@@ -7,11 +7,10 @@
 //! — the goal is "good enough to bootstrap zoom_out / improve_codebase
 //! architecture recommendations", not perfect static analysis.
 //!
-//! Persistence is Phase 2 (adds a `code_map_edges` table next to the
-//! existing `code_map_symbols`). Today the graph is rebuilt from the
-//! in-memory symbol set + source text on each call — fine because
-//! repos this scans are < 1 MB total source per `relevant_files_for_prompt`
-//! invocation.
+//! `neoth code-map persist --symbols` builds and stores edges in the
+//! `code_map_edges` table next to `code_map_symbols`; architecture recall
+//! reloads them without rescanning source. Direct callers can still build a
+//! graph from an in-memory symbol set and source text.
 //!
 //! BFS: `callers_of(target, max_depth)` walks the inverse adjacency to
 //! enumerate every symbol that (transitively) reaches `target` within

@@ -1,5 +1,5 @@
-//! Coding workflow — Hermes-adapted autonomous software engineering
-//! scaffold per `PLAN/SPEC_coding_workflow.md`.
+//! Hermes-adapted autonomous software-engineering workflow per
+//! `PLAN/SPEC_coding_workflow.md`.
 //!
 //! Maps the Hermes 5-stage workflow onto NEOTH's 3-hemisphere model:
 //!
@@ -19,20 +19,9 @@
 //! Activity feed (WAL 0x70..=0x76 frames)
 //! ```
 //!
-//! ## Pick #38 scope (Session 17, 2026-05-19)
-//!
-//! - Data model (`types.rs`)
-//! - Sqlite schema initializer (`store.rs::ensure_schema`)
-//! - WAL event-code reservations (in `wal/events.rs` 0x70..=0x76)
-//!
-//! ## NOT YET LIVE (subsequent picks per SPEC build order)
-//!
-//! - Pick #2: Store CRUD (sessions/tasks/comments round-trip)
-//! - Pick #3: Heuristic complexity classifier
-//! - Pick #4: Decomposer (Cerebellum LLM call → list<KanbanTask>)
-//! - Pick #5: CLI surface (`neoth code` + `neoth kanban`)
-//! - Pick #6: Worker dispatcher
-//! - Pick #7-10: Activity feed CLI/GUI + LLM second-opinion + review flow
+//! The data/store, classifier, decomposer, CLI, worker dispatcher, activity
+//! feed, second-opinion, verification, and review/promotion paths below are all
+//! production consumers; the WAL `0x70..=0x77` band records their lifecycle.
 //!
 //! ## References
 //!
@@ -42,14 +31,6 @@
 
 pub mod analyze;
 pub mod brainstorm;
-/// GOLD-FEAT-05 — self-source-edit engine: source root detection, unified-diff
-/// parsing (path extraction, SHA-256 hash, line counter).
-/// Consumed by `self_source_gate` and the `neoth self-edit` CLI.
-pub mod self_source;
-/// GOLD-FEAT-05 — five-layer fail-closed gate stack for self-source edits.
-/// Fail-closed: any gate failure refuses the request without touching the live
-/// source tree. WAL audit via `EXTENDED/SelfEditProposed` + `SelfEditApplied`.
-pub mod self_source_gate;
 /// QU-05 (Session 28) — `cargo check --message-format=json` diagnostic
 /// parser for the validate→fix→escalate loop. Pure-fn half: parse the
 /// captured JSON stream into structured diagnostics + format them for
@@ -85,6 +66,14 @@ pub mod provider_worker;
 pub mod retry;
 pub mod review;
 pub mod second_opinion;
+/// GOLD-FEAT-05 — self-source-edit engine: source root detection, unified-diff
+/// parsing (path extraction, SHA-256 hash, line counter).
+/// Consumed by `self_source_gate` and the `neoth self-edit` CLI.
+pub mod self_source;
+/// GOLD-FEAT-05 — five-layer fail-closed gate stack for self-source edits.
+/// Fail-closed: any gate failure refuses the request without touching the live
+/// source tree. WAL audit via `EXTENDED/SelfEditProposed` + `SelfEditApplied`.
+pub mod self_source_gate;
 pub mod store;
 /// QU-10b / SP-A1 — pending-task controller loop driving the dispatcher
 /// across every session with a Backlog task (`neoth code --run-pending`).

@@ -21,5 +21,4 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-# Empty by design — `neoth_run` must be no_mangle + extern "C" with
-# no host-call dependencies for the simplest happy-path test.
+neoth-plugin-sdk = { path = "../../SRC/neoth-plugin-sdk", version = "=0.1.0-alpha.0" }

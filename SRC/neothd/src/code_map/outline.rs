@@ -65,7 +65,11 @@ pub fn outline_source(source: &str, language: Language) -> Vec<OutlineEntry> {
                 // If the next symbol starts on the same line
                 // (minified / pathological) use line_start itself.
                 let next = symbols[i + 1].line;
-                if next > symbols[i].line { next - 1 } else { symbols[i].line }
+                if next > symbols[i].line {
+                    next - 1
+                } else {
+                    symbols[i].line
+                }
             } else {
                 total_lines
             }
@@ -225,15 +229,15 @@ type A = u8;\n\
     fn outline_file_on_real_rust_file() {
         // Point at this module's own source file.
         let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let this_file = manifest
-            .join("src")
-            .join("code_map")
-            .join("outline.rs");
+        let this_file = manifest.join("src").join("code_map").join("outline.rs");
         if !this_file.exists() {
             return; // alternate layout — skip
         }
         let out = outline_file(&this_file);
-        assert!(!out.is_empty(), "outline_file returned empty on real .rs file");
+        assert!(
+            !out.is_empty(),
+            "outline_file returned empty on real .rs file"
+        );
         let names: Vec<&str> = out.iter().map(|e| e.name.as_str()).collect();
         // This file defines `outline_source` and `outline_file` at
         // top level — both must appear.

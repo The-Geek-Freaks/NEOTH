@@ -114,6 +114,34 @@ fn apply_skill_toggle(skills: &mut crate::config::SkillsConfig, id_lc: &str, tur
     }
 }
 
+/// Canonical skill-toggle mutation for CLI, slash actions, and future GUI
+/// callers. Validation happens before the locked config RMW; malformed
+/// freedom.yaml bytes are preserved by [`FreedomConfig::update_at`].
+pub(crate) async fn set_skill_enabled_at(
+    home: &std::path::Path,
+    id: &str,
+    turn_on: bool,
+) -> Result<String> {
+    let id_lc = id.trim().to_lowercase();
+    if id_lc.is_empty() {
+        anyhow::bail!("skill id must not be empty");
+    }
+    let skills = load_all(&home.join("skills")).await?;
+    if !skills
+        .iter()
+        .any(|skill| skill.id().to_lowercase() == id_lc)
+    {
+        anyhow::bail!("no skill with id '{id}' — run `neoth skills --list` to see installed ids");
+    }
+
+    FreedomConfig::update_at(&home.join("freedom.yaml"), |cfg| {
+        apply_skill_toggle(&mut cfg.skills, &id_lc, turn_on);
+        Ok(())
+    })
+    .map_err(|error| anyhow::anyhow!("update freedom.yaml: {error}"))?;
+    Ok(id_lc)
+}
+
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     let skills_dir = FreedomConfig::default_neoth_home().join("skills");
 
@@ -214,8 +242,15 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
         })?;
         let config = FreedomConfig::load_from_default_path()?;
         let provider = crate::providers::from_config(&config).await?;
-        let outcomes =
-            crate::skills::test_harness::run_all_scenarios_for(provider.as_ref(), skill).await?;
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            provider,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+                config.autonomy_policy(),
+            )?,
+            config.provider_model.clone(),
+            "skills.test_harness",
+        );
+        let outcomes = crate::skills::test_harness::run_all_scenarios_for(&provider, skill).await?;
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 for o in &outcomes {
@@ -362,26 +397,14 @@ async fn run_skill_toggle(
         // The dispatcher only calls this when one of the two is Some.
         _ => unreachable!("run_skill_toggle requires --enable or --disable"),
     };
-    let id_lc = id.trim().to_lowercase();
-
-    // Validate against the loaded set so a typo'd id fails loudly instead of
-    // silently writing a no-op override.
-    if !skills.iter().any(|s| s.id().to_lowercase() == id_lc) {
-        anyhow::bail!("no skill with id '{id}' — run `neoth skills --list` to see installed ids");
-    }
-
-    let yaml = FreedomConfig::default_neoth_home().join("freedom.yaml");
-    if !yaml.exists() {
-        anyhow::bail!(
-            "freedom.yaml not found at {}. Run `neoth init` first.",
-            yaml.display()
-        );
-    }
-    let mut cfg = FreedomConfig::load_from_path(&yaml)
-        .map_err(|e| anyhow::anyhow!("load freedom.yaml: {e}"))?;
-    apply_skill_toggle(&mut cfg.skills, &id_lc, turn_on);
-    cfg.save_public_to_default_path()
-        .map_err(|e| anyhow::anyhow!("write freedom.yaml: {e}"))?;
+    // `skills` was already loaded by the caller; keep the invariant explicit
+    // while routing the mutation through the shared locked helper.
+    debug_assert!(
+        skills
+            .iter()
+            .any(|skill| skill.id().eq_ignore_ascii_case(id))
+    );
+    let id_lc = set_skill_enabled_at(&FreedomConfig::default_neoth_home(), id, turn_on).await?;
 
     let state = if turn_on { "enabled" } else { "disabled" };
     match args.output {

@@ -35,9 +35,11 @@
 //!
 //! ## Integration point
 //!
-//! The caller (the autonomous-loop dispatcher, not yet wired — tracked
-//! separately) calls [`StopConditionVerifier::judge`] when the agent emits
-//! `Action::AgentStop` and the current autonomy is `Elevated` or `Full`:
+//! The production loop engine and self-improvement executor call
+//! [`StopConditionVerifier::judge`] before accepting an agent completion
+//! claim. At `Elevated` or `Full`, unmet declared criteria force another
+//! iteration or a visible blocked outcome; supervised levels retain the
+//! documented bypass:
 //!
 //! ```rust,ignore
 //! use crate::council::stop_verifier::{StopConditionVerifier, StopProposal};
@@ -236,7 +238,10 @@ mod tests {
         let v = StopConditionVerifier::new(["all tests pass", "no open tasks"]);
         let p = proposal(&[]); // no evidence at all
         let j = v.judge(&p, AutonomyLevel::Standard);
-        assert!(j.is_approved(), "Standard must bypass the independent check");
+        assert!(
+            j.is_approved(),
+            "Standard must bypass the independent check"
+        );
         // note is None on bypass path
         assert_eq!(j, StopJudgement::Approved { note: None });
     }
@@ -379,11 +384,7 @@ mod tests {
     #[test]
     fn partial_match_only_satisfied_criteria_not_all() {
         // 3 criteria, only 1 covered → rejected, 2 unsatisfied reported.
-        let v = StopConditionVerifier::new([
-            "tests pass",
-            "lint clean",
-            "integration verified",
-        ]);
+        let v = StopConditionVerifier::new(["tests pass", "lint clean", "integration verified"]);
         let p = proposal(&["all tests pass"]);
         let j = v.judge(&p, AutonomyLevel::Full);
         assert!(!j.is_approved());

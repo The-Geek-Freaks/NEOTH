@@ -85,45 +85,39 @@ fn tick_state_path(home: &std::path::Path) -> PathBuf {
     home.join("reflections").join("subconscious_state.json")
 }
 
-/// Load the tick state. Returns `Default` when the file is absent or
-/// zero-length (fresh install or corrupted write window).
-pub fn load_tick_state(home: &std::path::Path) -> SubconsciousTickState {
+/// Load the tick state. A missing file is a fresh install; an existing
+/// unreadable, empty, or malformed file is evidence of broken persisted state
+/// and must stop the anti-double-emit gate rather than resetting it.
+pub fn load_tick_state(home: &std::path::Path) -> Result<SubconsciousTickState, String> {
     let path = tick_state_path(home);
     let bytes = match std::fs::read(&path) {
-        Ok(b) if !b.is_empty() => b,
-        _ => return SubconsciousTickState::default(),
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SubconsciousTickState::default());
+        }
+        Err(error) => {
+            return Err(format!(
+                "read reflection tick state {}: {error}",
+                path.display()
+            ));
+        }
     };
-    serde_json::from_slice(&bytes).unwrap_or_default()
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("parse reflection tick state {}: {error}", path.display()))
 }
 
-/// Persist the tick state atomically (`.tmp` + rename). Errors are
-/// swallowed with a warning — a failed save degrades at most to
-/// allowing a re-emit on next restart (the queue's ISO-week dedup
-/// still acts as the second net).
-pub fn save_tick_state(home: &std::path::Path, state: &SubconsciousTickState) {
+/// Persist the tick state privately, atomically, and durably. A successful
+/// enqueue is not reported as fully committed unless its replay-suppression
+/// state also reaches disk.
+pub fn save_tick_state(
+    home: &std::path::Path,
+    state: &SubconsciousTickState,
+) -> Result<(), String> {
     let path = tick_state_path(home);
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            warn!(error = %e, "reflection cron: failed to create reflections dir for tick state");
-            return;
-        }
-    }
-    let bytes = match serde_json::to_vec_pretty(state) {
-        Ok(b) => b,
-        Err(e) => {
-            warn!(error = %e, "reflection cron: failed to serialise tick state");
-            return;
-        }
-    };
-    let tmp = path.with_extension("json.tmp");
-    if let Err(e) = std::fs::write(&tmp, &bytes) {
-        warn!(error = %e, "reflection cron: failed to write tick state tmp");
-        return;
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        warn!(error = %e, "reflection cron: failed to rename tick state into place");
-        let _ = std::fs::remove_file(&tmp);
-    }
+    let bytes = serde_json::to_vec_pretty(state)
+        .expect("SubconsciousTickState contains only infallibly serializable fields");
+    crate::util::atomic_write::atomic_write_private(&path, &bytes)
+        .map_err(|error| format!("persist reflection tick state {}: {error}", path.display()))
 }
 
 // ── GOLD-ADAPT-OH-07: ReflectionSitrep ──────────────────────────────────────
@@ -163,16 +157,17 @@ pub struct ReflectionSitrep {
 /// 2. Daily period-reflection JSONL files for the last `lookback_days`.
 ///
 /// At most `max_entries` entries are returned, newest first.
-/// Missing files / parse errors are skipped silently (best-effort
-/// read — the sitrep must never fail the caller).
+/// Missing daily reflection files are naturally absent. A broken tick-state
+/// file is surfaced so the operator is not shown a false "never emitted"
+/// status while the autonomous gate is fail-closed.
 pub fn recent_reflections_sitrep(
     home: &std::path::Path,
     lookback_days: u32,
     max_entries: usize,
-) -> ReflectionSitrep {
+) -> Result<ReflectionSitrep, String> {
     use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, load_for_tag};
 
-    let state = load_tick_state(home);
+    let state = load_tick_state(home)?;
     let now = crate::time::now_unix_i64();
     let mut entries: Vec<SitrepEntry> = Vec::new();
 
@@ -194,10 +189,10 @@ pub fn recent_reflections_sitrep(
     entries.sort_by_key(|e| std::cmp::Reverse(e.generated_ts_unix));
     entries.truncate(max_entries);
 
-    ReflectionSitrep {
+    Ok(ReflectionSitrep {
         last_emitted_unix: state.last_emitted_unix,
         recent: entries,
-    }
+    })
 }
 
 // ── Weekly reflection tick (extended with OH-07 window gate) ─────────────────
@@ -232,7 +227,7 @@ pub fn run_reflection_tick_once(
 
     // GOLD-ADAPT-OH-07: window gate — suppress if we emitted recently.
     if min_window_secs > 0 {
-        let state = load_tick_state(home);
+        let state = load_tick_state(home)?;
         if state.last_emitted_unix > 0 {
             let elapsed = now_unix.saturating_sub(state.last_emitted_unix) as u64;
             if elapsed < min_window_secs {
@@ -275,7 +270,12 @@ pub fn run_reflection_tick_once(
     // GOLD-ADAPT-OH-07: persist last_emitted_unix on successful enqueue so
     // subsequent ticks within the window are suppressed even across restarts.
     if enqueued {
-        save_tick_state(home, &SubconsciousTickState { last_emitted_unix: now_unix });
+        save_tick_state(
+            home,
+            &SubconsciousTickState {
+                last_emitted_unix: now_unix,
+            },
+        )?;
     }
 
     // GOLD-ADAPT-OH-08 — stage the observation for the Intelligence view.
@@ -283,11 +283,9 @@ pub fn run_reflection_tick_once(
     // when the queue dedup already has this week's item (the observation is
     // an independent surface-only record, not a delivery-queue item). The
     // operator reads staged observations via `neoth proactive intelligence`.
-    if let Some(obs) = crate::reflection::build_reflection_observation(
-        &iso_week_tag,
-        &topics,
-        now_unix,
-    ) {
+    if let Some(obs) =
+        crate::reflection::build_reflection_observation(&iso_week_tag, &topics, now_unix)
+    {
         if let Err(e) = crate::reflection::append_staged_observation(home, &obs) {
             warn!(
                 error = %e,
@@ -321,9 +319,10 @@ async fn run_tech_currency_tick_once(
     if !cfg.weekly_refresh {
         return Ok(false); // opt-in; off by default (no network unless enabled)
     }
-    let autonomy = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.autonomy)
-        .unwrap_or_default();
+    let autonomy =
+        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))
+            .map_err(|error| format!("load freedom.yaml for tech-currency policy: {error:#}"))?
+            .autonomy;
     if autonomy == crate::permissions::AutonomyLevel::Strict {
         return Ok(false); // no external egress under Strict autonomy
     }
@@ -381,14 +380,19 @@ async fn run_tech_currency_tick_once(
 /// Resolve the Obsidian sync target (`vault_root`, `subdir`) from freedom.yaml,
 /// or `None` when no vault is configured. Re-read each tick so toggling the
 /// vault doesn't need a daemon restart.
-fn obsidian_target() -> Option<(PathBuf, String)> {
-    let cfg = crate::config::FreedomConfig::load_from_default_path().ok()?;
-    let vault = cfg.obsidian_vault.clone()?;
+fn obsidian_target(home: &std::path::Path) -> Result<Option<(PathBuf, String)>, String> {
+    let cfg = crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))
+        .map_err(|error| {
+        format!("load freedom.yaml for Obsidian reflection target: {error:#}")
+    })?;
+    let Some(vault) = cfg.obsidian_vault.clone() else {
+        return Ok(None);
+    };
     let subdir = cfg
         .obsidian_subdir
         .clone()
         .unwrap_or_else(|| "NEOTH".to_string());
-    Some((PathBuf::from(vault), subdir))
+    Ok(Some((PathBuf::from(vault), subdir)))
 }
 
 /// Generic offline daily/yearly reflection tick (OPT-IN). Composes a
@@ -522,7 +526,16 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
             // Opt-in offline daily + yearly self-reflections → archive + Obsidian
             // notes. Read the opt-in flags + Obsidian target fresh each tick.
             let cfg = crate::cli::reflect::ReflectTopics::load(&home);
-            let obsidian = obsidian_target();
+            let obsidian = match obsidian_target(&home) {
+                Ok(target) => target,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "reflection cron: config invalid; daily/yearly sync blocked fail-closed"
+                    );
+                    continue;
+                }
+            };
             let obs_ref = obsidian.as_ref().map(|(p, s)| (p.as_path(), s.as_str()));
             use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, year_tag_from_unix};
             let daily_tag = date_tag_from_unix(now_unix);
@@ -756,19 +769,18 @@ mod tests {
     #[test]
     fn tick_state_roundtrip_save_load() {
         let tmp = TempDir::new().unwrap();
-        let state = SubconsciousTickState { last_emitted_unix: 1_700_000_000 };
-        save_tick_state(tmp.path(), &state);
-        let loaded = load_tick_state(tmp.path());
-        assert_eq!(
-            loaded, state,
-            "save + load must produce identical state"
-        );
+        let state = SubconsciousTickState {
+            last_emitted_unix: 1_700_000_000,
+        };
+        save_tick_state(tmp.path(), &state).unwrap();
+        let loaded = load_tick_state(tmp.path()).unwrap();
+        assert_eq!(loaded, state, "save + load must produce identical state");
     }
 
     #[test]
     fn load_tick_state_returns_default_for_missing_file() {
         let tmp = TempDir::new().unwrap();
-        let state = load_tick_state(tmp.path());
+        let state = load_tick_state(tmp.path()).unwrap();
         assert_eq!(
             state.last_emitted_unix, 0,
             "missing file → default (never emitted)"
@@ -776,13 +788,19 @@ mod tests {
     }
 
     #[test]
-    fn load_tick_state_returns_default_for_empty_file() {
+    fn load_tick_state_rejects_empty_existing_file() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("reflections");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("subconscious_state.json"), b"").unwrap();
-        let state = load_tick_state(tmp.path());
-        assert_eq!(state.last_emitted_unix, 0, "zero-length file → default");
+        let state_path = dir.join("subconscious_state.json");
+        let error = load_tick_state(tmp.path()).unwrap_err();
+        assert!(error.contains("parse reflection tick state"));
+        assert_eq!(
+            std::fs::read(state_path).unwrap(),
+            b"",
+            "invalid state must remain available as forensic evidence"
+        );
     }
 
     // ── GOLD-ADAPT-OH-07: anti-double-emit window gate ───────────────────────
@@ -796,7 +814,13 @@ mod tests {
         let t1 = t0 + 60; // 60s later — still inside window
 
         // Manually plant a tick state as if the first tick already fired.
-        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+        save_tick_state(
+            tmp.path(),
+            &SubconsciousTickState {
+                last_emitted_unix: t0,
+            },
+        )
+        .unwrap();
 
         // Second tick within window → suppressed.
         let result = run_reflection_tick_once(tmp.path(), t1, window);
@@ -816,7 +840,13 @@ mod tests {
         let window: u64 = 3600; // 1h window
         let t_after = t0 + window as i64 + 1; // 1 second after window
 
-        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+        save_tick_state(
+            tmp.path(),
+            &SubconsciousTickState {
+                last_emitted_unix: t0,
+            },
+        )
+        .unwrap();
 
         // Tick after window expiry. No views.db → Ok(false) from that path,
         // NOT from the gate. We verify the gate was NOT the cause by checking
@@ -830,7 +860,7 @@ mod tests {
             "after window: no views.db gives Ok(false) from no-views-db path"
         );
         // State unchanged (no successful enqueue happened).
-        let state = load_tick_state(tmp.path());
+        let state = load_tick_state(tmp.path()).unwrap();
         assert_eq!(
             state.last_emitted_unix, t0,
             "last_emitted_unix must not change when no enqueue happened"
@@ -843,7 +873,13 @@ mod tests {
         // last_emitted_unix must not suppress the tick.
         let tmp = TempDir::new().unwrap();
         let t0: i64 = 1_700_000_000;
-        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+        save_tick_state(
+            tmp.path(),
+            &SubconsciousTickState {
+                last_emitted_unix: t0,
+            },
+        )
+        .unwrap();
 
         // Tick at t0 + 1s with gate disabled → falls through to no-views-db path.
         let result = run_reflection_tick_once(tmp.path(), t0 + 1, 0);
@@ -860,14 +896,20 @@ mod tests {
         let t0: i64 = 1_700_000_000;
         let window: u64 = 86_400; // 24h
 
-        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+        save_tick_state(
+            tmp.path(),
+            &SubconsciousTickState {
+                last_emitted_unix: t0,
+            },
+        )
+        .unwrap();
 
         // Tick 1h later — within window → suppressed.
         let r = run_reflection_tick_once(tmp.path(), t0 + 3600, window);
         assert_eq!(r, Ok(false));
 
         // State must NOT have been updated (save only happens on successful enqueue).
-        let state = load_tick_state(tmp.path());
+        let state = load_tick_state(tmp.path()).unwrap();
         assert_eq!(
             state.last_emitted_unix, t0,
             "suppressed tick must not overwrite last_emitted_unix"
@@ -879,7 +921,7 @@ mod tests {
     #[test]
     fn sitrep_empty_home_returns_zero_last_emitted_and_no_entries() {
         let tmp = TempDir::new().unwrap();
-        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10).unwrap();
         assert_eq!(sitrep.last_emitted_unix, 0, "fresh install = never emitted");
         assert!(sitrep.recent.is_empty(), "no daily reflections yet");
     }
@@ -888,9 +930,15 @@ mod tests {
     fn sitrep_reflects_persisted_last_emitted() {
         let tmp = TempDir::new().unwrap();
         let t0: i64 = 1_700_000_000;
-        save_tick_state(tmp.path(), &SubconsciousTickState { last_emitted_unix: t0 });
+        save_tick_state(
+            tmp.path(),
+            &SubconsciousTickState {
+                last_emitted_unix: t0,
+            },
+        )
+        .unwrap();
 
-        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10).unwrap();
         assert_eq!(
             sitrep.last_emitted_unix, t0,
             "sitrep must carry the persisted last_emitted_unix"
@@ -899,7 +947,9 @@ mod tests {
 
     #[test]
     fn sitrep_includes_recent_daily_reflections_newest_first() {
-        use crate::reflection::periodic::{PeriodKind, append, build_reflection, date_tag_from_unix};
+        use crate::reflection::periodic::{
+            PeriodKind, append, build_reflection, date_tag_from_unix,
+        };
         let tmp = TempDir::new().unwrap();
 
         // Write two daily reflections with different generated_ts_unix values.
@@ -907,13 +957,20 @@ mod tests {
         let today_tag = date_tag_from_unix(now);
         let yesterday_tag = date_tag_from_unix(now - 86_400);
 
-        let r1 = build_reflection(PeriodKind::Daily, &yesterday_tag, &["kubernetes".into()], now - 86_400).unwrap();
-        let r2 = build_reflection(PeriodKind::Daily, &today_tag, &["terraform".into()], now).unwrap();
+        let r1 = build_reflection(
+            PeriodKind::Daily,
+            &yesterday_tag,
+            &["kubernetes".into()],
+            now - 86_400,
+        )
+        .unwrap();
+        let r2 =
+            build_reflection(PeriodKind::Daily, &today_tag, &["terraform".into()], now).unwrap();
 
         append(tmp.path(), &r1).unwrap();
         append(tmp.path(), &r2).unwrap();
 
-        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10).unwrap();
         assert_eq!(sitrep.recent.len(), 2, "both daily reflections must appear");
         // Newest first.
         assert_eq!(
@@ -930,7 +987,9 @@ mod tests {
 
     #[test]
     fn sitrep_respects_max_entries_cap() {
-        use crate::reflection::periodic::{PeriodKind, append, build_reflection, date_tag_from_unix};
+        use crate::reflection::periodic::{
+            PeriodKind, append, build_reflection, date_tag_from_unix,
+        };
         let tmp = TempDir::new().unwrap();
 
         let now: i64 = crate::time::now_unix_i64();
@@ -943,7 +1002,7 @@ mod tests {
         }
 
         // Request at most 3.
-        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 3);
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 3).unwrap();
         assert_eq!(sitrep.recent.len(), 3, "max_entries cap must be honoured");
     }
 
@@ -1000,7 +1059,9 @@ mod tests {
 
     #[test]
     fn sitrep_lookback_days_bounds_how_far_back_we_read() {
-        use crate::reflection::periodic::{PeriodKind, append, build_reflection, date_tag_from_unix};
+        use crate::reflection::periodic::{
+            PeriodKind, append, build_reflection, date_tag_from_unix,
+        };
         let tmp = TempDir::new().unwrap();
 
         let now: i64 = crate::time::now_unix_i64();
@@ -1011,7 +1072,7 @@ mod tests {
         append(tmp.path(), &r).unwrap();
 
         // With lookback_days=7, the 10-day-old entry must not appear.
-        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10);
+        let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10).unwrap();
         assert!(
             sitrep.recent.is_empty(),
             "reflection outside lookback window must not appear in sitrep"

@@ -218,12 +218,7 @@ fn run_voices(output: OutputFormat) -> Result<()> {
 }
 
 fn run_show(home: &std::path::Path, output: OutputFormat) -> Result<()> {
-    let yaml = home.join("freedom.yaml");
-    let cfg = if yaml.exists() {
-        FreedomConfig::load_from_path(&yaml).unwrap_or_default()
-    } else {
-        FreedomConfig::default()
-    };
+    let cfg = FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
     let council = &cfg.council;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -404,7 +399,7 @@ fn run_weights(
     output: OutputFormat,
 ) -> Result<()> {
     let path = RoutingWeights::default_path(home);
-    let weights = RoutingWeights::load_from(&path);
+    let weights = RoutingWeights::load_from(&path).context("load routing weights")?;
     let role_filter = role_filter.map(parse_role).transpose()?;
 
     let now = now_unix();
@@ -590,52 +585,57 @@ fn council_row_summary(row: &CouncilEventRow) -> String {
 
 /// Multi-segment WAL scan collecting every council `0x60..=0x64` frame.
 /// Mirrors the SPEC-10 refusal-history walker: glob+sort `*.wal`, parse
-/// the v1/v2 segment header, decompress v2 zstd bodies, walk frames
-/// tolerantly (missing dir / short / unknown-format / torn tail / bad
-/// payload each skip rather than error — a partial WAL still yields every
-/// recoverable record). Read-only: no new store needed, the existing
-/// council emit sites already write these frames.
-fn collect_council_events(wal_dir: &Path) -> Vec<CouncilEventRow> {
-    let entries = match std::fs::read_dir(wal_dir) {
-        Ok(it) => it,
-        Err(_) => return Vec::new(),
-    };
-    let mut segments: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
-        .collect();
+/// the v1/v2 segment header, decompress v2 zstd bodies, and walk frames.
+/// A genuinely missing WAL directory is an empty history. Existing unreadable
+/// segments, invalid headers/compression, and malformed council payloads are
+/// surfaced so the audit UI cannot present a silently incomplete record. A
+/// torn active tail remains tolerated after every fully decoded frame.
+fn collect_council_events(wal_dir: &Path) -> Result<Vec<CouncilEventRow>> {
+    if !wal_dir
+        .try_exists()
+        .with_context(|| format!("inspect council WAL directory {}", wal_dir.display()))?
+    {
+        return Ok(Vec::new());
+    }
+    let entries = std::fs::read_dir(wal_dir)
+        .with_context(|| format!("read council WAL directory {}", wal_dir.display()))?;
+    let mut segments = Vec::new();
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("read entry in council WAL directory {}", wal_dir.display()))?
+            .path();
+        if path.extension().and_then(|s| s.to_str()) == Some("wal") {
+            segments.push(path);
+        }
+    }
     segments.sort();
 
     let mut out: Vec<CouncilEventRow> = Vec::new();
     for path in segments {
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        let Ok(hdr) = parse_segment_header(&bytes) else {
-            continue;
-        };
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read council WAL segment {}", path.display()))?;
+        let hdr = parse_segment_header(&bytes)
+            .with_context(|| format!("parse council WAL header {}", path.display()))?;
         let header_len = hdr.header_len();
         if bytes.len() <= header_len {
             continue;
         }
         let body = &bytes[header_len..];
         if hdr.is_compressed() {
-            match decompress_frames(body) {
-                Ok(d) => walk_council_frames(&d, &mut out),
-                Err(_) => continue,
-            }
+            let decompressed = decompress_frames(body)
+                .with_context(|| format!("decompress council WAL segment {}", path.display()))?;
+            walk_council_frames(&decompressed, &mut out)?;
         } else {
-            walk_council_frames(body, &mut out);
+            walk_council_frames(body, &mut out)?;
         }
     }
-    out
+    Ok(out)
 }
 
 /// Walk one (decompressed) segment body, pushing every council frame.
 /// Tail-tolerant; the zero-`total_len` guard prevents an infinite loop on
 /// a malformed frame.
-fn walk_council_frames(frames: &[u8], out: &mut Vec<CouncilEventRow>) {
+fn walk_council_frames(frames: &[u8], out: &mut Vec<CouncilEventRow>) -> Result<()> {
     let mut cursor = 0usize;
     while cursor < frames.len() {
         let dec = match decode_frame(&frames[cursor..]) {
@@ -644,7 +644,12 @@ fn walk_council_frames(frames: &[u8], out: &mut Vec<CouncilEventRow>) {
         };
         if let Some(code_name) = council_code_name(dec.header.event_type) {
             let payload: serde_json::Value =
-                serde_json::from_slice(dec.payload).unwrap_or(serde_json::Value::Null);
+                serde_json::from_slice(dec.payload).with_context(|| {
+                    format!(
+                        "decode council WAL payload for event {} (type 0x{:02X})",
+                        dec.header.event_id.0, dec.header.event_type
+                    )
+                })?;
             let prompt_hash = payload
                 .get("prompt_hash")
                 .and_then(|v| v.as_str())
@@ -666,6 +671,7 @@ fn walk_council_frames(frames: &[u8], out: &mut Vec<CouncilEventRow>) {
         }
         cursor = cursor.saturating_add(total);
     }
+    Ok(())
 }
 
 /// Sort most-recent-first (`ts_ns` desc, `event_id` tiebreak) + apply the
@@ -703,7 +709,7 @@ fn run_list(
     output: OutputFormat,
 ) -> Result<()> {
     let wal_dir = home.join("wal");
-    let mut rows = collect_council_events(&wal_dir);
+    let mut rows = collect_council_events(&wal_dir)?;
     if let Some(since) = since_unix {
         // Rows without a ts_unix payload field are kept (can't filter them
         // out without a timestamp; they're rare legacy frames).
@@ -862,7 +868,7 @@ fn render_replay_line(row: &CouncilEventRow) -> String {
 /// frame and replay renders it inline (and reports `transcripts_available`).
 fn run_replay(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()> {
     let wal_dir = home.join("wal");
-    let mut rows: Vec<CouncilEventRow> = collect_council_events(&wal_dir)
+    let mut rows: Vec<CouncilEventRow> = collect_council_events(&wal_dir)?
         .into_iter()
         .filter(|r| {
             r.prompt_hash
@@ -935,7 +941,7 @@ fn run_replay(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()
 fn run_inspect(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()> {
     let wal_dir = home.join("wal");
     let needle = prompt_hash.trim();
-    let matches: Vec<CouncilEventRow> = collect_council_events(&wal_dir)
+    let matches: Vec<CouncilEventRow> = collect_council_events(&wal_dir)?
         .into_iter()
         .filter(|r| {
             r.prompt_hash
@@ -1055,12 +1061,7 @@ fn budget_json_body(cfg: &FreedomConfig, runtime: Option<serde_json::Value>) -> 
 }
 
 fn run_budget(home: &Path, output: OutputFormat) -> Result<()> {
-    let yaml = home.join("freedom.yaml");
-    let cfg = if yaml.exists() {
-        FreedomConfig::load_from_path(&yaml).unwrap_or_default()
-    } else {
-        FreedomConfig::default()
-    };
+    let cfg = FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
     let cap = cfg.council.effective_max_calls();
     let daily_usd_cap = cfg.council.daily_usd_cap;
     let snap = crate::council::budget::load_budget_snapshot(home);
@@ -1257,7 +1258,7 @@ mod tests {
     #[test]
     fn collect_council_events_missing_dir_is_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let rows = collect_council_events(&dir.path().join("nope"));
+        let rows = collect_council_events(&dir.path().join("nope")).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1504,7 +1505,7 @@ mod tests {
             .await
             .unwrap();
 
-        let rows = collect_council_events(&wal_dir);
+        let rows = collect_council_events(&wal_dir).unwrap();
         assert_eq!(rows.len(), 2, "only the 2 council frames, not BOOT");
         assert!(rows.iter().all(|r| r.prompt_hash.as_deref() == Some(hash)));
         assert!(rows.iter().any(|r| r.code_name == "skip"));
@@ -1521,5 +1522,26 @@ mod tests {
             })
             .collect();
         assert_eq!(matched.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn council_audit_rejects_malformed_recognized_payload() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, join) = crate::wal::writer::spawn(wal_dir.join("000001.wal")).unwrap();
+        let payload = b"not-json".to_vec();
+        writer
+            .append(
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_COUNCIL_SKIP, &payload).build(),
+                payload,
+            )
+            .await
+            .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let error = collect_council_events(&wal_dir).unwrap_err();
+        assert!(format!("{error:#}").contains("decode council WAL payload"));
     }
 }

@@ -26,8 +26,8 @@ use serde::Deserialize;
 /// Tailscale-reachable peer. Same default as the Phase 2 mDNS
 /// announce port; operators who run a non-default port supply
 /// the override via `freedom.yaml::cluster.listen_port` — wired
-/// via [`super::policy::load_listen_port_from_freedom`].
-pub const DEFAULT_NEOTH_LISTEN_PORT: u16 = 49737;
+/// through the typed [`crate::config::ClusterConfig`].
+pub const DEFAULT_NEOTH_LISTEN_PORT: u16 = crate::config::DEFAULT_CLUSTER_LISTEN_PORT;
 
 /// Default TCP-connect timeout for the Phase 3 probe. Tailscale's
 /// magic-DNS resolves locally; the network hop to the peer is

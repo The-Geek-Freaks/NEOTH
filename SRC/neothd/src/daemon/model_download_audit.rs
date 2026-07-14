@@ -1,206 +1,337 @@
-//! HF-01 implicit-emit (Session 28g+) — shared best-effort WAL audit
-//! helper for HuggingFace model downloads.
+//! Fail-closed audit lifecycle for implicit Hugging Face downloads.
 //!
-//! The explicit path (`cli/models::run_pull`) already emits
-//! `0xD7 MODEL_DOWNLOAD_START` + `0xD8 MODEL_DOWNLOAD_COMPLETE` around
-//! the user-driven `neoth model pull` flow. The IMPLICIT path — the
-//! first-use download triggered inside `providers::local_qwen::ensure_artifacts`
-//! and `providers::ouro::adapter::ensure_artifacts` — was gated by
-//! HF-01 Slice A but had **no writer in scope**, so the audit chain
-//! was silent for the most-common operator flow ("just run `neoth chat`
-//! and pay the silent ~3 GB fetch"). This module closes that gap with
-//! the same best-effort one-shot writer pattern `run_pull` already uses:
-//!
-//!   1. If a live daemon owns the WAL writer (pidfile reports a healthy
-//!      PID), SKIP the emit — the daemon will end up writing its own
-//!      frames once the adapter dispatches, and a second writer on the
-//!      same segment violates the single-writer invariant.
-//!   2. Otherwise, open a short-lived `wal_spawn` writer, emit the
-//!      frame, drop the writer.
-//!
-//! Failures are tracing-warn'd, NEVER abort the download — the audit
-//! frame is a nicety, not a correctness invariant. The download itself
-//! is what produces operator-visible bytes on disk.
+//! A live daemon receives D7/D8 over its authenticated audit RPC. A standalone
+//! process owns a collision-resistant WAL segment for the entire attempt. D7
+//! must be durably acknowledged before the downloader closure receives its
+//! unforgeable [`ModelDownloadPermit`]; every returned outcome is closed by D8.
+
+use std::future::Future;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
 
 use crate::config::FreedomConfig;
-use crate::daemon::pidfile;
-use crate::wal::events::{EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, EVENT_TYPE_MODEL_DOWNLOAD_START};
-use crate::wal::{HeaderBuilder, spawn as wal_spawn};
+use crate::media::model_manager::{
+    ModelDownloadAttempt, ModelDownloadAuditSink, ModelDownloadPermit, PendingModelDownloadOutcome,
+};
+use crate::wal::{spawn as wal_spawn, writer::WalWriterHandle};
 
-/// HF-01 — best-effort emit of a `0xD7 MODEL_DOWNLOAD_START` audit frame
-/// around an implicit-path HuggingFace fetch. The matching
-/// [`emit_complete`] closes the bracket with `0xD8`.
-///
-/// Skipped silently when a live daemon owns the WAL writer (single-
-/// writer invariant) or when WAL spawn fails (best-effort).
-pub async fn emit_start(model_id: &str) {
-    emit_event(EVENT_TYPE_MODEL_DOWNLOAD_START, model_id, None).await;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImplicitModelDownloadSource {
+    Qwen,
+    Ouro,
 }
 
-/// HF-01 — best-effort emit of `0xD8 MODEL_DOWNLOAD_COMPLETE`. The
-/// `cached_path` is the on-disk location the fetch resolved to (so
-/// `neoth wal show` can correlate the model id to the operator's local
-/// cache layout); `duration_ms` is the wall-clock cost of the fetch.
-pub async fn emit_complete(model_id: &str, cached_path: &str, duration_ms: u64) {
-    emit_event(
-        EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE,
+impl ImplicitModelDownloadSource {
+    const fn trigger(self) -> &'static str {
+        let _ = self;
+        "implicit"
+    }
+}
+
+enum ImplicitAuditSink {
+    Daemon { home: PathBuf },
+    Wal(WalWriterHandle),
+}
+
+#[async_trait::async_trait]
+impl ModelDownloadAuditSink for ImplicitAuditSink {
+    async fn append_model_download(&self, event_type: u8, payload: Vec<u8>) -> Result<()> {
+        match self {
+            Self::Daemon { home } => {
+                crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload)
+                    .await
+                    .context("forward mandatory implicit model-download audit frame to daemon")
+            }
+            Self::Wal(writer) => {
+                ModelDownloadAuditSink::append_model_download(writer, event_type, payload).await
+            }
+        }
+    }
+}
+
+struct ImplicitAuditTransport {
+    sink: ImplicitAuditSink,
+    join: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ImplicitAuditTransport {
+    fn open() -> Result<Self> {
+        let pidfile = crate::daemon::pidfile::default_pidfile();
+        let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+            .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))?
+            .is_some();
+        if daemon_live {
+            return Ok(Self {
+                sink: ImplicitAuditSink::Daemon {
+                    home: FreedomConfig::default_neoth_home(),
+                },
+                join: None,
+            });
+        }
+
+        let wal_dir = FreedomConfig::default_wal_dir();
+        std::fs::create_dir_all(&wal_dir).with_context(|| {
+            format!(
+                "create mandatory implicit model-download WAL directory {}",
+                wal_dir.display()
+            )
+        })?;
+        let segment =
+            crate::wal::writer::unique_standalone_segment_path(&wal_dir, "implicit-model-download");
+        let (writer, join) =
+            wal_spawn(segment).context("spawn mandatory implicit model-download WAL writer")?;
+        Ok(Self {
+            sink: ImplicitAuditSink::Wal(writer),
+            join: Some(join),
+        })
+    }
+
+    async fn shutdown(self) -> Result<()> {
+        let Self { sink, join } = self;
+        drop(sink);
+        if let Some(join) = join {
+            join.await
+                .context("join mandatory implicit model-download WAL writer")?;
+        }
+        Ok(())
+    }
+}
+
+/// Run one implicit network fetch behind the canonical durable D7/D8 state
+/// machine. The closure cannot be called until D7 minted its exact permit.
+pub(crate) async fn run_implicit_model_download<F, Fut>(
+    root: &Path,
+    model_id: &str,
+    source: ImplicitModelDownloadSource,
+    artifacts_ready: bool,
+    download: F,
+) -> Result<()>
+where
+    F: FnOnce(ModelDownloadPermit) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let transport = ImplicitAuditTransport::open()?;
+    let operation = run_implicit_model_download_with_sink(
+        root,
         model_id,
-        Some((cached_path, duration_ms)),
+        source,
+        artifacts_ready,
+        &transport.sink,
+        download,
     )
     .await;
+    let shutdown = transport.shutdown().await;
+    match (operation, shutdown) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(error),
+        (Err(operation), Err(shutdown)) => Err(anyhow::anyhow!(
+            "{operation:#}; additionally failed to close audit WAL: {shutdown:#}"
+        )),
+    }
 }
 
-async fn emit_event(event_type: u8, model_id: &str, complete_fields: Option<(&str, u64)>) {
-    // Single-writer invariant: skip if a live daemon owns the segment.
-    let pidfile_path = pidfile::default_pidfile();
-    if matches!(pidfile::live_daemon_pid(&pidfile_path), Ok(Some(_))) {
-        return;
+async fn run_implicit_model_download_with_sink<F, Fut>(
+    root: &Path,
+    model_id: &str,
+    source: ImplicitModelDownloadSource,
+    artifacts_ready: bool,
+    sink: &dyn ModelDownloadAuditSink,
+    download: F,
+) -> Result<()>
+where
+    F: FnOnce(ModelDownloadPermit) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let mut attempt = ModelDownloadAttempt::acquire(root, model_id, source.trigger())
+        .await
+        .context("acquire implicit model-download lifecycle")?;
+
+    let had_pending = attempt.is_pending();
+    if let Some(pending_outcome) = attempt.pending_outcome() {
+        let replayed = attempt
+            .replay_terminal(sink)
+            .await
+            .context("replay pending implicit MODEL_DOWNLOAD_COMPLETE")?;
+        debug_assert_eq!(replayed, pending_outcome);
+        if artifacts_ready && matches!(replayed, PendingModelDownloadOutcome::Ready) {
+            return Ok(());
+        }
+    } else if artifacts_ready && !had_pending {
+        return Ok(());
     }
 
-    let seg = FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(parent) = seg.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    let permit = attempt
+        .authorize_network(sink)
+        .await
+        .context("append mandatory implicit MODEL_DOWNLOAD_START")?;
+    match download(permit).await {
+        Ok(()) => attempt
+            .finish_ready(sink, root)
+            .await
+            .context("append mandatory ready implicit MODEL_DOWNLOAD_COMPLETE"),
+        Err(download_error) => match attempt
+            .finish_failed(sink, &format!("{download_error:#}"))
+            .await
+        {
+            Ok(()) => Err(download_error),
+            Err(audit_error) => Err(anyhow::anyhow!(
+                "implicit model download failed: {download_error:#}; terminal audit also failed: {audit_error:#}"
+            )),
+        },
     }
-    let Ok((writer, join)) = wal_spawn(seg) else {
-        // Best-effort: a broken WAL dir must not abort the download.
-        tracing::debug!(
-            event_type = event_type,
-            model_id = model_id,
-            "HF-01 implicit-emit: wal_spawn failed; skipping audit frame"
-        );
-        return;
-    };
-
-    let ts_unix = crate::time::now_unix_secs();
-    let payload = match complete_fields {
-        None => serde_json::to_vec(&serde_json::json!({
-            "model_id": model_id,
-            "ts_unix": ts_unix,
-            "trigger": "implicit",
-        })),
-        Some((cached_path, duration_ms)) => serde_json::to_vec(&serde_json::json!({
-            "model_id": model_id,
-            "cached_path": cached_path,
-            "duration_ms": duration_ms,
-            "ts_unix": ts_unix,
-            "trigger": "implicit",
-        })),
-    }
-    .unwrap_or_default();
-
-    let header = HeaderBuilder::new(event_type, &payload).build();
-    if let Err(e) = writer.append(header, payload).await {
-        tracing::warn!(
-            error = %e,
-            event_type = event_type,
-            model_id = model_id,
-            "HF-01 implicit-emit: WAL append failed (non-fatal)"
-        );
-    }
-    drop(writer);
-    let _ = join.await;
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
-    use crate::wal::events::{EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, EVENT_TYPE_MODEL_DOWNLOAD_START};
 
-    /// Helper to seed a temp WAL dir + emit one frame directly via the
-    /// inner `emit_event` skeleton without relying on the daemon's
-    /// global `default_wal_dir`. The production path uses the global
-    /// dir intentionally (the daemon owns it); for unit tests we just
-    /// pin the payload shape via in-line emit + frame-walk.
-    async fn emit_via_writer(seg: &std::path::Path, event_type: u8, payload: serde_json::Value) {
-        if let Some(parent) = seg.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        let (w, join) = wal_spawn(seg.to_path_buf()).unwrap();
-        let bytes = serde_json::to_vec(&payload).unwrap();
-        let header = HeaderBuilder::new(event_type, &bytes).build();
-        w.append(header, bytes).await.unwrap();
-        drop(w);
-        let _ = join.await;
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<(u8, serde_json::Value)>>,
+        fail_event: Option<u8>,
     }
 
-    fn find_frame(seg: &std::path::Path, event_type: u8) -> Option<serde_json::Value> {
-        let bytes = std::fs::read(seg).ok()?;
-        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).ok()?;
-        let body = &bytes[hdr.header_len()..];
-        let mut cursor = 0usize;
-        while cursor < body.len() {
-            let Ok(dec) = crate::wal::frame::decode_frame(&body[cursor..]) else {
-                break;
-            };
-            if dec.header.event_type == event_type {
-                return serde_json::from_slice(dec.payload).ok();
+    #[async_trait::async_trait]
+    impl ModelDownloadAuditSink for RecordingSink {
+        async fn append_model_download(&self, event_type: u8, payload: Vec<u8>) -> Result<()> {
+            if self.fail_event == Some(event_type) {
+                anyhow::bail!("injected audit failure for {event_type:#04x}");
             }
-            let total = dec.header.total_len as usize;
-            if total == 0 {
-                break;
-            }
-            cursor = cursor.saturating_add(total);
-        }
-        None
-    }
-
-    #[tokio::test]
-    async fn start_frame_carries_required_fields_with_implicit_trigger() {
-        // Pin the wire-shape of 0xD7 carried by the implicit path: the
-        // `trigger=implicit` discriminator is what lets the operator
-        // (and the threat model audit) tell an implicit first-use fetch
-        // apart from an explicit `neoth model pull`.
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let ts_unix = 1_700_000_000u64;
-        let payload = serde_json::json!({
-            "model_id": "openai/whisper-large-v3-turbo",
-            "ts_unix": ts_unix,
-            "trigger": "implicit",
-        });
-        emit_via_writer(&seg, EVENT_TYPE_MODEL_DOWNLOAD_START, payload).await;
-        let found = find_frame(&seg, EVENT_TYPE_MODEL_DOWNLOAD_START)
-            .expect("0xD7 frame must be in the WAL");
-        assert_eq!(found["model_id"], "openai/whisper-large-v3-turbo");
-        assert_eq!(found["ts_unix"], ts_unix);
-        assert_eq!(found["trigger"], "implicit");
-    }
-
-    #[tokio::test]
-    async fn complete_frame_carries_cached_path_and_duration() {
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let payload = serde_json::json!({
-            "model_id": "Qwen/Qwen3-4B-Instruct-2507",
-            "cached_path": "/home/user/.cache/huggingface/hub/models--Qwen--Qwen3-4B",
-            "duration_ms": 12345u64,
-            "ts_unix": 1_700_000_042u64,
-            "trigger": "implicit",
-        });
-        emit_via_writer(&seg, EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, payload).await;
-        let found = find_frame(&seg, EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE)
-            .expect("0xD8 frame must be in the WAL");
-        assert_eq!(found["model_id"], "Qwen/Qwen3-4B-Instruct-2507");
-        assert!(
-            found["cached_path"]
-                .as_str()
+            self.events
+                .lock()
                 .unwrap()
-                .contains("huggingface")
-        );
-        assert_eq!(found["duration_ms"], 12345);
-        assert_eq!(found["trigger"], "implicit");
+                .push((event_type, serde_json::from_slice(&payload)?));
+            Ok(())
+        }
     }
 
     #[tokio::test]
-    async fn emit_event_is_silent_no_op_when_wal_dir_is_unwritable() {
-        // The helper must NEVER panic / fail when the WAL spawn fails —
-        // best-effort means a broken WAL dir still lets the download
-        // proceed. We can't easily force `default_wal_dir` to be
-        // unwritable in a unit test (it's process-global), so this
-        // test pins the contract that `emit_start` / `emit_complete`
-        // never return Err (they're `-> ()`).
-        // The fact that this compiles + returns is the test.
-        let _: () = emit_start("never-actually-fetched").await;
-        let _: () = emit_complete("never-actually-fetched", "/tmp/x", 0).await;
+    async fn audit_failure_prevents_network_closure() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("qwen");
+        let network_called = AtomicBool::new(false);
+        let sink = RecordingSink {
+            fail_event: Some(crate::wal::events::EVENT_TYPE_MODEL_DOWNLOAD_START),
+            ..RecordingSink::default()
+        };
+
+        let result = run_implicit_model_download_with_sink(
+            &root,
+            "Qwen/model",
+            ImplicitModelDownloadSource::Qwen,
+            false,
+            &sink,
+            |_permit| async {
+                network_called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(!network_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn qwen_and_ouro_share_attempt_hash_and_terminal_closure() {
+        for (source, model) in [
+            (ImplicitModelDownloadSource::Qwen, "Qwen/model"),
+            (ImplicitModelDownloadSource::Ouro, "ByteDance/Ouro"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("model");
+            let permit_root = root.clone();
+            let sink = RecordingSink::default();
+            run_implicit_model_download_with_sink(
+                &root,
+                model,
+                source,
+                false,
+                &sink,
+                move |permit| async move { permit.require(&permit_root, model) },
+            )
+            .await
+            .unwrap();
+
+            let events = sink.events.lock().unwrap();
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].1["trigger"], source.trigger());
+            assert_eq!(events[1].1["trigger"], source.trigger());
+            assert_eq!(events[0].1["attempt_id"], events[1].1["attempt_id"]);
+            assert_eq!(events[0].1["attempt_sha256"], events[1].1["attempt_sha256"]);
+            assert_eq!(events[0].1["attempt_sha256"].as_str().unwrap().len(), 64);
+            assert_eq!(events[0].1["status"], "started");
+            assert_eq!(events[1].1["status"], "ready");
+        }
+    }
+
+    #[tokio::test]
+    async fn download_failure_is_closed_by_failed_d8() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("ouro");
+        let sink = RecordingSink::default();
+        let result = run_implicit_model_download_with_sink(
+            &root,
+            "ByteDance/Ouro",
+            ImplicitModelDownloadSource::Ouro,
+            false,
+            &sink,
+            |_permit| async { anyhow::bail!("injected network failure") },
+        )
+        .await;
+
+        assert!(result.is_err());
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].1["status"], "failed");
+        assert!(events[1].1["reason"].as_str().unwrap().contains("injected"));
+        assert_eq!(events[0].1["attempt_id"], events[1].1["attempt_id"]);
+    }
+
+    #[tokio::test]
+    async fn ready_retry_replays_d8_without_a_second_network_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("qwen");
+        let failing_terminal = RecordingSink {
+            fail_event: Some(crate::wal::events::EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE),
+            ..RecordingSink::default()
+        };
+        assert!(
+            run_implicit_model_download_with_sink(
+                &root,
+                "Qwen/model",
+                ImplicitModelDownloadSource::Qwen,
+                false,
+                &failing_terminal,
+                |_permit| async { Ok(()) },
+            )
+            .await
+            .is_err()
+        );
+
+        let network_called = AtomicBool::new(false);
+        let replay = RecordingSink::default();
+        run_implicit_model_download_with_sink(
+            &root,
+            "Qwen/model",
+            ImplicitModelDownloadSource::Qwen,
+            true,
+            &replay,
+            |_permit| async {
+                network_called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!network_called.load(Ordering::SeqCst));
+        let events = replay.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1["status"], "ready");
     }
 }

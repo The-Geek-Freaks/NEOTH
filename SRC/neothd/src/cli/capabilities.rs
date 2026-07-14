@@ -58,9 +58,7 @@ pub fn run_capabilities(args: CapabilitiesArgs) -> Result<()> {
     let kind = match args.kind.as_deref() {
         Some(tok) => match parse_kind(tok) {
             Some(k) => Some(k),
-            None => anyhow::bail!(
-                "unknown --kind `{tok}` (expected: skill | cron | cli | slash)"
-            ),
+            None => anyhow::bail!("unknown --kind `{tok}` (expected: skill | cron | cli | slash)"),
         },
         None => None,
     };
@@ -91,13 +89,23 @@ pub fn run_capabilities(args: CapabilitiesArgs) -> Result<()> {
                 println!("{}", wiki.summary());
                 println!();
             }
-            println!("{} capabilit{} listed:", entries.len(), if entries.len() == 1 { "y" } else { "ies" });
+            println!(
+                "{} capabilit{} listed:",
+                entries.len(),
+                if entries.len() == 1 { "y" } else { "ies" }
+            );
             for e in &entries {
                 let gate = e
                     .feature_gate
                     .map(|g| format!("  [feature: {g}]"))
                     .unwrap_or_default();
-                println!("  [{}] {}{} — {}", e.kind.as_str(), e.id, gate, e.description);
+                println!(
+                    "  [{}] {}{} — {}",
+                    e.kind.as_str(),
+                    e.id,
+                    gate,
+                    e.description
+                );
             }
         }
     }

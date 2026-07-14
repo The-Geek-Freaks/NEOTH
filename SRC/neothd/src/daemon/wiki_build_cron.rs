@@ -37,8 +37,12 @@ pub struct SelfWikiTickReport {
 /// Run one self-wiki rebuild tick. Blocking work (fs + rusqlite) runs in
 /// `spawn_blocking`; errors are logged, never propagated (a broken vault
 /// path must not kill the daemon).
-pub async fn run_self_wiki_tick(cfg: SelfWikiConfig) -> SelfWikiTickReport {
-    tokio::task::spawn_blocking(move || run_tick_blocking(&cfg))
+pub async fn run_self_wiki_tick(
+    cfg: SelfWikiConfig,
+    views_db: &std::path::Path,
+) -> SelfWikiTickReport {
+    let views_db = views_db.to_path_buf();
+    tokio::task::spawn_blocking(move || run_tick_blocking(&cfg, &views_db))
         .await
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "self-wiki cron: tick task panicked");
@@ -49,7 +53,7 @@ pub async fn run_self_wiki_tick(cfg: SelfWikiConfig) -> SelfWikiTickReport {
         })
 }
 
-fn run_tick_blocking(cfg: &SelfWikiConfig) -> SelfWikiTickReport {
+fn run_tick_blocking(cfg: &SelfWikiConfig, views_db: &std::path::Path) -> SelfWikiTickReport {
     let mut report = SelfWikiTickReport::default();
 
     let vault = cfg
@@ -92,7 +96,7 @@ fn run_tick_blocking(cfg: &SelfWikiConfig) -> SelfWikiTickReport {
         }
         // 3. Ground-truth pointers for the design docs.
         if cfg.ingest {
-            match ingest_blocking(src) {
+            match ingest_blocking(src, views_db) {
                 Ok(n) => report.ingested = n,
                 Err(e) => {
                     tracing::error!(error = %e, "self-wiki cron: ground-truth ingest failed");
@@ -105,9 +109,9 @@ fn run_tick_blocking(cfg: &SelfWikiConfig) -> SelfWikiTickReport {
     report
 }
 
-fn ingest_blocking(src: &std::path::Path) -> anyhow::Result<usize> {
+fn ingest_blocking(src: &std::path::Path, views_db: &std::path::Path) -> anyhow::Result<usize> {
     let sources = crate::wiki::discover_sources(src)?;
-    let conn = crate::memory::store::open(&crate::memory::store::default_path())?;
+    let conn = crate::memory::store::open(views_db)?;
     let now_ns = crate::time::now_unix_ns_i64();
     let stats = crate::wiki::ingest_sources(&conn, &sources, now_ns)?;
     Ok(stats.inserted)
@@ -153,7 +157,7 @@ mod tests {
             ingest: false,
             ..Default::default()
         };
-        let report = run_self_wiki_tick(cfg).await;
+        let report = run_self_wiki_tick(cfg, &dir.path().join("views.db")).await;
         assert!(!report.had_errors, "clean vault write must not error");
         assert_eq!(report.capability_pages, 5, "index + 4 kind pages");
         assert_eq!(report.plan_pages, 0);
@@ -173,10 +177,10 @@ mod tests {
             enabled: true,
             vault: Some(vault.path().to_path_buf()),
             source_dir: Some(src.path().to_path_buf()),
-            ingest: false, // ingest hits the real default views.db — not in tests
+            ingest: false, // This test isolates Markdown generation from DB ingestion.
             ..Default::default()
         };
-        let report = run_self_wiki_tick(cfg).await;
+        let report = run_self_wiki_tick(cfg, &vault.path().join("views.db")).await;
         assert!(!report.had_errors);
         assert!(report.plan_pages >= 1, "at least the design page + index");
     }
@@ -190,7 +194,7 @@ mod tests {
             subdir: "../evil".to_string(),
             ..Default::default()
         };
-        let report = run_self_wiki_tick(cfg).await;
+        let report = run_self_wiki_tick(cfg, &dir.path().join("views.db")).await;
         assert!(report.had_errors, "traversal subdir must be refused");
         assert_eq!(report.capability_pages, 0);
     }

@@ -221,6 +221,7 @@ mod tests {
             };
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: std::time::Duration::from_millis(1),
                 input_tokens: None,
@@ -252,7 +253,11 @@ mod tests {
             .unwrap();
         assert!(out.is_some(), "a harness that moves off refusal must win");
         assert!(out.unwrap().contains("direct answer"));
-        assert_eq!(mock.calls.load(Ordering::SeqCst), 3, "stopped at the first success");
+        assert_eq!(
+            mock.calls.load(Ordering::SeqCst),
+            3,
+            "stopped at the first success"
+        );
     }
 
     #[tokio::test]
@@ -266,7 +271,11 @@ mod tests {
             .await
             .unwrap();
         assert!(out.is_none(), "all-refused must fall through to FEAT-08");
-        assert_eq!(mock.calls.load(Ordering::SeqCst), 4, "honoured max_retries=4");
+        assert_eq!(
+            mock.calls.load(Ordering::SeqCst),
+            4,
+            "honoured max_retries=4"
+        );
     }
 
     #[tokio::test]

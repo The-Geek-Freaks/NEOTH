@@ -70,11 +70,16 @@ impl TypedExtensionRegistry {
     /// Bad TOML → loud error so the operator fixes the typo rather
     /// than silently losing protection.
     pub fn load_from(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let body = std::fs::read_to_string(path)
-            .with_context(|| format!("read profile_extensions at {}", path.display()))?;
+        let body = match std::fs::read_to_string(path) {
+            Ok(body) => body,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("read profile_extensions at {}", path.display()));
+            }
+        };
         let parsed: ExtensionsFile =
             toml::from_str(&body).with_context(|| format!("parse TOML at {}", path.display()))?;
         Ok(Self {
@@ -176,6 +181,17 @@ hobbies = "Vec<Hobby>"
         std::fs::write(&path, "[extensions\npets = \"Vec<Pet>\"").unwrap();
         let err = TypedExtensionRegistry::load_from(&path).unwrap_err();
         assert!(err.to_string().contains("parse TOML"));
+    }
+
+    #[test]
+    fn existing_unreadable_path_returns_error_instead_of_empty_registry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("profile_extensions.toml");
+        std::fs::create_dir(&path).unwrap();
+        let err = TypedExtensionRegistry::load_from(&path).unwrap_err();
+        let detail = format!("{err:#}");
+        assert!(detail.contains("read profile_extensions"));
+        assert!(detail.contains("profile_extensions.toml"));
     }
 
     #[test]

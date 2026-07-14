@@ -8,7 +8,7 @@
 //! Consent state lives under `~/.neoth/consent/<provider_kind>.granted`.
 //! Operators can audit by hand (`ls ~/.neoth/consent/`) or via this CLI.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde_json::json;
 
@@ -69,8 +69,8 @@ pub async fn run_consent(args: ConsentArgs) -> Result<()> {
 /// grant/revoke itself already succeeded by the time this runs. Payload (JSON):
 /// `{provider, source:"cli", ts_unix}` (provider slug only, never a secret).
 /// Best-effort liveness probe for the daemon that owns the single WAL writer.
-fn daemon_is_live() -> bool {
-    let pidfile = crate::daemon::pidfile::default_pidfile();
+fn daemon_is_live(home: &std::path::Path) -> bool {
+    let pidfile = home.join("neothd.pid");
     matches!(
         crate::daemon::pidfile::live_daemon_pid(&pidfile),
         Ok(Some(_))
@@ -80,11 +80,12 @@ fn daemon_is_live() -> bool {
 /// GR-038 — whether `neoth consent grant/revoke` (a security-relevant privilege
 /// change) must enforce the required-audit posture before mutating, mirroring
 /// `cli::autonomy`. Reads `audit_rpc.required_for_oneshot_permission_events` from
-/// freedom.yaml; a missing or unparseable config → not required (no posture).
-fn consent_audit_required(home: &std::path::Path) -> bool {
+/// freedom.yaml. Missing or malformed config fails closed: a caller cannot
+/// erase the operator's required-audit posture by corrupting the policy file.
+fn consent_audit_required(home: &std::path::Path) -> Result<bool> {
     FreedomConfig::load_from_path(&home.join("freedom.yaml"))
         .map(|c| c.audit_rpc.required_for_oneshot_permission_events)
-        .unwrap_or(false)
+        .context("load freedom.yaml before consent mutation")
 }
 
 async fn emit_consent_change(
@@ -192,25 +193,7 @@ async fn render_grant(
     provider: ProviderKind,
     output: OutputFormat,
 ) -> Result<()> {
-    if !consent::is_cloud(provider) {
-        anyhow::bail!(
-            "provider `{}` is not a cloud provider — no consent required",
-            consent::slug(provider)
-        );
-    }
-    // GR-038 — granting a cloud provider consent is a security-relevant privilege
-    // change, so it must honour the required-audit posture BEFORE the mutation
-    // (mirrors cli::autonomy). If the daemon owns the WAL but its audit-RPC
-    // listener is unreachable under a required posture, refuse — never let the
-    // change land without an audit record.
-    crate::daemon::audit_rpc::enforce_required_audit(
-        consent_audit_required(home),
-        daemon_is_live(),
-        home,
-    )?;
-    consent::grant(home, provider)?;
-    // SR-017 / GOLD-SEC-30: forensic WAL trail for the consent grant.
-    emit_consent_change(EVENT_TYPE_CONSENT_GRANTED, provider, daemon_is_live(), home).await;
+    change_consent_at(home, provider, true).await?;
     let slug_s = consent::slug(provider);
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -237,21 +220,7 @@ async fn render_revoke(
     output: OutputFormat,
 ) -> Result<()> {
     let slug_s = consent::slug(provider);
-    let was_granted = consent::is_granted(home, provider);
-    // GR-038 — a revocation is a security-relevant change too; enforce the
-    // required-audit posture before mutating (mirrors the grant path above).
-    crate::daemon::audit_rpc::enforce_required_audit(
-        consent_audit_required(home),
-        daemon_is_live(),
-        home,
-    )?;
-    consent::revoke(home, provider)?;
-    // SR-017 / GOLD-SEC-30: audit only a real revocation of a cloud marker.
-    // (`is_granted` returns true for non-cloud kinds, which never hold a marker,
-    // and a no-op revoke of an absent marker changed nothing — neither emits.)
-    if was_granted && consent::is_cloud(provider) {
-        emit_consent_change(EVENT_TYPE_CONSENT_REVOKED, provider, daemon_is_live(), home).await;
-    }
+    let was_granted = change_consent_at(home, provider, false).await?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
@@ -274,6 +243,39 @@ async fn render_revoke(
         }
     }
     Ok(())
+}
+
+/// Canonical consent mutation for CLI, slash, and GUI surfaces. Required-audit
+/// posture is enforced before touching the marker; a real mutation receives
+/// the same WAL event regardless of caller.
+pub(crate) async fn change_consent_at(
+    home: &std::path::Path,
+    provider: ProviderKind,
+    grant: bool,
+) -> Result<bool> {
+    if grant && !consent::is_cloud(provider) {
+        anyhow::bail!(
+            "provider `{}` is not a cloud provider — no consent required",
+            consent::slug(provider)
+        );
+    }
+    let was_granted = consent::is_cloud(provider) && consent::is_granted(home, provider);
+    let daemon_live = daemon_is_live(home);
+    crate::daemon::audit_rpc::enforce_required_audit(
+        consent_audit_required(home)?,
+        daemon_live,
+        home,
+    )?;
+    if grant {
+        consent::grant(home, provider)?;
+        emit_consent_change(EVENT_TYPE_CONSENT_GRANTED, provider, daemon_live, home).await;
+    } else {
+        consent::revoke(home, provider)?;
+        if was_granted {
+            emit_consent_change(EVENT_TYPE_CONSENT_REVOKED, provider, daemon_live, home).await;
+        }
+    }
+    Ok(was_granted)
 }
 
 #[cfg(test)]
@@ -374,8 +376,8 @@ mod tests {
     fn consent_audit_required_reads_the_posture_flag() {
         // GR-038: consent grant/revoke must honour the required-audit posture.
         let dir = TempDir::new().unwrap();
-        // No config → no posture (fresh install): not required.
-        assert!(!consent_audit_required(dir.path()));
+        // Missing config cannot prove the posture and therefore fails closed.
+        assert!(consent_audit_required(dir.path()).is_err());
         // A config that turns the required-audit posture on → required, so the
         // enforce gate runs before any consent mutation.
         std::fs::write(
@@ -384,7 +386,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            consent_audit_required(dir.path()),
+            consent_audit_required(dir.path()).unwrap(),
             "the required-audit flag must be honoured for consent changes"
         );
     }

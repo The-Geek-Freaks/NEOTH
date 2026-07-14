@@ -223,7 +223,13 @@ fn run_interactive_loop(session: &PtySession, _timeout: Duration) -> Option<i32>
                 tv_usec: 0, // non-blocking check
             };
             let ready = unsafe {
-                libc::select(fd + 1, &mut rfds, std::ptr::null_mut(), std::ptr::null_mut(), &mut tv)
+                libc::select(
+                    fd + 1,
+                    &mut rfds,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut tv,
+                )
             };
             if ready > 0 {
                 if let Ok(n) = stdin.lock().read(&mut ibuf) {
@@ -243,7 +249,9 @@ fn run_interactive_loop(session: &PtySession, _timeout: Duration) -> Option<i32>
         // ── exit check ───────────────────────────────────────────────────────
         if !session.is_alive() {
             // Drain any remaining output.
-            let tail = session.read_until(Duration::from_millis(200)).unwrap_or_default();
+            let tail = session
+                .read_until(Duration::from_millis(200))
+                .unwrap_or_default();
             if !tail.is_empty() {
                 let _ = stdout.write_all(&tail);
                 let _ = stdout.flush();

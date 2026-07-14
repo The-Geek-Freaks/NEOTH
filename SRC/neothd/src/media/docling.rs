@@ -59,10 +59,16 @@ impl MediaExtractor for DoclingExtractor {
     async fn extract(&self, asset: &Asset) -> Result<Extraction, ExtractionError> {
         // ── Gate 1: operator opt-in ──────────────────────────────────────────
         // Load current FreedomConfig so the flag is live (no daemon required).
-        // Fall back to the safe default (docling_enabled=false) if the config
-        // file is absent or malformed — graceful degradation, not a hard fail.
-        let cfg = crate::config::FreedomConfig::load_from_default_path()
-            .unwrap_or_default();
+        // A genuinely absent config uses the safe disabled default. An existing
+        // malformed/unreadable policy is a hard extraction error: treating it
+        // as disabled would conceal operator-state corruption.
+        let cfg =
+            crate::config::FreedomConfig::load_from_default_path_or_default().map_err(|error| {
+                ExtractionError::Backend {
+                    backend: "docling",
+                    reason: format!("load freedom.yaml: {error:#}"),
+                }
+            })?;
         if !cfg.media.docling_enabled {
             return Err(ExtractionError::Unsupported {
                 backend: "docling",

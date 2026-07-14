@@ -97,18 +97,26 @@ neoth privacy audit --last 30d   # exactly what left the device — zero, locall
 ```
 
 For plugins specifically, this is a real sandbox: NEOTH runs WASM plugins
-(wasmtime) with fuel and memory caps, and a plugin can only use the hostcalls
-its manifest declared and you approved. An over-level call is refused at
-runtime and written to the audit log as a `0xC7 PLUGIN_CAP_DENIED` frame — never
-silent.
+(wasmtime) with fuel and memory caps and no ambient filesystem or network. An
+activation approval binds the exact manifest, WASM bytes, and requested
+permission level. Every linked hostcall checks that approval-derived level at
+runtime; an over-level call is refused and written to the audit log as a `0xC7
+PLUGIN_CAP_DENIED` frame — never silent.
+
+The v1 guest contract is explicit: plugins export `neoth_abi_version() -> i32`
+returning `1` and `neoth_run() -> i32`; the daemon rejects a missing or
+mismatched ABI before execution and instantiates each call with the approved
+manifest's validated fuel and memory caps.
 
 ## Why Rust, and who it's for
 
 NEOTH is a single Rust daemon. That bought me a few things that matter for this
-kind of project: a WASM host with hard resource caps, a sealed typestate
-`PermissionToken<T>` that enforces plugin capabilities at compile time, and the
-general property that the audit-critical paths don't have a garbage collector or
-a runtime surprising me.
+kind of project: a WASM host with hard resource caps, a sealed
+`PermissionToken<T>` typestate that catches permission-level mismatches in
+native Rust APIs, and the general property that the audit-critical paths don't
+have a garbage collector or a runtime surprising me. The typestate is API
+guidance, not the sandbox: WASM capability enforcement happens in the runtime
+hostcall gate described above.
 
 It's deliberately built for two audiences at once, which is the hard bet:
 

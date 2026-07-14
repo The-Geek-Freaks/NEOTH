@@ -11,21 +11,32 @@ NEOTH has two happy paths:
 
 ## 1. Install
 
-Fast path (bootstrap installer — NEOTH is not yet on crates.io, so
-`cargo install neoth` lands with the 1.0 release):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
-```
-
-Source path:
+Current path (the source tree is 1.0.0, but no signed `v1.0.0` archive or
+crates.io package exists yet):
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH/SRC
-cargo install --path neothd
-cargo install --path neothd-gui
+cargo install --locked --path neothd --features release-desktop
+cargo install --locked --path neothd-gui
+cargo install --locked --path neoth-migrate
+cargo install --locked --path neoth-relay
 ```
+
+After the signed release is published, the bootstrap installer downloads that
+archive and verifies it before installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH" # automatic profile wiring applies to new shells
+```
+
+Binary installs require `minisign` or `cosign`; without either verifier they
+fail closed. `NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` is an explicit emergency-only
+override for artifacts authenticated out of band.
+
+The separate manual crates.io workflow publishes `neoth-plugin-sdk` first and
+allows `neoth` only after the exact SDK version is visible to Cargo.
 
 Verify:
 
@@ -57,7 +68,7 @@ The wizard configures:
 | Identity | Name, language, style, role, response preference. | Operator profile seed and communication defaults. |
 | Privacy | How much NEOTH may remember and what needs approval. | Profile approval gate, redaction policy, autonomy level. |
 | Models | Cloud provider, local models, cost and fallback rules. | Provider routing and local model configuration. |
-| Channels | GUI, CLI, Telegram, WhatsApp, Slack, Discord, Keet, email, calendar. | Credentials, channel allowlists, and safe defaults. |
+| Channels | GUI, CLI, Telegram, WhatsApp, Slack, Discord. | Credentials, channel allowlists, and safe defaults. Email and calendar are configured separately after the wizard. |
 | Tools | Obsidian, n8n, Paperless, Todoist, local folders, plugins. | Integration config and capability boundaries. |
 | Mesh | LAN, Tailscale, Hysteria, cluster nodes. | Discovery, pairing, topology, and consent rules. |
 
@@ -85,7 +96,7 @@ Depending on your autonomy setting, NEOTH may ask in the GUI instead of requirin
 ```bash
 neoth profile show --evidence
 neoth privacy audit --last 7d
-neoth wal verify
+neoth verify
 ```
 
 Useful actions:
@@ -96,7 +107,7 @@ Useful actions:
 | `neoth profile redact <field>` | Remove a fact and prevent unwanted relearning. |
 | `neoth profile pending` | Review memory proposals before they become durable facts. |
 | `neoth privacy audit` | Show provider destinations, network surfaces, and sensitive events. |
-| `neoth wal verify` | Verify the local event chain. |
+| `neoth verify` | Verify HMAC compaction markers in the local WAL. |
 
 ## 5. Connect a first channel
 
@@ -119,10 +130,10 @@ Other surfaces:
 | :-- | :-- |
 | WhatsApp Business | `neoth channel add whatsapp` |
 | Slack | `neoth channel add slack` |
-| Keet | `neoth channel add keet` |
-| Discord | no credential field yet (outbound adapter only) |
-| Email | `neoth init` (IMAP account binding) |
-| Calendar | `neoth init` (CalDAV / provider binding) |
+| Keet | Unavailable: no supported public chat API; `neoth channel remove keet` clears legacy state. |
+| Discord | `neoth channel add discord`; verify the bot identity without sending via `neoth channel test discord` |
+| Email | Source-build opt-in: compile `imap_fetch`, configure IMAP credentials, then run `neoth email fetch` (the named release bundles currently omit this feature) |
+| Calendar | Set `calendar.caldav_url` plus credentials in `freedom.yaml` / `credentials.yaml`; use `neoth calendar list` or the GUI Calendar panel |
 
 See [channels.md](channels.md) for credentials, allowlists, webhook notes, and E2E checks.
 
@@ -131,12 +142,17 @@ See [channels.md](channels.md) for credentials, allowlists, webhook notes, and E
 Local models are optional, but they are the best default for private profile learning.
 
 ```bash
-neoth model list
-neoth model fetch qwen
-neoth model fetch ouro
-neoth model fetch clip
-neoth model fetch whisper
+neoth models list
+neoth models pull clip
+neoth models pull whisper
+neoth ouro list
+neoth ouro fetch --checkpoint ByteDance/Ouro-1.4B-Thinking
 ```
+
+Qwen selection is part of `neoth init`; it is intentionally not a
+`neoth models pull` target because onboarding sizes the inference topology
+before selecting the repository. See [local-models.md](local-models.md) for the
+Qwen, Ouro, CLIP, and Whisper workflows.
 
 | Model | Used for |
 | :-- | :-- |
@@ -175,7 +191,7 @@ Run this when setup feels wrong:
 neoth doctor
 neoth status
 neoth privacy audit
-neoth wal verify
+neoth verify
 ```
 
 If a channel fails, check [troubleshooting.md](troubleshooting.md).

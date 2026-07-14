@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use tracing::{debug, info, warn};
 
@@ -87,20 +87,14 @@ pub struct SkillRegistry {
 }
 
 impl SkillRegistry {
-    /// Load the initial skill set + return the registry. Failures fall
-    /// back to an empty set so a malformed user skill never blocks daemon
-    /// startup — each load failure is already warned by
-    /// [`super::loader::parse_one`] / `parse_bundled_skills`.
+    /// Load the initial skill set + return the registry. Existing unreadable
+    /// or malformed skill/policy files fail startup; only the loader's
+    /// explicitly optional missing paths resolve to an empty user layer.
     pub async fn load(skills_dir: impl AsRef<Path>) -> Result<Arc<Self>> {
         let skills_dir = skills_dir.as_ref().to_path_buf();
-        let initial = load_all(&skills_dir).await.unwrap_or_else(|e| {
-            warn!(
-                dir = %skills_dir.display(),
-                error = %e,
-                "initial skill load failed; daemon continues with empty skill set"
-            );
-            Vec::new()
-        });
+        let initial = load_all(&skills_dir).await.with_context(|| {
+            format!("load initial skill registry from {}", skills_dir.display())
+        })?;
         info!(
             count = initial.len(),
             dir = %skills_dir.display(),
@@ -344,6 +338,20 @@ mod tests {
             !snap.is_empty(),
             "registry must surface bundled skills even with empty user dir"
         );
+    }
+
+    #[tokio::test]
+    async fn initial_load_propagates_existing_malformed_manifest() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "broken", "id: [not-valid\n").await;
+        let error = match SkillRegistry::load(dir.path()).await {
+            Ok(_) => panic!("malformed manifest must reject initial registry load"),
+            Err(error) => error,
+        };
+        let detail = format!("{error:#}");
+        assert!(detail.contains("load initial skill registry"));
+        assert!(detail.contains("parse YAML"));
+        assert!(detail.contains("broken"));
     }
 
     #[tokio::test]

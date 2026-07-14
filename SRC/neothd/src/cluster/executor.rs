@@ -19,8 +19,7 @@
 
 use std::sync::Arc;
 
-use crate::providers::{Provider, Request, is_local_provider};
-use crate::wal::writer::WalWriterHandle;
+use crate::providers::{Provider, Request};
 
 use super::heartbeat::{FrameBody, FrameKind, TaskResultBody, TaskResultStatus, WireFrame};
 use super::peer_streams::PeerStreamRegistry;
@@ -48,15 +47,13 @@ pub struct ClusterTaskJob {
     pub prompt: String,
     /// Authenticated peer Noise pubkey hex to reply to.
     pub reply_peer_pk: String,
-    /// WAL writer so the executor can audit the inner provider call path.
-    pub wal_writer: Option<Arc<WalWriterHandle>>,
 }
 
 /// Spawn the single cluster-task executor. Returns the bounded `Sender` the
 /// session loop uses to dispatch accepted tasks. Holds a clone of the provider
 /// + peer-stream registry for the daemon's lifetime.
 pub fn spawn_cluster_executor(
-    provider: Option<Arc<dyn Provider>>,
+    provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
     peer_streams: Arc<PeerStreamRegistry>,
 ) -> tokio::sync::mpsc::Sender<ClusterTaskJob> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<ClusterTaskJob>(DISPATCH_QUEUE_DEPTH);
@@ -128,7 +125,10 @@ pub fn spawn_cluster_executor(
 /// Run a single delegated task and build its `TaskResultBody`. Takes OWNED args
 /// so it can run in an isolated sub-task (panic isolation). Transport-free —
 /// returns the body to ship back.
-async fn run_one_task(provider: Option<Arc<dyn Provider>>, job: ClusterTaskJob) -> TaskResultBody {
+async fn run_one_task(
+    provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
+    job: ClusterTaskJob,
+) -> TaskResultBody {
     let Some(provider) = provider else {
         // Honest failure (not theater): the master learns this node has no
         // provider + re-routes, instead of getting a fake OK.
@@ -142,6 +142,15 @@ async fn run_one_task(provider: Option<Arc<dyn Provider>>, job: ClusterTaskJob) 
         };
     };
     let provider_name = provider.name().to_string();
+    let provider = provider.with_audit_context(
+        crate::providers::cost_authorization::ProviderCallAuditContext {
+            source: Some("cluster_executor"),
+            call_type: Some("cluster_delegated"),
+            task_id: Some(job.task_id.clone()),
+            cluster_delegated: true,
+            ..Default::default()
+        },
+    );
 
     // The delegated prompt is the USER turn. The slave runs its OWN configured
     // provider (model_hint is advisory + ignored in this lane — no confused
@@ -151,27 +160,26 @@ async fn run_one_task(provider: Option<Arc<dyn Provider>>, job: ClusterTaskJob) 
         ..Default::default()
     };
 
-    // Audit: a delegated call is a provider call on the operator's resources.
-    // Local providers are cost-free ([[is_local_provider]]); a metered provider
-    // running a peer's prompt is flagged so the audit chain distinguishes it.
-    if !is_local_provider(&provider_name) {
-        if let Some(w) = &job.wal_writer {
-            emit_delegated_metered_call(w, &job.task_id, &provider_name);
-        }
-    }
-
     // Bound the inference wall-clock so a malicious master can't pin the single
     // executor / GPU indefinitely with a slow prompt.
     match tokio::time::timeout(TASK_INFERENCE_TIMEOUT, provider.complete(req)).await {
-        Ok(Ok(completion)) => {
+        Ok(Ok(completion)) if completion.identity.is_bound() => {
             let result = truncate_to_bytes(&completion.text, MAX_TASK_RESULT_BYTES);
             TaskResultBody {
                 task_id: job.task_id.clone(),
                 status: TaskResultStatus::Completed,
                 result: Some(result),
-                provider_name: Some(provider_name),
+                provider_name: Some(completion.identity.provider),
             }
         }
+        Ok(Ok(_)) => TaskResultBody {
+            task_id: job.task_id.clone(),
+            status: TaskResultStatus::Failed {
+                error: "provider returned no authenticated response identity".to_string(),
+            },
+            result: None,
+            provider_name: Some(provider_name),
+        },
         Ok(Err(e)) => TaskResultBody {
             task_id: job.task_id.clone(),
             status: TaskResultStatus::Failed {
@@ -219,35 +227,8 @@ fn truncate_to_bytes(s: &str, max: usize) -> String {
     out
 }
 
-/// Durable audit anchor: a delegated task ran on a METERED provider (cost on
-/// the operator's account). Reuses the provider-request event band so it joins
-/// the normal cost trail; the `cluster_delegated` marker + task_id distinguish
-/// it from operator-initiated calls. Uses `try_append_sync` (not spawn+append)
-/// so the frame is enqueued in the writer channel BEFORE we return — no
-/// crash-window where the cost frame is lost (review finding).
-fn emit_delegated_metered_call(writer: &WalWriterHandle, task_id: &str, provider_name: &str) {
-    let payload = serde_json::json!({
-        "cluster_delegated": true,
-        "task_id": task_id,
-        "provider": provider_name,
-        "ts_unix": now_unix_secs(),
-    })
-    .to_string()
-    .into_bytes();
-    let header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST, &payload)
-            .build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, "cluster executor: delegated-call audit append failed");
-    }
-}
-
 fn now_unix_ms() -> u64 {
     crate::time::now_unix_ms()
-}
-
-fn now_unix_secs() -> i64 {
-    crate::time::now_unix_i64()
 }
 
 #[cfg(test)]
@@ -259,7 +240,6 @@ mod tests {
             task_id: "t-1".into(),
             prompt: prompt.into(),
             reply_peer_pk: "aa".into(),
-            wal_writer: None,
         }
     }
 
@@ -308,12 +288,24 @@ mod tests {
             fn name(&self) -> &'static str {
                 "local_qwen"
             }
+            fn default_model(&self) -> Option<&str> {
+                Some("qwen3")
+            }
             async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
                 // A provider error that echoes a secret (the real leak risk).
                 anyhow::bail!("upstream rejected key sk-ant-api03-AAAABBBBCCCCDDDDEEEE1234")
             }
         }
-        let p: Option<Arc<dyn Provider>> = Some(Arc::new(ErrProvider));
+        let p = Some(Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                Arc::new(ErrProvider),
+                crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    crate::permissions::AutonomyLevel::Full,
+                ),
+                None,
+                "cluster.test",
+            ),
+        ));
         let body = run_one_task(p, job("hi")).await;
         match body.status {
             TaskResultStatus::Failed { error } => {
@@ -343,9 +335,13 @@ mod tests {
             fn name(&self) -> &'static str {
                 "local_qwen"
             }
+            fn default_model(&self) -> Option<&str> {
+                Some("qwen3")
+            }
             async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
                 Ok(Completion {
                     text: format!("echo: {}", req.prompt),
+                    identity: Default::default(),
                     model: "qwen3".into(),
                     latency: Duration::from_millis(1),
                     input_tokens: Some(2),
@@ -355,7 +351,16 @@ mod tests {
                 })
             }
         }
-        let p: Option<Arc<dyn Provider>> = Some(Arc::new(OkProvider));
+        let p = Some(Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                Arc::new(OkProvider),
+                crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    crate::permissions::AutonomyLevel::Full,
+                ),
+                None,
+                "cluster.test",
+            ),
+        ));
         let body = run_one_task(p, job("ping")).await;
         assert!(matches!(body.status, TaskResultStatus::Completed));
         assert_eq!(body.result.as_deref(), Some("echo: ping"));

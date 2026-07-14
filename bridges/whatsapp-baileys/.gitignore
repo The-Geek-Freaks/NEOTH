@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+.env
+.env.*
+*.env
+*.log
+auth/
+state/
+events.jsonl
+seen.json
+outbound-dedup.json
+auth-state.json
+auth-state.lock
+*.tmp
+*.retired
+!*.env.example

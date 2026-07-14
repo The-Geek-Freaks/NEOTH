@@ -6,20 +6,13 @@
 //! command surfaces.
 
 pub mod accelerator;
-/// GOLD-ADAPT-HERMES-09 — Lightweight token-throughput (TPS) meter for
-/// provider streaming responses. [`metering::TpsMeter`] wraps a stream:
-/// `start()` → repeated `observe(tokens)` → `finish()` → [`metering::TpsSample`].
-/// [`metering::emit_tps_sample`] writes `0x69 TOKEN_TPS_SAMPLE` to the WAL.
-/// The hot provider stream path is parallel-reserved; wiring the emit there
-/// is a follow-up. Ships standalone with unit + WAL-integration tests.
-pub mod metering;
-/// GOLD-ADAPT-HERMES-03 — Mid-run clarification gate. When a worker hits an
-/// ambiguity it calls [`clarify::ClarificationGate::park`], which parks the
-/// run in `Waiting` state and surfaces a [`clarify::ClarificationRequest`].
-/// An operator (or test) calls [`clarify::ClarificationGate::answer`] to
-/// resume. Unambiguous inputs call [`clarify::ClarificationGate::pass_through`]
-/// and see no state change. Self-contained, no hot-lane deps.
-pub mod clarify;
+/// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron. Scans cs.AI/cs.LG
+/// (operator-configurable `arxiv_skill_scan.topics`) on a 6h cadence,
+/// extracts 1-3 actionable takeaways per paper via the shared LLM provider,
+/// and writes each to `idx_groundtruth` (`source = "arxiv-skill-scan"`,
+/// `scope = "arxiv-learning"`, `FactState::Candidate`). WAL-free; off by
+/// default (`arxiv_skill_scan.enabled = false`). Requires a wired provider.
+pub mod arxiv_skill_scan_cron;
 /// AUDIT-RPC-01 — loopback audit-RPC listener + client so one-shot CLIs can
 /// forward audit frames to the WAL-owning daemon (bearer-auth, loopback-only,
 /// event-type allowlist). Gated `freedom.yaml::audit_rpc.enabled` (default off).
@@ -29,38 +22,12 @@ pub mod audit_rpc;
 /// the NEOTH-managed CLIs (claude-cli / antigravity-cli / codex) and
 /// emits `0x13 UPDATE_RAN`; notify-only below that tier.
 pub mod auto_update;
+/// GOLD-DELTA-04 — Babel-Index observer cron: scans the WAL for derived
+/// metrics, closes rolling windows, persists B_d scores to `views.db`
+/// (SQLite only — the WAL byte space is exhausted).
+pub mod babel_cron;
 pub mod backup;
 pub mod backup_retention;
-/// GOLD-ADAPT-HERMES-08 — SSE endpoint for live kanban events (task events,
-/// comments, dep edges). Binds loopback port 9432 (default) when
-/// `kanban_sse.enabled = true` in freedom.yaml. Bearer-auth + hyper 1.x
-/// + broadcast fan-out from `coding::store` mutations.
-pub mod kanban_sse;
-/// GOLD-ADAPT-ODY-24 — Companion LAN pairing server. Binds loopback port 9745
-/// (default) when `companion.enabled = true` in freedom.yaml. A phone scans
-/// the QR code displayed at `neoth init` to mint a chat-scoped bearer token
-/// via `POST /api/v1/companion/pair` (POST-only, SameSite=Lax CSRF guard,
-/// loopback-only bind, WAL `0x0B`/`0x0C` audit frames).
-pub mod companion;
-pub mod clock_floor;
-pub mod credentials_import_sidecar;
-pub mod detect_complete_sidecar;
-/// NN-MEM-06 — daily contradiction auto-resolution cron. Processes the
-/// `idx_contradictions` backlog: temporal-supersede (newer fact wins) +
-/// semantic-equiv (Jaccard≥0.90 merge) + human-review queue for genuine
-/// conflicts. Off by default (`contradiction_resolve.enabled = false`).
-/// JV-SELF-02 — AMEM4Rec consolidation sweep cron. Clusters hot-tier
-/// episode embeddings by cosine similarity, boosts importance, and merges
-/// mature clusters into `idx_groundtruth`. Emits `0x9D`/`0x9E`. Off by
-/// default (`consolidation_sweep.enabled = false`).
-pub mod consolidation_sweep_cron;
-/// JV-SELF-03 — auto-builder signal collector cron. Scans `idx_episode`
-/// topic frequency, `idx_groundtruth` lessons, and the SkillOpt ledger
-/// to classify improvement signals (`PatchSkill`, `PromptEdit`,
-/// `ConfigChange`, `Escalate`). Writes `~/.neoth/self_improvement_signals.json`
-/// atomically for HERMES-06. Emits `0xBE`/`0xBF`. Off by default
-/// (`self_improvement_collector.enabled = false`).
-pub mod self_improvement_collector;
 /// HERMES-06 GAP-B — capability evolver: reads a [`CollectorReport`] from the
 /// self-improvement collector, applies an auto-safe gate (only `PromptEdit`
 /// signals qualify — `PatchSkill`, `ConfigChange`, and `Escalate` require
@@ -71,7 +38,32 @@ pub mod self_improvement_collector;
 /// each collector tick inside `spawn_self_improvement_collector_loop`. Emits
 /// `0x0F CAPABILITY_EVOLVER_RAN`. Companion CLI surface: `neoth self-dev scan`.
 pub mod capability_evolver;
+/// GOLD-ADAPT-HERMES-03 — Mid-run clarification gate. When a worker hits an
+/// ambiguity it calls [`clarify::ClarificationGate::park`], which parks the
+/// run in `Waiting` state and surfaces a [`clarify::ClarificationRequest`].
+/// An operator (or test) calls [`clarify::ClarificationGate::answer`] to
+/// resume. Unambiguous inputs call [`clarify::ClarificationGate::pass_through`]
+/// and see no state change. Self-contained, no hot-lane deps.
+pub mod clarify;
+pub mod clock_floor;
+/// GOLD-ADAPT-ODY-24 — Companion LAN pairing server. Binds loopback port 9745
+/// (default) when `companion.enabled = true` in freedom.yaml. A phone scans
+/// the QR code displayed at `neoth init` to mint a chat-scoped bearer token
+/// via `POST /api/v1/companion/pair` (POST-only, SameSite=Lax CSRF guard,
+/// loopback-only bind, WAL `0x0B`/`0x0C` audit frames).
+pub mod companion;
+/// NN-MEM-06 — daily contradiction auto-resolution cron. Processes the
+/// `idx_contradictions` backlog: temporal-supersede (newer fact wins) +
+/// semantic-equiv (Jaccard≥0.90 merge) + human-review queue for genuine
+/// conflicts. Off by default (`contradiction_resolve.enabled = false`).
+/// JV-SELF-02 — AMEM4Rec consolidation sweep cron. Clusters hot-tier
+/// episode embeddings by cosine similarity, boosts importance, and merges
+/// mature clusters into `idx_groundtruth`. Emits `0x9D`/`0x9E`. Off by
+/// default (`consolidation_sweep.enabled = false`).
+pub mod consolidation_sweep_cron;
 pub mod contradiction_resolve_cron;
+pub mod credentials_import_sidecar;
+pub mod detect_complete_sidecar;
 pub mod doctor_cron;
 /// HO-09b — profile drift-alert cron. Runs the same drift evaluation
 /// as `neoth profile drift report` on a 6h schedule + emits a
@@ -90,25 +82,54 @@ pub mod export;
 pub mod g02_surfacing_cron;
 pub mod hardware;
 pub mod installer_audit_sidecar;
+/// GOLD-ADAPT-HERMES-08 — SSE endpoint for live kanban events (task events,
+/// comments, dep edges). Binds loopback port 9432 (default) when
+/// `kanban_sse.enabled = true` in freedom.yaml. Bearer-auth + hyper 1.x
+/// + broadcast fan-out from `coding::store` mutations.
+pub mod kanban_sse;
+/// GOLD-ADAPT-HERMES-09 — Lightweight token-throughput (TPS) meter for
+/// provider streaming responses. [`metering::TpsMeter`] wraps a stream:
+/// `start()` → repeated `observe(tokens)` → `finish()` → [`metering::TpsSample`].
+/// [`metering::emit_tps_sample`] writes `0x69 TOKEN_TPS_SAMPLE` to the WAL.
+/// The hot provider stream path is parallel-reserved; wiring the emit there
+/// is a follow-up. Ships standalone with unit + WAL-integration tests.
+pub mod metering;
 pub mod model_download_audit;
 /// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +
 /// channel activity every `monitor.interval_secs` and emits
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
-/// GOLD-DELTA-04 — Babel-Index observer cron: scans the WAL for derived
-/// metrics, closes rolling windows, persists B_d scores to `views.db`
-/// (SQLite only — the WAL byte space is exhausted).
-pub mod babel_cron;
-/// GOLD-ADAPT-HERMES-07b — log-analysis → patch-proposal → operator-reviewed
-/// fix. Categorises panics from crash.log into staged, advisory PatchProposals
-/// (never auto-applied). Consumed by the monitor crash path + `neoth self-heal`.
-pub mod self_heal;
+/// GOLD-ADAPT-JV-IMP-05 — Obsidian vault bidirectional sync cron.
+///
+/// **Reader**: walks the vault on a 6h cadence, finds files with managed
+/// `source: openclaw-*` / `source: neoth-*` YAML frontmatter, tracks each
+/// via SHA-256 (`~/.neoth/obsidian_vault_reader_state.json`), and inserts
+/// changed notes into `idx_groundtruth` as `Source::ImportObsidian`.
+///
+/// **Writer**: fetches operator-attested (`onboarding` / `operator-runtime`)
+/// rows from `idx_groundtruth` and writes/updates `<vault>/NEOTH-Facts/` notes
+/// with `source: neoth-groundtruth` frontmatter.  Uses `WriteCoalescer` to
+/// skip identical-content rewrites and break the reader-writer echo loop.
+///
+/// **Weekly synthesis** (Phase-1): on the first tick of each new ISO week,
+/// writes a `<vault>/NEOTH-Synthesis/<YYYY-WW>.md` summary note and inserts
+/// it into `idx_groundtruth` as `Source::Synthesis`.
+///
+/// WAL-free (groundtruth insert is the durable record).  Off by default
+/// (`obsidian_vault_reader_enabled = false`).
+pub mod obsidian_vault_reader_cron;
+/// Official OMI Developer API client: bounded paginated reads, full-detail
+/// revision digests, and idempotent transcript-segment export.
+pub mod omi_client;
 /// OM-01 — local OMI transcript ingest task. Polls a self-hosted OMI backend
 /// (SC-14: cloud endpoints refused at startup), sanitises + promotes
 /// high-confidence items to ground-truth (`0x9C`), extracts action items to
 /// kanban. Off by default.
 pub mod omi_ingest_task;
+/// OMI-MULTIMODAL-01 — authenticated, bounded native audio/caption/frame
+/// ingest with crash-recoverable journals and optional official OMI export.
+pub mod omi_native_ingest;
 /// G-01 (first slice) — inactivity-gap detector: enqueues one proactive
 /// "still there?" nudge after `pattern_cron.inactivity_gap_secs` of
 /// operator silence (deduped per UTC day), onto the G-01 proactive
@@ -139,49 +160,26 @@ pub mod reflection_cron;
 /// anchor queries' fresh answers + emits `0x3F REGRESSION_ALERT` on cosine
 /// drift below threshold. Off by default.
 pub mod regression_cron;
-pub mod resource_watch;
 /// GOLD-FEAT-06 — local resource-snapshot cron: samples CPU/RAM/VRAM every
 /// `SwarmConfig::interval_secs` and emits `EXTENDED/LocalSnapshot` WAL frames.
 /// Consumed by `neoth cluster swarm` to build the exo-style dashboard.
 #[cfg(feature = "cluster")]
 pub mod resource_snapshot_cron;
+pub mod resource_watch;
+/// GOLD-ADAPT-HERMES-07b — log-analysis → patch-proposal → operator-reviewed
+/// fix. Categorises panics from crash.log into staged, advisory PatchProposals
+/// (never auto-applied). Consumed by the monitor crash path + `neoth self-heal`.
+pub mod self_heal;
+/// JV-SELF-03 — auto-builder signal collector cron. Scans `idx_episode`
+/// topic frequency, `idx_groundtruth` lessons, and the SkillOpt ledger
+/// to classify improvement signals (`PatchSkill`, `PromptEdit`,
+/// `ConfigChange`, `Escalate`). Writes `~/.neoth/self_improvement_signals.json`
+/// atomically for HERMES-06. Emits `0xBE`/`0xBF`. Off by default
+/// (`self_improvement_collector.enabled = false`).
+pub mod self_improvement_collector;
 /// GOLD-ADAPT-VIEW-05 — session-health / outcome cron (A–F daily grade from the
 /// WAL audit trail; alerts on degradation).
 pub mod session_health_cron;
-/// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron. Reads
-/// `idx_episode` (frequency + temporal-clustering), `idx_groundtruth`
-/// (domain-correlation), and `idx_contradictions` (contradiction flags) to
-/// produce a structured synthesis meta-note written as a `idx_groundtruth` row
-/// (`source = "synthesis-cron"`, `scope = "meta"`) and optionally to
-/// `~/.neoth/synthesis/YYYY-WW.md`. WAL-free; off by default
-/// (`synthesis_cron.enabled = false`).
-pub mod synthesis_cron;
-/// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron. Scans cs.AI/cs.LG
-/// (operator-configurable `arxiv_skill_scan.topics`) on a 6h cadence,
-/// extracts 1-3 actionable takeaways per paper via the shared LLM provider,
-/// and writes each to `idx_groundtruth` (`source = "arxiv-skill-scan"`,
-/// `scope = "arxiv-learning"`, `FactState::Candidate`). WAL-free; off by
-/// default (`arxiv_skill_scan.enabled = false`). Requires a wired provider.
-pub mod arxiv_skill_scan_cron;
-/// GOLD-ADAPT-JV-IMP-05 — Obsidian vault bidirectional sync cron.
-///
-/// **Reader**: walks the vault on a 6h cadence, finds files with managed
-/// `source: openclaw-*` / `source: neoth-*` YAML frontmatter, tracks each
-/// via SHA-256 (`~/.neoth/obsidian_vault_reader_state.json`), and inserts
-/// changed notes into `idx_groundtruth` as `Source::ImportObsidian`.
-///
-/// **Writer**: fetches operator-attested (`onboarding` / `operator-runtime`)
-/// rows from `idx_groundtruth` and writes/updates `<vault>/NEOTH-Facts/` notes
-/// with `source: neoth-groundtruth` frontmatter.  Uses `WriteCoalescer` to
-/// skip identical-content rewrites and break the reader-writer echo loop.
-///
-/// **Weekly synthesis** (Phase-1): on the first tick of each new ISO week,
-/// writes a `<vault>/NEOTH-Synthesis/<YYYY-WW>.md` summary note and inserts
-/// it into `idx_groundtruth` as `Source::Synthesis`.
-///
-/// WAL-free (groundtruth insert is the durable record).  Off by default
-/// (`obsidian_vault_reader_enabled = false`).
-pub mod obsidian_vault_reader_cron;
 /// GOLD-ADAPT-ODY-26 — session auto-sort cron. Prunes throwaway
 /// [`HindsightCard`]s, then calls an LLM to group remaining sessions into
 /// topic folders (persisted as `"folder:<name>"` tags in `top_topics`).
@@ -202,6 +200,14 @@ pub mod startup_credential_audit;
 /// daemon auto-restarts + unattended self-update can activate the new
 /// binary. User-scoped, no root/admin.
 pub mod supervisor;
+/// NN-MEM-02 — weekly 5-dimensional synthesis pattern-recognition cron. Reads
+/// `idx_episode` (frequency + temporal-clustering), `idx_groundtruth`
+/// (domain-correlation), and `idx_contradictions` (contradiction flags) to
+/// produce a structured synthesis meta-note written as a `idx_groundtruth` row
+/// (`source = "synthesis-cron"`, `scope = "meta"`) and optionally to
+/// `~/.neoth/synthesis/YYYY-WW.md`. WAL-free; off by default
+/// (`synthesis_cron.enabled = false`).
+pub mod synthesis_cron;
 /// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron (scans WAL usage
 /// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
 pub mod token_anomaly_cron;
@@ -222,51 +228,51 @@ pub mod wiki_build_cron;
 /// HO-07 crash.log scan. Holds only abort-handle clones (shutdown unaffected).
 pub mod worker_watch;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
-pub mod dreaming;
-/// GOLD-ADAPT-JV-MEM-16 — Guidance-block snapshot refresh cron. Periodically
-/// writes `~/.neoth/guidance_snapshot.json` (scorecard freshness + 24h WAL
-/// signal counts) so `build_prompt_bundle` can inject richer session context
-/// without re-scanning the WAL on every chat turn. WAL-free (reads only).
-/// Off by default (`freedom.yaml::guidance_cron.enabled: true` to opt in).
-pub mod guidance_cron;
-/// GOLD-FEAT-11 — one-shot post-init healthcheck proactive item producer.
-/// Runs once at serve startup; if onboarding gaps are detected it enqueues a
-/// `ProactiveItem` (priority 80, dedup per binary version) into the proactive
-/// queue so the existing drain loop surfaces the checklist to the operator.
-pub mod post_init_cron;
-/// GOLD-FEAT-11 — cross-turn goal file-backed persistence.
-/// `GoalPersist::load` / `save` / `clear` manage `~/.neoth/current_goal.json`.
-/// `as_system_layer()` renders the `[CROSS-TURN GOAL]` injection block used
-/// by both `cli/chat.rs` and `cli/serve_pipeline.rs`.
-pub mod goal_persist;
-/// GOLD-FEAT-11 — LLM-generated check-in body cron. Detects inactivity gaps
-/// via `pattern_cron::detect_inactivity_gap`, classifies one of three body
-/// templates (casual / resume / unfinished-thread), calls the provider, and
-/// enqueues one `ProactiveItem` per UTC day. Gated by `checkin_cron.enabled`
-/// (default `false`).
-pub mod checkin_cron;
-/// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless ingest cron. Polls IMAP,
-/// runs the content scanner, quarantines HIGH-severity findings, and for
-/// clean messages uploads to Paperless-NGX + writes an Obsidian vault note.
-/// Gated by `email_ingest_cron.enabled` (default `false`).
-pub mod email_ingest_cron;
-/// GOLD-FEAT-11 — skill-curator cron (gated off, `enabled: false`). Scans
-/// `~/.neoth/proposals/*.json` for mature accepted `Skill` proposals and
-/// atomically promotes them to `~/.neoth/skills/<slug>.yaml`.
-pub mod skill_curator_cron;
-pub mod healthz;
-pub mod isolation;
-pub mod observability;
-pub mod pidfile;
-pub mod quota;
-pub mod rate_limit;
-pub mod usage_log;
 /// GOLD-ADAPT-ODY-07 — Background-job detach + auto-continue registry.
 /// Tracks detached subprocess jobs via on-disk `.log`/`.exit` marker files.
 /// Jobs register with [`bg_jobs::BgJobRegistry`]; the monitor polls for
 /// completion and fires optional `on_complete` callbacks (auto-continue).
 /// Self-contained, no hot-lane deps, new-file clean lane.
 pub mod bg_jobs;
+/// GOLD-ADAPT-ODY-07 companion — background-job monitor loop.
+/// [`bg_monitor::spawn_bg_monitor`] spawns a periodic scan over the
+/// [`bg_jobs::BgJobRegistry`]: completed jobs get their callbacks invoked,
+/// are removed from the registry, and produce a [`bg_monitor::JobCompleteReport`].
+pub mod bg_monitor;
+/// GOLD-FEAT-11 — LLM-generated check-in body cron. Detects inactivity gaps
+/// via `pattern_cron::detect_inactivity_gap`, classifies one of three body
+/// templates (casual / resume / unfinished-thread), calls the provider, and
+/// enqueues one `ProactiveItem` per UTC day. Gated by `checkin_cron.enabled`
+/// (default `false`).
+pub mod checkin_cron;
+pub mod dreaming;
+/// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless ingest cron. Polls IMAP,
+/// runs the content scanner, quarantines HIGH-severity findings, and for
+/// clean messages uploads to Paperless-NGX + writes an Obsidian vault note.
+/// Gated by `email_ingest_cron.enabled` (default `false`).
+pub mod email_ingest_cron;
+/// GOLD-FEAT-11 — cross-turn goal file-backed persistence.
+/// `GoalPersist::load` / `save` / `clear` manage `~/.neoth/current_goal.json`.
+/// `as_system_layer()` renders the `[CROSS-TURN GOAL]` injection block used
+/// by both `cli/chat.rs` and `cli/serve_pipeline.rs`.
+pub mod goal_persist;
+/// GOLD-ADAPT-JV-MEM-16 — Guidance-block snapshot refresh cron. Periodically
+/// writes `~/.neoth/guidance_snapshot.json` (scorecard freshness + 24h WAL
+/// signal counts) so `build_prompt_bundle` can inject richer session context
+/// without re-scanning the WAL on every chat turn. WAL-free (reads only).
+/// Off by default (`freedom.yaml::guidance_cron.enabled: true` to opt in).
+pub mod guidance_cron;
+pub mod healthz;
+pub mod isolation;
+pub mod observability;
+pub mod pidfile;
+/// GOLD-FEAT-11 — one-shot post-init healthcheck proactive item producer.
+/// Runs once at serve startup; if onboarding gaps are detected it enqueues a
+/// `ProactiveItem` (priority 80, dedup per binary version) into the proactive
+/// queue so the existing drain loop surfaces the checklist to the operator.
+pub mod post_init_cron;
+pub mod quota;
+pub mod rate_limit;
 /// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron. Runs `graphify update` on the
 /// daemon source tree on a schedule, copies `GRAPH_REPORT.md` +
 /// `GRAPH_TREE.html` into `<vault>/NEOTH-Self/`, ingests the report into
@@ -274,11 +280,11 @@ pub mod bg_jobs;
 /// SELF_MAP_COMPLETE`. Gated by `freedom.yaml::obsidian_vault` +
 /// `self_map_source_dir` (or env `NEOTH_SRC_DIR`). Off by default.
 pub mod self_map_task;
-/// GOLD-ADAPT-ODY-07 companion — background-job monitor loop.
-/// [`bg_monitor::spawn_bg_monitor`] spawns a periodic scan over the
-/// [`bg_jobs::BgJobRegistry`]: completed jobs get their callbacks invoked,
-/// are removed from the registry, and produce a [`bg_monitor::JobCompleteReport`].
-pub mod bg_monitor;
+/// GOLD-FEAT-11 — skill-curator cron (gated off, `enabled: false`). Scans
+/// `~/.neoth/proposals/*.json` for mature accepted `Skill` proposals and
+/// atomically promotes them to `~/.neoth/skills/<slug>.yaml`.
+pub mod skill_curator_cron;
+pub mod usage_log;
 /// GOLD-ADAPT-ODY-21 — outbound webhook manager cron. WAL-tail reader that
 /// fires HMAC-SHA256-signed HTTPS POSTs to registered endpoints whenever
 /// session/chat WAL frames arrive. SSRF guard: DNS-resolve + RFC-1918 block.

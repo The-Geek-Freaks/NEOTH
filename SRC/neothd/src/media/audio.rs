@@ -1,36 +1,20 @@
 //! Audio backend — R-9 Phase 2.
 //!
 //! Pure-Rust audio decode via `symphonia` (WAV / MP3 / FLAC / Ogg / M4A →
-//! 16 kHz mono f32), then **local Whisper transcription** (DD-03 / HON-04 — the
-//! doc previously claimed this was unimplemented "Phase 2b"; it IS wired):
-//! [`transcribe_if_cached`] runs `providers::whisper::WhisperEngine` (candle)
-//! over the decoded samples once the model artifacts (tokenizer + config +
-//! safetensors) are cached.
-//!
-//! ## First-STT-use auto-download (GOLD-ADAPT-HANDY-04)
-//!
-//! When the model is absent **and** `freedom.yaml::updater.allow_huggingface_downloads`
-//! is `true` (the default), the first STT call triggers an automatic download
-//! of the configured Whisper model (~1.6 GiB) via `WhisperEngine::ensure_artifacts`
-//! (HuggingFace Hub, resumable). `0xD7 MODEL_DOWNLOAD_START` + `0xD8 MODEL_DOWNLOAD_COMPLETE`
-//! WAL frames are emitted around the fetch. If the flag is `false`, the call
-//! returns `status = "model download blocked"` with an actionable hint naming
-//! the flag rather than silently producing an empty transcript.
+//! 16 kHz mono f32), then the canonical STT dispatcher. Provider selection,
+//! model-download consent, cloud consent, audit, post-processing, and fallback
+//! are enforced once in `media::stt_provider`; this extractor has no legacy
+//! transcription bypass.
 //!
 //! Operator-visible behaviour:
 //!   - WAV / MP3 / … bytes or path → decoded f32 samples + sample-rate
 //!     metadata. Returned in `Extraction.metadata` as `sample_count` +
 //!     `sample_rate` + `decoded_duration_secs`.
-//!   - `text` carries the real Whisper transcript once the model is cached
-//!     (auto-fetched on first use when downloads are permitted).
+//!   - `text` carries the transcript from the effective configured provider.
 //!
 //! Limitations:
-//!   - The auto-download blocks the calling audio-extraction for the duration
-//!     of the fetch (~1.6 GiB). This is intentional: the operator opted in via
-//!     the default `allow_huggingface_downloads = true`.
 //!   - Single-channel mix-down — stereo inputs are averaged to mono.
-//!   - 16 kHz resample is approximate (linear interpolation, not
-//!     low-pass-filtered); swap for `rubato` if quality measurably drifts.
+//!   - Resampling uses the shared band-limited path in `media::resampler`.
 
 use std::path::Path;
 
@@ -41,6 +25,45 @@ use super::{Asset, AssetKind, Extraction, ExtractionError, MediaExtractor};
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 pub struct AudioExtractor;
+
+impl AudioExtractor {
+    /// Extract audio with the caller's effective runtime policy and optional
+    /// WAL sink. Daemon callers must use this seam so reload state, model-
+    /// download consent, and cloud audit cannot drift from the active config.
+    pub(crate) async fn extract_with_context(
+        &self,
+        asset: &Asset,
+        media_cfg: &crate::config::MediaConfig,
+        updater_cfg: &crate::config::UpdaterConfig,
+        neoth_home: &std::path::Path,
+        wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    ) -> Result<Extraction, ExtractionError> {
+        if asset.kind() != AssetKind::Audio {
+            return Err(ExtractionError::Unsupported {
+                backend: "audio",
+                got: asset.kind(),
+            });
+        }
+        let payload = asset.clone();
+        let media_cfg = media_cfg.clone();
+        let updater_cfg = updater_cfg.clone();
+        let neoth_home = neoth_home.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            extract_blocking_with_context(
+                &payload,
+                &media_cfg,
+                &updater_cfg,
+                &neoth_home,
+                wal_writer.as_ref(),
+            )
+        })
+        .await
+        .map_err(|e| ExtractionError::Backend {
+            backend: "audio",
+            reason: format!("join error: {e}"),
+        })?
+    }
+}
 
 #[async_trait::async_trait]
 impl MediaExtractor for AudioExtractor {
@@ -54,17 +77,30 @@ impl MediaExtractor for AudioExtractor {
                 got: asset.kind(),
             });
         }
-        let payload = asset.clone();
-        tokio::task::spawn_blocking(move || extract_blocking(&payload))
-            .await
-            .map_err(|e| ExtractionError::Backend {
+        let config = crate::config::FreedomConfig::load_from_default_path().map_err(|error| {
+            ExtractionError::Backend {
                 backend: "audio",
-                reason: format!("join error: {e}"),
-            })?
+                reason: format!("load effective STT config: {error}"),
+            }
+        })?;
+        self.extract_with_context(
+            asset,
+            &config.media,
+            &config.updater,
+            &crate::config::FreedomConfig::default_neoth_home(),
+            None,
+        )
+        .await
     }
 }
 
-fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
+fn extract_blocking_with_context(
+    asset: &Asset,
+    media_cfg: &crate::config::MediaConfig,
+    updater_cfg: &crate::config::UpdaterConfig,
+    neoth_home: &std::path::Path,
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+) -> Result<Extraction, ExtractionError> {
     let DecodedAudio {
         samples,
         original_sample_rate,
@@ -74,86 +110,48 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     };
     let duration_secs = samples.len() as f64 / TARGET_SAMPLE_RATE as f64;
 
-    // B20: dispatch_transcription is the single production entry for ALL
+    // B20: dispatch_pcm_f32 is the single production entry for ALL PCM
     // transcription — local and cloud alike. Cloud gating (cloud_stt_enabled,
     // audit sink) is enforced inside the dispatcher; we no longer gate on
-    // needs_cloud here. The nested-runtime risk (WhisperLocalProvider::new() →
-    // init_global_engine_sync creating a mini rt inside handle.block_on) is
-    // resolved in dispatch_transcription via make_stt_provider_for_dispatch which
-    // wraps the problematic construction in spawn_blocking.
+    // needs_cloud here. Local engine construction is async and keyed by the
+    // explicit NEOTH home, repository, and idle timeout inside the dispatcher;
+    // there is no process-global legacy engine or nested mini-runtime.
     //
-    // transcribe_if_cached is kept only for the no-runtime path: production runs
-    // through spawn_blocking (which always has a Handle) so this branch is
-    // test-only (plain #[test] without a tokio executor).
-    // (text, status, effective provider id) — the provider is stamped by
+    // The provider is stamped by
     // dispatch_transcription (B20 review fix: metadata must name the backend
     // that ACTUALLY handled the bytes, never a hardcoded repo).
-    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
-    let (text, status, provider) = {
-        let wav = crate::media::stt_provider::pcm_bytes_to_wav(
-            &samples
-                .iter()
-                .flat_map(|s: &f32| s.to_le_bytes())
-                .collect::<Vec<u8>>(),
-        );
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => match handle.block_on(
-                crate::media::stt_provider::dispatch_transcription(
-                    &cfg.media.stt,
-                    &cfg.media,
-                    &wav,
-                    None,
-                ),
-            ) {
-                Ok(r) if !r.text.is_empty() => (r.text.clone(), "transcribed", r.provider),
-                Ok(r) => (String::new(), "empty transcript", r.provider),
-                Err(e) => {
-                    // Log the failure so operators can diagnose config/model issues.
-                    // Do NOT silently fall back to transcribe_if_cached — that
-                    // would bypass the configured provider and hide the error.
-                    tracing::warn!(
-                        error = %e,
-                        "audio: STT dispatch failed — check media.stt config or model artifacts"
-                    );
-                    (String::new(), "transcription failed", String::from("none"))
-                }
-            },
-            // No runtime: test-only fallback (plain #[test] without a tokio
-            // executor), guarded by cfg!(test) so it is statically
-            // unreachable in production.
-            Err(_) if cfg!(test) => {
-                let (t, s) = transcribe_if_cached(&samples);
-                (t, s, String::from("legacy_no_runtime"))
-            }
-            Err(_) => {
-                // B20 hard invariant: dispatch_transcription is the ONLY
-                // production STT entry — a runtime-less production caller is
-                // a wiring bug. Fail loud (empty text + explicit status)
-                // instead of silently bypassing MediaSttConfig via the
-                // legacy candle path.
-                tracing::error!(
-                    "audio: no tokio runtime — STT requires the daemon/CLI runtime \
-                     (B20: dispatch_transcription is the only production STT entry)"
-                );
-                (
-                    String::new(),
-                    "transcription failed: no runtime",
-                    String::from("none"),
-                )
-            }
-        }
+    let handle =
+        tokio::runtime::Handle::try_current().map_err(|error| ExtractionError::Backend {
+            backend: "audio",
+            reason: format!("no Tokio runtime for canonical STT dispatch: {error}"),
+        })?;
+    let result = handle
+        .block_on(crate::media::stt_provider::dispatch_pcm_f32(
+            &media_cfg.stt,
+            media_cfg,
+            updater_cfg,
+            neoth_home,
+            &samples,
+            TARGET_SAMPLE_RATE,
+            wal_writer,
+        ))
+        .map_err(|error| ExtractionError::Backend {
+            backend: "audio",
+            reason: format!("STT dispatch: {error}"),
+        })?;
+    let status = if result.text.is_empty() {
+        "empty transcript"
+    } else {
+        "transcribed"
     };
+    let text = result.text;
+    let segments = result.segments;
+    let speaker_labels = result.speaker_labels;
+    let provider = result.provider;
     // Truthful model detail per effective provider: the candle engine is pinned
-    // to its global repo; faster-whisper runs the configured size; cloud kinds
-    // are identified by the provider id itself.
-    let model_detail = match provider.as_str() {
-        "whisper_rs_local" => crate::providers::whisper::DEFAULT_WHISPER_REPO.to_string(),
-        "faster_whisper_local" => {
-            format!("faster-whisper/{}", cfg.media.stt.model_size.as_str())
-        }
-        "" | "none" | "legacy_no_runtime" => String::from("none"),
-        p => p.to_string(),
-    };
+    // to the configured size-specific repo; faster-whisper uses the matching
+    // SYSTRAN repo; cloud kinds are identified by the provider id itself.
+    let model_detail = transcription_model_detail(&provider, media_cfg.stt.model_size);
     Ok(Extraction {
         text,
         metadata: serde_json::json!({
@@ -165,44 +163,27 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
             "transcription_status": status,
             "transcription_provider": provider,
             "transcription_model": model_detail,
+            "transcription_segments": segments,
+            "speaker_labels": speaker_labels,
         }),
     })
 }
 
-/// Best-effort transcription with first-use auto-download (GOLD-ADAPT-HANDY-04).
-/// Returns `(text, status_string)`.
-///
-/// Priority order:
-///   1. **faster-whisper** (JV-VOICE-02/03): probe for `faster-whisper` on
-///      PATH; if present, write samples to a tmp WAV, invoke the CLI with
-///      `--model tiny --compute_type int8`, and parse JSONL output. Gated on
-///      `updater.allow_huggingface_downloads` — faster-whisper downloads its
-///      own models on first use (into `~/.cache/huggingface/`), so the
-///      air-gap policy applies to this path too.
-///   2. **candle WhisperEngine** (existing path): fires when
-///      `faster-whisper` is absent. If the model is not yet cached, triggers
-///      an auto-download gated by `updater.allow_huggingface_downloads`
-///      (default `true`). Emits `0xD7`/`0xD8` WAL frames around the fetch.
-///   3. **blocked / unavailable**: download disabled or failed — empty text
-///      with an actionable status string.
-///
-/// Pitfall: we are inside `spawn_blocking`; both the download and the
-/// faster-whisper path MUST use synchronous or mini-runtime patterns to
-/// avoid nested-runtime panic.
-/// `pub(crate)` so `media::dictation` can reuse the same STT path without
-/// duplicating the faster-whisper → candle priority logic.
-// B20: production callers go through `dispatch_transcription` UNCONDITIONALLY.
-// This wrapper remains as the no-runtime fallback seam used by:
-//   - `audio::extract_blocking` when `Handle::try_current()` is None (plain #[test])
-//   - `dictation::transcribe_utterance` when no tokio runtime is present
-// Both call sites gate the fallback arm with `cfg!(test)`, so this path is
-// statically unreachable in a production build — a runtime-less production
-// caller fails loud instead of bypassing MediaSttConfig.
-// allow(dead_code) retained because the call sits behind an
-// always-false-in-release `cfg!(test)` branch.
-#[allow(dead_code)]
-pub(crate) fn transcribe_pcm_samples(samples: &[f32]) -> (String, &'static str) {
-    transcribe_if_cached(samples)
+fn transcription_model_detail(
+    provider: &str,
+    model_size: crate::media::stt_dispatch::WhisperModelSize,
+) -> String {
+    use crate::media::stt_dispatch::SttProvider;
+
+    if provider == SttProvider::WhisperRsLocal.as_str() {
+        crate::media::stt_provider::candle_whisper_model_id(model_size).to_string()
+    } else if provider == SttProvider::FasterWhisperLocal.as_str() {
+        crate::media::stt_provider::faster_whisper_model_id(model_size).to_string()
+    } else if provider.is_empty() || provider == "none" {
+        String::from("none")
+    } else {
+        provider.to_string()
+    }
 }
 
 /// GOLD-ADOPT-25 — decode an audio file to 16 kHz mono f32 for the
@@ -214,316 +195,6 @@ pub(crate) fn decode_file_to_pcm(path: &Path) -> anyhow::Result<Vec<f32>> {
     decode_from_path(path)
         .map(|d| d.samples)
         .map_err(|e| anyhow::anyhow!("decode {}: {e}", path.display()))
-}
-
-fn transcribe_if_cached(samples: &[f32]) -> (String, &'static str) {
-    // ── Path 1: faster-whisper subprocess (JV-VOICE-02/03) ─────────────────
-    // Gated on the same `updater.allow_huggingface_downloads` policy as the
-    // candle path: faster-whisper downloads its own models into
-    // ~/.cache/huggingface/ on first use, so an air-gapped operator who
-    // disabled HF downloads must not have this path reach out either.
-    // (We can't know whether ITS cache is warm, so the gate is on the path.)
-    if let Some(exe) = crate::media::stt_provider::faster_whisper_exe() {
-        // FAIL-CLOSED on config-load failure (error-hunt wave s4): the
-        // serde default for allow_huggingface_downloads is `true`, so
-        // unwrap_or_default would silently re-open the air-gap exactly
-        // when the operator's `false` couldn't be read (file locked /
-        // mid-rotation). Skipping faster-whisper here only costs a
-        // fallthrough to the candle path.
-        let allow_hf = match crate::config::FreedomConfig::load_from_default_path() {
-            Ok(c) => c.updater.allow_huggingface_downloads,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "faster-whisper gate: freedom.yaml unreadable — failing CLOSED (candle path)"
-                );
-                false
-            }
-        };
-        if allow_hf {
-            if let Some((text, status)) = transcribe_via_faster_whisper(&exe, samples) {
-                return (text, status);
-            }
-            // faster-whisper present but failed — fall through to candle path.
-        } else {
-            tracing::info!(
-                "faster-whisper skipped: updater.allow_huggingface_downloads=false — using candle path"
-            );
-        }
-    }
-
-    // ── Path 2: candle WhisperEngine (HANDY-05: shared global instance) ────
-    //
-    // Previously constructed a NEW engine per-call (wasting VRAM on every
-    // audio-ingest). Now obtains the global `Arc<WhisperEngine>` singleton
-    // via `init_global_engine_sync`, which builds it once and reuses it
-    // thereafter. The idle-watcher task on the engine will free VRAM after
-    // the configured idle timeout (default 120 s) between calls.
-    //
-    // GOLD-ADAPT-HANDY-04: when `init_global_engine_sync` reports "not cached",
-    // attempt an auto-download before returning an empty transcript.
-    let engine = match crate::providers::whisper::init_global_engine_sync(None) {
-        Ok(e) => e,
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("not cached") {
-                // Model absent — try auto-download if the operator permits it.
-                // Test builds must NEVER hit the network: the wave-4 test run
-                // pulled the real 1.6GB whisper model through this hook via the
-                // operator's live config. cfg!(test) is compile-time-free in prod.
-                if cfg!(test) {
-                    return (String::new(), "model not cached");
-                }
-                match maybe_auto_download_whisper() {
-                    Ok(()) => {
-                        // Artifacts now on disk; build the engine.
-                        match crate::providers::whisper::init_global_engine_sync(None) {
-                            Ok(e) => e,
-                            Err(e2) => {
-                                tracing::warn!("whisper: engine init after download failed — {e2:#}");
-                                return (String::new(), "whisper engine init failed");
-                            }
-                        }
-                    }
-                    Err(dl_err) => {
-                        tracing::info!("whisper: auto-download skipped/failed — {dl_err:#}");
-                        // Return the dl_err message as status so callers/logs see
-                        // whether it was a consent block or a network error.
-                        let status: &'static str = if dl_err
-                            .to_string()
-                            .contains("allow_huggingface_downloads")
-                        {
-                            "model download blocked"
-                        } else {
-                            "model download failed"
-                        };
-                        return (String::new(), status);
-                    }
-                }
-            } else {
-                tracing::debug!("whisper: engine unavailable — {e:#}");
-                return (String::new(), "whisper engine init failed");
-            }
-        }
-    };
-
-    // We're inside spawn_blocking; build a minimal current-thread runtime
-    // to drive the async transcribe call.
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(_) => return (String::new(), "tokio runtime build failed"),
-    };
-    let samples_owned = samples.to_vec();
-    let text = rt.block_on(async move {
-        engine
-            .transcribe(&samples_owned, Default::default())
-            .await
-            .map_err(|_| ())
-    });
-    match text {
-        // GR-fix: the local Whisper path bypassed clean_transcript (only the cloud
-        // path in stt_provider.rs ran it), contra the stt_postprocess "every
-        // transcript" contract. Run it here too so both paths are consistent.
-        Ok(text) => (
-            crate::media::stt_postprocess::clean_transcript(&text),
-            "transcribed",
-        ),
-        Err(()) => (String::new(), "transcription failed"),
-    }
-}
-
-/// GOLD-ADAPT-HANDY-04 — first-STT-use auto-download for the candle Whisper model.
-///
-/// Called from inside `spawn_blocking` when `init_global_engine_sync` reports
-/// "not cached". Uses a mini current-thread runtime (same pattern as
-/// `init_global_engine_sync` itself) to drive the async download.
-///
-/// Gate: `freedom.yaml::updater.allow_huggingface_downloads` (default `true`).
-/// WAL: emits `0xD7 MODEL_DOWNLOAD_START` + `0xD8 MODEL_DOWNLOAD_COMPLETE`
-///      via `daemon::model_download_audit` (best-effort; never aborts the download).
-///
-/// Returns `Ok(())` when the artifacts are on disk (download completed or were
-/// already present). Returns `Err` with an actionable message when the download
-/// is blocked (`allow_huggingface_downloads = false`) or fails on the network.
-fn maybe_auto_download_whisper() -> anyhow::Result<()> {
-    use crate::providers::whisper::DEFAULT_WHISPER_REPO;
-
-    // HF-01 consent gate — reuse UpdaterConfig::check_model_download.
-    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
-    cfg.updater
-        .check_model_download(DEFAULT_WHISPER_REPO, Some("whisper"))
-        .map_err(|msg| anyhow::anyhow!("{msg}"))?;
-
-    // Build a mini runtime (we're inside spawn_blocking).
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| anyhow::anyhow!("build runtime for whisper download: {e}"))?;
-
-    rt.block_on(async {
-        let start = std::time::Instant::now();
-        // 0xD7 MODEL_DOWNLOAD_START
-        crate::daemon::model_download_audit::emit_start(DEFAULT_WHISPER_REPO).await;
-
-        // `WhisperEngine::new_with_idle_secs` calls `ensure_artifacts` which
-        // uses hf_hub to download tokenizer.json + config.json + model.safetensors.
-        // idle_secs=Some(0) → no background idle-watcher spawned in this transient rt.
-        let result =
-            crate::providers::whisper::WhisperEngine::new_with_idle_secs(None, Some(0)).await;
-
-        let duration_ms = start.elapsed().as_millis() as u64;
-        match &result {
-            Ok(_) => {
-                let cache_path = {
-                    let home = std::env::var("HOME")
-                        .map(std::path::PathBuf::from)
-                        .or_else(|_| {
-                            std::env::var("USERPROFILE").map(std::path::PathBuf::from)
-                        })
-                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                    let flattened = DEFAULT_WHISPER_REPO.replace('/', "-");
-                    home.join(".neoth").join("models").join(flattened)
-                };
-                // 0xD8 MODEL_DOWNLOAD_COMPLETE
-                crate::daemon::model_download_audit::emit_complete(
-                    DEFAULT_WHISPER_REPO,
-                    &cache_path.to_string_lossy(),
-                    duration_ms,
-                )
-                .await;
-                tracing::info!(
-                    model = DEFAULT_WHISPER_REPO,
-                    duration_ms,
-                    "whisper: auto-download complete"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    model = DEFAULT_WHISPER_REPO,
-                    error = %e,
-                    "whisper: auto-download failed"
-                );
-            }
-        }
-        // Drop the engine immediately — GLOBAL_WHISPER_ENGINE will be
-        // populated by the subsequent `init_global_engine_sync` call in the
-        // caller, which shares the same OnceLock path.
-        result.map(|_| ())
-    })
-}
-
-/// JV-VOICE-02/03 — invoke faster-whisper CLI synchronously (must be inside
-/// `spawn_blocking`; uses `std::process::Command` to avoid nested-runtime
-/// panic). Returns `Some((text, status))` on success or clean not-found, `None`
-/// to signal "try the next path".
-fn transcribe_via_faster_whisper(
-    exe: &std::path::Path,
-    samples: &[f32],
-) -> Option<(String, &'static str)> {
-    // Convert f32 PCM → minimal WAV bytes that faster-whisper can consume.
-    let wav = {
-        let samples_i16: Vec<i16> = samples
-            .iter()
-            .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-            .collect();
-        let data_len = (samples_i16.len() * 2) as u32;
-        let sample_rate: u32 = TARGET_SAMPLE_RATE;
-        let chunk_size = 36 + data_len;
-        let mut w = Vec::with_capacity(44 + data_len as usize);
-        w.extend_from_slice(b"RIFF");
-        w.extend_from_slice(&chunk_size.to_le_bytes());
-        w.extend_from_slice(b"WAVE");
-        w.extend_from_slice(b"fmt ");
-        w.extend_from_slice(&16u32.to_le_bytes());
-        w.extend_from_slice(&1u16.to_le_bytes()); // PCM
-        w.extend_from_slice(&1u16.to_le_bytes()); // channels
-        w.extend_from_slice(&sample_rate.to_le_bytes());
-        w.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte_rate
-        w.extend_from_slice(&2u16.to_le_bytes()); // block_align
-        w.extend_from_slice(&16u16.to_le_bytes()); // bits_per_sample
-        w.extend_from_slice(b"data");
-        w.extend_from_slice(&data_len.to_le_bytes());
-        for s in &samples_i16 {
-            w.extend_from_slice(&s.to_le_bytes());
-        }
-        w
-    };
-
-    let tmp_dir = std::env::temp_dir();
-    // Process-unique suffix: pid + atomic sequence + wall-clock nanos. Nanos
-    // alone collide when two spawn_blocking extractions read the same clock
-    // tick (Windows timer resolution can be >=1ms) — both calls then share
-    // one temp file and transcribe each other's audio.
-    static FW_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seq = FW_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    let tmp_path = tmp_dir.join(format!(
-        "neoth-fw-audio-{}-{seq}-{nanos}.wav",
-        std::process::id()
-    ));
-    if std::fs::write(&tmp_path, &wav).is_err() {
-        return None; // can't write → fall through
-    }
-
-    let result = std::process::Command::new(exe)
-        .args([
-            "--model",
-            "tiny",
-            "--device",
-            "cpu",
-            "--compute_type",
-            "int8",
-            "--output_format",
-            "json",
-            "--language",
-            "auto",
-            tmp_path.to_str().unwrap_or(""),
-        ])
-        .env("PYTHONIOENCODING", "utf-8")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .stdin(std::process::Stdio::null())
-        .output();
-
-    let _ = std::fs::remove_file(&tmp_path);
-
-    let out = result.ok()?;
-    if !out.status.success() {
-        // faster-whisper failed — log + fall through to candle.
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        tracing::debug!(
-            "faster-whisper exited {:?} — falling back to candle: {}",
-            out.status,
-            stderr.trim()
-        );
-        return None;
-    }
-
-    let (raw_text, _segs) =
-        crate::media::stt_provider::parse_faster_whisper_output(&out.stdout);
-    let cleaned = crate::media::stt_postprocess::clean_transcript(&raw_text);
-    Some((cleaned, "transcribed-faster-whisper"))
-}
-
-// HANDY-05: whisper_cache_dir() was previously used by `transcribe_if_cached`
-// to check artifact presence before building a per-call engine. Now superseded
-// by `providers::whisper::init_global_engine_sync` which performs the same
-// check internally. Kept here in case the faster-whisper path ever needs to
-// cross-reference the candle cache directory.
-#[allow(dead_code)]
-fn whisper_cache_dir() -> std::path::PathBuf {
-    let home = std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(std::path::PathBuf::from))
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let flattened = crate::providers::whisper::DEFAULT_WHISPER_REPO.replace('/', "-");
-    home.join(".neoth").join("models").join(flattened)
 }
 
 struct DecodedAudio {
@@ -680,7 +351,12 @@ fn decode_from_bytes(bytes: Vec<u8>, mime: &str) -> Result<DecodedAudio, Extract
         decoded_mono
     } else {
         // HANDY-01 — band-limited sinc (rubato), linear fallback inside.
-        super::resampler::resample_mono(&decoded_mono, original_sr, TARGET_SAMPLE_RATE)
+        super::resampler::resample_mono(&decoded_mono, original_sr, TARGET_SAMPLE_RATE).map_err(
+            |error| ExtractionError::Backend {
+                backend: "audio",
+                reason: format!("resample: {error}"),
+            },
+        )?
     };
 
     Ok(DecodedAudio {
@@ -757,12 +433,22 @@ mod tests {
     #[tokio::test]
     async fn extract_returns_unsupported_for_non_audio() {
         let extractor = AudioExtractor;
+        let home = tempfile::tempdir().unwrap();
         let asset = Asset::Bytes {
             kind: AssetKind::Image,
             mime: "image/png".into(),
             data: vec![0x89, b'P', b'N', b'G'],
         };
-        let err = extractor.extract(&asset).await.unwrap_err();
+        let err = extractor
+            .extract_with_context(
+                &asset,
+                &crate::config::MediaConfig::default(),
+                &crate::config::UpdaterConfig::default(),
+                home.path(),
+                None,
+            )
+            .await
+            .unwrap_err();
         assert!(matches!(
             err,
             ExtractionError::Unsupported {
@@ -772,19 +458,11 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn extract_decodes_wav_tone_to_16k_mono() {
-        let extractor = AudioExtractor;
-        let asset = Asset::Bytes {
-            kind: AssetKind::Audio,
-            mime: "audio/wav".into(),
-            data: synth_wav_tone(),
-        };
-        let out = extractor.extract(&asset).await.expect("decode wav");
-        assert!(out.text.is_empty(), "text deferred to Phase 2b");
-        let sr = out.metadata["sample_rate"].as_u64().unwrap();
-        assert_eq!(sr, TARGET_SAMPLE_RATE as u64);
-        let count = out.metadata["sample_count"].as_u64().unwrap();
+    #[test]
+    fn decode_wav_tone_to_16k_mono() {
+        let out = decode_from_bytes(synth_wav_tone(), "audio/wav").expect("decode wav");
+        assert_eq!(out.original_sample_rate, TARGET_SAMPLE_RATE);
+        let count = out.samples.len() as u64;
         // 1s at 16 kHz mono → ~16000 samples (allow ±100 from decoder
         // framing).
         assert!(
@@ -824,95 +502,18 @@ mod tests {
         assert_eq!(mime_hint_from_path(Path::new("x.unknown")), "");
     }
 
-    // ── GOLD-ADAPT-HANDY-04: auto-download gate tests ────────────────────────
-
-    /// When `allow_huggingface_downloads = false`, `maybe_auto_download_whisper`
-    /// must return Err whose message references the config flag — not attempt
-    /// any network request.
     #[test]
-    fn auto_download_blocked_when_hf_downloads_disabled() {
-        use crate::config::ops::UpdaterConfig;
+    fn candle_provider_metadata_uses_the_effective_model_repo() {
+        use crate::media::stt_dispatch::{SttProvider, WhisperModelSize};
 
-        let mut updater = UpdaterConfig::default();
-        updater.allow_huggingface_downloads = false;
-
-        // Directly test the consent gate that `maybe_auto_download_whisper` uses.
-        let result = updater.check_model_download(
-            crate::providers::whisper::DEFAULT_WHISPER_REPO,
-            Some("whisper"),
+        let detail = transcription_model_detail(
+            SttProvider::WhisperRsLocal.as_str(),
+            WhisperModelSize::Small,
         );
-        assert!(
-            result.is_err(),
-            "check_model_download must return Err when downloads disabled"
+        assert_eq!(
+            detail,
+            crate::media::stt_provider::candle_whisper_model_id(WhisperModelSize::Small)
         );
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("allow_huggingface_downloads"),
-            "error must name the config flag; got: {msg}"
-        );
-    }
-
-    /// When all three artifact files exist in the cache directory,
-    /// `init_global_engine_sync` returns Ok — confirming the "model present"
-    /// fast path does NOT invoke `maybe_auto_download_whisper`.
-    /// Uses a temp directory pointed at via the HOME override so no real
-    /// ~/.neoth layout is required.
-    #[test]
-    fn model_present_does_not_trigger_download() {
-        use crate::providers::whisper::{CONFIG_FILE, DEFAULT_WHISPER_REPO, SAFETENSORS_FILE, TOKENIZER_FILE};
-
-        // Env-var mutation MUST hold the process-wide test-env lock — without
-        // it the HOME override races parallel tests (the STT factory test saw
-        // our stub tree and flipped its is_err() expectation).
-        let _env = crate::test_env::lock();
-
-        // Build a fake model directory under a temp HOME.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let flattened = DEFAULT_WHISPER_REPO.replace('/', "-");
-        let model_dir = tmp.path().join(".neoth").join("models").join(&flattened);
-        std::fs::create_dir_all(&model_dir).unwrap();
-
-        // Touch all three sentinel files (content irrelevant — presence is the gate).
-        for name in &[SAFETENSORS_FILE, TOKENIZER_FILE, CONFIG_FILE] {
-            std::fs::write(model_dir.join(name), b"stub").unwrap();
-        }
-
-        // Override HOME so `default_cache_dir` resolves to our temp tree.
-        // NOTE: this is process-global; tests run in isolation via `cargo test`'s
-        // per-binary parallelism, but within-process test threads may race on env.
-        // We scope the env mutation tightly and accept the risk for this unit test.
-        let prev_home = std::env::var("HOME").ok();
-        let prev_userprofile = std::env::var("USERPROFILE").ok();
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-            std::env::set_var("USERPROFILE", tmp.path());
-        }
-
-        // `init_global_engine_sync` checks file existence before touching OnceLock.
-        // With stubs present the existence check passes; it then tries to build the
-        // engine (which fails because the stubs are not real weights). The test
-        // asserts the error is NOT "not cached" — proving the gate did NOT trigger.
-        let result = crate::providers::whisper::init_global_engine_sync(None);
-
-        unsafe {
-            match prev_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match prev_userprofile {
-                Some(v) => std::env::set_var("USERPROFILE", v),
-                None => std::env::remove_var("USERPROFILE"),
-            }
-        }
-
-        // If somehow the global engine was already set from another test that
-        // actually has the model cached, the call returns Ok — that is fine.
-        if let Err(e) = result {
-            let msg = e.to_string();
-            assert!(
-                !msg.contains("not cached"),
-                "expected a load/parse error (stubs), not a cache-miss; got: {msg}"
-            );
-        }
+        assert_ne!(detail, SttProvider::WhisperRsLocal.as_str());
     }
 }

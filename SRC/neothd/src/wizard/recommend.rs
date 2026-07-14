@@ -101,6 +101,8 @@ pub fn operator_complexity_level(experience: ExperienceLevel) -> ComplexityLevel
 pub enum ChannelRecommendation {
     Cli,
     Telegram,
+    /// Legacy serialized value. The recommendation engine never emits it:
+    /// Keet has no supported public chat API.
     Keet,
     Slack,
 }
@@ -201,8 +203,8 @@ pub fn recommend(
             ChannelRecommendation::Telegram
         }
         ExperienceLevel::Advanced => {
-            reasoning.push("Advanced → Keet (best privacy default for power users)".to_string());
-            ChannelRecommendation::Keet
+            reasoning.push("Advanced → CLI (local, no third-party channel required)".to_string());
+            ChannelRecommendation::Cli
         }
     };
 
@@ -407,9 +409,9 @@ mod tests {
     }
 
     #[test]
-    fn recommend_advanced_default_channel_is_keet() {
+    fn recommend_advanced_default_channel_is_local_cli() {
         let r = recommend(&report_with_gpu(None), ExperienceLevel::Advanced, false);
-        assert_eq!(r.default_channel, ChannelRecommendation::Keet);
+        assert_eq!(r.default_channel, ChannelRecommendation::Cli);
     }
 
     // ── vpn ───────────────────────────────────────────────────────

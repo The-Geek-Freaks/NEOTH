@@ -47,12 +47,9 @@ pub async fn dispatch_video_analysis(
 ) -> Result<String, String> {
     // P0 ENFORCEMENT — decoding video frames and shipping them to a cloud vision
     // model uploads imagery from the operator's files. It may only run when the
-    // operator opted in (`media.video_frame_upload_enabled`). The safe-mode rail
-    // makes this visible; this gate makes it REAL. A local synth (LocalLlava) is
-    // exempt — nothing leaves the device.
-    if !matches!(synth.provider(), MultimodalProvider::LocalLlava)
-        && !media_cfg.video_frame_upload_enabled
-    {
+    // operator opted in (`media.video_frame_upload_enabled`). Every offered
+    // synthesizer is cloud-backed, so there is no local exemption.
+    if !media_cfg.video_frame_upload_enabled {
         return Err(format!(
             "video frame upload ({}) is disabled — set media.video_frame_upload_enabled: true \
              to decode video frames and send them to a cloud vision model (those frames then \
@@ -61,14 +58,11 @@ pub async fn dispatch_video_analysis(
         ));
     }
     // P0 fail-closed pre-flight: under proof-hardline, refuse a CLOUD frame
-    // upload that can't be audited (LocalLlava is exempt — nothing leaves, so no
-    // audit is owed).
-    if !matches!(synth.provider(), MultimodalProvider::LocalLlava) {
-        crate::media::enforce_cloud_media_audit(
-            media_cfg.required_audit_for_cloud_media,
-            writer.is_some(),
-        )?;
-    }
+    // upload that can't be audited.
+    crate::media::enforce_cloud_media_audit(
+        media_cfg.required_audit_for_cloud_media,
+        writer.is_some(),
+    )?;
     // Honour the provider's documented per-request frame cap.
     let cap = synth.provider().max_frames_per_request() as usize;
     let chosen: Vec<u64> = timestamps_ms.iter().take(cap).copied().collect();

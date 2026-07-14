@@ -64,14 +64,16 @@ impl TofuStore {
         }
         let conn = Connection::open(path)
             .with_context(|| format!("open SSH TOFU store {}", path.display()))?;
-        conn.execute_batch(SCHEMA).context("create ssh_known_hosts table")?;
+        conn.execute_batch(SCHEMA)
+            .context("create ssh_known_hosts table")?;
         Ok(Self { conn })
     }
 
     /// In-memory store (tests / ephemeral sessions).
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory().context("open in-memory TOFU store")?;
-        conn.execute_batch(SCHEMA).context("create ssh_known_hosts table")?;
+        conn.execute_batch(SCHEMA)
+            .context("create ssh_known_hosts table")?;
         Ok(Self { conn })
     }
 
@@ -142,12 +144,14 @@ mod tests {
         let mut s = TofuStore::in_memory().unwrap();
         let key = b"ed25519-pubkey-bytes";
         assert_eq!(
-            s.check_and_update("host.example:22", "ssh-ed25519", key).unwrap(),
+            s.check_and_update("host.example:22", "ssh-ed25519", key)
+                .unwrap(),
             TofuOutcome::Accepted
         );
         // Re-sight of the SAME key matches.
         assert_eq!(
-            s.check_and_update("host.example:22", "ssh-ed25519", key).unwrap(),
+            s.check_and_update("host.example:22", "ssh-ed25519", key)
+                .unwrap(),
             TofuOutcome::Matched
         );
         assert_eq!(s.len().unwrap(), 1);
@@ -156,18 +160,26 @@ mod tests {
     #[test]
     fn changed_key_is_refused_and_store_unchanged() {
         let mut s = TofuStore::in_memory().unwrap();
-        s.check_and_update("h:22", "ssh-ed25519", b"original").unwrap();
-        match s.check_and_update("h:22", "ssh-ed25519", b"DIFFERENT").unwrap() {
+        s.check_and_update("h:22", "ssh-ed25519", b"original")
+            .unwrap();
+        match s
+            .check_and_update("h:22", "ssh-ed25519", b"DIFFERENT")
+            .unwrap()
+        {
             TofuOutcome::Changed { stored_key_base64 } => {
                 let want = base64::engine::general_purpose::STANDARD.encode(b"original");
-                assert_eq!(stored_key_base64, want, "must report the trusted key, not the new one");
+                assert_eq!(
+                    stored_key_base64, want,
+                    "must report the trusted key, not the new one"
+                );
             }
             other => panic!("expected Changed, got {other:?}"),
         }
         // The store must NOT have adopted the changed key — a later sight of the
         // ORIGINAL still matches.
         assert_eq!(
-            s.check_and_update("h:22", "ssh-ed25519", b"original").unwrap(),
+            s.check_and_update("h:22", "ssh-ed25519", b"original")
+                .unwrap(),
             TofuOutcome::Matched
         );
     }

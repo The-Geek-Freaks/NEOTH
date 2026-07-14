@@ -374,7 +374,7 @@ impl MempalaceNode {
 ///
 /// Absent or empty file returns `Ok(vec![])`.
 pub fn read_openclaw_mempalace(path: &Path) -> Result<Vec<ImportedClaim>> {
-    use crate::memory::tiers::{hebbian_reinforce_value, Tier};
+    use crate::memory::tiers::{Tier, hebbian_reinforce_value};
 
     if !path.exists() {
         return Ok(Vec::new());
@@ -409,7 +409,12 @@ pub fn read_openclaw_mempalace(path: &Path) -> Result<Vec<ImportedClaim>> {
                 continue;
             }
         };
-        let text = node.text.as_deref().map(str::trim).unwrap_or("").to_string();
+        let text = node
+            .text
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string();
         if text.is_empty() {
             tracing::debug!(index = i, "skipping mempalace node with empty text");
             continue;
@@ -562,11 +567,7 @@ pub fn read_obsidian_manual_notes(dir: &Path) -> Result<Vec<ImportedClaim>> {
     Ok(out)
 }
 
-fn visit_obsidian_dir(
-    root: &Path,
-    current: &Path,
-    out: &mut Vec<ImportedClaim>,
-) -> Result<()> {
+fn visit_obsidian_dir(root: &Path, current: &Path, out: &mut Vec<ImportedClaim>) -> Result<()> {
     let entries = std::fs::read_dir(current)
         .with_context(|| format!("read obsidian dir {}", current.display()))?;
     for entry in entries {
@@ -616,7 +617,11 @@ fn visit_obsidian_dir(
                 .and_then(|p| p.components().next())
                 .and_then(|c| {
                     use std::path::Component;
-                    if let Component::Normal(n) = c { n.to_str() } else { None }
+                    if let Component::Normal(n) = c {
+                        n.to_str()
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or("");
             obsidian_folder_scope(folder).to_string()
@@ -874,12 +879,16 @@ not even json
         .unwrap();
         let claims = read_openclaw_memory_index(&path).unwrap();
         assert_eq!(claims.len(), 2);
-        assert!(claims
-            .iter()
-            .any(|c| c.statement.contains("NEOTH on Windows") && c.scope == "host:primary"));
-        assert!(claims
-            .iter()
-            .any(|c| c.statement.contains("Never reboot Cube") && c.scope == "global"));
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.statement.contains("NEOTH on Windows") && c.scope == "host:primary")
+        );
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.statement.contains("Never reboot Cube") && c.scope == "global")
+        );
         for c in &claims {
             assert_eq!(c.source, Source::ImportOpenclaw);
         }
@@ -899,7 +908,11 @@ not even json
         )
         .unwrap();
         let claims = read_openclaw_memory_index(&path).unwrap();
-        assert_eq!(claims.len(), 1, "entry without text/content must be skipped");
+        assert_eq!(
+            claims.len(),
+            1,
+            "entry without text/content must be skipped"
+        );
         assert_eq!(claims[0].statement, "valid claim");
     }
 
@@ -932,8 +945,16 @@ not even json
         let path = mempalace_fixture(dir.path(), json);
         let claims = read_openclaw_mempalace(&path).unwrap();
         assert_eq!(claims.len(), 2);
-        assert!(claims.iter().any(|c| c.statement.contains("terse output") && c.scope == "global"));
-        assert!(claims.iter().any(|c| c.statement.contains("Server is on unraid") && c.scope == "host:primary"));
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.statement.contains("terse output") && c.scope == "global")
+        );
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.statement.contains("Server is on unraid") && c.scope == "host:primary")
+        );
         for c in &claims {
             assert_eq!(c.source, Source::ImportOpenclaw);
         }
@@ -949,13 +970,17 @@ not even json
         let path = mempalace_fixture(dir.path(), json);
         let claims = read_openclaw_mempalace(&path).unwrap();
         assert_eq!(claims.len(), 2);
-        assert!(claims.iter().any(|c| c.statement.contains("bare node one") && c.scope == "global"));
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.statement.contains("bare node one") && c.scope == "global")
+        );
         assert!(claims.iter().any(|c| c.scope == "project:neoth"));
     }
 
     #[test]
     fn mempalace_replays_hebbian_links_in_statement() {
-        use crate::memory::tiers::{hebbian_reinforce_value, Tier};
+        use crate::memory::tiers::{Tier, hebbian_reinforce_value};
         let dir = tempdir().unwrap();
         // 2 hebbianLinks on a node with importance 0.5 → two reinforce passes.
         let json = r#"{"nodes":[
@@ -1046,7 +1071,11 @@ not even json
         let path = memory_db_fixture(dir.path(), true);
         let claims = read_openclaw_memory_db(&path).unwrap();
         // blank-content + draft rows must be excluded
-        assert_eq!(claims.len(), 2, "only learned+completed with content; got {claims:?}");
+        assert_eq!(
+            claims.len(),
+            2,
+            "only learned+completed with content; got {claims:?}"
+        );
         let learned = claims.iter().find(|c| c.scope == "learned").unwrap();
         assert!(learned.statement.contains("Rust is memory-safe"));
         assert!(learned.statement.contains("[programming]"));
@@ -1063,9 +1092,21 @@ not even json
         let dir = tempdir().unwrap();
         let path = memory_db_fixture(dir.path(), false);
         let claims = read_openclaw_memory_db(&path).unwrap();
-        assert_eq!(claims.len(), 2, "draft row must be excluded; got {claims:?}");
-        assert!(claims.iter().any(|c| c.scope == "learned" && c.statement == "Rust is memory-safe"));
-        assert!(claims.iter().any(|c| c.scope == "completed" && c.statement == "Finished neoth v0.3"));
+        assert_eq!(
+            claims.len(),
+            2,
+            "draft row must be excluded; got {claims:?}"
+        );
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.scope == "learned" && c.statement == "Rust is memory-safe")
+        );
+        assert!(
+            claims
+                .iter()
+                .any(|c| c.scope == "completed" && c.statement == "Finished neoth v0.3")
+        );
     }
 
     #[test]
@@ -1135,7 +1176,13 @@ not even json
     fn obsidian_folder_to_scope_mapping() {
         let dir = tempdir().unwrap();
         // Create one note in each mapped folder.
-        for folder in ["05-Personen", "06-Regeln", "09-Dokumente", "00-MOCs", "07-Other"] {
+        for folder in [
+            "05-Personen",
+            "06-Regeln",
+            "09-Dokumente",
+            "00-MOCs",
+            "07-Other",
+        ] {
             std::fs::create_dir(dir.path().join(folder)).unwrap();
             std::fs::write(
                 dir.path().join(folder).join("note.md"),

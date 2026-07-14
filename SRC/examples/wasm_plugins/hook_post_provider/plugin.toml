@@ -1,9 +1,8 @@
 # UX-08 — sample manifest for the post-provider hook example.
 #
-# This is the value-add over the echo / recall_summariser examples: it shows
-# the HOOK-STAGE manifest fields a plugin author declares so the daemon's hook
-# dispatcher invokes the plugin at the right pipeline stage. Copy this next to
-# the built `plugin.wasm` under ~/.neoth/plugins/hook_post_provider/.
+# This shows the advisory HOOK-STAGE manifest fields. The operator still wires
+# a HookDef action for this plugin explicitly; manifest presence alone never
+# grants interception of a pipeline stage.
 #
 # Parses against `wasm_plugin::manifest::PluginManifest`.
 
@@ -13,14 +12,14 @@ name = "Post-Provider Hook Demo"
 version = "0.1.0"
 description = "Observe the PostProvider pipeline stage; demonstrates log + the fuel-budget pattern."
 
-# Least-privilege: this observer only logs, so it needs no write capability.
-# One of: "none" | "read" | "write".
-requested_permissions = "read"
+# Least-privilege: this observer only logs and reads fuel, both level `none`.
+# One of: "none" | "read_only" | "write" | "execute" | "dangerous".
+requested_permissions = "none"
 
 # The pipeline stages this plugin observes. Valid stages (snake_case):
-#   pre_provider | post_provider | pre_channel_send | post_channel_receive
+#   pre_provider_call | post_provider_call | pre_channel_send | post_channel_receive
 #   | on_recall_query | on_consolidation_pass
-hook_stages = ["post_provider"]
+hook_stages = ["post_provider_call"]
 
 # Optional caps (omit to use the host defaults):
 # fuel_budget_override = 2000000

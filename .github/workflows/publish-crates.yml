@@ -1,0 +1,316 @@
+name: Publish crates.io packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to publish (for example v1.0.0)"
+        required: true
+        type: string
+      confirm:
+        description: "Type publish-<tag> (for example publish-v1.0.0)"
+        required: true
+        type: string
+
+concurrency:
+  group: crates-io-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  verify:
+    name: Verify publish contract
+    runs-on: ubuntu-24.04
+    outputs:
+      core_version: ${{ steps.contract.outputs.core_version }}
+      sdk_version: ${{ steps.contract.outputs.sdk_version }}
+    steps:
+      - name: Checkout selected tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - name: Verify tag, package names, binaries, and SDK dependency
+        id: contract
+        shell: python
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          release_tag = os.environ["RELEASE_TAG"]
+          confirm = os.environ["CONFIRM"]
+          github_ref = os.environ["GITHUB_REF"]
+
+          tag_match = re.fullmatch(
+              r"v(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)"
+              r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?",
+              release_tag,
+          )
+          if not tag_match:
+              raise SystemExit(f"invalid release tag: {release_tag}")
+          prerelease = tag_match.group(4)
+          if prerelease and any(
+              part.isdigit() and len(part) > 1 and part.startswith("0")
+              for part in prerelease.split(".")
+          ):
+              raise SystemExit(
+                  f"invalid numeric prerelease identifier: {release_tag}"
+              )
+          if github_ref != f"refs/tags/{release_tag}":
+              raise SystemExit(
+                  f"run this workflow on tag {release_tag}; selected ref is {github_ref}"
+              )
+          if confirm != f"publish-{release_tag}":
+              raise SystemExit(f"confirmation must be exactly publish-{release_tag}")
+
+          core = tomllib.loads(
+              pathlib.Path("SRC/neothd/Cargo.toml").read_text(encoding="utf-8")
+          )
+          sdk = tomllib.loads(
+              pathlib.Path("SRC/neoth-plugin-sdk/Cargo.toml").read_text(encoding="utf-8")
+          )
+          core_package = core["package"]
+          sdk_package = sdk["package"]
+          tag_version = release_tag[1:]
+
+          if core_package["name"] != "neoth":
+              raise SystemExit(f"public package must be neoth, got {core_package['name']}")
+          if core_package["version"] != tag_version:
+              raise SystemExit(
+                  f"tag {release_tag} != neoth {core_package['version']}"
+              )
+          if sdk_package["name"] != "neoth-plugin-sdk":
+              raise SystemExit(
+                  f"SDK package must be neoth-plugin-sdk, got {sdk_package['name']}"
+              )
+
+          bin_names = {target["name"] for target in core.get("bin", [])}
+          if bin_names != {"neoth", "neothd"}:
+              raise SystemExit(
+                  f"neoth must publish neoth + neothd binaries, got {sorted(bin_names)}"
+              )
+          if core.get("lib", {}).get("name") != "neothd":
+              raise SystemExit("compatibility library target must remain neothd")
+
+          sdk_dep = core["dependencies"]["neoth-plugin-sdk"]
+          sdk_version = sdk_package["version"]
+          if sdk_dep.get("version") != sdk_version:
+              raise SystemExit(
+                  "neoth-plugin-sdk dependency version must match the SDK manifest: "
+                  f"{sdk_dep.get('version')} != {sdk_version}"
+              )
+          if sdk_dep.get("path") != "../neoth-plugin-sdk":
+              raise SystemExit("workspace build must keep the local SDK path dependency")
+          if "_host" not in sdk_dep.get("features", []):
+              raise SystemExit("neoth must enable the SDK _host feature")
+
+          output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              handle.write(f"core_version={core_package['version']}\n")
+              handle.write(f"sdk_version={sdk_version}\n")
+
+          print(
+              "Publish contract OK: "
+              f"{release_tag} -> neoth {core_package['version']}; "
+              f"dependency neoth-plugin-sdk {sdk_version}"
+          )
+
+      # The core package cannot resolve until the SDK is visible in the
+      # crates.io index. Package the independent SDK here; the next job owns the
+      # ordered publish + propagation wait for the core crate.
+      - name: Package SDK without publishing
+        working-directory: SRC
+        run: cargo package -p neoth-plugin-sdk --locked --no-verify
+
+  publish:
+    name: Publish SDK, then neoth
+    needs: verify
+    runs-on: ubuntu-24.04
+    environment: crates-io
+    env:
+      CORE_VERSION: ${{ needs.verify.outputs.core_version }}
+      SDK_VERSION: ${{ needs.verify.outputs.sdk_version }}
+    steps:
+      - name: Checkout selected tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      # Build the exact immutable archive before looking at crates.io. A crate's
+      # `repository` metadata is self-asserted and therefore not ownership
+      # proof; an already-published version is accepted only when its registry
+      # checksum matches the bytes this selected release tag packages locally.
+      - name: Package SDK for immutable-content verification
+        working-directory: SRC
+        run: cargo package -p neoth-plugin-sdk --locked --no-verify
+
+      - name: Check SDK registry state
+        id: sdk_registry
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response="$RUNNER_TEMP/crates-io-response.json"
+          status=$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+            --header 'User-Agent: NEOTH-release-workflow' \
+            "https://crates.io/api/v1/crates/neoth-plugin-sdk/$SDK_VERSION")
+
+          case "$status" in
+            200)
+              python - "$response" "target/package/neoth-plugin-sdk-$SDK_VERSION.crate" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          local_archive = pathlib.Path(sys.argv[2])
+          expected_checksum = ((data.get("version") or {}).get("checksum") or "").lower()
+          actual_checksum = hashlib.sha256(local_archive.read_bytes()).hexdigest()
+          if not expected_checksum or actual_checksum != expected_checksum:
+              raise SystemExit(
+                  "existing neoth-plugin-sdk version does not match this release tag: "
+                  f"local sha256={actual_checksum}, crates.io checksum={expected_checksum!r}"
+              )
+          repository = (
+              (data.get("crate") or {}).get("repository")
+              or (data.get("version") or {}).get("repository")
+              or ""
+          )
+          normalized = repository.lower().rstrip("/").removesuffix(".git")
+          if normalized != "https://github.com/the-geek-freaks/neoth":
+              raise SystemExit(
+                  f"existing neoth-plugin-sdk version has unexpected repository: {repository!r}"
+              )
+          PY
+              echo "neoth-plugin-sdk $SDK_VERSION already exists with this tag's exact package checksum."
+              echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::crates.io returned HTTP $status while checking neoth-plugin-sdk $SDK_VERSION."
+              cat "$response"
+              exit 1
+              ;;
+          esac
+
+      - name: Publish SDK
+        if: steps.sdk_registry.outputs.needs_publish == 'true'
+        working-directory: SRC
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not configured for the crates-io environment."
+            exit 1
+          fi
+          # The exact archive was produced above. Avoid running package build
+          # scripts while the registry token is present.
+          cargo publish -p neoth-plugin-sdk --locked --no-verify
+
+      - name: Wait for SDK index propagation and package neoth
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if cargo package -p neoth --locked --no-verify; then
+              echo "neoth-plugin-sdk $SDK_VERSION is resolvable; neoth $CORE_VERSION packages cleanly."
+              exit 0
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "::error::neoth-plugin-sdk $SDK_VERSION did not become resolvable within 5 minutes."
+              exit 1
+            fi
+            echo "SDK not visible to Cargo yet (attempt $attempt/30); retrying in 10 seconds."
+            sleep 10
+          done
+
+      - name: Check neoth registry state
+        id: core_registry
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response="$RUNNER_TEMP/crates-io-response.json"
+          status=$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+            --header 'User-Agent: NEOTH-release-workflow' \
+            "https://crates.io/api/v1/crates/neoth/$CORE_VERSION")
+
+          case "$status" in
+            200)
+              python - "$response" "target/package/neoth-$CORE_VERSION.crate" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          local_archive = pathlib.Path(sys.argv[2])
+          expected_checksum = ((data.get("version") or {}).get("checksum") or "").lower()
+          actual_checksum = hashlib.sha256(local_archive.read_bytes()).hexdigest()
+          if not expected_checksum or actual_checksum != expected_checksum:
+              raise SystemExit(
+                  "existing neoth version does not match this release tag: "
+                  f"local sha256={actual_checksum}, crates.io checksum={expected_checksum!r}"
+              )
+          repository = (
+              (data.get("crate") or {}).get("repository")
+              or (data.get("version") or {}).get("repository")
+              or ""
+          )
+          normalized = repository.lower().rstrip("/").removesuffix(".git")
+          if normalized != "https://github.com/the-geek-freaks/neoth":
+              raise SystemExit(
+                  f"existing neoth version has unexpected repository: {repository!r}"
+              )
+          PY
+              echo "neoth $CORE_VERSION already exists with this tag's exact package checksum."
+              echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::crates.io returned HTTP $status while checking neoth $CORE_VERSION."
+              cat "$response"
+              exit 1
+              ;;
+          esac
+
+      - name: Publish neoth
+        if: steps.core_registry.outputs.needs_publish == 'true'
+        working-directory: SRC
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not configured for the crates-io environment."
+            exit 1
+          fi
+          # The preceding package step proved the exact registry dependency is
+          # visible. Do not run package build scripts with the token in scope.
+          cargo publish -p neoth --locked --no-verify

@@ -75,7 +75,7 @@ pub async fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()
             // P0: a merge changes attribution semantics — under required-audit it
             // must NOT proceed un-audited when a daemon owns the WAL but its
             // audit-RPC listener is unreachable.
-            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = FreedomConfig::load_from_default_path_or_default()?;
             let daemon_live = matches!(
                 crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
                 Ok(Some(_))
@@ -198,7 +198,11 @@ async fn emit_identity_merged(
 fn render_list(ids: &[identity_store::Identity], output: OutputFormat) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::to_string_pretty(ids).unwrap_or_default())
+            println!(
+                "{}",
+                serde_json::to_string_pretty(ids)
+                    .expect("identity list contains only serializable fields")
+            )
         }
         OutputFormat::Table => {
             if ids.is_empty() {

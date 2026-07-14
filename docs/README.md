@@ -27,8 +27,13 @@ normal users, explicit enough for pros.
 ### Normal user
 
 ```bash
-# pre-1.0: install from the bootstrap script (crates.io publish lands with 1.0)
-curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
+# Until the first signed release and ordered crates.io publish, install from source.
+git clone https://github.com/The-Geek-Freaks/NEOTH
+cd NEOTH/SRC
+cargo install --locked --path neothd --features release-desktop
+cargo install --locked --path neothd-gui
+cargo install --locked --path neoth-migrate
+cargo install --locked --path neoth-relay
 neoth gui
 neoth doctor
 ```
@@ -41,7 +46,7 @@ neoth status
 neoth doctor
 neoth privacy audit --last 30d
 neoth profile show --evidence
-neoth wal verify
+neoth verify
 ```
 
 ### Fully local
@@ -50,7 +55,7 @@ neoth wal verify
 neoth preset activate fully-local
 neoth preset apply fully-local
 neoth doctor
-neoth privacy audit --destinations
+neoth privacy audit
 ```
 
 ### Coding buddy

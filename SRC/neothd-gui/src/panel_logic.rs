@@ -217,6 +217,116 @@ pub fn parse_safe_mode(json: &str) -> SafeModeSnapshot {
 
 // ── GR-03 trust panel (parse `neoth trust --output json`) ────────────────────
 
+/// Parsed `neoth omi status --output json`. Existing secrets are represented
+/// only by presence booleans; the GUI never reads secret values back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OmiSnapshot {
+    pub enabled: bool,
+    pub mode: String,
+    pub endpoint: String,
+    pub listen_addr: String,
+    pub configuration_valid: bool,
+    pub configuration_error: String,
+    pub developer_credential_present: bool,
+    pub native_credential_present: bool,
+    pub runtime_state: String,
+    pub runtime_detail: String,
+    pub pending_audits: u64,
+    pub retention_days: u64,
+    pub retain_transcripts: bool,
+    pub audio_enabled: bool,
+    pub visual_enabled: bool,
+    pub video_enabled: bool,
+    pub allow_cloud_api: bool,
+    pub allow_cloud_summary: bool,
+    pub create_actions: bool,
+    pub seed_groundtruth: bool,
+    pub summary_enabled: bool,
+}
+
+impl Default for OmiSnapshot {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: "developer_api".to_string(),
+            endpoint: "http://127.0.0.1:8002".to_string(),
+            listen_addr: "127.0.0.1:8003".to_string(),
+            configuration_valid: false,
+            configuration_error: String::new(),
+            developer_credential_present: false,
+            native_credential_present: false,
+            runtime_state: "unknown".to_string(),
+            runtime_detail: String::new(),
+            pending_audits: 0,
+            retention_days: 30,
+            retain_transcripts: false,
+            audio_enabled: false,
+            visual_enabled: false,
+            video_enabled: false,
+            allow_cloud_api: false,
+            allow_cloud_summary: false,
+            create_actions: true,
+            seed_groundtruth: true,
+            summary_enabled: true,
+        }
+    }
+}
+
+pub fn parse_omi_status(json: &str) -> OmiSnapshot {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return OmiSnapshot::default();
+    };
+    let defaults = OmiSnapshot::default();
+    let string = |key: &str, fallback: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(fallback)
+            .to_string()
+    };
+    let boolean = |key: &str, fallback: bool| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(fallback)
+    };
+    OmiSnapshot {
+        enabled: boolean("enabled", defaults.enabled),
+        mode: string("mode", &defaults.mode),
+        endpoint: string("endpoint", &defaults.endpoint),
+        listen_addr: string("listen_addr", &defaults.listen_addr),
+        configuration_valid: boolean("configuration_valid", defaults.configuration_valid),
+        configuration_error: string("configuration_error", &defaults.configuration_error),
+        developer_credential_present: boolean(
+            "developer_api_credential_present",
+            defaults.developer_credential_present,
+        ),
+        native_credential_present: boolean(
+            "native_ingest_credential_present",
+            defaults.native_credential_present,
+        ),
+        runtime_state: string("runtime_state", &defaults.runtime_state),
+        runtime_detail: string("runtime_detail", &defaults.runtime_detail),
+        pending_audits: value
+            .get("pending_audits")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(defaults.pending_audits),
+        retention_days: value
+            .get("retention_days")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(defaults.retention_days),
+        retain_transcripts: boolean("retain_transcripts", defaults.retain_transcripts),
+        audio_enabled: boolean("audio_enabled", defaults.audio_enabled),
+        visual_enabled: boolean("visual_enabled", defaults.visual_enabled),
+        video_enabled: boolean("video_enabled", defaults.video_enabled),
+        allow_cloud_api: boolean("allow_cloud_api", defaults.allow_cloud_api),
+        allow_cloud_summary: boolean("allow_cloud_summary", defaults.allow_cloud_summary),
+        create_actions: boolean("create_actions", defaults.create_actions),
+        seed_groundtruth: boolean("seed_groundtruth", defaults.seed_groundtruth),
+        summary_enabled: boolean("summary_enabled", defaults.summary_enabled),
+    }
+}
+
 /// One label→value row for the Trust panel (autonomy / privacy / recovery /
 /// ledger sections all render as these).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -474,8 +584,8 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
     let f = |p: &str| v.pointer(p).and_then(|x| x.as_f64());
     let cpu_load_pct = f("/cpu_load_pct");
     let gpu_util_pct = f("/gpu_load/util_pct");
-    let gpu_temp_c   = f("/gpu_load/temp_c");
-    let gpu_power_w  = f("/gpu_load/power_w");
+    let gpu_temp_c = f("/gpu_load/temp_c");
+    let gpu_power_w = f("/gpu_load/power_w");
     let load_readout = build_load_readout(cpu_load_pct, gpu_util_pct, gpu_temp_c, gpu_power_w);
 
     HardwareSnapshot {
@@ -894,14 +1004,16 @@ pub fn group_skill_rows(skills: &[SkillSummary], filter: &str) -> Vec<SkillIndex
 pub struct PluginSummary {
     pub id: String,
     pub name: String,
-    pub activation: String, // "enabled" | "pending" | "disabled" | …
+    pub activation: String, // "active" | "pending" | "disabled" | "reconsent_required"
+    pub requested_permission: String,
     /// True when the plugin's manifest declares a `ui_surface` object.
     pub has_ui_surface: bool,
     /// The `ui_surface.title` value, or "" when absent.
     pub ui_title: String,
 }
 
-/// Parse `neoth plugin list --output json` (array of `{id,name,activation,ui_surface?}`).
+/// Parse `neoth plugin list --output json` (array of
+/// `{id,name,activation,requested_permission,ui_surface?}`).
 /// PURE + robust (malformed/non-array → empty; id-less entries skipped).
 /// `ui_surface` is optional — absent or non-object → has_ui_surface=false, ui_title="".
 pub fn parse_plugins(json: &str) -> Vec<PluginSummary> {
@@ -924,6 +1036,11 @@ pub fn parse_plugins(json: &str) -> Vec<PluginSummary> {
                 .and_then(|a| a.as_str())
                 .unwrap_or("unknown")
                 .to_string();
+            let requested_permission = p
+                .get("requested_permission")
+                .and_then(|permission| permission.as_str())
+                .unwrap_or("none")
+                .to_string();
             // ui_surface is optional; tolerant — missing or wrong type → false / "".
             let (has_ui_surface, ui_title) = match p.get("ui_surface").and_then(|s| s.as_object()) {
                 Some(surf) => {
@@ -940,6 +1057,7 @@ pub fn parse_plugins(json: &str) -> Vec<PluginSummary> {
                 id,
                 name,
                 activation,
+                requested_permission,
                 has_ui_surface,
                 ui_title,
             })
@@ -972,14 +1090,8 @@ pub fn parse_plugin_events(json: &str) -> Vec<PluginEventRow> {
         .filter_map(|e| {
             // kind must be present; payload_bytes + ts_unix default to 0 if absent/wrong type.
             let kind = e.get("kind")?.as_str()?.to_string();
-            let payload_bytes = e
-                .get("payload_bytes")
-                .and_then(|b| b.as_u64())
-                .unwrap_or(0);
-            let ts_unix = e
-                .get("ts_unix")
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0);
+            let payload_bytes = e.get("payload_bytes").and_then(|b| b.as_u64()).unwrap_or(0);
+            let ts_unix = e.get("ts_unix").and_then(|t| t.as_u64()).unwrap_or(0);
             Some(PluginEventRow {
                 kind,
                 payload_bytes,
@@ -1062,26 +1174,31 @@ pub struct ChannelStatus {
 /// emits ONLY the boolean — token values never leave this function. A malformed
 /// file yields "all disconnected" (never panics, never partial-leaks).
 pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
-    // One row per messaging surface in the canonical `channels::ChannelKind`
-    // (the WhatsApp Business/Baileys pair collapses to one "whatsapp" row; the
-    // non-messaging `pears_bearer_token` transport is not a reachable channel).
-    // Only the PRESENCE of each channel's representative credential is derived —
-    // the field is read into an `Option<String>` solely to test emptiness and
-    // the value never leaves this function.
+    // One row per messaging surface in the canonical `channels::ChannelKind`.
+    // Meta Cloud and Baileys remain separate rows because they use independent
+    // credentials, transports, and trust boundaries.
+    // Only the PRESENCE of each channel's required credential fields is derived —
+    // values are read into `Option<String>` solely to test emptiness and never
+    // leave this function. Matrix deliberately checks homeserver + user + auth,
+    // so a token-only partial adoption is not shown as connected.
     #[derive(serde::Deserialize, Default)]
     struct MinimalCreds {
         telegram_token: Option<String>,
         whatsapp_token: Option<String>,
+        whatsapp_baileys_url: Option<String>,
+        whatsapp_baileys_token: Option<String>,
+        whatsapp_baileys_allowed_senders: Option<String>,
         slack_bot_token: Option<String>,
         discord_bot_token: Option<String>,
         signal_phone_number: Option<String>,
+        matrix_homeserver: Option<String>,
+        matrix_user_id: Option<String>,
         matrix_access_token: Option<String>,
         matrix_password: Option<String>,
         line_channel_access_token: Option<String>,
         irc_server: Option<String>,
         mattermost_token: Option<String>,
         twitch_oauth_token: Option<String>,
-        keet_seed_phrase: Option<String>,
         nostr_secret_key: Option<String>,
         bluebubbles_url: Option<String>,
         gchat_subscription: Option<String>,
@@ -1095,18 +1212,25 @@ pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
     vec![
         row("telegram", present(&creds.telegram_token)),
         row("whatsapp", present(&creds.whatsapp_token)),
+        row(
+            "whatsapp_baileys",
+            present(&creds.whatsapp_baileys_url)
+                && present(&creds.whatsapp_baileys_token)
+                && present(&creds.whatsapp_baileys_allowed_senders),
+        ),
         row("slack", present(&creds.slack_bot_token)),
         row("discord", present(&creds.discord_bot_token)),
         row("signal", present(&creds.signal_phone_number)),
         row(
             "matrix",
-            present(&creds.matrix_access_token) || present(&creds.matrix_password),
+            present(&creds.matrix_homeserver)
+                && present(&creds.matrix_user_id)
+                && (present(&creds.matrix_access_token) || present(&creds.matrix_password)),
         ),
         row("line", present(&creds.line_channel_access_token)),
         row("irc", present(&creds.irc_server)),
         row("mattermost", present(&creds.mattermost_token)),
         row("twitch", present(&creds.twitch_oauth_token)),
-        row("keet", present(&creds.keet_seed_phrase)),
         row("nostr", present(&creds.nostr_secret_key)),
         row("imessage", present(&creds.bluebubbles_url)),
         row("gchat", present(&creds.gchat_subscription)),
@@ -1159,7 +1283,12 @@ pub fn parse_presets(json: &str) -> Vec<PresetEntry> {
                         .and_then(|d| d.as_str())
                         .unwrap_or("")
                         .to_string();
-                    Some(PresetEntry { name, active, builtin, description })
+                    Some(PresetEntry {
+                        name,
+                        active,
+                        builtin,
+                        description,
+                    })
                 })
                 .collect()
         })
@@ -1220,14 +1349,27 @@ pub fn parse_apply_plan(json: &str) -> Option<ApplyPlan> {
             arr.iter()
                 .filter_map(|c| {
                     let path = c.get("path")?.as_str()?.to_string();
-                    let old = c.get("old").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let new = c.get("new").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let old = c
+                        .get("old")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let new = c
+                        .get("new")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     Some(WarnChange { path, old, new })
                 })
                 .collect()
         })
         .unwrap_or_default();
-    Some(ApplyPlan { name, autonomy_requested, warn_changes, fields_changed_count })
+    Some(ApplyPlan {
+        name,
+        autonomy_requested,
+        warn_changes,
+        fields_changed_count,
+    })
 }
 
 // ── SPEC-05 step5c behavioural-profile selector ──────────────────────────────
@@ -1751,10 +1893,14 @@ fn ticker_frame_over(messages: &[&'static str], tick: u64) -> &'static str {
 
 /// Remove the toast with the given `id` from `toasts`. Returns the new vec.
 /// Called from the event-loop callback after the 6 s lifetime expires.
-pub fn prune_toast(toasts: Vec<(i32, String, String, String)>, id: i32)
-    -> Vec<(i32, String, String, String)>
-{
-    toasts.into_iter().filter(|(tid, _, _, _)| *tid != id).collect()
+pub fn prune_toast(
+    toasts: Vec<(i32, String, String, String)>,
+    id: i32,
+) -> Vec<(i32, String, String, String)> {
+    toasts
+        .into_iter()
+        .filter(|(tid, _, _, _)| *tid != id)
+        .collect()
 }
 
 /// Allocate a fresh toast id that does not collide with any id in `toasts`.
@@ -1773,7 +1919,11 @@ pub type ActivityTuple = (i32, String, String, String, String, bool);
 
 /// Allocate the next activity id (monotonic, no collision with existing rows).
 pub fn next_activity_id(rows: &[ActivityTuple]) -> i32 {
-    let max = rows.iter().map(|(id, _, _, _, _, _)| *id).max().unwrap_or(0);
+    let max = rows
+        .iter()
+        .map(|(id, _, _, _, _, _)| *id)
+        .max()
+        .unwrap_or(0);
     max + 1
 }
 
@@ -1831,9 +1981,7 @@ pub fn format_recall_output(stdout: &str, stderr: &str, query: &str) -> String {
 /// Parse `neoth status --output json` into (mode, autonomy, channel_health,
 /// wal_bytes, tier_counts, daemon_state).
 /// `daemon_state` is "live" | "connecting" | "error" for the Led widget.
-pub fn parse_overview_status(
-    json: &str,
-) -> (String, String, String, String, String, String) {
+pub fn parse_overview_status(json: &str) -> (String, String, String, String, String, String) {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
 
     let mode = v
@@ -1896,7 +2044,14 @@ pub fn parse_overview_status(
         "live".to_string()
     };
 
-    (mode, autonomy, channel_health, wal_bytes, tier_counts, daemon_state)
+    (
+        mode,
+        autonomy,
+        channel_health,
+        wal_bytes,
+        tier_counts,
+        daemon_state,
+    )
 }
 
 /// Parse `neoth meter --format json` into (tokens_in, tokens_out, responses, cost, fraction).
@@ -2172,9 +2327,20 @@ pub fn now_hhmm() -> String {
 ///   "n8n_path":"/usr/local/bin/n8n","bundled_workflows":[]}`
 pub fn parse_n8n_status(json: &str) -> (bool, String, String) {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let installed    = v.get("n8n_installed").and_then(|x| x.as_bool()).unwrap_or(false);
-    let webhook_base = v.get("webhook_base").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let path         = v.get("n8n_path").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let installed = v
+        .get("n8n_installed")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
+    let webhook_base = v
+        .get("webhook_base")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let path = v
+        .get("n8n_path")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     (installed, webhook_base, path)
 }
 
@@ -2207,26 +2373,84 @@ pub fn parse_n8n_workflows(json: &str) -> Vec<(String, String)> {
 
 /// Parse `neoth babel status --output json`.
 ///
-/// Returns `(enabled, threshold, epsilon, federate, total_windows,
-///           collapse_flagged, gran_rows)` where `gran_rows` is
-/// `Vec<(window_secs_i32, count_i32, last_ts_end)>`.
 /// Row shape for the babel granularity table: `(window_secs, count, last_ts_end)`.
 pub type BabelGranRow = (i32, i32, String);
-/// Full `parse_babel_status` result — see the doc comment above for field order.
-pub type BabelStatus = (bool, String, String, bool, i32, i32, Vec<BabelGranRow>);
+
+#[derive(Debug, Default, PartialEq)]
+pub struct BabelStatus {
+    pub enabled: bool,
+    pub threshold: String,
+    pub epsilon: String,
+    pub federate: bool,
+    pub total_windows: i32,
+    pub collapse_flagged: i32,
+    pub memory_signals: String,
+    pub skill_signals: String,
+    pub k_d: String,
+    pub gran_rows: Vec<BabelGranRow>,
+}
 
 pub fn parse_babel_status(json: &str) -> BabelStatus {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let enabled   = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
-    let threshold = v.get("threshold").map(|x| x.to_string()).unwrap_or_default();
-    let epsilon   = v
-        .get("epsilon_calibrated")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-    let federate  = v.get("federate").and_then(|x| x.as_bool()).unwrap_or(false);
-    let total     = v.get("total_windows").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-    let collapse  = v.get("collapse_flagged").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+    let enabled = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
+    let threshold = v
+        .get("threshold")
+        .map(|x| x.to_string())
+        .unwrap_or_default();
+    let epsilon = match v.get("epsilon_calibrated") {
+        Some(serde_json::Value::Number(value)) => value.to_string(),
+        Some(serde_json::Value::String(value)) => value.clone(),
+        _ => String::new(),
+    };
+    let federate = v.get("federate").and_then(|x| x.as_bool()).unwrap_or(false);
+    let total = v.get("total_windows").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+    let collapse = v
+        .get("collapse_flagged")
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0) as i32;
+
+    let signal_status = |key: &str| {
+        let Some(signal) = v.get(key) else {
+            return String::new();
+        };
+        let enabled = signal
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mapping = signal
+            .get("mapping_version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("mapping unavailable");
+        format!(
+            "{} ({mapping})",
+            if enabled { "enabled" } else { "disabled" }
+        )
+    };
+    let memory_signals = signal_status("memory_signals");
+    let skill_signals = signal_status("skill_signals");
+    let k_d = v
+        .get("k_d")
+        .map(|posture| {
+            let mode = posture
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let requested = posture
+                .get("requested_model")
+                .and_then(serde_json::Value::as_str);
+            let degraded = posture
+                .get("last_window_posture")
+                .and_then(|last| last.get("degraded_reason"))
+                .and_then(serde_json::Value::as_str);
+            let mut status =
+                requested.map_or_else(|| mode.to_string(), |model| format!("{mode} / {model}"));
+            if let Some(reason) = degraded {
+                status.push_str(" / degraded: ");
+                status.push_str(reason);
+            }
+            status
+        })
+        .unwrap_or_default();
 
     let gran_rows: Vec<BabelGranRow> = v
         .get("windows_by_granularity")
@@ -2235,7 +2459,10 @@ pub fn parse_babel_status(json: &str) -> BabelStatus {
         .unwrap_or_default()
         .iter()
         .map(|item| {
-            let ws  = item.get("window_secs").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+            let ws = item
+                .get("window_secs")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0) as i32;
             let cnt = item.get("count").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
             let last = item
                 .get("last_ts_end")
@@ -2246,7 +2473,18 @@ pub fn parse_babel_status(json: &str) -> BabelStatus {
         })
         .collect();
 
-    (enabled, threshold, epsilon, federate, total, collapse, gran_rows)
+    BabelStatus {
+        enabled,
+        threshold,
+        epsilon,
+        federate,
+        total_windows: total,
+        collapse_flagged: collapse,
+        memory_signals,
+        skill_signals,
+        k_d,
+        gran_rows,
+    }
 }
 
 /// Parse `neoth babel windows --n 12 --output json`.
@@ -2267,12 +2505,27 @@ pub fn parse_babel_windows(json: &str) -> Vec<BabelWindowRow> {
         .unwrap_or_default();
     arr.iter()
         .map(|item| {
-            let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let ws = item.get("window_secs").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-            let ts_start = item.get("ts_start").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let ts_end   = item.get("ts_end").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let b_log    = item.get("b_log").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-            let b_mult   = item.get("b_mult").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            let id = item
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ws = item
+                .get("window_secs")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0) as i32;
+            let ts_start = item
+                .get("ts_start")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ts_end = item
+                .get("ts_end")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let b_log = item.get("b_log").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            let b_mult = item.get("b_mult").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
             let b_bottleneck = item
                 .get("b_bottleneck")
                 .and_then(|x| x.as_f64())
@@ -2283,7 +2536,16 @@ pub fn parse_babel_windows(json: &str) -> Vec<BabelWindowRow> {
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            (id, ws, ts_start, ts_end, b_log, b_mult, b_bottleneck, collapse_kind)
+            (
+                id,
+                ws,
+                ts_start,
+                ts_end,
+                b_log,
+                b_mult,
+                b_bottleneck,
+                collapse_kind,
+            )
         })
         .collect()
 }
@@ -2311,8 +2573,12 @@ pub fn parse_calendar_events(json: &str) -> (bool, Vec<(String, String, String)>
     let rows: Vec<(String, String, String)> = events
         .iter()
         .filter_map(|item| {
-            let summary  = item.get("summary").and_then(|x| x.as_str())?.to_string();
-            let start_raw = item.get("start").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let summary = item.get("summary").and_then(|x| x.as_str())?.to_string();
+            let start_raw = item
+                .get("start")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             // Display: keep first 16 chars of ISO timestamp (YYYY-MM-DDTHH:MM).
             let datetime = if start_raw.len() >= 16 {
                 start_raw[..16].replace('T', " ")
@@ -2337,14 +2603,26 @@ pub fn parse_calendar_events(json: &str) -> (bool, Vec<(String, String, String)>
 /// Returns `(enabled, auto, skillopt_installed, last_run, autonomy)`.
 pub fn parse_selfimprove_status(json: &str) -> (bool, bool, bool, String, String) {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let enabled  = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
-    let auto     = v.get("auto")
+    let enabled = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
+    let auto = v
+        .get("auto")
         .and_then(|x| x.as_bool())
         .or_else(|| v.get("implied_by_full_auto").and_then(|x| x.as_bool()))
         .unwrap_or(false);
-    let skillopt = v.get("skillopt_installed").and_then(|x| x.as_bool()).unwrap_or(false);
-    let last     = v.get("last").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let autonomy = v.get("autonomy").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let skillopt = v
+        .get("skillopt_installed")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
+    let last = v
+        .get("last")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let autonomy = v
+        .get("autonomy")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     (enabled, auto, skillopt, last, autonomy)
 }
 
@@ -2361,9 +2639,13 @@ pub fn parse_selfimprove_proposals(json: &str) -> Vec<(String, String, String)> 
         .unwrap_or_default();
     arr.iter()
         .filter_map(|item| {
-            let id    = item.get("id").and_then(|x| x.as_str())?.to_string();
-            let title = item.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let desc  = item
+            let id = item.get("id").and_then(|x| x.as_str())?.to_string();
+            let title = item
+                .get("title")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let desc = item
                 .get("description")
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
@@ -2386,10 +2668,23 @@ pub fn parse_selfimprove_log(json: &str) -> Vec<(String, String, String, String)
     arr.iter()
         .take(10)
         .map(|item| {
-            let id     = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let title  = item.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let status = item.get("status").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let ts     = item.get("ts")
+            let id = item
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let title = item
+                .get("title")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let status = item
+                .get("status")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ts = item
+                .get("ts")
                 .or_else(|| item.get("timestamp"))
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
@@ -2556,7 +2851,10 @@ mod selfdev_tests {
         assert_eq!(r.status, "accepted");
         assert_eq!(r.patch_path, "/tmp/edit.patch");
         assert_eq!(r.diff_sha256, "abc123def456");
-        assert_eq!(r.target_paths, vec!["src/cli/mod.rs", "src/cli/obsidian.rs"]);
+        assert_eq!(
+            r.target_paths,
+            vec!["src/cli/mod.rs", "src/cli/obsidian.rs"]
+        );
     }
 
     #[test]
@@ -2626,9 +2924,21 @@ pub struct MeshStatusSnap {
 /// Returns `(vault_path, subdir, result_text)`.
 pub fn parse_obsidian_status(json: &str) -> (String, String, String) {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let vault_path  = v.get("vault_path").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let subdir      = v.get("subdir").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let result_text = v.get("status").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let vault_path = v
+        .get("vault_path")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let subdir = v
+        .get("subdir")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let result_text = v
+        .get("status")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     (vault_path, subdir, result_text)
 }
 
@@ -2638,7 +2948,11 @@ pub fn parse_obsidian_status(json: &str) -> (String, String, String) {
 /// Returns `(Vec<(day, path, entries_i32)>, refreshed_at)`.
 pub fn parse_dream_days(json: &str) -> (Vec<(String, String, i32)>, String) {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let refreshed_at = v.get("refreshed_at").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let refreshed_at = v
+        .get("refreshed_at")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     let arr = v
         .get("days")
         .and_then(|x| x.as_array())
@@ -2647,8 +2961,12 @@ pub fn parse_dream_days(json: &str) -> (Vec<(String, String, i32)>, String) {
     let days = arr
         .iter()
         .filter_map(|item| {
-            let day     = item.get("day").and_then(|x| x.as_str())?.to_string();
-            let path    = item.get("path").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let day = item.get("day").and_then(|x| x.as_str())?.to_string();
+            let path = item
+                .get("path")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             let entries = item.get("entries").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
             Some((day, path, entries))
         })
@@ -2669,9 +2987,17 @@ pub fn parse_dream_entries(json: &str) -> Vec<(String, String, String)> {
         .unwrap_or_default();
     arr.iter()
         .filter_map(|item| {
-            let day   = item.get("day").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let day = item
+                .get("day")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             let title = item.get("title").and_then(|x| x.as_str())?.to_string();
-            let body  = item.get("body").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let body = item
+                .get("body")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             Some((day, title, body))
         })
         .collect()
@@ -2690,10 +3016,26 @@ pub fn parse_wiki_rows(json: &str) -> Vec<WikiRowData> {
         .unwrap_or_default();
     arr.iter()
         .map(|item| WikiRowData {
-            id:          item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            kind:        item.get("kind").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            description: item.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            gate:        item.get("gate").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            id: item
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            kind: item
+                .get("kind")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            description: item
+                .get("description")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            gate: item
+                .get("gate")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
         })
         .collect()
 }
@@ -2730,8 +3072,15 @@ pub fn parse_buddy_status(json: &str) -> BuddyStatusSnap {
                 .collect()
         })
         .unwrap_or_default();
-    let autonomy = v.get("autonomy").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    BuddyStatusSnap { self_activation_skills: skills, autonomy }
+    let autonomy = v
+        .get("autonomy")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    BuddyStatusSnap {
+        self_activation_skills: skills,
+        autonomy,
+    }
 }
 
 /// Parse `neoth cluster status --output json` → `MeshStatusSnap`.
@@ -2741,7 +3090,11 @@ pub fn parse_buddy_status(json: &str) -> BuddyStatusSnap {
 /// On parse failure all fields are empty / defaults (the cluster feature may not be built).
 pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let node_id = v.get("node_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let node_id = v
+        .get("node_id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     let listen_port = v
         .get("listen_port")
         .map(|x| x.to_string().replace('"', ""))
@@ -2762,21 +3115,38 @@ pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
         .map(|arr| {
             arr.iter()
                 .map(|p| MeshPeerData {
-                    id:        p.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    last_seen: p.get("last_seen").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    reachable: p.get("reachable").and_then(|x| x.as_bool()).unwrap_or(false),
+                    id: p
+                        .get("id")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    last_seen: p
+                        .get("last_seen")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    reachable: p
+                        .get("reachable")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false),
                 })
                 .collect()
         })
         .unwrap_or_default();
-    MeshStatusSnap { node_id, listen_port, trusted_ssids, peers, gossip_note: String::new() }
+    MeshStatusSnap {
+        node_id,
+        listen_port,
+        trusted_ssids,
+        peers,
+        gossip_note: String::new(),
+    }
 }
 
 /// DES-13 — one origin-peer's aggregated backup summary for the Mesh
 /// redundancy panel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForeignBackupPeer {
-    pub peer: String,   // origin peer pubkey (truncated for display)
+    pub peer: String, // origin peer pubkey (truncated for display)
     pub count: u64,
     pub bytes: u64,
     pub latest_at: i64, // latest received_at unix secs
@@ -2919,7 +3289,17 @@ pub fn parse_chat_consent_grants(json: &str) -> Vec<(String, bool)> {
 // where `timeout` is `timeout_seconds` as a display string (empty if 0/absent).
 /// Row shape for the cron jobs table:
 /// `(id, name, enabled, cron, tz, role, timeout, channel, recipient)`.
-pub type CronJobRow = (String, String, bool, String, String, String, String, String, String);
+pub type CronJobRow = (
+    String,
+    String,
+    bool,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
 
 pub fn parse_cron_jobs(json: &str) -> Vec<CronJobRow> {
     let arr = match serde_json::from_str::<serde_json::Value>(json) {
@@ -2928,20 +3308,60 @@ pub fn parse_cron_jobs(json: &str) -> Vec<CronJobRow> {
     };
     arr.iter()
         .filter_map(|item| {
-            let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let id = item
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             if id.is_empty() {
                 return None; // id is required
             }
-            let name    = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let enabled = item.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
-            let cron    = item.get("cron").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let tz      = item.get("tz").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let role    = item.get("role").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let timeout_secs = item.get("timeout_seconds").and_then(|x| x.as_i64()).unwrap_or(0);
-            let timeout = if timeout_secs > 0 { timeout_secs.to_string() } else { String::new() };
-            let channel   = item.get("channel").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let recipient = item.get("recipient").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            Some((id, name, enabled, cron, tz, role, timeout, channel, recipient))
+            let name = item
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let enabled = item
+                .get("enabled")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false);
+            let cron = item
+                .get("cron")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let tz = item
+                .get("tz")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let role = item
+                .get("role")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let timeout_secs = item
+                .get("timeout_seconds")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0);
+            let timeout = if timeout_secs > 0 {
+                timeout_secs.to_string()
+            } else {
+                String::new()
+            };
+            let channel = item
+                .get("channel")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let recipient = item
+                .get("recipient")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((
+                id, name, enabled, cron, tz, role, timeout, channel, recipient,
+            ))
         })
         .collect()
 }
@@ -3022,6 +3442,58 @@ mod tests {
     }
 
     // ── GR-03 trust panel parser ──────────────────────────────────────────
+    #[test]
+    fn parse_omi_status_keeps_secrets_presence_only_and_all_consent_switches() {
+        let snapshot = parse_omi_status(
+            r#"{
+                "enabled":true,"mode":"both","endpoint":"https://api.omi.me",
+                "listen_addr":"127.0.0.1:8003","configuration_valid":true,
+                "developer_api_credential_present":true,"native_ingest_credential_present":true,
+                "runtime_state":"healthy","runtime_detail":"ready","pending_audits":2,
+                "retention_days":14,"retain_transcripts":true,"audio_enabled":true,
+                "visual_enabled":false,"video_enabled":true,"allow_cloud_api":true,
+                "allow_cloud_summary":false,"create_actions":true,
+                "seed_groundtruth":false,"summary_enabled":true
+            }"#,
+        );
+        assert!(snapshot.enabled);
+        assert_eq!(snapshot.mode, "both");
+        assert_eq!(snapshot.runtime_state, "healthy");
+        assert_eq!(snapshot.pending_audits, 2);
+        assert!(snapshot.developer_credential_present);
+        assert!(snapshot.native_credential_present);
+        assert!(snapshot.retain_transcripts);
+        assert!(snapshot.audio_enabled);
+        assert!(!snapshot.visual_enabled);
+        assert!(snapshot.video_enabled);
+        assert!(snapshot.allow_cloud_api);
+        assert!(!snapshot.allow_cloud_summary);
+        assert!(snapshot.create_actions);
+        assert!(!snapshot.seed_groundtruth);
+        assert!(snapshot.summary_enabled);
+    }
+
+    #[test]
+    fn parse_omi_status_rejects_malformed_payload() {
+        assert_eq!(parse_omi_status("not json"), OmiSnapshot::default());
+    }
+
+    #[test]
+    fn parse_omi_status_sparse_payload_keeps_safe_manual_defaults() {
+        let snapshot = parse_omi_status(r#"{"enabled":true}"#);
+        assert!(snapshot.enabled);
+        assert_eq!(snapshot.mode, "developer_api");
+        assert_eq!(snapshot.endpoint, "http://127.0.0.1:8002");
+        assert_eq!(snapshot.listen_addr, "127.0.0.1:8003");
+        assert_eq!(snapshot.runtime_state, "unknown");
+        assert_eq!(snapshot.retention_days, 30);
+        assert!(snapshot.create_actions);
+        assert!(snapshot.seed_groundtruth);
+        assert!(snapshot.summary_enabled);
+        assert!(!snapshot.audio_enabled);
+        assert!(!snapshot.allow_cloud_api);
+    }
+
     #[test]
     fn parse_trust_extracts_all_four_sections() {
         let json = r#"{
@@ -3157,12 +3629,13 @@ mod tests {
     fn parse_hardware_backward_compat_no_load_fields() {
         // Old JSON without cpu_load_pct / gpu_load must parse cleanly with
         // all new fields as None and load_readout empty.
-        let json = r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#;
+        let json =
+            r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#;
         let h = parse_hardware(json);
         assert_eq!(h.cpu_load_pct, None);
         assert_eq!(h.gpu_util_pct, None);
-        assert_eq!(h.gpu_temp_c,   None);
-        assert_eq!(h.gpu_power_w,  None);
+        assert_eq!(h.gpu_temp_c, None);
+        assert_eq!(h.gpu_power_w, None);
         assert_eq!(h.load_readout, "");
     }
 
@@ -3176,8 +3649,8 @@ mod tests {
         let h = parse_hardware(json);
         assert!((h.cpu_load_pct.unwrap() - 23.4).abs() < 1e-6);
         assert_eq!(h.gpu_util_pct, Some(41.0));
-        assert_eq!(h.gpu_temp_c,   Some(62.0));
-        assert_eq!(h.gpu_power_w,  Some(118.0));
+        assert_eq!(h.gpu_temp_c, Some(62.0));
+        assert_eq!(h.gpu_power_w, Some(118.0));
         assert_eq!(h.load_readout, "CPU 23% · GPU 41% · 62°C · 118W");
     }
 
@@ -3638,9 +4111,7 @@ mod tests {
     // ── GOLD-ADAPT-AOS-01 — tags + grouped index ───────────────────────
     #[test]
     fn parse_skills_reads_tags() {
-        let rows = parse_skills(
-            r#"[{"id":"a","tags":["security","net"]},{"id":"b"}]"#,
-        );
+        let rows = parse_skills(r#"[{"id":"a","tags":["security","net"]},{"id":"b"}]"#);
         assert_eq!(rows[0].tags, vec!["security", "net"]);
         assert!(rows[1].tags.is_empty());
     }
@@ -3661,8 +4132,7 @@ mod tests {
             mk("writer", &["Docs"], ""),
         ];
         let rows = group_skill_rows(&skills, "");
-        let shape: Vec<(bool, &str)> =
-            rows.iter().map(|r| (r.is_header, r.id.as_str())).collect();
+        let shape: Vec<(bool, &str)> = rows.iter().map(|r| (r.is_header, r.id.as_str())).collect();
         assert_eq!(
             shape,
             vec![
@@ -3704,16 +4174,18 @@ mod tests {
     #[test]
     fn parse_plugins_array() {
         let json = r#"[
-            {"id":"faccam","name":"FacCam","activation":"enabled"},
-            {"id":"x","activation":"pending"}
+            {"id":"faccam","name":"FacCam","activation":"active","requested_permission":"read_only"},
+            {"id":"x","activation":"reconsent_required","requested_permission":"dangerous","approval_error":"manifest changed"}
         ]"#;
         let rows = parse_plugins(json);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, "faccam");
         assert_eq!(rows[0].name, "FacCam");
-        assert_eq!(rows[0].activation, "enabled");
+        assert_eq!(rows[0].activation, "active");
+        assert_eq!(rows[0].requested_permission, "read_only");
         assert_eq!(rows[1].name, "", "missing name -> empty");
-        assert_eq!(rows[1].activation, "pending");
+        assert_eq!(rows[1].activation, "reconsent_required");
+        assert_eq!(rows[1].requested_permission, "dangerous");
     }
 
     #[test]
@@ -3723,13 +4195,15 @@ mod tests {
             parse_plugins(r#"{"id":"x"}"#).is_empty(),
             "object not array"
         );
-        assert_eq!(parse_plugins(r#"[{"name":"no id"},{"id":"ok"}]"#).len(), 1);
+        let rows = parse_plugins(r#"[{"name":"no id"},{"id":"ok"}]"#);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].requested_permission, "none");
     }
 
     #[test]
     fn parse_plugins_ui_surface_present() {
         let json = r#"[
-            {"id":"feed","name":"Feed","activation":"enabled",
+            {"id":"feed","name":"Feed","activation":"active",
              "ui_surface":{"kind":"wal_feed","title":"Live Feed"}},
             {"id":"plain","name":"Plain","activation":"disabled"}
         ]"#;
@@ -3743,7 +4217,7 @@ mod tests {
 
     #[test]
     fn parse_plugins_ui_surface_missing_title_defaults_empty() {
-        let json = r#"[{"id":"x","activation":"enabled","ui_surface":{"kind":"wal_feed"}}]"#;
+        let json = r#"[{"id":"x","activation":"active","ui_surface":{"kind":"wal_feed"}}]"#;
         let rows = parse_plugins(json);
         assert!(rows[0].has_ui_surface);
         assert_eq!(rows[0].ui_title, "");
@@ -3752,7 +4226,7 @@ mod tests {
     #[test]
     fn parse_plugins_ui_surface_not_object_ignored() {
         // ui_surface is a scalar — should treat as absent
-        let json = r#"[{"id":"x","activation":"enabled","ui_surface":"bad"}]"#;
+        let json = r#"[{"id":"x","activation":"active","ui_surface":"bad"}]"#;
         let rows = parse_plugins(json);
         assert!(!rows[0].has_ui_surface);
     }
@@ -3848,11 +4322,11 @@ mod tests {
         assert!(by("slack"));
         assert!(by("irc"), "irc_server presence -> connected");
         assert!(!by("whatsapp"), "absent -> disconnected");
-        assert!(!by("keet"));
-        // Every canonical messaging ChannelKind has a row (whatsapp collapsed).
+        // Every canonical messaging ChannelKind has a row.
         for ch in [
             "telegram",
             "whatsapp",
+            "whatsapp_baileys",
             "slack",
             "discord",
             "signal",
@@ -3861,7 +4335,6 @@ mod tests {
             "irc",
             "mattermost",
             "twitch",
-            "keet",
             "nostr",
             "imessage",
             "gchat",
@@ -3873,6 +4346,53 @@ mod tests {
         }
         // The connected bool is all that's exposed — no token value in the struct.
         assert_eq!(rows.len(), 14);
+    }
+
+    #[test]
+    fn matrix_status_requires_homeserver_user_and_auth() {
+        let connected = |yaml: &str| {
+            channel_status_from_credentials_yaml(yaml)
+                .into_iter()
+                .find(|row| row.name == "matrix")
+                .unwrap()
+                .connected
+        };
+        assert!(!connected("matrix_access_token: syt_secret\n"));
+        assert!(!connected(
+            "matrix_homeserver: https://matrix.example.org\nmatrix_access_token: syt_secret\n"
+        ));
+        assert!(connected(
+            "matrix_homeserver: https://matrix.example.org\nmatrix_user_id: '@bot:example.org'\nmatrix_access_token: syt_secret\n"
+        ));
+        assert!(connected(
+            "matrix_homeserver: https://matrix.example.org\nmatrix_user_id: '@bot:example.org'\nmatrix_password: secret\n"
+        ));
+    }
+
+    #[test]
+    fn baileys_status_is_separate_from_meta_and_requires_policy() {
+        let connected = |name: &str, yaml: &str| {
+            channel_status_from_credentials_yaml(yaml)
+                .into_iter()
+                .find(|row| row.name == name)
+                .unwrap()
+                .connected
+        };
+        let meta = "whatsapp_token: meta\n";
+        assert!(connected("whatsapp", meta));
+        assert!(!connected("whatsapp_baileys", meta));
+        let partial = concat!(
+            "whatsapp_baileys_url: http://127.0.0.1:9120\n",
+            "whatsapp_baileys_token: 0123456789abcdef0123456789abcdef\n",
+        );
+        assert!(!connected("whatsapp_baileys", partial));
+        let complete = concat!(
+            "whatsapp_baileys_url: http://127.0.0.1:9120\n",
+            "whatsapp_baileys_token: 0123456789abcdef0123456789abcdef\n",
+            "whatsapp_baileys_allowed_senders: '+491701234567'\n",
+        );
+        assert!(connected("whatsapp_baileys", complete));
+        assert!(!connected("whatsapp", complete));
     }
 
     #[test]
@@ -3895,7 +4415,7 @@ mod tests {
     fn read_channel_status_missing_file_is_all_off() {
         let dir = tempfile::tempdir().unwrap();
         let rows = read_channel_status(dir.path());
-        assert_eq!(rows.len(), 14);
+        assert_eq!(rows.len(), 15);
         assert!(rows.iter().all(|c| !c.connected));
     }
 
@@ -3987,7 +4507,10 @@ mod tests {
     #[test]
     fn parse_apply_plan_malformed_json_returns_none() {
         assert!(parse_apply_plan("not json").is_none());
-        assert!(parse_apply_plan("{}").is_none(), "missing name field → None");
+        assert!(
+            parse_apply_plan("{}").is_none(),
+            "missing name field → None"
+        );
         assert!(parse_apply_plan("").is_none());
     }
 
@@ -4152,10 +4675,12 @@ mod tests {
     // ── GOLD-ADAPT-ODY-02/05 — metrics chip formatting ─────────────────
     #[test]
     fn format_stream_metrics_full_stats() {
-        let (chip, detail) =
-            format_stream_metrics(12_400, 200_000, 12_000, 400, 10_000).unwrap();
+        let (chip, detail) = format_stream_metrics(12_400, 200_000, 12_000, 400, 10_000).unwrap();
         assert_eq!(chip, "ctx 6% · 40 tok/s");
-        assert!(detail.contains("context: 12.4k / 200.0k tokens (6%)"), "{detail}");
+        assert!(
+            detail.contains("context: 12.4k / 200.0k tokens (6%)"),
+            "{detail}"
+        );
         assert!(detail.contains("in: 12.0k · out: 400"), "{detail}");
         assert!(detail.contains("wall: 10.0s"), "{detail}");
     }
@@ -4271,7 +4796,14 @@ mod tests {
 
     // ── Wave-2 activity helpers ──────────────────────────────────────────
     fn make_row(id: i32, kind: &str, active: bool) -> ActivityTuple {
-        (id, "12:00".to_string(), kind.to_string(), "T".to_string(), "D".to_string(), active)
+        (
+            id,
+            "12:00".to_string(),
+            kind.to_string(),
+            "T".to_string(),
+            "D".to_string(),
+            active,
+        )
     }
 
     #[test]
@@ -4283,7 +4815,11 @@ mod tests {
 
     #[test]
     fn cap_activity_keeps_newest_n_rows() {
-        let rows = vec![make_row(3, "plan", true), make_row(2, "kanban", false), make_row(1, "loop", false)];
+        let rows = vec![
+            make_row(3, "plan", true),
+            make_row(2, "kanban", false),
+            make_row(1, "loop", false),
+        ];
         let capped = cap_activity(rows.clone(), 2);
         assert_eq!(capped.len(), 2);
         assert_eq!(capped[0].0, 3);
@@ -4355,7 +4891,10 @@ mod tests {
 
     #[test]
     fn next_toast_id_increments_past_max() {
-        let toasts = vec![make_toast(3, "info", "A", ""), make_toast(7, "warn", "B", "")];
+        let toasts = vec![
+            make_toast(3, "info", "A", ""),
+            make_toast(7, "warn", "B", ""),
+        ];
         assert_eq!(next_toast_id(&toasts), 8);
     }
 
@@ -4544,26 +5083,31 @@ mod tests {
 
     #[test]
     fn parse_babel_status_happy_path() {
-        let json = r#"{"enabled":true,"threshold":0.42,"epsilon_calibrated":"calibrated","federate":false,"total_windows":120,"collapse_flagged":3,"windows_by_granularity":[{"window_secs":300,"count":60,"last_ts_end":"2026-07-04T10:00:00Z"}]}"#;
-        let (enabled, threshold, epsilon, federate, total, collapse, gran) =
-            super::parse_babel_status(json);
-        assert!(enabled);
-        assert!(!threshold.is_empty());
-        assert_eq!(epsilon, "calibrated");
-        assert!(!federate);
-        assert_eq!(total, 120);
-        assert_eq!(collapse, 3);
-        assert_eq!(gran.len(), 1);
-        assert_eq!(gran[0].0, 300);
-        assert_eq!(gran[0].1, 60);
+        let json = r#"{"enabled":true,"threshold":0.42,"epsilon_calibrated":0.01,"federate":false,"total_windows":120,"collapse_flagged":3,"memory_signals":{"enabled":true,"mapping_version":"BabelSignalMap_v1"},"skill_signals":{"enabled":false,"mapping_version":"BabelSignalMap_v1"},"k_d":{"mode":"embedding_v1","requested_model":"org/embed","last_window_posture":{"degraded_reason":"provider_error"}},"windows_by_granularity":[{"window_secs":300,"count":60,"last_ts_end":"2026-07-04T10:00:00Z"}]}"#;
+        let status = super::parse_babel_status(json);
+        assert!(status.enabled);
+        assert!(!status.threshold.is_empty());
+        assert_eq!(status.epsilon, "0.01");
+        assert!(!status.federate);
+        assert_eq!(status.total_windows, 120);
+        assert_eq!(status.collapse_flagged, 3);
+        assert_eq!(status.memory_signals, "enabled (BabelSignalMap_v1)");
+        assert_eq!(status.skill_signals, "disabled (BabelSignalMap_v1)");
+        assert_eq!(
+            status.k_d,
+            "embedding_v1 / org/embed / degraded: provider_error"
+        );
+        assert_eq!(status.gran_rows.len(), 1);
+        assert_eq!(status.gran_rows[0].0, 300);
+        assert_eq!(status.gran_rows[0].1, 60);
     }
 
     #[test]
     fn parse_babel_status_malformed_returns_defaults() {
-        let (enabled, _, _, _, total, _, gran) = super::parse_babel_status("not json");
-        assert!(!enabled);
-        assert_eq!(total, 0);
-        assert!(gran.is_empty());
+        let status = super::parse_babel_status("not json");
+        assert!(!status.enabled);
+        assert_eq!(status.total_windows, 0);
+        assert!(status.gran_rows.is_empty());
     }
 
     // ── Wave 4a: parse_babel_windows ──────────────────────────────────────────
@@ -4583,7 +5127,10 @@ mod tests {
     fn parse_babel_windows_bottleneck_clamped() {
         let json = r#"{"windows":[{"id":"x","window_secs":60,"ts_start":"","ts_end":"","b_log":0.0,"b_mult":1.0,"b_bottleneck":1.5,"collapse_kind":""}]}"#;
         let rows = super::parse_babel_windows(json);
-        assert!((rows[0].6 - 1.0).abs() < 0.01, "bottleneck must clamp to 1.0");
+        assert!(
+            (rows[0].6 - 1.0).abs() < 0.01,
+            "bottleneck must clamp to 1.0"
+        );
     }
 
     #[test]
@@ -4739,7 +5286,8 @@ mod tests {
 
     #[test]
     fn parse_wiki_rows_happy_path() {
-        let json = r#"{"capabilities":[{"id":"CAP-01","kind":"tool","description":"A tool","gate":""}]}"#;
+        let json =
+            r#"{"capabilities":[{"id":"CAP-01","kind":"tool","description":"A tool","gate":""}]}"#;
         let rows = super::parse_wiki_rows(json);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "CAP-01");
@@ -4755,8 +5303,18 @@ mod tests {
     #[test]
     fn filter_wiki_rows_by_kind() {
         let rows = vec![
-            super::WikiRowData { id: "A".into(), kind: "tool".into(), description: "desc".into(), gate: "".into() },
-            super::WikiRowData { id: "B".into(), kind: "skill".into(), description: "desc".into(), gate: "".into() },
+            super::WikiRowData {
+                id: "A".into(),
+                kind: "tool".into(),
+                description: "desc".into(),
+                gate: "".into(),
+            },
+            super::WikiRowData {
+                id: "B".into(),
+                kind: "skill".into(),
+                description: "desc".into(),
+                gate: "".into(),
+            },
         ];
         let filtered = super::filter_wiki_rows(rows, "", "tool");
         assert_eq!(filtered.len(), 1);
@@ -4766,8 +5324,18 @@ mod tests {
     #[test]
     fn filter_wiki_rows_by_search() {
         let rows = vec![
-            super::WikiRowData { id: "CAP-01".into(), kind: "tool".into(), description: "compiler".into(), gate: "".into() },
-            super::WikiRowData { id: "CAP-02".into(), kind: "tool".into(), description: "debugger".into(), gate: "".into() },
+            super::WikiRowData {
+                id: "CAP-01".into(),
+                kind: "tool".into(),
+                description: "compiler".into(),
+                gate: "".into(),
+            },
+            super::WikiRowData {
+                id: "CAP-02".into(),
+                kind: "tool".into(),
+                description: "debugger".into(),
+                gate: "".into(),
+            },
         ];
         let filtered = super::filter_wiki_rows(rows, "comp", "");
         assert_eq!(filtered.len(), 1);
@@ -4855,7 +5423,8 @@ mod tests {
     #[test]
     fn parse_chat_consent_grants_explicit_bool_field() {
         // `granted: false` row — marker absent, so not granted.
-        let json = r#"[{"provider":"gemini","granted":false},{"provider":"mistral","granted":true}]"#;
+        let json =
+            r#"[{"provider":"gemini","granted":false},{"provider":"mistral","granted":true}]"#;
         let grants = super::parse_chat_consent_grants(json);
         assert_eq!(grants.len(), 2);
         assert!(!grants[0].1);
@@ -4963,7 +5532,10 @@ mod tests {
     #[test]
     fn parse_foreign_backup_empty_and_malformed() {
         assert_eq!(parse_foreign_backup("[]"), ForeignBackupSummary::default());
-        assert_eq!(parse_foreign_backup("not json"), ForeignBackupSummary::default());
+        assert_eq!(
+            parse_foreign_backup("not json"),
+            ForeignBackupSummary::default()
+        );
         // Object (not array) → empty (cluster feature returns array).
         assert_eq!(parse_foreign_backup("{}"), ForeignBackupSummary::default());
         // Rows missing origin_peer_pk are skipped.

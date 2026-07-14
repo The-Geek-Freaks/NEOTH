@@ -47,6 +47,18 @@ pub async fn replay_once_audited(
     segment_path: &Path,
     writer: Option<&WalWriterHandle>,
 ) -> Result<usize> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    replay_once_audited_at_home(&home, conn, segment_path, writer).await
+}
+
+/// Instance-bound replay used by the daemon. Encrypted segments are decoded
+/// with the master key belonging to `home`, never the process-global default.
+pub async fn replay_once_audited_at_home(
+    home: &Path,
+    conn: &mut Connection,
+    segment_path: &Path,
+    writer: Option<&WalWriterHandle>,
+) -> Result<usize> {
     let segment_key = segment_path.to_string_lossy().to_string();
     let start_offset = load_cursor(conn, &segment_key)?;
 
@@ -67,23 +79,24 @@ pub async fn replay_once_audited(
     // from compacted segments. For v1 this borrows the raw bytes. The saved
     // cursor is a LOGICAL offset, so the resume path (start_offset > 0) indexes
     // from it directly against the same logical byte stream.
-    let (header_len, logical) = match crate::wal::compaction::logical_segment_bytes(&bytes) {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(
-                error = %e,
-                segment = %segment_path.display(),
-                "indexer: unreconstructable (tamper-suspect) segment — skipping this pass"
-            );
-            // GR-164: the monitor cron only scans for already-written recovery
-            // frames; this decode-time failure leaves none, so without an
-            // explicit frame the tamper event is unauditable. Emit one.
-            if let Some(w) = writer {
-                emit_tamper_suspect(w, segment_path, &e.to_string()).await;
+    let (header_len, logical) =
+        match crate::wal::compaction::logical_segment_bytes_at_home(&bytes, home) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    segment = %segment_path.display(),
+                    "indexer: unreconstructable (tamper-suspect) segment — skipping this pass"
+                );
+                // GR-164: the monitor cron only scans for already-written recovery
+                // frames; this decode-time failure leaves none, so without an
+                // explicit frame the tamper event is unauditable. Emit one.
+                if let Some(w) = writer {
+                    emit_tamper_suspect(w, segment_path, &e.to_string()).await;
+                }
+                return Ok(0);
             }
-            return Ok(0);
-        }
-    };
+        };
 
     // First-time index of this segment starts after the header; a resume picks
     // up from the saved logical cursor. GR-006: a resume cursor must NEVER point
@@ -156,6 +169,7 @@ pub async fn replay_once_audited(
 /// sibling. The seed file itself is always indexed even if it does not
 /// (yet) exist on disk.
 pub async fn tail(
+    home: PathBuf,
     mut conn: Connection,
     segment_path: PathBuf,
     interval: Duration,
@@ -170,7 +184,7 @@ pub async fn tail(
     change_tx: Option<tokio::sync::watch::Sender<()>>,
 ) -> Result<()> {
     loop {
-        match replay_all_segments_audited(&mut conn, &segment_path, writer.as_ref()).await {
+        match replay_all_segments_audited(&home, &mut conn, &segment_path, writer.as_ref()).await {
             Ok(n) if n > 0 => {
                 debug!(frames = n, "indexer caught up");
                 // GOLD-ADAPT-TRAIL-02 — notify in-process consumers that views.db
@@ -199,7 +213,9 @@ pub async fn tail(
                     }
                     let embedded = vectors.len();
                     for (event_id, model, vec) in vectors {
-                        crate::memory::embeddings::store_episode_vector(&conn, event_id, &model, &vec);
+                        crate::memory::embeddings::store_episode_vector(
+                            &conn, event_id, &model, &vec,
+                        );
                     }
                     if embedded > 0 {
                         debug!(embedded, "indexer auto-embedded new episodes (MEMGRAPH-01)");
@@ -221,12 +237,14 @@ pub async fn tail(
 ///
 /// Returns the total number of frames newly indexed across all segments.
 pub async fn replay_all_segments(conn: &mut Connection, seed: &Path) -> Result<usize> {
-    replay_all_segments_audited(conn, seed, None).await
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    replay_all_segments_audited(&home, conn, seed, None).await
 }
 
 /// GR-164 — writer-aware variant of [`replay_all_segments`]; threads `writer`
 /// down to [`replay_once_audited`] so a tamper-suspect segment emits an alert.
 async fn replay_all_segments_audited(
+    home: &Path,
     conn: &mut Connection,
     seed: &Path,
     writer: Option<&WalWriterHandle>,
@@ -238,7 +256,7 @@ async fn replay_all_segments_audited(
     // yet (fresh boot before the writer creates 000001.wal). replay_once
     // tolerates missing files by returning Ok(0).
     if seen.insert(seed.to_path_buf()) {
-        total += replay_once_audited(conn, seed, writer).await?;
+        total += replay_once_audited_at_home(home, conn, seed, writer).await?;
     }
 
     // Discover sibling segments. Parent missing = nothing to walk; that
@@ -268,7 +286,7 @@ async fn replay_all_segments_audited(
     // Sort by filename so per-segment cursors advance in segment-seq order.
     paths.sort();
     for p in paths {
-        total += replay_once_audited(conn, &p, writer).await?;
+        total += replay_once_audited_at_home(home, conn, &p, writer).await?;
     }
     Ok(total)
 }
@@ -574,11 +592,21 @@ mod tests {
         // Build a minimal WAL segment with one RAW_TEXT frame so the indexer
         // has something to replay (n > 0) on the first pass.
         let mut bytes = Vec::new();
-        let sh =
-            crate::wal::segment_header::SegmentHeader::new(0, 1, 0, 1_700_000_000_000_000_000, [0u8; 16]);
+        let sh = crate::wal::segment_header::SegmentHeader::new(
+            0,
+            1,
+            0,
+            1_700_000_000_000_000_000,
+            [0u8; 16],
+        );
         bytes.extend_from_slice(&sh.to_le_bytes());
         let p = b"trail02".to_vec();
-        let h = header_for(EVENT_TYPE_RAW_TEXT, p.len() as u32, 42, 1_700_000_042_000_000_000);
+        let h = header_for(
+            EVENT_TYPE_RAW_TEXT,
+            p.len() as u32,
+            42,
+            1_700_000_042_000_000_000,
+        );
         bytes.extend_from_slice(&encode_frame(&h, &p));
         write(&seg, &bytes).await.unwrap();
 
@@ -587,21 +615,22 @@ mod tests {
 
         // Spawn tail() with a very short interval so the first pass fires quickly.
         let seg_clone = seg.clone();
+        let home = dir.path().to_path_buf();
         let handle = tokio::spawn(async move {
             let _ = crate::memory::indexer::tail(
+                home,
                 conn,
                 seg_clone,
                 std::time::Duration::from_millis(50),
-                None,  // no writer
-                None,  // no embed provider
+                None, // no writer
+                None, // no embed provider
                 Some(tx),
             )
             .await;
         });
 
         // The change-bus receiver must see at least one notification within 2s.
-        let changed =
-            tokio::time::timeout(std::time::Duration::from_secs(2), rx.changed()).await;
+        let changed = tokio::time::timeout(std::time::Duration::from_secs(2), rx.changed()).await;
         assert!(
             changed.is_ok(),
             "TRAIL-02: change_tx must fire after the indexer replays a WAL frame"
@@ -821,8 +850,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            cursor,
-            SEGMENT_HEADER_LEN as i64,
+            cursor, SEGMENT_HEADER_LEN as i64,
             "benign BufferTooShort must keep cursor at frame start for retry; \
              cursor advanced to {cursor}"
         );

@@ -14,7 +14,7 @@
 //!    version string).  A version suffix MUST NOT appear in federated records.
 //! 4. Windows shorter than 60 seconds MUST NOT be submitted (re-identification
 //!    via timing).
-//! 5. Only pre-approved metrics keys are allowed in the `metrics` object.
+//! 5. The wire record has a closed schema and no free-form metrics map.
 //!
 //! ## Contributor ID
 //!
@@ -25,24 +25,9 @@
 //! pseudonymous but consistent (enables per-instance random effects in the
 //! mixed-effects model).
 
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 
-use crate::channels::keet_crypto::hmac_sha256;
-
-/// Approved keys in the `metrics` pass-through map.
-/// Any key NOT in this set is silently dropped before federation.
-pub static APPROVED_METRICS_KEYS: &[&str] = &[
-    "tokens_in_total",
-    "tokens_out_total",
-    "tool_calls_total",
-    "fallback_attempts_total",
-    "retry_events_total",
-    "agent_dispatches_total",
-    "context_used_ratio_max",
-    "latency_ms_p99",
-];
+use crate::util::hmac;
 
 /// Minimum window duration that may be submitted to the federation pool.
 pub const MIN_WINDOW_SECS: u64 = 60;
@@ -62,8 +47,7 @@ pub fn derive_contributor_id(local_salt: &[u8], repo_slug: &str) -> String {
 /// to 16 hex chars.  The truncation to 64-bit output is sufficient for
 /// de-duplication within the dataset and too short to reverse the HMAC.
 pub fn pseudonymise_id(local_salt: &[u8], original_id: &str) -> String {
-    let mut out = [0u8; 32];
-    hmac_sha256(local_salt, original_id.as_bytes(), &mut out);
+    let out = hmac::sha256(local_salt, original_id.as_bytes());
     hex::encode(&out[..8]) // 16 hex chars = 8 bytes
 }
 
@@ -86,11 +70,17 @@ pub fn normalise_repo_slug(repo_uri: &str) -> String {
             &stripped[colon_pos + 1..]
         } else {
             // https-style: find the first '/' then skip one more component
-            stripped.find('/').map(|i| &stripped[i + 1..]).unwrap_or(stripped)
+            stripped
+                .find('/')
+                .map(|i| &stripped[i + 1..])
+                .unwrap_or(stripped)
         }
     } else {
         // No colon — https-style: skip host (first slash-delimited component)
-        stripped.find('/').map(|i| &stripped[i + 1..]).unwrap_or(stripped)
+        stripped
+            .find('/')
+            .map(|i| &stripped[i + 1..])
+            .unwrap_or(stripped)
     };
     // Take at most two path components (owner/repo).
     let parts: Vec<&str> = after_host.splitn(3, '/').take(2).collect();
@@ -105,24 +95,28 @@ pub fn normalise_repo_slug(repo_uri: &str) -> String {
 /// "claude-3-5-sonnet-20241022" with provider "anthropic" → "anthropic/claude-3".
 /// Any version suffix is stripped.
 pub fn coarsen_model(provider: &str, model_id: &str) -> String {
-    // Derive family: take the first two dash-separated tokens.
-    let family: String = model_id
+    // Keep only the model leaf and discard tag/fine-tune/query suffixes before
+    // deriving the first two family components. This also covers local model
+    // tags such as `qwen2.5:7b`, where dash-only truncation leaked the exact tag.
+    let stable_id = model_id
+        .rsplit('/')
+        .next()
+        .unwrap_or(model_id)
+        .split([':', '@', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let family = stable_id
         .split('-')
+        .filter(|part| !part.is_empty())
         .take(2)
         .collect::<Vec<_>>()
         .join("-");
+    let family = if family.is_empty() {
+        "unknown"
+    } else {
+        &family
+    };
     format!("{}/{}", provider, family)
-}
-
-/// Filter a metrics map to only approved keys.
-pub fn filter_metrics(
-    raw: &std::collections::HashMap<String, serde_json::Value>,
-) -> std::collections::HashMap<String, serde_json::Value> {
-    let approved: HashSet<&str> = APPROVED_METRICS_KEYS.iter().copied().collect();
-    raw.iter()
-        .filter(|(k, _)| approved.contains(k.as_str()))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect()
 }
 
 /// Deployment context for stratification metadata.
@@ -202,6 +196,14 @@ mod tests {
             coarsen_model("anthropic", "claude-sonnet-4-6"),
             "anthropic/claude-sonnet"
         );
+        assert_eq!(
+            coarsen_model("ollama", "qwen2.5:7b-instruct-q4"),
+            "ollama/qwen2.5"
+        );
+        assert_eq!(
+            coarsen_model("openai", "org/gpt-4o-2024-08-06"),
+            "openai/gpt-4o"
+        );
     }
 
     #[test]
@@ -224,21 +226,7 @@ mod tests {
     #[test]
     fn pseudonymise_id_differs_for_different_inputs() {
         let salt = b"test-salt";
-        assert_ne!(
-            pseudonymise_id(salt, "id-a"),
-            pseudonymise_id(salt, "id-b")
-        );
-    }
-
-    #[test]
-    fn filter_metrics_drops_unapproved_keys() {
-        let raw: std::collections::HashMap<String, serde_json::Value> = [
-            ("tokens_in_total".to_string(), serde_json::Value::Number(42.into())),
-            ("raw_prompt_text".to_string(), serde_json::Value::String("secret".into())),
-        ].into();
-        let filtered = filter_metrics(&raw);
-        assert!(filtered.contains_key("tokens_in_total"));
-        assert!(!filtered.contains_key("raw_prompt_text"));
+        assert_ne!(pseudonymise_id(salt, "id-a"), pseudonymise_id(salt, "id-b"));
     }
 
     #[test]

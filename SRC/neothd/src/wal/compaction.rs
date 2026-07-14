@@ -204,8 +204,8 @@ pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
 /// Refuses keys shorter than 16 bytes — the same weak-key floor as
 /// [`load_or_init_key`].
 ///
-/// Run with the daemon stopped: there is a brief window where the key
-/// file is absent between removing the old file and writing the new one.
+/// Replacement is an fsync + atomic sibling rename: readers observe either
+/// the complete old key or the complete replacement, never an absent/torn key.
 pub fn rewrap_key(path: &Path, raw_key: &[u8]) -> Result<()> {
     if raw_key.len() < 16 {
         anyhow::bail!(
@@ -218,15 +218,13 @@ pub fn rewrap_key(path: &Path, raw_key: &[u8]) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create HMAC key parent {}", parent.display()))?;
     }
-    if path.exists() {
-        std::fs::remove_file(path).with_context(|| {
-            format!(
-                "remove existing HMAC key at {} before re-wrap",
-                path.display()
-            )
-        })?;
-    }
-    write_key_securely(path, raw_key)
+    let encoded = encode_key_for_storage(path, raw_key)?;
+    crate::util::atomic_write::atomic_write_private(path, &encoded)
+        .with_context(|| format!("atomically replace HMAC key at {}", path.display()))?;
+    #[cfg(windows)]
+    crate::wal::win_acl::restrict_to_owner(path)
+        .with_context(|| format!("restrict HMAC key ACL {}", path.display()))?;
+    Ok(())
 }
 
 /// On Windows: if the file is DPAPI-wrapped, unwrap. Otherwise return
@@ -264,6 +262,26 @@ pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn encode_key_for_storage(_path: &Path, key: &[u8]) -> Result<Vec<u8>> {
+    Ok(key.to_vec())
+}
+
+#[cfg(windows)]
+fn encode_key_for_storage(path: &Path, key: &[u8]) -> Result<Vec<u8>> {
+    match crate::wal::dpapi::protect(key) {
+        Ok(wrapped) => Ok(wrapped),
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "DPAPI wrap unavailable; writing HMAC key plaintext with DACL fallback"
+            );
+            Ok(key.to_vec())
+        }
+    }
+}
+
 #[cfg(windows)]
 pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
     // K-Sec-4: DPAPI-wrap before writing so a copy of the file is
@@ -271,19 +289,19 @@ pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
     // unavailable (no user session, SYSTEM context, …) log a warning
     // and fall back to plaintext + DACL — the file stays as protected
     // as it was pre-K-Sec-4 instead of failing key generation.
-    let payload = match crate::wal::dpapi::protect(key) {
-        Ok(wrapped) => wrapped,
-        Err(e) => {
-            tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "DPAPI wrap unavailable; writing HMAC key plaintext with DACL fallback"
-            );
-            key.to_vec()
-        }
-    };
-    std::fs::write(path, &payload)
+    let payload = encode_key_for_storage(path, key)?;
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .with_context(|| format!("create HMAC key at {}", path.display()))?;
+    file.write_all(&payload)
         .with_context(|| format!("write HMAC key at {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("flush HMAC key {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("fsync HMAC key {}", path.display()))?;
     if let Err(e) = crate::wal::win_acl::restrict_to_owner(path) {
         tracing::warn!(
             path = %path.display(),
@@ -329,6 +347,20 @@ pub(crate) fn logical_segment_bytes(raw: &[u8]) -> Result<(usize, Cow<'_, [u8]>)
     // decrypt sealed segments transparently, with zero signature ripple.
     if segment_body_is_encrypted(raw) {
         return logical_segment_bytes_with_key(raw, crate::wal::master_key::default_segment_key());
+    }
+    logical_segment_bytes_with_key(raw, None)
+}
+
+/// Reconstruct a segment using the master key owned by an explicit daemon
+/// instance. The daemon indexer uses this for custom homes so encrypted WAL
+/// segments are never opened with the process-default key.
+pub(crate) fn logical_segment_bytes_at_home<'a>(
+    raw: &'a [u8],
+    home: &Path,
+) -> Result<(usize, Cow<'a, [u8]>)> {
+    if segment_body_is_encrypted(raw) {
+        let key = crate::wal::master_key::segment_key_at(home);
+        return logical_segment_bytes_with_key(raw, key.as_ref());
     }
     logical_segment_bytes_with_key(raw, None)
 }
@@ -445,18 +477,25 @@ mod tests {
     #[test]
     fn crypto04c_decrypts_encrypted_segment_at_chokepoint() {
         use crate::wal::compress::compress_frames;
-        use crate::wal::crypto::{self, derive_subkey, WalMasterKey, INFO_WAL_SEGMENT};
+        use crate::wal::crypto::{self, INFO_WAL_SEGMENT, WalMasterKey, derive_subkey};
         use crate::wal::segment_header::{
-            SegmentHeaderV2, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN,
+            SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN, SegmentHeaderV2,
         };
 
-        let key =
-            derive_subkey(&WalMasterKey::from_bytes(&[3u8; 32]).unwrap(), INFO_WAL_SEGMENT).unwrap();
+        let key = derive_subkey(
+            &WalMasterKey::from_bytes(&[3u8; 32]).unwrap(),
+            INFO_WAL_SEGMENT,
+        )
+        .unwrap();
         let frames = b"the raw frame stream the writer held before sealing".repeat(4);
 
         // Build: header(plaintext AAD) || ENC_MAGIC ‖ nonce ‖ encrypt(maybe-compress(frames)).
         let build = |compressed: bool| -> Vec<u8> {
-            let flag = if compressed { SEGMENT_FLAG_COMPRESSED } else { 0 };
+            let flag = if compressed {
+                SEGMENT_FLAG_COMPRESSED
+            } else {
+                0
+            };
             let header = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], flag)
                 .to_le_bytes()
                 .to_vec();
@@ -486,9 +525,11 @@ mod tests {
             assert!(logical_segment_bytes_with_key(&seg, None).is_err());
             assert!(logical_segment_bytes(&seg).is_err());
             // Wrong key → AEAD tag fails closed.
-            let wrong =
-                derive_subkey(&WalMasterKey::from_bytes(&[9u8; 32]).unwrap(), INFO_WAL_SEGMENT)
-                    .unwrap();
+            let wrong = derive_subkey(
+                &WalMasterKey::from_bytes(&[9u8; 32]).unwrap(),
+                INFO_WAL_SEGMENT,
+            )
+            .unwrap();
             assert!(logical_segment_bytes_with_key(&seg, Some(&wrong)).is_err());
         }
 

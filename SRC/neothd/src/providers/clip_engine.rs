@@ -23,7 +23,7 @@
 //! What is NOT in scope here:
 //!   - Text features / caption generation. CLIP's text tower retrieves
 //!     by text-prompt match; a real caption needs a generative model
-//!     (BLIP-2 or a small Llava variant) and is Phase 2c.
+//!     (for example BLIP-2) and is Phase 2c.
 //!   - GPU acceleration. Vision Phase 2b ships CPU-only so the install
 //!     stays self-contained on every operator machine. Operators with
 //!     CUDA / Metal can flip the feature later once D14b adds the
@@ -37,13 +37,47 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::clip;
 
-/// Hugging Face repo we default to. ViT-B/32 is the smallest CLIP that
-/// still gives sensible 512-dim embeddings (~605 MiB on disk).
-pub const DEFAULT_CLIP_REPO: &str = "openai/clip-vit-base-patch32";
+/// Reviewed ViT-B/32 safetensors repository. The upstream OpenAI repository
+/// publishes only `pytorch_model.bin`; Candle requires safetensors, so the old
+/// default could never complete its documented download path.
+pub const DEFAULT_CLIP_REPO: &str = "laion/CLIP-ViT-B-32-laion2B-s34B-b79K";
+const DEFAULT_CLIP_REVISION: &str = "1a25a446712ba5ee05982a381eed697ef9b435cf";
 
 pub const CONFIG_FILE: &str = "config.json";
 pub const SAFETENSORS_FILE: &str = "model.safetensors";
 pub const TOKENIZER_FILE: &str = "tokenizer.json";
+
+const REQUIRED_ARTIFACTS: [crate::media::model_manager::RequiredArtifact; 3] = {
+    use crate::media::model_manager::{
+        ArtifactKind, ExpectedArtifactFingerprint, RequiredArtifact,
+    };
+    [
+        RequiredArtifact {
+            filename: CONFIG_FILE,
+            kind: ArtifactKind::JsonObject,
+            expected: Some(ExpectedArtifactFingerprint {
+                len: 4_355,
+                sha256: "1284cbff35169abb23a1c5525a8b0f543c7bd191d4b9aed63880c1571bc4191c",
+            }),
+        },
+        RequiredArtifact {
+            filename: TOKENIZER_FILE,
+            kind: ArtifactKind::JsonObject,
+            expected: Some(ExpectedArtifactFingerprint {
+                len: 2_224_041,
+                sha256: "b556ac8c99757ffb677208af34bc8c6721572114111a6e0aaf5fa69ff0b8d842",
+            }),
+        },
+        RequiredArtifact {
+            filename: SAFETENSORS_FILE,
+            kind: ArtifactKind::Safetensors,
+            expected: Some(ExpectedArtifactFingerprint {
+                len: 605_157_884,
+                sha256: "74813fbcdc750f235c9784c367ca1394d2a5c25eb0aac92761752ac239db7cff",
+            }),
+        },
+    ]
+};
 
 /// Side length CLIP ViT-B/32 expects after preprocessing.
 pub const IMAGE_SIZE: usize = 224;
@@ -68,10 +102,12 @@ const CLIP_STD: [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
 
 pub struct ClipEngine {
     repo: String,
+    hf_cache_dir: PathBuf,
     config_path: PathBuf,
     weights_path: PathBuf,
     tokenizer_path: PathBuf,
     loaded: Arc<Mutex<Option<LoadedClip>>>,
+    allow_pending_validation: bool,
 }
 
 struct LoadedClip {
@@ -83,54 +119,177 @@ struct LoadedClip {
 impl ClipEngine {
     /// Construct an engine + ensure the model artifacts are cached
     /// under `~/.neoth/models/<repo-flattened>/`. ~605 MiB download on
-    /// the first run for `openai/clip-vit-base-patch32`.
-    pub async fn new(repo: Option<String>) -> Result<Self> {
+    /// the first run for the reviewed default repository.
+    pub(crate) async fn new(repo: Option<String>) -> Result<Self> {
+        let models_root = crate::config::FreedomConfig::default_neoth_home().join("models");
+        let engine = Self::from_models_root(repo, &models_root, false)?;
+        let health = cache_health_at(&models_root, &engine.repo);
+        if !health.is_ready() {
+            anyhow::bail!("CLIP cache is not ready ({health}); run `neoth models pull clip` first");
+        }
+        engine.validate_load().await?;
+        Ok(engine)
+    }
+
+    /// The only network-capable CLIP constructor. Callers must complete model
+    /// download policy and D7 audit before entering this seam.
+    pub(crate) async fn prefetch_with_models_root(
+        repo: Option<String>,
+        models_root: &Path,
+        attempt: &crate::media::model_manager::ModelDownloadAttempt,
+    ) -> Result<Self> {
+        let engine = Self::from_models_root(repo, models_root, true)?;
+        engine.ensure_artifacts(attempt).await?;
+        Ok(engine)
+    }
+
+    pub(crate) async fn open_with_models_root(
+        repo: Option<String>,
+        models_root: &Path,
+    ) -> Result<Self> {
+        let engine = Self::from_models_root(repo, models_root, false)?;
+        let cache_dir = engine
+            .config_path
+            .parent()
+            .context("CLIP cache path has no parent")?;
+        let health =
+            crate::media::model_manager::verified_cache_health(cache_dir, &REQUIRED_ARTIFACTS);
+        if !health.is_ready() {
+            anyhow::bail!("CLIP cache is not verified ({health}); run `neoth models pull clip`");
+        }
+        Ok(engine)
+    }
+
+    fn from_models_root(
+        repo: Option<String>,
+        models_root: &Path,
+        allow_pending_validation: bool,
+    ) -> Result<Self> {
         let repo = repo.unwrap_or_else(|| DEFAULT_CLIP_REPO.to_string());
-        let cache_dir = default_cache_dir(&repo);
-        std::fs::create_dir_all(&cache_dir)
-            .with_context(|| format!("create cache dir {}", cache_dir.display()))?;
-        let engine = ClipEngine {
+        if repo != DEFAULT_CLIP_REPO {
+            anyhow::bail!(
+                "unsupported CLIP repository `{repo}`: NEOTH only accepts the reviewed \
+                 revision/SHA-256 manifest for `{DEFAULT_CLIP_REPO}`"
+            );
+        }
+        let cache_dir = cache_dir_at(models_root, &repo);
+        Ok(ClipEngine {
             repo: repo.clone(),
+            hf_cache_dir: models_root.join(".hf-hub"),
             config_path: cache_dir.join(CONFIG_FILE),
             weights_path: cache_dir.join(SAFETENSORS_FILE),
             tokenizer_path: cache_dir.join(TOKENIZER_FILE),
             loaded: Arc::new(Mutex::new(None)),
-        };
-        engine.ensure_artifacts().await?;
-        Ok(engine)
+            allow_pending_validation,
+        })
     }
 
-    async fn ensure_artifacts(&self) -> Result<()> {
-        use hf_hub::api::tokio::Api;
-        use std::time::Duration;
-        let need = !self.config_path.exists()
-            || !self.weights_path.exists()
-            || !self.tokenizer_path.exists();
-        if !need {
+    async fn ensure_artifacts(
+        &self,
+        attempt: &crate::media::model_manager::ModelDownloadAttempt,
+    ) -> Result<()> {
+        use hf_hub::api::tokio::ApiBuilder;
+        use hf_hub::{Repo, RepoType};
+        let cache_dir = self
+            .config_path
+            .parent()
+            .context("CLIP cache path has no parent")?;
+        if crate::media::model_manager::verified_cache_health_during_install(
+            cache_dir,
+            &REQUIRED_ARTIFACTS,
+        )
+        .is_ready()
+        {
             return Ok(());
         }
-        let api = Api::new().context("init HF Hub API")?;
-        let repo_handle = api.model(self.repo.clone());
-        for (filename, target) in [
-            (CONFIG_FILE, &self.config_path),
-            (SAFETENSORS_FILE, &self.weights_path),
-            (TOKENIZER_FILE, &self.tokenizer_path),
-        ] {
-            let downloaded =
-                tokio::time::timeout(Duration::from_secs(900), repo_handle.download(filename))
-                    .await
-                    .with_context(|| format!("HF download timeout for {filename}"))?
-                    .with_context(|| format!("HF download error for {filename}"))?;
-            if &downloaded != target {
-                std::fs::copy(&downloaded, target).with_context(|| {
+        if !attempt.network_authorized(cache_dir, &self.repo) {
+            anyhow::bail!(
+                "CLIP network access for `{}` is not authorised by a confirmed D7 attempt",
+                self.repo
+            );
+        }
+        let api = ApiBuilder::new()
+            .with_cache_dir(self.hf_cache_dir.clone())
+            .build()
+            .context("init HF Hub API")?;
+        let repo_handle = api.repo(Repo::with_revision(
+            self.repo.clone(),
+            RepoType::Model,
+            DEFAULT_CLIP_REVISION.to_string(),
+        ));
+        for artifact in REQUIRED_ARTIFACTS {
+            let filename = artifact.filename;
+            let target = cache_dir.join(filename);
+            let downloaded = repo_handle
+                .download(filename)
+                .await
+                .with_context(|| format!("HF download error for {filename}"))?;
+            if downloaded != target {
+                let expected = artifact
+                    .expected
+                    .context("pinned CLIP artifact lacks a fingerprint")?;
+                let expected = crate::media::model_manager::ArtifactFingerprint {
+                    len: expected.len,
+                    sha256: expected.sha256.to_string(),
+                };
+                crate::media::model_manager::install_from_hf_source(
+                    &downloaded,
+                    &target,
+                    &expected,
+                )
+                .await
+                .with_context(|| {
                     format!(
-                        "copy HF cache {} -> {}",
+                        "atomically install HF cache {} -> {}",
                         downloaded.display(),
                         target.display()
                     )
                 })?;
             }
         }
+        let health = crate::media::model_manager::verified_cache_health_during_install(
+            cache_dir,
+            &REQUIRED_ARTIFACTS,
+        );
+        if !health.is_ready() {
+            anyhow::bail!("CLIP artifacts failed post-install validation: {health}");
+        }
+        Ok(())
+    }
+
+    /// Prove the pinned bytes and construct the actual Candle model before a
+    /// model-download lifecycle can report D8 `ready`.
+    pub(crate) async fn validate_load(&self) -> Result<()> {
+        let cache_dir = self
+            .config_path
+            .parent()
+            .context("CLIP cache path has no parent")?
+            .to_path_buf();
+        let allow_pending = self.allow_pending_validation;
+        let health = tokio::task::spawn_blocking(move || {
+            if allow_pending {
+                crate::media::model_manager::verified_cache_health_during_install(
+                    &cache_dir,
+                    &REQUIRED_ARTIFACTS,
+                )
+            } else {
+                crate::media::model_manager::verified_cache_health(&cache_dir, &REQUIRED_ARTIFACTS)
+            }
+        })
+        .await
+        .context("join CLIP SHA-256 validation")?;
+        if !health.is_ready() {
+            anyhow::bail!("CLIP cache failed full integrity validation: {health}");
+        }
+        let loaded = Arc::clone(&self.loaded);
+        let config_path = self.config_path.clone();
+        let weights_path = self.weights_path.clone();
+        let tokenizer_path = self.tokenizer_path.clone();
+        tokio::task::spawn_blocking(move || {
+            ensure_loaded(&loaded, &config_path, &weights_path, &tokenizer_path)
+        })
+        .await
+        .context("join CLIP backend validation")??;
         Ok(())
     }
 
@@ -138,6 +297,15 @@ impl ClipEngine {
     /// buffer at the given dimensions. `rgb` length must equal
     /// `width * height * 3`.
     pub async fn embed_image(&self, rgb: &[u8], width: u32, height: u32) -> Result<Vec<f32>> {
+        let cache_dir = self
+            .config_path
+            .parent()
+            .context("CLIP cache path has no parent")?;
+        let _model_lock = crate::media::model_manager::lock_model_cache(cache_dir).await?;
+        let health = crate::media::model_manager::cache_health(cache_dir, &REQUIRED_ARTIFACTS);
+        if !health.is_ready() {
+            anyhow::bail!("CLIP cache became unavailable before image embedding: {health}");
+        }
         let expected = (width as usize) * (height as usize) * 3;
         if rgb.len() != expected {
             anyhow::bail!(
@@ -170,6 +338,15 @@ impl ClipEngine {
     /// leaves room for `<|startoftext|>` + `<|endoftext|>`) then
     /// padded with zeros to the full 77 positions.
     pub async fn embed_text(&self, prompt: &str) -> Result<Vec<f32>> {
+        let cache_dir = self
+            .config_path
+            .parent()
+            .context("CLIP cache path has no parent")?;
+        let _model_lock = crate::media::model_manager::lock_model_cache(cache_dir).await?;
+        let health = crate::media::model_manager::cache_health(cache_dir, &REQUIRED_ARTIFACTS);
+        if !health.is_ready() {
+            anyhow::bail!("CLIP cache became unavailable before text embedding: {health}");
+        }
         let loaded = Arc::clone(&self.loaded);
         let config_path = self.config_path.clone();
         let weights_path = self.weights_path.clone();
@@ -212,10 +389,11 @@ fn ensure_loaded(
     // without touching the file. We do NOT claim exclusive process
     // ownership: multi-process use within the same operator session
     // (daemon + `neoth ingest`) is allowed because both processes only
-    // read. If a third party truncates / overwrites the cache while
-    // NEOTH is running, the resulting UB is the operator's
-    // responsibility — `neoth doctor` warns when the file vanishes,
-    // and a stable HMAC check is tracked as a Phase 2 hardening.
+    // read. Engine construction and explicit validation hash every
+    // artifact against the reviewed revision/length/SHA-256 manifest
+    // before this mapping is created. A third party that can ignore
+    // the cache lock and mutate an operator-owned file after that
+    // validation is outside NEOTH's process trust boundary.
     let vb = unsafe {
         VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)
             .with_context(|| format!("mmap safetensors {}", weights_path.display()))?
@@ -400,13 +578,53 @@ fn l2_normalise(v: &[f32]) -> Vec<f32> {
     v.iter().map(|x| x / norm).collect()
 }
 
-pub fn default_cache_dir(repo: &str) -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let flattened = repo.replace('/', "-");
-    home.join(".neoth").join("models").join(flattened)
+pub(crate) fn default_cache_dir(repo: &str) -> PathBuf {
+    let models_root = crate::config::FreedomConfig::default_neoth_home().join("models");
+    cache_dir_at(&models_root, repo)
+}
+
+pub(crate) fn cache_dir_at(models_root: &Path, repo: &str) -> PathBuf {
+    models_root.join(super::model_cache_component(repo))
+}
+
+pub(crate) fn cache_health_at(
+    models_root: &Path,
+    repo: &str,
+) -> crate::media::model_manager::CacheHealth {
+    let cache = cache_dir_at(models_root, repo);
+    if repo != DEFAULT_CLIP_REPO {
+        return crate::media::model_manager::CacheHealth::Corrupt {
+            path: cache,
+            reason: format!(
+                "unsupported CLIP repository `{repo}` has no reviewed revision/SHA-256 manifest"
+            ),
+        };
+    }
+    crate::media::model_manager::cache_health(&cache, &REQUIRED_ARTIFACTS)
+}
+
+pub(crate) fn verified_cache_health_at(
+    models_root: &Path,
+    repo: &str,
+    during_attempt: bool,
+) -> crate::media::model_manager::CacheHealth {
+    let cache = cache_dir_at(models_root, repo);
+    if repo != DEFAULT_CLIP_REPO {
+        return crate::media::model_manager::CacheHealth::Corrupt {
+            path: cache,
+            reason: format!(
+                "unsupported CLIP repository `{repo}` has no reviewed revision/SHA-256 manifest"
+            ),
+        };
+    }
+    if during_attempt {
+        crate::media::model_manager::verified_cache_health_during_install(
+            &cache,
+            &REQUIRED_ARTIFACTS,
+        )
+    } else {
+        crate::media::model_manager::verified_cache_health(&cache, &REQUIRED_ARTIFACTS)
+    }
 }
 
 #[cfg(test)]
@@ -416,15 +634,37 @@ mod tests {
     #[test]
     fn default_cache_dir_flattens_repo_path() {
         let p = default_cache_dir("openai/clip-vit-base-patch32");
-        let s = p.to_string_lossy();
-        assert!(s.contains("openai-clip-vit-base-patch32"));
-        assert!(s.contains(".neoth"));
-        assert!(s.contains("models"));
+        assert_eq!(
+            p,
+            crate::config::FreedomConfig::default_neoth_home()
+                .join("models")
+                .join("openai-clip-vit-base-patch32")
+        );
+    }
+
+    #[test]
+    fn explicit_models_root_is_used_verbatim() {
+        let root = PathBuf::from("isolated-neoth-home").join("models");
+        assert_eq!(
+            cache_dir_at(&root, "openai/clip-vit-base-patch32"),
+            root.join("openai-clip-vit-base-patch32")
+        );
+    }
+
+    #[test]
+    fn repo_id_cannot_escape_explicit_models_root() {
+        let root = PathBuf::from("isolated-neoth-home").join("models");
+        let path = cache_dir_at(&root, r"C:\\outside/../../model");
+        assert_eq!(path.parent(), Some(root.as_path()));
+        assert!(path.starts_with(&root));
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(!name.contains('/'));
+        assert!(!name.contains('\\'));
     }
 
     #[test]
     fn default_repo_is_clip_vit_base_patch32() {
-        assert_eq!(DEFAULT_CLIP_REPO, "openai/clip-vit-base-patch32");
+        assert_eq!(DEFAULT_CLIP_REPO, "laion/CLIP-ViT-B-32-laion2B-s34B-b79K");
     }
 
     #[test]

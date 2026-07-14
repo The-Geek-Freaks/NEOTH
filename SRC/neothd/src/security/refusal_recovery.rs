@@ -369,6 +369,7 @@ mod tests {
             match next {
                 Ok(text) => Ok(Completion {
                     text,
+                    identity: Default::default(),
                     model: "mock-1".into(),
                     latency: Duration::from_millis(1),
                     input_tokens: Some(10),
@@ -561,6 +562,7 @@ mod tests {
         let r = RecoveryOutcome::Recovered {
             completion: Completion {
                 text: "x".into(),
+                identity: Default::default(),
                 model: "m".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: None,

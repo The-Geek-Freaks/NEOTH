@@ -161,9 +161,7 @@ pub fn run(
         // write and surface diagnostics to stderr. Best-effort: any failure
         // here is a warning, never a hard error — the edit already succeeded.
         if lsp_enabled {
-            let server_cmd = lsp_server_cmd
-                .as_deref()
-                .unwrap_or("rust-analyzer");
+            let server_cmd = lsp_server_cmd.as_deref().unwrap_or("rust-analyzer");
             let workspace = args
                 .base
                 .parent()
@@ -172,17 +170,18 @@ pub fn run(
             // wrote to stdout; the caller is expected to redirect that back to
             // the file, but we read the base content since we have it in memory
             // — the reconstructed text is what was just emitted).
-            match crate::lsp::client::LspSession::open(server_cmd, workspace)
-                .and_then(|mut sess| {
+            match crate::lsp::client::LspSession::open(server_cmd, workspace).and_then(
+                |mut sess| {
                     sess.notify_did_open(&args.base, &reconstructed)?;
-                    sess.collect_diagnostics(std::time::Duration::from_millis(500))
-                }) {
+                    sess.collect_diagnostics(crate::lsp::client::DEFAULT_DIAGNOSTICS_TIMEOUT)
+                },
+            ) {
                 Ok(diags) if !diags.is_empty() => {
                     for d in &diags {
                         eprintln!("[lsp] {d}");
                     }
                 }
-                Ok(_) => {}  // no diagnostics — clean
+                Ok(_) => {} // no diagnostics — clean
                 Err(e) => eprintln!("[lsp] warning: {e}"),
             }
         }
@@ -326,7 +325,10 @@ mod tests {
             true,
             Some("__nonexistent_lsp_server_binary__".to_string()),
         );
-        assert!(result.is_ok(), "apply must succeed even if LSP server is missing: {result:?}");
+        assert!(
+            result.is_ok(),
+            "apply must succeed even if LSP server is missing: {result:?}"
+        );
     }
 
     /// When `lsp_enabled=false`, no subprocess is spawned and the function

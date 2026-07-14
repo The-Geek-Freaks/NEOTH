@@ -1,11 +1,9 @@
 //! K-Repo-Map Phase 3b (Session 14 Pick #25) — relevance engine.
 //!
 //! Given a prompt and a populated `code_map.db`, return the files the
-//! agent should know about when answering. Foundation for Phase 3c
-//! prompt-injection (system-prompt `<repo-context>` block), but the
-//! engine ships first standalone so operators can inspect what would
-//! be injected (`neoth code-map relevant "<prompt>"`) before any
-//! live wire-in.
+//! agent should know about when answering. The same engine powers
+//! `neoth code-map relevant`, opt-in `neoth chat` `<repo-context>`
+//! injection, and codegraph MCP lookups.
 //!
 //! ## Algorithm
 //!
@@ -25,17 +23,15 @@
 //!    "auth" → `src/auth/mod.rs` gets a bonus point), then by
 //!    lexicographic path. Return top `max_files` entries.
 //!
-//! ## What this is NOT (deferred)
+//! ## Current limits
 //!
-//! - Semantic similarity. Phase 3b uses keyword matching only —
-//!   embedding-based recall is Phase 3d. The current engine
+//! - Semantic similarity. The engine uses keyword matching only. It
 //!   matches "fn auth_middleware" / "AuthMiddleware" / "auth_middleware"
 //!   in the prompt against a symbol named `auth_middleware`; it does
 //!   NOT match the prompt "how does login work" against the same
 //!   symbol unless "login" / "auth" overlaps the path.
-//! - Recency bias. Phase 3c will add a `scanned_at` weighting so a
-//!   freshly-scanned file ranks above stale snapshots. Phase 3b
-//!   ranks purely on identifier-count + path-keyword overlap.
+//! - Recency bias. Ranking is identifier-count + path-keyword overlap;
+//!   `scanned_at` does not change rank.
 //! - Cross-root deduplication. If the same symbol name appears in
 //!   two persisted roots (operator scanned two repos), both files
 //!   surface. The CLI shows the root so the operator can disambiguate.
@@ -309,10 +305,127 @@ pub fn render_context_block(files: &[RelevantFile]) -> String {
     out
 }
 
+/// Bundled architecture-improvement skill which consumes GRAPH-02 findings.
+pub const ARCHITECTURE_SKILL_ID: &str = "improve_codebase_architecture";
+
+/// Hard cap on call cycles injected into one architecture prompt. The scan is
+/// local SQLite work, but the rendered result still consumes model context.
+pub const ARCHITECTURE_CYCLE_LIMIT: usize = 20;
+
+/// One cycle plus the persisted code-map root it came from. Roots stay separate
+/// during detection so equal symbol names in two repositories cannot form a
+/// synthetic cross-repository cycle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchitectureCycleFinding {
+    pub root: String,
+    pub symbols: Vec<String>,
+}
+
+/// Operator- and audit-facing summary of the automatic GRAPH-02 scan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchitectureFindings {
+    pub block: String,
+    pub roots_scanned: usize,
+    pub edges_scanned: usize,
+    pub cycles_injected: usize,
+    pub truncated: bool,
+}
+
+/// Build the architecture findings consumed by the real
+/// `improve_codebase_architecture` workflow.
+///
+/// A non-matching skill returns `None` before touching the graph. For the
+/// matching skill, only the caller-resolved current canonical repository root
+/// is scanned and the resulting cycle evidence is rendered into a bounded
+/// system-prompt block. An empty-but-present map still returns a block stating
+/// that no cycle was found; an unknown root returns `None` rather than falling
+/// back to another persisted repository.
+pub fn architecture_findings_for_skill(
+    conn: &Connection,
+    skill_id: Option<&str>,
+    root: &str,
+    max_cycles: usize,
+) -> Result<Option<ArchitectureFindings>> {
+    if skill_id != Some(ARCHITECTURE_SKILL_ID) {
+        return Ok(None);
+    }
+
+    let root_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM code_map_roots WHERE root = ?1)",
+        [root],
+        |row| row.get(0),
+    )?;
+    if !root_exists {
+        return Ok(None);
+    }
+
+    let roots_scanned = 1;
+    let mut cycles: Vec<ArchitectureCycleFinding> = Vec::new();
+    let mut truncated = false;
+
+    let edges = super::persist::load_edges(conn, root)?;
+    let edges_scanned = edges.len();
+    // Ask for one extra cycle so the rendered block can disclose that the
+    // context cap hid additional findings rather than pretending complete
+    // coverage. `find_cycles` is deterministic over persisted edge order.
+    let probe_limit = max_cycles.saturating_add(1);
+    let graph = super::graph::CallGraph::from_edges(edges);
+    for symbols in graph.find_cycles(probe_limit) {
+        if cycles.len() == max_cycles {
+            truncated = true;
+            break;
+        }
+        cycles.push(ArchitectureCycleFinding {
+            root: root.to_string(),
+            symbols,
+        });
+    }
+
+    let block = render_architecture_findings(&cycles, roots_scanned, edges_scanned, truncated);
+    Ok(Some(ArchitectureFindings {
+        cycles_injected: cycles.len(),
+        block,
+        roots_scanned,
+        edges_scanned,
+        truncated,
+    }))
+}
+
+fn render_architecture_findings(
+    cycles: &[ArchitectureCycleFinding],
+    roots_scanned: usize,
+    edges_scanned: usize,
+    truncated: bool,
+) -> String {
+    let mut out = format!(
+        "# architecture-findings (NEOTH code-map GRAPH-02)\n\
+         # Automatic persisted CallGraph cycle scan for the active architecture workflow.\n\
+         # roots_scanned={roots_scanned} edges_scanned={edges_scanned} \
+         cycles_injected={} truncated={truncated}\n",
+        cycles.len()
+    );
+    if cycles.is_empty() {
+        out.push_str("  - no call cycles detected in the persisted code map\n");
+        return out;
+    }
+    for finding in cycles {
+        let mut closed = finding.symbols.clone();
+        if let Some(first) = finding.symbols.first() {
+            closed.push(first.clone());
+        }
+        out.push_str(&format!("  - {}: {}\n", finding.root, closed.join(" -> ")));
+    }
+    if truncated {
+        out.push_str("  - additional cycles omitted by the context limit\n");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_map::persist::{open, persist_map};
+    use crate::code_map::graph::{CodeEdge, EdgeKind};
+    use crate::code_map::persist::{open, persist_edges, persist_map};
     use crate::code_map::symbols::{Symbol, SymbolKind};
     use crate::code_map::walker::{Language, RepoFile, RepoMap, ScanReport};
     use tempfile::tempdir;
@@ -531,5 +644,75 @@ mod tests {
         if let (Some(ai), Some(ci)) = (auth_idx, config_idx) {
             assert!(ai < ci, "lex order broken: {paths:?}");
         }
+    }
+
+    #[test]
+    fn architecture_skill_automatically_consumes_persisted_cycles() {
+        let (_dir, mut conn) = seed_db_with_two_files();
+        persist_edges(
+            &mut conn,
+            "/repo/a",
+            &[
+                CodeEdge {
+                    from_file: "src/a.rs".into(),
+                    from_symbol: "a".into(),
+                    to_name: "b".into(),
+                    kind: EdgeKind::Calls,
+                },
+                CodeEdge {
+                    from_file: "src/b.rs".into(),
+                    from_symbol: "b".into(),
+                    to_name: "a".into(),
+                    kind: EdgeKind::Calls,
+                },
+            ],
+        )
+        .unwrap();
+
+        let findings = architecture_findings_for_skill(
+            &conn,
+            Some(ARCHITECTURE_SKILL_ID),
+            "/repo/a",
+            ARCHITECTURE_CYCLE_LIMIT,
+        )
+        .unwrap()
+        .expect("active architecture skill must consume GRAPH-02");
+
+        assert_eq!(findings.roots_scanned, 1);
+        assert_eq!(findings.edges_scanned, 2);
+        assert_eq!(findings.cycles_injected, 1);
+        assert!(!findings.truncated);
+        assert!(findings.block.contains("a -> b -> a"));
+        assert!(findings.block.contains("architecture-findings"));
+    }
+
+    #[test]
+    fn architecture_cycle_context_is_skill_scoped_and_discloses_empty_scan() {
+        let (_dir, conn) = seed_db_with_two_files();
+        assert!(
+            architecture_findings_for_skill(&conn, Some("unrelated_skill"), "/repo/a", 20)
+                .unwrap()
+                .is_none(),
+            "normal chat turns must not receive architecture-only graph evidence"
+        );
+
+        let findings =
+            architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), "/repo/a", 20)
+                .unwrap()
+                .unwrap();
+        assert_eq!(findings.cycles_injected, 0);
+        assert!(findings.block.contains("no call cycles detected"));
+
+        assert!(
+            architecture_findings_for_skill(
+                &conn,
+                Some(ARCHITECTURE_SKILL_ID),
+                "/repo/unrelated",
+                20,
+            )
+            .unwrap()
+            .is_none(),
+            "an unknown/currently-unmapped repo must never fall back to another persisted root"
+        );
     }
 }

@@ -151,8 +151,7 @@ mod tests {
     /// Tests that read/write NEOTH_TZ must hold this lock for their entire body
     /// — env vars are process-global, so parallel test threads race otherwise.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
-            std::sync::OnceLock::new();
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .expect("env_lock poisoned")
@@ -183,10 +182,7 @@ mod tests {
     fn config_field_resolves() {
         without_env(|| {
             let cfg = cfg_with_tz(Some("America/New_York"));
-            assert_eq!(
-                resolve_tz_name(&cfg).as_deref(),
-                Some("America/New_York")
-            );
+            assert_eq!(resolve_tz_name(&cfg).as_deref(), Some("America/New_York"));
         });
     }
 
@@ -221,7 +217,10 @@ mod tests {
             "missing UTC offset: {ctx}"
         );
         // Must start with "Current time context:".
-        assert!(ctx.starts_with("Current time context:"), "wrong prefix: {ctx}");
+        assert!(
+            ctx.starts_with("Current time context:"),
+            "wrong prefix: {ctx}"
+        );
         // Must end with scheduling hint.
         assert!(
             ctx.contains("use this timezone"),
@@ -245,12 +244,15 @@ mod tests {
             let prompt = "Schedule a meeting for tomorrow";
             let result = maybe_prepend_tz(prompt, &cfg);
             // Context block must precede original prompt, separated by \n\n.
-            assert!(result.contains("\n\nSchedule a meeting for tomorrow"),
-                "separator missing: {result}");
-            assert!(result.starts_with("Current time context:"),
-                "no context prefix: {result}");
-            assert!(result.contains("Europe/Berlin"),
-                "no IANA name: {result}");
+            assert!(
+                result.contains("\n\nSchedule a meeting for tomorrow"),
+                "separator missing: {result}"
+            );
+            assert!(
+                result.starts_with("Current time context:"),
+                "no context prefix: {result}"
+            );
+            assert!(result.contains("Europe/Berlin"), "no IANA name: {result}");
         });
     }
 
@@ -271,7 +273,11 @@ mod tests {
         );
         assert_eq!(offset2.len(), 6, "wrong length: {offset2}");
         // HH and MM are ASCII digits (colon at index 3).
-        let digits: String = offset2.chars().skip(1).filter(|c| c.is_ascii_digit()).collect();
+        let digits: String = offset2
+            .chars()
+            .skip(1)
+            .filter(|c| c.is_ascii_digit())
+            .collect();
         assert_eq!(digits.len(), 4, "expected 4 digits: {offset2}");
     }
 }

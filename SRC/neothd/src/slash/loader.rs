@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use tracing::warn;
 
 use super::builtins::built_in_commands;
 use super::schema::SlashCommand;
@@ -22,24 +21,44 @@ pub async fn load_all(dir: &Path) -> Result<Vec<SlashCommand>> {
         by_name.insert(cmd.name.clone(), cmd);
     }
 
-    if dir.is_dir() {
-        let mut rd = tokio::fs::read_dir(dir)
-            .await
-            .with_context(|| format!("read slash dir {}", dir.display()))?;
-        while let Some(entry) = rd.next_entry().await? {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
-                continue;
-            }
-            match parse_file(&path).await {
-                Ok(cmd) => {
-                    by_name.insert(cmd.name.clone(), cmd);
-                }
-                Err(e) => {
-                    warn!(path = %path.display(), error = %e, "skipping bad slash command file");
-                }
-            }
+    match tokio::fs::metadata(dir).await {
+        Ok(metadata) if !metadata.is_dir() => {
+            anyhow::bail!("slash-command path {} is not a directory", dir.display());
         }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut out: Vec<SlashCommand> = by_name
+                .into_values()
+                .filter(|command| command.enabled)
+                .collect();
+            out.sort_by(|left, right| left.name.cmp(&right.name));
+            return Ok(out);
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect slash-command dir {}", dir.display()));
+        }
+    }
+
+    let mut rd = tokio::fs::read_dir(dir)
+        .await
+        .with_context(|| format!("read slash-command dir {}", dir.display()))?;
+    while let Some(entry) = rd
+        .next_entry()
+        .await
+        .with_context(|| format!("enumerate slash-command dir {}", dir.display()))?
+    {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+            continue;
+        }
+        let command = parse_file(&path).await.with_context(|| {
+            format!(
+                "operator slash-command set is invalid at {}; refusing partial dispatch",
+                path.display()
+            )
+        })?;
+        by_name.insert(command.name.clone(), command);
     }
 
     let mut out: Vec<SlashCommand> = by_name.into_values().filter(|c| c.enabled).collect();
@@ -155,14 +174,23 @@ enabled = false
     }
 
     #[tokio::test]
-    async fn bad_toml_does_not_crash_the_loader() {
+    async fn bad_toml_rejects_the_entire_operator_command_set() {
         let dir = tempdir().unwrap();
         tokio::fs::write(dir.path().join("broken.toml"), "this = is not [valid")
             .await
             .unwrap();
-        let cmds = load_all(dir.path()).await.unwrap();
-        // Built-ins still loaded.
-        assert!(cmds.iter().any(|c| c.name == "help"));
+        let error = load_all(dir.path()).await.unwrap_err();
+        assert!(error.to_string().contains("refusing partial dispatch"));
+    }
+
+    #[tokio::test]
+    async fn unreadable_toml_entry_rejects_the_entire_operator_command_set() {
+        let dir = tempdir().unwrap();
+        tokio::fs::create_dir(dir.path().join("unreadable.toml"))
+            .await
+            .unwrap();
+        let error = load_all(dir.path()).await.unwrap_err();
+        assert!(error.to_string().contains("refusing partial dispatch"));
     }
 
     #[tokio::test]

@@ -15,25 +15,24 @@
 //! release, so a compromised release controls both — SHA-256 is a
 //! corruption check, not an authenticity control. The minisign public
 //! key is pinned at COMPILE TIME via the `NEOTH_RELEASE_MINISIGN_PUBKEY`
-//! env (cargo-dist passes it on the release build); an attacker who
+//! env (the release workflow passes it into every native/cross build); an attacker who
 //! swaps the release cannot forge a signature without the operator's
 //! private key, which never leaves CI secrets.
 //!
-//! ## Two-tier enforcement
+//! ## Enforcement
 //!
-//! - **Manual** (`neoth update --self --apply`): `require = false`. A
-//!   missing signature / unprovisioned key WARNS and proceeds (so the
-//!   existing manual updater keeps working for releases published before
-//!   signing was enabled). A PRESENT-but-INVALID signature always bails.
+//! - **Manual** (`neoth update --self --apply`): signatures are required by
+//!   default. The explicit `--allow-unsigned` recovery flag passes
+//!   `require = false`; a present-but-invalid signature still always bails.
 //! - **Unattended** (daemon auto path): `require = true`. Anything short
 //!   of a verified signature hard-bails — no unattended swap without
 //!   cryptographic provenance.
 
 /// The minisign public key (base64 of the key line, NOT the full `.pub`
 /// file) pinned into the binary at compile time. `None` when the build
-/// did not set `NEOTH_RELEASE_MINISIGN_PUBKEY` — i.e. signing is not yet
-/// provisioned, in which case the unattended path refuses and the manual
-/// path warns.
+/// did not set `NEOTH_RELEASE_MINISIGN_PUBKEY`. Official release CI refuses to
+/// build without it; source/dev builds may intentionally have no pinned key and
+/// therefore cannot pass a required verification gate.
 pub const PINNED_PUBKEY: Option<&str> = option_env!("NEOTH_RELEASE_MINISIGN_PUBKEY");
 
 /// Outcome of a signature check that did NOT hard-fail. The caller logs
@@ -43,11 +42,11 @@ pub enum SigStatus {
     /// Signature present + verified against the pinned key.
     Verified,
     /// No signature companion on the release; allowed only because the
-    /// caller passed `require = false` (manual path, pre-signing releases).
+    /// caller explicitly passed `require = false` (`--allow-unsigned`).
     UnsignedAllowed,
     /// A signature companion was present but the binary has no pinned
     /// public key (build didn't set the env); allowed only because the
-    /// caller passed `require = false`.
+    /// caller explicitly passed `require = false`.
     NoPinnedKey,
 }
 
@@ -64,10 +63,9 @@ impl SigStatus {
 /// Verify a minisign signature over `data`.
 ///
 /// `signature` is the raw `.minisig` companion text (`None` when the
-/// release has no signature companion). `require` is the two-tier gate:
-/// `true` for the unattended daemon path (any non-verified outcome
-/// bails), `false` for the manual operator path (missing sig / no pinned
-/// key warns + proceeds; a present-but-invalid sig still bails).
+/// release has no signature companion). `require=true` is the default manual
+/// and unattended gate; `false` is reserved for the explicit trusted-recovery
+/// override. A present-but-invalid signature always bails.
 ///
 /// Returns the [`SigStatus`] for the non-fatal paths; `Err` on a hard
 /// failure (invalid signature, or a `require = true` gate that wasn't
@@ -77,10 +75,23 @@ pub fn check_signature(
     signature: Option<&str>,
     require: bool,
 ) -> anyhow::Result<SigStatus> {
+    check_signature_for_file(data, signature, require, None)
+}
+
+/// Verify the signature and, when supplied, bind it to the exact release asset
+/// filename carried in minisign's globally signed trusted comment. This blocks
+/// a valid signature for an older archive from being replayed under a newer
+/// staged-update version record.
+pub fn check_signature_for_file(
+    data: &[u8],
+    signature: Option<&str>,
+    require: bool,
+    expected_file: Option<&str>,
+) -> anyhow::Result<SigStatus> {
     let Some(pubkey_b64) = PINNED_PUBKEY else {
         if require {
             anyhow::bail!(
-                "unattended self-update requires a signed release, but this \
+                "signature verification is required, but this \
                  binary has no pinned minisign public key \
                  (NEOTH_RELEASE_MINISIGN_PUBKEY was not set at build time)"
             );
@@ -91,13 +102,23 @@ pub fn check_signature(
     let Some(sig_text) = signature else {
         if require {
             anyhow::bail!(
-                "unattended self-update requires a signed release, but no \
+                "signature verification is required, but no \
                  `.minisig` signature companion was published for this asset"
             );
         }
         return Ok(SigStatus::UnsignedAllowed);
     };
 
+    verify_with_public_key(data, sig_text, pubkey_b64, expected_file)?;
+    Ok(SigStatus::Verified)
+}
+
+fn verify_with_public_key(
+    data: &[u8],
+    sig_text: &str,
+    pubkey_b64: &str,
+    expected_file: Option<&str>,
+) -> anyhow::Result<()> {
     let pubkey = minisign_verify::PublicKey::from_base64(pubkey_b64.trim())
         .map_err(|e| anyhow::anyhow!("pinned minisign public key is malformed: {e}"))?;
     let sig = minisign_verify::Signature::decode(sig_text)
@@ -105,7 +126,17 @@ pub fn check_signature(
     pubkey
         .verify(data, &sig, false)
         .map_err(|e| anyhow::anyhow!("release signature verification FAILED: {e}"))?;
-    Ok(SigStatus::Verified)
+    if let Some(expected_file) = expected_file {
+        let expected_comment = format!("file:{expected_file}");
+        if sig.trusted_comment() != expected_comment {
+            anyhow::bail!(
+                "release signature is valid for trusted comment {:?}, expected {:?}; refusing a cross-version/cross-target replay",
+                sig.trusted_comment(),
+                expected_comment
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -157,5 +188,24 @@ mod tests {
         assert_eq!(SigStatus::Verified.as_str(), "verified");
         assert_eq!(SigStatus::UnsignedAllowed.as_str(), "unsigned_allowed");
         assert_eq!(SigStatus::NoPinnedKey.as_str(), "no_pinned_key");
+    }
+
+    #[test]
+    fn trusted_comment_binds_signature_to_exact_release_asset() {
+        let keypair = crate::updater::sig_keygen::ReleaseKeypair::generate().unwrap();
+        let data = b"signed archive";
+        let asset = "neoth-v1.0.0-x86_64-unknown-linux-gnu.tar.gz";
+        let signature = keypair.sign_minisig(data, "test", &format!("file:{asset}"));
+
+        verify_with_public_key(data, &signature, &keypair.public_key_base64(), Some(asset))
+            .unwrap();
+        let error = verify_with_public_key(
+            data,
+            &signature,
+            &keypair.public_key_base64(),
+            Some("neoth-v1.0.1-x86_64-unknown-linux-gnu.tar.gz"),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("cross-version/cross-target replay"));
     }
 }

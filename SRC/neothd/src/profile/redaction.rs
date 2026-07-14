@@ -5,11 +5,10 @@
 //! marker that forbids the extractor pipeline from proposing future
 //! claims against that field. Backed by `idx_profile_redactions`.
 //!
-//! Stage 5's `ProfileClaimGuard` consults this registry. Any claim
-//! whose `field` matches a `never_recreate=1` redaction is rejected
-//! with `GuardReason::FieldRedacted`. Operators set redactions via
-//! `neoth memory --forget <topic>` (the GDPR cascade-delete) or the
-//! future `neoth profile redact` CLI.
+//! Stage 5 and the final apply-time race recheck consult this registry. Normal
+//! entries block an exact profile field. The `_tombstone.<topic>` entries that
+//! `neoth memory --forget <topic>` writes atomically block the topic in any
+//! future claim field or structured value.
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
@@ -102,6 +101,21 @@ pub fn list_all(conn: &Connection) -> Result<Vec<Redaction>> {
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("collect redactions")?;
     Ok(rows)
+}
+
+/// Active permanent redactions used by the final apply-time race recheck.
+/// Returning complete rows preserves the redaction id/asserting actor needed
+/// by the `PROFILE_REDACT_BLOCKED` audit event.
+pub fn list_active(conn: &Connection) -> Result<Vec<Redaction>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, field, never_recreate, reason, asserted_by, asserted_at, revoked_at \
+         FROM idx_profile_redactions \
+         WHERE revoked_at IS NULL AND never_recreate = 1 \
+         ORDER BY asserted_at DESC, id DESC",
+    )?;
+    stmt.query_map([], row_to_redaction)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect active redactions")
 }
 
 fn row_to_redaction(r: &rusqlite::Row<'_>) -> rusqlite::Result<Redaction> {

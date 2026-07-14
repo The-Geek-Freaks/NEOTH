@@ -7,7 +7,8 @@
 //! Call sites stay thin:
 //!
 //! ```text
-//! match Gate::for_level(level).check(&Action::ExecArbitrary, &writer).await {
+//! match Gate::for_policy(config.autonomy_policy())
+//!     .check(&Action::ExecArbitrary, &writer).await {
 //!     Ok(()) => run_the_thing(),
 //!     Err(GateError::Denied(reason)) => return Err(...),
 //!     Err(GateError::Aborted) => return Ok(()),  // operator said no
@@ -28,7 +29,7 @@ use crate::wal::events::{EVENT_TYPE_PERMISSION_DENIED, EVENT_TYPE_PERMISSION_GRA
 use crate::wal::writer::WalWriterHandle;
 
 use super::lease::{CapabilityLease, LeaseStore};
-use super::{Action, AutonomyLevel, Decision, evaluate, lease_scope_for};
+use super::{Action, AutonomyLevel, AutonomyPolicySnapshot, Decision, evaluate, lease_scope_for};
 
 #[derive(Error, Debug)]
 pub enum GateError {
@@ -49,13 +50,13 @@ pub enum ConfirmStrategy {
     /// Interactive TTY prompt via dialoguer. Fails with `Unavailable` if no TTY.
     Tty,
     /// Channel-driven approve/deny — sends a message back through the channel
-    /// adapter and waits for a yes/no reply with a timeout. Not implemented
-    /// in this commit; falls through to `FailClosed` until Phase 28b AU-4-part-2
-    /// wires the channel callback.
+    /// adapter and waits for a yes/no reply with a timeout. Requires a
+    /// [`ChannelAsker`]; a missing/unavailable asker fails closed.
     Channel,
     /// Daemon / cron / non-interactive: deny by default.
     FailClosed,
     /// Test-only: every `Confirm` becomes Allow. NEVER use outside tests.
+    #[cfg(test)]
     #[doc(hidden)]
     AlwaysAllow,
 }
@@ -132,7 +133,7 @@ impl LeaseContext {
 
 /// One per autonomy decision site. Cheap to construct.
 pub struct Gate {
-    level: AutonomyLevel,
+    policy: AutonomyPolicySnapshot,
     confirm: ConfirmStrategy,
     /// R2-P1-2: when `Some`, the `ConfirmStrategy::Channel` path
     /// routes through this asker instead of dead-failing. None
@@ -152,14 +153,21 @@ pub struct Gate {
 }
 
 impl Gate {
-    pub fn for_level(level: AutonomyLevel) -> Self {
+    pub fn for_policy(policy: AutonomyPolicySnapshot) -> Self {
         Self {
-            level,
+            policy,
             confirm: ConfirmStrategy::FailClosed,
             channel_asker: None,
             channel_timeout: Duration::from_secs(90),
             lease_ctx: None,
         }
+    }
+
+    /// Built-in-level constructor retained only for the compact historical
+    /// unit-test matrix. Production call sites must provide a real snapshot.
+    #[cfg(test)]
+    pub fn for_level(level: AutonomyLevel) -> Self {
+        Self::for_policy(AutonomyPolicySnapshot::test_level(level))
     }
 
     /// Replace the confirm strategy. Defaults to `FailClosed`.
@@ -246,7 +254,21 @@ impl Gate {
         action: &Action,
         writer: Option<&WalWriterHandle>,
     ) -> Result<(), GateError> {
-        self.check_at(action, writer, Self::now_unix()).await
+        self.check_at_with_audit(action, writer, Self::now_unix(), false)
+            .await
+    }
+
+    /// Resolve `action` and require the permission-decision frame to be
+    /// durably appended before returning `Ok(())`. Paid provider dispatch uses
+    /// this stronger boundary: an operator grant without its WAL proof must
+    /// never open the network side effect.
+    pub async fn check_required_audit(
+        &self,
+        action: &Action,
+        writer: &WalWriterHandle,
+    ) -> Result<(), GateError> {
+        self.check_at_with_audit(action, Some(writer), Self::now_unix(), true)
+            .await
     }
 
     /// [`Self::check`] with an explicit decision-time clock. The lease
@@ -259,13 +281,25 @@ impl Gate {
     /// make an expired lease appear live, so production code outside this
     /// crate must go through [`Self::check`] (which always reads a fresh
     /// wall-clock). Only the in-crate test module supplies a fixed clock.
+    #[cfg(test)]
     pub(crate) async fn check_at(
         &self,
         action: &Action,
         writer: Option<&WalWriterHandle>,
         now_unix: i64,
     ) -> Result<(), GateError> {
-        let decision = evaluate(action, self.level);
+        self.check_at_with_audit(action, writer, now_unix, false)
+            .await
+    }
+
+    async fn check_at_with_audit(
+        &self,
+        action: &Action,
+        writer: Option<&WalWriterHandle>,
+        now_unix: i64,
+        audit_required: bool,
+    ) -> Result<(), GateError> {
+        let decision = evaluate(action, &self.policy);
         // SL-01a-b: a covering capability lease upgrades `Confirm → Allow`,
         // and ONLY `Confirm`. `Deny` is the operator's hard floor at this
         // autonomy level — it is final and a lease can NEVER override it
@@ -289,18 +323,30 @@ impl Gate {
         };
 
         if let Some(w) = writer {
-            // Best-effort audit. A WAL append failure must not block the
-            // decision the operator just made.
             let subject = self.lease_ctx.as_ref().map(|c| c.subject.as_str());
-            let _ = audit(
+            let audit_result = audit(
                 w,
                 action,
-                self.level,
+                self.policy.level(),
                 &final_decision,
                 subject,
                 lease_id.as_deref(),
             )
             .await;
+            if audit_required {
+                audit_result.map_err(|error| {
+                    GateError::Unavailable(format!(
+                        "required permission audit WAL append failed: {error}"
+                    ))
+                })?;
+            } else if let Err(error) = audit_result {
+                tracing::warn!(
+                    error = %error,
+                    action = ?action,
+                    decision = final_decision.tag(),
+                    "best-effort permission audit WAL append failed"
+                );
+            }
         }
 
         match final_decision {
@@ -314,6 +360,7 @@ impl Gate {
 
     async fn resolve_confirm(&self, action: &Action, reason: &str) -> Decision {
         match self.confirm {
+            #[cfg(test)]
             ConfirmStrategy::AlwaysAllow => Decision::Allow,
             ConfirmStrategy::FailClosed => {
                 Decision::Deny(format!("daemon-mode fail-closed; {reason}"))
@@ -406,9 +453,35 @@ async fn audit(
         Decision::Deny(r) => (EVENT_TYPE_PERMISSION_DENIED, Some(r.as_str())),
         Decision::Confirm(r) => (EVENT_TYPE_PERMISSION_DENIED, Some(r.as_str())),
     };
+    let (authorization_id, request_binding_sha256) = match action {
+        Action::PaidProviderCall {
+            authorization_id,
+            request_binding_sha256,
+            ..
+        }
+        | Action::UnboundedPaidProviderCall {
+            authorization_id,
+            request_binding_sha256,
+            ..
+        } => (
+            Some(authorization_id.as_str()),
+            Some(request_binding_sha256.as_str()),
+        ),
+        Action::ExternalTtsSynthesis {
+            request_binding_sha256,
+            ..
+        }
+        | Action::ExternalHttpRequest {
+            request_binding_sha256,
+            ..
+        } => (None, Some(request_binding_sha256.as_str())),
+        _ => (None, None),
+    };
     let payload = serde_json::to_vec(&serde_json::json!({
         "level": level.as_str(),
         "action": format!("{action:?}"),
+        "authorization_id": authorization_id,
+        "request_binding_sha256": request_binding_sha256,
         "decision": decision.tag(),
         "reason": reason,
         "subject": subject,
@@ -432,11 +505,59 @@ mod tests {
     use tempfile::tempdir;
     use tokio::fs::read;
 
+    fn paid_action(eur_estimate: f32) -> Action {
+        Action::PaidProviderCall {
+            provider: "openai_api".into(),
+            model: "gpt-5".into(),
+            authorization_id: "a".repeat(64),
+            request_binding_sha256: "b".repeat(64),
+            eur_estimate,
+        }
+    }
+
     #[tokio::test]
     async fn allow_path_lets_action_through() {
         let gate = Gate::for_level(AutonomyLevel::Standard);
         let r = gate.check(&Action::Read, None).await;
         assert!(r.is_ok(), "Read on Standard must Allow, got {:?}", r);
+    }
+
+    #[tokio::test]
+    async fn custom_snapshot_drives_allow_confirm_and_deny_through_gate() {
+        let mut custom = crate::permissions::CustomAutonomyConfig::default();
+        custom.overrides.insert(
+            crate::permissions::ActionKind::ExecArbitrary,
+            crate::permissions::CustomDecision::Allow,
+        );
+        custom.overrides.insert(
+            crate::permissions::ActionKind::Read,
+            crate::permissions::CustomDecision::Confirm,
+        );
+        custom.overrides.insert(
+            crate::permissions::ActionKind::ChannelSend,
+            crate::permissions::CustomDecision::Deny,
+        );
+        let policy = AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &custom);
+
+        assert!(
+            Gate::for_policy(policy.clone())
+                .check(&Action::ExecArbitrary, None)
+                .await
+                .is_ok()
+        );
+        assert!(
+            Gate::for_policy(policy.clone())
+                .with_confirm(ConfirmStrategy::AlwaysAllow)
+                .check(&Action::Read, None)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            Gate::for_policy(policy)
+                .check(&Action::ChannelSend, None)
+                .await,
+            Err(GateError::Denied(_))
+        ));
     }
 
     #[tokio::test]
@@ -613,6 +734,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn required_audit_failure_blocks_an_otherwise_allowed_paid_call() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("required-audit.wal");
+        let (writer, join) = wal_spawn(seg).unwrap();
+        let writer = writer.with_quota_guard(Arc::new(crate::wal::writer::QuotaGuard::new(
+            dir.path().to_path_buf(),
+            0,
+        )));
+        let gate = Gate::for_level(AutonomyLevel::Full);
+        let action = paid_action(0.10);
+
+        assert!(
+            gate.check(&action, Some(&writer)).await.is_ok(),
+            "the legacy generic gate keeps its documented best-effort audit semantics"
+        );
+        let error = gate
+            .check_required_audit(&action, &writer)
+            .await
+            .expect_err("paid-call grant without a durable audit must fail closed");
+        assert!(
+            matches!(&error, GateError::Unavailable(reason) if reason.contains("required permission audit WAL append failed")),
+            "unexpected error: {error:?}"
+        );
+
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn paid_call_permission_frame_carries_request_binding_fields() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("bound-paid-call.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let action = paid_action(0.10);
+
+        Gate::for_level(AutonomyLevel::Full)
+            .check_required_audit(&action, &writer)
+            .await
+            .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = read(&seg).await.unwrap();
+        let frame = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(payload["authorization_id"], "a".repeat(64));
+        assert_eq!(payload["request_binding_sha256"], "b".repeat(64));
+        let action_debug = payload["action"].as_str().unwrap();
+        assert!(action_debug.contains(&"a".repeat(64)));
+        assert!(action_debug.contains(&"b".repeat(64)));
+    }
+
+    #[tokio::test]
     async fn audit_emits_denied_frame_when_deny() {
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
@@ -655,9 +829,7 @@ mod tests {
 
         let gate =
             Gate::for_level(AutonomyLevel::Standard).with_confirm(ConfirmStrategy::FailClosed);
-        let action = Action::PaidProviderCall {
-            eur_estimate: 1.25, // > €0.50 ceiling → triggers Confirm
-        };
+        let action = paid_action(1.25); // > €0.50 ceiling → triggers Confirm
         let r = gate.check(&action, Some(&writer)).await;
         assert!(
             matches!(r, Err(GateError::Denied(_))),
@@ -686,7 +858,7 @@ mod tests {
 
         let gate =
             Gate::for_level(AutonomyLevel::Standard).with_confirm(ConfirmStrategy::FailClosed);
-        let action = Action::PaidProviderCall { eur_estimate: 0.10 };
+        let action = paid_action(0.10);
         let r = gate.check(&action, Some(&writer)).await;
         assert!(
             r.is_ok(),
@@ -761,7 +933,7 @@ mod tests {
 
         let gate = Gate::for_level(AutonomyLevel::Full).with_confirm(ConfirmStrategy::FailClosed);
         for action in [
-            Action::PaidProviderCall { eur_estimate: 10.0 },
+            paid_action(10.0),
             Action::ChannelSend,
             Action::WriteOutsideHome,
             Action::ExecArbitrary,
@@ -822,7 +994,7 @@ mod tests {
     #[tokio::test]
     async fn cost_predict_feeds_eur_estimate_for_paid_call() {
         // Pick #10 cost-integration spine: the daemon path constructs
-        // `Action::PaidProviderCall { eur_estimate: cost.total_eur }`
+        // request-bound `Action::PaidProviderCall { .. }`
         // from `providers::cost::predict()`. This test verifies the
         // wire — a non-trivial prompt against a paid provider produces
         // a non-zero estimate, and that estimate flows through the gate
@@ -841,9 +1013,7 @@ mod tests {
             cost.total_eur
         );
 
-        let action = Action::PaidProviderCall {
-            eur_estimate: cost.total_eur,
-        };
+        let action = paid_action(cost.total_eur);
         let gate =
             Gate::for_level(AutonomyLevel::Standard).with_confirm(ConfirmStrategy::FailClosed);
         let r = gate.check(&action, None).await;

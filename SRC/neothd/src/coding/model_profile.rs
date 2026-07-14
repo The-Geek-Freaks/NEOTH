@@ -36,13 +36,11 @@
 //!
 //! ## Why no IO + no async
 //!
-//! Pure-function module — caller passes the model name string
-//! in, gets a struct back. Tests pin the table contents and the
-//! matcher's longest-key-wins behaviour. Integration into
-//! `provider_worker::ProviderWorker::execute()` (consult
-//! `tool_format` to format the tool-call payload, consult
-//! `context_length` to gate the 2-stage tool router from port
-//! #3) lands in a follow-up commit so this port stays focused.
+//! Pure-function module — caller passes the model name string in and gets a
+//! struct back. `provider_worker::ProviderWorker::execute()` consumes the
+//! profile on every coding task to select direct vs two-stage tool routing and
+//! to frame a model-appropriate tool-use hint. Tests pin the table contents,
+//! longest-key-wins matching, and the worker integration.
 //!
 //! ## What this module is NOT
 //!

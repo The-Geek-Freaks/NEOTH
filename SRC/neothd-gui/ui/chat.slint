@@ -36,6 +36,8 @@ export struct ChatMessage {
     /// (`panel_logic::format_stream_metrics`); empty = no chip.
     metrics: string,
     metrics-detail: string,
+    /// Exact provider response model from the stream done-sentinel.
+    model: string,
 }
 
 /// GOLD-ADAPT-ODY-01 — one recent session in the sidebar (from the
@@ -84,18 +86,20 @@ component ChatBubble inherits Rectangle {
             // accent so a failed turn is visibly distinct — the Rust side
             // emits role "error"/"assistant"; "assistant" falls through to
             // the NEOTH card default, "error" now has its own red arm.
-            background: root.message.role == "operator"
+            background: Theme.chat-bubble-style == 2 && root.message.role != "error"
+                ? transparent
+                : (root.message.role == "operator"
                 ? Theme.accent-green.with-alpha(0.18)
                 : (root.message.role == "error"
                     ? Theme.accent-pink.with-alpha(0.18)
-                    : (root.message.role == "system" ? transparent : Theme.bg-card));
+                    : (root.message.role == "system" ? transparent : Theme.bg-card)));
             border-color: root.message.role == "operator"
                 ? Theme.accent-green.with-alpha(0.4)
                 : (root.message.role == "error"
                     ? Theme.accent-pink.with-alpha(0.55)
                     : (root.message.role == "system" ? transparent : Theme.border-subtle));
-            border-width: root.message.role == "system" ? 0px : 1px;
-            border-radius: Theme.radius-card;
+            border-width: root.message.role == "system" || Theme.chat-bubble-style == 2 ? 0px : 1px;
+            border-radius: Theme.chat-bubble-style == 1 ? Theme.radius-xs : Theme.radius-card;
             max-width: root.bubble-max-width;
 
             VerticalLayout {
@@ -127,7 +131,7 @@ component ChatBubble inherits Rectangle {
                     }
                     // ODY-02/05 — context/throughput chip; click pops the
                     // full metrics detail.
-                    if root.message.metrics != "": Rectangle {
+                    if Theme.show-token-count && root.message.metrics != "": Rectangle {
                         width: chip-txt.preferred-width + 14px;
                         height: 18px;
                         border-radius: Theme.radius-pill;
@@ -162,6 +166,23 @@ component ChatBubble inherits Rectangle {
                                     }
                                 }
                             }
+                        }
+                    }
+                    if Theme.show-model-badge && root.message.model != "": Rectangle {
+                        width: model-txt.preferred-width + 14px;
+                        height: 18px;
+                        border-radius: Theme.radius-pill;
+                        background: Theme.accent-tint;
+                        border-width: 1px;
+                        border-color: Theme.border-accent;
+                        model-txt := Text {
+                            text: root.message.model;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.accent;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
                         }
                     }
                 }
@@ -391,7 +412,7 @@ component Composer inherits Rectangle {
             horizontal-stretch: 1;
             // Auto-grow: height tracks the TextInput's reactive
             // preferred-height between a 1-line floor and a ~6-line cap.
-            height: max(38px, min(160px, composer-input.preferred-height + Theme.space-base));
+            height: max(Theme.input-height, min(160px, composer-input.preferred-height + Theme.space-base));
             background: Theme.bg-card;
             border-radius: Theme.radius-button;
             border-width: 1px;

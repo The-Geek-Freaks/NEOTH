@@ -9,10 +9,9 @@
 //!      code idiomatic, safe, and well-tested?
 //!
 //! Both stages return a typed `ReviewVerdict` with a pass/fail flag + free-
-//! form feedback. The dispatcher (caller in `cli/chat.rs` follow-up) emits
-//! a WAL `0x84 SUBAGENT_REVIEW_STAGE` frame per stage so the audit trail
-//! captures the chain. v0.1 ships the module + tests; chat-pipeline wiring
-//! is the follow-up step.
+//! form feedback. The live chat dispatcher calls [`two_stage_review`] when
+//! `review_gate_enabled` is set and emits a WAL `0x84
+//! SUBAGENT_REVIEW_STAGE` frame per completed stage.
 //!
 //! Cost note: each invocation triples the provider spend. Operators opt in
 //! via `FreedomConfig.review_gate_enabled` (default `false`) — sensible for
@@ -303,6 +302,7 @@ mod tests {
                 .ok_or_else(|| anyhow::anyhow!("scripted provider ran out of canned replies"))?;
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model: "scripted-1".into(),
                 latency: std::time::Duration::from_millis(1),
                 input_tokens: Some(10),

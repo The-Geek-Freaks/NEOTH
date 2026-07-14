@@ -1,11 +1,10 @@
-//! Per-source readers — V10-06 Phase-3 dry-run path.
+//! Per-source readers for the prior-assistant migration path.
 //!
-//! Each import-source kind (Markdown / Json / LanceArrow / Sqlite /
-//! GitTree / FaissFlat per `RUNBOOK_phase3_cutover.md` Day-62) gets
-//! its own reader. Phase 1 (this binary) implements the scan-only
-//! variants — count rows, surface sample entries, validate the shape.
-//! Phase 2 (V10-06 follow-up) will wire each reader to an
-//! `OperatorWalEmitter` that appends WAL frames during `apply`.
+//! Each import-source kind gets a scan path and, where supported, an apply
+//! path. `AssistantHome` is the complete OpenClaw/Hermes/OpenHuman/Veronica
+//! home reader used by `detect`: it recursively covers memory-bearing
+//! Markdown, JSON/JSONL and SQLite stores while excluding secrets, caches and
+//! the NEOTH target tree.
 //!
 //! The list of sources is NOT hardcoded — the operator declares their
 //! own prior-AI memory stores in an `import-manifest.yaml` (passed via
@@ -84,8 +83,9 @@ pub enum ScanStatus {
     Ok,
     /// Store path doesn't exist on this operator's machine.
     PathMissing,
-    /// Reader not yet implemented in this Phase-1 binary. Operator
-    /// sees this in the report and knows to wait for V10-06 follow-up.
+    /// Reserved compatibility shape for a reader that cannot inventory its
+    /// source in the running binary. Current scan-only kinds have inventory
+    /// readers and therefore report `Ok` or `Error` instead.
     ReaderNotImplemented { reason: String },
     /// Reader hit an unrecoverable error mid-walk (permissions,
     /// corruption). Operator-actionable.
@@ -99,6 +99,9 @@ pub enum ScanStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportKind {
+    /// A complete prior-assistant home. `hint` MUST identify the family:
+    /// `openclaw | hermes | openhuman | veronica`.
+    AssistantHome,
     Markdown,
     MarkdownFile,
     JsonDir,
@@ -112,6 +115,7 @@ pub enum ImportKind {
 impl ImportKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::AssistantHome => "assistant_home",
             Self::Markdown => "markdown",
             Self::MarkdownFile => "markdown_file",
             Self::JsonDir => "json_dir",
@@ -129,10 +133,28 @@ impl ImportKind {
 /// level — the `ScanStatus::Error` variant carries the per-source
 /// failure detail.
 pub fn scan_all(sources: &[ImportSource], home: &Path) -> Vec<StoreScan> {
-    sources.iter().map(|s| scan_one(s, home)).collect()
+    let target = home.join(".neoth");
+    sources
+        .iter()
+        .map(|s| scan_one(s, home, std::slice::from_ref(&target)))
+        .collect()
 }
 
-fn scan_one(source: &ImportSource, home: &Path) -> StoreScan {
+/// Dry-run scan with the real apply target excluded. This is used when
+/// `apply --db` points outside the default `~/.neoth/views.db` location.
+pub fn scan_all_for_target(
+    sources: &[ImportSource],
+    home: &Path,
+    target_db: &Path,
+) -> Vec<StoreScan> {
+    let exclusions = target_exclusions(target_db);
+    sources
+        .iter()
+        .map(|s| scan_one(s, home, &exclusions))
+        .collect()
+}
+
+fn scan_one(source: &ImportSource, home: &Path, exclusions: &[PathBuf]) -> StoreScan {
     let name = source.name.as_str();
     let kind = source.kind;
     let resolved = resolve_path(&source.path, home);
@@ -147,10 +169,37 @@ fn scan_one(source: &ImportSource, home: &Path) -> StoreScan {
             sample: vec![],
         };
     }
+    let expects_directory = matches!(
+        kind,
+        ImportKind::AssistantHome
+            | ImportKind::Markdown
+            | ImportKind::JsonDir
+            | ImportKind::LanceArrow
+            | ImportKind::GitTree
+            | ImportKind::FaissFlat
+    );
+    let expects_file = matches!(kind, ImportKind::MarkdownFile | ImportKind::JsonFile);
+    if (expects_directory && !resolved.is_dir()) || (expects_file && !resolved.is_file()) {
+        return StoreScan {
+            name: name.to_string(),
+            path: path_str,
+            kind: kind.as_str().to_string(),
+            status: ScanStatus::Error {
+                detail: if expects_directory {
+                    "source kind requires a directory".to_string()
+                } else {
+                    "source kind requires a regular file".to_string()
+                },
+            },
+            row_count: 0,
+            sample: Vec::new(),
+        };
+    }
     match kind {
-        ImportKind::Markdown => scan_markdown_dir(name, &resolved, kind),
+        ImportKind::AssistantHome => scan_assistant_home(source, &resolved, exclusions),
+        ImportKind::Markdown => scan_markdown_dir(name, &resolved, kind, exclusions),
         ImportKind::MarkdownFile => scan_markdown_file(name, &resolved, kind),
-        ImportKind::JsonDir => scan_json_dir(name, &resolved, kind),
+        ImportKind::JsonDir => scan_json_dir(name, &resolved, kind, exclusions),
         ImportKind::JsonFile => scan_json_file(name, &resolved, kind),
         ImportKind::Sqlite => scan_sqlite(name, &resolved, kind),
         ImportKind::FaissFlat => scan_faiss_flat(name, &resolved, kind),
@@ -266,33 +315,21 @@ fn scan_git_inventory(name: &str, path: &std::path::Path, kind: ImportKind) -> S
 
 fn scan_sqlite(name: &str, path: &std::path::Path, kind: ImportKind) -> StoreScan {
     let kind_str = kind.as_str().to_string();
-    // If the operator pointed us at a directory, pick the first `.db`
-    // file under it. A direct file path is used as-is.
-    let actual_db = if path.is_dir() {
-        let candidate = std::fs::read_dir(path)
-            .ok()
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path())
-            .find(|p| p.extension().and_then(|x| x.to_str()) == Some("db"));
-        match candidate {
-            Some(c) => c,
-            None => {
-                return StoreScan {
-                    name: name.to_string(),
-                    path: path.display().to_string(),
-                    kind: kind_str,
-                    status: ScanStatus::Error {
-                        detail: "directory contains no .db file".into(),
-                    },
-                    row_count: 0,
-                    sample: vec![],
-                };
-            }
+    // Directory sources select the same sorted direct child as apply.
+    let actual_db = match resolve_sqlite_source(path) {
+        Ok(path) => path,
+        Err(error) => {
+            return StoreScan {
+                name: name.to_string(),
+                path: path.display().to_string(),
+                kind: kind_str,
+                status: ScanStatus::Error {
+                    detail: format!("resolve sqlite source: {error:#}"),
+                },
+                row_count: 0,
+                sample: vec![],
+            };
         }
-    } else {
-        path.to_path_buf()
     };
 
     let conn = match rusqlite::Connection::open_with_flags(
@@ -419,15 +456,31 @@ fn resolve_path(template: &str, home: &Path) -> PathBuf {
     }
 }
 
-fn scan_markdown_dir(name: &str, dir: &Path, kind: ImportKind) -> StoreScan {
+fn scan_markdown_dir(
+    name: &str,
+    dir: &Path,
+    kind: ImportKind,
+    exclusions: &[PathBuf],
+) -> StoreScan {
     let mut count = 0;
     let mut sample = Vec::new();
-    for entry in WalkBuilder::new(dir)
-        .standard_filters(true)
-        .build()
-        .flatten()
-    {
-        if entry.path().extension().and_then(|e| e.to_str()) != Some("md") {
+    for result in recursive_source_walk(dir, exclusions) {
+        let entry = match result {
+            Ok(entry) => entry,
+            Err(error) => {
+                return StoreScan {
+                    name: name.to_string(),
+                    path: dir.display().to_string(),
+                    kind: kind.as_str().to_string(),
+                    status: ScanStatus::Error {
+                        detail: format!("walk Markdown source: {error}"),
+                    },
+                    row_count: 0,
+                    sample: Vec::new(),
+                };
+            }
+        };
+        if !matches!(lower_extension(entry.path()).as_str(), "md" | "markdown") {
             continue;
         }
         count += 1;
@@ -482,19 +535,27 @@ fn scan_markdown_file(name: &str, file: &Path, kind: ImportKind) -> StoreScan {
     }
 }
 
-fn scan_json_dir(name: &str, dir: &Path, kind: ImportKind) -> StoreScan {
+fn scan_json_dir(name: &str, dir: &Path, kind: ImportKind, exclusions: &[PathBuf]) -> StoreScan {
     let mut count = 0;
     let mut sample = Vec::new();
-    for entry in WalkBuilder::new(dir)
-        .standard_filters(true)
-        .build()
-        .flatten()
-    {
+    for result in recursive_source_walk(dir, exclusions) {
+        let entry = match result {
+            Ok(entry) => entry,
+            Err(error) => {
+                return StoreScan {
+                    name: name.to_string(),
+                    path: dir.display().to_string(),
+                    kind: kind.as_str().to_string(),
+                    status: ScanStatus::Error {
+                        detail: format!("walk JSON source: {error}"),
+                    },
+                    row_count: 0,
+                    sample: Vec::new(),
+                };
+            }
+        };
         let p = entry.path();
-        if matches!(
-            p.extension().and_then(|e| e.to_str()),
-            Some("json" | "ajson")
-        ) {
+        if matches!(lower_extension(p).as_str(), "json" | "ajson") {
             count += 1;
             if sample.len() < 3 {
                 sample.push(p.display().to_string());
@@ -548,6 +609,588 @@ fn scan_json_file(name: &str, file: &Path, kind: ImportKind) -> StoreScan {
     }
 }
 
+// ── Complete prior-assistant home reader (GOLD-ADAPT-OH-01) ────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AssistantFamily {
+    Openclaw,
+    Hermes,
+    Openhuman,
+    Veronica,
+}
+
+fn assistant_family(source: &ImportSource) -> anyhow::Result<AssistantFamily> {
+    match source
+        .hint
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "openclaw" => Ok(AssistantFamily::Openclaw),
+        "hermes" => Ok(AssistantFamily::Hermes),
+        "openhuman" => Ok(AssistantFamily::Openhuman),
+        "veronica" => Ok(AssistantFamily::Veronica),
+        other => anyhow::bail!(
+            "assistant_home source '{}' requires hint: openclaw | hermes | openhuman | veronica (got '{other}')",
+            source.name
+        ),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HomeArtifactKind {
+    Markdown,
+    Json,
+    JsonLines,
+    Sqlite,
+}
+
+#[derive(Clone, Debug)]
+struct HomeArtifact {
+    path: PathBuf,
+    kind: HomeArtifactKind,
+}
+
+/// Memory import deliberately excludes credential/auth/browser stores. A
+/// migration must never turn a bearer token or cookie into a recallable fact.
+/// Config/credential conversion remains the explicit `import-config` surface.
+const SENSITIVE_PATH_PARTS: &[&str] = &[
+    "auth",
+    "oauth",
+    "credentials",
+    "credential",
+    "secrets",
+    "secret",
+    "keys",
+    "api_keys",
+    "apikeys",
+    "keychain",
+    "cookies",
+    "cookie",
+    "webview_accounts",
+    "cef",
+    ".ssh",
+];
+
+/// Generated/runtime trees cannot contain operator-authored memory and can be
+/// very large. Pruning them is part of whole-home discovery, not a silent
+/// partial: the policy is pinned here and surfaced in the scan sample.
+const NOISE_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "cache",
+    "caches",
+    "logs",
+    "tmp",
+    "temp",
+];
+
+fn lower_file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn lower_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn sensitive_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        let part = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        SENSITIVE_PATH_PARTS.iter().any(|needle| part == *needle)
+    }) || {
+        let name = lower_file_name(path);
+        name == ".env"
+            || name.starts_with(".env.")
+            || matches!(
+                name.as_str(),
+                ".npmrc" | ".pypirc" | "id_rsa" | "id_ed25519"
+            )
+            || name.contains("auth-profile")
+            || name.contains("auth_profile")
+            || name.contains("api-key")
+            || name.contains("api_key")
+            || name.contains("apikey")
+            || name.contains("oauth")
+            || name.contains("credential")
+            || name.contains("secret")
+            || name.contains("token")
+            || name.contains("password")
+            || name.contains("passwd")
+            || name.contains("private-key")
+            || name.contains("private_key")
+            || name.contains("cookie")
+            || name.contains("keychain")
+    }
+}
+
+fn sensitive_identifier(identifier: &str) -> bool {
+    let lower = identifier.to_ascii_lowercase();
+    let compact: String = lower
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect();
+    matches!(
+        compact.as_str(),
+        "auth"
+            | "oauth"
+            | "credential"
+            | "credentials"
+            | "secret"
+            | "secrets"
+            | "token"
+            | "tokens"
+            | "password"
+            | "passwd"
+            | "cookie"
+            | "cookies"
+            | "keychain"
+    ) || [
+        "apikey",
+        "accesstoken",
+        "refreshtoken",
+        "authtoken",
+        "bearertoken",
+        "clientsecret",
+        "privatekey",
+        "encryptionkey",
+        "signingkey",
+        "sessionkey",
+        "passwordhash",
+    ]
+    .iter()
+    .any(|needle| compact.contains(needle))
+        || lower
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .any(|part| {
+                matches!(
+                    part,
+                    "auth"
+                        | "credential"
+                        | "credentials"
+                        | "secret"
+                        | "secrets"
+                        | "password"
+                        | "passwd"
+                        | "cookie"
+                        | "cookies"
+                        | "keychain"
+                        | "oauth"
+                )
+            })
+}
+
+fn discriminator_identifier(identifier: &str) -> bool {
+    matches!(
+        identifier.trim().to_ascii_lowercase().as_str(),
+        "key" | "name" | "type" | "kind" | "setting" | "field" | "property"
+    )
+}
+
+fn noise_dir(path: &Path) -> bool {
+    let name = lower_file_name(path);
+    NOISE_DIRS.contains(&name.as_str())
+}
+
+fn comparable_path(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    }
+}
+
+fn path_eq(left: &Path, right: &Path) -> bool {
+    let left = comparable_path(left);
+    let right = comparable_path(right);
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn path_within(path: &Path, parent: &Path) -> bool {
+    let path = comparable_path(path);
+    let parent = comparable_path(parent);
+    #[cfg(windows)]
+    {
+        let path = path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        let mut parent = parent
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        if !parent.ends_with('/') {
+            parent.push('/');
+        }
+        path == parent.trim_end_matches('/') || path.starts_with(&parent)
+    }
+    #[cfg(not(windows))]
+    {
+        path.starts_with(parent)
+    }
+}
+
+fn is_excluded(path: &Path, exclusions: &[PathBuf]) -> bool {
+    exclusions.iter().any(|excluded| {
+        path_eq(path, excluded)
+            || path_within(path, excluded)
+            || (path.is_file()
+                && excluded.is_file()
+                && same_file::is_same_file(path, excluded).unwrap_or(false))
+    })
+}
+
+fn target_exclusions(target_db: &Path) -> Vec<PathBuf> {
+    let mut exclusions = vec![target_db.to_path_buf()];
+    if let Some(parent) = target_db.parent() {
+        exclusions.push(parent.to_path_buf());
+    }
+    exclusions
+}
+
+/// Recursive generic sources may be broader than the NEOTH home. Always
+/// prune the current target workspace so preview and apply see the same input
+/// and never re-ingest migration output.
+fn recursive_source_walk(root: &Path, exclusions: &[PathBuf]) -> ignore::Walk {
+    let filter_root = root.to_path_buf();
+    let filter_exclusions = exclusions.to_vec();
+    let mut builder = WalkBuilder::new(root);
+    builder.standard_filters(true).filter_entry(move |entry| {
+        path_eq(entry.path(), &filter_root) || !is_excluded(entry.path(), &filter_exclusions)
+    });
+    builder.build()
+}
+
+fn sqlite_magic(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 16];
+    file.read_exact(&mut magic).is_ok() && &magic == b"SQLite format 3\0"
+}
+
+/// Resolve the legacy directory form to one deterministic direct SQLite
+/// child. Whole assistant homes use [`assistant_home_inventory`] instead and
+/// therefore import every discovered database.
+fn resolve_sqlite_source(path: &Path) -> anyhow::Result<PathBuf> {
+    if !path.is_dir() {
+        return Ok(path.to_path_buf());
+    }
+
+    let mut candidates = Vec::new();
+    for result in std::fs::read_dir(path)
+        .with_context(|| format!("read SQLite source directory {}", path.display()))?
+    {
+        let entry = result
+            .with_context(|| format!("read entry in SQLite source directory {}", path.display()))?;
+        if !entry
+            .file_type()
+            .with_context(|| format!("inspect SQLite candidate {}", entry.path().display()))?
+            .is_file()
+        {
+            continue;
+        }
+        let candidate = entry.path();
+        if matches!(
+            lower_extension(&candidate).as_str(),
+            "db" | "sqlite" | "sqlite3"
+        ) {
+            candidates.push(candidate);
+        }
+    }
+    candidates.sort();
+    candidates.into_iter().next().ok_or_else(|| {
+        anyhow::anyhow!(
+            "directory contains no .db, .sqlite, or .sqlite3 file: {}",
+            path.display()
+        )
+    })
+}
+
+fn assistant_home_inventory(
+    root: &Path,
+    exclusions: &[PathBuf],
+) -> anyhow::Result<Vec<HomeArtifact>> {
+    anyhow::ensure!(
+        root.is_dir(),
+        "assistant home is not a directory: {}",
+        root.display()
+    );
+
+    let filter_exclusions = exclusions.to_vec();
+    let filter_root = root.to_path_buf();
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .ignore(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .follow_links(false)
+        .filter_entry(move |entry| {
+            let path = entry.path();
+            if path_eq(path, &filter_root) {
+                return true;
+            }
+            if is_excluded(path, &filter_exclusions) || sensitive_path(path) {
+                return false;
+            }
+            if entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_dir())
+                && noise_dir(path)
+            {
+                return false;
+            }
+            true
+        });
+
+    let mut artifacts = Vec::new();
+    for result in builder.build() {
+        let entry = result.with_context(|| format!("walk assistant home {}", root.display()))?;
+        if !entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
+        {
+            continue;
+        }
+        let path = entry.into_path();
+        let ext = lower_extension(&path);
+        let kind = match ext.as_str() {
+            "md" | "markdown" => Some(HomeArtifactKind::Markdown),
+            "json" | "ajson" => Some(HomeArtifactKind::Json),
+            "jsonl" | "ndjson" => Some(HomeArtifactKind::JsonLines),
+            "db" | "sqlite" | "sqlite3" if sqlite_magic(&path) => Some(HomeArtifactKind::Sqlite),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            artifacts.push(HomeArtifact { path, kind });
+        }
+    }
+    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(artifacts)
+}
+
+fn scan_assistant_home(source: &ImportSource, root: &Path, exclusions: &[PathBuf]) -> StoreScan {
+    let kind = source.kind.as_str().to_string();
+    let path = root.display().to_string();
+    let result = (|| -> anyhow::Result<(usize, Vec<String>)> {
+        assistant_family(source)?;
+        let artifacts = assistant_home_inventory(root, exclusions)?;
+        let claims = emit_assistant_home_inventory(&artifacts, source_tag_for(source), "global")?;
+        let mut sample: Vec<String> = artifacts
+            .iter()
+            .take(3)
+            .map(|artifact| artifact.path.display().to_string())
+            .collect();
+        sample.push(format!(
+            "policy: {} memory artifact(s); secrets/caches/NEOTH target excluded",
+            artifacts.len()
+        ));
+        Ok((claims.len(), sample))
+    })();
+
+    match result {
+        Ok((row_count, sample)) => StoreScan {
+            name: source.name.clone(),
+            path,
+            kind,
+            status: ScanStatus::Ok,
+            row_count,
+            sample,
+        },
+        Err(error) => StoreScan {
+            name: source.name.clone(),
+            path,
+            kind,
+            status: ScanStatus::Error {
+                detail: format!("{error:#}"),
+            },
+            row_count: 0,
+            sample: Vec::new(),
+        },
+    }
+}
+
+fn emit_assistant_home_claims(
+    source: &ImportSource,
+    root: &Path,
+    tag: &'static str,
+    scope: &str,
+    exclusions: &[PathBuf],
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    assistant_family(source)?;
+    let artifacts = assistant_home_inventory(root, exclusions)?;
+    emit_assistant_home_inventory(&artifacts, tag, scope)
+}
+
+fn emit_assistant_home_inventory(
+    artifacts: &[HomeArtifact],
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    let mut claims = Vec::new();
+    for artifact in artifacts {
+        let mut emitted = match artifact.kind {
+            HomeArtifactKind::Markdown => emit_markdown_file_claims(&artifact.path, tag, scope),
+            HomeArtifactKind::Json => emit_json_file_claims_recursive(&artifact.path, tag, scope),
+            HomeArtifactKind::JsonLines => emit_json_lines_claims(&artifact.path, tag, scope),
+            HomeArtifactKind::Sqlite => {
+                emit_sqlite_claims_with_policy(&artifact.path, tag, scope, true)
+            }
+        }
+        .with_context(|| format!("import assistant-home artifact {}", artifact.path.display()))?;
+        claims.append(&mut emitted);
+    }
+    claims.sort();
+    claims.dedup();
+    Ok(claims)
+}
+
+/// Reject a source that can read the current import target. This guard is
+/// shared by preview and apply so dry-run cannot make a self-targeting
+/// manifest appear safe.
+pub fn validate_sources_not_target(
+    sources: &[ImportSource],
+    home: &Path,
+    target_db: &Path,
+) -> anyhow::Result<()> {
+    let target_workspace = target_db.parent().unwrap_or(target_db);
+    for source in sources {
+        let path = resolve_path(&source.path, home);
+        let same_file = path.is_file()
+            && target_db.is_file()
+            && same_file::is_same_file(&path, target_db).unwrap_or(false);
+        anyhow::ensure!(
+            !same_file && !path_eq(&path, target_db),
+            "source '{}' resolves to the NEOTH target database {}; refusing self-migration",
+            source.name,
+            target_db.display()
+        );
+        anyhow::ensure!(
+            !path_eq(&path, target_workspace) && !path_within(&path, target_workspace),
+            "source '{}' is inside the NEOTH target workspace {}; refusing self-migration",
+            source.name,
+            target_workspace.display()
+        );
+
+        // The legacy Sqlite directory reader selects one direct child. If the
+        // directory contains the target workspace that choice could become a
+        // self-read. Recursive kinds are safe because they prune exclusions.
+        if source.kind == ImportKind::Sqlite && path.is_dir() && path_within(target_db, &path) {
+            anyhow::bail!(
+                "sqlite source directory '{}' contains target database {}; point at the source .db file explicitly",
+                path.display(),
+                target_db.display()
+            );
+        }
+        if source.kind == ImportKind::Sqlite && path.is_dir() {
+            if let Ok(actual_db) = resolve_sqlite_source(&path) {
+                anyhow::ensure!(
+                    !is_excluded(&actual_db, &target_exclusions(target_db)),
+                    "sqlite source directory '{}' selects an alias of target database {}; refusing self-migration",
+                    path.display(),
+                    target_db.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate the complete apply set before opening a transaction. Besides the
+/// target guard this rejects malformed, absent, ambiguous, and scan-only
+/// sources before audit intent or mutation begins.
+pub fn validate_sources_for_apply(
+    sources: &[ImportSource],
+    home: &Path,
+    target_db: &Path,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(!sources.is_empty(), "import manifest contains no sources");
+    validate_sources_not_target(sources, home, target_db)?;
+    let mut names = std::collections::HashSet::new();
+
+    for source in sources {
+        anyhow::ensure!(
+            !source.name.trim().is_empty(),
+            "import source name must not be empty"
+        );
+        anyhow::ensure!(
+            names.insert(source.name.trim().to_string()),
+            "duplicate import source name '{}'",
+            source.name
+        );
+        let path = resolve_path(&source.path, home);
+        anyhow::ensure!(
+            path.exists(),
+            "import source '{}' does not exist: {}",
+            source.name,
+            path.display()
+        );
+
+        if source.kind == ImportKind::AssistantHome {
+            assistant_family(source)?;
+        }
+
+        match source.kind {
+            ImportKind::AssistantHome | ImportKind::Markdown | ImportKind::JsonDir => {
+                anyhow::ensure!(
+                    path.is_dir(),
+                    "source '{}' kind '{}' requires a directory: {}",
+                    source.name,
+                    source.kind.as_str(),
+                    path.display()
+                );
+            }
+            ImportKind::MarkdownFile | ImportKind::JsonFile => {
+                anyhow::ensure!(
+                    path.is_file(),
+                    "source '{}' kind '{}' requires a regular file: {}",
+                    source.name,
+                    source.kind.as_str(),
+                    path.display()
+                );
+            }
+            ImportKind::Sqlite
+            | ImportKind::LanceArrow
+            | ImportKind::GitTree
+            | ImportKind::FaissFlat => {}
+        }
+
+        if matches!(
+            source.kind,
+            ImportKind::LanceArrow | ImportKind::FaissFlat | ImportKind::GitTree
+        ) {
+            anyhow::bail!(
+                "source '{}' uses scan-only kind '{}'; remove it before apply",
+                source.name,
+                source.kind.as_str()
+            );
+        }
+    }
+    Ok(())
+}
+
 // ── Known source-tag strings (mirror neothd's Source::as_str()) ─────────────
 //
 // These constants are the EXACT values neothd's `Source::as_str()` returns.
@@ -560,6 +1203,13 @@ fn scan_json_file(name: &str, file: &Path, kind: ImportKind) -> StoreScan {
 /// sub-formats: hermes / openhuman / cq-commons).
 fn source_tag_for(src: &ImportSource) -> &'static str {
     match src.kind {
+        ImportKind::AssistantHome => match assistant_family(src) {
+            Ok(AssistantFamily::Openclaw) => "import:openclaw",
+            Ok(AssistantFamily::Hermes) => "import:hermes",
+            Ok(AssistantFamily::Openhuman) => "import:openhuman",
+            Ok(AssistantFamily::Veronica) => "import:veronica",
+            Err(_) => "import:openclaw",
+        },
         ImportKind::Sqlite => {
             // Sqlite kind carries multiple sub-formats. The operator declares
             // which one via `hint: hermes | openhuman | cq-commons | veronica`.
@@ -590,9 +1240,20 @@ fn source_tag_for(src: &ImportSource) -> &'static str {
 ///
 /// Kinds that have no implemented reader (`LanceArrow`, `FaissFlat`,
 /// `GitTree`) bail immediately so the caller can log and skip.
+#[cfg(test)]
 pub fn emit_claims(
     src: &ImportSource,
     home: &Path,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    emit_claims_for_target(src, home, &home.join(".neoth").join("views.db"))
+}
+
+/// Apply variant with an explicit target path so recursive sources can prune
+/// a custom `--db` location as well as the default NEOTH home.
+pub fn emit_claims_for_target(
+    src: &ImportSource,
+    home: &Path,
+    target_db: &Path,
 ) -> anyhow::Result<Vec<(String, String, String)>> {
     let resolved = resolve_path(&src.path, home);
     let tag = source_tag_for(src);
@@ -609,6 +1270,13 @@ pub fn emit_claims(
         .to_string();
 
     match src.kind {
+        ImportKind::AssistantHome => {
+            // Validate the discriminator even though source_tag_for has a
+            // conservative fallback: generated and hand-written manifests
+            // must never silently import under the wrong provenance tag.
+            assistant_family(src)?;
+            emit_assistant_home_claims(src, &resolved, tag, &scope, &target_exclusions(target_db))
+        }
         ImportKind::LanceArrow | ImportKind::FaissFlat | ImportKind::GitTree => {
             anyhow::bail!(
                 "emit_claims: reader not implemented for kind {:?} (source '{}'). \
@@ -622,11 +1290,15 @@ pub fn emit_claims(
 
         ImportKind::MarkdownFile => emit_markdown_file_claims(&resolved, tag, &scope),
 
-        ImportKind::Markdown => emit_markdown_dir_claims(&resolved, tag, &scope),
+        ImportKind::Markdown => {
+            emit_markdown_dir_claims(&resolved, tag, &scope, &target_exclusions(target_db))
+        }
 
         ImportKind::JsonFile => emit_json_file_claims(&resolved, tag, &scope),
 
-        ImportKind::JsonDir => emit_json_dir_claims(&resolved, tag, &scope),
+        ImportKind::JsonDir => {
+            emit_json_dir_claims(&resolved, tag, &scope, &target_exclusions(target_db))
+        }
     }
 }
 
@@ -641,21 +1313,18 @@ fn emit_sqlite_claims(
     tag: &'static str,
     scope: &str,
 ) -> anyhow::Result<Vec<(String, String, String)>> {
+    emit_sqlite_claims_with_policy(path, tag, scope, false)
+}
+
+fn emit_sqlite_claims_with_policy(
+    path: &Path,
+    tag: &'static str,
+    scope: &str,
+    safe_only: bool,
+) -> anyhow::Result<Vec<(String, String, String)>> {
     use anyhow::Context as _;
 
-    // Resolve directory → first .db file (same logic as scan_sqlite).
-    let actual_db = if path.is_dir() {
-        let candidate = std::fs::read_dir(path)
-            .ok()
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path())
-            .find(|p| p.extension().and_then(|x| x.to_str()) == Some("db"));
-        candidate.ok_or_else(|| anyhow::anyhow!("directory contains no .db file: {}", path.display()))?
-    } else {
-        path.to_path_buf()
-    };
+    let actual_db = resolve_sqlite_source(path)?;
 
     let conn = rusqlite::Connection::open_with_flags(
         &actual_db,
@@ -671,31 +1340,81 @@ fn emit_sqlite_claims(
                  AND name NOT LIKE 'sqlite_%' ORDER BY name",
             )
             .context("list tables")?;
-        stmt.query_map([], |row| row.get::<_, String>(0))
-            .context("query tables")?
-            .filter_map(|r| r.ok())
-            .collect()
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .context("query tables")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("read table names")?
     };
 
     let mut claims = Vec::new();
+
+    // Preserve OpenHuman profile triples as one fact rather than importing
+    // subject/predicate/object as three context-free fragments.
+    if tag == "import:openhuman" && tables.iter().any(|table| table == "profile_facts") {
+        let mut stmt = conn
+            .prepare(
+                "SELECT subject, predicate, object, confidence FROM profile_facts \
+                 WHERE confidence > 0.7 ORDER BY subject, predicate, object",
+            )
+            .context("prepare OpenHuman profile_facts query")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            })
+            .context("query OpenHuman profile_facts")?;
+        for row in rows {
+            let (subject, predicate, object, confidence) = row?;
+            if safe_only && sensitive_identifier(&predicate) {
+                continue;
+            }
+            claims.push((
+                format!(
+                    "{} {} {} (confidence {:.2})",
+                    subject.trim(),
+                    predicate.trim(),
+                    object.trim(),
+                    confidence
+                ),
+                tag.to_string(),
+                format!("subject:{}", subject.trim()),
+            ));
+        }
+    }
+
     for table in &tables {
+        if table == "profile_facts" && tag == "import:openhuman" {
+            continue;
+        }
+        if safe_only && sensitive_identifier(table) {
+            continue;
+        }
         // Find TEXT columns in each table.
         let col_query = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
         let text_cols: Vec<String> = {
             let mut stmt = conn.prepare(&col_query).context("table_info")?;
-            stmt.query_map([], |row| {
-                let col_type: String = row.get::<_, String>(2).unwrap_or_default();
-                let col_name: String = row.get::<_, String>(1)?;
-                Ok((col_name, col_type))
-            })
-            .context("iterate columns")?
-            .filter_map(|r| r.ok())
-            .filter(|(_, col_type)| {
-                let t = col_type.to_uppercase();
-                t.contains("TEXT") || t.is_empty() // SQLite affinity: no type → TEXT affinity
-            })
-            .map(|(name, _)| name)
-            .collect()
+            let rows = stmt
+                .query_map([], |row| {
+                    let col_type: String = row.get(2)?;
+                    let col_name: String = row.get(1)?;
+                    Ok((col_name, col_type))
+                })
+                .context("iterate columns")?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .context("read column metadata")?
+                .into_iter()
+                .filter(|(_, col_type)| {
+                    let t = col_type.to_uppercase();
+                    t.contains("TEXT") || t.is_empty() // SQLite affinity: no type → TEXT affinity
+                })
+                .filter(|(name, _)| !safe_only || !sensitive_identifier(name))
+                .map(|(name, _)| name)
+                .collect()
         };
 
         if text_cols.is_empty() {
@@ -716,23 +1435,50 @@ fn emit_sqlite_claims(
         let rows = stmt
             .query_map([], |row| {
                 let mut vals = Vec::with_capacity(col_count);
-                for i in 0..col_count {
-                    let v: Option<String> = row.get(i).ok().flatten();
-                    vals.push(v);
+                for index in 0..col_count {
+                    let value = match row.get_ref(index)? {
+                        rusqlite::types::ValueRef::Null => None,
+                        rusqlite::types::ValueRef::Text(bytes) => {
+                            let text = std::str::from_utf8(bytes).map_err(|error| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    index,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                )
+                            })?;
+                            Some(text.to_string())
+                        }
+                        // SQLite columns are dynamically typed. Non-text
+                        // values in a TEXT-affinity column are not memory
+                        // claims, but they are not corruption either.
+                        _ => None,
+                    };
+                    vals.push(value);
                 }
                 Ok(vals)
             })
             .context("query rows")?;
 
-        for row in rows.filter_map(|r| r.ok()) {
-            for val in row.into_iter().flatten() {
+        for row in rows {
+            let values = row.with_context(|| format!("read rows from SQLite table '{table}'"))?;
+            let sensitive_row = safe_only
+                && text_cols.iter().zip(&values).any(|(column, value)| {
+                    discriminator_identifier(column)
+                        && value.as_deref().is_some_and(sensitive_identifier)
+                });
+            if sensitive_row {
+                continue;
+            }
+            for val in values.into_iter().flatten() {
                 let stmt_text = val.trim().to_string();
-                if !stmt_text.is_empty() {
+                if stmt_text.len() >= 8 {
                     claims.push((stmt_text, tag.to_string(), scope.to_string()));
                 }
             }
         }
     }
+    claims.sort();
+    claims.dedup();
     Ok(claims)
 }
 
@@ -803,19 +1549,18 @@ fn emit_markdown_dir_claims(
     dir: &Path,
     tag: &'static str,
     scope: &str,
+    exclusions: &[PathBuf],
 ) -> anyhow::Result<Vec<(String, String, String)>> {
     let mut claims = Vec::new();
-    for entry in WalkBuilder::new(dir).standard_filters(true).build().flatten() {
+    for result in recursive_source_walk(dir, exclusions) {
+        let entry = result.with_context(|| format!("walk Markdown source {}", dir.display()))?;
         let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("md") {
+        if !matches!(lower_extension(p).as_str(), "md" | "markdown") {
             continue;
         }
-        match emit_markdown_file_claims(p, tag, scope) {
-            Ok(mut c) => claims.append(&mut c),
-            Err(e) => {
-                tracing::warn!(path = %p.display(), err = %e, "markdown claim read failed, skipping file");
-            }
-        }
+        let mut emitted = emit_markdown_file_claims(p, tag, scope)
+            .with_context(|| format!("import Markdown artifact {}", p.display()))?;
+        claims.append(&mut emitted);
     }
     Ok(claims)
 }
@@ -842,6 +1587,46 @@ fn emit_json_file_claims(
         serde_json::from_str(&text).with_context(|| format!("parse json: {}", path.display()))?;
 
     Ok(extract_json_claims(&val, tag, scope))
+}
+
+/// Whole-home JSON can wrap messages several levels deep (`messages`,
+/// `conversations`, `items`). Walk those containers while still extracting
+/// only known content fields; arbitrary config scalar values are not facts.
+fn emit_json_file_claims_recursive(
+    path: &Path,
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read json file: {}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parse json: {}", path.display()))?;
+    let mut claims = Vec::new();
+    extract_json_claims_recursive(&value, tag, scope, &mut claims);
+    claims.sort();
+    claims.dedup();
+    Ok(claims)
+}
+
+fn emit_json_lines_claims(
+    path: &Path,
+    tag: &'static str,
+    scope: &str,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read JSONL file: {}", path.display()))?;
+    let mut claims = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line)
+            .with_context(|| format!("parse JSONL {} line {}", path.display(), index + 1))?;
+        extract_json_claims_recursive(&value, tag, scope, &mut claims);
+    }
+    claims.sort();
+    claims.dedup();
+    Ok(claims)
 }
 
 /// Known field names (in priority order) to extract the statement from
@@ -899,6 +1684,67 @@ fn extract_json_claims(
     claims
 }
 
+fn extract_json_claims_recursive(
+    value: &serde_json::Value,
+    tag: &'static str,
+    scope: &str,
+    claims: &mut Vec<(String, String, String)>,
+) {
+    match value {
+        serde_json::Value::Object(object) => {
+            // Whole-home inputs commonly mix memory and provider config. A
+            // secret-bearing object is excluded as a unit so a generic
+            // `value` field cannot turn an API key into a recall claim.
+            if json_object_is_sensitive(object) {
+                return;
+            }
+            if let Some(statement) = pick_claim_field(value) {
+                claims.push((statement, tag.to_string(), scope.to_string()));
+            }
+            for (field, nested) in object {
+                if sensitive_identifier(field) {
+                    continue;
+                }
+                // The chosen content field was already emitted. Recursing into
+                // the same scalar would duplicate it, but nested containers
+                // under any key still need walking.
+                if CLAIM_FIELDS.contains(&field.as_str()) && nested.is_string() {
+                    continue;
+                }
+                if nested.is_array() || nested.is_object() {
+                    extract_json_claims_recursive(nested, tag, scope, claims);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for nested in values {
+                if let serde_json::Value::String(statement) = nested {
+                    let statement = statement.trim();
+                    if statement.len() >= 8 {
+                        claims.push((statement.to_string(), tag.to_string(), scope.to_string()));
+                    }
+                } else {
+                    extract_json_claims_recursive(nested, tag, scope, claims);
+                }
+            }
+        }
+        serde_json::Value::String(statement) => {
+            let statement = statement.trim();
+            if statement.len() >= 8 {
+                claims.push((statement.to_string(), tag.to_string(), scope.to_string()));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn json_object_is_sensitive(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    object.keys().any(|field| sensitive_identifier(field))
+        || object.iter().any(|(field, value)| {
+            discriminator_identifier(field) && value.as_str().is_some_and(sensitive_identifier)
+        })
+}
+
 fn pick_claim_field(obj: &serde_json::Value) -> Option<String> {
     for &field in CLAIM_FIELDS {
         if let Some(serde_json::Value::String(s)) = obj.get(field) {
@@ -916,22 +1762,18 @@ fn emit_json_dir_claims(
     dir: &Path,
     tag: &'static str,
     scope: &str,
+    exclusions: &[PathBuf],
 ) -> anyhow::Result<Vec<(String, String, String)>> {
     let mut claims = Vec::new();
-    for entry in WalkBuilder::new(dir).standard_filters(true).build().flatten() {
+    for result in recursive_source_walk(dir, exclusions) {
+        let entry = result.with_context(|| format!("walk JSON source {}", dir.display()))?;
         let p = entry.path();
-        if !matches!(
-            p.extension().and_then(|e| e.to_str()),
-            Some("json" | "ajson")
-        ) {
+        if !matches!(lower_extension(p).as_str(), "json" | "ajson") {
             continue;
         }
-        match emit_json_file_claims(p, tag, scope) {
-            Ok(mut c) => claims.append(&mut c),
-            Err(e) => {
-                tracing::warn!(path = %p.display(), err = %e, "json claim read failed, skipping file");
-            }
-        }
+        let mut emitted = emit_json_file_claims(p, tag, scope)
+            .with_context(|| format!("import JSON artifact {}", p.display()))?;
+        claims.append(&mut emitted);
     }
     Ok(claims)
 }
@@ -1004,6 +1846,7 @@ sources:
         // Pin every variant so wire-format compat across binary
         // versions survives. Operator manifests use these `kind:`
         // values verbatim.
+        assert_eq!(ImportKind::AssistantHome.as_str(), "assistant_home");
         assert_eq!(ImportKind::Markdown.as_str(), "markdown");
         assert_eq!(ImportKind::MarkdownFile.as_str(), "markdown_file");
         assert_eq!(ImportKind::JsonDir.as_str(), "json_dir");
@@ -1078,7 +1921,7 @@ sources:
         std::fs::write(dir.join("a.md"), "# heading\nbody").unwrap();
         std::fs::write(dir.join("b.md"), "# other").unwrap();
         std::fs::write(dir.join("ignored.txt"), "skip me").unwrap();
-        let scan = scan_markdown_dir("test", &dir, ImportKind::Markdown);
+        let scan = scan_markdown_dir("test", &dir, ImportKind::Markdown, &[]);
         assert_eq!(scan.row_count, 2);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.name, "test");
@@ -1130,7 +1973,7 @@ sources:
         ] {
             let p = tmp.path().join(sub);
             std::fs::create_dir_all(&p).unwrap();
-            let scan = scan_one(&src("test", &p.to_string_lossy(), kind), tmp.path());
+            let scan = scan_one(&src("test", &p.to_string_lossy(), kind), tmp.path(), &[]);
             assert!(
                 matches!(scan.status, ScanStatus::Ok),
                 "{kind:?} reader must run an inventory pass"
@@ -1420,9 +2263,11 @@ sources:
         let claims = emit_claims(&src, tmp.path()).unwrap();
         assert_eq!(claims.len(), 2, "two text rows expected; got {claims:?}");
         assert!(claims.iter().all(|(_, tag, _)| tag == "import:hermes"));
-        assert!(claims
-            .iter()
-            .any(|(s, _, _)| s.contains("operator lives in Germany")));
+        assert!(
+            claims
+                .iter()
+                .any(|(s, _, _)| s.contains("operator lives in Germany"))
+        );
     }
 
     #[test]
@@ -1453,5 +2298,286 @@ sources:
         assert_eq!(source_tag_for(&mk(Some("cq-commons"))), "import:openclaw");
         assert_eq!(source_tag_for(&mk(Some("veronica"))), "import:veronica");
         assert_eq!(source_tag_for(&mk(None)), "import:openclaw"); // fallback
+    }
+
+    #[test]
+    fn assistant_home_import_is_recursive_secret_safe_and_target_safe() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join(".openhuman");
+        std::fs::create_dir_all(root.join("workspace/nested")).unwrap();
+        std::fs::write(
+            root.join("workspace/MEMORY.md"),
+            "# Operator profile\n\nThe operator builds privacy-first Rust agents.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("workspace/nested/conversations.json"),
+            r#"{"conversations":[{"messages":[{"content":"Nested OpenHuman conversation fact"}]}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("workspace/nested/provider.json"),
+            r#"{"providers":[{"key":"openaiApiKey","value":"must-never-be-imported-json-key"}]}"#,
+        )
+        .unwrap();
+
+        let db_path = root.join("workspace/nested/memory.sqlite");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profile_facts (
+                subject TEXT, predicate TEXT, object TEXT, confidence REAL
+             );
+             INSERT INTO profile_facts VALUES ('operator','role','developer',0.95);
+             INSERT INTO profile_facts VALUES ('operator','maybe','noise',0.4);
+             INSERT INTO profile_facts VALUES ('operator','api_key','must-never-be-imported-profile-key',0.99);
+             CREATE TABLE memory_docs (content TEXT);
+             INSERT INTO memory_docs VALUES ('Durable OpenHuman memory document');
+             CREATE TABLE access_tokens (token TEXT);
+             INSERT INTO access_tokens VALUES ('must-never-be-imported-token');
+             CREATE TABLE settings (key TEXT, value TEXT);
+             INSERT INTO settings VALUES ('openai_api_key','must-never-be-imported-key-value');
+             INSERT INTO settings VALUES ('operator_note','Safe OpenHuman setting memory');",
+        )
+        .unwrap();
+        drop(conn);
+
+        std::fs::create_dir_all(root.join("credentials")).unwrap();
+        std::fs::write(
+            root.join("credentials/private.json"),
+            r#"{"content":"must-never-be-imported-secret"}"#,
+        )
+        .unwrap();
+
+        let neoth = root.join(".neoth");
+        std::fs::create_dir_all(&neoth).unwrap();
+        let target = neoth.join("views.db");
+        let conn = rusqlite::Connection::open(&target).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE target_only (content TEXT);
+             INSERT INTO target_only VALUES ('must-never-self-import-target');",
+        )
+        .unwrap();
+        drop(conn);
+
+        let source = make_src(
+            "openhuman-home",
+            &root.to_string_lossy(),
+            ImportKind::AssistantHome,
+            Some("openhuman"),
+        );
+        validate_sources_for_apply(std::slice::from_ref(&source), tmp.path(), &target).unwrap();
+        let claims = emit_claims_for_target(&source, tmp.path(), &target).unwrap();
+
+        let statements: Vec<&str> = claims.iter().map(|claim| claim.0.as_str()).collect();
+        assert!(
+            statements
+                .iter()
+                .any(|text| text.contains("privacy-first Rust"))
+        );
+        assert!(
+            statements
+                .iter()
+                .any(|text| text.contains("Nested OpenHuman"))
+        );
+        assert!(
+            statements
+                .iter()
+                .any(|text| text.contains("Durable OpenHuman"))
+        );
+        assert!(
+            statements
+                .iter()
+                .any(|text| text.contains("Safe OpenHuman setting memory"))
+        );
+        assert!(
+            statements
+                .iter()
+                .any(|text| text.contains("operator role developer (confidence 0.95)"))
+        );
+        assert!(!statements.iter().any(|text| text.contains("noise")));
+        assert!(
+            !statements
+                .iter()
+                .any(|text| text.contains("never-be-imported"))
+        );
+        assert!(
+            !statements
+                .iter()
+                .any(|text| text.contains("self-import-target"))
+        );
+        assert!(claims.iter().all(|(_, tag, _)| tag == "import:openhuman"));
+    }
+
+    #[test]
+    fn assistant_home_malformed_supported_artifact_fails_closed() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join(".openhuman");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("broken.jsonl"), "{not json}\n").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".neoth")).unwrap();
+        let target = tmp.path().join(".neoth/views.db");
+        rusqlite::Connection::open(&target).unwrap();
+        let source = make_src(
+            "openhuman-home",
+            &root.to_string_lossy(),
+            ImportKind::AssistantHome,
+            Some("openhuman"),
+        );
+        let error = emit_claims_for_target(&source, tmp.path(), &target).unwrap_err();
+        assert!(format!("{error:#}").contains("broken.jsonl"));
+    }
+
+    #[test]
+    fn generic_json_directory_malformed_artifact_fails_closed() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("json-export");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("valid.json"),
+            r#"{"statement":"this valid claim must not be partially imported"}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("broken.json"), "{not json}").unwrap();
+        let source = make_src(
+            "json-export",
+            &root.to_string_lossy(),
+            ImportKind::JsonDir,
+            None,
+        );
+
+        let error = emit_claims(&source, tmp.path()).unwrap_err();
+        assert!(format!("{error:#}").contains("broken.json"));
+    }
+
+    #[test]
+    fn generic_markdown_directory_unreadable_artifact_fails_closed() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("markdown-export");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("valid.md"), "A valid imported memory statement.").unwrap();
+        std::fs::write(root.join("invalid.md"), [0xff, 0xfe, 0xfd]).unwrap();
+        let source = make_src(
+            "markdown-export",
+            &root.to_string_lossy(),
+            ImportKind::Markdown,
+            None,
+        );
+
+        let error = emit_claims(&source, tmp.path()).unwrap_err();
+        assert!(format!("{error:#}").contains("invalid.md"));
+    }
+
+    #[test]
+    fn generic_recursive_source_prunes_target_in_preview_and_apply() {
+        let tmp = tempdir().unwrap();
+        let neoth = tmp.path().join(".neoth");
+        std::fs::create_dir_all(&neoth).unwrap();
+        let target = neoth.join("views.db");
+        rusqlite::Connection::open(&target).unwrap();
+        std::fs::write(
+            tmp.path().join("memory.json"),
+            r#"{"statement":"outside target memory must be imported"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            neoth.join("migration-output.json"),
+            r#"{"statement":"must-never-reimport-target-output"}"#,
+        )
+        .unwrap();
+        let target_alias = tmp.path().join("target-alias.json");
+        let target_alias_created = std::fs::hard_link(&target, &target_alias).is_ok();
+        let source = make_src(
+            "broad-json-export",
+            &tmp.path().to_string_lossy(),
+            ImportKind::JsonDir,
+            None,
+        );
+
+        validate_sources_for_apply(std::slice::from_ref(&source), tmp.path(), &target).unwrap();
+        let report = scan_all_for_target(std::slice::from_ref(&source), tmp.path(), &target);
+        assert_eq!(report[0].row_count, 1);
+        let claims = emit_claims_for_target(&source, tmp.path(), &target).unwrap();
+        assert!(
+            claims
+                .iter()
+                .any(|(statement, _, _)| statement.contains("outside target"))
+        );
+        assert!(
+            !claims
+                .iter()
+                .any(|(statement, _, _)| statement.contains("reimport-target"))
+        );
+        if target_alias_created {
+            assert!(target_alias.exists());
+        }
+    }
+
+    #[test]
+    fn apply_validation_rejects_target_aliases_and_target_workspace_sources() {
+        let tmp = tempdir().unwrap();
+        let neoth = tmp.path().join(".neoth");
+        std::fs::create_dir_all(&neoth).unwrap();
+        let target = neoth.join("views.db");
+        rusqlite::Connection::open(&target).unwrap();
+
+        let exact = make_src(
+            "exact",
+            &target.to_string_lossy(),
+            ImportKind::Sqlite,
+            Some("openhuman"),
+        );
+        let error = validate_sources_not_target(std::slice::from_ref(&exact), tmp.path(), &target)
+            .unwrap_err();
+        assert!(error.to_string().contains("self-migration"));
+        let error = validate_sources_for_apply(&[exact], tmp.path(), &target).unwrap_err();
+        assert!(error.to_string().contains("self-migration"));
+
+        let inside = make_src(
+            "inside",
+            &neoth.to_string_lossy(),
+            ImportKind::AssistantHome,
+            Some("openhuman"),
+        );
+        let error = validate_sources_for_apply(&[inside], tmp.path(), &target).unwrap_err();
+        assert!(error.to_string().contains("target workspace"));
+
+        let alias = tmp.path().join("target-alias.db");
+        if std::fs::hard_link(&target, &alias).is_ok() {
+            let alias_source = make_src(
+                "hard-link-alias",
+                &alias.to_string_lossy(),
+                ImportKind::Sqlite,
+                Some("openhuman"),
+            );
+            let error =
+                validate_sources_for_apply(&[alias_source], tmp.path(), &target).unwrap_err();
+            assert!(error.to_string().contains("self-migration"));
+
+            let alias_dir = tmp.path().join("alias-dir");
+            std::fs::create_dir_all(&alias_dir).unwrap();
+            std::fs::hard_link(&target, alias_dir.join("selected.db")).unwrap();
+            let directory_source = make_src(
+                "hard-link-directory",
+                &alias_dir.to_string_lossy(),
+                ImportKind::Sqlite,
+                Some("openhuman"),
+            );
+            let error =
+                validate_sources_not_target(&[directory_source], tmp.path(), &target).unwrap_err();
+            assert!(error.to_string().contains("alias of target"));
+        }
+    }
+
+    #[test]
+    fn assistant_home_requires_explicit_family_hint() {
+        let tmp = tempdir().unwrap();
+        let source = make_src(
+            "unknown-home",
+            &tmp.path().to_string_lossy(),
+            ImportKind::AssistantHome,
+            None,
+        );
+        let error = emit_claims(&source, tmp.path()).unwrap_err();
+        assert!(error.to_string().contains("requires hint"));
     }
 }

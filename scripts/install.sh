@@ -2,12 +2,12 @@
 # neoth install script
 # Installs neoth to $HOME/.local/bin
 # NO sudo required. Idempotent (safe to re-run).
-# Usage: curl -sSf https://raw.githubusercontent.com/<owner>/neoth/main/scripts/install.sh | bash
+# Usage: curl -sSf https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.sh | bash
 # INSTALL_DEBUG=1 bash install.sh for verbose output.
 
 set -euo pipefail
 
-NEOTH_REPO="${NEOTH_REPO:-https://github.com/<owner>/neoth.git}"
+NEOTH_REPO="${NEOTH_REPO:-https://github.com/The-Geek-Freaks/NEOTH.git}"
 NEOTH_SRC_DIR="${NEOTH_SRC_DIR:-$HOME/.local/src/neoth}"
 NEOTH_BIN_DIR="${NEOTH_BIN_DIR:-$HOME/.local/bin}"
 NEOTH_MIN_RUST_VER="1.86"
@@ -36,12 +36,12 @@ detect_platform() {
             log_error "Native Windows detected. Use WSL2:"
             log_error "  wsl --install  (then re-run inside WSL2)"
             exit 1 ;;
-        *) log_warn "Unknown OS: $os. Assuming linux."; OS="linux" ;;
+        *) log_error "Unsupported OS: $os"; exit 1 ;;
     esac
     case "$arch" in
         x86_64)        ARCH="x86_64" ;;
         aarch64|arm64) ARCH="aarch64" ;;
-        *)             log_warn "Unknown arch: $arch. Assuming x86_64."; ARCH="x86_64" ;;
+        *)             log_error "Unsupported architecture: $arch"; exit 1 ;;
     esac
     log_info "Platform: $OS / $ARCH"
 }
@@ -98,52 +98,122 @@ clone_or_update_repo() {
 }
 
 build_neoth() {
-    log_step "Building neoth (cargo build --release)"
-    log_info "First build takes 30-120s."
-    cd "$NEOTH_SRC_DIR"
+    log_step "Building neoth and companion binaries"
+    log_info "The first full-feature build can take several minutes."
+    cd "$NEOTH_SRC_DIR/SRC"
     command -v cargo &>/dev/null || source "$HOME/.cargo/env"
-    cargo build --release
+    # Match the signed desktop-release feature contract. A source install must
+    # not silently omit the advertised WASM host or optional channel adapters.
+    cargo build --release --locked -p neoth --bins --features release-desktop
+    cargo build --release --locked \
+        -p neothd-gui -p neoth-migrate -p neoth-relay
     log_info "Build complete."
 }
 
 install_binaries() {
     log_step "Installing to $NEOTH_BIN_DIR"
     mkdir -p "$NEOTH_BIN_DIR"
-    local rel="$NEOTH_SRC_DIR/target/release"
-    local installed=()
-    # Cargo builds `neothd` (daemon + CLI) and `neothd-gui` (Slint
-    # wizard). There is no separate `neoth` binary today; the README's
-    # "thin `neoth` alias" is provided by a symlink to `neothd` so the
-    # documented `neoth chat …` UX works.
-    for bin in neothd neothd-gui; do
-        [[ -f "$rel/$bin" ]] || continue
-        cp "$rel/$bin" "$NEOTH_BIN_DIR/$bin"
-        chmod +x "$NEOTH_BIN_DIR/$bin"
-        installed+=("$bin")
-        log_info "Installed: $NEOTH_BIN_DIR/$bin"
+    local rel="$NEOTH_SRC_DIR/SRC/target/release"
+    local stage payload backup bin destination rollback_index rollback_bin
+    local -a binaries replaced
+    # `neoth` is the public command. `neothd` remains a small compatibility
+    # launcher that delegates to the sibling public binary.
+    for bin in neoth neothd neothd-gui neoth-migrate neoth-relay; do
+        if [[ ! -f "$rel/$bin" ]]; then
+            log_error "Required build output is missing: $rel/$bin"
+            exit 1
+        fi
     done
-    # Create the `neoth` alias as a symlink to `neothd` so operators
-    # can type `neoth <subcommand>` per the README. Symlink not copy
-    # — keeps the alias in sync with future daemon upgrades.
-    if [[ -f "$NEOTH_BIN_DIR/neothd" ]]; then
-        ln -sf neothd "$NEOTH_BIN_DIR/neoth"
-        log_info "Aliased: $NEOTH_BIN_DIR/neoth -> neothd"
-    fi
-    [[ ${#installed[@]} -gt 0 ]] || { log_error "No binaries built."; exit 1; }
+
+    case "$NEOTH_BIN_DIR" in
+        *$'\n'*|*$'\r'*) log_error "Install directory must not contain a newline."; exit 1 ;;
+    esac
+    stage="$(mktemp -d "$NEOTH_BIN_DIR/.neoth-install.XXXXXX")"
+    payload="$stage/payload"
+    backup="$stage/backup"
+    mkdir -p "$payload" "$backup"
+    binaries=(neothd neothd-gui neoth-migrate neoth-relay neoth)
+    for bin in "${binaries[@]}"; do
+        if ! install -m 0755 "$rel/$bin" "$payload/$bin"; then
+            rm -rf "$stage"
+            log_error "Could not stage $bin."
+            exit 1
+        fi
+    done
+
+    rollback_replaced() {
+        local rollback_failed=0
+        for ((rollback_index=${#replaced[@]} - 1; rollback_index >= 0; rollback_index--)); do
+            rollback_bin="${replaced[$rollback_index]}"
+            rm -f "$NEOTH_BIN_DIR/$rollback_bin" || rollback_failed=1
+            if [[ -e "$backup/$rollback_bin" || -L "$backup/$rollback_bin" ]]; then
+                mv "$backup/$rollback_bin" "$NEOTH_BIN_DIR/$rollback_bin" || rollback_failed=1
+            fi
+        done
+        return "$rollback_failed"
+    }
+
+    replaced=()
+    for bin in "${binaries[@]}"; do
+        destination="$NEOTH_BIN_DIR/$bin"
+        if [[ ( -e "$destination" || -L "$destination" ) && ! -f "$destination" && ! -L "$destination" ]]; then
+            if ! rollback_replaced; then
+                log_error "Rollback failed; backups retained at $backup"
+                exit 1
+            fi
+            rm -rf "$stage"
+            log_error "Install target is not a regular file: $destination"
+            exit 1
+        fi
+        if [[ -e "$destination" || -L "$destination" ]] && ! mv "$destination" "$backup/$bin"; then
+            if ! rollback_replaced; then
+                log_error "Rollback failed; backups retained at $backup"
+                exit 1
+            fi
+            rm -rf "$stage"
+            log_error "Could not back up $destination."
+            exit 1
+        fi
+        replaced+=("$bin")
+        if ! mv "$payload/$bin" "$destination"; then
+            if ! rollback_replaced; then
+                log_error "Rollback failed; backups retained at $backup"
+                exit 1
+            fi
+            rm -rf "$stage"
+            log_error "Could not install $bin; previous files were restored."
+            exit 1
+        fi
+        log_info "Installed: $destination"
+    done
+    rm -rf "$stage"
 }
 
 check_path() {
-    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$NEOTH_BIN_DIR"; then
-        log_warn "$NEOTH_BIN_DIR not in PATH. Add to your shell profile:"
-        log_warn '  export PATH="$HOME/.local/bin:$PATH"'
+    case ":$PATH:" in
+        *":$NEOTH_BIN_DIR:"*) return ;;
+    esac
+    local profile marker
+    case "${SHELL:-}" in
+        */zsh) profile="$HOME/.zshrc" ;;
+        */bash) profile="$HOME/.bashrc" ;;
+        *) profile="$HOME/.profile" ;;
+    esac
+    marker="# NEOTH installer PATH: $NEOTH_BIN_DIR"
+    touch "$profile" || { log_error "Could not update $profile"; exit 1; }
+    if ! grep -Fqx "$marker" "$profile"; then
+        {
+            printf '\n%s\n' "$marker"
+            printf 'export PATH=%q:"$PATH"\n' "$NEOTH_BIN_DIR"
+        } >> "$profile" || { log_error "Could not update $profile"; exit 1; }
     fi
+    log_info "Wired $NEOTH_BIN_DIR into $profile"
+    printf 'For this current shell, run: export PATH=%q:"$PATH"\n' "$NEOTH_BIN_DIR"
 }
 
 verify_installation() {
     log_step "Verifying"
-    command -v neoth &>/dev/null \
-        && log_info "neoth $(neoth --version 2>/dev/null || echo '?')" \
-        || log_warn "neoth not found in PATH yet."
+    log_info "$($NEOTH_BIN_DIR/neoth --version 2>/dev/null || echo "$NEOTH_BIN_DIR/neoth")"
 }
 
 main() {
@@ -158,10 +228,10 @@ main() {
     echo ""
     echo -e "${B}Done!${R} Run the onboarding wizard:"
     echo ""
-    echo "  neoth init"
+    echo "  $NEOTH_BIN_DIR/neoth init"
     echo ""
-    echo "Then: neoth chat \"hello\""
-    echo "Docs: https://github.com/<owner>/neoth/blob/main/docs/install.md"
+    echo "Then: $NEOTH_BIN_DIR/neoth chat \"hello\""
+    echo "Docs: https://github.com/The-Geek-Freaks/NEOTH/blob/main/docs/install.md"
 }
 
 main "$@"

@@ -3,11 +3,9 @@
 //! The moral core is an operator-authored set of behavioural directives that
 //! get injected at **position 0** of the enrichment pipeline (highest
 //! priority) — a sovereign, operator-owned "constitution" the model reads
-//! before anything else. This slice ships the *loader* + the compact-render +
-//! the `neoth moral-core {list,preview,doctor}` CLI surface. The enrichment
-//! injection (an `EnrichmentInputs.moral_core` field threaded through the
-//! chat/serve pipelines) + `MoralCoreConfig` + the WAL audit frame land in a
-//! later slice (they touch the parallel-active chat path).
+//! before anything else. The loader, compact render, CLI management surface,
+//! kill-switch and chat/serve injection are live. Existing unreadable policy
+//! is an error; only a genuinely missing directory means no directives.
 //!
 //! ## Format
 //! A moral-core directory holds `*.md` files. In each file, a `# Heading`
@@ -83,15 +81,19 @@ pub fn default_dir() -> PathBuf {
 
 /// Load every `*.md` under `dir` into blocks (sorted by source then tag for
 /// deterministic output). A missing dir yields an empty Vec (moral core is
-/// opt-in); an unreadable file is skipped.
+/// opt-in); directory-entry and file-read failures propagate so configured
+/// directives cannot disappear silently.
 pub fn load_moral_core(dir: &Path) -> Result<Vec<MoralCoreBlock>> {
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let rd =
-        std::fs::read_dir(dir).with_context(|| format!("read moral-core dir {}", dir.display()))?;
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(e).with_context(|| format!("read moral-core dir {}", dir.display()));
+        }
+    };
     let mut out: Vec<MoralCoreBlock> = Vec::new();
-    for de in rd.flatten() {
+    for de in rd {
+        let de = de.with_context(|| format!("read moral-core entry in {}", dir.display()))?;
         let p = de.path();
         if p.extension()
             .and_then(|e| e.to_str())
@@ -106,10 +108,8 @@ pub fn load_moral_core(dir: &Path) -> Result<Vec<MoralCoreBlock>> {
             .and_then(|s| s.to_str())
             .unwrap_or(stem)
             .to_string();
-        let content = match std::fs::read_to_string(&p) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+        let content = std::fs::read_to_string(&p)
+            .with_context(|| format!("read moral-core file {}", p.display()))?;
         out.extend(parse_blocks(&content, stem, &name));
     }
     out.sort_by(|a, b| a.source.cmp(&b.source).then_with(|| a.tag.cmp(&b.tag)));
@@ -136,29 +136,22 @@ pub fn compact_directives(blocks: &[MoralCoreBlock]) -> String {
     s
 }
 
-/// GOLD-FEAT-07 — one-shot load of the default moral-core directory into the
-/// compact injectable string for the enrichment pipeline. Returns `None` when
-/// the directory is absent or holds no directives (so the enrichment layer is
-/// simply skipped). Best-effort: a load error yields `None` (never breaks a
-/// turn).
-pub fn compact_for_injection() -> Option<String> {
-    // GOLD-FEAT-07 — operator kill-switch. Best-effort config read; a default or
-    // unreadable freedom.yaml keeps injection ON (backward-compatible). When
-    // `moral_core.enabled = false`, return None so neither the CLI (chat.rs) nor
-    // the channel (serve_pipeline) injection site emits the moral core — gated
-    // once here so both call sites stay untouched.
-    let enabled = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.moral_core.enabled)
-        .unwrap_or(true);
-    if !enabled {
-        return None;
+/// GOLD-FEAT-07 — load the turn-scoped moral core into the compact injectable
+/// string. Returns `Ok(None)` only when disabled, absent, or empty. Existing
+/// unreadable policy returns `Err` so callers can block before provider use.
+pub fn compact_for_injection(
+    config: &crate::config::FreedomConfig,
+    home: &Path,
+) -> Result<Option<String>> {
+    if !config.moral_core.enabled {
+        return Ok(None);
     }
-    let blocks = load_moral_core(&default_dir()).unwrap_or_default();
+    let blocks = load_moral_core(&home.join("moral_core"))?;
     let compact = compact_directives(&blocks);
     if compact.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(compact)
+        Ok(Some(compact))
     }
 }
 
@@ -228,5 +221,38 @@ some prose ignored
         let blocks = load_moral_core(tmp.path()).unwrap();
         assert_eq!(blocks.len(), 1, "only the .md file");
         assert_eq!(blocks[0].directives, vec!["directive one"]);
+    }
+
+    #[test]
+    fn existing_invalid_directory_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let not_a_dir = tmp.path().join("moral-core-file");
+        std::fs::write(&not_a_dir, "not a directory").unwrap();
+        let error = load_moral_core(&not_a_dir).unwrap_err();
+        assert!(error.to_string().contains("read moral-core dir"));
+    }
+
+    #[test]
+    fn md_read_error_is_not_skipped_by_compact_injection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("moral_core");
+        std::fs::create_dir(&dir).unwrap();
+        // A directory carrying the .md suffix deterministically makes
+        // read_to_string fail on every supported OS without permission races.
+        std::fs::create_dir(dir.join("unreadable.md")).unwrap();
+
+        let error = compact_for_injection(&crate::config::FreedomConfig::default(), tmp.path())
+            .unwrap_err();
+        assert!(error.to_string().contains("read moral-core file"));
+    }
+
+    #[test]
+    fn disabled_moral_core_does_not_touch_policy_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = crate::config::FreedomConfig::default();
+        config.moral_core.enabled = false;
+        std::fs::write(tmp.path().join("moral_core"), "not a directory").unwrap();
+
+        assert_eq!(compact_for_injection(&config, tmp.path()).unwrap(), None);
     }
 }

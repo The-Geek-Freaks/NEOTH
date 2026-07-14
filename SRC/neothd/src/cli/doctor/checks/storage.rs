@@ -172,7 +172,16 @@ pub(crate) fn check_quota(home: &Path) -> CheckOutcome {
 /// model-cache footprint. Operators who haven't pulled CLIP / whisper /
 /// Qwen yet see a heads-up before the download stalls at 70%.
 pub(crate) fn check_disk_space(home: &Path) -> CheckOutcome {
-    let probe = crate::daemon::hardware::probe(home);
+    let probe = match crate::daemon::hardware::probe(home) {
+        Ok(probe) => probe,
+        Err(error) => {
+            return CheckOutcome {
+                name: "disk space",
+                status: CheckStatus::Fail,
+                detail: format!("hardware/config probe failed: {error:#}"),
+            };
+        }
+    };
     let avail = probe.disk.home_available_gib();
     let needed = probe.estimated_full_cache_gib;
     if probe.disk.home_total_bytes == 0 {
@@ -249,7 +258,20 @@ pub(crate) fn check_self_heal_proposals(home: &Path) -> CheckOutcome {
 /// encrypted credentials permanently unreadable — the highest-severity footgun,
 /// so this stays a standing WARN while encryption is on.
 pub(crate) fn check_wal_encryption_backup(home: &Path) -> CheckOutcome {
-    let enc = crate::config::wal::load_wal_config(&home.join("freedom.yaml")).encryption;
+    let config_path = home.join("freedom.yaml");
+    let enc = match crate::config::wal::load_wal_config(&config_path) {
+        Ok(config) => config.encryption,
+        Err(error) => {
+            return CheckOutcome {
+                name: "wal encryption",
+                status: CheckStatus::Fail,
+                detail: format!(
+                    "cannot load WAL encryption policy from {}: {error:#}",
+                    config_path.display()
+                ),
+            };
+        }
+    };
     if enc != crate::config::wal::WalEncryption::Aes256GcmSiv {
         return CheckOutcome {
             name: "wal encryption",

@@ -3,7 +3,7 @@
 //!
 //! Threading: the child process runs as a background tokio process,
 //! and the client owns the stdin/stdout handles. Requests are sent
-//! synchronously (write framed JSON, read framed JSON response)
+//! synchronously (write newline-delimited JSON, read one JSON response)
 //! since v0.1 invokes one tool at a time per call site. Future
 //! versions can layer a request/response multiplexer on top if
 //! parallel tool calls become a hotspot.
@@ -19,12 +19,24 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::time::Instant;
 
 use crate::mcp::config::McpServerConfig;
-use crate::mcp::transport::{JsonRpcRequest, JsonRpcResponse, frame, parse_frame, MAX_MCP_FRAME_BYTES};
+use crate::mcp::transport::{
+    JsonRpcRequest, JsonRpcResponse, MAX_MCP_FRAME_BYTES, frame, parse_frame,
+};
 
 /// Default timeout for any single MCP request. 30s is generous for
 /// `tools/list` (which servers cache) but tight enough to surface
 /// hung servers quickly.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Latest MCP revision this client implements. The basic tools surface remains
+/// compatible with the three preceding revisions.
+pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+pub(crate) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
+    MCP_PROTOCOL_VERSION,
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
 
 /// One tool definition as returned by `tools/list`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -150,6 +162,12 @@ impl McpClient {
         config: &McpServerConfig,
         request_timeout: Duration,
     ) -> Result<Self, McpError> {
+        // Every production MCP caller converges here. Validate before env
+        // resolution or process creation so unpinned runtime fetches, opaque
+        // wrappers, and inherited Node/npm overrides fail closed uniformly.
+        config
+            .validate_spawn_context()
+            .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;
         let env = config
             .resolve_env()
             .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;
@@ -187,7 +205,7 @@ impl McpClient {
 
     async fn handshake(&mut self) -> Result<(), McpError> {
         let params = InitializeParams {
-            protocol_version: "2024-11-05",
+            protocol_version: MCP_PROTOCOL_VERSION,
             capabilities: serde_json::json!({}),
             client_info: ClientInfo {
                 name: "neoth",
@@ -195,7 +213,49 @@ impl McpClient {
             },
         };
         let resp = self.request("initialize", params).await?;
+        let negotiated = resp
+            .get("protocolVersion")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                McpError::Protocol(
+                    self.server_id.clone(),
+                    "initialize result omitted protocolVersion".into(),
+                )
+            })?;
+        if !SUPPORTED_PROTOCOL_VERSIONS.contains(&negotiated) {
+            return Err(McpError::Protocol(
+                self.server_id.clone(),
+                format!(
+                    "server negotiated unsupported protocol version `{negotiated}` (supported: {})",
+                    SUPPORTED_PROTOCOL_VERSIONS.join(", ")
+                ),
+            ));
+        }
         self.server_info = Some(resp);
+        // Required lifecycle transition: the server must receive this before
+        // normal tool requests begin.
+        self.notify("notifications/initialized", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
+    async fn notify<P: Serialize>(&mut self, method: &str, params: P) -> Result<(), McpError> {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }))
+        .map_err(|e| McpError::Protocol(self.server_id.clone(), e.to_string()))?;
+        let message = frame(&body);
+        let timeout = self.request_timeout;
+        tokio::time::timeout(timeout, self.stdin.write_all(&message))
+            .await
+            .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
+            .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
+        tokio::time::timeout(timeout, self.stdin.flush())
+            .await
+            .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
+            .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
         Ok(())
     }
 
@@ -230,7 +290,7 @@ impl McpClient {
             .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
             .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
 
-        // Read framed responses until we see the one whose id matches our
+        // Read newline-delimited responses until we see the one whose id matches our
         // request. Notifications (no id) and responses for other in-flight
         // ids are drained and skipped rather than killing the connection
         // (COR-26: a server legitimately interleaves notifications/* frames
@@ -281,7 +341,7 @@ impl McpClient {
                 Err(_) => return Err(McpError::Timeout(self.server_id.clone(), timeout)),
             };
             buf.extend_from_slice(&chunk[..n]);
-            if buf.len() > MAX_MCP_FRAME_BYTES {
+            if !buf.contains(&b'\n') && buf.len() > MAX_MCP_FRAME_BYTES {
                 return Err(McpError::FrameTooBig(self.server_id.clone()));
             }
         }
@@ -393,6 +453,33 @@ mod tests {
         };
         match err {
             McpError::Spawn(id, _) => assert_eq!(id, "test"),
+            other => panic!("expected Spawn error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_unpinned_npx_before_process_creation() {
+        let cfg = McpServerConfig {
+            id: "unpinned".into(),
+            description: None,
+            command: "npx".into(),
+            args: vec!["-y".into(), "example-mcp@latest".into()],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+            allow_tools: Some(vec!["read".into()]),
+            trust_all_tools: false,
+            smart_approve: false,
+            autonomy_gate: None,
+        };
+        let error = match McpClient::spawn_with_timeout(&cfg, Duration::from_millis(200)).await {
+            Ok(_) => panic!("unpinned launcher must fail before spawn"),
+            Err(error) => error,
+        };
+        match error {
+            McpError::Spawn(id, detail) => {
+                assert_eq!(id, "unpinned");
+                assert!(detail.contains("exact-version"));
+            }
             other => panic!("expected Spawn error, got {other:?}"),
         }
     }

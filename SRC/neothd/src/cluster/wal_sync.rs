@@ -10,7 +10,7 @@
 //!   keeps a gossip broadcast from ever leaking permissions, profile PII,
 //!   consent, raw conversation text, or WAL-structure events to a peer.
 //! - **Send** ([`GossipState::build_outbound`]): wrap a replicable local WAL
-//!   frame in a [`GossipFrame`] (VectorClock tick + monotonic seq). Returns
+//!   frame in a [`GossipFrame`] (VectorClock tick + stable frame identity). Returns
 //!   `None` for a non-replicable event — the ACL on the emit side.
 //! - **Receive** ([`GossipState::accept_inbound`]): `evaluate_acceptance`
 //!   (tag/budget/dedup) PLUS a defence-in-depth band re-check on the payload's
@@ -20,21 +20,18 @@
 //! - **Persist** ([`ingest_foreign_event`], G02-CLUSTER-02): an accepted frame
 //!   is written to the `idx_foreign_events` table (`(origin_peer_pk,
 //!   origin_seq)` UNIQUE → idempotent), then [`GossipState::commit_inbound`]
-//!   advances the dedup high-water + merges the sender's VC only after the DB
+//!   records the dedup identity + merges the sender's VC only after the DB
 //!   write confirms. This is the failover backup-at-rest: a peer's replicable
 //!   events survive on this node if the peer's disk dies. Queryable via
-//!   [`list_foreign_events`] / `neoth cluster events`. **Transport note:** the
-//!   hyperswarm/peeroxide receive loop persists; the iroh `gossip_handler`
-//!   (opt-in `cluster-iroh`) is a sync frame handler with no DB context and
-//!   currently commits VC-only without persisting — a known gap.
-//!
-//! **STILL DEFERRED (genuine multi-week):** APPLYING a stored foreign event
-//! back INTO local recall/memory on a recovered node — the conflict-resolution
-//! + merge step. Foreign events are a separate queryable surface today, never
-//! mixed into `idx_episode` / `idx_groundtruth`; automatic restore is not yet
-//! built. Treat the mesh as durable backup, not one-click restore.
+//!   [`list_foreign_events`] / `neoth cluster events`. Both peeroxide and the
+//!   opt-in iroh transport use the same persistence writer and only advance the
+//!   dedup state after a successful durable handoff.
+//! - **Restore** ([`apply_restore_frame`]): `neoth cluster restore` applies a
+//!   consent-gated same-origin export through an explicit conflict matrix.
+//!   Cross-peer local row ids are never guessed; multiplicative decay is bound
+//!   to durable `(origin_peer_pk, origin_seq)` markers for exactly-once replay.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -181,10 +178,37 @@ pub struct GossipState {
     /// This node's logical-time view (advanced on each outbound frame, merged
     /// on each accepted inbound frame).
     pub vc: VectorClock,
-    /// Monotonic per-session outbound sequence.
-    next_seq: u64,
-    /// Dedup table: origin peer → highest applied event_seq.
-    seen: HashMap<PeerPubkey, u64>,
+    /// Dedup table: origin peer → bounded set of stable payload identities.
+    seen: HashMap<PeerPubkey, SeenEvents>,
+    /// Most recently committed identity per peer, for observability only. It
+    /// is not a high-water gate because SHA-derived identities are unordered.
+    latest_seen: HashMap<PeerPubkey, u64>,
+}
+
+const SEEN_EVENTS_PER_PEER: usize = 16_384;
+
+#[derive(Debug, Default)]
+struct SeenEvents {
+    ids: HashSet<u64>,
+    order: VecDeque<u64>,
+}
+
+impl SeenEvents {
+    fn contains(&self, event_seq: u64) -> bool {
+        self.ids.contains(&event_seq)
+    }
+
+    fn insert(&mut self, event_seq: u64) {
+        if !self.ids.insert(event_seq) {
+            return;
+        }
+        self.order.push_back(event_seq);
+        if self.order.len() > SEEN_EVENTS_PER_PEER
+            && let Some(evicted) = self.order.pop_front()
+        {
+            self.ids.remove(&evicted);
+        }
+    }
 }
 
 impl GossipState {
@@ -211,12 +235,19 @@ impl GossipState {
         if !is_replicable_ext(event_type, event_subtype, policy) {
             return None;
         }
+        use sha2::{Digest as _, Sha256};
+
         self.vc.tick(self_id);
-        self.next_seq = self.next_seq.wrapping_add(1);
+        let digest = Sha256::digest(&payload);
+        let event_seq = u64::from_be_bytes(
+            digest[..8]
+                .try_into()
+                .expect("SHA-256 prefix is exactly eight bytes"),
+        );
         Some(GossipFrame {
             vector_clock: self.vc.clone(),
             origin: self_id.clone(),
-            event_seq: self.next_seq,
+            event_seq,
             timestamp_unix,
             tag: GossipTag::Replicate,
             payload,
@@ -234,7 +265,7 @@ impl GossipState {
     /// CHECK-ONLY (G02-CLUSTER-02 persist-then-dedup): `Accept` mutates
     /// NOTHING. The caller persists the payload first and calls
     /// [`Self::commit_inbound`] only after the DB write is confirmed —
-    /// advancing the dedup high-water (and merging the sender's VC) before
+    /// recording the dedup identity (and merging the sender's VC) before
     /// persistence made a failed INSERT a permanent loss: the peer's
     /// anti-entropy considered the event delivered and never re-sent it.
     ///
@@ -249,8 +280,11 @@ impl GossipState {
         now_ts_unix: i64,
     ) -> GossipAcceptance {
         let budget = ReplayBudget::from_policy(policy);
-        let last_seen = self.seen.get(&frame.origin).copied();
-        let verdict = frame.evaluate_acceptance(&budget, now_ts_unix, last_seen);
+        let already_seen = self
+            .seen
+            .get(&frame.origin)
+            .is_some_and(|seen| seen.contains(frame.event_seq));
+        let verdict = frame.evaluate_acceptance(&budget, now_ts_unix, already_seen);
         if !matches!(verdict, GossipAcceptance::Accept) {
             return verdict;
         }
@@ -270,42 +304,68 @@ impl GossipState {
         GossipAcceptance::Accept
     }
 
-    /// Commit an accepted-AND-persisted inbound frame: record the dedup
-    /// high-water + converge the VC. Call ONLY after the foreign event is
+    /// Commit an accepted-AND-persisted inbound frame: record the stable dedup
+    /// identity + converge the VC. Call ONLY after the foreign event is
     /// durably stored (`ingest_foreign_event` returned `Ok`). Idempotent for
     /// the same frame (re-inserting the same seq / re-merging the same VC is
     /// a no-op), so a duplicate arriving before the first commit lands is
     /// harmless — the DB's `INSERT OR IGNORE` on (origin, seq) absorbs it.
     pub fn commit_inbound(&mut self, frame: &GossipFrame) {
-        self.seen.insert(frame.origin.clone(), frame.event_seq);
+        self.seen
+            .entry(frame.origin.clone())
+            .or_default()
+            .insert(frame.event_seq);
+        self.latest_seen
+            .insert(frame.origin.clone(), frame.event_seq);
         self.vc.merge(&frame.vector_clock);
     }
 
     /// Highest applied seq for a peer (observability).
     pub fn last_seen_seq(&self, origin: &PeerPubkey) -> Option<u64> {
-        self.seen.get(origin).copied()
+        self.latest_seen.get(origin).copied()
     }
 }
 
-/// Minimum WAL frame header size (the 96-byte `EventHeaderV2`). `event_type` is
-/// header byte 2; `total_len` is the LE u32 at bytes 9..13 (pinned by the WAL
-/// header tests). We read these RAW (no HMAC verify) because the send-tick
-/// walks THIS node's own uncompressed active-segment body.
-const WAL_HEADER_MIN: usize = 96;
+/// Decode the canonical WAL frame metadata carried by every gossip payload.
+///
+/// This is deliberately shared by both transports. Reading fixed bytes from
+/// the payload used to interpret the 4-byte `NEOT` preamble as the event type
+/// and silently rejected normal WAL frames. Full decoding also verifies the
+/// declared frame length and CRC before the receive-side ACL trusts the type.
+pub fn gossip_payload_event_meta(payload: &[u8]) -> Option<(u8, u8)> {
+    let decoded = crate::wal::frame::decode_frame(payload).ok()?;
+    if decoded.header.total_len as usize != payload.len() {
+        return None;
+    }
+    Some((decoded.header.event_type, decoded.header.event_subtype))
+}
+
+/// Original WAL event time used by the replay-budget gate. Retries must not
+/// stamp `now`, otherwise an old frame can be refreshed indefinitely and evade
+/// the operator's bounded replay window.
+pub fn gossip_payload_timestamp_unix(payload: &[u8]) -> Option<i64> {
+    let decoded = crate::wal::frame::decode_frame(payload).ok()?;
+    if decoded.header.total_len as usize != payload.len() {
+        return None;
+    }
+    i64::try_from(decoded.header.hlc.physical_ns() / 1_000_000_000).ok()
+}
 
 /// Walk an uncompressed WAL segment BODY from `from_offset`, collecting up to
-/// `max` REPLICABLE frames as `(event_type, raw_frame_bytes)`. Returns the
+/// `max` REPLICABLE canonical frames as `(event_type, raw_frame_bytes)`. Returns the
 /// collected frames + the new cursor (advanced past every frame walked, so the
 /// next tick continues from there). Stops cleanly on a torn/short tail.
 ///
-/// Pure — no IO. The send-tick reads the active segment file, strips the
-/// segment header, and calls this on the body.
+/// Pure — no IO. The shared directory walker reconstructs each live or sealed
+/// segment into logical frame bytes, strips the segment header, and calls this
+/// on the body.
 ///
 /// GOLD-ARCH-03 audit: intentionally NOT migrated to `wal::scan::for_each_frame`.
 /// Gossip needs the RAW on-wire frame bytes + a resumable cursor, and the caller
-/// (`spawn_gossip_tick`) already derives the correct v1/v2 `header_len()` and
-/// skips compressed/finalised segments (whose body is a zstd blob, never walked
-/// raw). The format-awareness lives in the caller; this stays a pure body walk.
+/// (`read_gossipable_batch`) already derives the correct versioned
+/// `header_len()` and reconstructs compressed/encrypted sealed segments through
+/// `wal::compaction::logical_segment_bytes`. The format-awareness lives in the
+/// caller; this stays a pure logical-body walk.
 pub fn collect_gossipable_frames(
     body: &[u8],
     from_offset: usize,
@@ -314,20 +374,20 @@ pub fn collect_gossipable_frames(
 ) -> (Vec<(u8, Vec<u8>)>, usize) {
     let mut out = Vec::new();
     let mut cursor = from_offset.min(body.len());
-    while cursor + WAL_HEADER_MIN <= body.len() && out.len() < max {
-        let event_type = body[cursor + 2];
-        // Byte 3 is the event_subtype for EXTENDED (0x00) frames; 0 for others.
-        let event_subtype = body[cursor + 3];
-        let total_len = u32::from_le_bytes([
-            body[cursor + 9],
-            body[cursor + 10],
-            body[cursor + 11],
-            body[cursor + 12],
-        ]) as usize;
-        // Torn tail / corrupt length ⇒ stop (don't advance past garbage).
-        if total_len < WAL_HEADER_MIN || cursor + total_len > body.len() {
+    while cursor < body.len() && out.len() < max {
+        // `decode_frame` accepts a slice containing later frames, then uses the
+        // first header's declared length for CRC and payload boundaries.
+        // Any torn/corrupt tail stops the cursor before untrusted bytes.
+        let decoded = match crate::wal::frame::decode_frame(&body[cursor..]) {
+            Ok(decoded) => decoded,
+            Err(_) => break,
+        };
+        let total_len = decoded.header.total_len as usize;
+        if total_len == 0 || cursor.saturating_add(total_len) > body.len() {
             break;
         }
+        let event_type = decoded.header.event_type;
+        let event_subtype = decoded.header.event_subtype;
         // Use ext classifier so SwarmResourceSnapshot (0x00/0x03) is included
         // and LocalSnapshot (0x00/0x04) is correctly excluded.
         if is_replicable_ext(event_type, event_subtype, policy) {
@@ -338,35 +398,178 @@ pub fn collect_gossipable_frames(
     (out, cursor)
 }
 
+/// Crash-safe anti-entropy cursor across the complete local WAL history.
+///
+/// The cursor is intentionally transport-independent. Both peeroxide and iroh
+/// walk the same sorted segment set, including sealed compressed/encrypted
+/// segments reconstructed through the canonical WAL reader. Stable payload
+/// identities make every wrap-around retry idempotent at the receiver.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GossipWalCursor {
+    segment: Option<PathBuf>,
+    offset: usize,
+}
+
+/// Read the next bounded anti-entropy batch without blocking Tokio's executor
+/// on file IO, decompression, or sealed-segment decryption.
+pub async fn read_gossipable_batch(
+    wal_dir: &std::path::Path,
+    cursor: &mut GossipWalCursor,
+    policy: &GossipPolicy,
+    max: usize,
+) -> Vec<(u8, Vec<u8>)> {
+    let wal_dir = wal_dir.to_path_buf();
+    let mut next_cursor = cursor.clone();
+    let policy = policy.clone();
+    match tokio::task::spawn_blocking(move || {
+        let frames = collect_gossipable_from_wal_dir(&wal_dir, &mut next_cursor, &policy, max);
+        (frames, next_cursor)
+    })
+    .await
+    {
+        Ok((frames, next_cursor)) => {
+            *cursor = next_cursor;
+            frames
+        }
+        Err(error) => {
+            tracing::warn!(%error, "cluster anti-entropy WAL scan task failed");
+            Vec::new()
+        }
+    }
+}
+
+fn collect_gossipable_from_wal_dir(
+    wal_dir: &std::path::Path,
+    cursor: &mut GossipWalCursor,
+    policy: &GossipPolicy,
+    max: usize,
+) -> Vec<(u8, Vec<u8>)> {
+    if max == 0 {
+        return Vec::new();
+    }
+    let mut segments: Vec<PathBuf> = match std::fs::read_dir(wal_dir) {
+        Ok(entries) => entries
+            .filter_map(|entry| match entry {
+                Ok(entry) => Some(entry.path()),
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        path = %wal_dir.display(),
+                        "cluster anti-entropy could not enumerate a WAL directory entry"
+                    );
+                    None
+                }
+            })
+            .filter(|path| path.extension().is_some_and(|ext| ext == "wal"))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(%error, path = %wal_dir.display(), "cluster anti-entropy WAL directory read failed");
+            return Vec::new();
+        }
+    };
+    segments.sort();
+    if segments.is_empty() {
+        *cursor = GossipWalCursor::default();
+        return Vec::new();
+    }
+
+    let start_index = cursor
+        .segment
+        .as_ref()
+        .and_then(|current| segments.iter().position(|path| path == current))
+        .unwrap_or(0);
+    let start_offset = if cursor.segment.as_ref() == Some(&segments[start_index]) {
+        cursor.offset
+    } else {
+        0
+    };
+    let mut out = Vec::new();
+
+    for visited in 0..segments.len() {
+        let index = (start_index + visited) % segments.len();
+        let path = &segments[index];
+        let offset = if visited == 0 { start_offset } else { 0 };
+        let raw = match std::fs::read(path) {
+            Ok(raw) => raw,
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "cluster anti-entropy segment read failed");
+                continue;
+            }
+        };
+        if crate::wal::segment_header::parse_segment_header(&raw).is_err() {
+            tracing::warn!(path = %path.display(), "cluster anti-entropy rejected an invalid segment header");
+            continue;
+        }
+        let (header_len, logical) = match crate::wal::compaction::logical_segment_bytes(&raw) {
+            Ok(logical) => logical,
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "cluster anti-entropy could not reconstruct sealed segment");
+                continue;
+            }
+        };
+        let Some(body) = logical.get(header_len..) else {
+            tracing::warn!(
+                path = %path.display(),
+                header_len,
+                logical_len = logical.len(),
+                "cluster anti-entropy rejected a truncated logical segment"
+            );
+            continue;
+        };
+        let remaining = max.saturating_sub(out.len());
+        let (mut frames, next_offset) = collect_gossipable_frames(body, offset, policy, remaining);
+        out.append(&mut frames);
+
+        if next_offset > offset && next_offset < body.len() && out.len() >= max {
+            cursor.segment = Some(path.clone());
+            cursor.offset = next_offset;
+            return out;
+        }
+
+        // Tail reached, or a torn/corrupt frame stopped this segment. Advance
+        // to the next segment instead of permanently pinning anti-entropy; the
+        // next full cycle retries this path after the writer has completed it.
+        let next_index = (index + 1) % segments.len();
+        cursor.segment = Some(segments[next_index].clone());
+        cursor.offset = 0;
+        if out.len() >= max {
+            return out;
+        }
+    }
+    out
+}
+
 /// SL-01b send path: spawn the anti-entropy gossip tick. Every
-/// [`GOSSIP_TICK_INTERVAL`] it reads the active WAL segment tail, band-filters
-/// replicable frames, wraps them in [`GossipFrame`]s (VectorClock-tagged), and
-/// broadcasts to paired peers. Read-only consumer of the WAL (NOT a write hook
+/// [`GOSSIP_TICK_INTERVAL`] it cycles the complete WAL segment history,
+/// band-filters replicable frames, wraps them in [`GossipFrame`]s
+/// (VectorClock-tagged), and broadcasts to paired peers. Read-only consumer of
+/// the WAL (NOT a write hook
 /// — the per-peer read loop is read-to-completion and can't take an append
 /// callback). Returns the task handle so the daemon can abort it on shutdown.
 ///
-/// `self_id` is a per-session uuid (gossip state is in-memory + rebuilds on
-/// restart for SL-01b; a persistent node-id origin is a follow-on with the
-/// foreign-event store).
+/// `self_id` is the transport-authenticated stable node identity (peeroxide
+/// Noise public key or iroh EndpointId). The receive path binds the envelope
+/// origin back to that authenticated key before accepting it.
 pub fn spawn_gossip_tick(
     peer_streams: Arc<PeerStreamRegistry>,
     segment_path: PathBuf,
     writer: Arc<WalWriterHandle>,
+    self_id: PeerPubkey,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let policy = GossipPolicy::default();
         let mut state = GossipState::new();
-        let self_id = PeerPubkey::new(uuid::Uuid::now_v7().to_string());
-        // The WAL dir to re-resolve the ACTIVE segment each tick (a fixed path
-        // would go stale after a rollover — review HIGH). The seed path's parent
-        // is the segment dir.
+        // The seed path's parent is the segment directory. The shared cursor
+        // cycles every live and sealed segment, so rollover cannot create an
+        // unsynchronised historical gap.
         let wal_dir = segment_path
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
-        // Track which segment the offset belongs to; reset to 0 on a rollover.
-        let mut current_segment: PathBuf = segment_path.clone();
-        let mut last_offset: usize = 0;
+        let mut cursor = GossipWalCursor {
+            segment: Some(segment_path),
+            offset: 0,
+        };
         let mut ticker = tokio::time::interval(GOSSIP_TICK_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -375,51 +578,22 @@ pub fn spawn_gossip_tick(
             if peer_streams.peer_count() == 0 {
                 continue;
             }
-            // Resolve the active (newest) segment. On rollover the offset is
-            // meaningless for the new file ⇒ reset to 0.
-            let active = newest_segment(&wal_dir).unwrap_or_else(|| current_segment.clone());
-            if active != current_segment {
-                current_segment = active;
-                last_offset = 0;
-            }
-            let bytes = match tokio::fs::read(&current_segment).await {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::debug!(error = %e, "gossip tick: segment read failed");
-                    continue;
-                }
-            };
-            let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
-                continue;
-            };
-            // A compressed (rolled/finalised) segment can't be walked raw — its
-            // body is zstd. The ACTIVE segment is uncompressed; skip a finalised
-            // one rather than ship corrupt bytes (review LOW).
-            if hdr.is_compressed() {
-                continue;
-            }
-            let header_len = hdr.header_len();
-            if bytes.len() <= header_len {
-                continue;
-            }
-            let body = &bytes[header_len..];
-            let (frames, new_offset) =
-                collect_gossipable_frames(body, last_offset, &policy, GOSSIP_BATCH_MAX);
-            // ALWAYS advance the cursor past the frames we walked — gossip is
-            // best-effort (the receiver dedups + the ReplayBudget covers gaps).
-            // Gating advancement on delivery would re-walk + re-send the same
-            // frames forever when a peer queue is briefly full (review MEDIUM).
-            last_offset = new_offset;
+            let frames =
+                read_gossipable_batch(&wal_dir, &mut cursor, &policy, GOSSIP_BATCH_MAX).await;
             if frames.is_empty() {
                 continue;
             }
             let frame_count = frames.len();
             for (event_type, raw) in frames {
-                let ts = now_unix_secs();
-                // Byte 3 of the raw frame body is the event_subtype for EXTENDED
-                // frames; 0 for all other types (ignored by classify_event_ext).
-                let event_subtype = raw.get(3).copied().unwrap_or(0);
-                if let Some(gframe) = state.build_outbound(&self_id, event_type, event_subtype, raw, ts, &policy) {
+                let Some(ts) = gossip_payload_timestamp_unix(&raw) else {
+                    continue;
+                };
+                let event_subtype = gossip_payload_event_meta(&raw)
+                    .map(|(_, subtype)| subtype)
+                    .unwrap_or(0);
+                if let Some(gframe) =
+                    state.build_outbound(&self_id, event_type, event_subtype, raw, ts, &policy)
+                {
                     let wf = WireFrame {
                         kind: FrameKind::Gossip,
                         sequence: gframe.event_seq,
@@ -433,23 +607,6 @@ pub fn spawn_gossip_tick(
             emit_gossip_sent_wal(&writer, frame_count, peer_streams.peer_count());
         }
     })
-}
-
-/// Find the lexicographically-greatest `*.wal` in `dir` — the active segment
-/// (segment files are zero-padded sequence names, so lexical max = newest).
-fn newest_segment(dir: &std::path::Path) -> Option<PathBuf> {
-    let mut newest: Option<PathBuf> = None;
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("wal") {
-            match &newest {
-                Some(cur) if path <= *cur => {}
-                _ => newest = Some(path),
-            }
-        }
-    }
-    newest
 }
 
 fn emit_gossip_sent_wal(writer: &WalWriterHandle, frame_count: usize, peer_count: usize) {
@@ -531,6 +688,33 @@ pub fn ingest_foreign_event(
          {FOREIGN_EVENT_MAX_AGE_SECS}s in the past (now={now}); \
          peer={origin_peer_pk} seq={origin_seq}"
     );
+
+    // Anti-resurrection boundary for operator-forgotten topics. Raw/PII bands
+    // are the only gossip payloads that can carry arbitrary text. Validate the
+    // canonical frame even when no tombstone exists, then terminally drop a
+    // matching frame before it reaches the queryable foreign backup surface.
+    // Registry/decode failures propagate (fail closed); returning Ok for a
+    // deliberate tombstone drop lets the receiver record its dedup identity
+    // instead of retrying the same forbidden bytes forever.
+    if classify_event(event_type) == ReplicationClass::RawIngressGated {
+        let (inner_event_type, _) = gossip_payload_event_meta(payload)
+            .context("ingest_foreign_event: malformed raw gossip WAL frame")?;
+        anyhow::ensure!(
+            inner_event_type == event_type,
+            "ingest_foreign_event: outer/inner event type mismatch (outer=0x{event_type:02X}, inner=0x{inner_event_type:02X})"
+        );
+        for topic in crate::memory::forget::active_tombstone_topics(conn)? {
+            if crate::memory::forget::foreign_frame_contains_topic(payload, event_type, &topic)? {
+                tracing::info!(
+                    peer = origin_peer_pk,
+                    seq = origin_seq,
+                    event_type = format_args!("0x{event_type:02X}"),
+                    "foreign raw gossip dropped by local forget tombstone"
+                );
+                return Ok(());
+            }
+        }
+    }
     conn.execute(
         "INSERT OR IGNORE INTO idx_foreign_events \
          (origin_peer_pk, origin_seq, event_type, payload, received_at) \
@@ -569,7 +753,7 @@ pub struct ForeignPersistJob {
 /// Sender half handed to a transport's accept path. `try_send` is
 /// non-blocking; a full channel drops the job (gossip is best-effort — the
 /// sender re-delivers via its replay budget). The transport commits the
-/// dedup high-water ONLY on a successful send (persist-then-commit).
+/// dedup state ONLY on a successful send (persist-then-commit).
 pub type ForeignPersistTx = tokio::sync::mpsc::Sender<ForeignPersistJob>;
 
 /// DES-13 — spawn the single foreign-event DB writer. Returns the sender
@@ -724,7 +908,7 @@ impl std::fmt::Display for RestoreSkipReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LocalRowMissing => f.write_str("local row missing"),
-            Self::Idempotent => f.write_str("idempotent (local >= peer)"),
+            Self::Idempotent => f.write_str("idempotent (already applied or local >= peer)"),
             Self::AlreadyRevoked => f.write_str("already revoked"),
             Self::Contradicted => f.write_str("contradicted (closed fact)"),
             Self::NoiseEventType => f.write_str("noise event type (aggregate, no apply effect)"),
@@ -738,6 +922,8 @@ impl std::fmt::Display for RestoreSkipReason {
 /// Apply a single restored foreign frame to local recall surfaces.
 ///
 /// # Parameters
+/// - `origin_peer_pk` / `origin_seq` — durable event identity used to make
+///   multiplicative 0x92 decay exactly-once across restore invocations.
 /// - `event_type` — the parsed `event_type` byte from the export JSONL line.
 /// - `payload_bytes` — the full WAL frame bytes (base64-decoded from `payload_b64`).
 /// - `received_at` — the `received_at` timestamp from the export line (used for
@@ -750,32 +936,142 @@ impl std::fmt::Display for RestoreSkipReason {
 /// | event_type | effect | skip conditions |
 /// |---|---|---|
 /// | 0x90 / 0x91 | `MAX(importance, peer)` on local episode | Missing / Idempotent |
-/// | 0x92 | `* 0.5, floor DECAY_FLOOR` on local episode | Missing |
+/// | 0x92 | `* 0.5, floor DECAY_FLOOR` on local episode | Missing / Idempotent marker |
 /// | 0x98 | SET `revoked_at` on local groundtruth | Missing / AlreadyRevoked / Contradicted |
 /// | 0x94 / 0x13 | no local effect (aggregate / capability) | NoiseEventType |
 /// | 0x97 / 0x93 / 0x12 / other DoNotGossip | reject | DoNotGossip |
 ///
 /// # Savepoints
-/// The caller is responsible for wrapping each call in its own SQLite
-/// savepoint so a conflict-matrix Skip on one row does not roll back the
-/// entire restore session.
+/// The caller may wrap each call in a per-row savepoint so one error does not
+/// roll back the restore session. The 0x92 branch additionally nests its own
+/// savepoint so the decay and durable idempotency marker commit atomically.
 pub fn apply_restore_frame(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    origin_seq: u64,
+    event_type: u8,
+    payload_bytes: &[u8],
+    received_at: i64,
+    dry_run: bool,
+) -> anyhow::Result<RestoreOutcome> {
+    if event_type != crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED {
+        return apply_restore_frame_inner(conn, event_type, payload_bytes, received_at, dry_run);
+    }
+
+    // 0x92 is multiplicative, so local-value comparison cannot make retries
+    // idempotent. Bind it to the durable gossip identity instead. Dry-runs
+    // only read an existing marker table and never create schema.
+    if dry_run {
+        if restore_decay_was_applied(conn, origin_peer_pk, origin_seq)? {
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent));
+        }
+        return apply_restore_frame_inner(conn, event_type, payload_bytes, received_at, true);
+    }
+
+    // Keep the decay and its marker in one transaction, including for callers
+    // that do not provide their own per-row savepoint.
+    const SAVEPOINT: &str = "neoth_restore_decay_marker";
+    conn.execute_batch(&format!("SAVEPOINT {SAVEPOINT}"))
+        .context("restore decay: open marker savepoint")?;
+    let result = (|| {
+        ensure_restore_decay_markers(conn)?;
+        if restore_decay_was_applied(conn, origin_peer_pk, origin_seq)? {
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent));
+        }
+        let outcome =
+            apply_restore_frame_inner(conn, event_type, payload_bytes, received_at, false)?;
+        if outcome == RestoreOutcome::Applied {
+            mark_restore_decay_applied(conn, origin_peer_pk, origin_seq)?;
+        }
+        Ok(outcome)
+    })();
+    match result {
+        Ok(outcome) => {
+            conn.execute_batch(&format!("RELEASE SAVEPOINT {SAVEPOINT}"))
+                .context("restore decay: commit marker savepoint")?;
+            Ok(outcome)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch(&format!(
+                "ROLLBACK TO SAVEPOINT {SAVEPOINT}; RELEASE SAVEPOINT {SAVEPOINT}"
+            ));
+            Err(error)
+        }
+    }
+}
+
+const RESTORE_DECAY_MARKERS_TABLE: &str = "cluster_restore_decay_applied";
+
+fn ensure_restore_decay_markers(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"CREATE TABLE IF NOT EXISTS cluster_restore_decay_applied (
+               origin_peer_pk TEXT NOT NULL,
+               origin_seq INTEGER NOT NULL,
+               applied_at INTEGER NOT NULL,
+               PRIMARY KEY (origin_peer_pk, origin_seq)
+           ) WITHOUT ROWID"#,
+    )
+    .context("restore decay: ensure idempotency markers")
+}
+
+fn restore_decay_was_applied(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    origin_seq: u64,
+) -> anyhow::Result<bool> {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [RESTORE_DECAY_MARKERS_TABLE],
+            |row| row.get(0),
+        )
+        .context("restore decay: inspect marker schema")?;
+    if !table_exists {
+        return Ok(false);
+    }
+    let origin_seq = i64::try_from(origin_seq).context("restore decay: origin_seq exceeds i64")?;
+    conn.query_row(
+        r#"SELECT EXISTS(
+               SELECT 1 FROM cluster_restore_decay_applied
+               WHERE origin_peer_pk = ?1 AND origin_seq = ?2
+           )"#,
+        rusqlite::params![origin_peer_pk, origin_seq],
+        |row| row.get(0),
+    )
+    .context("restore decay: read idempotency marker")
+}
+
+fn mark_restore_decay_applied(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    origin_seq: u64,
+) -> anyhow::Result<()> {
+    let origin_seq = i64::try_from(origin_seq).context("restore decay: origin_seq exceeds i64")?;
+    conn.execute(
+        r#"INSERT INTO cluster_restore_decay_applied
+           (origin_peer_pk, origin_seq, applied_at) VALUES (?1, ?2, ?3)"#,
+        rusqlite::params![origin_peer_pk, origin_seq, crate::time::now_unix_i64()],
+    )
+    .context("restore decay: persist idempotency marker")?;
+    Ok(())
+}
+
+fn apply_restore_frame_inner(
     conn: &rusqlite::Connection,
     event_type: u8,
     payload_bytes: &[u8],
     received_at: i64,
     dry_run: bool,
 ) -> anyhow::Result<RestoreOutcome> {
+    use crate::cluster::foreign_indexer::{
+        BoostOutcome, EpisodeArchivedPayload, EpisodeConsolidatedPayload, EpisodePromotedPayload,
+        GroundtruthRevokeOutcome, GroundtruthRevokedPayload, apply_episode_boost,
+        apply_episode_decay_sql, apply_groundtruth_revoke,
+    };
     use crate::wal::events::{
         EVENT_TYPE_CONSOLIDATION_PASS, EVENT_TYPE_EPISODE_ARCHIVED,
         EVENT_TYPE_EPISODE_CONSOLIDATED, EVENT_TYPE_EPISODE_PROMOTED,
         EVENT_TYPE_GROUNDTRUTH_REVOKED, EVENT_TYPE_UPDATE_RAN,
-    };
-    use crate::cluster::foreign_indexer::{
-        apply_episode_boost, apply_episode_decay_sql, apply_groundtruth_revoke,
-        BoostOutcome, GroundtruthRevokeOutcome,
-        EpisodeConsolidatedPayload, EpisodePromotedPayload,
-        EpisodeArchivedPayload, GroundtruthRevokedPayload,
     };
 
     // Noise / DoNotGossip guard: no need to decode the frame for these.
@@ -820,23 +1116,12 @@ pub fn apply_restore_frame(
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!(error = %e, "restore: malformed 0x90 payload");
-                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                    return Ok(RestoreOutcome::Skipped(
+                        RestoreSkipReason::MalformedInnerPayload,
+                    ));
                 }
             };
-            if dry_run {
-                // Evaluate only — check existence/idempotency but skip write.
-                let exists: i64 = conn.query_row(
-                    "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
-                    [p.event_id],
-                    |r| r.get(0),
-                ).context("restore dry-run: check episode existence")?;
-                return Ok(if exists == 0 {
-                    RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
-                } else {
-                    RestoreOutcome::Applied
-                });
-            }
-            match apply_episode_boost(conn, p.event_id, p.importance)? {
+            match apply_episode_boost(conn, p.event_id, p.importance, dry_run)? {
                 BoostOutcome::Applied => Ok(RestoreOutcome::Applied),
                 BoostOutcome::Idempotent => {
                     Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent))
@@ -851,22 +1136,12 @@ pub fn apply_restore_frame(
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!(error = %e, "restore: malformed 0x91 payload");
-                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                    return Ok(RestoreOutcome::Skipped(
+                        RestoreSkipReason::MalformedInnerPayload,
+                    ));
                 }
             };
-            if dry_run {
-                let exists: i64 = conn.query_row(
-                    "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
-                    [p.event_id],
-                    |r| r.get(0),
-                ).context("restore dry-run: check episode existence")?;
-                return Ok(if exists == 0 {
-                    RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
-                } else {
-                    RestoreOutcome::Applied
-                });
-            }
-            match apply_episode_boost(conn, p.event_id, p.to_importance)? {
+            match apply_episode_boost(conn, p.event_id, p.to_importance, dry_run)? {
                 BoostOutcome::Applied => Ok(RestoreOutcome::Applied),
                 BoostOutcome::Idempotent => {
                     Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent))
@@ -881,15 +1156,19 @@ pub fn apply_restore_frame(
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!(error = %e, "restore: malformed 0x92 payload");
-                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                    return Ok(RestoreOutcome::Skipped(
+                        RestoreSkipReason::MalformedInnerPayload,
+                    ));
                 }
             };
             if dry_run {
-                let exists: i64 = conn.query_row(
-                    "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
-                    [p.event_id],
-                    |r| r.get(0),
-                ).context("restore dry-run: check episode existence")?;
+                let exists: i64 = conn
+                    .query_row(
+                        "SELECT count(*) FROM idx_episode WHERE event_id = ?1",
+                        [p.event_id],
+                        |r| r.get(0),
+                    )
+                    .context("restore dry-run: check episode existence")?;
                 return Ok(if exists == 0 {
                     RestoreOutcome::Skipped(RestoreSkipReason::LocalRowMissing)
                 } else {
@@ -908,7 +1187,9 @@ pub fn apply_restore_frame(
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!(error = %e, "restore: malformed 0x98 payload");
-                    return Ok(RestoreOutcome::Skipped(RestoreSkipReason::MalformedInnerPayload));
+                    return Ok(RestoreOutcome::Skipped(
+                        RestoreSkipReason::MalformedInnerPayload,
+                    ));
                 }
             };
             if dry_run {
@@ -925,9 +1206,7 @@ pub fn apply_restore_frame(
                     Err(e) => {
                         return Err(anyhow::anyhow!("restore dry-run 0x98: {e}"));
                     }
-                    Ok((Some(_), _)) => {
-                        RestoreOutcome::Skipped(RestoreSkipReason::AlreadyRevoked)
-                    }
+                    Ok((Some(_), _)) => RestoreOutcome::Skipped(RestoreSkipReason::AlreadyRevoked),
                     Ok((None, fs)) if fs == "contradicted" => {
                         RestoreOutcome::Skipped(RestoreSkipReason::Contradicted)
                     }
@@ -956,29 +1235,29 @@ pub fn apply_restore_frame(
 }
 
 /// Derive the stable local node pubkey from the cluster passphrase stored in
-/// `home/credentials.yaml`. Returns `None` when no cluster identity is
-/// configured (no passphrase or no cluster name in freedom.yaml).
+/// `home/credentials.yaml`. Returns `Ok(None)` when no cluster identity is
+/// configured (no passphrase or no cluster name in freedom.yaml). Existing
+/// invalid policy/credential stores are surfaced.
 ///
 /// The pubkey is the 64-character lowercase hex encoding of the 32-byte
 /// `ClusterKey` (HMAC of the passphrase). This is the same value stored in
 /// `origin_peer_pk` when this node exports its own foreign events.
-pub fn local_node_pubkey(home: &std::path::Path) -> Option<String> {
+pub fn local_node_pubkey(home: &std::path::Path) -> anyhow::Result<Option<String>> {
     let freedom =
-        crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok()?;
+        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
     let creds =
-        crate::config::credentials::Credentials::load_or_default(
-            &home.join("credentials.yaml"),
-        )
-        .ok()?;
-    let identity =
-        crate::cluster::identity::resolve_cluster_identity(&freedom, &creds)?;
+        crate::config::credentials::Credentials::load_or_default(&home.join("credentials.yaml"))?;
+    let Some(identity) = crate::cluster::identity::resolve_cluster_identity(&freedom, &creds)
+    else {
+        return Ok(None);
+    };
     let hex = identity
         .key
         .0
         .iter()
         .map(|b| format!("{:02x}", b))
         .collect::<String>();
-    Some(hex)
+    Ok(Some(hex))
 }
 
 #[cfg(test)]
@@ -1061,15 +1340,12 @@ mod tests {
         }
     }
 
-    /// Build a minimal 96-byte WAL frame header with a given event_type +
-    /// total_len (no payload ⇒ total_len = 96), matching the raw offsets the
-    /// walker reads (byte 2 = event_type, bytes 9..13 = total_len LE).
+    /// Build the same canonical frame bytes that the WAL writer places in an
+    /// active segment body.
     fn fake_frame(event_type: u8) -> Vec<u8> {
-        let mut f = vec![0u8; WAL_HEADER_MIN];
-        f[2] = event_type;
-        let total = WAL_HEADER_MIN as u32;
-        f[9..13].copy_from_slice(&total.to_le_bytes());
-        f
+        let payload = format!("event-{event_type:02x}").into_bytes();
+        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+        crate::wal::frame::encode_frame(&header, &payload)
     }
 
     #[test]
@@ -1096,13 +1372,61 @@ mod tests {
         let mut body = Vec::new();
         body.extend_from_slice(&fake_frame(0x90));
         body.extend_from_slice(&fake_frame(0x91));
+        let complete_len = body.len();
         // Append a torn (short) header tail.
         body.extend_from_slice(&[0u8; 10]);
         let (frames, _off) = collect_gossipable_frames(&body, 0, &p, 1);
         assert_eq!(frames.len(), 1, "max=1 caps collection");
         // From a from_offset past the two full frames, the torn tail stops cleanly.
-        let (rest, _) = collect_gossipable_frames(&body, WAL_HEADER_MIN * 2, &p, 16);
+        let (rest, _) = collect_gossipable_frames(&body, complete_len, &p, 16);
         assert!(rest.is_empty(), "torn tail yields nothing, no panic");
+    }
+
+    #[tokio::test]
+    async fn anti_entropy_cycles_live_and_sealed_segments() {
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeader, SegmentHeaderV2};
+
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("000001.wal");
+        let second = dir.path().join("000002.wal");
+
+        let mut live = SegmentHeader::new(1, 1, 1, 1, [1; 16])
+            .to_le_bytes()
+            .to_vec();
+        live.extend_from_slice(&fake_frame(0x90));
+        std::fs::write(&first, live).unwrap();
+
+        let sealed_frame = fake_frame(0x91);
+        let mut sealed = SegmentHeaderV2::new(1, 2, 2, 2, [1; 16], SEGMENT_FLAG_COMPRESSED)
+            .to_le_bytes()
+            .to_vec();
+        sealed.extend_from_slice(&compress_frames(&sealed_frame).unwrap());
+        std::fs::write(&second, sealed).unwrap();
+
+        let policy = GossipPolicy::default();
+        let mut cursor = GossipWalCursor::default();
+        let first_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1).await;
+        let second_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1).await;
+        let retry_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1).await;
+
+        assert_eq!(first_batch[0].0, 0x90);
+        assert_eq!(second_batch[0].0, 0x91);
+        assert_eq!(retry_batch[0].0, 0x90, "cursor must wrap for retries");
+    }
+
+    #[test]
+    fn canonical_gossip_metadata_rejects_crc_or_trailing_bytes() {
+        let frame = fake_frame(0x90);
+        assert_eq!(gossip_payload_event_meta(&frame), Some((0x90, 0)));
+
+        let mut corrupt = frame.clone();
+        corrupt[100] ^= 0x01;
+        assert_eq!(gossip_payload_event_meta(&corrupt), None);
+
+        let mut trailing = frame;
+        trailing.push(0);
+        assert_eq!(gossip_payload_event_meta(&trailing), None);
     }
 
     #[test]
@@ -1139,9 +1463,16 @@ mod tests {
             .build_outbound(&self_pk(), 0x90, 0, vec![9], 1000, &p)
             .expect("safe event wraps");
         assert_eq!(f.origin, self_pk());
-        assert_eq!(f.event_seq, 1);
+        assert_ne!(f.event_seq, 0);
         assert_eq!(f.tag, GossipTag::Replicate);
         assert!(f.vector_clock.get(&self_pk()) >= 1);
+        let retry = st
+            .build_outbound(&self_pk(), 0x90, 0, vec![9], 1000, &p)
+            .expect("same frame remains replicable");
+        assert_eq!(
+            retry.event_seq, f.event_seq,
+            "retries must keep a stable dedup identity"
+        );
     }
 
     #[test]
@@ -1176,8 +1507,14 @@ mod tests {
             );
         }
         // Non-EXTENDED types delegate to classify_event — no regression.
-        assert!(is_replicable_ext(0x90, 0, &p), "0x90 still replicates via classify_event");
-        assert!(!is_replicable_ext(0xA0, 0, &p), "0xA0 still DoNotGossip via classify_event");
+        assert!(
+            is_replicable_ext(0x90, 0, &p),
+            "0x90 still replicates via classify_event"
+        );
+        assert!(
+            !is_replicable_ext(0xA0, 0, &p),
+            "0xA0 still DoNotGossip via classify_event"
+        );
     }
 
     #[test]
@@ -1206,7 +1543,7 @@ mod tests {
         assert_eq!(
             st.last_seen_seq(&peer),
             None,
-            "accept_inbound must NOT advance the high-water before commit"
+            "accept_inbound must NOT record the identity before commit"
         );
         // Re-delivery BEFORE commit is still Accept (DB INSERT OR IGNORE
         // absorbs the double-persist) — the crash-window contract.
@@ -1214,7 +1551,7 @@ mod tests {
             st.accept_inbound(&frame, Some(0x90), None, &p, now),
             GossipAcceptance::Accept
         );
-        // After confirmed persistence the caller commits: high-water + VC.
+        // After confirmed persistence the caller commits: dedup identity + VC.
         st.commit_inbound(&frame);
         assert_eq!(st.last_seen_seq(&peer), Some(5));
         assert!(st.vc.get(&peer) >= 1, "receiver VC converged on sender");
@@ -1223,6 +1560,13 @@ mod tests {
             st.accept_inbound(&frame, Some(0x90), None, &p, now),
             GossipAcceptance::DroppedDuplicate { .. }
         ));
+        let mut unseen_lower_identity = frame.clone();
+        unseen_lower_identity.event_seq = 4;
+        assert_eq!(
+            st.accept_inbound(&unseen_lower_identity, Some(0x90), None, &p, now),
+            GossipAcceptance::Accept,
+            "unordered stable identities must use set membership, not a numeric high-water"
+        );
         // Defence-in-depth: a frame whose payload is actually a DoNotGossip
         // band (mis-tagged) is dropped even though the GossipTag says Replicate.
         let mut vc2 = VectorClock::new();
@@ -1253,7 +1597,13 @@ mod tests {
             payload: vec![0],
         };
         assert_eq!(
-            st.accept_inbound(&snap_frame, Some(0x00), Some(SWARM_SNAPSHOT_SUBTYPE), &p, now),
+            st.accept_inbound(
+                &snap_frame,
+                Some(0x00),
+                Some(SWARM_SNAPSHOT_SUBTYPE),
+                &p,
+                now
+            ),
             GossipAcceptance::Accept,
             "SwarmResourceSnapshot (0x00/0x03) must be accepted by the receive ACL"
         );
@@ -1350,6 +1700,15 @@ mod tests {
             );
             CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
                 ON idx_foreign_events (origin_peer_pk, received_at DESC);
+            CREATE TABLE IF NOT EXISTS idx_profile_redactions (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                field            TEXT NOT NULL,
+                never_recreate   INTEGER NOT NULL DEFAULT 1,
+                reason           TEXT,
+                asserted_by      TEXT NOT NULL,
+                asserted_at      INTEGER NOT NULL,
+                revoked_at       INTEGER
+            );
             "#,
         )
         .unwrap();
@@ -1424,6 +1783,89 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_foreign_events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "double-ingest same (peer,seq) must remain 1 row");
+    }
+
+    #[test]
+    fn raw_foreign_ingest_honours_active_forget_tombstone() {
+        let conn = open_foreign_events_db();
+        conn.execute(
+            "INSERT INTO idx_profile_redactions \
+             (field, never_recreate, asserted_by, asserted_at) \
+             VALUES ('_tombstone.berlin', 1, 'cli', 1)",
+            [],
+        )
+        .unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "channel": "chat",
+            "text": "Back in BERLIN"
+        }))
+        .unwrap();
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_RAW_TEXT, &payload)
+                .build();
+        let frame = crate::wal::frame::encode_frame(&header, &payload);
+        ingest_foreign_event(
+            &conn,
+            "peer",
+            7,
+            crate::wal::events::EVENT_TYPE_RAW_TEXT,
+            &frame,
+            crate::time::now_unix_i64(),
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_foreign_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "forgotten raw peer text must not be persisted");
+    }
+
+    #[test]
+    fn raw_foreign_ingest_keeps_unrelated_text_and_rejects_bad_crc() {
+        let conn = open_foreign_events_db();
+        conn.execute(
+            "INSERT INTO idx_profile_redactions \
+             (field, never_recreate, asserted_by, asserted_at) \
+             VALUES ('_tombstone.berlin', 1, 'cli', 1)",
+            [],
+        )
+        .unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({"text": "Hamburg"})).unwrap();
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_RAW_TEXT, &payload)
+                .build();
+        let frame = crate::wal::frame::encode_frame(&header, &payload);
+        ingest_foreign_event(
+            &conn,
+            "peer",
+            8,
+            crate::wal::events::EVENT_TYPE_RAW_TEXT,
+            &frame,
+            crate::time::now_unix_i64(),
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_foreign_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let mut corrupt = frame;
+        corrupt[100] ^= 1;
+        assert!(
+            ingest_foreign_event(
+                &conn,
+                "peer",
+                9,
+                crate::wal::events::EVENT_TYPE_RAW_TEXT,
+                &corrupt,
+                crate::time::now_unix_i64(),
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -323,10 +323,7 @@ pub fn persona_mode_path(home: &std::path::Path) -> std::path::PathBuf {
 /// `.txt.tmp` + rename. Mode 0600 on unix. Emits
 /// `EVENT_TYPE_LOYAL_BUDDY_ACTIVATED` (0xFE) WAL frame via the provided
 /// writer handle. Mirrors `record_active_preset`.
-pub fn record_persona_mode(
-    home: &std::path::Path,
-    mode: crate::config::PersonaMode,
-) -> Result<()> {
+pub fn record_persona_mode(home: &std::path::Path, mode: crate::config::PersonaMode) -> Result<()> {
     let path = persona_mode_path(home);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
@@ -384,6 +381,16 @@ pub enum PersonaSub {
     Clear,
 }
 
+fn load_profile_extensions(
+    path: Option<&std::path::Path>,
+) -> Result<crate::profile::extension_registry::TypedExtensionRegistry> {
+    let path = path
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(crate::profile::extension_registry::TypedExtensionRegistry::default_path);
+    crate::profile::extension_registry::TypedExtensionRegistry::load_from(&path)
+        .with_context(|| format!("load profile extension registry from {}", path.display()))
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 struct ProfileRow {
     field: String,
@@ -395,6 +402,15 @@ struct ProfileRow {
 }
 
 pub async fn run_profile(args: ProfileArgs) -> Result<()> {
+    // Validate the typed extension boundary before opening/migrating views.db
+    // or constructing a paid provider. A broken existing registry must leave
+    // both external and durable state untouched.
+    let preloaded_extensions = match &args.action {
+        ProfileAction::Run {
+            extensions_file, ..
+        } => Some(load_profile_extensions(extensions_file.as_deref())?),
+        _ => None,
+    };
     let db_path = FreedomConfig::default_neoth_home().join("views.db");
     let conn = store::open(&db_path).context("open views.db")?;
     match args.action {
@@ -412,11 +428,9 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             // LOWKEY, the recommended default the daemon falls back to.
             let active =
                 load_active_preset(&home).unwrap_or(crate::profile::presets::ProfilePreset::Lowkey);
-            // Autonomy is a freedom.yaml knob; default Standard when the
-            // config is unreadable (matches AutonomyLevel::default()).
-            let autonomy = FreedomConfig::load_from_default_path()
-                .map(|c| c.autonomy)
-                .unwrap_or_default();
+            // A genuinely missing config uses Standard; an existing malformed
+            // policy is surfaced rather than rendered as a fabricated default.
+            let autonomy = FreedomConfig::load_from_default_path_or_default()?.autonomy;
             let rows = knob_rows(active, autonomy);
             render_knobs(&rows, &args.output);
             Ok(())
@@ -484,7 +498,7 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             trigger_event,
             last_n,
             turns_back,
-            extensions_file,
+            extensions_file: _,
         } => {
             // Resolve the event-id list before we open the pipeline
             // connection, so the operator sees the "no triggers found"
@@ -507,14 +521,9 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
                 (Some(_), Some(_)) => unreachable!("clap enforces mutual exclusion"),
             };
             drop(conn); // run_pipeline needs &mut Connection — reopen.
-            run_pipeline_cli_batch(
-                &db_path,
-                &triggers,
-                turns_back,
-                extensions_file,
-                &args.output,
-            )
-            .await
+            let extensions = preloaded_extensions
+                .context("profile extension registry preflight result missing")?;
+            run_pipeline_cli_batch(&db_path, &triggers, turns_back, extensions, &args.output).await
         }
         ProfileAction::Pending { limit } => run_pending_list(&conn, limit, &args.output),
         ProfileAction::Approve { extraction_id } => {
@@ -904,7 +913,7 @@ async fn run_drift(db_path: &std::path::Path, sub: DriftSub, output: &OutputForm
                      `neoth profile seed-baseline` (the one-shot 0xB3 migration anchor)."
                 ),
             };
-            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = FreedomConfig::load_from_default_path_or_default()?;
             let threshold = cfg.drift_alert.threshold;
             let alerting = cfg.drift_alert.enabled;
             let over = report.is_over(threshold);
@@ -1511,7 +1520,7 @@ async fn run_pipeline_cli_batch(
     db_path: &std::path::Path,
     triggers: &[i64],
     turns_back: u32,
-    extensions_file: Option<std::path::PathBuf>,
+    extensions: crate::profile::extension_registry::TypedExtensionRegistry,
     output: &OutputFormat,
 ) -> Result<()> {
     // Wire dependencies: provider from freedom.yaml, fresh WAL writer
@@ -1536,16 +1545,23 @@ async fn run_pipeline_cli_batch(
     let segment = wal_dir.join(format!("profile-run-{}.wal", crate::time::now_unix_secs(),));
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer")?;
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        ),
+        config
+            .inference
+            .slot_for(crate::config::inference::HemisphereRole::Left)
+            .model
+            .clone()
+            .or_else(|| config.provider_model.clone()),
+        "profile.cli_batch",
+    );
 
     let mut conn = store::open(db_path).context("reopen views.db for pipeline")?;
     let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
-    let extensions = match extensions_file {
-        Some(path) => crate::profile::extension_registry::TypedExtensionRegistry::load_from(&path)
-            .context("load extensions file")?,
-        None => {
-            crate::profile::extension_registry::TypedExtensionRegistry::load().unwrap_or_default()
-        }
-    };
     let now_unix = crate::time::now_unix_secs();
 
     let mut runs: Vec<(i64, crate::profile::PipelineRun)> = Vec::with_capacity(triggers.len());
@@ -1553,7 +1569,7 @@ async fn run_pipeline_cli_batch(
         let result = crate::profile::run_pipeline(
             crate::profile::PipelineConn::Owned(&mut conn),
             &writer,
-            provider.as_ref(),
+            &provider,
             trigger_event,
             turns_back,
             &guard,
@@ -1576,6 +1592,7 @@ async fn run_pipeline_cli_batch(
             }
         }
     }
+    drop(provider);
     drop(writer);
     let _ = writer_join.await;
 
@@ -1764,8 +1781,9 @@ fn load_summary(conn: &rusqlite::Connection) -> Result<Vec<ProfileRow>> {
 
 fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProfileRow> {
     let value_json_str: String = r.get(1)?;
-    let value: serde_json::Value =
-        serde_json::from_str(&value_json_str).unwrap_or(serde_json::Value::Null);
+    let value: serde_json::Value = serde_json::from_str(&value_json_str).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
     let superseded_at: Option<i64> = r.get(5)?;
     Ok(ProfileRow {
         field: r.get(0)?,
@@ -2146,7 +2164,8 @@ fn render_knobs(rows: &[KnobRow], output: &OutputFormat) {
                 .collect();
             println!(
                 "{}",
-                serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string())
+                serde_json::to_string_pretty(&arr)
+                    .expect("profile export array contains only serializable values")
             );
         }
         OutputFormat::Table => {
@@ -2170,6 +2189,29 @@ mod tests {
     // `ProfilePreset` is already in scope via `use super::*`; only
     // `AutonomyLevel` needs importing here.
     use crate::permissions::AutonomyLevel;
+
+    #[test]
+    fn profile_extension_preflight_propagates_malformed_registry_with_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile_extensions.toml");
+        std::fs::write(&path, "[extensions\nbroken = true").unwrap();
+        let error = load_profile_extensions(Some(&path)).unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("load profile extension registry"));
+        assert!(detail.contains("profile_extensions.toml"));
+        assert!(detail.contains("parse TOML"));
+    }
+
+    #[test]
+    fn profile_extension_preflight_propagates_existing_unreadable_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile_extensions.toml");
+        std::fs::create_dir(&path).unwrap();
+        let error = load_profile_extensions(Some(&path)).unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("load profile extension registry"));
+        assert!(detail.contains("read profile_extensions"));
+    }
 
     #[test]
     fn knob_rows_reflects_lowkey_preset() {
@@ -3091,7 +3133,7 @@ mod tests {
     fn persona_mode_none_produces_no_identity_anchor_in_enriched_output() {
         // When no persona mode is set, identity_anchor=None and identity_locked=false →
         // the enriched system prompt must not contain the loyal-buddy anchor text.
-        use crate::pipeline::{build_enriched_request, EnrichmentInputs};
+        use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let enriched = build_enriched_request(EnrichmentInputs {
             prompt: "hello",
             operator_context: None,
@@ -3119,7 +3161,7 @@ mod tests {
     fn identity_anchor_injected_at_position_1_when_locked() {
         // When identity_locked=true and identity_anchor is set, it must appear
         // BEFORE operator_context in the assembled system prompt.
-        use crate::pipeline::{build_enriched_request, EnrichmentInputs};
+        use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let anchor = "[ANCHOR] test anchor text";
         let op_ctx = "operator context";
         let enriched = build_enriched_request(EnrichmentInputs {
@@ -3137,9 +3179,13 @@ mod tests {
             identity_locked: true,
             current_goal: None,
         });
-        let sys = enriched.system.expect("system must be Some when layers present");
+        let sys = enriched
+            .system
+            .expect("system must be Some when layers present");
         let anchor_pos = sys.find(anchor).expect("anchor must be in system prompt");
-        let op_pos = sys.find(op_ctx).expect("operator_context must be in system prompt");
+        let op_pos = sys
+            .find(op_ctx)
+            .expect("operator_context must be in system prompt");
         assert!(
             anchor_pos < op_pos,
             "identity_anchor (pos {anchor_pos}) must appear before operator_context (pos {op_pos})"

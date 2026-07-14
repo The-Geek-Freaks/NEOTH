@@ -9,7 +9,7 @@
 //! - `latest_version()` → query the npm registry via `npm view <pkg> version`
 //! - `apply()` → `npm install -g <pkg>@latest`
 //!
-//! V2 (deferred): obsidian, hysteria, keet bridge, neothd self-update.
+//! V2 (deferred): obsidian, hysteria, neothd self-update.
 //! The trait + reporting machinery is laid out so a v2 implementor only adds
 //! a new variant to `Component`.
 

@@ -169,12 +169,12 @@ mod tests {
     fn format_strip_keeps_valid_drops_invalid_resume() {
         // F71 — no-sessions-dir path: well-formed UUID kept, junk dropped.
         let good = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
-        let kept = strip_format_invalid_resume_args(&[
-            "--resume".into(),
-            good.into(),
-            "post".into(),
-        ]);
-        assert_eq!(kept, vec!["--resume".to_string(), good.to_string(), "post".into()]);
+        let kept =
+            strip_format_invalid_resume_args(&["--resume".into(), good.into(), "post".into()]);
+        assert_eq!(
+            kept,
+            vec!["--resume".to_string(), good.to_string(), "post".into()]
+        );
 
         let dropped = strip_format_invalid_resume_args(&[
             "--resume".into(),

@@ -347,7 +347,7 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
 /// write (the `0xC8 TODO_WRITE` frame couldn't land).
 pub(crate) fn gate_external_task_write(yes: bool, provider: &str, action: &str) -> Result<()> {
     use crate::permissions::{Action, Decision, evaluate};
-    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
     let home = crate::config::FreedomConfig::default_neoth_home();
     let daemon_live = matches!(
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
@@ -363,7 +363,7 @@ pub(crate) fn gate_external_task_write(yes: bool, provider: &str, action: &str) 
         provider: provider.into(),
         action: action.into(),
     };
-    match evaluate(&act, cfg.autonomy) {
+    match evaluate(&act, &cfg.autonomy_policy()) {
         Decision::Allow => Ok(()),
         Decision::Deny(r) => anyhow::bail!("denied: {r}"),
         Decision::Confirm(reason) => {

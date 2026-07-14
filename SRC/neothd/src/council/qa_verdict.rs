@@ -6,23 +6,19 @@
 //! dispatcher loop's old `bool success` return was too thin: a real verifier
 //! reports WHY it failed (failed test names, missing invariants, blocked-by-
 //! permission), and that diagnosis feeds the retry path's reframing/replanning.
-//! GR-024 — wiring status: these are the verdict TYPES only. As of v1.0 they
-//! have NO production emitter — there is no `QA_VERDICT_EMITTED` WAL code
-//! allocated (the previously-documented `0x72` is `KANBAN_TASK_ASSIGNED`, an
-//! unrelated frame), and no council-voting / `sub_agents` call site constructs
-//! a `QaVerdict` yet. The emission frame + council integration + the
-//! `neoth code show <task>` surface are future work; don't read this module as
-//! evidence they already exist. Pure data + constructors — the scoring logic
-//! stays in [`crate::council::quality_score`].
+//! Production sub-agent fan-out emits this shape through the existing `0x84`
+//! sub-agent review frame and persists it in the private run record. The
+//! scoring logic stays in [`crate::council::quality_score`].
 
 use serde::{Deserialize, Serialize};
 
 /// One failure item from a verifier sub-agent. Carries enough context
 /// for the retry path to decide between "fix this one thing" vs "scrap
-/// the patch and replan". Operator-readable strings — intended for a future
-/// `neoth code show <task>` surface (not yet wired; see the module-level
-/// GR-024 note: no `QA_VERDICT_EMITTED` WAL frame exists today).
+/// the patch and replan". Operator-readable strings are rendered by
+/// `neoth agents run/history`, persisted in the private run record, and
+/// summarized (content-free) in the `0x84 SUBAGENT_REVIEW_STAGE` WAL frame.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FailureItem {
     /// Short stable id: `test_failure` / `lint_violation` / `invariant`
     /// / `coverage_gap` / `permission_denied`. Operators grep on these
@@ -50,7 +46,7 @@ pub struct FailureItem {
 ///   missing, upstream API down). Retry doesn't help — the operator
 ///   needs to know.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QaVerdict {
     /// Sub-agent confirmed the change is good. Optional `evidence`
     /// list carries the citation chain the verifier walked
@@ -119,6 +115,68 @@ impl QaVerdict {
     /// stop the auto-retry loop.
     pub fn is_blocked(&self) -> bool {
         matches!(self, Self::Blocked { .. })
+    }
+
+    /// Validate model-produced verdicts at the trust boundary. Constructors
+    /// keep in-process callers honest; deserialization can otherwise create an
+    /// empty `Fail`, unbounded evidence, or opaque failure kinds directly.
+    pub fn validate(&self) -> Result<(), String> {
+        const MAX_ITEMS: usize = 16;
+        const MAX_KIND_BYTES: usize = 64;
+        const MAX_EVIDENCE_BYTES: usize = 512;
+        const MAX_MESSAGE_BYTES: usize = 4096;
+
+        let valid_text = |value: &str, max: usize| {
+            !value.trim().is_empty() && value.len() <= max && !value.contains('\0')
+        };
+        match self {
+            Self::Pass { evidence } => {
+                if evidence.len() > MAX_ITEMS {
+                    return Err(format!("pass evidence exceeds {MAX_ITEMS} items"));
+                }
+                if evidence
+                    .iter()
+                    .any(|item| !valid_text(item, MAX_EVIDENCE_BYTES))
+                {
+                    return Err("pass evidence contains an empty or oversized item".into());
+                }
+            }
+            Self::Fail { failures } => {
+                if failures.is_empty() || failures.len() > MAX_ITEMS {
+                    return Err(format!(
+                        "fail verdict must contain 1..={MAX_ITEMS} failure items"
+                    ));
+                }
+                for failure in failures {
+                    if !valid_text(&failure.kind, MAX_KIND_BYTES)
+                        || !failure
+                            .kind
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+                    {
+                        return Err(
+                            "failure kind must be a lowercase ASCII slug up to 64 bytes".into()
+                        );
+                    }
+                    if !valid_text(&failure.message, MAX_MESSAGE_BYTES) {
+                        return Err("failure message is empty or oversized".into());
+                    }
+                    if failure
+                        .citation
+                        .as_deref()
+                        .is_some_and(|citation| !valid_text(citation, MAX_EVIDENCE_BYTES))
+                    {
+                        return Err("failure citation is empty or oversized".into());
+                    }
+                }
+            }
+            Self::Blocked { reason } => {
+                if !valid_text(reason, MAX_MESSAGE_BYTES) {
+                    return Err("blocked reason is empty or oversized".into());
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -234,5 +292,26 @@ mod tests {
                 "exactly one of is_pass/is_retriable/is_blocked must fire for {v:?}"
             );
         }
+    }
+
+    #[test]
+    fn model_verdict_validation_rejects_empty_fail_and_opaque_kinds() {
+        let empty: QaVerdict = serde_json::from_str(r#"{"kind":"fail","failures":[]}"#).unwrap();
+        assert!(empty.validate().is_err());
+
+        let opaque: QaVerdict = serde_json::from_str(
+            r#"{"kind":"fail","failures":[{"kind":"Test Failure!","message":"x"}]}"#,
+        )
+        .unwrap();
+        assert!(opaque.validate().is_err());
+    }
+
+    #[test]
+    fn model_verdict_rejects_unknown_fields() {
+        let err = serde_json::from_str::<QaVerdict>(
+            r#"{"kind":"pass","evidence":[],"ignore_previous":true}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
     }
 }

@@ -36,6 +36,8 @@ use iroh::{
 
 use crate::cluster::discovery::ClusterKey;
 use crate::cluster::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
+use crate::cluster::swarm::{emit_peer_snapshot_to_wal, encode_snapshot_gossip_payload};
+use crate::daemon::resource_snapshot_cron::{new_system, resolve_node_id, sample_snapshot};
 use crate::wal::events::{
     EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED,
     EVENT_TYPE_CLUSTER_GOSSIP_SENT,
@@ -126,10 +128,9 @@ pub type FrameHandler = Arc<dyn Fn(Vec<u8>) -> Vec<u8> + Send + Sync>;
 struct GossipProtocol {
     handler: FrameHandler,
     peers: PeerRegistry,
-    /// D3 — when present, every inbound connection must present a valid
-    /// `cluster_key` HMAC proof (Hello prefix) before its frame reaches the
-    /// handler. `None` keeps the legacy unauthenticated path (no key configured).
-    cluster_key: Option<Arc<ClusterKey>>,
+    /// D3 — every inbound connection must present a valid `cluster_key` HMAC
+    /// proof (Hello prefix) before its frame reaches the handler.
+    cluster_key: Arc<ClusterKey>,
     /// Our own endpoint id — the proof's verifier half.
     our_id: EndpointId,
     /// D3 reject-audit sink (gossip-dropped frames for the peer-auth path).
@@ -154,43 +155,61 @@ impl ProtocolHandler for GossipProtocol {
             .await
             .map_err(AcceptError::from_err)?;
 
-        // D3 — cluster_key Hello proof. When a key is configured the first
-        // CLUSTER_PROOF_BYTES of the stream are the peer's HMAC proof and the
-        // gossip frame follows. A peer that can reach the ALPN but can't prove
+        // D3 — the first CLUSTER_PROOF_BYTES of the stream are the peer's HMAC
+        // proof and the gossip frame follows. A peer that can reach the ALPN but can't prove
         // cluster membership is dropped BEFORE add_peer / before its frame is
         // evaluated — parity with the peeroxide Hello gate. (iroh's QUIC channel
         // already authenticates the peer's EndpointId at the transport level; the
         // proof binds that id to our shared cluster_key, closing the
         // authorization gap.)
-        let frame: Vec<u8> = match &self.cluster_key {
-            Some(key) => {
-                if request.len() < CLUSTER_PROOF_BYTES {
-                    emit_gossip_audit(
-                        &self.writer,
-                        false,
-                        "peer_auth_missing_proof",
-                        &peer_id.to_string(),
-                    );
-                    return Ok(()); // reject: too short to carry a proof
-                }
-                let (proof, frame) = request.split_at(CLUSTER_PROOF_BYTES);
-                let claimed: [u8; 32] =
-                    proof.try_into().expect("split_at(32) yields exactly 32 bytes");
-                if !verify_peer_proof(key, &claimed, peer_id.as_bytes(), self.our_id.as_bytes()) {
-                    emit_gossip_audit(
-                        &self.writer,
-                        false,
-                        "peer_auth_failed",
-                        &peer_id.to_string(),
-                    );
-                    return Ok(()); // reject: not a proven cluster member
-                }
-                frame.to_vec()
-            }
-            None => request, // legacy: no key configured → no proof expected
-        };
+        if request.len() < CLUSTER_PROOF_BYTES {
+            emit_gossip_audit(
+                &self.writer,
+                false,
+                "peer_auth_missing_proof",
+                &peer_id.to_string(),
+            );
+            return Ok(()); // reject: too short to carry a proof
+        }
+        let (proof, frame) = request.split_at(CLUSTER_PROOF_BYTES);
+        let claimed: [u8; 32] = proof
+            .try_into()
+            .expect("split_at(32) yields exactly 32 bytes");
+        if !verify_peer_proof(
+            &self.cluster_key,
+            &claimed,
+            peer_id.as_bytes(),
+            self.our_id.as_bytes(),
+        ) {
+            emit_gossip_audit(
+                &self.writer,
+                false,
+                "peer_auth_failed",
+                &peer_id.to_string(),
+            );
+            return Ok(()); // reject: not a proven cluster member
+        }
+        let frame = frame.to_vec();
 
-        // Proof OK (or no key configured) → learn this peer's dial key so we can
+        // Bind the logical gossip origin to the authenticated QUIC endpoint.
+        // Without this check a valid cluster member could write rows under a
+        // different peer identity and poison that peer's dedup namespace.
+        let authenticated_origin = peer_id.to_string();
+        let origin_matches =
+            serde_json::from_slice::<crate::cluster::gossip_wire::GossipFrame>(&frame)
+                .ok()
+                .is_some_and(|gossip| gossip.origin.as_str() == authenticated_origin);
+        if !origin_matches {
+            emit_gossip_audit(
+                &self.writer,
+                false,
+                "peer_origin_mismatch",
+                &authenticated_origin,
+            );
+            return Ok(());
+        }
+
+        // Proof OK → learn this peer's dial key so we can
         // gossip BACK to it (outbound broadcast).
         self.peers
             .lock()
@@ -212,9 +231,8 @@ impl ProtocolHandler for GossipProtocol {
 pub struct IrohTransport {
     router: Router,
     peers: PeerRegistry,
-    /// D3 — our cluster_key. The dial side prepends a Hello proof when present
-    /// so a peeroxide-parity authorization handshake runs on every send.
-    cluster_key: Option<Arc<ClusterKey>>,
+    /// D3 — our cluster_key. The dial side prepends a Hello proof on every send.
+    cluster_key: Arc<ClusterKey>,
 }
 
 impl IrohTransport {
@@ -222,12 +240,12 @@ impl IrohTransport {
     /// accepting NEOTH cluster connections. Resolves once the endpoint is
     /// online (has a reachable address / relay home).
     ///
-    /// `cluster_key` (D3): when `Some`, the accept path requires a valid
-    /// `cluster_key` HMAC proof on every inbound connection and the dial path
-    /// prepends ours. `writer` (F19): the gossip-decision audit sink.
+    /// `cluster_key` (D3) is mandatory at the type boundary: the accept path
+    /// requires a valid proof on every inbound connection and the dial path
+    /// prepends ours. `writer` (F19) is the gossip-decision audit sink.
     pub async fn bind(
         handler: FrameHandler,
-        cluster_key: Option<Arc<ClusterKey>>,
+        cluster_key: Arc<ClusterKey>,
         writer: Option<Arc<WalWriterHandle>>,
     ) -> Result<Self> {
         let peers: PeerRegistry = Arc::new(Mutex::new(HashSet::new()));
@@ -241,7 +259,7 @@ impl IrohTransport {
                 GossipProtocol {
                     handler,
                     peers: Arc::clone(&peers),
-                    cluster_key: cluster_key.clone(),
+                    cluster_key: Arc::clone(&cluster_key),
                     our_id,
                     writer,
                 },
@@ -287,7 +305,16 @@ impl IrohTransport {
             .collect();
         let mut delivered = 0;
         for peer in targets {
-            if self.send_frame(peer, frame).await.is_ok() {
+            if let Ok(reply) = self.send_frame(peer, frame).await
+                && serde_json::from_slice::<serde_json::Value>(&reply)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("accepted")
+                            .and_then(|accepted| accepted.as_bool())
+                    })
+                    == Some(true)
+            {
                 delivered += 1;
             }
         }
@@ -321,14 +348,13 @@ impl IrohTransport {
         // our membership before evaluating the frame. proof = HMAC(cluster_key,
         // DOMAIN || our_id || peer_id) — signer-first asymmetry guards against a
         // reflection attack (see cluster::peer_auth).
-        if let Some(key) = &self.cluster_key {
-            let our_id = self.router.endpoint().id();
-            let peer_id = conn.remote_id();
-            let proof = compute_cluster_key_proof(key, our_id.as_bytes(), peer_id.as_bytes());
-            send.write_all(&proof)
-                .await
-                .map_err(|e| anyhow::anyhow!("iroh: write proof: {e}"))?;
-        }
+        let our_id = self.router.endpoint().id();
+        let peer_id = conn.remote_id();
+        let proof =
+            compute_cluster_key_proof(&self.cluster_key, our_id.as_bytes(), peer_id.as_bytes());
+        send.write_all(&proof)
+            .await
+            .map_err(|e| anyhow::anyhow!("iroh: write proof: {e}"))?;
         send.write_all(frame)
             .await
             .map_err(|e| anyhow::anyhow!("iroh: write frame: {e}"))?;
@@ -398,30 +424,24 @@ impl IrohTransport {
 /// guarantees:
 ///   - **(2) frame acceptance + (4) replay** — `GossipState::accept_inbound`
 ///     runs `evaluate_acceptance` (replicable tag / within replay budget / not
-///     a duplicate via the per-origin dedup high-water) and merges the vector
-///     clock (causal frontier — stale frames can't advance state);
-///   - **(5) consent/policy band** — the DoNotGossip re-check on the payload's
-///     OWN event_type (byte 2 of the inner WAL header), so a mistagged frame
-///     can't smuggle a private band across.
+///     a duplicate via the per-origin stable-identity set); the vector clock is
+///     merged only after durable persistence;
+///   - **(5) consent/policy band** — the canonical inner WAL frame is
+///     length/CRC decoded before the DoNotGossip re-check trusts its own
+///     event type/subtype, so a mistagged frame can't smuggle a private band.
 ///
 /// **(1) node capabilities** are checked downstream as on the peeroxide path.
 ///
-/// ⚠ **(3) peer trust — iroh path NOT yet at parity (D3).** iroh's QUIC channel
-/// authenticates the peer's `EndpointId` at the TRANSPORT level, but — unlike
-/// the peeroxide loop — the iroh accept path does NOT yet verify a `cluster_key`
-/// HMAC proof (`cluster::peer_auth`) on a Hello before admitting gossip: peers
-/// are admitted by `EndpointId` / `cluster.peers` seed only, so a remote that
-/// reaches the ALPN can have frames evaluated without proving cluster
-/// membership. The `accept_inbound` stack below still gates frame
-/// acceptance/replay/band, but membership proof is missing. The cluster_key
-/// Hello handshake (+ the WAL audit F19 + the shared `GossipState`/real
-/// `self_id` F56) is tracked in GOLD `GR-RESID-IROH`; the iroh transport stays
-/// EXPERIMENTAL (feature `cluster-iroh`, off by default; peeroxide is the
-/// authenticated default carrier) until that lands.
+/// **(3) peer trust** is enforced by `GossipProtocol` before this handler runs:
+/// iroh authenticates the remote `EndpointId`, then the Hello prefix proves
+/// shared-cluster membership with an asymmetric HMAC over both transport
+/// identities. Missing or invalid proofs are rejected before peer admission and
+/// audited as dropped gossip. Production and test transports both require an
+/// explicit cluster key at construction.
 pub fn gossip_handler(
     state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
     // DES-13 — foreign-event persistence handoff. `Some` → an accepted frame
-    // is submitted to the shared writer BEFORE the dedup high-water advances
+    // is submitted to the shared writer BEFORE the dedup identity is recorded
     // (persist-then-commit parity with the peeroxide loop, so a dropped
     // persist lets the sender re-deliver). `None` → VC-only (tests / a build
     // without a live persist writer): commit immediately, legacy semantics.
@@ -444,46 +464,78 @@ pub fn gossip_handler(
                 return reply(false, "malformed");
             }
         };
-        // payload's own event_type = byte 2 of the inner WAL header (foreign
-        // frame → read without HMAC, exactly like the peeroxide loop).
-        let payload_et = frame.payload.get(2).copied();
-        // Byte 3 = event_subtype for EXTENDED (0x00) frames.
-        let payload_sub = frame.payload.get(3).copied();
+        // Decode the complete canonical WAL frame before trusting its type for
+        // the receive ACL. Malformed length/CRC yields `(None, None)` and the
+        // default-deny acceptance path drops it.
+        let payload_timestamp =
+            crate::cluster::wal_sync::gossip_payload_timestamp_unix(&frame.payload);
+        let (payload_et, payload_sub) = match (
+            crate::cluster::wal_sync::gossip_payload_event_meta(&frame.payload),
+            payload_timestamp,
+        ) {
+            (Some((event_type, subtype)), Some(timestamp)) if timestamp == frame.timestamp_unix => {
+                (Some(event_type), Some(subtype))
+            }
+            _ => (None, None),
+        };
         let now = crate::time::now_unix_i64();
         let origin = frame.origin.as_str().to_string();
-        let verdict = {
+        let (verdict, committed) = {
             let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
             let v = g.accept_inbound(&frame, payload_et, payload_sub, &policy, now);
+            let mut committed = false;
             if matches!(v, GossipAcceptance::Accept) {
-                match &persist_tx {
-                    // DES-13: persist-then-commit. Submit the accepted frame to
-                    // the shared writer; advance the dedup high-water ONLY on a
-                    // successful handoff. A full channel / closed writer → do NOT
-                    // commit, so the sender's replay budget re-delivers (a lost
-                    // backup event is worse than a duplicate — INSERT OR IGNORE
-                    // absorbs the duplicate).
-                    Some(tx) => {
-                        let job = crate::cluster::wal_sync::ForeignPersistJob {
-                            origin_peer_pk: origin.clone(),
-                            origin_seq: frame.event_seq,
-                            event_type: payload_et.unwrap_or(0),
-                            payload: frame.payload.clone(),
-                            received_at: now,
-                        };
-                        if tx.try_send(job).is_ok() {
-                            g.commit_inbound(&frame);
-                        } else {
-                            tracing::warn!(peer = %origin, seq = frame.event_seq,
+                // Swarm snapshots have a second durable consumer: the local
+                // WAL-backed dashboard. Persist that frame before advancing
+                // the gossip dedup identity, otherwise a WAL failure would make
+                // the peer's row unrecoverable as a deduplicated retry.
+                let dashboard_persisted = if payload_et == Some(0x00)
+                    && payload_sub == Some(crate::cluster::wal_sync::SWARM_SNAPSHOT_SUBTYPE)
+                {
+                    writer
+                        .as_deref()
+                        .is_none_or(|wal| emit_peer_snapshot_to_wal(wal, &frame.payload))
+                } else {
+                    true
+                };
+                if !dashboard_persisted {
+                    tracing::warn!(peer = %origin, seq = frame.event_seq,
+                        "iroh gossip: peer snapshot WAL append failed — not committing");
+                } else {
+                    match &persist_tx {
+                        // DES-13: persist-then-commit. Submit the accepted frame to
+                        // the shared writer; record the dedup identity ONLY on a
+                        // successful handoff. A full channel / closed writer → do NOT
+                        // commit, so the sender's replay budget re-delivers (a lost
+                        // backup event is worse than a duplicate — INSERT OR IGNORE
+                        // absorbs the duplicate).
+                        Some(tx) => {
+                            let job = crate::cluster::wal_sync::ForeignPersistJob {
+                                origin_peer_pk: origin.clone(),
+                                origin_seq: frame.event_seq,
+                                event_type: payload_et.unwrap_or(0),
+                                payload: frame.payload.clone(),
+                                received_at: now,
+                            };
+                            if tx.try_send(job).is_ok() {
+                                g.commit_inbound(&frame);
+                                committed = true;
+                            } else {
+                                tracing::warn!(peer = %origin, seq = frame.event_seq,
                                 "iroh gossip: foreign-persist channel unavailable — not committing (sender re-delivers)");
+                            }
+                        }
+                        // VC-only: no persist writer wired (tests). Commit immediately.
+                        None => {
+                            g.commit_inbound(&frame);
+                            committed = true;
                         }
                     }
-                    // VC-only: no persist writer wired (tests). Commit immediately.
-                    None => g.commit_inbound(&frame),
                 }
             }
-            v
+            (v, committed)
         };
-        let accepted = matches!(verdict, GossipAcceptance::Accept);
+        let accepted = matches!(verdict, GossipAcceptance::Accept) && committed;
         let verdict_str = format!("{verdict:?}");
         // F19 — audit the inbound gossip decision (0xEE accepted / 0xEF dropped),
         // matching the peeroxide path's WAL coverage.
@@ -492,26 +544,13 @@ pub fn gossip_handler(
     })
 }
 
-/// Newest `*.wal` segment in `dir` (the live one). Inlined (the wal_sync copy
-/// is private).
-fn newest_wal_segment(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut segs: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "wal").unwrap_or(false))
-        .collect();
-    segs.sort();
-    segs.pop()
-}
-
 /// Outbound gossip broadcast tick for iroh — the send-side counterpart to
 /// `wal_sync::spawn_gossip_tick` (which serves the peeroxide streams). Every 30s
-/// it reads the active WAL segment tail, band-filters replicable frames with the
-/// SAME `collect_gossipable_frames` + `build_outbound` the peeroxide path uses,
+/// it cycles every live or sealed WAL segment, band-filters replicable frames
+/// with the SAME canonical reader + `build_outbound` the peeroxide path uses,
 /// and broadcasts each as a bare `GossipFrame` (JSON) to every known peer via
-/// `IrohTransport::broadcast` (dial-by-key). Best-effort: the cursor always
-/// advances (receiver dedups + replay-budget cover gaps).
+/// `IrohTransport::broadcast` (dial-by-key). Stable event identities make
+/// wrap-around retries idempotent.
 pub fn spawn_gossip_broadcast(
     transport: Arc<IrohTransport>,
     segment_path: std::path::PathBuf,
@@ -520,15 +559,15 @@ pub fn spawn_gossip_broadcast(
     writer: Option<Arc<WalWriterHandle>>,
 ) -> tokio::task::JoinHandle<()> {
     use crate::cluster::gossip::GossipPolicy;
-    use crate::cluster::wal_sync::collect_gossipable_frames;
+    use crate::cluster::wal_sync::{GossipWalCursor, read_gossipable_batch};
     tokio::spawn(async move {
         let policy = GossipPolicy::default();
+        let mut snapshot_system = new_system();
         let wal_dir = segment_path
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let mut current = segment_path.clone();
-        let mut last_offset = 0usize;
+        let mut cursor = GossipWalCursor::default();
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -536,36 +575,45 @@ pub fn spawn_gossip_broadcast(
             if transport.peer_count() == 0 {
                 continue; // no peers ⇒ nothing to gossip
             }
-            let active = newest_wal_segment(&wal_dir).unwrap_or_else(|| current.clone());
-            if active != current {
-                current = active.clone();
-                last_offset = 0; // rollover ⇒ offset is meaningless for the new file
+
+            // GOLD-FEAT-06: LocalSnapshot frames are deliberately excluded
+            // from WAL gossip, so iroh must emit its own 0x03 peer snapshot
+            // producer just like the peeroxide heartbeat path.
+            let snapshot = sample_snapshot(&resolve_node_id(), &mut snapshot_system);
+            if let Some(payload) = encode_snapshot_gossip_payload(&snapshot) {
+                let timestamp = crate::cluster::wal_sync::gossip_payload_timestamp_unix(&payload)
+                    .expect("snapshot encoder must produce a canonical WAL frame");
+                let outbound = {
+                    let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
+                    g.build_outbound(
+                        &self_id,
+                        crate::wal::events::EVENT_TYPE_EXTENDED,
+                        crate::cluster::wal_sync::SWARM_SNAPSHOT_SUBTYPE,
+                        payload,
+                        timestamp,
+                        &policy,
+                    )
+                };
+                if let Some(frame) = outbound {
+                    if let Ok(wire) = serde_json::to_vec(&frame) {
+                        let delivered = transport.broadcast(&wire).await;
+                        emit_gossip_sent(&writer, 1, delivered, transport.peer_count());
+                    }
+                }
             }
-            let Ok(bytes) = tokio::fs::read(&current).await else {
-                continue;
-            };
-            let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
-                continue;
-            };
-            if hdr.is_compressed() {
-                continue; // finalised/rolled segment — body is zstd, skip
-            }
-            let header_len = hdr.header_len();
-            if bytes.len() <= header_len {
-                continue;
-            }
-            let body = &bytes[header_len..];
-            let (frames, new_offset) = collect_gossipable_frames(body, last_offset, &policy, 32);
-            last_offset = new_offset; // always advance (best-effort)
+            let frames = read_gossipable_batch(&wal_dir, &mut cursor, &policy, 32).await;
             let frame_count = frames.len();
             let mut delivered = 0usize;
             for (event_type, raw) in frames {
-                let ts = crate::time::now_unix_i64();
+                let Some(ts) = crate::cluster::wal_sync::gossip_payload_timestamp_unix(&raw) else {
+                    continue;
+                };
                 // F56 — build_outbound ticks + reads the SHARED vector clock.
                 // Scope the std Mutex guard so it drops BEFORE the broadcast
                 // await (a std guard is !Send and must never cross an await).
-                // Byte 3 of the raw frame is event_subtype for EXTENDED frames.
-                let event_subtype = raw.get(3).copied().unwrap_or(0);
+                let event_subtype = crate::cluster::wal_sync::gossip_payload_event_meta(&raw)
+                    .map(|(_, subtype)| subtype)
+                    .unwrap_or(0);
                 let gframe_opt = {
                     let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
                     g.build_outbound(&self_id, event_type, event_subtype, raw, ts, &policy)
@@ -576,9 +624,9 @@ pub fn spawn_gossip_broadcast(
                     }
                 }
             }
-            // GR-RESID-IROH follow-up — send-side audit (0xED), parity with the
-            // peeroxide gossip-tick. Only when frames actually went out so an
-            // idle tick leaves no noise.
+            // Send-side audit (0xED), parity with the peeroxide gossip tick.
+            // Only emit when frames actually went out so an idle tick leaves
+            // no noise.
             if frame_count > 0 {
                 emit_gossip_sent(&writer, frame_count, delivered, transport.peer_count());
             }
@@ -590,11 +638,15 @@ pub fn spawn_gossip_broadcast(
 mod tests {
     use super::*;
 
+    fn test_cluster_key() -> Arc<ClusterKey> {
+        Arc::new(ClusterKey([0x42; 32]))
+    }
+
     /// Two endpoints, one round-trip: B dials A by key, A's handler replies.
     /// Proves the real iroh send/accept path (bind → connect → bi-stream →
     /// handler → reply) works end-to-end. `#[ignore]` — it brings up real iroh
     /// endpoints (relay/discovery), so it needs a network; run manually:
-    /// `cargo test -p neothd --features cluster-iroh loopback_frame_round_trip -- --ignored`.
+    /// `cargo test -p neoth --features cluster-iroh loopback_frame_round_trip -- --ignored`.
     #[tokio::test]
     #[ignore = "real iroh endpoints — needs network (relay/discovery)"]
     async fn loopback_frame_round_trip() {
@@ -604,18 +656,26 @@ mod tests {
             r.extend_from_slice(b"+ack");
             r
         });
-        let a = IrohTransport::bind(handler, None, None)
+        let a = IrohTransport::bind(handler, test_cluster_key(), None)
             .await
             .expect("bind A");
-        let b = IrohTransport::bind(Arc::new(|r| r), None, None)
+        let b = IrohTransport::bind(Arc::new(|r| r), test_cluster_key(), None)
             .await
             .expect("bind B");
 
-        let reply = b
-            .send_frame(a.addr(), b"gossip-hello")
-            .await
-            .expect("round-trip");
-        assert_eq!(reply, b"gossip-hello+ack");
+        let request = crate::cluster::gossip_wire::GossipFrame {
+            vector_clock: crate::cluster::gossip_wire::VectorClock::new(),
+            origin: crate::cluster::PeerPubkey::new(b.node_id()),
+            event_seq: 1,
+            timestamp_unix: crate::time::now_unix_i64(),
+            tag: crate::cluster::gossip::GossipTag::Replicate,
+            payload: vec![1, 2, 3],
+        };
+        let request = serde_json::to_vec(&request).unwrap();
+        let reply = b.send_frame(a.addr(), &request).await.expect("round-trip");
+        let mut expected = request;
+        expected.extend_from_slice(b"+ack");
+        assert_eq!(reply, expected);
 
         a.shutdown().await.expect("shutdown A");
         b.shutdown().await.expect("shutdown B");
@@ -670,6 +730,68 @@ mod tests {
             dropped, 1,
             "a malformed inbound gossip frame writes one 0xEF DROPPED audit"
         );
+    }
+
+    #[tokio::test]
+    async fn accepted_iroh_peer_snapshot_is_visible_in_dashboard_wal() {
+        use crate::cluster::gossip::GossipPolicy;
+        use crate::cluster::swarm::NodeResourceSnapshot;
+        use crate::cluster::wal_sync::{GossipState, SWARM_SNAPSHOT_SUBTYPE};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let writer = Arc::new(writer);
+
+        let snapshot = NodeResourceSnapshot::new(
+            "iroh-peer".to_string(),
+            "peer-host".to_string(),
+            23.5,
+            2048,
+            8192,
+            Some(1024),
+            Some(4096),
+            crate::time::now_unix_i64(),
+        );
+        let payload = encode_snapshot_gossip_payload(&snapshot).expect("snapshot payload");
+        let timestamp = crate::cluster::wal_sync::gossip_payload_timestamp_unix(&payload)
+            .expect("canonical snapshot timestamp");
+        let frame = GossipState::new()
+            .build_outbound(
+                &crate::cluster::PeerPubkey::new("iroh-peer-pk"),
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                SWARM_SNAPSHOT_SUBTYPE,
+                payload,
+                timestamp,
+                &GossipPolicy::default(),
+            )
+            .expect("swarm snapshots are replicable");
+
+        let receiver = Arc::new(Mutex::new(GossipState::new()));
+        let handler = gossip_handler(receiver, None, Some(Arc::clone(&writer)));
+        let reply = handler(serde_json::to_vec(&frame).unwrap());
+        let verdict: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(verdict["accepted"], true);
+
+        drop(handler);
+        drop(writer);
+        let _ = join.await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut dashboard_rows = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && decoded.header.event_subtype == SWARM_SNAPSHOT_SUBTYPE
+            {
+                dashboard_rows.push(
+                    serde_json::from_slice::<NodeResourceSnapshot>(decoded.payload)
+                        .expect("dashboard snapshot JSON"),
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(dashboard_rows, vec![snapshot]);
     }
 
     // GR-RESID-IROH follow-up — the send-side broadcast tick writes a 0xED

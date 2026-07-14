@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
-use super::{Completion, Provider, Request};
+use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
 /// Pinned Anthropic API version. Required on every request; bumping it is
@@ -43,6 +43,44 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// (~3000 words) covers a chat reply comfortably and is supported by every
 /// current Claude model; operators tuning longer outputs is a follow-on.
 const DEFAULT_MAX_TOKENS: u32 = 4096;
+
+/// Models released after Claude Opus 4.6 retain the legacy fields only as
+/// compatibility shims: temperature must be exactly 1.0 and top-p at least
+/// 0.99. Unknown model/version aliases take the restricted path so a moving
+/// alias cannot silently turn a locally accepted request into a remote 400.
+fn uses_restricted_sampling_compatibility(model: &str) -> bool {
+    let mut version_numbers = model
+        .split(['-', '.'])
+        .filter_map(|component| component.parse::<u32>().ok());
+    match (version_numbers.next(), version_numbers.next()) {
+        (Some(1..=3), _) => false,
+        (Some(4), Some(minor)) => minor >= 7,
+        (Some(4), None) => true,
+        (Some(major), _) if major >= 5 => true,
+        _ => true,
+    }
+}
+
+fn validate_model_sampling_controls(model: &str, req: &Request) -> Result<()> {
+    if !uses_restricted_sampling_compatibility(model) {
+        return Ok(());
+    }
+    if let Some(temperature) = req.temperature {
+        if temperature != 1.0 {
+            anyhow::bail!(
+                "provider `anthropic_api`: model `{model}` accepts temperature only in the range [1.0, 1.0], got {temperature}"
+            );
+        }
+    }
+    if let Some(top_p) = req.top_p {
+        if top_p < 0.99 {
+            anyhow::bail!(
+                "provider `anthropic_api`: model `{model}` accepts top_p only in the range [0.99, 1.0], got {top_p}"
+            );
+        }
+    }
+    Ok(())
+}
 
 /// Adapter for the native Anthropic Messages API.
 pub struct AnthropicAdapter {
@@ -92,7 +130,29 @@ impl Provider for AnthropicAdapter {
         "anthropic_api"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING_WITHOUT_SEED
+    }
+
+    fn validate_request_controls(&self, req: &Request) -> Result<()> {
+        self.request_controls().validate(self.name(), req)?;
+        let model = req.model.as_deref().unwrap_or(&self.default_model);
+        validate_model_sampling_controls(model, req)
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.default_model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(self.max_tokens)
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         // GR-04: same circuit-breaker wrap as the other cloud adapters so a
         // persistent Anthropic outage trips to a fast local error.
         crate::providers::circuit_breaker::run_with_breaker("anthropic_api", async {
@@ -120,6 +180,10 @@ impl Provider for AnthropicAdapter {
                     role: "user",
                     content: req.prompt.clone(),
                 }],
+                temperature: req.temperature,
+                top_p: req.top_p,
+                stop_sequences: (!req.stop_sequences.is_empty())
+                    .then(|| req.stop_sequences.clone()),
             };
 
             let url = format!("{}/messages", self.endpoint);
@@ -199,6 +263,7 @@ impl Provider for AnthropicAdapter {
 
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model,
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
@@ -237,6 +302,12 @@ struct MessagesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<Vec<SystemBlock>>,
     messages: Vec<AnthropicMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_sequences: Option<Vec<String>>,
 }
 
 /// One `system[]` content block. A bare text block is the whole system
@@ -341,6 +412,69 @@ mod tests {
     }
 
     #[test]
+    fn opus_4_7_and_future_4_x_models_enforce_sampling_compatibility_ranges() {
+        let adapter = AnthropicAdapter::new(
+            SecretString::from("sk-ant-test"),
+            "claude-opus-4-7".to_string(),
+        )
+        .expect("construct");
+
+        let temperature_error = adapter
+            .validate_request_controls(&Request {
+                temperature: Some(0.8),
+                ..Request::default()
+            })
+            .expect_err("Opus 4.7 must reject non-compatibility temperature");
+        let temperature_error = temperature_error.to_string();
+        assert!(temperature_error.contains("claude-opus-4-7"));
+        assert!(temperature_error.contains("[1.0, 1.0]"));
+
+        let top_p_error = adapter
+            .validate_request_controls(&Request {
+                model: Some("claude-opus-4-99".into()),
+                top_p: Some(0.98),
+                ..Request::default()
+            })
+            .expect_err("unknown future Claude 4.x must take the restricted path");
+        let top_p_error = top_p_error.to_string();
+        assert!(top_p_error.contains("claude-opus-4-99"));
+        assert!(top_p_error.contains("[0.99, 1.0]"));
+
+        adapter
+            .validate_request_controls(&Request {
+                temperature: Some(1.0),
+                top_p: Some(0.99),
+                ..Request::default()
+            })
+            .expect("documented compatibility values must remain accepted");
+        assert_eq!(
+            crate::providers::internal_temperature(&adapter, 0.1, "test.internal"),
+            None,
+            "non-essential incompatible hints must be omitted"
+        );
+        assert_eq!(
+            crate::providers::internal_temperature(&adapter, 1.0, "test.internal"),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn opus_4_6_legacy_model_keeps_full_sampling_ranges() {
+        let adapter = AnthropicAdapter::new(
+            SecretString::from("sk-ant-test"),
+            "claude-opus-4-6".to_string(),
+        )
+        .expect("construct");
+        adapter
+            .validate_request_controls(&Request {
+                temperature: Some(0.2),
+                top_p: Some(0.8),
+                ..Request::default()
+            })
+            .expect("Opus 4.6 and older models retain legacy sampling controls");
+    }
+
+    #[test]
     fn system_serializes_as_cached_text_block_array() {
         // FEAT-12 acceptance: the system prompt rides as a content-block
         // ARRAY with an ephemeral `cache_control` breakpoint, not a bare
@@ -353,6 +487,9 @@ mod tests {
                 role: "user",
                 content: "hi".into(),
             }],
+            temperature: None,
+            top_p: None,
+            stop_sequences: None,
         };
         let v = serde_json::to_value(&body).expect("serialize");
         assert_eq!(v["system"][0]["type"], "text");
@@ -360,6 +497,29 @@ mod tests {
         assert_eq!(v["system"][0]["cache_control"]["type"], "ephemeral");
         // ttl omitted → default 5m; the 1h TTL would need an extra beta header.
         assert!(v["system"][0]["cache_control"].get("ttl").is_none());
+        for field in ["temperature", "top_p", "stop_sequences"] {
+            assert!(v.get(field).is_none());
+        }
+    }
+
+    #[test]
+    fn sampling_controls_serialize_with_anthropic_field_names() {
+        let body = MessagesRequest {
+            model: "m".into(),
+            max_tokens: 16,
+            system: None,
+            messages: vec![AnthropicMessage {
+                role: "user",
+                content: "hi".into(),
+            }],
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            stop_sequences: Some(vec!["END".into()]),
+        };
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(json["temperature"], 0.2);
+        assert_eq!(json["top_p"], 0.9);
+        assert_eq!(json["stop_sequences"], serde_json::json!(["END"]));
     }
 
     fn build_adapter_against(server_uri: &str) -> AnthropicAdapter {
@@ -370,6 +530,22 @@ mod tests {
             DEFAULT_MAX_TOKENS,
         )
         .expect("adapter constructs against mock URI")
+    }
+
+    #[tokio::test]
+    async fn unsupported_seed_is_rejected_before_anthropic_http_call() {
+        let mock = MockServer::start().await;
+        let adapter = build_adapter_against(&mock.uri());
+        let error = adapter
+            .complete(Request {
+                prompt: "hello".into(),
+                sampling_seed: Some(7),
+                ..Request::default()
+            })
+            .await
+            .expect_err("Anthropic must reject deterministic seed");
+        assert!(error.to_string().contains("provider `anthropic_api`"));
+        assert!(error.to_string().contains("sampling_seed"));
     }
 
     #[tokio::test]

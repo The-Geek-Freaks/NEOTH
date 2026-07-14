@@ -135,15 +135,16 @@ fn apply_domain_op(mut domains: Vec<String>, op: &EmailTrustAction) -> (Vec<Stri
     }
 }
 
-/// Read the current `email.trusted_domains` from freedom.yaml (empty when
-/// absent/unset).
-fn read_trusted_domains() -> Vec<String> {
-    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
-    cfg.email.trusted_domains
+/// Read the current `email.trusted_domains` from freedom.yaml. A genuinely
+/// missing config uses the empty compiled default; malformed operator policy
+/// is surfaced instead of being mistaken for an empty trust list.
+fn read_trusted_domains() -> Result<Vec<String>> {
+    let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    Ok(cfg.email.trusted_domains)
 }
 
 fn run_email_trust(action: EmailTrustAction, output: OutputFormat) -> Result<()> {
-    let current = read_trusted_domains();
+    let current = read_trusted_domains()?;
 
     if matches!(action, EmailTrustAction::List) {
         return render_trusted(&current, output);
@@ -374,7 +375,7 @@ async fn fetch_and_triage(
     // provider is configured. A provider error per-email is fail-safe (the
     // deterministic ReviewQueue verdict stands). No call is made for any
     // non-ReviewQueue email, so there is zero LLM cost on a clean inbox.
-    let fcfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    let fcfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
     if fcfg.email.llm_tiebreak
         && triaged
             .iter()
@@ -384,6 +385,15 @@ async fn fetch_and_triage(
         // route it to the fast/cheap `inference.utility_provider` when set.
         match crate::providers::from_config_for_utility(&fcfg).await {
             Ok(provider) => {
+                let provider =
+                    crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                        provider,
+                        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+                            fcfg.autonomy_policy(),
+                        )?,
+                        crate::providers::utility_model_for_config(&fcfg),
+                        "email.threat_tiebreak",
+                    );
                 let allow = fcfg.email.llm_tiebreak_allow_downgrade;
                 let mut reviewed = Vec::with_capacity(triaged.len());
                 for t in triaged {
@@ -394,9 +404,7 @@ async fn fetch_and_triage(
                     if t.action == InboundAction::ReviewQueue {
                         reviewed.push(
                             crate::email::threat_tiebreak::tiebreak_review_inbound(
-                                t,
-                                provider.as_ref(),
-                                allow,
+                                t, &provider, allow,
                             )
                             .await,
                         );

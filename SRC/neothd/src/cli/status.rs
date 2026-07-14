@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::cli::OutputFormat;
@@ -34,11 +34,19 @@ pub struct StatusArgs {
 pub async fn run_status(args: StatusArgs) -> Result<()> {
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
 
-    // Best-effort config load — a freshly-init'd home has a freedom.yaml,
-    // but the operator might run `neoth status` against an arbitrary dir
-    // for diagnostics. Missing config → snapshot still works, channels +
-    // operator-id come back as None.
-    let cfg = FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok();
+    // An arbitrary diagnostic home may genuinely have no config; preserve
+    // that as `None`. Existing unreadable or malformed policy must remain an
+    // operator-visible status failure rather than a healthy-looking empty
+    // snapshot.
+    let config_path = home.join("freedom.yaml");
+    let cfg = if config_path
+        .try_exists()
+        .with_context(|| format!("inspect {}", config_path.display()))?
+    {
+        Some(FreedomConfig::load_from_path(&config_path)?)
+    } else {
+        None
+    };
     let snap = snapshot(&home, cfg.as_ref())?;
 
     // GOLD-ADOPT-27 — channel health probe (which channels are live /
@@ -83,7 +91,10 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
                     cred_status.as_str()
                 ),
             }];
-            (crate::config::credentials::Credentials::default(), synthetic)
+            (
+                crate::config::credentials::Credentials::default(),
+                synthetic,
+            )
         }
     };
 
@@ -102,8 +113,7 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
         OutputFormat::Json | OutputFormat::Jsonl => {
             // Merge the channel-health rows into the snapshot object so the
             // output stays a single JSON document.
-            let mut v: serde_json::Value =
-                serde_json::from_str(&snap.render_json()).unwrap_or_else(|_| serde_json::json!({}));
+            let mut v = serde_json::to_value(&snap)?;
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("channels".into(), serde_json::to_value(&channel_health)?);
                 obj.insert(

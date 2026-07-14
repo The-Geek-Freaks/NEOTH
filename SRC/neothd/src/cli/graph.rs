@@ -150,15 +150,12 @@ pub struct GraphArgs {
 /// → streams stdout back to the terminal. Errors out cleanly if graphify is absent or
 /// exits non-zero.
 async fn run_graph_query(args: &GraphArgs, cmd: &GraphCmd) -> anyhow::Result<()> {
-    let corpus_path = args
-        .path
-        .canonicalize()
-        .with_context(|| {
-            format!(
-                "GRAPH-04: resolve corpus path `{}` for query sub-command",
-                args.path.display()
-            )
-        })?;
+    let corpus_path = args.path.canonicalize().with_context(|| {
+        format!(
+            "GRAPH-04: resolve corpus path `{}` for query sub-command",
+            args.path.display()
+        )
+    })?;
 
     // Probe graphify before spawning — gives a clean error instead of a
     // `No module named graphifyy` from the subprocess.
@@ -228,13 +225,12 @@ pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
     let cfg = crate::config::FreedomConfig::load_from_default_path()
         .context("GRAPH-06: load freedom.yaml")?;
 
-    let vault_str = cfg
-        .obsidian_vault
-        .as_deref()
-        .ok_or_else(|| anyhow!(
+    let vault_str = cfg.obsidian_vault.as_deref().ok_or_else(|| {
+        anyhow!(
             "GRAPH-06: `obsidian_vault` is not set in freedom.yaml. \
              Add `obsidian_vault: /path/to/your/vault` and retry."
-        ))?;
+        )
+    })?;
     let vault = PathBuf::from(vault_str);
 
     // ── Step 2: resolve corpus path + name ──────────────────────────────────
@@ -297,20 +293,14 @@ pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
             stderr.trim()
         );
     }
-    println!(
-        "GRAPH-06: graphify update OK ({})",
-        update_out.status
-    );
+    println!("GRAPH-06: graphify update OK ({})", update_out.status);
 
     // GRAPH-07: run `graphify label` when --label is set (operator opt-in).
     // Runs BEFORE vault-copy so the labeled GRAPH_REPORT.md is what gets
     // filed into Obsidian and ingested into idx_groundtruth.
     let communities_labeled: u64 = if args.label {
         use crate::daemon::self_map_task::run_label_step_one_shot;
-        let provider_key = cfg
-            .provider_key
-            .as_ref()
-            .map(|s| s.expose().to_owned());
+        let provider_key = cfg.provider_key.as_ref().map(|s| s.expose().to_owned());
         run_label_step_one_shot(
             &corpus_path,
             &cfg.provider_kind,
@@ -374,7 +364,10 @@ pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
             })?;
         pages_written += 1;
     }
-    println!("GRAPH-06: vault copy OK ({pages_written} file(s) → `{}`)", out_dir.display());
+    println!(
+        "GRAPH-06: vault copy OK ({pages_written} file(s) → `{}`)",
+        out_dir.display()
+    );
 
     // ── Step 6: groundtruth ingest (unless --no-ingest) ──────────────────────
     // Use a per-corpus scope `graphify-corpus-<slug>` (NOT wiki::WIKI_SCOPE
@@ -394,9 +387,8 @@ pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
             let scope = scope_clone;
             let sources = crate::wiki::discover_sources(&ingest_dir)
                 .context("GRAPH-06: discover_sources for ingest")?;
-            let conn =
-                crate::memory::store::open(&crate::memory::store::default_path())
-                    .context("GRAPH-06: open views.db")?;
+            let conn = crate::memory::store::open(&crate::memory::store::default_path())
+                .context("GRAPH-06: open views.db")?;
             // Revoke prior entries for this corpus scope before re-inserting
             // (idempotent re-run support — mirrors wiki::ingest_sources logic).
             let prior = crate::memory::groundtruth::list_for_scope(&conn, &scope)
@@ -446,7 +438,13 @@ pub async fn run_graph(args: GraphArgs) -> anyhow::Result<()> {
     // may fail — that is logged as a warning and never blocks the CLI (pitfall
     // #4). We reuse the same event byte (0xFB) because the semantic is
     // identical: graphify completed on a corpus.
-    emit_wal_frame(pages_written, gt_inserted, communities_labeled, &corpus_name).await;
+    emit_wal_frame(
+        pages_written,
+        gt_inserted,
+        communities_labeled,
+        &corpus_name,
+    )
+    .await;
 
     // ── Step 8: summary ──────────────────────────────────────────────────────
     println!();
@@ -492,7 +490,12 @@ fn build_corpus_scope(corpus_name: &str) -> String {
 /// Best-effort: any error (e.g. the daemon holds an exclusive WAL lock) is
 /// logged as a warning — the CLI result is still `Ok`. Mirrors the email
 /// one-shot pattern in `cli/email.rs`.
-async fn emit_wal_frame(pages_written: u64, gt_inserted: u64, communities_labeled: u64, corpus: &str) {
+async fn emit_wal_frame(
+    pages_written: u64,
+    gt_inserted: u64,
+    communities_labeled: u64,
+    corpus: &str,
+) {
     let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
     if let Some(p) = segment.parent() {
         let _ = std::fs::create_dir_all(p);
@@ -527,10 +530,7 @@ mod tests {
 
     #[test]
     fn scope_is_prefixed_and_slugified() {
-        assert_eq!(
-            build_corpus_scope("mycorp"),
-            "graphify-corpus-mycorp"
-        );
+        assert_eq!(build_corpus_scope("mycorp"), "graphify-corpus-mycorp");
     }
 
     #[test]
@@ -568,16 +568,16 @@ mod tests {
     /// <path>` without panicking.
     #[test]
     fn graph_subcommand_parses() {
-        use clap::Parser;
         use crate::cli::{Cli, Commands};
+        use clap::Parser;
         let cli = Cli::try_parse_from(["neoth", "graph", "/tmp/somerepo"]).unwrap();
         assert!(matches!(cli.command, Commands::Graph(_)));
     }
 
     #[test]
     fn graph_subcommand_accepts_all_flags() {
-        use clap::Parser;
         use crate::cli::{Cli, Commands};
+        use clap::Parser;
         let cli = Cli::try_parse_from([
             "neoth",
             "graph",
@@ -604,8 +604,8 @@ mod tests {
     /// `neoth graph <path> query "<q>"` parses into GraphCmd::Query.
     #[test]
     fn graph_query_subcommand_parses() {
-        use clap::Parser;
         use crate::cli::{Cli, Commands};
+        use clap::Parser;
         let cli = Cli::try_parse_from([
             "neoth",
             "graph",
@@ -629,16 +629,11 @@ mod tests {
     /// `neoth graph <path> explain "<node>"` parses into GraphCmd::Explain.
     #[test]
     fn graph_explain_subcommand_parses() {
-        use clap::Parser;
         use crate::cli::{Cli, Commands};
-        let cli = Cli::try_parse_from([
-            "neoth",
-            "graph",
-            "/tmp/myrepo",
-            "explain",
-            "FreedomConfig",
-        ])
-        .unwrap();
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["neoth", "graph", "/tmp/myrepo", "explain", "FreedomConfig"])
+                .unwrap();
         if let Commands::Graph(args) = cli.command {
             match args.cmd {
                 Some(GraphCmd::Explain { node }) => {
@@ -654,16 +649,10 @@ mod tests {
     /// `neoth graph <path> affected "<node>"` parses into GraphCmd::Affected.
     #[test]
     fn graph_affected_subcommand_parses() {
-        use clap::Parser;
         use crate::cli::{Cli, Commands};
-        let cli = Cli::try_parse_from([
-            "neoth",
-            "graph",
-            "/tmp/myrepo",
-            "affected",
-            "recall",
-        ])
-        .unwrap();
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["neoth", "graph", "/tmp/myrepo", "affected", "recall"]).unwrap();
         if let Commands::Graph(args) = cli.command {
             match args.cmd {
                 Some(GraphCmd::Affected { node }) => {
@@ -679,8 +668,8 @@ mod tests {
     /// `neoth graph <path> tree` parses into GraphCmd::Tree with no depth.
     #[test]
     fn graph_tree_subcommand_parses_no_depth() {
-        use clap::Parser;
         use crate::cli::{Cli, Commands};
+        use clap::Parser;
         let cli = Cli::try_parse_from(["neoth", "graph", "/tmp/myrepo", "tree"]).unwrap();
         if let Commands::Graph(args) = cli.command {
             match args.cmd {
@@ -697,12 +686,10 @@ mod tests {
     /// `neoth graph <path> tree --depth 3` parses depth correctly.
     #[test]
     fn graph_tree_subcommand_parses_with_depth() {
-        use clap::Parser;
         use crate::cli::{Cli, Commands};
-        let cli = Cli::try_parse_from([
-            "neoth", "graph", "/tmp/myrepo", "tree", "--depth", "3",
-        ])
-        .unwrap();
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["neoth", "graph", "/tmp/myrepo", "tree", "--depth", "3"]).unwrap();
         if let Commands::Graph(args) = cli.command {
             match args.cmd {
                 Some(GraphCmd::Tree { depth }) => {

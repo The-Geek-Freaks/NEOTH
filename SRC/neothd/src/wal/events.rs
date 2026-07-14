@@ -86,19 +86,45 @@ pub enum ExtendedSubtype {
     /// completed (result frame; payload carries ok/err outcome).
     ObsidianPreloadResult = 0x07,
     /// GOLD-ADAPT-IGNIS-04 — `sync_archive` detected cloud-sync conflict files
-    /// in the operator's Obsidian vault and skipped the write pass to avoid
-    /// stomping on in-progress cloud-sync merges.
-    /// Payload (JSON): `{ "conflict_count": N, "ts_unix": T }`.
+    /// or Obsidian's built-in Sync plugin and skipped the write pass to avoid
+    /// stomping on in-progress cloud-sync merges. The append is required before
+    /// the guarded pass returns a skipped outcome.
+    /// Payload (JSON): `{ "conflict_count": N|null,
+    /// "core_sync_enabled": bool|null, "scan_complete": bool,
+    /// "reason": code, "ts_unix": T }`. Null fields record that the guarded
+    /// inspection failed before that value could be established.
     ObsidianSyncConflict = 0x08,
-    /// GOLD-ADAPT-SNYK-02 — an install command fired while one or more manifest
-    /// files (package.json, Cargo.toml, requirements.txt, …) were edited in the
-    /// same turn; the `ManifestInstallInspector` blocked the call and the
-    /// dispatch loop scanned the exact file bytes. Pending state never clears:
-    /// a retry is allowed only while every current SHA-256 matches its clean
-    /// scan approval.
-    /// Payload includes `manifests`, `scan_proven`, `scan_results`,
-    /// `severity_policy`, `server`, `tool`, and `ts_unix`.
+    /// GOLD-ADAPT-SNYK-02 — blocked first attempt of a strict package-manager
+    /// call. The payload contains only hashes, counts, stable result codes,
+    /// policy, server/tool identity and timestamp — never raw commands, paths,
+    /// dependency specs, URLs, parser errors or manifest contents. A clean WAL
+    /// append is required before an immutable lock-backed retry is recorded;
+    /// direct fetch/mutation calls never receive a permit.
     ManifestInstallBlocked = 0x09,
+    /// OMI-MULTIMODAL-01 — OMI runtime, projection, retention, summary, and
+    /// operator lifecycle audit. Payloads are metadata-only and never contain
+    /// transcript, media, credential, or raw conversation identifiers.
+    OmiLifecycleAudit = 0x0A,
+    /// GOLD-ADAPT-KB-03 — the nightly self-improvement pass found a repeated
+    /// tool-call sequence in more than three independent session traces with
+    /// confidence above 0.8. Payload is metadata-only: sequence hash, counts,
+    /// confidence in milli-units, proposal-staged flag, and timestamp.
+    SkillDistillCandidate = 0x0B,
+    /// GOLD-ADAPT-GRAPH-02 — persisted CallGraph cycles were automatically
+    /// injected into an active `improve_codebase_architecture` workflow.
+    /// Payload (JSON): `{skill_id, surface,
+    /// roots_scanned, edges_scanned, cycles_injected, truncated,
+    /// context_hash_xxh3, ts_unix}`. Cycle symbols and repository paths stay in
+    /// the local prompt block, not the WAL.
+    ArchitectureCyclesInjected = 0x0C,
+    /// GOLD-PROG-17 — crash-safe operator proof-key rotation. The payload is a
+    /// canonical old→new public-key transition signed by BOTH keys and contains
+    /// public metadata only (never either 32-byte signing seed).
+    ProofKeyRotated = 0x0D,
+    /// Mandatory pre-network intent for one request-bound external HTTP call.
+    ExternalHttpIntent = 0x0E,
+    /// Mandatory terminal success/failure bound to `ExternalHttpIntent`.
+    ExternalHttpResult = 0x0F,
 }
 
 impl ExtendedSubtype {
@@ -114,6 +140,12 @@ impl ExtendedSubtype {
             ExtendedSubtype::ObsidianPreloadResult => "obsidian_preload_result",
             ExtendedSubtype::ObsidianSyncConflict => "obsidian_sync_conflict",
             ExtendedSubtype::ManifestInstallBlocked => "manifest_install_blocked",
+            ExtendedSubtype::OmiLifecycleAudit => "omi_lifecycle_audit",
+            ExtendedSubtype::SkillDistillCandidate => "skill_distill_candidate",
+            ExtendedSubtype::ArchitectureCyclesInjected => "architecture_cycles_injected",
+            ExtendedSubtype::ProofKeyRotated => "proof_key_rotated",
+            ExtendedSubtype::ExternalHttpIntent => "external_http_intent",
+            ExtendedSubtype::ExternalHttpResult => "external_http_result",
         }
     }
 
@@ -129,8 +161,38 @@ impl ExtendedSubtype {
             0x07 => Some(ExtendedSubtype::ObsidianPreloadResult),
             0x08 => Some(ExtendedSubtype::ObsidianSyncConflict),
             0x09 => Some(ExtendedSubtype::ManifestInstallBlocked),
+            0x0A => Some(ExtendedSubtype::OmiLifecycleAudit),
+            0x0B => Some(ExtendedSubtype::SkillDistillCandidate),
+            0x0C => Some(ExtendedSubtype::ArchitectureCyclesInjected),
+            0x0D => Some(ExtendedSubtype::ProofKeyRotated),
+            0x0E => Some(ExtendedSubtype::ExternalHttpIntent),
+            0x0F => Some(ExtendedSubtype::ExternalHttpResult),
             _ => None,
         }
+    }
+
+    /// Resolve an operator-facing snake_case name to a registered subtype.
+    pub fn from_name(name: &str) -> Option<ExtendedSubtype> {
+        let name = name.trim();
+        [
+            Self::SelfEditProposed,
+            Self::SelfEditApplied,
+            Self::SwarmResourceSnapshot,
+            Self::LocalSnapshot,
+            Self::SelfEditRefused,
+            Self::ObsidianPreloadIntent,
+            Self::ObsidianPreloadResult,
+            Self::ObsidianSyncConflict,
+            Self::ManifestInstallBlocked,
+            Self::OmiLifecycleAudit,
+            Self::SkillDistillCandidate,
+            Self::ArchitectureCyclesInjected,
+            Self::ProofKeyRotated,
+            Self::ExternalHttpIntent,
+            Self::ExternalHttpResult,
+        ]
+        .into_iter()
+        .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
     }
 }
 
@@ -223,8 +285,9 @@ pub const EVENT_TYPE_STALE_INTERRUPTED: u8 = 0x07;
 /// delivery cron emits this after each successful fan-out so an operator can
 /// audit every external notification: `neoth wal show --type webhook_delivered`.
 ///
-/// Payload (JSON): `{event_name, endpoint_url_hash (xxh3-64 hex, NEVER raw URL),
-/// status_code, ts_unix}`.
+/// Payload (JSON): `{event_id, delivery_id, endpoint_url_hash (xxh3-64 hex,
+/// NEVER raw URL), status, latency_ms}`. `delivery_id` is also sent as
+/// `X-NEOTH-Delivery-ID` and stays stable across at-least-once retries.
 pub const EVENT_TYPE_WEBHOOK_DELIVERED: u8 = 0x08;
 
 /// `0x09 WEBHOOK_SSRF_BLOCKED` — GOLD-ADAPT-ODY-21. The SSRF guard REJECTED the
@@ -233,16 +296,18 @@ pub const EVENT_TYPE_WEBHOOK_DELIVERED: u8 = 0x08;
 /// multicast, or the `http://` scheme was used instead of `https://`. The
 /// request was NOT sent. Immediate-sync (a blocked-SSRF is a security event).
 ///
-/// Payload (JSON): `{event_name, endpoint_url_hash, reason, ts_unix}`.
+/// Payload (JSON): `{event_id, delivery_id, endpoint_url_hash, reason}`.
 pub const EVENT_TYPE_WEBHOOK_SSRF_BLOCKED: u8 = 0x09;
 
-/// `0x0A WEBHOOK_FAILED` — GOLD-ADAPT-ODY-21. An outbound webhook POST was
-/// attempted (passed the SSRF guard) but failed: network error, DNS resolution
-/// error, TLS failure, or a non-2xx HTTP response. Best-effort / non-fatal —
-/// the cron continues to the next endpoint. Records the failure so an operator
-/// can identify a broken receiver via `neoth wal show --type webhook_failed`.
+/// `0x0A WEBHOOK_FAILED` — GOLD-ADAPT-ODY-21. An outbound webhook delivery
+/// failed before or during POST: DNS resolution, network/TLS, configuration,
+/// or a non-2xx HTTP response. The cron continues to the
+/// next endpoint, but a retryable failure (DNS/transport, HTTP 408/429/5xx) or
+/// a failed audit append retains the durable scan cursor for a later retry.
+/// Records the failure so an operator can identify a broken receiver via
+/// `neoth wal show --type webhook_failed`.
 ///
-/// Payload (JSON): `{event_name, endpoint_url_hash, error, ts_unix}`.
+/// Payload (JSON): `{event_id, delivery_id, endpoint_url_hash, error}`.
 pub const EVENT_TYPE_WEBHOOK_FAILED: u8 = 0x0A;
 
 // ── GOLD-ADAPT-ODY-24 companion pairing audit (0x0B..=0x0C) ────────────────
@@ -324,8 +389,8 @@ pub const EVENT_TYPE_CAPABILITY_EVOLVER_RAN: u8 = 0x0F;
 // Compile-time band-guard: 0x0F must fit in 0x01..=0x0F and must follow 0x0E.
 const _: () = {
     let _ = [(); 1][(EVENT_TYPE_CAPABILITY_EVOLVER_RAN > 0x0F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_CAPABILITY_EVOLVER_RAN <= EVENT_TYPE_COMPANION_P2P_REJECTED) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_CAPABILITY_EVOLVER_RAN <= EVENT_TYPE_COMPANION_P2P_REJECTED) as usize];
 };
 
 // ---- 0x10..=0x1F  Daemon lifecycle ----------------------------------------
@@ -518,7 +583,7 @@ pub const EVENT_TYPE_INGEST_EXTRACTED: u8 = 0x2C;
 /// CLIP / future multimodal embedding was written to `idx_embedding`.
 /// Payload: `{source_kind, source_ref, model, dim, ts}`. Always paired
 /// with a preceding 0x2C `INGEST_EXTRACTED` (or a channel-side counterpart
-/// once Telegram/Keet land the image-attachment path).
+/// once supported channels land the image-attachment path).
 pub const EVENT_TYPE_EMBED_PERSISTED: u8 = 0x2D;
 /// SPEC-04 (Session 28) — profile-extraction provider-target audit
 /// frame. Emitted once per `profile::run_pipeline` invocation, BEFORE
@@ -608,9 +673,10 @@ pub const EVENT_TYPE_INGRESS_SANITIZED: u8 = 0x36;
 /// Phase 33b SP-5 (C-prime). Payload: `{channel, message_id, ts}`.
 pub const EVENT_TYPE_CHANNEL_ACK: u8 = 0x37;
 /// An existing outbound message was edited via the channel's edit endpoint
-/// (Telegram editMessageText, Slack chat.update). Used by streaming preview.
-/// Phase 33b SP-5 (C-prime, deferred to LiveDelivery — placeholder reserved).
-/// Payload: `{channel, message_id, new_text_hash, bytes, ts}`.
+/// (Telegram editMessageText, Slack chat.update), or an inbound platform edit
+/// was observed. `LiveDelivery` emits the outbound form for every real preview
+/// edit. Payload is metadata-only and includes `direction`, channel/message id,
+/// text hash, byte length, and timestamp.
 pub const EVENT_TYPE_CHANNEL_EDIT: u8 = 0x38;
 /// `0x39 N8N_REQUEST` — n8n workflow hit the NEOTH localhost HTTP API.
 /// One frame per inbound request to `/api/*` (after bearer-auth success).
@@ -639,9 +705,11 @@ pub const EVENT_TYPE_PROACTIVE_SENT: u8 = 0x3A;
 /// CHANNEL_INGRESS` frame); this frame closes SF-03's audit gap: the drop
 /// was previously `tracing::warn`-only, leaving no `neoth wal show` trail
 /// of rejected inbound. Now the operator can see WHO tried + how often.
-/// Payload: `{channel, sender_id, reason, ts_unix}` — `reason` is
-/// `"not_on_allowlist"`; no message text (the gate fires before the text
-/// is even read, so there is none to leak). SF-03 (Session 29).
+/// Payload: `{channel, sender_id, reason, ts_unix}` — `reason` is normally
+/// `"not_on_allowlist"`; Matrix additionally records `"invite_not_allowed"`,
+/// `"room_or_sender_not_allowed"`, or `"unencrypted_room"` for its pre-pipeline
+/// room/invite/E2EE gates. No message text (the gate fires before text is read,
+/// so there is none to leak). SF-03 (Session 29).
 pub const EVENT_TYPE_CHANNEL_GATE_REJECTED: u8 = 0x3B;
 
 /// `0x3C CHANNEL_PRIVILEGE_BLOCKED` — an allowlisted channel sender invoked
@@ -1258,12 +1326,11 @@ pub const EVENT_TYPE_KANBAN_TASK_COMPLETED: u8 = 0x75;
 /// tasks_done, tasks_archived, ts}`.
 pub const EVENT_TYPE_KANBAN_SESSION_CLOSED: u8 = 0x76;
 
-/// `0x77 KANBAN_TASK_PROGRESS` — Pick #6 dispatcher progress heartbeat
-/// (reserved 2026-05-20 per `PLAN/CHORUS_dispatcher_design.md` Q2).
-/// Emitted ~every 30s while a worker runs so `neoth kanban watch`
-/// shows "still working" without the audit chain bloating
-/// per-token. Payload: `{task_id, hemisphere, bytes_emitted,
-/// ts}`. Not yet wired — Pick #6 implementation lands this.
+/// `0x77 KANBAN_TASK_PROGRESS` — dispatcher task-lifecycle progress.
+/// Emitted before worker execution (`dispatched`, 0%) and when the result is
+/// ready for review (`review_ready`, 100%); `coding::feed` decodes the same
+/// payload for operator-facing activity views. Payload:
+/// `{task_id, session_id, hemisphere, progress_pct, message, ts_unix}`.
 pub const EVENT_TYPE_KANBAN_TASK_PROGRESS: u8 = 0x77;
 
 /// `0x78 KANBAN_TASK_DEP_ADDED` — GOLD-ADAPT-HERMES-08. A dependency
@@ -2096,24 +2163,29 @@ pub const EVENT_TYPE_CREDENTIAL_IMPORT: u8 = 0xD6;
 /// immediately BEFORE a HuggingFace model download begins (when the
 /// `updater.allow_huggingface_downloads` gate permits it). Durable audit
 /// of exactly-what-we-fetched-when. Payload:
-/// `{ model_id, expected_files, ts_unix }`.
+/// `{ model_id, status: "started", expected_files?, ts_unix }`.
 pub const EVENT_TYPE_MODEL_DOWNLOAD_START: u8 = 0xD7;
 
 /// `0xD8 MODEL_DOWNLOAD_COMPLETE` — HF-01. Emitted by `cli::models::run_pull`
-/// after a download finishes, recording the on-disk cache location +
-/// wall-clock duration. Payload:
-/// `{ model_id, cached_path, duration_ms, ts_unix }`.
+/// as the terminal event for every started download. `status: "ready"` is
+/// emitted only after structural cache validation succeeds; `status: "failed"`
+/// closes a failed attempt with a bounded reason. Payload:
+/// `{ model_id, status: "ready" | "failed", cached_path?, reason?,
+///    duration_ms, ts_unix }`.
 pub const EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE: u8 = 0xD8;
 
 /// `0xD9 HMAC_KEY_ROTATED` — SC-09. Emitted when the WAL HMAC integrity key is
-/// REPLACED on disk — today by `neoth security rewrap-hmac-key` (Tier-1
-/// recovery: a plaintext backup re-wrapped for a new machine/user), and by any
-/// future `rotate-hmac-key`. This frame is the ROTATION BOUNDARY that
+/// REPLACED on disk — by `neoth security rewrap-hmac-key` (Tier-1 recovery: a
+/// plaintext backup re-wrapped for a new machine/user) and `neoth keys rotate`.
+/// This frame is the ROTATION BOUNDARY that
 /// `neoth wal verify --since-rotation` uses: compaction markers BEFORE it were
 /// signed with the old key and are skipped; markers after verify under the new
 /// key. Audit metadata ONLY — never the raw key bytes; just the SHA-256 of the
-/// installed key for correlation. Payload:
-/// `{ new_key_sha256, replaced, reason, ts_unix }`.
+/// installed key for correlation. Current v2 payload also binds a UUIDv7 and
+/// the prior on-disk envelope hash so an interrupted transaction cannot replay
+/// an older signed rotation:
+/// `{ schema, rotation_id, new_key_sha256, previous_key_storage_sha256,
+///    replaced, reason, ts_unix, signer_pubkey, sig }`.
 pub const EVENT_TYPE_HMAC_KEY_ROTATED: u8 = 0xD9;
 
 /// `0xDA PRESET_APPLIED` — QM-8 + P1. `neoth preset apply <name>` merged a saved
@@ -2505,7 +2577,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("token_tps_sample", EVENT_TYPE_TOKEN_TPS_SAMPLE),
     ("council_self_score", EVENT_TYPE_COUNCIL_SELF_SCORE),
     ("deep_research_started", EVENT_TYPE_DEEP_RESEARCH_STARTED),
-    ("deep_research_completed", EVENT_TYPE_DEEP_RESEARCH_COMPLETED),
+    (
+        "deep_research_completed",
+        EVENT_TYPE_DEEP_RESEARCH_COMPLETED,
+    ),
     ("skill_perf_suggestion", EVENT_TYPE_SKILL_PERF_SUGGESTION),
     ("token_anomaly_detected", EVENT_TYPE_TOKEN_ANOMALY_DETECTED),
     (
@@ -2803,11 +2878,12 @@ pub const EVENT_TYPE_MEMORY_TRANSFER_EXPORTED: u8 = 0xF5;
 pub const EVENT_TYPE_RECON_RUN: u8 = 0xF6;
 
 /// `0xF7 INCOGNITO_TURN` — GOLD-ADAPT-ODY-09. The operator ran a chat turn
-/// with `--incognito`: memory injection (Block::D recall) was suppressed and
-/// no RAW_TEXT / PROVIDER_REQUEST / PROVIDER_RESPONSE frames were written.
-/// The reply was still rendered to stdout. This frame is the SOLE audit anchor
-/// proving an incognito turn ran — payload carries only `{ts_unix}` so no
-/// prompt content reaches the WAL. Operator-system band (0xF0..=0xFF);
+/// with `--incognito`: memory injection (Block::D recall), RAW_TEXT journaling,
+/// and post-turn memory surfaces were suppressed. The mandatory provider
+/// request/terminal lifecycle remains present as hash-only typed metadata
+/// marked `incognito: true`; it contains no prompt or response plaintext. This
+/// privacy-mode anchor itself carries only `{ts_unix}`. Operator-system band
+/// (0xF0..=0xFF);
 /// immediate-sync (a privacy-mode decision must survive a crash).
 /// Payload (JSON): `{ts_unix}`.
 pub const EVENT_TYPE_INCOGNITO_TURN: u8 = 0xF7;
@@ -2903,35 +2979,27 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_ELICITATION_RESPONSE < 0x01
         || EVENT_TYPE_ELICITATION_RESPONSE > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_ELICITATION_REQUESTED <= EVENT_TYPE_REINFORCE) as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_ELICITATION_RESPONSE <= EVENT_TYPE_ELICITATION_REQUESTED) as usize];
+    let _ = [(); 1][(EVENT_TYPE_ELICITATION_RESPONSE <= EVENT_TYPE_ELICITATION_REQUESTED) as usize];
     // 0x05..=0x07 are recovery anchors (turn-journal lifecycle), not recall
     // ops, even though they sit in the 0x01..=0x0F memory+recall band.
-    let _ =
-        [(); 1][(EVENT_TYPE_TURN_JOURNAL_OPENED < 0x01 || EVENT_TYPE_TURN_JOURNAL_OPENED > 0x0F)
-            as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_TURN_JOURNAL_CLOSED < 0x01 || EVENT_TYPE_TURN_JOURNAL_CLOSED > 0x0F)
-            as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_STALE_INTERRUPTED < 0x01 || EVENT_TYPE_STALE_INTERRUPTED > 0x0F)
-            as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_TURN_JOURNAL_OPENED < 0x01 || EVENT_TYPE_TURN_JOURNAL_OPENED > 0x0F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_TURN_JOURNAL_CLOSED < 0x01 || EVENT_TYPE_TURN_JOURNAL_CLOSED > 0x0F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_STALE_INTERRUPTED < 0x01 || EVENT_TYPE_STALE_INTERRUPTED > 0x0F) as usize];
     // GOLD-ADAPT-ODY-21 — webhook audit (0x08..=0x0A) in the memory+recall band.
-    let _ =
-        [(); 1][(EVENT_TYPE_WEBHOOK_DELIVERED < 0x01 || EVENT_TYPE_WEBHOOK_DELIVERED > 0x0F)
-            as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_WEBHOOK_SSRF_BLOCKED < 0x01 || EVENT_TYPE_WEBHOOK_SSRF_BLOCKED > 0x0F)
-            as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_WEBHOOK_DELIVERED < 0x01 || EVENT_TYPE_WEBHOOK_DELIVERED > 0x0F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_WEBHOOK_SSRF_BLOCKED < 0x01
+        || EVENT_TYPE_WEBHOOK_SSRF_BLOCKED > 0x0F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_WEBHOOK_FAILED < 0x01 || EVENT_TYPE_WEBHOOK_FAILED > 0x0F) as usize];
     // GOLD-ADAPT-ODY-24 — companion pairing audit (0x0B..=0x0C) in the memory+recall band.
-    let _ =
-        [(); 1][(EVENT_TYPE_COMPANION_PAIRED < 0x01 || EVENT_TYPE_COMPANION_PAIRED > 0x0F)
-            as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_COMPANION_REVOKED < 0x01 || EVENT_TYPE_COMPANION_REVOKED > 0x0F)
-            as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_COMPANION_PAIRED < 0x01 || EVENT_TYPE_COMPANION_PAIRED > 0x0F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_COMPANION_REVOKED < 0x01 || EVENT_TYPE_COMPANION_REVOKED > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_BOOT < 0x10 || EVENT_TYPE_BOOT > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SHUTDOWN < 0x10 || EVENT_TYPE_SHUTDOWN > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_INSTALLER_RAN < 0x10 || EVENT_TYPE_INSTALLER_RAN > 0x1F) as usize];
@@ -3111,25 +3179,24 @@ const _: () = {
         || EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_TEACHER_ESCALATION_COMPLETE < 0x80
         || EVENT_TYPE_TEACHER_ESCALATION_COMPLETE > 0x8F) as usize];
-    let _ = [(); 1][(EVENT_TYPE_BG_SESSION_STARTED < 0x80
-        || EVENT_TYPE_BG_SESSION_STARTED > 0x8F) as usize];
     let _ = [(); 1]
-        [(EVENT_TYPE_BG_SESSION_DONE < 0x80 || EVENT_TYPE_BG_SESSION_DONE > 0x8F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_GOAL_JUDGED < 0x80 || EVENT_TYPE_GOAL_JUDGED > 0x8F) as usize];
+        [(EVENT_TYPE_BG_SESSION_STARTED < 0x80 || EVENT_TYPE_BG_SESSION_STARTED > 0x8F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_BG_SESSION_DONE < 0x80 || EVENT_TYPE_BG_SESSION_DONE > 0x8F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_GOAL_JUDGED < 0x80 || EVENT_TYPE_GOAL_JUDGED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT < 0x80
         || EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT > 0x8F) as usize];
-    let _ = [(); 1][(EVENT_TYPE_HOOK_SKIPPED_ONCE < 0x80
-        || EVENT_TYPE_HOOK_SKIPPED_ONCE > 0x8F) as usize];
-    let _ = [(); 1][(EVENT_TYPE_SUBDIR_MD_LOADED < 0x80
-        || EVENT_TYPE_SUBDIR_MD_LOADED > 0x8F) as usize];
-    let _ = [(); 1][(EVENT_TYPE_TZ_CONTEXT_INJECTED < 0x80
-        || EVENT_TYPE_TZ_CONTEXT_INJECTED > 0x8F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_HOOK_SKIPPED_ONCE < 0x80 || EVENT_TYPE_HOOK_SKIPPED_ONCE > 0x8F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_SUBDIR_MD_LOADED < 0x80 || EVENT_TYPE_SUBDIR_MD_LOADED > 0x8F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_TZ_CONTEXT_INJECTED < 0x80 || EVENT_TYPE_TZ_CONTEXT_INJECTED > 0x8F) as usize];
     // GOLD-ADAPT-HERMES-11: PTY session lifecycle (0x8E/0x8F) in hooks band.
-    let _ = [(); 1][(EVENT_TYPE_PTY_SESSION_STARTED < 0x80
-        || EVENT_TYPE_PTY_SESSION_STARTED > 0x8F) as usize];
-    let _ = [(); 1][(EVENT_TYPE_PTY_SESSION_ENDED < 0x80
-        || EVENT_TYPE_PTY_SESSION_ENDED > 0x8F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_PTY_SESSION_STARTED < 0x80 || EVENT_TYPE_PTY_SESSION_STARTED > 0x8F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_PTY_SESSION_ENDED < 0x80 || EVENT_TYPE_PTY_SESSION_ENDED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EPISODE_CONSOLIDATED < 0x90
         || EVENT_TYPE_EPISODE_CONSOLIDATED > 0x9F) as usize];
     let _ = [(); 1]
@@ -3212,11 +3279,9 @@ const _: () = {
         [(EVENT_TYPE_OS_CLIPBOARD_DENIED < 0xB0 || EVENT_TYPE_OS_CLIPBOARD_DENIED > 0xBF) as usize];
     // JV-SELF-03 collector — 0xBE/0xBF overflow from the full 0xB0..=0xBD space.
     let _ = [(); 1][(EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED < 0xB0
-        || EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED > 0xBF)
-        as usize];
+        || EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED > 0xBF) as usize];
     let _ = [(); 1][(EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE < 0xB0
-        || EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE > 0xBF)
-        as usize];
+        || EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE > 0xBF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -3279,14 +3344,11 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_AUTO_SKILL_EXTRACTED < 0x70
         || EVENT_TYPE_AUTO_SKILL_EXTRACTED > 0x7F) as usize];
     // GOLD-LOOP-01: 0x7C..=0x7F loop-engine events in coding-workflow band.
-    let _ = [(); 1]
-        [(EVENT_TYPE_LOOP_STARTED < 0x70 || EVENT_TYPE_LOOP_STARTED > 0x7F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_LOOP_STARTED < 0x70 || EVENT_TYPE_LOOP_STARTED > 0x7F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_LOOP_ROUND < 0x70 || EVENT_TYPE_LOOP_ROUND > 0x7F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_LOOP_REFINED < 0x70 || EVENT_TYPE_LOOP_REFINED > 0x7F) as usize];
     let _ =
-        [(); 1][(EVENT_TYPE_LOOP_ROUND < 0x70 || EVENT_TYPE_LOOP_ROUND > 0x7F) as usize];
-    let _ =
-        [(); 1][(EVENT_TYPE_LOOP_REFINED < 0x70 || EVENT_TYPE_LOOP_REFINED > 0x7F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_LOOP_COMPLETED < 0x70 || EVENT_TYPE_LOOP_COMPLETED > 0x7F) as usize];
+        [(); 1][(EVENT_TYPE_LOOP_COMPLETED < 0x70 || EVENT_TYPE_LOOP_COMPLETED > 0x7F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0
@@ -3313,8 +3375,8 @@ const _: () = {
         || EVENT_TYPE_SUDOMODE_PRESET_APPLIED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_SELF_UPDATE_REJECTED < 0xD0
         || EVENT_TYPE_SELF_UPDATE_REJECTED > 0xDF) as usize];
-    let _ = [(); 1][(EVENT_TYPE_MORAL_CORE_TOGGLED < 0xD0
-        || EVENT_TYPE_MORAL_CORE_TOGGLED > 0xDF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_MORAL_CORE_TOGGLED < 0xD0 || EVENT_TYPE_MORAL_CORE_TOGGLED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xEF).
     // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
     // (0xEB..=0xEF) share one declared band. Every assertion uses the full
@@ -3394,12 +3456,15 @@ mod tests {
         assert_eq!(EVENT_TYPE_EXTENDED, 0x00);
         assert_eq!(event_name_from_code(EVENT_TYPE_EXTENDED), Some("extended"));
 
-        // Every shipped sub-type round-trips code → variant → name → code.
+        // Every shipped sub-type has a unique non-zero byte and round-trips
+        // code → variant → name → code.
+        let mut seen_subtypes = [false; 256];
         for st in [
             ExtendedSubtype::SelfEditProposed,
             ExtendedSubtype::SelfEditApplied,
             ExtendedSubtype::SwarmResourceSnapshot,
             ExtendedSubtype::LocalSnapshot,
+            ExtendedSubtype::SelfEditRefused,
             // NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01
             ExtendedSubtype::ObsidianPreloadIntent,
             ExtendedSubtype::ObsidianPreloadResult,
@@ -3407,15 +3472,45 @@ mod tests {
             ExtendedSubtype::ObsidianSyncConflict,
             // GOLD-ADAPT-SNYK-02
             ExtendedSubtype::ManifestInstallBlocked,
+            // OMI-MULTIMODAL-01
+            ExtendedSubtype::OmiLifecycleAudit,
+            // GOLD-ADAPT-KB-03
+            ExtendedSubtype::SkillDistillCandidate,
+            // GOLD-ADAPT-GRAPH-02
+            ExtendedSubtype::ArchitectureCyclesInjected,
+            // GOLD-PROG-17
+            ExtendedSubtype::ProofKeyRotated,
+            // GOLD-OUTBOUND-HTTP
+            ExtendedSubtype::ExternalHttpIntent,
+            ExtendedSubtype::ExternalHttpResult,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");
+            assert!(
+                !seen_subtypes[byte as usize],
+                "duplicate EXTENDED subtype allocation: 0x{byte:02X}"
+            );
+            seen_subtypes[byte as usize] = true;
             assert_eq!(ExtendedSubtype::from_u8(byte), Some(st));
             assert_eq!(extended_subtype_name(byte), st.name());
+            assert_eq!(ExtendedSubtype::from_name(st.name()), Some(st));
         }
         // Unknown/forward-compat sub-type renders a stable placeholder.
         assert_eq!(ExtendedSubtype::from_u8(0x00), None);
         assert_eq!(extended_subtype_name(0xAB), "extended_0xAB");
+        assert_eq!(
+            ExtendedSubtype::from_name("OMI_LIFECYCLE_AUDIT"),
+            Some(ExtendedSubtype::OmiLifecycleAudit)
+        );
+        assert_eq!(
+            ExtendedSubtype::from_name("ARCHITECTURE_CYCLES_INJECTED"),
+            Some(ExtendedSubtype::ArchitectureCyclesInjected)
+        );
+        // Historical 0x9C frames retain their narrow public identity.
+        assert_eq!(
+            event_name_from_code(EVENT_TYPE_OMI_ACTION_PROMOTED),
+            Some("omi_action_promoted")
+        );
     }
 
     /// A built EXTENDED frame carries (event_type=0x00, event_subtype=<sub>) on
@@ -3706,7 +3801,10 @@ mod tests {
             ("KANBAN_SESSION_CLOSED", EVENT_TYPE_KANBAN_SESSION_CLOSED),
             ("KANBAN_TASK_PROGRESS", EVENT_TYPE_KANBAN_TASK_PROGRESS),
             ("KANBAN_TASK_DEP_ADDED", EVENT_TYPE_KANBAN_TASK_DEP_ADDED),
-            ("KANBAN_TASK_DEP_REMOVED", EVENT_TYPE_KANBAN_TASK_DEP_REMOVED),
+            (
+                "KANBAN_TASK_DEP_REMOVED",
+                EVENT_TYPE_KANBAN_TASK_DEP_REMOVED,
+            ),
             ("CONFIG_RELOADED", EVENT_TYPE_CONFIG_RELOADED),
             ("CONFIG_RELOAD_REJECTED", EVENT_TYPE_CONFIG_RELOAD_REJECTED),
             ("SELF_UPDATE_APPLIED", EVENT_TYPE_SELF_UPDATE_APPLIED),

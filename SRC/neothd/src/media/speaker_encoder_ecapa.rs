@@ -1,14 +1,14 @@
 //! SPEAKR-02c — ECAPA-TDNN speaker-embedding encoder (highest-accuracy neural upgrade).
 //!
-//! ## Status: DORMANT SCAFFOLD
+//! ## Status: OPTIONAL PRODUCTION BACKEND
 //!
-//! This module compiles and passes shape/wiring tests, but **produces
-//! meaningful embeddings ONLY when real weights are provisioned**. The
+//! This module is wired into the common STT speaker-label path and produces
+//! embeddings when real weights are provisioned. The
 //! `speechbrain/spkrec-ecapa-voxceleb` checkpoint is NOT bundled; an operator
 //! must run `scripts/convert_ecapa.py` and place the output safetensors in
-//! the NEOTH model cache (see `try_load` for the path). Until that file exists
-//! `try_load()` returns `None` and the caller falls back to the x-vector or
-//! log-mel encoder in `speaker_encoder_xvector.rs` / `speaker_encoder.rs`.
+//! the NEOTH model cache (see `try_load` for the path). Until that file exists,
+//! `try_load()` returns `None` and the caller deliberately falls back to the
+//! x-vector or log-mel production tiers.
 //!
 //! ## Architecture (extracted from speechbrain/spkrec-ecapa-voxceleb hyperparams.yaml)
 //!
@@ -94,9 +94,7 @@
 
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Module, ModuleT, Tensor};
-use candle_nn::{
-    BatchNormConfig, Conv1dConfig, VarBuilder, batch_norm, conv1d,
-};
+use candle_nn::{BatchNormConfig, Conv1dConfig, VarBuilder, batch_norm, conv1d};
 
 use crate::media::speaker_profile::unit_normalise;
 use crate::providers::clip_engine::default_cache_dir;
@@ -180,8 +178,7 @@ impl TdnnBlock {
             dilation,
             groups: 1,
         };
-        let conv = conv1d(in_ch, out_ch, kernel, cfg, conv_vb)
-            .context("TdnnBlock: conv1d")?;
+        let conv = conv1d(in_ch, out_ch, kernel, cfg, conv_vb).context("TdnnBlock: conv1d")?;
         let bn = batch_norm(out_ch, BatchNormConfig::default(), bn_vb)
             .context("TdnnBlock: batch_norm")?;
         Ok(Self { conv, bn })
@@ -234,11 +231,14 @@ impl Res2NetBlock {
             let sub_vb = vb.pp(format!("blocks_{i}"));
             let sub_bn_vb = vb.pp(format!("blocks_{i}_bn"));
             blocks.push(TdnnBlock::new(
-                group_ch, group_ch, kernel, dilation,
-                sub_vb, sub_bn_vb,
+                group_ch, group_ch, kernel, dilation, sub_vb, sub_bn_vb,
             )?);
         }
-        Ok(Self { blocks, scale, group_ch })
+        Ok(Self {
+            blocks,
+            scale,
+            group_ch,
+        })
     }
 
     /// Forward pass matching SpeechBrain `Res2NetBlock.forward`.
@@ -296,18 +296,16 @@ struct SeBlock {
 }
 
 impl SeBlock {
-    fn new(
-        in_ch: usize,
-        se_ch: usize,
-        out_ch: usize,
-        vb: VarBuilder,
-    ) -> Result<Self> {
+    fn new(in_ch: usize, se_ch: usize, out_ch: usize, vb: VarBuilder) -> Result<Self> {
         // Both convolutions use kernel=1 (pointwise, no padding needed).
-        let k1_cfg = Conv1dConfig { padding: 0, stride: 1, dilation: 1, groups: 1 };
-        let conv1 = conv1d(in_ch, se_ch, 1, k1_cfg, vb.pp("conv1"))
-            .context("SEBlock: conv1")?;
-        let conv2 = conv1d(se_ch, out_ch, 1, k1_cfg, vb.pp("conv2"))
-            .context("SEBlock: conv2")?;
+        let k1_cfg = Conv1dConfig {
+            padding: 0,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+        };
+        let conv1 = conv1d(in_ch, se_ch, 1, k1_cfg, vb.pp("conv1")).context("SEBlock: conv1")?;
+        let conv2 = conv1d(se_ch, out_ch, 1, k1_cfg, vb.pp("conv2")).context("SEBlock: conv2")?;
         Ok(Self { conv1, conv2 })
     }
 
@@ -356,25 +354,35 @@ impl SeRes2NetBlock {
         vb: VarBuilder,
     ) -> Result<Self> {
         // tdnn1: 1×1 pointwise Conv.
-        let tdnn1 = TdnnBlock::new(in_ch, out_ch, 1, 1,
-            vb.pp("tdnn1"), vb.pp("tdnn1_bn"))?;
+        let tdnn1 = TdnnBlock::new(in_ch, out_ch, 1, 1, vb.pp("tdnn1"), vb.pp("tdnn1_bn"))?;
         // Res2Net body.
-        let res2net = Res2NetBlock::new(out_ch, kernel, dilation, scale,
-            vb.pp("res2net"))?;
+        let res2net = Res2NetBlock::new(out_ch, kernel, dilation, scale, vb.pp("res2net"))?;
         // tdnn2: 1×1 pointwise Conv.
-        let tdnn2 = TdnnBlock::new(out_ch, out_ch, 1, 1,
-            vb.pp("tdnn2"), vb.pp("tdnn2_bn"))?;
+        let tdnn2 = TdnnBlock::new(out_ch, out_ch, 1, 1, vb.pp("tdnn2"), vb.pp("tdnn2_bn"))?;
         // SE block.
         let se = SeBlock::new(out_ch, se_ch, out_ch, vb.pp("se"))?;
         // Shortcut only when dimensions differ (not needed for ECAPA's equal-ch blocks).
         let shortcut = if in_ch != out_ch {
-            let cfg = Conv1dConfig { padding: 0, stride: 1, dilation: 1, groups: 1 };
-            Some(conv1d(in_ch, out_ch, 1, cfg, vb.pp("shortcut"))
-                .context("SERes2NetBlock: shortcut conv")?)
+            let cfg = Conv1dConfig {
+                padding: 0,
+                stride: 1,
+                dilation: 1,
+                groups: 1,
+            };
+            Some(
+                conv1d(in_ch, out_ch, 1, cfg, vb.pp("shortcut"))
+                    .context("SERes2NetBlock: shortcut conv")?,
+            )
         } else {
             None
         };
-        Ok(Self { tdnn1, res2net, tdnn2, se, shortcut })
+        Ok(Self {
+            tdnn1,
+            res2net,
+            tdnn2,
+            se,
+            shortcut,
+        })
     }
 
     fn forward(&self, x: &Tensor) -> candle_core::Result<Tensor> {
@@ -419,14 +427,21 @@ struct AttentiveStatisticsPooling {
 impl AttentiveStatisticsPooling {
     fn new(channels: usize, attn_ch: usize, vb: VarBuilder) -> Result<Self> {
         // global_context=true → input channels = channels * 3.
-        let attn_tdnn = TdnnBlock::new(
-            channels * 3, attn_ch, 1, 1,
-            vb.pp("tdnn"), vb.pp("tdnn_bn"),
-        )?;
-        let cfg = Conv1dConfig { padding: 0, stride: 1, dilation: 1, groups: 1 };
-        let attn_conv = conv1d(attn_ch, channels, 1, cfg, vb.pp("conv"))
-            .context("ASP: attn_conv")?;
-        Ok(Self { attn_tdnn, attn_conv, channels })
+        let attn_tdnn =
+            TdnnBlock::new(channels * 3, attn_ch, 1, 1, vb.pp("tdnn"), vb.pp("tdnn_bn"))?;
+        let cfg = Conv1dConfig {
+            padding: 0,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+        };
+        let attn_conv =
+            conv1d(attn_ch, channels, 1, cfg, vb.pp("conv")).context("ASP: attn_conv")?;
+        Ok(Self {
+            attn_tdnn,
+            attn_conv,
+            channels,
+        })
     }
 
     /// Forward.
@@ -443,14 +458,14 @@ impl AttentiveStatisticsPooling {
         let mean = x.mean_keepdim(2)?; // [batch, C, 1]
         // Weighted std (biased, SpeechBrain style):
         //   std = sqrt( E[(x - mean)²] + eps )
-        let diff = x.broadcast_sub(&mean)?;          // [batch, C, T]
-        let var = diff.sqr()?.mean_keepdim(2)?;       // [batch, C, 1]
-        let std = (var + 1e-12f64)?.sqrt()?;         // [batch, C, 1]
+        let diff = x.broadcast_sub(&mean)?; // [batch, C, T]
+        let var = diff.sqr()?.mean_keepdim(2)?; // [batch, C, 1]
+        let std = (var + 1e-12f64)?.sqrt()?; // [batch, C, 1]
 
         // Broadcast mean and std over time, then concatenate with x.
         let mean_t = mean.expand(&[batch, self.channels, t])?;
-        let std_t  = std.expand(&[batch, self.channels, t])?;
-        let attn   = Tensor::cat(&[x, &mean_t, &std_t], 1)?; // [batch, 3C, T]
+        let std_t = std.expand(&[batch, self.channels, t])?;
+        let attn = Tensor::cat(&[x, &mean_t, &std_t], 1)?; // [batch, 3C, T]
 
         // Attention weights: TdnnBlock → Tanh not needed because SpeechBrain
         // wraps the TdnnBlock output (which already has ReLU) in a Tanh, then
@@ -460,31 +475,30 @@ impl AttentiveStatisticsPooling {
         //   attn = self.conv(self.tanh(self.tdnn(attn)))
         // The TdnnBlock includes ReLU+BN; tanh is an extra activation.
         // We apply tanh after the TdnnBlock's output, before the attn_conv.
-        let attn = self.attn_tdnn.forward(&attn)?;   // [batch, attn_ch, T]
-        let attn = attn.tanh()?;                      // tanh on top of BN output
-        let attn = self.attn_conv.forward(&attn)?;    // [batch, C, T]
+        let attn = self.attn_tdnn.forward(&attn)?; // [batch, attn_ch, T]
+        let attn = attn.tanh()?; // tanh on top of BN output
+        let attn = self.attn_conv.forward(&attn)?; // [batch, C, T]
 
         // Softmax over time axis (dim=2).
         let attn = candle_nn::ops::softmax(&attn, 2)?; // [batch, C, T]
 
         // Attentive mean: sum_t( attn_t * x_t ) per channel.
-        let w_mean = (attn.clone() * x)?.sum(2)?;                 // [batch, C]
+        let w_mean = (attn.clone() * x)?.sum(2)?; // [batch, C]
         // Attentive std:
         //   std = sqrt( sum_t( attn_t * (x_t - mean)² ) + eps )
-        let mean2 = w_mean.unsqueeze(2)?;                          // [batch, C, 1]
-        let diff2 = x.broadcast_sub(&mean2)?;                      // [batch, C, T]
-        let w_var = (attn * diff2.sqr()?)?.sum(2)?;                // [batch, C]
-        let w_std = (w_var + 1e-12f64)?.sqrt()?;                  // [batch, C]
+        let mean2 = w_mean.unsqueeze(2)?; // [batch, C, 1]
+        let diff2 = x.broadcast_sub(&mean2)?; // [batch, C, T]
+        let w_var = (attn * diff2.sqr()?)?.sum(2)?; // [batch, C]
+        let w_std = (w_var + 1e-12f64)?.sqrt()?; // [batch, C]
 
         // Concatenate mean ‖ std.
-        Tensor::cat(&[&w_mean, &w_std], 1)  // [batch, 2*C]
+        Tensor::cat(&[&w_mean, &w_std], 1) // [batch, 2*C]
     }
-
 }
 
 // ── EcapaTdnn ─────────────────────────────────────────────────────────────────
 
-/// ECAPA-TDNN speaker-embedding encoder (dormant until weights are provisioned).
+/// ECAPA-TDNN speaker-embedding encoder (available when weights are provisioned).
 ///
 /// Construct via [`EcapaTdnn::try_load`]. Returns `None` if the safetensors
 /// file is not in the NEOTH model cache — the caller falls back to the
@@ -545,10 +559,8 @@ impl EcapaTdnn {
         // convert_ecapa.py script; the same safety contract is used in
         // clip_engine.rs (search: "SAFETY: `from_mmaped_safetensors`").
         let vb = unsafe {
-            candle_nn::VarBuilder::from_mmaped_safetensors(
-                &[&weights_path], DType::F32, &device,
-            )
-            .with_context(|| format!("mmap safetensors {}", weights_path.display()))?
+            candle_nn::VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &device)
+                .with_context(|| format!("mmap safetensors {}", weights_path.display()))?
         };
 
         Self::build_from_vb(vb, device)
@@ -556,8 +568,7 @@ impl EcapaTdnn {
 
     fn build_from_vb(vb: VarBuilder, device: Device) -> Result<Self> {
         // block[0]: TdnnBlock(80 → 1024, k=5, d=1).
-        let block0 = TdnnBlock::new(N_MELS, C0, 5, 1,
-            vb.pp("blocks_0"), vb.pp("blocks_0_bn"))?;
+        let block0 = TdnnBlock::new(N_MELS, C0, 5, 1, vb.pp("blocks_0"), vb.pp("blocks_0_bn"))?;
 
         // blocks[1..3]: SERes2NetBlocks with dilations 2, 3, 4.
         // From hyperparams.yaml: channels[1]=channels[2]=channels[3]=1024,
@@ -568,8 +579,12 @@ impl EcapaTdnn {
         for (i, &dil) in dilations.iter().enumerate() {
             let block_idx = i + 1; // SpeechBrain block indices 1, 2, 3
             se_block_vec.push(SeRes2NetBlock::new(
-                C1, C1, 3, dil,
-                RES2NET_SCALE, SE_CH,
+                C1,
+                C1,
+                3,
+                dil,
+                RES2NET_SCALE,
+                SE_CH,
                 vb.pp(format!("blocks_{block_idx}")),
             )?);
         }
@@ -579,8 +594,7 @@ impl EcapaTdnn {
 
         // MFA TdnnBlock: concat of blocks[1..4] → 3*C1=3072 channels, then
         // project to C_MFA=3072 with k=1, d=1.
-        let mfa = TdnnBlock::new(C1 * 3, C_MFA, 1, 1,
-            vb.pp("mfa"), vb.pp("mfa_bn"))?;
+        let mfa = TdnnBlock::new(C1 * 3, C_MFA, 1, 1, vb.pp("mfa"), vb.pp("mfa_bn"))?;
 
         // ASP: 3072 input channels, 128 attention channels.
         let asp = AttentiveStatisticsPooling::new(C_MFA, ATTN_CH, vb.pp("asp"))?;
@@ -591,12 +605,26 @@ impl EcapaTdnn {
 
         // Final conv (fc): 6144 → 192, k=1 (no bias in SpeechBrain's Conv1d wrapper).
         // SpeechBrain Conv1d default has bias=True.
-        let fc_cfg = Conv1dConfig { padding: 0, stride: 1, dilation: 1, groups: 1 };
-        let fc = conv1d(C_MFA * 2, ECAPA_EMBEDDING_DIM, 1, fc_cfg, vb.pp("fc"))
-            .context("ecapa: fc")?;
+        let fc_cfg = Conv1dConfig {
+            padding: 0,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+        };
+        let fc =
+            conv1d(C_MFA * 2, ECAPA_EMBEDDING_DIM, 1, fc_cfg, vb.pp("fc")).context("ecapa: fc")?;
 
         let filterbank = ecapa_fbank_filterbank();
-        Ok(Self { block0, se_blocks, mfa, asp, asp_bn, fc, device, filterbank })
+        Ok(Self {
+            block0,
+            se_blocks,
+            mfa,
+            asp,
+            asp_bn,
+            fc,
+            device,
+            filterbank,
+        })
     }
 
     /// Encode 16 kHz mono f32 samples into a unit-norm ECAPA embedding.
@@ -643,7 +671,7 @@ impl EcapaTdnn {
         let x = Tensor::from_vec(flat, (1, N_MELS, n_frames), &self.device)?;
 
         // 4. block[0]: TdnnBlock(80 → 1024, k=5, d=1).
-        let x0 = self.block0.forward(&x)?;  // [1, 1024, T]
+        let x0 = self.block0.forward(&x)?; // [1, 1024, T]
 
         // 5. SE-Res2Net blocks with dilations 2, 3, 4.
         //    Collect outputs for MFA (multi-feature aggregation).
@@ -666,11 +694,11 @@ impl EcapaTdnn {
         // 9. BatchNorm after ASP (treat as [1, 6144, 1] for conv-friendly BN).
         //    SpeechBrain BatchNorm1d with skip_transpose=True expects [B, C, T].
         //    Unsqueeze time dim, apply BN in inference mode, squeeze back.
-        let x_asp3 = x_asp.unsqueeze(2)?;              // [1, 6144, 1]
-        let x_bn   = self.asp_bn.forward_t(&x_asp3, false)?; // [1, 6144, 1]
+        let x_asp3 = x_asp.unsqueeze(2)?; // [1, 6144, 1]
+        let x_bn = self.asp_bn.forward_t(&x_asp3, false)?; // [1, 6144, 1]
 
         // 10. Final fc Conv1d(6144 → 192, k=1).
-        let x_fc = self.fc.forward(&x_bn)?;             // [1, 192, 1]
+        let x_fc = self.fc.forward(&x_bn)?; // [1, 192, 1]
 
         // 11. Flatten to Vec<f32> and L2-normalise.
         let vec: Vec<f32> = x_fc.flatten_all()?.to_vec1()?;
@@ -703,9 +731,9 @@ fn ecapa_fbank_filterbank() -> Vec<Vec<f32>> {
     let bin = |hz: f32| hz * N_FFT as f32 / SAMPLE_RATE as f32;
     let mut fb = vec![vec![0.0f32; n_bins]; N_MELS];
     for (m, filt) in fb.iter_mut().enumerate() {
-        let left   = bin(pts[m]);
+        let left = bin(pts[m]);
         let center = bin(pts[m + 1]);
-        let right  = bin(pts[m + 2]);
+        let right = bin(pts[m + 2]);
         for (k, w) in filt.iter_mut().enumerate() {
             let kf = k as f32;
             *w = if kf >= left && kf <= center && center > left {
@@ -724,7 +752,7 @@ fn ecapa_fbank_filterbank() -> Vec<Vec<f32>> {
 fn ecapa_fbank_frames(samples: &[f32], fb: &[Vec<f32>]) -> Vec<Vec<f32>> {
     let mut planner = RealFftPlanner::<f32>::new();
     let r2c = planner.plan_fft_forward(N_FFT);
-    let mut indata   = r2c.make_input_vec();
+    let mut indata = r2c.make_input_vec();
     let mut spectrum = r2c.make_output_vec();
 
     // PERIODIC HAMMING window — SpeechBrain STFT defaults to
@@ -808,9 +836,7 @@ mod tests {
 
     fn sine_1s(freq_hz: f32) -> Vec<f32> {
         (0..SAMPLE_RATE as usize)
-            .map(|i| {
-                (2.0 * std::f32::consts::PI * freq_hz * i as f32 / SAMPLE_RATE as f32).sin()
-            })
+            .map(|i| (2.0 * std::f32::consts::PI * freq_hz * i as f32 / SAMPLE_RATE as f32).sin())
             .collect()
     }
 
@@ -827,18 +853,23 @@ mod tests {
             Tensor::ones(shape, DType::F32, dev).unwrap()
         }
         // Insert Conv1d weight [out, in, k] + bias [out].
-        fn ins_conv(t: &mut HashMap<String, Tensor>, dev: &Device,
-                    prefix: &str, out_ch: usize, in_ch: usize, k: usize) {
+        fn ins_conv(
+            t: &mut HashMap<String, Tensor>,
+            dev: &Device,
+            prefix: &str,
+            out_ch: usize,
+            in_ch: usize,
+            k: usize,
+        ) {
             t.insert(format!("{prefix}.weight"), zz(dev, &[out_ch, in_ch, k]));
-            t.insert(format!("{prefix}.bias"),   zz(dev, &[out_ch]));
+            t.insert(format!("{prefix}.bias"), zz(dev, &[out_ch]));
         }
         // Insert BatchNorm γ/β/running_mean/running_var (var=1 to avoid NaN).
-        fn ins_bn(t: &mut HashMap<String, Tensor>, dev: &Device,
-                  prefix: &str, ch: usize) {
-            t.insert(format!("{prefix}.weight"),       oo(dev, &[ch]));
-            t.insert(format!("{prefix}.bias"),         zz(dev, &[ch]));
+        fn ins_bn(t: &mut HashMap<String, Tensor>, dev: &Device, prefix: &str, ch: usize) {
+            t.insert(format!("{prefix}.weight"), oo(dev, &[ch]));
+            t.insert(format!("{prefix}.bias"), zz(dev, &[ch]));
             t.insert(format!("{prefix}.running_mean"), zz(dev, &[ch]));
-            t.insert(format!("{prefix}.running_var"),  oo(dev, &[ch]));
+            t.insert(format!("{prefix}.running_var"), oo(dev, &[ch]));
         }
 
         // block[0]: TdnnBlock(80 → 1024, k=5).
@@ -849,40 +880,43 @@ mod tests {
         for i in 1..=3usize {
             let p = format!("blocks_{i}");
             // tdnn1 (1×1, C1 → C1).
-            ins_conv(&mut t, dev, &format!("{p}.tdnn1"),    C1, C1, 1);
+            ins_conv(&mut t, dev, &format!("{p}.tdnn1"), C1, C1, 1);
             ins_bn(&mut t, dev, &format!("{p}.tdnn1_bn"), C1);
             // Res2Net sub-blocks (scale-1 = 7 sub-blocks, each group_ch=128).
             let gc = C1 / RES2NET_SCALE; // 1024/8 = 128
             for j in 0..(RES2NET_SCALE - 1) {
-                ins_conv(&mut t, dev, &format!("{p}.res2net.blocks_{j}"),    gc, gc, 3);
+                ins_conv(&mut t, dev, &format!("{p}.res2net.blocks_{j}"), gc, gc, 3);
                 ins_bn(&mut t, dev, &format!("{p}.res2net.blocks_{j}_bn"), gc);
             }
             // tdnn2 (1×1, C1 → C1).
-            ins_conv(&mut t, dev, &format!("{p}.tdnn2"),    C1, C1, 1);
+            ins_conv(&mut t, dev, &format!("{p}.tdnn2"), C1, C1, 1);
             ins_bn(&mut t, dev, &format!("{p}.tdnn2_bn"), C1);
             // SE block (pointwise convs — no BN; conv1: C1 → SE_CH, conv2: SE_CH → C1).
             t.insert(format!("{p}.se.conv1.weight"), zz(dev, &[SE_CH, C1, 1]));
-            t.insert(format!("{p}.se.conv1.bias"),   zz(dev, &[SE_CH]));
+            t.insert(format!("{p}.se.conv1.bias"), zz(dev, &[SE_CH]));
             t.insert(format!("{p}.se.conv2.weight"), zz(dev, &[C1, SE_CH, 1]));
-            t.insert(format!("{p}.se.conv2.bias"),   zz(dev, &[C1]));
+            t.insert(format!("{p}.se.conv2.bias"), zz(dev, &[C1]));
         }
 
         // MFA TdnnBlock (3072 → 3072, k=1).
-        ins_conv(&mut t, dev, "mfa",    C_MFA, C1 * 3, 1);
+        ins_conv(&mut t, dev, "mfa", C_MFA, C1 * 3, 1);
         ins_bn(&mut t, dev, "mfa_bn", C_MFA);
 
         // ASP tdnn (3*3072 → ATTN_CH, k=1) + conv (ATTN_CH → 3072, k=1).
-        ins_conv(&mut t, dev, "asp.tdnn",    ATTN_CH, C_MFA * 3, 1);
+        ins_conv(&mut t, dev, "asp.tdnn", ATTN_CH, C_MFA * 3, 1);
         ins_bn(&mut t, dev, "asp.tdnn_bn", ATTN_CH);
         t.insert("asp.conv.weight".into(), zz(dev, &[C_MFA, ATTN_CH, 1]));
-        t.insert("asp.conv.bias".into(),   zz(dev, &[C_MFA]));
+        t.insert("asp.conv.bias".into(), zz(dev, &[C_MFA]));
 
         // asp_bn (6144).
         ins_bn(&mut t, dev, "asp_bn", C_MFA * 2);
 
         // fc Conv1d(6144 → 192, k=1).
-        t.insert("fc.weight".into(), zz(dev, &[ECAPA_EMBEDDING_DIM, C_MFA * 2, 1]));
-        t.insert("fc.bias".into(),   zz(dev, &[ECAPA_EMBEDDING_DIM]));
+        t.insert(
+            "fc.weight".into(),
+            zz(dev, &[ECAPA_EMBEDDING_DIM, C_MFA * 2, 1]),
+        );
+        t.insert("fc.bias".into(), zz(dev, &[ECAPA_EMBEDDING_DIM]));
 
         VarBuilder::from_tensors(t, DType::F32, dev)
     }
@@ -913,7 +947,11 @@ mod tests {
         let fb = ecapa_fbank_filterbank();
         let frames = ecapa_fbank_frames(&samples, &fb);
         // At HOP_LEN=160, 16000 samples → ~99 frames.
-        assert!(frames.len() >= 90, "expected ~99 frames, got {}", frames.len());
+        assert!(
+            frames.len() >= 90,
+            "expected ~99 frames, got {}",
+            frames.len()
+        );
         assert_eq!(frames[0].len(), N_MELS);
     }
 
@@ -939,21 +977,25 @@ mod tests {
         let dev = Device::Cpu;
         let mut t: HashMap<String, Tensor> = HashMap::new();
         let zeros = |shape: &[usize]| Tensor::zeros(shape, DType::F32, &dev).unwrap();
-        let ones  = |shape: &[usize]| Tensor::ones(shape, DType::F32, &dev).unwrap();
+        let ones = |shape: &[usize]| Tensor::ones(shape, DType::F32, &dev).unwrap();
         let gc = C1 / RES2NET_SCALE; // 128
         for j in 0..(RES2NET_SCALE - 1) {
             t.insert(format!("blocks_{j}.weight"), zeros(&[gc, gc, 3]));
-            t.insert(format!("blocks_{j}.bias"),   zeros(&[gc]));
-            t.insert(format!("blocks_{j}_bn.weight"),       ones(&[gc]));
-            t.insert(format!("blocks_{j}_bn.bias"),         zeros(&[gc]));
+            t.insert(format!("blocks_{j}.bias"), zeros(&[gc]));
+            t.insert(format!("blocks_{j}_bn.weight"), ones(&[gc]));
+            t.insert(format!("blocks_{j}_bn.bias"), zeros(&[gc]));
             t.insert(format!("blocks_{j}_bn.running_mean"), zeros(&[gc]));
-            t.insert(format!("blocks_{j}_bn.running_var"),  ones(&[gc]));
+            t.insert(format!("blocks_{j}_bn.running_var"), ones(&[gc]));
         }
         let vb = VarBuilder::from_tensors(t, DType::F32, &dev);
         let block = Res2NetBlock::new(C1, 3, 2, RES2NET_SCALE, vb).unwrap();
         let x = Tensor::zeros(&[1usize, C1, 50], DType::F32, &dev).unwrap();
         let y = block.forward(&x).unwrap();
-        assert_eq!(y.dims(), &[1, C1, 50], "Res2NetBlock must preserve [batch, C, T]");
+        assert_eq!(
+            y.dims(),
+            &[1, C1, 50],
+            "Res2NetBlock must preserve [batch, C, T]"
+        );
     }
 
     #[test]
@@ -963,13 +1005,13 @@ mod tests {
         let mut t: HashMap<String, Tensor> = HashMap::new();
         let zeros = |shape: &[usize]| Tensor::zeros(shape, DType::F32, &dev).unwrap();
         t.insert("conv1.weight".into(), zeros(&[SE_CH, C1, 1]));
-        t.insert("conv1.bias".into(),   zeros(&[SE_CH]));
+        t.insert("conv1.bias".into(), zeros(&[SE_CH]));
         t.insert("conv2.weight".into(), zeros(&[C1, SE_CH, 1]));
-        t.insert("conv2.bias".into(),   zeros(&[C1]));
-        let vb  = VarBuilder::from_tensors(t, DType::F32, &dev);
-        let se  = SeBlock::new(C1, SE_CH, C1, vb).unwrap();
-        let x   = Tensor::zeros(&[1usize, C1, 50], DType::F32, &dev).unwrap();
-        let y   = se.forward(&x).unwrap();
+        t.insert("conv2.bias".into(), zeros(&[C1]));
+        let vb = VarBuilder::from_tensors(t, DType::F32, &dev);
+        let se = SeBlock::new(C1, SE_CH, C1, vb).unwrap();
+        let x = Tensor::zeros(&[1usize, C1, 50], DType::F32, &dev).unwrap();
+        let y = se.forward(&x).unwrap();
         assert_eq!(y.dims(), &[1, C1, 50], "SEBlock must preserve shape");
     }
 
@@ -979,20 +1021,24 @@ mod tests {
         let dev = Device::Cpu;
         let mut t: HashMap<String, Tensor> = HashMap::new();
         let zeros = |shape: &[usize]| Tensor::zeros(shape, DType::F32, &dev).unwrap();
-        let ones  = |shape: &[usize]| Tensor::ones(shape, DType::F32, &dev).unwrap();
-        t.insert("tdnn.weight".into(),       zeros(&[ATTN_CH, C_MFA * 3, 1]));
-        t.insert("tdnn.bias".into(),         zeros(&[ATTN_CH]));
-        t.insert("tdnn_bn.weight".into(),    ones(&[ATTN_CH]));
-        t.insert("tdnn_bn.bias".into(),      zeros(&[ATTN_CH]));
+        let ones = |shape: &[usize]| Tensor::ones(shape, DType::F32, &dev).unwrap();
+        t.insert("tdnn.weight".into(), zeros(&[ATTN_CH, C_MFA * 3, 1]));
+        t.insert("tdnn.bias".into(), zeros(&[ATTN_CH]));
+        t.insert("tdnn_bn.weight".into(), ones(&[ATTN_CH]));
+        t.insert("tdnn_bn.bias".into(), zeros(&[ATTN_CH]));
         t.insert("tdnn_bn.running_mean".into(), zeros(&[ATTN_CH]));
-        t.insert("tdnn_bn.running_var".into(),  ones(&[ATTN_CH]));
+        t.insert("tdnn_bn.running_var".into(), ones(&[ATTN_CH]));
         t.insert("conv.weight".into(), zeros(&[C_MFA, ATTN_CH, 1]));
-        t.insert("conv.bias".into(),   zeros(&[C_MFA]));
-        let vb  = VarBuilder::from_tensors(t, DType::F32, &dev);
+        t.insert("conv.bias".into(), zeros(&[C_MFA]));
+        let vb = VarBuilder::from_tensors(t, DType::F32, &dev);
         let asp = AttentiveStatisticsPooling::new(C_MFA, ATTN_CH, vb).unwrap();
-        let x   = Tensor::zeros(&[1usize, C_MFA, 30], DType::F32, &dev).unwrap();
-        let y   = asp.forward(&x).unwrap();
-        assert_eq!(y.dims(), &[1, C_MFA * 2], "ASP output must be [batch, 2*channels]");
+        let x = Tensor::zeros(&[1usize, C_MFA, 30], DType::F32, &dev).unwrap();
+        let y = asp.forward(&x).unwrap();
+        assert_eq!(
+            y.dims(),
+            &[1, C_MFA * 2],
+            "ASP output must be [batch, 2*channels]"
+        );
     }
 
     #[test]
@@ -1009,10 +1055,7 @@ mod tests {
                     v.iter().all(|x| x.is_finite()),
                     "all embedding values must be finite"
                 );
-                assert!(
-                    v.iter().all(|x| !x.is_nan()),
-                    "no NaN in embedding output"
-                );
+                assert!(v.iter().all(|x| !x.is_nan()), "no NaN in embedding output");
             }
             Err(e) => {
                 // Known: zero weights → all-zero output after BN; unit_normalise
@@ -1026,6 +1069,9 @@ mod tests {
     fn too_short_clip_returns_none() {
         let enc = make_encoder_with_proper_weights();
         let short = vec![0.0f32; MIN_SAMPLES - 1];
-        assert!(enc.embed(&short).is_none(), "sub-MIN_SAMPLES must return None");
+        assert!(
+            enc.embed(&short).is_none(),
+            "sub-MIN_SAMPLES must return None"
+        );
     }
 }

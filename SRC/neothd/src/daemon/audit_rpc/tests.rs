@@ -85,6 +85,22 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     for c in [0x10u8, 0x15, 0xA0, 0xA1, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
         assert!(!is_allowed_client_event(c), "{c:#x} must be refused");
     }
+
+    let proof_rotation = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
+    let http_intent = crate::wal::events::ExtendedSubtype::ExternalHttpIntent as u8;
+    let http_result = crate::wal::events::ExtendedSubtype::ExternalHttpResult as u8;
+    assert_eq!(
+        ALLOWED_CLIENT_EXTENDED_SUBTYPES,
+        &[proof_rotation, http_intent, http_result]
+    );
+    assert!(is_allowed_client_event_pair(0x00, proof_rotation));
+    assert!(!is_allowed_client_event_pair(0x00, 0));
+    assert!(!is_allowed_client_event_pair(0x00, proof_rotation + 1));
+    assert!(is_allowed_client_event_pair(0xA8, 0));
+    assert!(
+        !is_allowed_client_event_pair(0xA8, proof_rotation),
+        "a non-zero subtype on an allowed top-level code must be rejected"
+    );
 }
 
 #[test]
@@ -186,6 +202,51 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
 }
 
 #[tokio::test]
+async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("000001.wal");
+    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let state = AuditRpcState {
+        token: "tok-subtype".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(b"{}");
+
+    let accepted =
+        format!("{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{payload_b64:?}}}");
+    assert_eq!(raw_post(addr, Some("tok-subtype"), &accepted).await, 200);
+
+    let extended_zero =
+        format!("{{\"event_type\":0,\"event_subtype\":0,\"payload_b64\":{payload_b64:?}}}");
+    assert_eq!(
+        raw_post(addr, Some("tok-subtype"), &extended_zero).await,
+        422
+    );
+
+    let top_level_with_subtype = format!(
+        "{{\"event_type\":168,\"event_subtype\":{subtype},\"payload_b64\":{payload_b64:?}}}"
+    );
+    assert_eq!(
+        raw_post(addr, Some("tok-subtype"), &top_level_with_subtype).await,
+        422
+    );
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let frame =
+        crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
+            .unwrap();
+    assert_eq!(frame.header.event_type, 0x00);
+    assert_eq!(frame.header.event_subtype, subtype);
+}
+
+#[tokio::test]
 async fn wrong_token_is_401_and_writes_no_frame() {
     let segdir = tempdir().unwrap();
     let seg = segdir.path().join("000001.wal");
@@ -275,6 +336,38 @@ async fn client_round_trips_against_a_live_listener() {
         crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
             .unwrap();
     assert_eq!(f.header.event_type, EVENT_TYPE_OS_FILE_READ);
+}
+
+#[tokio::test]
+async fn subtype_client_round_trips_against_a_live_listener() {
+    let home = tempdir().unwrap();
+    let seg_dir = tempdir().unwrap();
+    let seg = seg_dir.path().join("000001.wal");
+    let token = init_rpc_token(home.path()).unwrap();
+    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+    let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
+
+    try_post_audit_frame_with_subtype(home.path(), 0x00, subtype, b"{}")
+        .await
+        .expect("subtype-aware client round-trip must succeed");
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let frame =
+        crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
+            .unwrap();
+    assert_eq!(frame.header.event_type, 0x00);
+    assert_eq!(frame.header.event_subtype, subtype);
 }
 
 #[tokio::test]

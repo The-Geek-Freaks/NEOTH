@@ -20,21 +20,23 @@ pub mod aws_sigv4;
 pub mod azure_openai;
 pub mod circuit_breaker;
 pub mod circuit_breaker_stream;
-/// GOLD-ADAPT-HARNESS-03 — message-history compaction middleware.
-pub mod compactor;
 pub mod claude_cli;
 pub mod claude_pid_hunter;
-/// GOLD-ADAPT-ODY-15 — GitHub Copilot OAuth provider (zero per-token cost for GH subscribers).
-pub mod copilot;
 pub mod claude_retry;
 pub mod claude_session;
 pub mod claude_tmux;
 pub mod clip_engine;
 /// PF-02 — native Cohere v2 Chat adapter (hybrid OAI-request/Anthropic-response).
 pub mod cohere_api;
+/// GOLD-ADAPT-HARNESS-03 — message-history compaction middleware.
+pub mod compactor;
 pub mod context_guards;
-pub mod cooldown_pair;
+/// GOLD-ADAPT-ODY-15 — GitHub Copilot OAuth provider (variable billing;
+/// unbounded paid-call gate without live plan/allowance context).
+pub mod copilot;
 pub mod cost;
+/// B22 — cost authorization bound to each exact provider leaf request.
+pub mod cost_authorization;
 pub mod effort_override;
 pub mod embed;
 /// SPEC-03b — per-provider 429 fallback chain (`FallbackProvider` decorator).
@@ -66,17 +68,44 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use futures_util::stream::{self, Stream};
 
 use crate::cli::init::ProviderKind;
 use crate::config::FreedomConfig;
 use crate::secret::SecretString;
 
+/// Exact concrete identity of the provider invocation that produced a result.
+/// The paid-call boundary overwrites adapter-supplied/default values after the
+/// leaf gate succeeds, so consumers never have to reconstruct this from a
+/// decorator name or a pre-resolution model alias.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionIdentity {
+    pub provider: String,
+    pub wire_model: String,
+}
+
+impl CompletionIdentity {
+    fn new(provider: &str, wire_model: &str) -> Self {
+        Self {
+            provider: provider.to_owned(),
+            wire_model: wire_model.to_owned(),
+        }
+    }
+
+    pub fn is_bound(&self) -> bool {
+        !self.provider.is_empty() && !self.wire_model.is_empty()
+    }
+}
+
 /// One completion result. `text` is the full final response; `latency` is
-/// wall-clock time from request to last token. Day-5b will add streaming.
+/// wall-clock time from request to last token.
 #[derive(Debug, Clone, Default)]
 pub struct Completion {
     pub text: String,
+    /// Typed leaf identity; authoritative for audit, usage and domain events.
+    pub identity: CompletionIdentity,
+    /// Backward-compatible mirror of `identity.wire_model`.
     pub model: String,
     pub latency: Duration,
     pub input_tokens: Option<u32>,
@@ -95,22 +124,21 @@ pub struct Completion {
 /// A request to send to a Provider. Plain text for Day-5 MVP; multimodal
 /// (image / tool-use) comes in later phases.
 ///
-/// Sampling fields are advisory — adapters that don't honour them
-/// (claude_cli today, anthropic_api, gemini_api, openai_api) silently
-/// ignore. `local_qwen` reads them and overrides its cached
-/// `SamplingConfig` for the call. v0.1.x scope; a typed `SamplingPolicy`
-/// promoted across adapters is Phase 2c follow-up.
+/// Request controls are strict, not advisory. Every concrete leaf declares
+/// its [`ProviderRequestControls`]; unsupported or malformed controls fail
+/// before authorization and transport. This prevents a CLI flag from looking
+/// active while a provider silently drops it.
 #[derive(Debug, Clone, Default)]
 pub struct Request {
     pub prompt: String,
     pub system: Option<String>,
     pub model: Option<String>,
-    /// Sampling temperature override for this single call. `None` =
-    /// adapter default. Range [0.0, 2.0].
+    /// Sampling temperature override for this single call. `None` = adapter
+    /// default. Provider ranges are either [0.0, 1.0] or [0.0, 2.0].
     pub temperature: Option<f32>,
-    /// Top-p nucleus cutoff. `None` = adapter default.
+    /// Top-p nucleus cutoff. `None` = adapter default. Range (0.0, 1.0].
     pub top_p: Option<f32>,
-    /// RNG seed for reproducible sampling.
+    /// RNG seed for reproducible sampling. Portable wire range: u32.
     pub sampling_seed: Option<u64>,
     /// L-13 (Session 19, 2026-05-21): stop sequences. When the
     /// decoded body reaches one of these substrings, generation
@@ -118,21 +146,192 @@ pub struct Request {
     /// the stop sequence (the stop string itself is NOT
     /// included in the returned text). Empty = no stop check.
     ///
-    /// Today only `local_qwen` honours this — cloud providers
-    /// already implement stop sequences natively + the value
-    /// flows through their API parameters when wired
-    /// (per-adapter pickup follows the same pattern as
-    /// `temperature` / `top_p`).
+    /// Supported providers forward this to their native wire field; local
+    /// Qwen truncates decoded output at the first match. At most four non-empty
+    /// sequences of 256 UTF-8 bytes each are accepted.
     pub stop_sequences: Vec<String>,
     /// GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget override.
     /// When `Some(n)`, the `claude_cli` adapter overrides
     /// `MAX_THINKING_TOKENS` to `n` for this specific call before
     /// spawning the claude binary. `None` = use the adapter default
     /// (currently 10 000 tokens, set in `scrub_outbound_env`).
-    /// Other adapters (openai, local_qwen, …) ignore this field via
-    /// `Default::default()` — it is `Option<u32>` so the default is
-    /// always `None`, zero cost when unused.
+    /// Other adapters reject this control rather than ignoring it.
     pub thinking_budget: Option<u32>,
+}
+
+/// Per-leaf request-control capability contract.
+///
+/// The fields stay private so adapters select one reviewed capability set
+/// instead of constructing contradictory values ad hoc. Validation is shared
+/// across every leaf and runs before model binding, cost authorization, or I/O.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderRequestControls {
+    maximum_temperature: Option<u8>,
+    top_p: bool,
+    sampling_seed: bool,
+    stop_sequences: bool,
+    thinking_budget: bool,
+}
+
+impl ProviderRequestControls {
+    pub const NONE: Self = Self::new(None, false, false, false, false);
+    /// Temperature up to 2.0, top-p, seed, and stop sequences.
+    pub const SAMPLING: Self = Self::new(Some(2), true, true, true, false);
+    /// Temperature up to 1.0, top-p, seed, and stop sequences.
+    pub const SAMPLING_MAX_ONE: Self = Self::new(Some(1), true, true, true, false);
+    /// Temperature up to 1.0, top-p, and stop sequences; seed unsupported.
+    pub const SAMPLING_WITHOUT_SEED: Self = Self::new(Some(1), true, false, true, false);
+    /// Temperature up to 2.0, top-p, and seed; stop sequences unsupported.
+    pub const SAMPLING_WITHOUT_STOPS: Self = Self::new(Some(2), true, true, false, false);
+    /// Per-call reasoning budget only (Claude CLI).
+    pub const THINKING_BUDGET: Self = Self::new(None, false, false, false, true);
+
+    const fn new(
+        maximum_temperature: Option<u8>,
+        top_p: bool,
+        sampling_seed: bool,
+        stop_sequences: bool,
+        thinking_budget: bool,
+    ) -> Self {
+        Self {
+            maximum_temperature,
+            top_p,
+            sampling_seed,
+            stop_sequences,
+            thinking_budget,
+        }
+    }
+
+    pub const fn supports_thinking_budget(self) -> bool {
+        self.thinking_budget
+    }
+
+    pub const fn supports_temperature(self) -> bool {
+        self.maximum_temperature.is_some()
+    }
+
+    pub const fn supports_sampling_seed(self) -> bool {
+        self.sampling_seed
+    }
+
+    /// Capabilities common to both providers in a decorator/fallback path.
+    pub const fn intersection(self, other: Self) -> Self {
+        let maximum_temperature = match (self.maximum_temperature, other.maximum_temperature) {
+            (Some(left), Some(right)) => Some(if left < right { left } else { right }),
+            _ => None,
+        };
+        Self::new(
+            maximum_temperature,
+            self.top_p && other.top_p,
+            self.sampling_seed && other.sampling_seed,
+            self.stop_sequences && other.stop_sequences,
+            self.thinking_budget && other.thinking_budget,
+        )
+    }
+
+    pub fn validate(self, provider: &str, req: &Request) -> Result<()> {
+        validate_portable_request_controls(provider, req)?;
+
+        let mut unsupported = Vec::with_capacity(5);
+        if req.temperature.is_some() && self.maximum_temperature.is_none() {
+            unsupported.push("temperature");
+        }
+        if req.top_p.is_some() && !self.top_p {
+            unsupported.push("top_p");
+        }
+        if req.sampling_seed.is_some() && !self.sampling_seed {
+            unsupported.push("sampling_seed");
+        }
+        if !req.stop_sequences.is_empty() && !self.stop_sequences {
+            unsupported.push("stop_sequences");
+        }
+        if req.thinking_budget.is_some() && !self.thinking_budget {
+            unsupported.push("thinking_budget");
+        }
+        if !unsupported.is_empty() {
+            anyhow::bail!(
+                "provider `{provider}` does not support request control(s): {}",
+                unsupported.join(", ")
+            );
+        }
+        if let (Some(temperature), Some(maximum)) = (req.temperature, self.maximum_temperature) {
+            if temperature > maximum as f32 {
+                anyhow::bail!(
+                    "provider `{provider}`: temperature must be within [0.0, {maximum}.0], got {temperature}"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Validate provider-independent request-control limits. Leaf validation calls
+/// this before its capability/model checks; non-dispatch surfaces such as
+/// `neoth recipe validate` reuse it so malformed automation is rejected without
+/// making a provider call.
+pub(crate) fn validate_portable_request_controls(provider: &str, req: &Request) -> Result<()> {
+    const MAX_STOP_SEQUENCES: usize = 4;
+    const MAX_STOP_SEQUENCE_BYTES: usize = 256;
+    const MAX_STOP_SEQUENCE_TOTAL_BYTES: usize = 2_048;
+    const MAX_THINKING_BUDGET: u32 = 1_000_000;
+
+    if let Some(temperature) = req.temperature {
+        if !temperature.is_finite() || !(0.0..=2.0).contains(&temperature) {
+            anyhow::bail!(
+                "provider `{provider}`: temperature must be finite and within [0.0, 2.0], got {temperature}"
+            );
+        }
+    }
+    if let Some(top_p) = req.top_p {
+        if !top_p.is_finite() || top_p <= 0.0 || top_p > 1.0 {
+            anyhow::bail!(
+                "provider `{provider}`: top_p must be finite and within (0.0, 1.0], got {top_p}"
+            );
+        }
+    }
+    if let Some(seed) = req.sampling_seed {
+        if seed > u64::from(u32::MAX) {
+            anyhow::bail!(
+                "provider `{provider}`: sampling_seed must be within [0, {}], got {seed}",
+                u32::MAX
+            );
+        }
+    }
+    if req.stop_sequences.len() > MAX_STOP_SEQUENCES {
+        anyhow::bail!(
+            "provider `{provider}`: at most {MAX_STOP_SEQUENCES} stop sequences are allowed, got {}",
+            req.stop_sequences.len()
+        );
+    }
+    let mut stop_total = 0usize;
+    for (index, stop) in req.stop_sequences.iter().enumerate() {
+        if stop.is_empty() {
+            anyhow::bail!(
+                "provider `{provider}`: stop sequence {} must not be empty",
+                index + 1
+            );
+        }
+        if stop.len() > MAX_STOP_SEQUENCE_BYTES {
+            anyhow::bail!(
+                "provider `{provider}`: stop sequence {} exceeds {MAX_STOP_SEQUENCE_BYTES} UTF-8 bytes",
+                index + 1
+            );
+        }
+        stop_total = stop_total.saturating_add(stop.len());
+    }
+    if stop_total > MAX_STOP_SEQUENCE_TOTAL_BYTES {
+        anyhow::bail!(
+            "provider `{provider}`: stop sequences exceed {MAX_STOP_SEQUENCE_TOTAL_BYTES} total UTF-8 bytes"
+        );
+    }
+    if let Some(thinking_budget) = req.thinking_budget {
+        if thinking_budget == 0 || thinking_budget > MAX_THINKING_BUDGET {
+            anyhow::bail!(
+                "provider `{provider}`: thinking_budget must be within [1, {MAX_THINKING_BUDGET}], got {thinking_budget}"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// One delta during a streaming response. `delta` is incremental new text
@@ -142,6 +341,9 @@ pub struct Request {
 pub struct CompletionChunk {
     pub delta: String,
     pub done: bool,
+    /// Exact leaf identity. The authorization boundary attaches it to every
+    /// chunk, including the final usage-bearing chunk.
+    pub identity: CompletionIdentity,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
     /// VIEW-03 — cache creation tokens from the final done-chunk usage block.
@@ -158,23 +360,107 @@ pub struct CompletionChunk {
 /// the consumer should stop reading.
 pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>;
 
-/// Canonical "is this `Provider::name()` an on-device (local) inference
-/// backend" predicate. This is the SINGLE place the local-provider set is
+/// Canonical "is this concrete `Provider::name()` guaranteed offline"
+/// predicate. This is the SINGLE place the trusted local-provider set is
 /// enumerated — quota tracking, privacy classification, WAL audit gating
 /// and the free-price table all key off it. GR-17 (Session 30) extracted
 /// this after `local_ouro` (the second local provider, shipped Session 22)
 /// was silently missed at five separate `== "local_qwen"` guards: a new
 /// local backend must only be added here, not hunted across the codebase.
+/// Add a name only when the leaf cannot inherit a network-capable sidecar;
+/// decorators must still authorize their concrete children rather than trust
+/// the primary name.
 ///
-/// NOTE: this is the "is it local at all" question. Provider-SPECIFIC checks
+/// `recursive_mas` is deliberately excluded: it launches an operator-installed
+/// Python sidecar with inherited environment/network access, so nominally local
+/// model weights do not make it safe to bypass B22 authorization.
+///
+/// NOTE: this is the "is it guaranteed offline" question. Provider-SPECIFIC checks
 /// (e.g. `doctor::check_local_qwen_weights`, which verifies the Qwen weight
 /// cache) intentionally stay keyed to their one provider and must NOT route
 /// through this helper.
 pub fn is_local_provider(name: &str) -> bool {
     matches!(
         name,
-        "local_qwen" | "local_ouro" | "local_abliterated" | "local_ollama" | "recursive_mas"
+        "local_qwen" | "local_ouro" | "local_abliterated" | "local_ollama"
     )
+}
+
+/// Convert an operator/config supplied model repository id into one safe path
+/// component. Both platform separators and Windows drive separators are
+/// flattened so cache paths cannot escape the caller-owned model root.
+pub(crate) fn model_cache_component(repo: &str) -> String {
+    repo.chars()
+        .map(|character| match character {
+            '/' | '\\' | ':' => '-',
+            control if control.is_control() => '-',
+            other => other,
+        })
+        .collect()
+}
+
+/// Hard output cap sent by the cloud adapters that expose the corresponding
+/// wire field (`max_tokens`, `maxCompletionTokens`, ...). This is never a
+/// fallback authorization guess: a provider that cannot prove and enforce an
+/// output ceiling must return `None` from [`Provider::output_token_ceiling`]
+/// and dispatch uses the explicit unbounded paid-provider permission path.
+pub const DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING: u32 = 4096;
+
+/// Capability required by every concrete provider transport. Its field and
+/// constructor are private to this module, so safe Rust outside the mandatory
+/// authorization boundary cannot manufacture a dispatch permit.
+///
+/// ```compile_fail
+/// use neothd::providers::ProviderDispatchPermit;
+///
+/// let _forged = ProviderDispatchPermit { _private: () };
+/// ```
+pub struct ProviderDispatchPermit {
+    _private: (),
+}
+
+fn bind_wire_identity<P: Provider + ?Sized>(
+    provider: &P,
+    req: &mut Request,
+) -> Result<CompletionIdentity> {
+    if req.model.is_none() {
+        req.model = provider.default_model().map(str::to_owned);
+    }
+    let requested_model = req.model.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "provider `{}` has no explicit request model or declared default",
+            provider.name()
+        )
+    })?;
+    let wire_model = provider.resolve_model_for_wire(requested_model);
+    req.model = Some(wire_model.clone());
+    Ok(CompletionIdentity::new(provider.name(), &wire_model))
+}
+
+fn stamp_completion_identity(
+    completion: &mut Completion,
+    identity: &CompletionIdentity,
+    preserve_bound_identity: bool,
+) {
+    if !preserve_bound_identity || !completion.identity.is_bound() {
+        completion.identity = identity.clone();
+        completion.model = identity.wire_model.clone();
+    }
+}
+
+fn stamp_stream_identity(
+    stream: ChunkStream,
+    identity: CompletionIdentity,
+    preserve_bound_identity: bool,
+) -> ChunkStream {
+    Box::pin(stream.map(move |item| {
+        item.map(|mut chunk| {
+            if !preserve_bound_identity || !chunk.identity.is_bound() {
+                chunk.identity = identity.clone();
+            }
+            chunk
+        })
+    }))
 }
 
 /// Every LLM backend implements this. Trait is object-safe by design so the
@@ -184,22 +470,192 @@ pub trait Provider: Send + Sync {
     /// Short identifier for logs + WAL events: "claude_cli", "openai_api", ...
     fn name(&self) -> &'static str;
 
-    /// Synchronous (non-streaming) completion. Returns the full response once
-    /// the provider finishes generating.
-    async fn complete(&self, req: Request) -> Result<Completion>;
+    /// Controls this concrete provider leaf implements. Decorators delegate or
+    /// return the intersection of every leaf they may select.
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::NONE
+    }
+
+    /// Validate both the shared capability contract and any leaf-specific,
+    /// model-dependent restrictions. Leaf overrides must call the shared
+    /// validator first so malformed and unsupported controls stay fail-closed.
+    fn validate_request_controls(&self, req: &Request) -> Result<()> {
+        self.request_controls().validate(self.name(), req)
+    }
+
+    /// Concrete model the adapter sends when `Request.model` is absent.
+    /// Decorators delegate this to their effective primary. The cost boundary
+    /// uses it to replace implicit wire defaults with an explicit request model.
+    fn default_model(&self) -> Option<&str> {
+        None
+    }
+
+    /// Resolve an operator/config alias to the exact model identifier that the
+    /// adapter will put on the wire. Paid-call authorization invokes this
+    /// before hashing, pricing, or opening a stream.
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        requested_model.to_owned()
+    }
+
+    /// Proven maximum billable output tokens this concrete leaf can emit for
+    /// `req`. `Some(n)` is valid only when the same adapter invocation enforces
+    /// `n` on the wire. `None` means the whole invocation has no proven finite
+    /// upper cost bound, so non-local leaves are audited and gated through
+    /// `UnboundedPaidProviderCall`; there is no generic 4096-token assumption.
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        None
+    }
+
+    /// Whether this provider's raw streaming implementation requests a
+    /// streaming response on its concrete wire protocol. The default stream
+    /// buffers [`Self::complete`] into one chunk, so its actual wire mode is
+    /// non-streaming and must be audited as such.
+    fn streams_on_wire(&self) -> bool {
+        false
+    }
+
+    /// Authorization decorators return the identity stamped by their actual
+    /// inner leaf. Concrete transports must keep the default so a raw adapter
+    /// cannot forge a different provider/model than the request authorized at
+    /// this boundary.
+    fn preserves_inner_response_identity(&self) -> bool {
+        false
+    }
+
+    /// Dispatch one concrete non-streaming provider hop through the mandatory
+    /// paid-call boundary. Decorators override this method and recurse into
+    /// their actual child hop(s); leaf adapters use this default, which binds
+    /// the exact wire model and authorizes the exact request immediately before
+    /// the network call.
+    async fn complete_authorized(
+        &self,
+        mut req: Request,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        self.validate_request_controls(&req)?;
+        let identity = bind_wire_identity(self, &mut req)?;
+        let output_token_ceiling = self.output_token_ceiling(&req);
+        let authorized = authorizer
+            .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
+            .await?;
+        let mut audit = authorized.begin_dispatch().await?;
+        let permit = ProviderDispatchPermit { _private: () };
+        match self.complete_raw(req, &permit).await {
+            Ok(mut completion) => {
+                stamp_completion_identity(
+                    &mut completion,
+                    &identity,
+                    self.preserves_inner_response_identity(),
+                );
+                audit.complete_success(&completion).await?;
+                Ok(completion)
+            }
+            Err(error) => {
+                if let Err(audit_error) = audit.failure("provider_call_failed").await {
+                    return Err(anyhow::anyhow!(
+                        "provider call failed and terminal audit failed: {audit_error}; provider error: {error}"
+                    ));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Streaming twin of [`Self::complete_authorized`]. The authorization
+    /// payload records streaming mode and is completed before a stream can
+    /// open. Decorators recurse into the actual streaming child.
+    async fn stream_authorized(
+        &self,
+        mut req: Request,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<ChunkStream> {
+        self.validate_request_controls(&req)?;
+        let identity = bind_wire_identity(self, &mut req)?;
+        let output_token_ceiling = self.output_token_ceiling(&req);
+        let streaming = self.streams_on_wire();
+        let authorized = authorizer
+            .authorize_leaf(
+                self.name(),
+                &req,
+                call_scope,
+                streaming,
+                output_token_ceiling,
+            )
+            .await?;
+        let mut audit = authorized.begin_dispatch().await?;
+        let permit = ProviderDispatchPermit { _private: () };
+        match self.stream_raw(req, &permit).await {
+            Ok(stream) => Ok(audit.wrap_stream(stamp_stream_identity(
+                stream,
+                identity,
+                self.preserves_inner_response_identity(),
+            ))),
+            Err(error) => {
+                if let Err(audit_error) = audit.failure("stream_open_failed").await {
+                    return Err(anyhow::anyhow!(
+                        "provider stream open failed and terminal audit failed: {audit_error}; provider error: {error}"
+                    ));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Concrete transport execution. The unforgeable permit is created only
+    /// after cost WAL + permission WAL + policy approval succeed.
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
+        // Test doubles historically implement `complete`; forwarding here
+        // keeps them lightweight. Production adapters implement `complete_raw`
+        // directly and the source invariant below rejects other overrides.
+        self.complete(req).await
+    }
+
+    /// Safe dispatch entry. Only authorization decorators override this in
+    /// production; a bare leaf fails before any transport can run.
+    async fn complete(&self, req: Request) -> Result<Completion> {
+        #[cfg(test)]
+        {
+            let mut req = req;
+            self.validate_request_controls(&req)?;
+            let identity = bind_wire_identity(self, &mut req)?;
+            let permit = ProviderDispatchPermit { _private: () };
+            let mut completion = self.complete_raw(req, &permit).await?;
+            stamp_completion_identity(&mut completion, &identity, false);
+            return Ok(completion);
+        }
+        #[cfg(not(test))]
+        {
+            let _ = req;
+            anyhow::bail!(
+                "raw provider `{}` is not dispatchable; wrap it in an authorized provider boundary",
+                self.name()
+            )
+        }
+    }
 
     /// Streaming completion. Adapters that natively stream (claude_cli with
-    /// `--output-format stream-json`, OpenAI SSE, Gemini streamGenerateContent)
-    /// override this. Adapters that do not yet support streaming fall through
+    /// `--output-format stream-json`, OpenAI SSE, Ollama NDJSON) override this.
+    /// Adapters that do not yet support streaming fall through
     /// to the default impl: synchronously call `complete`, wrap the full text
     /// in a single done-chunk. UX-wise that means `neoth chat --stream` on
     /// such adapters still works but emits one chunk at the end, not
     /// progressively.
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
-        let completion = self.complete(req).await?;
+    async fn stream_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
+        let completion = self.complete_raw(req, permit).await?;
         let chunk = CompletionChunk {
             delta: completion.text,
             done: true,
+            identity: completion.identity,
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
             // VIEW-03 — propagate cache tokens from the fallback complete() path
@@ -209,6 +665,54 @@ pub trait Provider: Send + Sync {
             cache_read_tokens: completion.cache_read_tokens,
         };
         Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
+    }
+
+    /// Safe streaming entry. Bare leaves fail closed in production.
+    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+        #[cfg(test)]
+        {
+            let mut req = req;
+            self.validate_request_controls(&req)?;
+            let identity = bind_wire_identity(self, &mut req)?;
+            let permit = ProviderDispatchPermit { _private: () };
+            let stream = self.stream_raw(req, &permit).await?;
+            return Ok(stamp_stream_identity(stream, identity, false));
+        }
+        #[cfg(not(test))]
+        {
+            let _ = req;
+            anyhow::bail!(
+                "raw provider `{}` is not stream-dispatchable; wrap it in an authorized provider boundary",
+                self.name()
+            )
+        }
+    }
+}
+
+/// Apply a non-essential temperature hint only when the selected leaf can put
+/// it on the wire. Operator-provided controls never use this helper and remain
+/// strict; this is only for internal quality hints that must stay portable.
+pub(crate) fn internal_temperature(
+    provider: &dyn Provider,
+    temperature: f32,
+    call_scope: &'static str,
+) -> Option<f32> {
+    let request = Request {
+        temperature: Some(temperature),
+        ..Request::default()
+    };
+    match provider.validate_request_controls(&request) {
+        Ok(()) => Some(temperature),
+        Err(error) => {
+            tracing::warn!(
+                provider = provider.name(),
+                call_scope,
+                temperature,
+                error = %error,
+                "internal temperature hint omitted because the effective provider model cannot wire it"
+            );
+            None
+        }
     }
 }
 
@@ -305,6 +809,7 @@ pub(crate) fn consented_fallback_slots<'a>(
 
 pub async fn fallback_chain_from_config(
     config: &FreedomConfig,
+    home: &std::path::Path,
     wal_writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<Box<dyn Provider>> {
     let primary =
@@ -312,13 +817,20 @@ pub async fn fallback_chain_from_config(
     if config.fallback.chain.is_empty() {
         return Ok(primary);
     }
-    let home = FreedomConfig::default_neoth_home();
     let mut chain: Vec<Box<dyn Provider>> = vec![primary];
+    let mut configured_models = vec![
+        config
+            .inference
+            .slot_for(crate::config::inference::HemisphereRole::Left)
+            .model
+            .clone()
+            .or_else(|| config.provider_model.clone()),
+    ];
     // CRITICAL consent gate (4-lens gremium) lives in
     // `consented_fallback_slots` — a regression there would leak operator
     // text to an un-consented cloud provider on every 429, so it is a pure
     // tested seam rather than an inline branch.
-    for (slot, inf_provider) in consented_fallback_slots(&home, &config.fallback.chain) {
+    for (slot, inf_provider) in consented_fallback_slots(home, &config.fallback.chain) {
         let kind = inf_provider.to_provider_kind();
         let mut synthetic = config.clone();
         synthetic.provider_kind = Some(kind);
@@ -332,7 +844,10 @@ pub async fn fallback_chain_from_config(
             synthetic.provider_api_version = Some(ver);
         }
         match from_config(&synthetic).await {
-            Ok(p) => chain.push(p),
+            Ok(p) => {
+                chain.push(p);
+                configured_models.push(slot.model.clone());
+            }
             Err(e) => tracing::warn!(
                 provider = inf_provider.as_str(),
                 error = %e,
@@ -345,10 +860,12 @@ pub async fn fallback_chain_from_config(
         // decorator, just the primary.
         return Ok(chain.into_iter().next().expect("primary present"));
     }
-    Ok(Box::new(fallback::FallbackProvider::new(
+    Ok(Box::new(fallback::FallbackProvider::new_with_models_at(
         chain,
+        configured_models,
         config.fallback.max_hops,
         wal_writer,
+        home.join("quota.json"),
     )))
 }
 
@@ -489,6 +1006,16 @@ pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn P
     }
 }
 
+/// Model that [`from_config_for_utility`] will put on the wire when callers
+/// explicitly bind `Request.model`. Keeping this next to
+/// [`build_utility_config`] prevents utility cost authorization from drifting
+/// to the main/flagship model after routing selected a fast model.
+pub(crate) fn utility_model_for_config(config: &FreedomConfig) -> Option<String> {
+    build_utility_config(config)
+        .map(|synthetic| synthetic.provider_model)
+        .unwrap_or_else(|| config.provider_model.clone())
+}
+
 /// GOLD-ADAPT-ODY-08 — build the SOTA teacher provider for escalation when a
 /// local model fails or replies with low confidence.
 ///
@@ -497,10 +1024,11 @@ pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn P
 ///   2. Main provider (`from_config(config)`) as fallback — the operator's cloud
 ///      flagship then acts as the teacher.
 ///
-/// **Safety gate:** a LOCAL `teacher_provider` is rejected with a clear error.
-/// Teaching via a local model is circular — the same model class that failed
-/// would be asked to correct itself. The gate uses the single canonical
-/// `is_local_provider()` check; do NOT reimplement the string comparison.
+/// **Safety gate:** a non-cloud-SOTA `teacher_provider` is rejected with a clear
+/// error. Teaching via a local model is circular — the same model class that
+/// failed would be asked to correct itself. This also rejects `recursive_mas`:
+/// it is intentionally outside the guaranteed-offline classification, but it
+/// still is not a cloud SOTA teacher.
 ///
 /// **No key cross-contamination:** if `teacher_provider` differs from the
 /// operator's main provider, the synthetic config resets the key/endpoint/model
@@ -512,9 +1040,9 @@ pub async fn from_config_for_teacher(config: &FreedomConfig) -> Result<Box<dyn P
         return from_config(config).await;
     };
     let teacher_str = inf_prov.as_str();
-    if is_local_provider(teacher_str) {
+    if is_local_provider(teacher_str) || teacher_str == "recursive_mas" {
         anyhow::bail!(
-            "freedom.yaml::inference.teacher_provider = `{teacher_str}` is a local provider. \
+            "freedom.yaml::inference.teacher_provider = `{teacher_str}` is not a cloud SOTA teacher. \
              Teacher escalation requires a cloud SOTA provider so the correction adds value. \
              Set a cloud provider (e.g. `anthropic_api`, `claude_cli`, `openai_api`, `gemini_api`) \
              or remove `teacher_provider` to fall through to the operator's main provider."
@@ -583,8 +1111,8 @@ fn build_utility_config(config: &FreedomConfig) -> Option<FreedomConfig> {
 ///
 /// Returns `Err` if the operator has not configured a provider yet (provider
 /// kind is `Skip` or absent). The caller — typically `cli::chat::run` — is
-/// expected to print a helpful "run `neoth provider add`" message in that
-/// case.
+/// expected to print a helpful "run `neoth init` or `neoth hemispheres set`"
+/// message in that case.
 /// GOLD-WIRE-03: the default model for a provider when the operator left
 /// `provider_model` unset. Resolves from [`model_roles::default_table`] (the
 /// single source of truth for ship-time model defaults) and falls back to
@@ -636,9 +1164,9 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
         None => None,
     };
     let config = aliased_config.as_ref().unwrap_or(config);
-    let kind = config
-        .provider_kind
-        .ok_or_else(|| anyhow::anyhow!("no provider configured. Run `neoth provider add`."))?;
+    let kind = config.provider_kind.ok_or_else(|| {
+        anyhow::anyhow!("no provider configured. Run `neoth init` or `neoth hemispheres set`.")
+    })?;
 
     match kind {
         ProviderKind::ClaudeCli => {
@@ -763,9 +1291,8 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
             // First construction downloads model artifacts from Hugging Face
             // (~3 GB); subsequent constructions are cache-fast. Operator-
             // chosen accelerator + sampling defaults thread through from
-            // `freedom.yaml::inference`. Sampling stays greedy for v0.1.x;
-            // top-p comes online when `neoth chat --temperature/--top-p`
-            // CLI flags land in Phase 2c.
+            // `freedom.yaml::inference`; per-call controls are merged by the
+            // adapter after the strict leaf capability gate.
             let repo = config.provider_model.clone();
             let accelerator = config
                 .inference
@@ -910,7 +1437,10 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
             )
         }
         ProviderKind::Skip => {
-            anyhow::bail!("provider was set to `skip` during init. Run `neoth provider add`.")
+            anyhow::bail!(
+                "provider was set to `skip` during init. Run `neoth init` or \
+                 `neoth hemispheres set`."
+            )
         }
     }
 }
@@ -1014,6 +1544,144 @@ mod tests {
     use crate::config::inference::{
         HemisphereRole, HemisphereSlot, InferenceProvider, InferenceTopology, TopologyMode,
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct NoControlProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for NoControlProvider {
+        fn name(&self) -> &'static str {
+            "no_controls"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_control_is_rejected_before_provider_call() {
+        let provider = NoControlProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let error = provider
+            .complete(Request {
+                temperature: Some(0.4),
+                ..Request::default()
+            })
+            .await
+            .expect_err("unsupported control must fail");
+        assert!(error.to_string().contains("provider `no_controls`"));
+        assert!(error.to_string().contains("temperature"));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn internal_temperature_is_omitted_for_unsupported_provider() {
+        let provider = NoControlProvider {
+            calls: AtomicUsize::new(0),
+        };
+
+        assert_eq!(internal_temperature(&provider, 0.4, "test.internal"), None);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn request_control_validation_rejects_non_finite_ranges_and_bad_stops() {
+        let controls = ProviderRequestControls::SAMPLING;
+        for temperature in [f32::NAN, f32::INFINITY, -0.1, 2.1] {
+            let error = controls
+                .validate(
+                    "test",
+                    &Request {
+                        temperature: Some(temperature),
+                        ..Request::default()
+                    },
+                )
+                .expect_err("invalid temperature");
+            assert!(error.to_string().contains("temperature"));
+        }
+        for top_p in [f32::NAN, f32::INFINITY, 0.0, -0.1, 1.1] {
+            let error = controls
+                .validate(
+                    "test",
+                    &Request {
+                        top_p: Some(top_p),
+                        ..Request::default()
+                    },
+                )
+                .expect_err("invalid top_p");
+            assert!(error.to_string().contains("top_p"));
+        }
+        let seed_error = controls
+            .validate(
+                "test",
+                &Request {
+                    sampling_seed: Some(u32::MAX as u64 + 1),
+                    ..Request::default()
+                },
+            )
+            .expect_err("oversized seed");
+        assert!(seed_error.to_string().contains("sampling_seed"));
+        for stops in [vec![String::new()], vec!["x".repeat(257)]] {
+            let error = controls
+                .validate(
+                    "test",
+                    &Request {
+                        stop_sequences: stops,
+                        ..Request::default()
+                    },
+                )
+                .expect_err("invalid stop sequence");
+            assert!(error.to_string().contains("stop sequence"));
+        }
+    }
+
+    #[test]
+    fn request_control_intersection_preserves_the_stricter_temperature_limit() {
+        ProviderRequestControls::SAMPLING
+            .validate(
+                "two",
+                &Request {
+                    temperature: Some(1.5),
+                    ..Request::default()
+                },
+            )
+            .expect("two-range provider accepts 1.5");
+
+        let strict = ProviderRequestControls::SAMPLING
+            .intersection(ProviderRequestControls::SAMPLING_MAX_ONE);
+        let error = strict
+            .validate(
+                "fallback",
+                &Request {
+                    temperature: Some(1.5),
+                    ..Request::default()
+                },
+            )
+            .expect_err("intersection must retain the narrower leaf range");
+        assert!(error.to_string().contains("[0.0, 1.0]"));
+    }
+
+    #[test]
+    fn model_cache_component_flattens_cross_platform_path_escape_syntax() {
+        assert_eq!(
+            model_cache_component(r"C:\\outside/../../model"),
+            "C---outside-..-..-model"
+        );
+        assert!(!model_cache_component("repo\nname").contains('\n'));
+    }
 
     #[test]
     fn default_model_resolves_from_table_then_falls_back() {
@@ -1094,18 +1762,35 @@ mod tests {
     }
 
     #[test]
-    fn is_local_provider_recognises_both_local_backends_and_rejects_cloud() {
-        // The canonical local-provider set. Adding a third local backend
-        // means adding ONE arm here — every quota/privacy/audit guard
-        // routes through this fn, so they can't drift out of sync (GR-17).
+    fn is_local_provider_recognises_only_guaranteed_offline_backends() {
+        // The canonical guaranteed-offline set. Adding another trusted local
+        // backend means adding ONE arm here — every quota/privacy/audit guard
+        // routes through this fn, so they cannot drift out of sync (GR-17).
         assert!(is_local_provider("local_qwen"));
         assert!(is_local_provider("local_ouro"));
+        assert!(is_local_provider("local_abliterated"));
+        assert!(is_local_provider("local_ollama"));
+        assert!(
+            !is_local_provider("recursive_mas"),
+            "network-capable sidecars must not bypass paid-call authorization"
+        );
         assert!(!is_local_provider("claude_cli"));
         assert!(!is_local_provider("openai_api"));
         assert!(!is_local_provider("gemini_api"));
         assert!(!is_local_provider("aws_bedrock"));
         assert!(!is_local_provider("azure_openai"));
         assert!(!is_local_provider("")); // defensive: empty name is not local
+    }
+
+    #[tokio::test]
+    async fn recursive_mas_remains_ineligible_as_teacher() {
+        let mut cfg = base_config();
+        cfg.inference.teacher_provider = Some(InferenceProvider::RecursiveMas);
+        let err = err_or_panic(from_config_for_teacher(&cfg).await);
+        assert!(
+            err.to_string().contains("not a cloud SOTA teacher"),
+            "recursive_mas must not become a teacher merely because it is no longer trusted offline"
+        );
     }
 
     fn base_config() -> FreedomConfig {
@@ -1186,7 +1871,8 @@ mod tests {
     }
 
     /// Smoke test: with `provider_kind = Skip`, both paths return Err —
-    /// the chat path can render the same "run `neoth provider add`"
+    /// the chat path can render the same "run `neoth init` or
+    /// `neoth hemispheres set`"
     /// hint regardless of whether the role-aware variant was used.
     #[tokio::test]
     async fn skip_provider_kind_errors_consistently_across_both_entry_points() {
@@ -1407,7 +2093,9 @@ mod tests {
             "ghp_test_pat_000000000000000000000000",
         ));
         cfg.provider_model = Some("gpt-4o".to_string());
-        let provider = from_config(&cfg).await.expect("CopilotAdapter must construct");
+        let provider = from_config(&cfg)
+            .await
+            .expect("CopilotAdapter must construct");
         // name() == "copilot_api" proves the correct arm was reached.
         assert_eq!(
             provider.name(),

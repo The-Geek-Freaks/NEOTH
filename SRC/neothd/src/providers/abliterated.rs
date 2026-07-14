@@ -19,7 +19,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use super::local_qwen::LocalQwenAdapter;
-use super::{Completion, Provider, Request};
+use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 
 /// Tier-3 fallback: the operator's own locally-hosted abliterated model. Thin
 /// wrapper over [`LocalQwenAdapter`] — all inference, weight caching, and the
@@ -45,10 +45,26 @@ impl Provider for AbliteratedProvider {
         "local_abliterated"
     }
 
+    fn request_controls(&self) -> ProviderRequestControls {
+        self.inner.request_controls()
+    }
+
+    fn validate_request_controls(&self, req: &Request) -> Result<()> {
+        self.inner.validate_request_controls(req)
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        self.inner.default_model()
+    }
+
     /// Delegates to the inner adapter unchanged (its circuit breaker still
     /// fires on repeated local-inference failures).
-    async fn complete(&self, req: Request) -> Result<Completion> {
-        self.inner.complete(req).await
+    async fn complete_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
+        self.inner.complete_raw(req, permit).await
     }
 
     // `stream` inherits the Provider default impl (wrap `complete` in one

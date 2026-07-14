@@ -2,7 +2,7 @@
 //!
 //! BlueBubbles is an open-source Mac app that exposes iMessage as a REST
 //! API + optional webhook (<https://bluebubblestatus.com>). NEOTH uses the
-//! **polling** transport (`GET /api/v1/message?after=<cursor>`) so the
+//! **polling** transport (`POST /api/v1/message/query`) so the
 //! operator needs NO public URL — NEOTH dials out to the BlueBubbles server
 //! on the local Mac (or LAN/Tailscale).
 //!
@@ -29,7 +29,9 @@
 //!
 //! ## Polling cursor
 //!
-//! The inbound poll uses `GET /api/v1/message?after=<unix_ms>`. On each
+//! The inbound poll uses `POST /api/v1/message/query` with `after`, `limit`,
+//! `offset`, and ascending sort. All pages are drained before the cursor is
+//! advanced. On each
 //! tick the cursor advances to `max(returned message timestamps) + 1 ms`.
 //! On the first tick, `after = now_unix_ms - poll_interval_ms` so only
 //! "very recent" messages are fetched at startup (avoids replaying history
@@ -51,8 +53,8 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use super::{
-    sender_blocked_by_allowlist, Channel, ChannelError, ChannelKind, InboundMessage, MediaPayload,
-    MessageId, PipelineHandler,
+    Channel, ChannelError, ChannelKind, InboundMessage, MediaPayload, MessageId, PipelineHandler,
+    sender_blocked_by_allowlist,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -61,17 +63,33 @@ use super::{
 /// server load negligible (it is a personal Mac app, not a cloud service).
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(3);
 
+/// BlueBubbles accepts up to 1000 rows per message-query page.
+const POLL_PAGE_SIZE: usize = 1000;
+
+/// Fail the poll without advancing its cursor if a broken server ignores
+/// `offset` forever. One million rows per 3-second window is already far above
+/// a personal iMessage workload; returning an error preserves retryability.
+const MAX_POLL_PAGES: usize = 1000;
+
 /// `User-Agent` sent on every BlueBubbles HTTP request.
 const USER_AGENT: &str = "NEOTH/0.1 (+https://neoth.dev)";
 
 // ── Wire types ─────────────────────────────────────────────────────────────
 
-/// Top-level response of `GET /api/v1/message?after=<ts>`.
-/// BB wraps the array in `{ "status": 200, "message": [...] }`.
+/// Top-level response of `POST /api/v1/message/query`.
+/// BB wraps the array in `{ "status": 200, "data": [...], "metadata": ... }`.
 #[derive(Debug, Deserialize)]
 struct MessageListResponse {
     #[serde(default)]
-    message: Vec<BbMessage>,
+    data: Vec<BbMessage>,
+    #[serde(default)]
+    metadata: Option<MessageListMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageListMetadata {
+    #[serde(default)]
+    total: Option<usize>,
 }
 
 /// One inbound message from the BlueBubbles REST API.
@@ -90,8 +108,8 @@ pub(crate) struct BbMessage {
     /// Plain-text body (may be empty for tapback/reactions/system messages).
     #[serde(default)]
     pub text: Option<String>,
-    /// BB date in milliseconds since macOS reference date (2001-01-01).
-    /// Convert: `unix_ms = date_ms + 978_307_200_000`.
+    /// Unix milliseconds. BlueBubbles serializes its internal `Date` with
+    /// JavaScript `Date::getTime()` before sending the REST response.
     #[serde(default, rename = "dateCreated")]
     pub date_created: i64,
     /// True if NEOTH sent this message (via our own Apple ID). We NEVER
@@ -117,14 +135,12 @@ pub(crate) struct BbChat {
     pub guid: String,
 }
 
-/// macOS reference date delta — BB timestamps are milliseconds since
-/// 2001-01-01 00:00:00 UTC; Unix timestamps start at 1970-01-01.
-const MACOS_EPOCH_DELTA_MS: i64 = 978_307_200_000;
-
-/// Convert a BB `dateCreated` value to Unix milliseconds, clamping to 0
-/// for the rare case of negative or pre-epoch values.
+/// Clamp a BlueBubbles Unix-millisecond timestamp to zero for corrupt negative
+/// values. The server already converts its macOS database epoch to `Date` and
+/// serializes `Date::getTime()`; adding the 2001 epoch delta again would move
+/// the cursor roughly 31 years into the future.
 pub(crate) fn bb_date_to_unix_ms(date_created: i64) -> i64 {
-    date_created.saturating_add(MACOS_EPOCH_DELTA_MS).max(0)
+    date_created.max(0)
 }
 
 // ── Mapping ───────────────────────────────────────────────────────────────
@@ -276,29 +292,66 @@ impl BlueBubblesChannel {
         )
     }
 
-    /// Poll `GET /api/v1/message?after=<cursor_ms>&password=…` and return
-    /// the raw message list. An empty body or a 200 with no messages is
-    /// `Ok(vec![])`.
+    /// Drain every `POST /api/v1/message/query` page for one fixed cursor.
+    /// Advancing the cursor remains the caller's job and happens only after
+    /// this returns the complete window.
     async fn poll_messages(
         &self,
         cursor_ms: i64,
     ) -> std::result::Result<Vec<BbMessage>, ChannelError> {
-        // Build the URL; note the password is added by `api_url`, the cursor
-        // goes as a second query param appended here.
-        let url = format!("{}&after={}", self.api_url("message"), cursor_ms);
-        let resp = self
-            .http
-            .get(&url)
-            .header(reqwest::header::USER_AGENT, USER_AGENT)
-            .send()
+        self.poll_messages_with_page_size(cursor_ms, POLL_PAGE_SIZE)
             .await
-            .map_err(|e| ChannelError::Transport(self.scrub(format!("BlueBubbles GET /message: {e}"))))?;
-        map_bb_status(&resp)?;
-        let parsed: MessageListResponse = resp
-            .json()
-            .await
-            .map_err(|e| ChannelError::Transport(self.scrub(format!("BlueBubbles /message parse: {e}"))))?;
-        Ok(parsed.message)
+    }
+
+    async fn poll_messages_with_page_size(
+        &self,
+        cursor_ms: i64,
+        page_size: usize,
+    ) -> std::result::Result<Vec<BbMessage>, ChannelError> {
+        let page_size = page_size.clamp(1, 1000);
+        let url = self.api_url("message/query");
+        let mut messages = Vec::new();
+        let mut offset = 0usize;
+
+        for _ in 0..MAX_POLL_PAGES {
+            let body = serde_json::json!({
+                "after": cursor_ms,
+                "limit": page_size,
+                "offset": offset,
+                "sort": "ASC",
+                "with": ["chats"],
+            });
+            let resp = self
+                .http
+                .post(&url)
+                .header(reqwest::header::USER_AGENT, USER_AGENT)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| {
+                    ChannelError::Transport(
+                        self.scrub(format!("BlueBubbles POST /message/query: {e}")),
+                    )
+                })?;
+            map_bb_status(&resp)?;
+            let parsed: MessageListResponse = resp.json().await.map_err(|e| {
+                ChannelError::Transport(
+                    self.scrub(format!("BlueBubbles /message/query parse: {e}")),
+                )
+            })?;
+            let page_len = parsed.data.len();
+            let total = parsed.metadata.and_then(|metadata| metadata.total);
+            messages.extend(parsed.data);
+            offset = offset.saturating_add(page_len);
+
+            if page_len == 0 || page_len < page_size || total.is_some_and(|total| offset >= total) {
+                return Ok(messages);
+            }
+        }
+
+        Err(ChannelError::Transport(format!(
+            "BlueBubbles /message/query exceeded {MAX_POLL_PAGES} pages without completing; cursor preserved for retry"
+        )))
     }
 
     /// `POST /api/v1/message/text` — send `text` to `chat_guid`.
@@ -322,13 +375,19 @@ impl BlueBubblesChannel {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ChannelError::Transport(self.scrub(format!("BlueBubbles POST /message/text: {e}"))))?;
+            .map_err(|e| {
+                ChannelError::Transport(self.scrub(format!("BlueBubbles POST /message/text: {e}")))
+            })?;
         map_bb_status(&resp)?;
         // Parse the returned message GUID if available; fall back to "sent".
         // BB wraps responses as `{status, message: "<string>", data: {guid}}`
         // (verified against MessageRouter.sendText upstream) — the guid lives
         // at `/data/guid`; `/message/guid` kept as a legacy fallback.
-        let val: serde_json::Value = resp.json().await.unwrap_or_default();
+        let val: serde_json::Value = resp.json().await.map_err(|error| {
+            ChannelError::Transport(self.scrub(format!(
+                "BlueBubbles POST /message/text response JSON: {error}"
+            )))
+        })?;
         let guid = val
             .pointer("/data/guid")
             .or_else(|| val.pointer("/message/guid"))
@@ -395,8 +454,7 @@ impl Channel for BlueBubblesChannel {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
-        let mut cursor_ms = now_unix_ms
-            .saturating_sub(self.poll_interval.as_millis() as i64);
+        let mut cursor_ms = now_unix_ms.saturating_sub(self.poll_interval.as_millis() as i64);
 
         let allowed_sender = self.allowed_sender.as_deref();
         let chat_guid_allowlist = self.chat_guid_allowlist.as_deref();
@@ -431,9 +489,7 @@ impl Channel for BlueBubblesChannel {
 
                         match handler(inbound).await {
                             Ok(Some(out)) => {
-                                if let Err(e) =
-                                    self.post_text(&out.recipient_id, &out.text).await
-                                {
+                                if let Err(e) = self.post_text(&out.recipient_id, &out.text).await {
                                     warn!(error = %e, "bluebubbles reply send failed (dropped)");
                                 }
                             }
@@ -533,7 +589,11 @@ impl Channel for BlueBubblesChannel {
                 )
             })?;
         map_bb_status(&resp)?;
-        let val: serde_json::Value = resp.json().await.unwrap_or_default();
+        let val: serde_json::Value = resp.json().await.map_err(|error| {
+            ChannelError::Transport(self.scrub(format!(
+                "BlueBubbles POST /message/attachment response JSON: {error}"
+            )))
+        })?;
         let guid = val
             .pointer("/data/guid")
             .and_then(|v| v.as_str())
@@ -613,7 +673,7 @@ mod tests {
             "+14155551234",
             Some("hello"),
             "iMessage;-;+14155551234",
-            0, // macOS epoch = Unix epoch + 978_307_200_000 ms
+            1_700_000_000_123,
             false,
         );
         let inbound = bb_message_to_inbound(&msg, None).expect("valid DM maps");
@@ -621,9 +681,8 @@ mod tests {
         assert_eq!(inbound.sender_id, "+14155551234");
         assert_eq!(inbound.chat_id, "iMessage;-;+14155551234");
         assert_eq!(inbound.text.as_deref(), Some("hello"));
-        // date_created = 0 → unix_ms = MACOS_EPOCH_DELTA_MS → ts = 978_307_200
-        assert_eq!(inbound.channel_ts_unix, 978_307_200_u64);
-        assert_eq!(inbound.raw_ts_ms, Some(978_307_200_000));
+        assert_eq!(inbound.channel_ts_unix, 1_700_000_000_u64);
+        assert_eq!(inbound.raw_ts_ms, Some(1_700_000_000_123));
     }
 
     #[test]
@@ -665,9 +724,9 @@ mod tests {
     // ── Cursor advance ────────────────────────────────────────────────────
 
     #[test]
-    fn bb_date_to_unix_ms_applies_epoch_delta() {
-        // date_created = 0 → 2001-01-01 = unix 978_307_200_000 ms
-        assert_eq!(bb_date_to_unix_ms(0), MACOS_EPOCH_DELTA_MS);
+    fn bb_date_to_unix_ms_preserves_server_unix_timestamp() {
+        // BlueBubbles already serializes Date::getTime() (Unix ms).
+        assert_eq!(bb_date_to_unix_ms(1_700_000_000_123), 1_700_000_000_123);
         // Negative clamped to 0 (paranoia against corrupted BB data)
         assert_eq!(bb_date_to_unix_ms(i64::MIN), 0);
     }
@@ -714,12 +773,89 @@ mod tests {
     #[test]
     fn new_trims_trailing_slash() {
         let pw = SecretString::from("pw");
-        let ch = BlueBubblesChannel::new("http://localhost:1234/", pw, None, None)
-            .expect("builds");
+        let ch = BlueBubblesChannel::new("http://localhost:1234/", pw, None, None).expect("builds");
         assert_eq!(
             ch.server_url, "http://localhost:1234",
             "trailing slash stripped"
         );
+    }
+
+    #[tokio::test]
+    async fn poll_drains_all_message_query_pages_before_returning() {
+        use wiremock::matchers::{body_json, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let common = |offset| {
+            serde_json::json!({
+                "after": 1_700_000_000_000_i64,
+                "limit": 2,
+                "offset": offset,
+                "sort": "ASC",
+                "with": ["chats"],
+            })
+        };
+        Mock::given(method("POST"))
+            .and(path("/api/v1/message/query"))
+            .and(query_param("password", "pw"))
+            .and(body_json(common(0)))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": 200,
+                "message": "Successfully fetched messages!",
+                "data": [{"guid": "g1"}, {"guid": "g2"}],
+                "metadata": {"offset": 0, "limit": 2, "total": 3, "count": 2}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/message/query"))
+            .and(query_param("password", "pw"))
+            .and(body_json(common(2)))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": 200,
+                "message": "Successfully fetched messages!",
+                "data": [{"guid": "g3"}],
+                "metadata": {"offset": 2, "limit": 2, "total": 3, "count": 1}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let channel = BlueBubblesChannel::new(server.uri(), SecretString::from("pw"), None, None)
+            .expect("channel builds");
+        let messages = channel
+            .poll_messages_with_page_size(1_700_000_000_000, 2)
+            .await
+            .expect("all pages load");
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.guid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["g1", "g2", "g3"]
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_send_success_response_is_not_reported_as_sent() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/message/text"))
+            .and(query_param("password", "pw"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .mount(&server)
+            .await;
+        let channel =
+            BlueBubblesChannel::new(server.uri(), SecretString::from("pw"), None, None).unwrap();
+        let error = channel
+            .post_text("iMessage;-;+1234", "hello")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("response JSON"), "got: {error}");
     }
 
     #[test]
@@ -731,8 +867,7 @@ mod tests {
         // This is a compile+shape test — the actual network call will fail
         // with a connection-refused Transport error.
         let pw = SecretString::from("pw");
-        let ch =
-            BlueBubblesChannel::new("http://127.0.0.1:19999", pw, None, None).expect("builds");
+        let ch = BlueBubblesChannel::new("http://127.0.0.1:19999", pw, None, None).expect("builds");
         // The error MUST be ChannelError::Transport (not Auth, not panics).
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -752,8 +887,7 @@ mod tests {
     fn api_url_contains_password_but_struct_debug_does_not_expose_it() {
         // Confirm the Debug impl on SecretString does NOT print the raw secret.
         let pw = SecretString::from("super_secret_pw");
-        let ch =
-            BlueBubblesChannel::new("http://localhost:1234", pw, None, None).expect("builds");
+        let ch = BlueBubblesChannel::new("http://localhost:1234", pw, None, None).expect("builds");
         let debug_str = format!("{:?}", ch.password);
         assert!(
             !debug_str.contains("super_secret_pw"),

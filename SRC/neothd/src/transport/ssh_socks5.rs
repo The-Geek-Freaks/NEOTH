@@ -131,7 +131,11 @@ where
 /// Egress through an existing SOCKS5 proxy: connect to `proxy`, do the NO-AUTH
 /// greeting + a `CONNECT` to `target_host:target_port`, and return the live
 /// stream on success. Used for the "SOCKS5 hop-0" path of TERMIX-02.
-pub async fn socks5_connect(proxy: SocketAddr, target_host: &str, target_port: u16) -> Result<TcpStream> {
+pub async fn socks5_connect(
+    proxy: SocketAddr,
+    target_host: &str,
+    target_port: u16,
+) -> Result<TcpStream> {
     if target_host.len() > 255 {
         bail!("socks5: domain too long ({} > 255)", target_host.len());
     }
@@ -141,7 +145,11 @@ pub async fn socks5_connect(proxy: SocketAddr, target_host: &str, target_port: u
     let mut sel = [0u8; 2];
     s.read_exact(&mut sel).await?;
     if sel[0] != VER || sel[1] != METHOD_NO_AUTH {
-        bail!("socks5: proxy refused NO-AUTH (got {:#x},{:#x})", sel[0], sel[1]);
+        bail!(
+            "socks5: proxy refused NO-AUTH (got {:#x},{:#x})",
+            sel[0],
+            sel[1]
+        );
     }
     // CONNECT request with a DOMAIN address (the proxy resolves it).
     let mut req = vec![VER, CMD_CONNECT, 0x00, ATYP_DOMAIN, target_host.len() as u8];
@@ -197,7 +205,13 @@ mod tests {
         });
         negotiate_no_auth(&mut server).await.unwrap();
         let addr = read_connect_request(&mut server).await.unwrap();
-        assert_eq!(addr, Socks5Addr { host: "example.com".into(), port: 443 });
+        assert_eq!(
+            addr,
+            Socks5Addr {
+                host: "example.com".into(),
+                port: 443
+            }
+        );
         write_reply(&mut server, reply::SUCCEEDED).await.unwrap();
         client_task.await.unwrap();
     }
@@ -216,7 +230,13 @@ mod tests {
         });
         negotiate_no_auth(&mut server).await.unwrap();
         let addr = read_connect_request(&mut server).await.unwrap();
-        assert_eq!(addr, Socks5Addr { host: "10.0.0.5".into(), port: 22 });
+        assert_eq!(
+            addr,
+            Socks5Addr {
+                host: "10.0.0.5".into(),
+                port: 22
+            }
+        );
         t.await.unwrap();
     }
 
@@ -268,7 +288,9 @@ mod tests {
             let _target = read_connect_request(&mut client).await.unwrap();
             let mut up = TcpStream::connect(echo_addr).await.unwrap();
             write_reply(&mut client, reply::SUCCEEDED).await.unwrap();
-            tokio::io::copy_bidirectional(&mut client, &mut up).await.ok();
+            tokio::io::copy_bidirectional(&mut client, &mut up)
+                .await
+                .ok();
         });
         let mut s = socks5_connect(proxy_addr, "127.0.0.1", echo_addr.port())
             .await

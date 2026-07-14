@@ -373,6 +373,23 @@ pub fn hebbian_reinforce_at_tier(
     Ok(Some(ReinforceOutcome { old, new, tier }))
 }
 
+/// Operator upvote: find `event_id` across Hot→Warm→Cold and reinforce the
+/// first tier that owns it. This mirrors [`hebbian_weaken_across_tiers`] so an
+/// id copied from any recall result is accepted without the caller guessing
+/// its storage tier.
+pub fn hebbian_reinforce_across_tiers(
+    conn: &Connection,
+    event_id: i64,
+    now_ns: u64,
+) -> Result<Option<ReinforceOutcome>> {
+    for tier in [Tier::Hot, Tier::Warm, Tier::Cold] {
+        if let Some(outcome) = hebbian_reinforce_at_tier(conn, tier, event_id, now_ns)? {
+            return Ok(Some(outcome));
+        }
+    }
+    Ok(None)
+}
+
 /// The (select, update) importance SQL pair for a tier — compile-time literal
 /// table names. Used by the GOLD-ADAPT-MEM-08 weaken path; reinforce inlines
 /// the same strings.
@@ -518,6 +535,32 @@ mod tests {
         // An absent event_id weakens nothing.
         assert!(
             hebbian_weaken_across_tiers(&conn, 999, HEBBIAN_HARMFUL_PENALTY, 3_000)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn hebbian_reinforce_across_tiers_finds_and_persists_hot_event() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        insert_row(&conn, 77, 1_000, 0.5);
+
+        let outcome = hebbian_reinforce_across_tiers(&conn, 77, 2_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome.tier, Tier::Hot);
+        assert!(outcome.new > outcome.old);
+        let stored: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 77",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((stored - outcome.new).abs() < 1e-9);
+        assert!(
+            hebbian_reinforce_across_tiers(&conn, 999, 3_000)
                 .unwrap()
                 .is_none()
         );

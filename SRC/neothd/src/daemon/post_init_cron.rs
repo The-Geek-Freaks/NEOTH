@@ -80,7 +80,10 @@ async fn run_post_init_check_inner(home: &Path) -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("queue load/save: {e}"))?;
 
     if enqueued {
-        tracing::info!("post_init_cron: enqueued onboarding checklist item ({} gap(s))", gaps.len());
+        tracing::info!(
+            "post_init_cron: enqueued onboarding checklist item ({} gap(s))",
+            gaps.len()
+        );
     } else {
         tracing::debug!("post_init_cron: item already queued (dedup), skipping");
     }
@@ -91,56 +94,10 @@ async fn run_post_init_check_inner(home: &Path) -> anyhow::Result<()> {
 /// Collect human-readable gap descriptions. Same logic as the doctor check
 /// in `cli/doctor/checks/onboarding.rs` so both surfaces stay in sync.
 fn collect_onboarding_gaps(home: &Path) -> Vec<String> {
-    let mut gaps = Vec::new();
-
-    let freedom_path = home.join("freedom.yaml");
-    let cfg = match crate::config::FreedomConfig::load_from_path(&freedom_path) {
-        Ok(c) => c,
-        Err(_) => {
-            gaps.push("freedom.yaml missing or unreadable — run `neoth init`".to_string());
-            return gaps;
-        }
-    };
-
-    // Provider wired?
-    let kind_str = serde_yaml::to_string(&cfg.provider_kind)
-        .unwrap_or_default()
-        .trim()
-        .to_lowercase();
-    let creds_ok = home.join("credentials.yaml").exists();
-    let has_provider = !kind_str.is_empty()
-        && (creds_ok || kind_str.contains("local_qwen") || kind_str.contains("antigravity"));
-    if !has_provider {
-        gaps.push(
-            "provider not wired — no credentials.yaml for the configured provider_kind".to_string(),
-        );
+    match crate::cli::onboarding_readiness::load(home) {
+        Ok((_, readiness)) => readiness.gaps(),
+        Err(_) => vec!["freedom.yaml or credentials are unreadable - run `neoth init`".to_string()],
     }
-
-    // Channel token present?
-    let has_channel = {
-        let creds_path = home.join("credentials.yaml");
-        if creds_path.exists() {
-            match crate::config::credentials::Credentials::load_or_default(&creds_path) {
-                Ok(c) => {
-                    c.telegram_token.is_some()
-                        || c.slack_bot_token.is_some()
-                        || c.discord_bot_token.is_some()
-                        || c.whatsapp_token.is_some()
-                }
-                Err(_) => false,
-            }
-        } else {
-            false
-        }
-    };
-    if !has_channel {
-        gaps.push(
-            "no channel token (Telegram/Slack/Discord/WhatsApp) — proactive delivery is silent"
-                .to_string(),
-        );
-    }
-
-    gaps
 }
 
 #[cfg(test)]
@@ -163,10 +120,7 @@ mod tests {
         // No freedom.yaml → gaps detected
         run_post_init_check(dir.path()).await;
         let queue_path = dir.path().join("proactive_queue.json");
-        assert!(
-            queue_path.exists(),
-            "queue should exist after enqueue"
-        );
+        assert!(queue_path.exists(), "queue should exist after enqueue");
         let queue = crate::proactive::ProactiveQueue::load_from(&queue_path).unwrap();
         assert!(!queue.is_empty(), "should have one item");
         // Verify source tag
@@ -201,7 +155,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.path().join("credentials.yaml"),
-            "telegram_token: \"123:abc\"\n",
+            "provider_key: \"sk-test\"\ntelegram_token: \"123:abc\"\n",
         )
         .unwrap();
         run_post_init_check(dir.path()).await;

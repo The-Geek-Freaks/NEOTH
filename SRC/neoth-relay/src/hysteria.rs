@@ -1,14 +1,9 @@
-//! Cluster Phase 5 — Hysteria transport scaffolding.
+//! External-Hysteria deployment contract for `neoth-relay`.
 //!
-//! Architect verdict (Session 21): the relay is a separate binary,
-//! TLS via **Hysteria** (a QUIC-based UDP obfuscation transport)
-//! is the production hardening path for restricted networks. This
-//! module ships the **config types + bind contract** the v1 wire
-//! will need; the actual `hysteria` daemon plumbing is multi-week
-//! and runs as a sibling process (per the architect's "do not fork
-//! Hysteria" verdict).
+//! Hysteria is intentionally a separate, operator-managed process. NEOTH does
+//! not embed, fork, download, provision, or supervise it. The production
+//! boundary is:
 //!
-//! v0.1 deployment shape:
 //!   1. Operator runs `hysteria server -c hysteria.yaml` on the
 //!      same host as `neoth-relay`.
 //!   2. Hysteria listens on the public UDP port (e.g. 443/udp)
@@ -18,18 +13,19 @@
 //!      connection; Hysteria handles the QUIC + auth + obfuscation
 //!      on the public side.
 //!
-//! The `HysteriaTransportConfig` here is **metadata only** in v0.1
-//! — the relay daemon reads it for status / doctor output so
-//! operators can verify their Hysteria sidecar is configured
-//! correctly. v2 (post-O-7 Hysteria-embedded build) flips
-//! `connect_via_hysteria` from `bail` to a real implementation.
+//! [`HysteriaTransportConfig`] records that boundary. `serve` validates the
+//! configured `forward_to` against its actual loopback bind before accepting
+//! traffic. `status` and `doctor` probe the relay-side TCP target. They cannot
+//! prove that the sidecar's public QUIC listener or authentication works; that
+//! must be checked with Hysteria's own tooling.
 
-use anyhow::{Result, anyhow};
+use std::net::SocketAddr;
+
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-/// Operator-supplied Hysteria sidecar config metadata. v1 reads
-/// this for status surfaces only — the actual QUIC socket is
-/// owned by the operator's standalone `hysteria` daemon.
+/// Operator-supplied Hysteria sidecar deployment contract. The actual QUIC
+/// socket and credentials are owned by the standalone `hysteria` daemon.
 ///
 /// Wire shape mirrors Hysteria's own YAML so operators can copy-
 /// paste between the two configs (e.g. `listen`, `auth.type`).
@@ -49,7 +45,7 @@ pub struct HysteriaTransportConfig {
     /// Auth scheme name (`password` / `userpass` / `none`). The
     /// actual credential lives in `hysteria.yaml` (the sidecar's
     /// own config); we surface only the scheme name here for
-    /// `neoth doctor` to verify the operator picked something
+    /// `neoth-relay doctor` to verify the operator declared something
     /// stronger than `none`.
     pub auth_scheme: String,
     /// Operator-readable note about the deployment (e.g. "Tailscale
@@ -60,9 +56,8 @@ pub struct HysteriaTransportConfig {
 
 impl HysteriaTransportConfig {
     /// True ⇔ operator has configured a Hysteria sidecar. Used by
-    /// the `neoth-relay status` command + the future `neoth doctor
-    /// cluster relay` check to surface "running plain TCP" vs
-    /// "behind Hysteria sidecar".
+    /// `neoth-relay status` and `doctor` use this to distinguish direct TCP
+    /// from an explicitly configured external sidecar.
     pub fn is_configured(&self) -> bool {
         !self.listen.trim().is_empty()
     }
@@ -137,75 +132,82 @@ impl HysteriaTransportConfig {
         }
         warnings
     }
+
+    /// Validate the external-sidecar boundary against the address this relay
+    /// will actually bind. Supplying `--hysteria-config` is an explicit request
+    /// for sidecar mode, so every mismatch is fatal rather than a warning.
+    pub fn validate_for_relay_bind(&self, relay_bind: SocketAddr) -> Result<()> {
+        if !self.is_configured() {
+            bail!(
+                "Hysteria config was supplied but `listen` is empty; remove \
+                 --hysteria-config for direct TCP mode or declare the external \
+                 sidecar's public listen address"
+            );
+        }
+
+        if let Some(warning) = self.validate().into_iter().next() {
+            bail!("invalid Hysteria sidecar contract: {warning}");
+        }
+
+        let forward_to: SocketAddr =
+            self.forward_to.trim().parse().with_context(|| {
+                format!("parse Hysteria forward_to `{}`", self.forward_to.trim())
+            })?;
+
+        if !relay_bind.ip().is_loopback() {
+            bail!(
+                "Hysteria sidecar mode requires a loopback relay bind; got {relay_bind}. \
+                 Bind neoth-relay to 127.0.0.1 (or ::1) and expose only the \
+                 sidecar's authenticated QUIC listener"
+            );
+        }
+        if !forward_to.ip().is_loopback() {
+            bail!(
+                "Hysteria forward_to must be loopback in sidecar mode; got {forward_to}. \
+                 A non-loopback plaintext hop bypasses the intended transport boundary"
+            );
+        }
+        if forward_to != relay_bind {
+            bail!(
+                "Hysteria forward_to {forward_to} does not match neoth-relay --bind \
+                 {relay_bind}; the sidecar would forward to a different service"
+            );
+        }
+        Ok(())
+    }
 }
 
-/// v1 stub for the future Hysteria-embedded build (post-O-7). The
-/// architect verdict pinned that v1 ships the relay binary
-/// alongside a standalone Hysteria daemon (operator owns both
-/// processes); future work may embed Hysteria as a Rust library
-/// (`quinn` + the `hysteria-rs` crate) so a single binary handles
-/// both sides.
-///
-/// Returns `Err` in v1 — the bind contract is documented but the
-/// QUIC socket is the operator's standalone `hysteria` daemon's
-/// responsibility. Callers (the relay's serve loop) get the
-/// "deferred" message so a misconfigured operator who points
-/// `--bind` at a Hysteria URL gets a clear error instead of a
-/// silent fall-through.
-pub fn connect_via_hysteria(_cfg: &HysteriaTransportConfig) -> Result<()> {
-    Err(anyhow!(
-        "Hysteria-embedded transport deferred to post-O-7 work. \
-         v1 deployment: run `hysteria server` alongside this binary + \
-         point its `forward_to` at the relay's loopback bind (default \
-         127.0.0.1:8443)."
-    ))
-}
+// ── Hysteria operator guidance ────────────────────────────────────
 
-// ── HW-1..HW-4 — Hysteria wizard screen scaffolding ──────────────
-//
-// The Cluster Phase 5 scaffolding above (HysteriaTransportConfig +
-// validate + connect stub) ships the operator-tweakable knob; the
-// HW-* items wrap that knob in the WIZARD-FACING UX layer the
-// future Slint screens consume. Pure data + helpers so both the
-// CLI wizard step + the Slint screen render identical text.
+/// Operator-facing "Why tunnel?" copy. One paragraph, three concrete threats,
+/// and the exact scope of what the sidecar protects.
+pub const WHY_TUNNEL_COPY: &str = "A Hysteria sidecar protects the connection to your NEOTH \
+     relay; it does not tunnel unrelated provider or channel traffic. \
+     Three concrete cases it helps with: (1) a coffee-shop network \
+     operator profiling relay connections; (2) an ISP throttling or \
+     fingerprinting relay traffic; (3) a state actor blocking direct \
+     connections to your relay host. If none apply, use direct TCP on \
+     a private network. Never expose an unauthenticated relay publicly.";
 
-/// HW-1 — operator-facing "Why tunnel?" copy. One paragraph, three
-/// concrete threats, decline-friendly framing. Slint pulls this
-/// verbatim so a copy edit lands in one place.
-pub const WHY_TUNNEL_COPY: &str = "A Hysteria tunnel hides which servers NEOTH talks to and \
-     when from anyone watching the network between you and the \
-     relay. Three concrete cases it defends against: (1) a coffee-\
-     shop network operator profiling your cluster pairings; (2) \
-     an ISP throttling or fingerprinting your peer traffic; (3) a \
-     state actor blocking direct connections to your relay host. \
-     If none of those apply to you, decline this step — your \
-     channels and cluster still work bareback, just less private.";
-
-/// HW-2 — the two onboarding paths + the always-available decline.
+/// The two sidecar onboarding paths plus the direct-TCP option.
 /// `Skip` returns no Hysteria config (relay runs plain TCP); the
-/// other two land at the same `HysteriaTransportConfig` shape but
-/// the wizard collects different inputs from the operator.
+/// other two land at the same [`HysteriaTransportConfig`] shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HysteriaOnboardingPath {
-    /// Self-host one-click setup. Wizard asks for VPS address plus
-    /// bearer token, runs ACME (via the standalone `hysteria` daemon)
-    /// for TLS, writes a sane default Hysteria config. Multi-day
-    /// implementation — VPS provisioning + ACME + config write all
-    /// defer to a focused session.
+    /// Deploy a new standalone sidecar. NEOTH prints the required bind and
+    /// forward contract; the operator provisions the host, certificate,
+    /// credentials, and Hysteria config with Hysteria's own tooling.
     SelfHost,
-    /// Paste existing config. Operator already runs Hysteria
-    /// elsewhere; wizard just records the `forward_to` + auth scheme
-    /// so `neoth doctor cluster relay` surfaces the deployment
-    /// correctly.
+    /// Record an existing external sidecar's public listener, loopback relay
+    /// target, and declared auth scheme for validation and diagnostics.
     BringExisting,
-    /// Decline gracefully. Relay stays plain-TCP behind `--bind`.
-    /// Channels + cluster still work; just no QUIC obfuscation.
+    /// Run the relay directly. This is appropriate only on loopback or a
+    /// trusted private network; a public bind still requires relay bearer auth.
     Skip,
 }
 
 impl HysteriaOnboardingPath {
-    /// Stable string for the wizard log + freedom.yaml round-trip
-    /// (operator may flip later via `neoth init --force`).
+    /// Stable identifier printed by `neoth-relay doctor`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SelfHost => "self_host",
@@ -214,36 +216,28 @@ impl HysteriaOnboardingPath {
         }
     }
 
-    /// One-line operator-facing description shown in the wizard
-    /// path-picker (HW-2 screen).
+    /// One-line operator-facing deployment description.
     pub fn description(self) -> &'static str {
         match self {
             Self::SelfHost => {
-                "Set up a new Hysteria server on a VPS I control (asks for \
-                 VPS address + bearer token; runs ACME for TLS)"
+                "Deploy a standalone Hysteria sidecar; NEOTH validates its \
+                 loopback forward target but does not provision VPS/TLS/config"
             }
             Self::BringExisting => {
-                "I already run Hysteria; let me paste my forward-to + auth \
-                 scheme so the relay records it correctly"
+                "Record an existing Hysteria sidecar's listener, loopback \
+                 forward target, and declared auth scheme"
             }
-            Self::Skip => "Skip Hysteria for now — relay runs plain TCP behind --bind",
+            Self::Skip => {
+                "Use direct TCP on loopback/private networking; public binds require bearer auth"
+            }
         }
     }
 }
 
-/// HW-3 — health-check helper. Pings the local SOCKS5 listener
-/// (when the operator picked SelfHost or BringExisting) by
-/// attempting a TCP connect to `forward_to` with a short timeout.
-/// Reports specific failure modes so the wizard surfaces an
-/// actionable hint ("Hysteria sidecar isn't running" vs "wrong
-/// forward_to address" vs "TLS / auth handshake refused").
-///
-/// v1 ships the SHAPE of the check — actual SOCKS5 protocol
-/// handshake defers to the multi-day Hysteria-embedded work.
-/// Today the check is a plain TCP-connect probe; that's enough
-/// to catch the typical "operator misconfigured forward_to"
-/// failure mode.
-pub async fn check_hysteria_listener(cfg: &HysteriaTransportConfig) -> HealthCheckOutcome {
+/// Probe the plaintext relay target that the external Hysteria sidecar forwards
+/// to. Success proves only that `neoth-relay` is accepting TCP at `forward_to`;
+/// it does not probe the sidecar's public QUIC listener, TLS, or authentication.
+pub async fn check_relay_forward_target(cfg: &HysteriaTransportConfig) -> HealthCheckOutcome {
     use std::time::Duration;
     use tokio::net::TcpStream;
 
@@ -253,7 +247,15 @@ pub async fn check_hysteria_listener(cfg: &HysteriaTransportConfig) -> HealthChe
     if cfg.forward_to.trim().is_empty() {
         return HealthCheckOutcome::MissingForwardTo;
     }
-    let addr = cfg.forward_to.trim();
+    let addr: SocketAddr = match cfg.forward_to.trim().parse() {
+        Ok(addr) if addr.ip().is_loopback() => addr,
+        Ok(addr) => {
+            return HealthCheckOutcome::InvalidForwardTarget(format!(
+                "{addr} is not a loopback address"
+            ));
+        }
+        Err(error) => return HealthCheckOutcome::InvalidForwardTarget(error.to_string()),
+    };
     let timeout = Duration::from_secs(3);
     match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
         Ok(Ok(_)) => HealthCheckOutcome::Ok,
@@ -262,46 +264,48 @@ pub async fn check_hysteria_listener(cfg: &HysteriaTransportConfig) -> HealthChe
     }
 }
 
-/// Outcome of [`check_hysteria_listener`]. Operator-visible — the
-/// wizard renders one of these as the green/yellow/red status
-/// before allowing the operator to continue past the screen.
+/// Outcome of [`check_relay_forward_target`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HealthCheckOutcome {
-    /// Listener accepted the TCP connect — sidecar is up.
+    /// The relay's loopback TCP listener accepted the connection.
     Ok,
-    /// Operator picked `Skip`; nothing to check.
+    /// No external sidecar was configured; nothing to probe.
     NotConfigured,
-    /// `listen` is set but `forward_to` is empty — wizard caught
-    /// this before the operator hit Continue.
+    /// `listen` is set but `forward_to` is empty.
     MissingForwardTo,
-    /// Connect refused (sidecar down, wrong port, firewall).
-    /// Carries the raw error for the wizard's "show details" panel.
+    /// `forward_to` is not a loopback `SocketAddr`.
+    InvalidForwardTarget(String),
+    /// Connect refused (relay down or wrong target port).
     ConnectionRefused(String),
-    /// Connect didn't complete inside the 3s window — likely
-    /// network reach issue or Hysteria mid-handshake.
+    /// Connect didn't complete inside the 3s window.
     Timeout,
 }
 
 impl HealthCheckOutcome {
-    /// True ⇔ wizard can proceed without warning the operator.
-    /// `NotConfigured` passes (operator explicitly chose Skip).
+    /// True when the configured relay target is reachable or sidecar mode was
+    /// explicitly not configured.
     pub fn is_passable(&self) -> bool {
         matches!(self, Self::Ok | Self::NotConfigured)
     }
 
-    /// Operator-readable summary for the wizard's status line.
+    /// Operator-readable diagnostic summary.
     pub fn summary(&self) -> String {
         match self {
-            Self::Ok => "Hysteria sidecar reachable on forward_to".to_string(),
+            Self::Ok => {
+                "relay forward target reachable (public Hysteria QUIC/auth not probed)".to_string()
+            }
             Self::NotConfigured => "Hysteria skipped (plain TCP mode)".to_string(),
             Self::MissingForwardTo => {
                 "forward_to is empty — point it at the relay's loopback bind".to_string()
             }
+            Self::InvalidForwardTarget(reason) => {
+                format!("invalid Hysteria forward_to: {reason}")
+            }
             Self::ConnectionRefused(reason) => {
-                format!("Hysteria forward_to refused TCP connect: {reason}")
+                format!("relay forward target refused TCP connect: {reason}")
             }
             Self::Timeout => {
-                "Hysteria forward_to didn't respond inside 3s (sidecar down? wrong port?)"
+                "relay forward target didn't respond inside 3s (relay down or wrong port?)"
                     .to_string()
             }
         }
@@ -424,13 +428,41 @@ mod tests {
     }
 
     #[test]
-    fn connect_via_hysteria_bails_in_v1_with_actionable_message() {
-        let cfg = full_fixture();
-        let err = connect_via_hysteria(&cfg).unwrap_err();
-        let msg = err.to_string();
-        // Operator must see WHERE to look for the v1 deployment story.
-        assert!(msg.contains("deferred") || msg.contains("v1 deployment"));
-        assert!(msg.contains("hysteria server") || msg.contains("127.0.0.1:8443"));
+    fn relay_bind_contract_accepts_exact_loopback_target() {
+        full_fixture()
+            .validate_for_relay_bind("127.0.0.1:8443".parse().unwrap())
+            .unwrap();
+    }
+
+    #[test]
+    fn relay_bind_contract_rejects_mismatch() {
+        let error = full_fixture()
+            .validate_for_relay_bind("127.0.0.1:9000".parse().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("does not match"));
+    }
+
+    #[test]
+    fn relay_bind_contract_rejects_public_plaintext_hop() {
+        let mut cfg = full_fixture();
+        cfg.forward_to = "192.0.2.10:8443".into();
+        let error = cfg
+            .validate_for_relay_bind("127.0.0.1:8443".parse().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("must be loopback"));
+    }
+
+    #[test]
+    fn relay_bind_contract_rejects_declared_no_auth() {
+        let mut cfg = full_fixture();
+        cfg.auth_scheme = "none".into();
+        let error = cfg
+            .validate_for_relay_bind("127.0.0.1:8443".parse().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("auth_scheme"));
     }
 
     #[test]
@@ -449,7 +481,7 @@ mod tests {
         assert_eq!(empty, back);
     }
 
-    // ── HW-1..HW-4 wizard scaffolding tests ─────────────────────
+    // ── Operator guidance tests ──────────────────────────────────
 
     #[test]
     fn hw1_why_tunnel_copy_mentions_three_concrete_threats() {
@@ -460,8 +492,9 @@ mod tests {
         assert!(c.contains("coffee-shop"));
         assert!(c.contains("isp"));
         assert!(c.contains("state"));
-        // Decline-friendly framing.
-        assert!(c.contains("decline"));
+        // Direct-mode boundary is explicit.
+        assert!(c.contains("direct tcp"));
+        assert!(c.contains("does not tunnel unrelated"));
     }
 
     #[test]
@@ -485,28 +518,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hw3_health_check_returns_not_configured_for_empty_config() {
+    async fn health_check_returns_not_configured_for_empty_config() {
         let cfg = HysteriaTransportConfig::default();
-        let outcome = check_hysteria_listener(&cfg).await;
+        let outcome = check_relay_forward_target(&cfg).await;
         assert_eq!(outcome, HealthCheckOutcome::NotConfigured);
         assert!(outcome.is_passable(), "decline path must allow continue");
     }
 
     #[tokio::test]
-    async fn hw3_health_check_flags_missing_forward_to() {
+    async fn health_check_flags_missing_forward_to() {
         let cfg = HysteriaTransportConfig {
             listen: ":443".into(),
             forward_to: "".into(),
             auth_scheme: "password".into(),
             note: String::new(),
         };
-        let outcome = check_hysteria_listener(&cfg).await;
+        let outcome = check_relay_forward_target(&cfg).await;
         assert_eq!(outcome, HealthCheckOutcome::MissingForwardTo);
         assert!(!outcome.is_passable());
     }
 
     #[tokio::test]
-    async fn hw3_health_check_refused_on_dead_loopback_port() {
+    async fn health_check_rejects_non_loopback_target_without_dialing() {
+        let cfg = HysteriaTransportConfig {
+            listen: ":443".into(),
+            forward_to: "192.0.2.10:8443".into(),
+            auth_scheme: "password".into(),
+            note: String::new(),
+        };
+        let outcome = check_relay_forward_target(&cfg).await;
+        assert!(matches!(
+            outcome,
+            HealthCheckOutcome::InvalidForwardTarget(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn health_check_refused_on_dead_loopback_port() {
         // Loopback :1 is the lowest port number; reserved by IANA
         // and never bound by user processes → TCP-connect refuses
         // immediately. Cross-platform deterministic for the
@@ -517,7 +565,7 @@ mod tests {
             auth_scheme: "password".into(),
             note: String::new(),
         };
-        let outcome = check_hysteria_listener(&cfg).await;
+        let outcome = check_relay_forward_target(&cfg).await;
         assert!(
             matches!(
                 outcome,
@@ -528,7 +576,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hw3_health_check_succeeds_on_live_loopback_listener() {
+    async fn health_check_succeeds_on_live_loopback_listener() {
         // Bind a real TCP listener on an ephemeral port + check.
         use tokio::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -539,7 +587,7 @@ mod tests {
             auth_scheme: "password".into(),
             note: String::new(),
         };
-        let outcome = check_hysteria_listener(&cfg).await;
+        let outcome = check_relay_forward_target(&cfg).await;
         assert_eq!(outcome, HealthCheckOutcome::Ok);
         assert!(outcome.is_passable());
     }
@@ -550,6 +598,7 @@ mod tests {
             HealthCheckOutcome::Ok,
             HealthCheckOutcome::NotConfigured,
             HealthCheckOutcome::MissingForwardTo,
+            HealthCheckOutcome::InvalidForwardTarget("not-loopback".into()),
             HealthCheckOutcome::ConnectionRefused("refused".into()),
             HealthCheckOutcome::Timeout,
         ] {
@@ -559,9 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn hw4_skip_path_is_always_passable() {
-        // Operator who picks Skip MUST be able to continue the
-        // wizard regardless — the relay falls back to plain TCP.
+    fn direct_tcp_path_is_passable_without_sidecar_config() {
         assert!(HealthCheckOutcome::NotConfigured.is_passable());
     }
 }

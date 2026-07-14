@@ -38,7 +38,7 @@ use tracing::debug;
 use super::aws_credentials::{AwsCredentials, ResolvedCredentials, env_var_getter, resolve_chain};
 use super::aws_sigv4::sign;
 use super::quota::{QuotaError, parse_retry_after};
-use super::{Completion, Provider, Request};
+use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 
 /// AWS service name used in the SigV4 credential scope. **Not**
 /// `bedrock-runtime` — the runtime data plane signs under `bedrock`.
@@ -127,7 +127,23 @@ impl Provider for AwsBedrockAdapter {
         "aws_bedrock"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING_WITHOUT_SEED
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.default_model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("aws_bedrock", async {
             let started = Instant::now();
@@ -229,6 +245,7 @@ impl Provider for AwsBedrockAdapter {
 
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model,
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
@@ -315,15 +332,18 @@ fn normalise_region(raw: String) -> String {
 }
 
 fn build_converse_body(req: &Request) -> ConverseRequest {
-    let mut inference_config = InferenceConfig::default();
-    let mut config_set = false;
+    let mut inference_config = InferenceConfig {
+        max_tokens: Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING),
+        ..InferenceConfig::default()
+    };
     if let Some(t) = req.temperature {
         inference_config.temperature = Some(t);
-        config_set = true;
     }
     if let Some(p) = req.top_p {
         inference_config.top_p = Some(p);
-        config_set = true;
+    }
+    if !req.stop_sequences.is_empty() {
+        inference_config.stop_sequences = Some(req.stop_sequences.clone());
     }
 
     let system_text = req
@@ -339,11 +359,7 @@ fn build_converse_body(req: &Request) -> ConverseRequest {
             }],
         }],
         system: system_text,
-        inference_config: if config_set {
-            Some(inference_config)
-        } else {
-            None
-        },
+        inference_config: Some(inference_config),
     }
 }
 
@@ -386,6 +402,8 @@ struct InferenceConfig {
     temperature: Option<f32>,
     #[serde(rename = "topP", skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
+    #[serde(rename = "stopSequences", skip_serializing_if = "Option::is_none")]
+    stop_sequences: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -544,7 +562,10 @@ mod tests {
         assert_eq!(body.messages[0].role, "user");
         assert_eq!(body.messages[0].content[0].text, "Hello");
         assert!(body.system.is_none());
-        assert!(body.inference_config.is_none());
+        assert_eq!(
+            body.inference_config.unwrap().max_tokens,
+            Some(crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        );
     }
 
     #[test]
@@ -570,8 +591,13 @@ mod tests {
         };
         let body = build_converse_body(&req);
         let cfg = body.inference_config.expect("inference config present");
+        assert_eq!(
+            cfg.max_tokens,
+            Some(crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        );
         assert_eq!(cfg.temperature, Some(0.5));
         assert_eq!(cfg.top_p, Some(0.95));
+        assert!(cfg.stop_sequences.is_none());
     }
 
     #[test]
@@ -579,14 +605,15 @@ mod tests {
         let req = Request {
             prompt: "hi".into(),
             temperature: Some(0.5),
+            stop_sequences: vec!["END".into()],
             ..Default::default()
         };
         let body = build_converse_body(&req);
         let json = serde_json::to_string(&body).unwrap();
         // Converse API uses camelCase wire fields.
         assert!(json.contains("\"inferenceConfig\""), "got: {json}");
-        // maxTokens is None → must not appear in the wire envelope.
-        assert!(!json.contains("maxTokens"), "got: {json}");
+        assert!(json.contains("\"maxTokens\":4096"), "got: {json}");
+        assert!(json.contains("\"stopSequences\":[\"END\"]"), "got: {json}");
     }
 
     #[test]

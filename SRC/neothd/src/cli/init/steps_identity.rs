@@ -137,26 +137,61 @@ pub(crate) fn step3b_hmac_backup(
             .context("hmac backup prompt")?;
         state.hmac_backup_offered = true;
         if do_backup {
-            let output = neoth_dir.join("wal").join("hmac_backup.bin");
-            let bargs = crate::cli::security::BackupHmacKeyArgs {
-                output: output.clone(),
-                force: true,
-                home: Some(neoth_dir.to_path_buf()),
-            };
-            // Best-effort: a backup failure must NOT abort onboarding.
-            match crate::cli::security::run_backup_hmac_key(&bargs) {
-                Ok(()) => eprintln!(
-                    "[neoth init] WAL integrity key backed up to {}",
+            let raw_output: String =
+                dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt(
+                        "[3b/9] Absolute external/offline backup file (outside ~/.neoth; e.g. USB)",
+                    )
+                    .validate_with(|input: &String| {
+                        let output = std::path::Path::new(input.trim());
+                        if !output.is_absolute() {
+                            return Err(
+                                "enter an absolute file path so the recovery location is explicit"
+                                    .to_string(),
+                            );
+                        }
+                        crate::cli::security::resolve_hmac_backup_destination(neoth_dir, output)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    })
+                    .interact_text()
+                    .context("external HMAC-backup destination input")?;
+            let output = std::path::PathBuf::from(raw_output.trim());
+            let resolved = backup_hmac_key_to_destination(neoth_dir, &output).with_context(|| {
+                format!(
+                    "HMAC key backup to {} failed; onboarding stopped and no recovery backup was recorded",
                     output.display()
-                ),
-                Err(e) => eprintln!("[neoth init] HMAC key backup failed (non-fatal): {e}"),
-            }
+                )
+            })?;
+            eprintln!(
+                "[neoth init] WAL integrity-key recovery backup complete: {}",
+                resolved.display()
+            );
         }
     }
     // `neoth_dir` + `state` are only consumed under the `wizard` feature.
     #[cfg(not(feature = "wizard"))]
     let _ = (neoth_dir, state);
     Ok(())
+}
+
+pub(crate) fn backup_hmac_key_to_destination(
+    neoth_dir: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<std::path::PathBuf> {
+    let resolved = crate::cli::security::resolve_hmac_backup_destination(neoth_dir, output)?;
+    // A fresh wizard runs before the daemon has written its first WAL frame, so
+    // the integrity key does not exist yet. Initialize it through the canonical
+    // compaction-key path; RNG/DPAPI/permission failures abort onboarding.
+    let key_path = neoth_dir.join("wal").join("hmac.key");
+    crate::wal::compaction::load_or_init_key(&key_path)
+        .context("initialize WAL integrity key for recovery backup")?;
+    crate::cli::security::run_backup_hmac_key(&crate::cli::security::BackupHmacKeyArgs {
+        output: resolved.clone(),
+        force: false,
+        home: Some(neoth_dir.to_path_buf()),
+    })?;
+    Ok(resolved)
 }
 
 pub(crate) fn step4_role(
@@ -197,4 +232,109 @@ pub(crate) fn step4_role(
     state.role = Some(role);
     state.steps_completed.push(WizardStep::Role as u8);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seed_hmac_key(home: &std::path::Path) -> Vec<u8> {
+        let key_path = home.join("wal").join("hmac.key");
+        crate::wal::compaction::load_or_init_key(&key_path).expect("seed HMAC key")
+    }
+
+    #[test]
+    fn fresh_wizard_hmac_backup_initializes_and_exports_the_exact_key() {
+        let home = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let output = external.path().join("neoth-hmac-recovery.key");
+
+        let resolved = backup_hmac_key_to_destination(home.path(), &output).unwrap();
+        let expected =
+            crate::wal::compaction::load_or_init_key(&home.path().join("wal").join("hmac.key"))
+                .unwrap();
+
+        assert_eq!(resolved, output.canonicalize().unwrap());
+        assert_eq!(std::fs::read(&output).unwrap(), expected);
+        assert!(
+            !home.path().join("wal").join("hmac_backup.bin").exists(),
+            "wizard must never leave the recovery copy inside NEOTH home"
+        );
+    }
+
+    #[test]
+    fn wizard_hmac_backup_rejects_destination_inside_neoth_home() {
+        let home = tempfile::tempdir().unwrap();
+        seed_hmac_key(home.path());
+        let output = home.path().join("wal").join("recovery.key");
+
+        let err = backup_hmac_key_to_destination(home.path(), &output).unwrap_err();
+
+        assert!(err.to_string().contains("inside NEOTH home"), "got: {err}");
+        assert!(!output.exists(), "rejected destination must stay unwritten");
+    }
+
+    #[test]
+    fn wizard_hmac_backup_propagates_key_initialization_and_overwrite_failures() {
+        let broken_home = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let output = external.path().join("recovery.key");
+        std::fs::write(broken_home.path().join("wal"), b"not-a-directory").unwrap();
+
+        let initialization =
+            backup_hmac_key_to_destination(broken_home.path(), &output).unwrap_err();
+        assert!(
+            initialization
+                .to_string()
+                .contains("initialize WAL integrity key"),
+            "got: {initialization}"
+        );
+        assert!(!output.exists());
+
+        let home = tempfile::tempdir().unwrap();
+        seed_hmac_key(home.path());
+        std::fs::write(&output, b"older-recovery-key").unwrap();
+        let overwrite = backup_hmac_key_to_destination(home.path(), &output).unwrap_err();
+        assert!(
+            overwrite.to_string().contains("refusing to overwrite"),
+            "got: {overwrite}"
+        );
+        assert_eq!(std::fs::read(&output).unwrap(), b"older-recovery-key");
+    }
+
+    #[test]
+    fn hmac_backup_destination_rejects_parent_traversal() {
+        let home = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let output = external
+            .path()
+            .join("nested")
+            .join("..")
+            .join("recovery.key");
+
+        let err = crate::cli::security::resolve_hmac_backup_destination(home.path(), &output)
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("must not contain `..`"),
+            "got: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hmac_backup_destination_rejects_symlink_into_neoth_home() {
+        use std::os::unix::fs::symlink;
+
+        let home = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let link = external.path().join("looks-external");
+        symlink(home.path(), &link).unwrap();
+        let output = link.join("recovery.key");
+
+        let err = crate::cli::security::resolve_hmac_backup_destination(home.path(), &output)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("inside NEOTH home"), "got: {err}");
+    }
 }

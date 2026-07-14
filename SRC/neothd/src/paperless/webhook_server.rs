@@ -289,17 +289,21 @@ fn url_decode(input: &str) -> String {
 }
 
 fn json_response<T: serde::Serialize>(code: StatusCode, body: &T) -> Response<Full<Bytes>> {
-    let body_bytes = serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec());
+    let (code, body_bytes) = match serde_json::to_vec(body) {
+        Ok(bytes) => (code, bytes),
+        Err(error) => {
+            tracing::error!(%error, "paperless webhook response serialization failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                br#"{"error":"response encoding failed"}"#.to_vec(),
+            )
+        }
+    };
     Response::builder()
         .status(code)
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(body_bytes)))
-        .unwrap_or_else(|_| {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from_static(b"{}")))
-                .unwrap()
-        })
+        .expect("static paperless response status and header are valid")
 }
 
 #[cfg(test)]

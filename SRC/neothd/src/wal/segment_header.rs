@@ -599,7 +599,15 @@ mod tests {
     // ── GOLD-PROG-12 v3 header ─────────────────────────────────
 
     fn fixture_v3(seq: u64, epoch: u32) -> SegmentHeaderV3 {
-        SegmentHeaderV3::new(7, seq, 42, 1_700_000_000_000_000_000, [9u8; 16], SEGMENT_FLAG_COMPRESSED, epoch)
+        SegmentHeaderV3::new(
+            7,
+            seq,
+            42,
+            1_700_000_000_000_000_000,
+            [9u8; 16],
+            SEGMENT_FLAG_COMPRESSED,
+            epoch,
+        )
     }
 
     #[test]

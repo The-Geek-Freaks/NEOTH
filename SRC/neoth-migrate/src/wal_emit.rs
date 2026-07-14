@@ -1,230 +1,334 @@
-//! WAL audit sidecar for `neoth-migrate apply`.
+//! Durable audit sidecar for `neoth-migrate apply`.
 //!
-//! `neoth-migrate` is a standalone binary; it cannot hold the daemon's
-//! `WalWriterHandle` (single-writer invariant). Instead it writes a JSONL
-//! audit file at `~/.neoth/neoth-migrate-audit.jsonl` using three lifecycle
-//! events:
-//!
-//! | kind | when |
-//! |---|---|
-//! | `MIGRATION_STARTED` | before the source loop |
-//! | `MIGRATION_BATCH` | after each source is processed |
-//! | `MIGRATION_COMPLETE` | after `COMMIT` succeeds |
-//!
-//! The file is appended-to (not truncated) so repeated runs accumulate a
-//! full history. All writes are best-effort: a filesystem error is silently
-//! ignored so that a read-only `.neoth` dir never causes the import to abort.
-//!
-//! The `GROUNDTRUTH_IMPORTED` (0x99) summary line previously written inline
-//! in `run_apply` is now replaced by `MIGRATION_COMPLETE`.  Existing tooling
-//! that parsed `GROUNDTRUTH_IMPORTED` should use `MIGRATION_COMPLETE` instead;
-//! both fields (`inserted`, `sources_total`) are present.
+//! The migrator is a separate process and therefore cannot borrow the
+//! daemon's single WAL writer. It records one fsynced JSONL lifecycle stream
+//! under `~/.neoth/neoth-migrate-audit.jsonl`. Audit writes are fail-closed:
+//! an apply never starts when its intent cannot be persisted.
 
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::Write as _,
     path::{Path, PathBuf},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// Writes structured JSONL audit events to `~/.neoth/neoth-migrate-audit.jsonl`.
-///
-/// Constructed once per `run_apply` invocation **after** the dry-run early
-/// return and **after** the schema check, so no events are written on
-/// dry-run paths or schema failures.
-///
-/// When `dry_run` is `true`, all `emit_*` calls are no-ops (the guard is
-/// belt-and-suspenders; the caller should never reach the emitter on a
-/// dry-run path).
+use anyhow::{Context as _, Result};
+use serde::Serialize;
+
+#[derive(Debug)]
 pub struct OperatorWalEmitter {
     audit_path: PathBuf,
-    dry_run: bool,
+    operation_id: String,
+    file: Mutex<File>,
 }
 
 impl OperatorWalEmitter {
-    /// Create a new emitter targeting `<home>/.neoth/neoth-migrate-audit.jsonl`.
-    ///
-    /// Pass `dry_run: true` to disable all writes (no-op emitter).
-    pub fn new(home: &Path, dry_run: bool) -> Self {
-        Self {
-            audit_path: home.join(".neoth").join("neoth-migrate-audit.jsonl"),
-            dry_run,
+    /// Open and permission-check the append-only audit stream. The NEOTH home
+    /// must already exist because the target database was opened before this.
+    pub fn open(home: &Path) -> Result<Self> {
+        let audit_path = home.join(".neoth").join("neoth-migrate-audit.jsonl");
+        let parent = audit_path.parent().expect("audit path has parent");
+        anyhow::ensure!(
+            parent.is_dir(),
+            "migration audit directory does not exist: {}",
+            parent.display()
+        );
+        let file = open_append(&audit_path)
+            .with_context(|| format!("open migration audit at {}", audit_path.display()))?;
+        file.sync_data()
+            .with_context(|| format!("sync migration audit at {}", audit_path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&audit_path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| {
+                    format!("chmod 0600 migration audit at {}", audit_path.display())
+                })?;
         }
+
+        let operation_id = format!("migration-{}", now_ns());
+        Ok(Self {
+            audit_path,
+            operation_id,
+            file: Mutex::new(file),
+        })
     }
 
-    /// Emit `MIGRATION_STARTED` — called once before the source loop.
-    pub fn emit_migration_started(&self, sources_total: usize) {
-        if self.dry_run {
-            return;
-        }
-        let line = serde_json::json!({
+    pub fn emit_migration_started(&self, sources_total: usize, target_db: &Path) -> Result<()> {
+        self.append_line(&serde_json::json!({
             "kind": "MIGRATION_STARTED",
+            "operation_id": self.operation_id,
             "sources_total": sources_total,
+            "target_db": target_db.display().to_string(),
+            "atomic": true,
             "ts_ns": now_ns(),
-        });
-        self.append_line(&line);
+        }))
     }
 
-    /// Emit `MIGRATION_BATCH` — called once per source after its claims
-    /// have been processed (whether inserted or skipped due to duplicates).
-    ///
-    /// `claims_seen` is the total number of `(statement, source_tag, scope)`
-    /// tuples returned by `emit_claims` for this source.  `inserted` is the
-    /// count that actually hit the database (i.e. were not duplicates).
-    pub fn emit_migration_batch(&self, source_name: &str, claims_seen: usize, inserted: usize) {
-        if self.dry_run {
-            return;
-        }
-        let line = serde_json::json!({
+    pub fn emit_migration_batch(
+        &self,
+        source_name: &str,
+        claims_seen: usize,
+        inserted: usize,
+    ) -> Result<()> {
+        self.append_line(&serde_json::json!({
             "kind": "MIGRATION_BATCH",
+            "operation_id": self.operation_id,
             "source_name": source_name,
             "claims_seen": claims_seen,
             "inserted": inserted,
             "skipped_duplicates": claims_seen.saturating_sub(inserted),
             "ts_ns": now_ns(),
-        });
-        self.append_line(&line);
+        }))
     }
 
-    /// Emit `MIGRATION_COMPLETE` — called once after `COMMIT` succeeds.
-    ///
-    /// Also includes the legacy `event`/`event_type` fields so that
-    /// tooling that previously parsed `GROUNDTRUTH_IMPORTED` (0x99) can
-    /// detect this line via either field.
-    pub fn emit_migration_complete(&self, inserted: usize, skipped_sources: usize) {
-        if self.dry_run {
-            return;
-        }
-        let line = serde_json::json!({
+    pub fn emit_migration_complete(&self, inserted: usize) -> Result<()> {
+        self.append_line(&serde_json::json!({
             "kind": "MIGRATION_COMPLETE",
-            // Legacy compat: tools that parsed the old single-line summary
-            // by "event"/"event_type" will still match.
+            "operation_id": self.operation_id,
+            // Compatibility with the original one-line summary.
             "event": "GROUNDTRUTH_IMPORTED",
-            "event_type": 0x99u8,   // = 153
+            "event_type": 0x99u8,
             "inserted": inserted,
-            "skipped_sources": skipped_sources,
+            "skipped_sources": 0,
             "ts_ns": now_ns(),
-        });
-        self.append_line(&line);
+        }))
     }
 
-    // ── private ───────────────────────────────────────────────────────────────
+    pub fn emit_migration_failed(
+        &self,
+        stage: &str,
+        error: &anyhow::Error,
+        rolled_back: bool,
+    ) -> Result<()> {
+        let mut detail = format!("{error:#}");
+        detail.truncate(2_048);
+        self.append_line(&serde_json::json!({
+            "kind": "MIGRATION_FAILED",
+            "operation_id": self.operation_id,
+            "stage": stage,
+            "error": detail,
+            "rolled_back": rolled_back,
+            "ts_ns": now_ns(),
+        }))
+    }
 
-    fn append_line(&self, value: &serde_json::Value) {
-        // Best-effort: silently ignore any I/O error so a read-only
-        // ~/.neoth dir does not abort the import.
-        if let Ok(serialised) = serde_json::to_string(value) {
-            let _ = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.audit_path)
-                .and_then(|mut f| writeln!(f, "{serialised}"));
+    fn append_line(&self, value: &serde_json::Value) -> Result<()> {
+        let serialised = serde_json::to_string(value).context("serialize migration audit event")?;
+        let mut file = self.file.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "migration audit lock poisoned at {}",
+                self.audit_path.display()
+            )
+        })?;
+        writeln!(&mut *file, "{serialised}")
+            .with_context(|| format!("write migration audit at {}", self.audit_path.display()))?;
+        file.sync_data()
+            .with_context(|| format!("sync migration audit at {}", self.audit_path.display()))
+    }
+}
+
+fn open_append(path: &Path) -> std::io::Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)
+    }
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new().create(true).append(true).open(path)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct MigrationAuditStatus {
+    pub audit_path: String,
+    pub state: String,
+    pub operation_id: Option<String>,
+    pub sources_total: usize,
+    pub batches_completed: usize,
+    pub claims_seen: usize,
+    pub inserted: usize,
+    pub started_ns: Option<i64>,
+    pub finished_ns: Option<i64>,
+    pub error: Option<String>,
+    pub rolled_back: Option<bool>,
+}
+
+impl MigrationAuditStatus {
+    fn empty(path: &Path) -> Self {
+        Self {
+            audit_path: path.display().to_string(),
+            state: "never_started".to_string(),
+            operation_id: None,
+            sources_total: 0,
+            batches_completed: 0,
+            claims_seen: 0,
+            inserted: 0,
+            started_ns: None,
+            finished_ns: None,
+            error: None,
+            rolled_back: None,
         }
     }
 }
 
-/// Current wall-clock time in nanoseconds since the Unix epoch.
+/// Read the latest lifecycle from the append-only audit stream. Old events
+/// without operation ids remain readable; a new STARTED line resets the view.
+pub fn load_status(home: &Path) -> Result<MigrationAuditStatus> {
+    let path = home.join(".neoth").join("neoth-migrate-audit.jsonl");
+    if !path.exists() {
+        return Ok(MigrationAuditStatus::empty(&path));
+    }
+    let body = std::fs::read_to_string(&path)
+        .with_context(|| format!("read migration audit at {}", path.display()))?;
+    let mut status = MigrationAuditStatus::empty(&path);
+    for (line_index, line) in body.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event: serde_json::Value = serde_json::from_str(line).with_context(|| {
+            format!(
+                "parse migration audit {} line {}",
+                path.display(),
+                line_index + 1
+            )
+        })?;
+        match event.get("kind").and_then(serde_json::Value::as_str) {
+            Some("MIGRATION_STARTED") => {
+                status = MigrationAuditStatus::empty(&path);
+                status.state = "in_progress".to_string();
+                status.operation_id = event
+                    .get("operation_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                status.sources_total = event
+                    .get("sources_total")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
+                status.started_ns = event.get("ts_ns").and_then(serde_json::Value::as_i64);
+            }
+            Some("MIGRATION_BATCH")
+                if status.state == "in_progress" && event_matches_current(&status, &event) =>
+            {
+                status.batches_completed += 1;
+                status.claims_seen += event
+                    .get("claims_seen")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
+                status.inserted += event
+                    .get("inserted")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
+            }
+            Some("MIGRATION_COMPLETE")
+                if status.state == "in_progress" && event_matches_current(&status, &event) =>
+            {
+                status.state = "complete".to_string();
+                status.inserted = event
+                    .get("inserted")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(status.inserted as u64) as usize;
+                status.finished_ns = event.get("ts_ns").and_then(serde_json::Value::as_i64);
+            }
+            Some("MIGRATION_FAILED")
+                if status.state == "in_progress" && event_matches_current(&status, &event) =>
+            {
+                status.state = "failed".to_string();
+                status.finished_ns = event.get("ts_ns").and_then(serde_json::Value::as_i64);
+                status.error = event
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                status.rolled_back = event
+                    .get("rolled_back")
+                    .and_then(serde_json::Value::as_bool);
+            }
+            _ => {}
+        }
+    }
+    Ok(status)
+}
+
+fn event_matches_current(status: &MigrationAuditStatus, event: &serde_json::Value) -> bool {
+    status.operation_id.as_deref().is_none_or(|operation_id| {
+        event
+            .get("operation_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(operation_id)
+    })
+}
+
 fn now_ns() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos() as i64
+        .as_nanos()
+        .min(i64::MAX as u128) as i64
 }
-
-// ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    fn read_jsonl(path: &Path) -> Vec<serde_json::Value> {
-        std::fs::read_to_string(path)
-            .unwrap_or_default()
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| serde_json::from_str(l).expect("valid JSON line"))
-            .collect()
-    }
-
     #[test]
-    fn emits_three_lifecycle_events_in_order() {
-        let dir = tempdir().unwrap();
-        let emitter = OperatorWalEmitter::new(dir.path(), false);
-        let audit = dir.path().join(".neoth").join("neoth-migrate-audit.jsonl");
-        std::fs::create_dir_all(dir.path().join(".neoth")).unwrap();
-
-        emitter.emit_migration_started(2);
-        emitter.emit_migration_batch("src-a", 3, 3);
-        emitter.emit_migration_batch("src-b", 1, 0);
-        emitter.emit_migration_complete(3, 0);
-
-        let lines = read_jsonl(&audit);
-        assert_eq!(lines.len(), 4, "expected 4 JSONL lines");
-
-        assert_eq!(lines[0]["kind"], "MIGRATION_STARTED");
-        assert_eq!(lines[0]["sources_total"], 2);
-
-        assert_eq!(lines[1]["kind"], "MIGRATION_BATCH");
-        assert_eq!(lines[1]["source_name"], "src-a");
-        assert_eq!(lines[1]["inserted"], 3);
-
-        assert_eq!(lines[2]["kind"], "MIGRATION_BATCH");
-        assert_eq!(lines[2]["source_name"], "src-b");
-        assert_eq!(lines[2]["inserted"], 0);
-        assert_eq!(lines[2]["skipped_duplicates"], 1);
-
-        assert_eq!(lines[3]["kind"], "MIGRATION_COMPLETE");
-        assert_eq!(lines[3]["inserted"], 3);
-        assert_eq!(lines[3]["skipped_sources"], 0);
-        // Legacy compat fields
-        assert_eq!(lines[3]["event"], "GROUNDTRUTH_IMPORTED");
-        assert_eq!(lines[3]["event_type"], 153);
-    }
-
-    #[test]
-    fn dry_run_mode_writes_no_lines() {
-        let dir = tempdir().unwrap();
-        let emitter = OperatorWalEmitter::new(dir.path(), /* dry_run= */ true);
-        std::fs::create_dir_all(dir.path().join(".neoth")).unwrap();
-
-        emitter.emit_migration_started(1);
-        emitter.emit_migration_batch("x", 5, 5);
-        emitter.emit_migration_complete(5, 0);
-
-        let audit = dir.path().join(".neoth").join("neoth-migrate-audit.jsonl");
-        assert!(
-            !audit.exists(),
-            "dry_run emitter must not create the audit file"
-        );
-    }
-
-    #[test]
-    fn missing_neoth_dir_does_not_panic() {
-        // .neoth dir does NOT exist — append_line must silently swallow the error.
-        let dir = tempdir().unwrap();
-        let emitter = OperatorWalEmitter::new(dir.path(), false);
-        // No create_dir_all here on purpose.
-        emitter.emit_migration_started(0);
-        emitter.emit_migration_complete(0, 0);
-        // If we reach here without panic, the test passes.
-    }
-
-    #[test]
-    fn skipped_sources_counted_in_complete() {
+    fn lifecycle_is_durable_and_status_reports_latest_run() {
         let dir = tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".neoth")).unwrap();
-        let emitter = OperatorWalEmitter::new(dir.path(), false);
-        let audit = dir.path().join(".neoth").join("neoth-migrate-audit.jsonl");
+        let emitter = OperatorWalEmitter::open(dir.path()).unwrap();
+        emitter
+            .emit_migration_started(2, &dir.path().join(".neoth/views.db"))
+            .unwrap();
+        emitter.emit_migration_batch("a", 3, 3).unwrap();
+        emitter.emit_migration_batch("b", 2, 1).unwrap();
+        emitter.emit_migration_complete(4).unwrap();
 
-        emitter.emit_migration_started(3);
-        emitter.emit_migration_batch("ok-src", 10, 10);
-        // Two sources skipped (emit_claims failed) — no BATCH emitted for them.
-        emitter.emit_migration_complete(10, 2);
+        let status = load_status(dir.path()).unwrap();
+        assert_eq!(status.state, "complete");
+        assert_eq!(status.sources_total, 2);
+        assert_eq!(status.batches_completed, 2);
+        assert_eq!(status.claims_seen, 5);
+        assert_eq!(status.inserted, 4);
+        assert!(status.operation_id.is_some());
+    }
 
-        let lines = read_jsonl(&audit);
-        // STARTED + one BATCH + COMPLETE
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[2]["skipped_sources"], 2);
+    #[test]
+    fn failure_is_visible_and_records_rollback() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".neoth")).unwrap();
+        let emitter = OperatorWalEmitter::open(dir.path()).unwrap();
+        emitter
+            .emit_migration_started(1, &dir.path().join(".neoth/views.db"))
+            .unwrap();
+        emitter
+            .emit_migration_failed("preflight", &anyhow::anyhow!("bad source"), true)
+            .unwrap();
+
+        let status = load_status(dir.path()).unwrap();
+        assert_eq!(status.state, "failed");
+        assert_eq!(status.rolled_back, Some(true));
+        assert!(status.error.unwrap().contains("bad source"));
+    }
+
+    #[test]
+    fn missing_audit_reports_never_started_without_creating_files() {
+        let dir = tempdir().unwrap();
+        let status = load_status(dir.path()).unwrap();
+        assert_eq!(status.state, "never_started");
+        assert!(!dir.path().join(".neoth").exists());
+    }
+
+    #[test]
+    fn open_fails_when_neoth_directory_is_missing() {
+        let dir = tempdir().unwrap();
+        let error = OperatorWalEmitter::open(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("does not exist"));
     }
 }

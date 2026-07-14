@@ -1,5 +1,5 @@
-//! WhatsApp Cloud API webhook payload decoder — the parsing layer that
-//! the Phase-2 HTTP server will feed.
+//! WhatsApp Cloud API webhook payload decoder used by the live shared
+//! HTTP webhook listener.
 //!
 //! Meta POSTs webhook events as nested JSON to the operator's configured
 //! callback URL. The envelope shape:
@@ -32,8 +32,8 @@
 //! template reply, button click) flow through `Other` so the
 //! webhook handler still ACKs them and Meta stops re-delivering.
 //!
-//! The HTTP verify-token round-trip + the listener itself are
-//! deferred to Phase 2 — once hyper lands the route becomes:
+//! The live `webhook_listener` owns the HTTP verify-token round-trip and
+//! signature check. Its route is:
 //! `POST /webhook` → `verify_signature` → `decode_payload` →
 //! dispatch each `InboundMessage` to the `PipelineHandler`.
 
@@ -42,9 +42,8 @@ use serde::Deserialize;
 use super::{ChannelKind, InboundMessage};
 
 /// Top-level webhook envelope. Meta wraps every dispatched event in
-/// `object: "whatsapp_business_account"` plus an `entry` array. v0.1
-/// handles the first entry only — multi-WABA support arrives with the
-/// real listener.
+/// `object: "whatsapp_business_account"` plus an `entry` array. The decoder
+/// walks every entry and change so a multi-WABA delivery is not truncated.
 #[derive(Debug, Deserialize)]
 pub struct WebhookEnvelope {
     #[serde(default)]
@@ -139,8 +138,8 @@ pub enum DecodedWebhook {
 }
 
 /// Parse one webhook POST body into a `DecodedWebhook`. Pure function;
-/// no I/O. The Phase-2 HTTP listener calls this on every received
-/// request after the X-Hub-Signature-256 verify step.
+/// no I/O. The live HTTP listener calls this on every received request
+/// after the X-Hub-Signature-256 verify step.
 pub fn decode_payload(raw: &str) -> DecodedWebhook {
     let envelope: WebhookEnvelope = match serde_json::from_str(raw) {
         Ok(e) => e,

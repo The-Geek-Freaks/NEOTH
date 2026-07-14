@@ -240,11 +240,26 @@ mod tests {
     #[test]
     fn source_kind_from_event_type_classifies_correctly() {
         assert_eq!(SourceKind::from_event_type(0x01), SourceKind::OperatorCli);
-        assert_eq!(SourceKind::from_event_type(0x32), SourceKind::ChannelIngress);
-        assert_eq!(SourceKind::from_event_type(0x60), SourceKind::SelfReflection);
-        assert_eq!(SourceKind::from_event_type(0x6F), SourceKind::SelfReflection);
-        assert_eq!(SourceKind::from_event_type(0x70), SourceKind::ImportedExternal);
-        assert_eq!(SourceKind::from_event_type(0x7F), SourceKind::ImportedExternal);
+        assert_eq!(
+            SourceKind::from_event_type(0x32),
+            SourceKind::ChannelIngress
+        );
+        assert_eq!(
+            SourceKind::from_event_type(0x60),
+            SourceKind::SelfReflection
+        );
+        assert_eq!(
+            SourceKind::from_event_type(0x6F),
+            SourceKind::SelfReflection
+        );
+        assert_eq!(
+            SourceKind::from_event_type(0x70),
+            SourceKind::ImportedExternal
+        );
+        assert_eq!(
+            SourceKind::from_event_type(0x7F),
+            SourceKind::ImportedExternal
+        );
         // Memory ops, provider ops, proactivity — all Unknown.
         assert_eq!(SourceKind::from_event_type(0x02), SourceKind::Unknown);
         assert_eq!(SourceKind::from_event_type(0x21), SourceKind::Unknown);
@@ -278,10 +293,22 @@ mod tests {
     fn backend_from_operator_id_classifies_correctly() {
         assert_eq!(Backend::from_operator_id(None), Backend::Operator);
         assert_eq!(Backend::from_operator_id(Some("")), Backend::Operator);
-        assert_eq!(Backend::from_operator_id(Some("local_qwen")), Backend::Local);
-        assert_eq!(Backend::from_operator_id(Some("local-ouro")), Backend::Local);
-        assert_eq!(Backend::from_operator_id(Some("claude_cli")), Backend::Cloud);
-        assert_eq!(Backend::from_operator_id(Some("openai_api")), Backend::Cloud);
+        assert_eq!(
+            Backend::from_operator_id(Some("local_qwen")),
+            Backend::Local
+        );
+        assert_eq!(
+            Backend::from_operator_id(Some("local-ouro")),
+            Backend::Local
+        );
+        assert_eq!(
+            Backend::from_operator_id(Some("claude_cli")),
+            Backend::Cloud
+        );
+        assert_eq!(
+            Backend::from_operator_id(Some("openai_api")),
+            Backend::Cloud
+        );
         assert_eq!(Backend::from_operator_id(Some("anthropic")), Backend::Cloud);
     }
 
@@ -294,7 +321,10 @@ mod tests {
             Backend::Unknown,
         ] {
             let m = backend.multiplier();
-            assert!(m > 0.0 && m <= 1.0, "backend {backend:?} mult {m} out of (0,1]");
+            assert!(
+                m > 0.0 && m <= 1.0,
+                "backend {backend:?} mult {m} out of (0,1]"
+            );
         }
         // Operator is max trust.
         assert_eq!(Backend::Operator.multiplier(), 1.0);
@@ -320,10 +350,7 @@ mod tests {
         let at4 = weight_multiplier(SourceKind::OperatorCli, Backend::Operator, 4, false);
         let at8 = weight_multiplier(SourceKind::OperatorCli, Backend::Operator, 8, false);
         let at100 = weight_multiplier(SourceKind::OperatorCli, Backend::Operator, 100, false);
-        assert!(
-            (at4 - at8).abs() < 1e-12,
-            "cap at 4: at4={at4} at8={at8}"
-        );
+        assert!((at4 - at8).abs() < 1e-12, "cap at 4: at4={at4} at8={at8}");
         assert!(
             (at4 - at100).abs() < 1e-12,
             "cap at 4: at4={at4} at100={at100}"

@@ -75,6 +75,8 @@ pub fn low_confidence_local(text: &str) -> bool {
 ///   for WAL payload; caller must have already verified `is_local_provider`).
 /// * `config` — the operator's full `FreedomConfig` (for `from_config_for_teacher`
 ///   + `teacher_model_override`).
+/// * `authorizer` — the live per-leaf cost/permission boundary inherited from
+///   the calling chat or channel turn.
 /// * `writer` — optional WAL writer (absent in unit tests / dry-run callers).
 /// * `ts` — `now_unix() as i64` from the calling turn.
 ///
@@ -90,6 +92,7 @@ pub async fn try_teacher_escalation(
     system: Option<&str>,
     provider_name: &str,
     config: &crate::config::FreedomConfig,
+    authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
     writer: Option<&WalWriterHandle>,
     ts: i64,
 ) -> Result<Option<String>> {
@@ -125,7 +128,7 @@ pub async fn try_teacher_escalation(
             "is_low_confidence": is_low_conf,
             "ts_unix": ts,
         }),
-    );
+    )?;
 
     // ── Build the teacher provider ─────────────────────────────────────────
     // from_config_for_teacher returns Err if teacher_provider is local (guard).
@@ -165,7 +168,10 @@ pub async fn try_teacher_escalation(
     };
 
     // ── Call the teacher ────────────────────────────────────────────────────
-    let corrected = teacher.complete(teacher_req).await?.text;
+    let corrected = teacher
+        .complete_authorized(teacher_req, authorizer, "teacher.escalation")
+        .await?
+        .text;
     let corrected_bytes = corrected.len();
 
     // ── Write SKILL.md (best-effort) ───────────────────────────────────────
@@ -179,7 +185,7 @@ pub async fn try_teacher_escalation(
     }
 
     // ── WAL 0x86: escalation complete ──────────────────────────────────────
-    emit_wal(
+    if let Err(e) = emit_wal(
         writer,
         EVENT_TYPE_TEACHER_ESCALATION_COMPLETE,
         serde_json::json!({
@@ -188,7 +194,9 @@ pub async fn try_teacher_escalation(
             "skill_id": &skill_id,
             "ts_unix": ts,
         }),
-    );
+    ) {
+        tracing::warn!(error = %e, "ODY-08 teacher completion WAL emit failed");
+    }
 
     info!(
         teacher_provider = teacher_name,
@@ -237,21 +245,20 @@ fn write_skill_md(skill_id: &str, corrected_text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Best-effort WAL emit — mirrors `security::refusal_abliterated::emit_wal`.
-/// A WAL failure logs but never fails the escalation turn.
-fn emit_wal(writer: Option<&WalWriterHandle>, event_type: u8, payload: serde_json::Value) {
+/// The pre-call attempted frame is fail-closed; the post-call completion frame
+/// is necessarily best-effort because the provider side effect already ran.
+fn emit_wal(
+    writer: Option<&WalWriterHandle>,
+    event_type: u8,
+    payload: serde_json::Value,
+) -> Result<()> {
     let Some(writer) = writer else {
-        return;
+        return Ok(());
     };
     let payload_bytes = payload.to_string().into_bytes();
     let header = crate::wal::builder::make_header(event_type, &payload_bytes);
-    if let Err(e) = writer.try_append_sync(header, payload_bytes) {
-        tracing::warn!(
-            event_type = format!("0x{event_type:02X}"),
-            error = %e,
-            "ODY-08 teacher WAL emit failed (non-fatal)"
-        );
-    }
+    writer.try_append_sync(header, payload_bytes)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -262,7 +269,9 @@ mod tests {
     fn low_confidence_local_matches_expected_phrases() {
         assert!(low_confidence_local("I'm not sure about this topic."));
         assert!(low_confidence_local("I do not know the answer."));
-        assert!(low_confidence_local("Cannot determine the correct solution."));
+        assert!(low_confidence_local(
+            "Cannot determine the correct solution."
+        ));
         assert!(low_confidence_local("I am uncertain about this claim."));
         assert!(low_confidence_local("Not enough information to proceed."));
         assert!(low_confidence_local("I'm unsure how to handle that."));

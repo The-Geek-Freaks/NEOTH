@@ -193,7 +193,7 @@ async fn emit_event(writer: &WalWriterHandle, event: &PendingEvent) -> Result<()
                 "proposal_id": event.proposal_id,
                 "ts_unix": event.ts_unix,
             }))
-            .unwrap_or_default();
+            .expect("SELF_DEV_ACCEPTED payload contains only infallible JSON values");
             let header =
                 crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_ACCEPTED, &payload).build();
             writer.append(header, payload).await?;
@@ -205,7 +205,7 @@ async fn emit_event(writer: &WalWriterHandle, event: &PendingEvent) -> Result<()
                 "reason": reason,
                 "ts_unix": event.ts_unix,
             }))
-            .unwrap_or_default();
+            .expect("SELF_DEV_DECLINED payload contains only infallible JSON values");
             let header =
                 crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_DECLINED, &payload).build();
             writer.append(header, payload).await?;

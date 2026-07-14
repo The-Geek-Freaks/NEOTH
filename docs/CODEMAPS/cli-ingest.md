@@ -49,7 +49,7 @@ print IngestReport { path, kind, text_bytes, preview, embed_status, embed_persis
 
 ### WAL concurrency contract
 
-`neoth ingest` emits audit events only when no `neothd serve` daemon owns the WAL segment
+`neoth ingest` emits audit events only when no `neoth serve` daemon owns the WAL segment
 (checked via pidfile). If the daemon is running, audit emission is skipped with a WARN log;
 the extraction report still prints. This avoids interleaved frames between two concurrent
 O_APPEND writers.

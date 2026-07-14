@@ -83,7 +83,7 @@ pub(crate) fn step7_autonomy(
             (
                 "custom",
                 AutonomyLevel::Custom,
-                "fine-grained matrix (today behaves like standard until override file lands)",
+                "Standard baseline plus per-action allow/confirm/deny overrides",
             ),
         ];
         let labels: Vec<String> = options
@@ -134,6 +134,11 @@ pub(crate) fn step7_autonomy(
             }
         } else {
             state.autonomy = picked;
+            if picked == AutonomyLevel::Custom {
+                println!(
+                    "        Tune actions with `neoth permissions set <action> <allow|confirm|deny>`."
+                );
+            }
         }
         println!("  [7/9] autonomy: {}", state.autonomy.as_str());
     }
@@ -151,22 +156,39 @@ pub(crate) fn step7_autonomy(
 /// the daemon in the safest mode (no background HTTP traffic to
 /// GitHub, no auto-apply).
 ///
-/// Non-interactive runs leave the default `AutoUpdateConfig`
-/// (enabled=false, auto_apply=false). Operators in CI / cold-
-/// start scripts who want different values edit freedom.yaml
-/// directly OR add `--auto-update` / `--auto-update-apply`
-/// flags later (not yet wired — would land alongside other
-/// non-interactive wizard knobs).
+/// Non-interactive runs preserve the hydrated/default policy unless an
+/// explicit `--auto-update`, `--auto-update-apply`, or `--no-auto-update`
+/// override is present. That makes first installs conservative while allowing
+/// deterministic cloud-init and `init --force` reconfiguration.
 pub(crate) fn step7b_auto_update(
-    _args: &InitArgs,
+    args: &InitArgs,
     interactive: bool,
     state: &mut WizardState,
 ) -> Result<()> {
     debug!("wizard step 7b: auto-update");
 
+    if args.no_auto_update {
+        state.auto_update.enabled = false;
+        state.auto_update.auto_apply = false;
+        state.steps_completed.push(WizardStep::AutoUpdate as u8);
+        return Ok(());
+    }
+    if args.auto_update_apply {
+        state.auto_update.enabled = true;
+        state.auto_update.auto_apply = true;
+        state.steps_completed.push(WizardStep::AutoUpdate as u8);
+        return Ok(());
+    }
+    if args.auto_update {
+        state.auto_update.enabled = true;
+        state.auto_update.auto_apply = false;
+        state.steps_completed.push(WizardStep::AutoUpdate as u8);
+        return Ok(());
+    }
+
     if !interactive {
-        // Default = enabled:false, auto_apply:false. Already set
-        // by WizardState::default(); just record the step.
+        // Preserve a hydrated policy on `init --force`; a fresh state already
+        // carries the fail-closed defaults.
         state.steps_completed.push(WizardStep::AutoUpdate as u8); // 7-and-a-half style marker
         return Ok(());
     }
@@ -185,7 +207,7 @@ pub(crate) fn step7b_auto_update(
             state.auto_update.enabled = true;
             let apply = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt(
-                    "  Also auto-apply updates (download + replace the daemon binary)? Recommend NO — most operators want check-only nag.",
+                    "  Also auto-stage verified updates (download + verify, then notify)? The binary is replaced only after `neoth update --self --apply`. Recommend NO for check-only.",
                 )
                 .default(false)
                 .interact()
@@ -225,9 +247,8 @@ pub(crate) fn step7b_auto_update(
 /// Behaviour:
 ///   - Scans `<neoth_dir>/plugins/` via `wasm_plugin::discovery::discover`.
 ///   - Zero discovered → silent no-op (the common first-run state).
-///   - Non-interactive → leaves activations empty (every plugin stays
-///     Pending; operator must enable via `neoth plugin enable <id>`
-///     after install).
+///   - Non-interactive → only `--enable-plugin <id>` entries are activated;
+///     every other plugin stays Pending.
 ///   - Interactive → MultiSelect with one row per discovered plugin.
 ///     Picked → `Active`; unpicked → `Disabled` (NOT `Pending`, because
 ///     the operator HAS reviewed it during the wizard).
@@ -275,10 +296,10 @@ pub(crate) fn step7c_wasm_plugin_activation(
         let mut activated: Vec<String> = Vec::new();
         let disabled: Vec<String> = Vec::new();
         for id in &args.enable_plugin {
-            if known.contains(id.as_str()) {
+            if let Some(plugin) = report.loaded.iter().find(|p| p.manifest.id == *id) {
                 state.plugins.wasm.activations.insert(
                     id.clone(),
-                    crate::wasm_plugin::discovery::PluginActivation::Active,
+                    crate::wasm_plugin::discovery::PluginActivationRecord::active_for(plugin),
                 );
                 activated.push(id.clone());
             } else {
@@ -323,7 +344,15 @@ pub(crate) fn step7c_wasm_plugin_activation(
         let labels: Vec<String> = report
             .loaded
             .iter()
-            .map(|p| format!("{}  ({})", p.manifest.id, p.manifest.name,))
+            .map(|p| {
+                format!(
+                    "{}  ({}) — {}: {}",
+                    p.manifest.id,
+                    p.manifest.name,
+                    p.manifest.requested_permissions.as_str(),
+                    crate::cli::plugin::capability_disclosure(p.manifest.requested_permissions),
+                )
+            })
             .collect();
 
         let picked =
@@ -339,10 +368,12 @@ pub(crate) fn step7c_wasm_plugin_activation(
         for (idx, plugin) in report.loaded.iter().enumerate() {
             let state_val = if picked_set.contains(&idx) {
                 active_count += 1;
-                crate::wasm_plugin::discovery::PluginActivation::Active
+                crate::wasm_plugin::discovery::PluginActivationRecord::active_for(plugin)
             } else {
                 disabled_count += 1;
-                crate::wasm_plugin::discovery::PluginActivation::Disabled
+                crate::wasm_plugin::discovery::PluginActivationRecord::from_state(
+                    crate::wasm_plugin::discovery::PluginActivation::Disabled,
+                )
             };
             state
                 .plugins
@@ -576,7 +607,9 @@ fn offer_preset_interactive() -> Result<Option<&'static str>> {
     let mut items: Vec<String> = BUILTIN_NAMES
         .iter()
         .map(|n| {
-            let desc = builtin_by_name(n).and_then(|p| p.description).unwrap_or_default();
+            let desc = builtin_by_name(n)
+                .and_then(|p| p.description)
+                .unwrap_or_default();
             format!("{n} — {desc}")
         })
         .collect();
@@ -611,8 +644,8 @@ mod zero_friction_tests {
         state.autonomy = crate::permissions::AutonomyLevel::Strict;
         state.inference.mode = crate::config::inference::TopologyMode::Triplet;
 
-        let chosen = step_zero_friction(&args_with_zero_friction(true), false, &mut state)
-            .expect("applies");
+        let chosen =
+            step_zero_friction(&args_with_zero_friction(true), false, &mut state).expect("applies");
 
         // Back-compat: --zero-friction maps to the full-auto built-in.
         assert_eq!(chosen.as_deref(), Some("full-auto"));
@@ -630,8 +663,8 @@ mod zero_friction_tests {
         let before = state.autonomy;
 
         // Flag off + non-interactive → no change, no preset.
-        let chosen = step_zero_friction(&args_with_zero_friction(false), false, &mut state)
-            .expect("noop");
+        let chosen =
+            step_zero_friction(&args_with_zero_friction(false), false, &mut state).expect("noop");
 
         assert!(chosen.is_none());
         assert_eq!(state.autonomy, before);

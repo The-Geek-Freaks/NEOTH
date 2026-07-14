@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::FreedomConfig;
 
-use super::handlers::{route, HandlerOutcome};
+use super::handlers::{HandlerOutcome, route};
 
 /// Spawn the oai_serve hyper task.
 ///
@@ -34,8 +34,9 @@ use super::handlers::{route, HandlerOutcome};
 /// On a bind failure logs at `error!` and returns `None` — the daemon
 /// continues without the serve adapter rather than aborting boot.
 ///
-/// `home` is the NEOTH home directory (the catalog file lives at
-/// `<home>/models_catalog.json`). In production this is
+/// `home` is the NEOTH home directory. The catalog path is derived through
+/// [`crate::models::catalog::ModelsCatalog::default_path`], the same SSOT used
+/// by the refresh task and CLI. In production this is
 /// `FreedomConfig::default_neoth_home()`; tests inject a tempdir.
 pub fn spawn_server(
     config: Arc<FreedomConfig>,
@@ -43,13 +44,11 @@ pub fn spawn_server(
     shutdown: Arc<Notify>,
 ) -> Option<JoinHandle<()>> {
     if !config.oai_serve.enabled {
-        tracing::debug!(
-            "freedom.yaml::oai_serve.enabled = false; skipping oai_serve spawn"
-        );
+        tracing::debug!("freedom.yaml::oai_serve.enabled = false; skipping oai_serve spawn");
         return None;
     }
     let port = config.oai_serve.port;
-    let catalog_path = home.join("models_catalog.json");
+    let catalog_path = crate::models::catalog::ModelsCatalog::default_path(&home);
 
     Some(tokio::spawn(async move {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
@@ -103,9 +102,7 @@ pub fn spawn_server(
                 let io = TokioIo::new(stream);
                 let svc = service_fn(move |req: Request<Incoming>| {
                     let cat = catalog_path_for_conn.clone();
-                    async move {
-                        Ok::<_, Infallible>(handle_request(req, &cat).await)
-                    }
+                    async move { Ok::<_, Infallible>(handle_request(req, &cat).await) }
                 });
                 if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
                     tracing::debug!(error = %e, "oai_serve connection error");
@@ -222,7 +219,10 @@ mod tests {
             data.iter().any(|m| m["id"] == "claude-opus-4-7"),
             "catalog entry must appear in /v1/models response; got: {data:?}"
         );
-        assert_eq!(data[0]["object"], "model", "each entry must have object='model'");
+        assert_eq!(
+            data[0]["object"], "model",
+            "each entry must have object='model'"
+        );
         assert_eq!(data[0]["owned_by"], "anthropic_api");
 
         // 6. Shut down cleanly.

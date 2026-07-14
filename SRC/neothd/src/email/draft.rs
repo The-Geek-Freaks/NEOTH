@@ -80,9 +80,9 @@ pub enum DraftStatus {
     /// `neoth email show <id>` was run). Future filter for
     /// the proactive nudge so reminders skip already-seen drafts.
     Reviewed,
-    /// Operator sent via EM-01's send path (or manually copied
-    /// the body into their mail client and called `neoth email
-    /// mark-sent <id>`).
+    /// Operator manually sent/copied the draft through their mail client and
+    /// recorded that fact with `neoth email mark-sent <id>`. NEOTH has no
+    /// SMTP/Gmail-API send path.
     Sent,
     /// Operator threw it away. Stays on disk so the audit shows
     /// what NEOTH proposed.

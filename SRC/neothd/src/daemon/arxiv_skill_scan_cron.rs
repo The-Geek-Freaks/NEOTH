@@ -9,8 +9,8 @@
 //!
 //! ## Design
 //!
-//! - **WAL-free**: groundtruth insert is the durable audit record (per
-//!   MEM-15 precedent — all WAL bands 0x00..=0xFF are assigned/reserved).
+//! - Groundtruth inserts remain the durable content record; each external
+//!   arXiv request additionally carries the shared HTTP intent/result WAL proof.
 //! - **spawn_blocking for DB writes**: rusqlite `Connection` is `!Send`;
 //!   a new connection is opened INSIDE `spawn_blocking` (never passed across
 //!   an `.await` boundary), matching the `daemon::synthesis_cron` pattern.
@@ -63,21 +63,23 @@ pub struct ScanReport {
 pub fn spawn(
     home: PathBuf,
     topics: Vec<String>,
-    provider: Arc<dyn Provider>,
+    provider: Arc<crate::providers::cost_authorization::AuthorizedProvider>,
     interval: Option<Duration>,
     max_per_topic: Option<usize>,
+    http: Arc<crate::tools::external_http::ExternalHttpAuthorizer>,
 ) -> JoinHandle<Result<()>> {
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
     let max_per_topic = max_per_topic.unwrap_or(DEFAULT_MAX_PER_TOPIC);
-    tokio::spawn(async move { run(home, topics, provider, interval, max_per_topic).await })
+    tokio::spawn(async move { run(home, topics, provider, interval, max_per_topic, http).await })
 }
 
 async fn run(
     home: PathBuf,
     topics: Vec<String>,
-    provider: Arc<dyn Provider>,
+    provider: Arc<crate::providers::cost_authorization::AuthorizedProvider>,
     interval: Duration,
     max_per_topic: usize,
+    http: Arc<crate::tools::external_http::ExternalHttpAuthorizer>,
 ) -> Result<()> {
     info!(
         topics = topics.len(),
@@ -91,8 +93,15 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        match run_one_scan_pass(ARXIV_API_URL, &home, &topics, provider.as_ref(), max_per_topic)
-            .await
+        match run_one_scan_pass_authorized(
+            ARXIV_API_URL,
+            &home,
+            &topics,
+            provider.as_ref(),
+            max_per_topic,
+            http.as_ref(),
+        )
+        .await
         {
             Ok(r) if r.facts_inserted > 0 || r.papers_skipped > 0 => {
                 info!(
@@ -115,12 +124,13 @@ async fn run(
 /// Fail-soft: topic fetch failure → skip topic; paper extraction failure →
 /// skip paper; DB write failure → log + skip. Never returns `Err` for
 /// per-item failures — only for a catastrophic pass-level failure.
-pub async fn run_one_scan_pass(
+pub async fn run_one_scan_pass_authorized(
     endpoint: &str,
     home: &Path,
     topics: &[String],
-    provider: &dyn Provider,
+    provider: &crate::providers::cost_authorization::AuthorizedProvider,
     max_per_topic: usize,
+    http: &crate::tools::external_http::ExternalHttpAuthorizer,
 ) -> Result<ScanReport> {
     let db_path = home.join("views.db");
     let now_ns = crate::time::now_unix_ns_i64();
@@ -130,13 +140,14 @@ pub async fn run_one_scan_pass(
     let mut papers_skipped = 0usize;
 
     for topic in topics {
-        let papers = match arxiv::search_against(endpoint, topic, max_per_topic).await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!(error = %e, topic, "arxiv skill-scan topic fetch failed; skipping topic");
-                continue;
-            }
-        };
+        let papers =
+            match arxiv::search_against_authorized(endpoint, topic, max_per_topic, http).await {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(error = %e, topic, "arxiv skill-scan topic fetch failed; skipping topic");
+                    continue;
+                }
+            };
 
         for paper in &papers {
             papers_scanned += 1;
@@ -202,6 +213,18 @@ pub async fn run_one_scan_pass(
         facts_inserted,
         papers_skipped,
     })
+}
+
+#[cfg(test)]
+pub async fn run_one_scan_pass(
+    endpoint: &str,
+    home: &Path,
+    topics: &[String],
+    provider: &crate::providers::cost_authorization::AuthorizedProvider,
+    max_per_topic: usize,
+) -> Result<ScanReport> {
+    let http = crate::tools::external_http::ExternalHttpAuthorizer::test_allow();
+    run_one_scan_pass_authorized(endpoint, home, topics, provider, max_per_topic, &http).await
 }
 
 /// Extract 1-3 actionable takeaways from a paper abstract via the LLM provider.
@@ -280,6 +303,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
                 text: self.0.clone(),
+                identity: Default::default(),
                 model: "fixed-test".to_string(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,
@@ -306,6 +330,19 @@ mod tests {
         }
     }
 
+    fn authorized(
+        provider: impl Provider + 'static,
+    ) -> crate::providers::cost_authorization::AuthorizedProvider {
+        crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(provider),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            Some("mock".to_string()),
+            "arxiv_skill_scan.test",
+        )
+    }
+
     fn count_groundtruth_rows(home: &Path, scope: &str, source: &str) -> usize {
         let conn = store::open(&home.join("views.db")).expect("open views.db");
         conn.query_row(
@@ -323,10 +360,10 @@ mod tests {
         let _conn = store::open(&dir.path().join("views.db")).unwrap();
 
         let srv = mock_arxiv_server(ONE_CS_AI_PAPER, 200).await;
-        let provider = FixedProvider(
+        let provider = authorized(FixedProvider(
             "Use attention mechanisms for sequence tasks.\nPrefer transformers over RNNs."
                 .to_string(),
-        );
+        ));
         let topics = vec!["cat:cs.AI".to_string()];
         let report = run_one_scan_pass(&srv.uri(), dir.path(), &topics, &provider, 10)
             .await
@@ -335,10 +372,16 @@ mod tests {
         assert_eq!(report.topics_queried, 1);
         assert_eq!(report.papers_scanned, 1);
         assert_eq!(report.papers_skipped, 0);
-        assert!(report.facts_inserted >= 1, "expected at least 1 fact inserted");
+        assert!(
+            report.facts_inserted >= 1,
+            "expected at least 1 fact inserted"
+        );
 
         let rows = count_groundtruth_rows(dir.path(), "arxiv-learning", "arxiv-skill-scan");
-        assert!(rows >= 1, "expected groundtruth rows in arxiv-learning scope");
+        assert!(
+            rows >= 1,
+            "expected groundtruth rows in arxiv-learning scope"
+        );
     }
 
     #[tokio::test]
@@ -347,7 +390,7 @@ mod tests {
         let _conn = store::open(&dir.path().join("views.db")).unwrap();
 
         let srv = mock_arxiv_server(ONE_CS_AI_PAPER, 200).await;
-        let provider = FailProvider;
+        let provider = authorized(FailProvider);
         let topics = vec!["cat:cs.AI".to_string()];
         let report = run_one_scan_pass(&srv.uri(), dir.path(), &topics, &provider, 10)
             .await
@@ -366,7 +409,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _conn = store::open(&dir.path().join("views.db")).unwrap();
 
-        let provider = FixedProvider("anything".to_string());
+        let provider = authorized(FixedProvider("anything".to_string()));
         let report = run_one_scan_pass("http://unused", dir.path(), &[], &provider, 10)
             .await
             .unwrap();
@@ -390,7 +433,7 @@ mod tests {
         let _conn = store::open(&dir.path().join("views.db")).unwrap();
 
         let srv = mock_arxiv_server("", 503).await;
-        let provider = FixedProvider("takeaway".to_string());
+        let provider = authorized(FixedProvider("takeaway".to_string()));
         let topics = vec!["cat:cs.LG".to_string()];
         let report = run_one_scan_pass(&srv.uri(), dir.path(), &topics, &provider, 10)
             .await

@@ -439,10 +439,10 @@ mod tests {
     //
     // Run on demand:
     //
-    //   cargo test -p neothd --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1
+    //   cargo test -p neoth --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1
 
     #[test]
-    #[ignore = "D008 latency bench — run with: cargo test -p neothd --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1"]
+    #[ignore = "D008 latency bench — run with: cargo test -p neoth --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1"]
     fn flush_vs_sync_data_latency_comparison() {
         use std::io::Write;
         use std::time::Instant;

@@ -24,11 +24,12 @@ pub enum PipelineStage {
     DefaultMode,
 }
 
-/// Read-only context provided to a hook by the host.
+/// Read-only context provided to a hook by native Rust integration code.
 ///
-/// The host populates every field before calling `Hook::run`. Plugins read
-/// the fields directly; mutation is not possible (the type is `Copy`-friendly
-/// in practice — `session_id` and `node_id` are fixed-size arrays).
+/// The integration populates every field before calling `Hook::run`. Plugins
+/// read the fields directly; mutation is not possible (the type is
+/// `Copy`-friendly in practice — `session_id` and `node_id` are fixed-size
+/// arrays).
 ///
 /// **Field encoding**
 /// - `session_id`, `node_id`: raw 16-byte UUID v7 in big-endian byte order
@@ -36,9 +37,11 @@ pub enum PipelineStage {
 /// - `message`: bytes of the inbound payload. For text-channel events this is
 ///   UTF-8; for binary channels (future) it may be opaque. Plugins should
 ///   validate before interpreting.
-/// - `permission`: token at the exact level `L` the hook declared. The host
-///   does NOT pass tokens at a higher level — a hook declared on `ReadOnly`
-///   cannot escalate inside `run`. Upgrades require a fresh `FreedomGrant`.
+/// - `permission`: SDK-side marker at the exact level `L` the hook declared.
+///   Rust integration code can require a fresh `FreedomGrant` for typed
+///   upgrades. Neither zero-sized type crosses the WASM ABI: the production
+///   host stores a separate `HostcallPermission` in `PluginStoreState` and
+///   checks it independently on every hostcall.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct HookContext<'a, L: crate::permission::PermissionLevel> {
@@ -51,7 +54,7 @@ pub struct HookContext<'a, L: crate::permission::PermissionLevel> {
     pub stage: PipelineStage,
     /// Inbound message payload as borrowed bytes.
     pub message: &'a [u8],
-    /// Capability token at exactly the level `L` the hook declared.
+    /// Zero-sized API marker at exactly the level `L` the hook declared.
     pub permission: PermissionToken<L>,
 }
 
@@ -91,8 +94,8 @@ pub enum HookError {
 
 /// The trait every plugin author implements.
 ///
-/// Implementations should be cheap to clone (no heap state) since the host
-/// may instantiate one per request.
+/// Implementations should be cheap to clone (no heap state) since an
+/// integration may instantiate one per request.
 pub trait Hook<L: crate::permission::PermissionLevel>: Send + Sync {
     /// Stable identifier for this hook. Used in WAL audit events.
     fn id(&self) -> &'static str;
@@ -125,8 +128,9 @@ mod tests {
 
     #[test]
     fn noop_hook_compiles_and_runs() {
-        // Without `_host` feature, plugin tests can construct a Hook but
-        // cannot mint a token. We can still verify trait-impl shape compiles.
+        // With default features, plugin tests can construct a Hook but the
+        // host-integration token constructor is absent. This verifies the
+        // public trait shape, not a runtime authorization boundary.
         let h = NoopHook;
         assert_eq!(h.id(), "noop");
         assert_eq!(h.stage(), PipelineStage::PrePipeline);

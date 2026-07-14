@@ -1,38 +1,33 @@
-//! Council debate primitive — Phase 2 architecture foundation.
+//! Live multi-hemisphere Council runtime.
 //!
-//! NEOTH's "Council" is the multi-hemisphere debate pattern: a prompt
-//! gets routed to all three configured hemispheres in parallel (Left
-//! analytic / Right creative / Cerebellum router), their responses are
-//! collected, dissent is scored, and a verdict is produced. The
-//! design rationale is `SPEC_council_governance.md`; this module
-//! ships the orchestrator + scoring primitives so the chat dispatch
-//! (CH-04 follow-up) can opt into council mode on a per-call basis.
+//! Both local chat and channel dispatch use the smart trigger before routing
+//! eligible prompts to Left, Right, and Cerebellum in parallel. The shared
+//! orchestrator enforces call/depth budgets, scores dissent and response
+//! quality, checks verified ground truth, supports bounded fractal depth, and
+//! produces the typed debate consumed by winner selection, callosum recovery,
+//! self-reflection, transparent diagnostics, and WAL audit emission at the
+//! dispatch boundary.
 //!
-//! What's here today:
-//!   - [`HemisphereResponse`] — one provider's reply with timing + tokens
-//!   - [`CouncilDebate`] — the aggregate: three responses + dissent + verdict
-//!   - [`DissentScore`] — operator-readable disagreement metric (0.0-1.0)
-//!   - [`run_debate`] — fires the three providers in parallel, builds the
-//!     debate record. Pure logic; no WAL emission (caller's job).
-//!
-//! Deferred (explicit follow-ups, not shipped today):
-//!   - Council adversarial test suite `test_all_three_agree_and_wrong`
-//!     (CH-03 GROUND_TRUTH_TAG injection).
-//!   - Council adaptive thresholds (CH-12).
-//!   - Council smart-trigger logic (CH-14: complexity + dissent + rate
-//!     + budget gates that decide WHEN to convene the council vs use
-//!       single-hemisphere chat).
-//!   - Block-B profile injection / Block-C recall ranking integration
-//!     (CH-09/10/11) — those layer on top of `run_debate` once the
-//!     dispatch path consumes it.
+//! Trigger thresholds, extra dissent markers, topology, budget caps, factual
+//! injection, reflection, and debug surfaces are operator-configurable. Pure
+//! helpers remain deterministic; provider calls and durable audit writes stay
+//! in their explicit runtime callers.
 
-pub mod adaptive_thresholds;
 pub mod budget;
 pub mod callosum;
 pub mod day_counter;
 pub mod dissent;
 pub mod diversity;
 pub mod eval;
+/// Round-3 v0.4 ADV-12 — Council factual-contradiction check using
+/// `[GROUND_TRUTH]…[/GROUND_TRUTH]` tags + ground-truth-based
+/// scoring (not hemisphere agreement). Structural fix that closes
+/// the `test_all_three_agree_and_wrong` adversarial gap — three
+/// hemispheres echoing the same wrong fact previously read as
+/// "high confidence" (0 dissent); now the ground-truth check
+/// catches it independently.
+pub mod factual_check;
+pub mod last_ts;
 /// GOLD-ADAPT-LOWKEY-08 — Dynamic-persona MDS tone modifier.
 /// Classifies per-turn input intensity (Low/Medium/High/Urgent) from the
 /// raw prompt string and maps it to a tone-hint string appended to the
@@ -44,27 +39,18 @@ pub mod mds_tone;
 /// the hemisphere debate runs.  `Conflicted` gates the debate and
 /// surfaces a disambiguation request instead of a confused answer.
 pub mod motive_ident;
-/// Round-3 v0.4 ADV-12 — Council factual-contradiction check using
-/// `[GROUND_TRUTH]…[/GROUND_TRUTH]` tags + ground-truth-based
-/// scoring (not hemisphere agreement). Structural fix that closes
-/// the `test_all_three_agree_and_wrong` adversarial gap — three
-/// hemispheres echoing the same wrong fact previously read as
-/// "high confidence" (0 dissent); now the ground-truth check
-/// catches it independently.
-pub mod factual_check;
-pub mod last_ts;
 pub mod nspace;
 pub mod orchestrator;
 pub mod qa_verdict;
 pub mod quality_score;
 pub mod self_challenge;
 pub mod self_reflect;
-pub mod transparent;
 /// GOLD-ADAPT-KB-02 — independent judge for autonomous-loop stop conditions.
 /// Gates `Action::AgentStop` at autonomy ≥ Elevated through a deterministic,
 /// LLM-free structural check: every declared `done_criterion` must be covered
 /// by the agent's `claimed_evidence` for the stop to be approved.
 pub mod stop_verifier;
+pub mod transparent;
 pub mod trigger;
 pub mod types;
 

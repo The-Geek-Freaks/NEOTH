@@ -29,7 +29,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use crate::config::RecursiveMasConfig;
-use crate::providers::{Completion, Provider, Request};
+use crate::providers::{
+    Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+};
 
 /// Local ML inference is slow — generous per-completion ceiling.
 const SIDECAR_TIMEOUT: Duration = Duration::from_secs(120);
@@ -78,7 +80,7 @@ impl RecursiveMasAdapter {
                 marker.display()
             );
         }
-        let vram = crate::daemon::hardware::probe(&home).vram;
+        let vram = crate::daemon::hardware::probe(&home)?.vram;
         crate::providers::recursive_mas::recursive_mas_available(cfg, vram.as_ref())
             .map_err(|reason| anyhow::anyhow!("recursive_mas unavailable: {reason}"))?;
 
@@ -167,7 +169,19 @@ impl Provider for RecursiveMasAdapter {
         "recursive_mas"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::NONE
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some("recursive_mas")
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         let started = Instant::now();
         let line = encode_request(&req, &self.style, self.rounds);
 
@@ -182,7 +196,10 @@ impl Provider for RecursiveMasAdapter {
                 .context("write to sidecar stdin")?;
             io.stdin.flush().context("flush sidecar stdin")?;
             let mut buf = String::new();
-            let n = io.stdout.read_line(&mut buf).context("read sidecar stdout")?;
+            let n = io
+                .stdout
+                .read_line(&mut buf)
+                .context("read sidecar stdout")?;
             if n == 0 {
                 anyhow::bail!("sidecar closed stdout (process died?)");
             }
@@ -212,6 +229,7 @@ impl Provider for RecursiveMasAdapter {
         let text = parse_response_line(&reply)?;
         Ok(Completion {
             text,
+            identity: Default::default(),
             model: "recursive-mas".to_string(),
             latency: started.elapsed(),
             ..Default::default()
@@ -268,5 +286,4 @@ mod tests {
         assert!(parse_response_line("not json").is_err());
         assert!(parse_response_line("{}").is_err());
     }
-
 }

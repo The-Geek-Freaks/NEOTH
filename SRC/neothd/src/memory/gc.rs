@@ -154,14 +154,17 @@ pub fn enforce_size_cap(conn: &mut Connection, max_sources: usize) -> Result<usi
         let mut stmt =
             tx.prepare("SELECT id FROM sources ORDER BY indexed_ts ASC, id ASC LIMIT ?1")?;
         let rows = stmt.query_map(params![overflow], |r| r.get::<_, i64>(0))?;
-        rows.filter_map(|r| r.ok()).collect()
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect size-cap source ids")?
     };
     for id in &victim_ids {
-        let _ = tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![id]);
-        let _ = tx.execute(
+        tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![id])
+            .with_context(|| format!("delete chunks for source {id}"))?;
+        tx.execute(
             "DELETE FROM chunks_trigram WHERE source_id = ?1",
             params![id],
-        );
+        )
+        .with_context(|| format!("delete trigram chunks for source {id}"))?;
     }
     let dropped = if victim_ids.is_empty() {
         0

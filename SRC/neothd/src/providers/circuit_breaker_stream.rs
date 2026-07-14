@@ -164,6 +164,7 @@ mod tests {
         CompletionChunk {
             delta: delta.into(),
             done,
+            identity: Default::default(),
             input_tokens: None,
             output_tokens: None,
             cache_creation_tokens: None,

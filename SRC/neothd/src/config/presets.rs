@@ -223,9 +223,7 @@ pub fn set_active(home: &Path, name: &str) -> Result<()> {
     // ZF-01 — built-ins are activatable too (they show up in `preset
     // list`); consumers of the active pointer resolve via [`resolve`],
     // which falls back to the compiled-in set.
-    if !file.presets.contains_key(name)
-        && super::preset_builtins::builtin_by_name(name).is_none()
-    {
+    if !file.presets.contains_key(name) && super::preset_builtins::builtin_by_name(name).is_none() {
         anyhow::bail!("preset `{}` not found", name);
     }
     file.active = Some(name.to_string());
@@ -492,7 +490,10 @@ fn merge_overrides(
         for seg in parents {
             let key = serde_yaml::Value::from(*seg);
             if !cur.contains_key(&key) {
-                cur.insert(key.clone(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+                cur.insert(
+                    key.clone(),
+                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+                );
             }
             cur = match cur.get_mut(&key) {
                 Some(serde_yaml::Value::Mapping(m)) => m,
@@ -615,9 +616,9 @@ fn set_nested<F: FnOnce(&mut serde_yaml::Mapping, &str)>(
     // the operator sees WHY the field didn't change.
     if let Some(existing) = mapping.get(&block_key) {
         if !existing.is_mapping() {
-            report
-                .fields_changed
-                .push(format!("{block}.{key} (SKIPPED: `{block}` is not a mapping)"));
+            report.fields_changed.push(format!(
+                "{block}.{key} (SKIPPED: `{block}` is not a mapping)"
+            ));
             return;
         }
     }

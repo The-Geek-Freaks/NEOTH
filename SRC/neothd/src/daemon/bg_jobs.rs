@@ -415,7 +415,9 @@ mod tests {
             triggered_clone.store(true, std::sync::atomic::Ordering::SeqCst);
         });
         let id = BgJobId::new("cb-job", 3_000);
-        let registered = reg.register(id.clone(), "callback test", 3_000, Some(cb)).await;
+        let registered = reg
+            .register(id.clone(), "callback test", 3_000, Some(cb))
+            .await;
         assert!(registered);
         let entries = reg.entries().await;
         assert_eq!(entries.len(), 1);

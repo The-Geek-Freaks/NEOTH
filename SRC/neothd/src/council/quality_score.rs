@@ -193,24 +193,24 @@ pub fn score_response(resp: &HemisphereResponse) -> QualityScore {
         HemisphereOutcome::Errored { .. } => return QualityScore::errored(),
     };
     let tier = provider_tier(&resp.provider);
-    // N-Space anti-pattern penalty (LOWKEY-8): hedging/tone-policing/theater
-    // responses lose scoring weight so `best_response` never prefers slop.
-    // Built-in pattern tables only — operator extra_patterns need a config
-    // surface here before they can flow in.
-    let nspace = super::nspace::scan_nspace(text, &[]);
-    let dynamic = (dynamic_signal_from_text(text) - nspace.total_penalty).max(0.0);
+    // `dynamic_signal_from_text` owns the N-Space penalty. Keeping the
+    // deduction in one place prevents the live ranking path from applying the
+    // same anti-pattern hit twice.
+    let dynamic = dynamic_signal_from_text(text);
     // Memory weight stays at neutral 0.5 until SP-4 wires the
     // `memory::routing_weights` lookup.
     QualityScore::new(tier, dynamic, 0.5, 0.0)
 }
 
 /// COUNCIL-WEIGHTING-01 — returns `true` when the provider id corresponds
-/// to a locally-running backend (compute on operator's machine).
+/// to a backend guaranteed to keep data on the operator's machine.
 ///
 /// `claude_cli` is **excluded** — it uses OAuth but inference runs on
-/// Anthropic's servers.  Mirrors `InferenceProvider::is_local()`.
+/// Anthropic's servers. `recursive_mas` is also excluded because its
+/// operator-installed Python sidecar inherits network access. Mirrors
+/// `InferenceProvider::is_local()`.
 pub fn is_local_provider(id: &str) -> bool {
-    matches!(id, "local_qwen" | "local_ouro" | "local_ollama" | "recursive_mas")
+    matches!(id, "local_qwen" | "local_ouro" | "local_ollama")
 }
 
 /// COUNCIL-WEIGHTING-01 — adjust a score vector to prefer local providers.
@@ -760,6 +760,22 @@ Steps to reproduce:
     }
 
     #[test]
+    fn score_response_applies_nspace_penalty_exactly_once() {
+        let theater =
+            "as an ai assistant my purpose is to help and it is worth noting that generally speaking this is fine. "
+                .repeat(10);
+        let expected = dynamic_signal_from_text(&theater);
+        assert!(expected > 0.0, "fixture must not be floored before ranking");
+
+        let scored = score_response(&ok_resp("anthropic_api", &theater));
+        assert!(
+            (scored.dynamic_signal - expected).abs() < 1e-6,
+            "score_response must reuse the already-penalised dynamic signal: expected {expected}, got {}",
+            scored.dynamic_signal,
+        );
+    }
+
+    #[test]
     fn nspace_clean_response_keeps_full_signal() {
         // A direct, anti-pattern-free response incurs zero N-Space penalty, so
         // its dynamic signal is unchanged by LOWKEY-03 — length-maxed + no
@@ -776,11 +792,11 @@ Steps to reproduce:
     // ── COUNCIL-WEIGHTING-01 locality tests ─────────────────────────────
 
     #[test]
-    fn is_local_provider_identifies_local_backends() {
+    fn is_local_provider_identifies_offline_backends() {
         assert!(is_local_provider("local_qwen"));
         assert!(is_local_provider("local_ouro"));
         assert!(is_local_provider("local_ollama"));
-        assert!(is_local_provider("recursive_mas"));
+        assert!(!is_local_provider("recursive_mas"));
         // cloud / semi-cloud providers must NOT be flagged as local
         assert!(!is_local_provider("claude_cli")); // inference on Anthropic's servers
         assert!(!is_local_provider("anthropic_api"));
@@ -813,9 +829,20 @@ Steps to reproduce:
             (HemisphereRole::Right, 0.79_f32),
         ];
         apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
-        let right = scores.iter().find(|(r, _)| *r == HemisphereRole::Right).unwrap().1;
-        let left = scores.iter().find(|(r, _)| *r == HemisphereRole::Left).unwrap().1;
-        assert!(right > left, "local (Right) must win tie-break: right={right} left={left}");
+        let right = scores
+            .iter()
+            .find(|(r, _)| *r == HemisphereRole::Right)
+            .unwrap()
+            .1;
+        let left = scores
+            .iter()
+            .find(|(r, _)| *r == HemisphereRole::Left)
+            .unwrap()
+            .1;
+        assert!(
+            right > left,
+            "local (Right) must win tie-break: right={right} left={left}"
+        );
     }
 
     /// CW-01 test 2 — cloud clearly ahead, no tie-break fires.
@@ -841,9 +868,20 @@ Steps to reproduce:
         ];
         let pre_left = scores[0].1;
         apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
-        let right = scores.iter().find(|(r, _)| *r == HemisphereRole::Right).unwrap().1;
-        let left = scores.iter().find(|(r, _)| *r == HemisphereRole::Left).unwrap().1;
-        assert!(left > right, "cloud (Left) must remain ahead: left={left} right={right}");
+        let right = scores
+            .iter()
+            .find(|(r, _)| *r == HemisphereRole::Right)
+            .unwrap()
+            .1;
+        let left = scores
+            .iter()
+            .find(|(r, _)| *r == HemisphereRole::Left)
+            .unwrap()
+            .1;
+        assert!(
+            left > right,
+            "cloud (Left) must remain ahead: left={left} right={right}"
+        );
         assert_eq!(pre_left, left, "cloud score must not change");
     }
 
@@ -871,7 +909,10 @@ Steps to reproduce:
         ];
         let original = scores.clone();
         apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
-        assert_eq!(scores, original, "zero-bonus + no-tie-break must leave scores unchanged");
+        assert_eq!(
+            scores, original,
+            "zero-bonus + no-tie-break must leave scores unchanged"
+        );
     }
 
     /// CW-01 test 4 — explicit bonus flips a near-tie to local.
@@ -897,10 +938,24 @@ Steps to reproduce:
             (HemisphereRole::Right, 0.70_f32),
         ];
         apply_locality_weights(&mut scores, &[cloud_resp, local_resp], &cfg);
-        let right = scores.iter().find(|(r, _)| *r == HemisphereRole::Right).unwrap().1;
-        let left = scores.iter().find(|(r, _)| *r == HemisphereRole::Left).unwrap().1;
+        let right = scores
+            .iter()
+            .find(|(r, _)| *r == HemisphereRole::Right)
+            .unwrap()
+            .1;
+        let left = scores
+            .iter()
+            .find(|(r, _)| *r == HemisphereRole::Left)
+            .unwrap()
+            .1;
         // local 0.70 + 0.20 = 0.90 > cloud 0.80
-        assert!(right > left, "bonus must flip result: right={right} left={left}");
-        assert!((right - 0.90).abs() < 1e-5, "local score should be 0.90: {right}");
+        assert!(
+            right > left,
+            "bonus must flip result: right={right} left={left}"
+        );
+        assert!(
+            (right - 0.90).abs() < 1e-5,
+            "local score should be 0.90: {right}"
+        );
     }
 }

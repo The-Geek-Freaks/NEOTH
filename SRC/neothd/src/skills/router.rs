@@ -645,8 +645,13 @@ mod tests {
             "default floor must preserve historical single-token match"
         );
         assert!(
-            route_with_min_weight("got any ideas for dinner", &skills, FULL_AUTO_MIN_WEIGHT, &[])
-                .is_none(),
+            route_with_min_weight(
+                "got any ideas for dinner",
+                &skills,
+                FULL_AUTO_MIN_WEIGHT,
+                &[]
+            )
+            .is_none(),
             "full-auto floor must suppress a lone generic single-word trigger"
         );
     }
@@ -1422,7 +1427,10 @@ mod tests {
         let skills = [s];
         let active = vec!["main.py".to_string()];
         let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &active);
-        assert!(result.is_none(), "skill must be gated out when no active file matches");
+        assert!(
+            result.is_none(),
+            "skill must be gated out when no active file matches"
+        );
     }
 
     #[test]
@@ -1433,7 +1441,10 @@ mod tests {
         let skills = [s];
         let active = vec!["lib.rs".to_string()];
         let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &active);
-        assert!(result.is_some(), "skill must activate when an active file matches");
+        assert!(
+            result.is_some(),
+            "skill must activate when an active file matches"
+        );
         assert_eq!(result.unwrap().skill.id(), "rust-skill");
     }
 
@@ -1445,11 +1456,17 @@ mod tests {
         let skills1 = [s.clone()];
         let active = vec!["main.py".to_string()];
         let r1 = route_with_min_weight("refactor this", &skills1, DEFAULT_MIN_WEIGHT, &active);
-        assert!(r1.is_some(), "empty paths must always activate (backward compat)");
+        assert!(
+            r1.is_some(),
+            "empty paths must always activate (backward compat)"
+        );
         // without files
         let skills2 = [s];
         let r2 = route_with_min_weight("refactor this", &skills2, DEFAULT_MIN_WEIGHT, &[]);
-        assert!(r2.is_some(), "empty paths + empty active_files must activate");
+        assert!(
+            r2.is_some(),
+            "empty paths + empty active_files must activate"
+        );
     }
 
     #[test]
@@ -1460,7 +1477,10 @@ mod tests {
         s.manifest.paths = vec!["**/*.rs".to_string()];
         let skills = [s];
         let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &[]);
-        assert!(result.is_some(), "empty active_files disables the gate entirely");
+        assert!(
+            result.is_some(),
+            "empty active_files disables the gate entirely"
+        );
     }
 
     #[test]
@@ -1475,7 +1495,10 @@ mod tests {
             "src/lib.rs".to_string(),
         ];
         let result = route_with_min_weight("refactor this", &skills, DEFAULT_MIN_WEIGHT, &active);
-        assert!(result.is_some(), "skill activates when any one active file matches");
+        assert!(
+            result.is_some(),
+            "skill activates when any one active file matches"
+        );
     }
 
     #[test]
@@ -1512,17 +1535,20 @@ mod tests {
 
     #[test]
     fn design_eng_short_triggers_activate() {
-        let manifest: SkillManifest = serde_yaml::from_str(include_str!(
-            "../../assets/skills/design_eng/skill.yaml"
-        ))
-        .expect("bundled design_eng yaml parses");
+        let manifest: SkillManifest =
+            serde_yaml::from_str(include_str!("../../assets/skills/design_eng/skill.yaml"))
+                .expect("bundled design_eng yaml parses");
         let s = Skill {
             manifest,
             path: PathBuf::from("/bundled/design_eng/skill.yaml"),
             content_hash: String::new(),
         };
         let skills = [s];
-        for prompt in ["animation timing is off", "GUI polish needed", "polish this UI"] {
+        for prompt in [
+            "animation timing is off",
+            "GUI polish needed",
+            "polish this UI",
+        ] {
             assert!(
                 route(prompt, &skills).is_some(),
                 "prompt `{prompt}` must activate design_eng via short trigger",
@@ -1532,10 +1558,9 @@ mod tests {
 
     #[test]
     fn taste_short_triggers_activate() {
-        let manifest: SkillManifest = serde_yaml::from_str(include_str!(
-            "../../assets/skills/taste/skill.yaml"
-        ))
-        .expect("bundled taste yaml parses");
+        let manifest: SkillManifest =
+            serde_yaml::from_str(include_str!("../../assets/skills/taste/skill.yaml"))
+                .expect("bundled taste yaml parses");
         let s = Skill {
             manifest,
             path: PathBuf::from("/bundled/taste/skill.yaml"),

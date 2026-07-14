@@ -624,6 +624,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "mock-1".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(10),
@@ -653,6 +654,7 @@ mod tests {
             let _permit = self.release.acquire().await;
             Ok(Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "mock-1".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(10),

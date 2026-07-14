@@ -281,7 +281,7 @@ Total: ~7 focused engineering days.
 - `RefusalReport` / `RefusalClass`: shipped
 - `EVENT_TYPE_REFUSAL_{OBSERVED, MIRRORED, REDIRECTED, PERSISTENT}`: reserved in WAL
 - `policy.yaml::dangerous_targets`: shipped
-- `Permissions::evaluate(action, level)`: shipped
+- `Permissions::evaluate(action, &policy_snapshot)`: shipped
 - `HemisphereRole` + `InferenceTopology::slot_for(role)`: shipped
 
 Per-hemisphere classification depends on the council/multi-hemisphere dispatcher landing (currently the chat path is single-hemisphere). The single-hemisphere recovery loop (items 1-9 above except 1.2) ships immediately; council-aware (1.2) lands when the multi-hemisphere chat flow lands.

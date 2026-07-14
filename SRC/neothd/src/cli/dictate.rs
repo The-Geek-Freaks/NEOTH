@@ -1,9 +1,10 @@
 //! `neoth dictate <file>` — GOLD-ADOPT-25 dictation surface.
 //!
 //! Decodes an audio file to 16 kHz mono PCM (symphonia — WAV/MP3/FLAC/
-//! Ogg/M4A) and runs it through `media::dictation::transcribe_utterance`:
+//! Ogg/M4A) and runs it through the writer-aware canonical dictation path:
 //! the `media.dictation_enabled` consent gate, the optional SmoothedVad
-//! pre-filter, and the faster-whisper → candle STT priority chain.
+//! pre-filter, configured STT provider/fallback, download consent, and WAL
+//! audit for cloud transcription.
 //!
 //! Live microphone capture is deliberately out of scope (no cpal dep);
 //! file-based dictation is the production caller for the pipeline until
@@ -29,23 +30,55 @@ pub struct DictateArgs {
 pub async fn run_dictate(args: DictateArgs) -> Result<()> {
     let config = crate::config::FreedomConfig::load_from_default_path()?;
     let media_cfg = config.media;
+    let updater_cfg = config.updater;
+    let neoth_home = crate::config::FreedomConfig::default_neoth_home();
     let file = args.file.clone();
+
+    // A standalone CLI process must not append to the daemon-owned active
+    // segment. Use an independent timestamp-named segment and pass its writer
+    // into the canonical STT boundary. If opening it fails, local STT remains
+    // usable; proof-hardline cloud STT rejects the missing sink before egress.
+    let audit = {
+        let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+        let opened = (|| -> anyhow::Result<_> {
+            std::fs::create_dir_all(&wal_dir)?;
+            Ok(crate::wal::writer::spawn(
+                wal_dir.join(format!("{:020}.wal", crate::time::now_unix_ns())),
+            )?)
+        })();
+        match opened {
+            Ok(pair) => Some(pair),
+            Err(error) => {
+                tracing::warn!(%error, "dictate: WAL audit writer unavailable");
+                None
+            }
+        }
+    };
+    let writer_for_stt = audit.as_ref().map(|(writer, _)| writer.clone());
 
     // Decode + STT are blocking (symphonia / whisper) — keep them off
     // the async reactor. The closure returns Ok(Result<String,
     // DictationError>) ON PURPOSE: DictationError is a match-handled
     // outcome below (AllSilence = clean exit), NOT a `?`-propagated
     // failure — don't "simplify" the double wrap.
-    let outcome = tokio::task::spawn_blocking(move || {
+    let blocking_result = tokio::task::spawn_blocking(move || {
         let samples = crate::media::audio::decode_file_to_pcm(&file)?;
-        Ok::<_, anyhow::Error>(crate::media::dictation::transcribe_utterance(
+        Ok::<_, anyhow::Error>(crate::media::dictation::transcribe_utterance_with_writer(
             &samples,
             crate::media::audio::TARGET_SAMPLE_RATE,
             &media_cfg,
+            &updater_cfg,
+            &neoth_home,
+            writer_for_stt.as_ref(),
         ))
     })
-    .await
-    .context("dictate: blocking decode/STT task panicked")??;
+    .await;
+
+    if let Some((writer, join)) = audit {
+        drop(writer);
+        join.await.context("dictate: WAL writer task panicked")?;
+    }
+    let outcome = blocking_result.context("dictate: blocking decode/STT task panicked")??;
 
     match outcome {
         Ok(text) => match args.output {
@@ -77,7 +110,7 @@ pub async fn run_dictate(args: DictateArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::config::features::MediaConfig;
-    use crate::media::dictation::{transcribe_utterance, DictationError};
+    use crate::media::dictation::{DictationError, transcribe_utterance};
 
     /// The CLI is a thin shim; the load-bearing contract is that the
     /// default config (dictation_enabled=false) refuses before touching
@@ -85,8 +118,16 @@ mod tests {
     #[test]
     fn default_config_refuses_dictation() {
         let cfg = MediaConfig::default();
+        let home = tempfile::tempdir().unwrap();
         let pcm = vec![0.0f32; 3200]; // 200 ms of silence @ 16 kHz
-        let err = transcribe_utterance(&pcm, 16_000, &cfg).unwrap_err();
+        let err = transcribe_utterance(
+            &pcm,
+            16_000,
+            &cfg,
+            &crate::config::UpdaterConfig::default(),
+            home.path(),
+        )
+        .unwrap_err();
         assert!(matches!(err, DictationError::NotEnabled));
     }
 }

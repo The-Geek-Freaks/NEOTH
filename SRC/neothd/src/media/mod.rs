@@ -2,39 +2,34 @@
 //!
 //! Per `memory/neoth-arch-v2.md` R-9 + the round-3 research synthesis pins.
 //! The status column reflects what actually ships today — not the original
-//! aspiration. In particular **the audio path is cloud-first**: local STT
-//! transcription and local TTS are NOT implemented yet, so any claim of a
-//! "full-stack local" audio pipeline would be untrue (GOLD-HON-04 / B-08).
+//! aspiration. Audio STT is local-first by default through the canonical
+//! dispatcher; cloud STT remains an explicit opt-in. TTS has the same honest
+//! split: offline system-native/Piper providers plus explicitly consented cloud
+//! providers through one audited dispatcher (GOLD-TTS-01).
 //!
 //! | Modality | Tech pin                                                                | Status                                                                                       |
 //! |----------|-------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
-//! | PDF      | `pdf-extract` text · `pdfium-render` forms (feature `pdf-forms`)         | text extraction shipped (no OCR); form fields behind `pdf-forms`                              |
+//! | PDF      | `pdf-extract` text                                                      | text extraction shipped (no OCR or form editing)                                              |
 //! | Vision   | `image` decode · local CLIP embed (candle) · cloud vision synth (MM-02b) | decode + cached-CLIP embed + cloud synth shipped                                              |
-//! | Audio    | `symphonia` decode · STT: candle `whisper` local (cache-gated) + cloud REST (MM-01b) · TTS: cloud REST (MM-03b) + planned `piper-rs`/OS-native | decode + **local candle-Whisper STT** (wired; fires once the model artifacts are cached) + cloud STT/TTS REST shipped; local **TTS** still planned |
+//! | Audio    | `symphonia` decode · STT: configured Candle/faster-whisper local backend + opt-in cloud REST (MM-01b) · TTS: cloud REST (MM-03b) + OS-native/local providers | decode + canonical local-first STT dispatcher and opt-in cloud STT/TTS shipped |
 //! | Video    | ffmpeg decode → vision synth (MM-02b)                                    | frame decode + vision synth shipped                                                           |
 //!
 //! This module started as a **trait surface**; most paths are now real — cloud
-//! STT (MM-01b), cloud TTS (MM-03b), and video decode → vision-synth (MM-02b)
+//! STT (MM-01b), local/cloud TTS (MM-03b/GOLD-TTS-01), and video decode → vision-synth (MM-02b)
 //! ship working REST/ffmpeg backends; PDF text + CLIP image embedding work
-//! locally; and **local Whisper STT is wired** (DD-03 / HON-04 — the doc
-//! previously said the opposite): `audio.rs`'s `transcribe_if_cached` runs
-//! `providers::whisper::WhisperEngine` (candle) once the model artifacts are
-//! cached, emitting real transcript text; only when the model is absent does
-//! `text` stay empty (status `"model not cached"`). The remaining **local**
-//! scaffold is TTS (piper-rs / OS-native speech synthesis) and PDF OCR. The
-//! shape is intentional — no module-internal "later we'll generalise" pattern:
-//! every backend is its own typed `Asset` consumer + producer.
+//! locally. Audio, video, file dictation, channel attachments, and OMI all enter
+//! `stt_provider::dispatch_pcm_f32`, which selects the configured backend and
+//! size, enforces download/cloud policy, records audit events, and performs at
+//! most one typed fallback. Missing artifacts fail loudly or are fetched only
+//! through the updater gate; there is no legacy `transcribe_if_cached` bypass.
+//! Every backend remains its own typed `Asset` consumer + producer.
 
 pub mod audio;
-/// GOLD-ADOPT-25 — Dictation input mode: microphone PCM → VAD gate → local STT.
+/// GOLD-ADOPT-25 — Dictation input mode: caller-supplied PCM → VAD → configured STT.
 /// Scope: dictation-surface-only (reuses existing candle WhisperEngine; no
-/// second GGML engine). `whisper-stt` Cargo feature reserved for future GGML.
+/// second GGML engine). Dictation is runtime-gated by `media.dictation_enabled`;
+/// there is no inert build feature that can imply a capability it does not add.
 pub mod dictation;
-/// GOLD-ADAPT-HANDY-02 — SmoothedVad: energy-based voice-activity detector with
-/// probability smoothing + hangover, wired as a pre-STT gate in the dictation
-/// capture path. The `vad` Cargo feature extends the energy backend with a
-/// Silero ONNX neural backend (scaffold; ONNX runtime pending).
-pub mod vad;
 /// GOLD-ADAPT-AWE-DOC-01 — Docling subprocess extractor for PDF/Document/Image.
 /// Invokes `docling --output-format json <file>` in a headless subprocess when
 /// `MediaConfig::docling_enabled` is true AND the binary is on PATH; otherwise
@@ -42,42 +37,41 @@ pub mod vad;
 /// pure-Rust backends.
 pub mod docling;
 pub mod document;
+/// MM-02b — ffmpeg-backed video frame decoder (single still near a timestamp).
+pub mod frame_decoder;
 /// GOLD-ADAPT-HANDY-07 — GPU/accelerator detection + FMA3 guard for the
 /// media pipeline (STT backend selection). Probes CPU capability flags
 /// (FMA3/AVX2/AVX) and best available accelerator class; `require_fma3`
 /// guards against SIGILL on pre-Haswell CPUs.
 pub mod hw_probe;
-/// MM-02b — ffmpeg-backed video frame decoder (single still near a timestamp).
-pub mod frame_decoder;
-/// MM-02b — multimodal vision synthesizers (Anthropic / OpenAI / Gemini REST).
-pub mod multimodal_synth;
-pub mod pdf;
-pub mod pdf_forms;
 /// GOLD-ADAPT-HANDY-04 — model download manager: SHA-256 verify, resumable
 /// `Range` downloads, and atomic tmp→dest rename.
 pub mod model_manager;
+/// MM-02b — multimodal vision synthesizers (Anthropic / OpenAI / Gemini REST).
+pub mod multimodal_synth;
+pub mod pdf;
 /// HANDY-01 — band-limited sinc resampler (rubato) for the STT capture path.
 pub mod resampler;
-pub mod stt_dispatch;
+/// SPEAKR-02c — self-contained log-mel + statistics-pooling speaker-embedding
+/// encoder. Fills the `utterance_embeddings` seam: PCM → unit-norm voice vector
+/// consumed by `speaker_profile`. No model download, no external weights.
+pub mod speaker_encoder;
+/// SPEAKR-02c (highest-accuracy neural tier) — production ECAPA-TDNN
+/// speaker-embedding inference (192-dim). Activates when the operator
+/// provisions compatible weights via `scripts/convert_ecapa.py`; the common
+/// STT path prefers it over x-vector and log-mel.
+pub mod speaker_encoder_ecapa;
+/// SPEAKR-02c (neural fallback tier) — production x-vector (TDNN)
+/// speaker-embedding inference. Activates when compatible weights are present;
+/// the common STT path falls back to the weight-free log-mel encoder otherwise.
+pub mod speaker_encoder_xvector;
 /// GOLD-ADAPT-SPEAKR-02 — Speaker voice-profile re-identification.
 /// Cosine-matches a voice embedding against known profiles, updates the
 /// winning centroid via a 70/30 EMA, and guards against ambiguous top-2
 /// results. Wire into the STT post-processing path when embeddings are
 /// available (`media.auto_speaker_labels: true`).
 pub mod speaker_profile;
-/// SPEAKR-02c — self-contained log-mel + statistics-pooling speaker-embedding
-/// encoder. Fills the `utterance_embeddings` seam: PCM → unit-norm voice vector
-/// consumed by `speaker_profile`. No model download, no external weights.
-pub mod speaker_encoder;
-/// SPEAKR-02c (neural upgrade) — x-vector (TDNN) speaker-embedding encoder.
-/// Dormant scaffold: activates when the operator provisions weights via
-/// `scripts/convert_xvector.py`. Falls back to `speaker_encoder` when absent.
-pub mod speaker_encoder_xvector;
-/// SPEAKR-02c (highest-accuracy neural upgrade) — ECAPA-TDNN speaker-embedding
-/// encoder (192-dim). Dormant scaffold: activates when the operator provisions
-/// weights via `scripts/convert_ecapa.py`. Preferred over x-vector when weights
-/// are present; falls back to x-vector then log-mel when absent.
-pub mod speaker_encoder_ecapa;
+pub mod stt_dispatch;
 /// HANDY-03 — filler-word removal + stutter collapse for raw STT transcripts.
 /// Called as a post-processing hook before transcript text leaves the pipeline.
 pub mod stt_postprocess;
@@ -85,11 +79,16 @@ pub mod stt_postprocess;
 /// `make_stt_provider` factory. REST via `providers::http_client`. Transcript
 /// text is never WAL-written (privacy).
 pub mod stt_provider;
-/// MM-03b — cloud TTS providers (Azure Cognitive Services + ElevenLabs) +
-/// the `make_tts_provider` factory. REST via `providers::http_client`.
+/// MM-03b / GOLD-TTS-01 — canonical TTS provider factory, audited dispatch,
+/// local Piper/system-native execution, and consent-gated cloud clients.
 pub mod tts_cloud;
 pub mod tts_dispatch;
 pub mod tts_provider;
+/// GOLD-ADAPT-HANDY-02 — SmoothedVad: energy-based voice-activity detector with
+/// probability smoothing + hangover, wired as a pre-STT gate in the dictation
+/// capture path. It has no model/runtime dependency and is present in every
+/// build.
+pub mod vad;
 pub mod video;
 /// MM-02b — video analysis dispatch: decode → vision synth → 0xC9 audit.
 pub mod video_dispatch;

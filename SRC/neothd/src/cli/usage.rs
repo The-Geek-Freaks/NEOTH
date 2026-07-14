@@ -167,8 +167,7 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
     if roll.total_automated_count + roll.total_human_count > 0 {
         println!(
             "  session type: human={} automated={}",
-            roll.total_human_count,
-            roll.total_automated_count,
+            roll.total_human_count, roll.total_automated_count,
         );
     }
     // VIEW-03 — cache token economics (shown only when cache was used).
@@ -179,7 +178,11 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
             roll.total_cache_creation_tokens,
             roll.total_cache_read_tokens,
             format_amount(savings_in_target.abs(), currency),
-            if roll.total_cache_savings_usd < 0.0 { " (cost)" } else { "" },
+            if roll.total_cache_savings_usd < 0.0 {
+                " (cost)"
+            } else {
+                ""
+            },
         );
     }
     if roll.per_provider.is_empty() {

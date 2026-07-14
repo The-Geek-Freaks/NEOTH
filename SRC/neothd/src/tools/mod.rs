@@ -24,6 +24,8 @@ pub mod caldav_calendar;
 /// Builds on `web_search::search_cached` (ODY-29), `web_fetch::fetch_with_goal`
 /// (ODY-23), and `pipeline::untrusted_wrap::wrap_untrusted` (ODY-18).
 pub mod deep_research;
+/// Central autonomy + mandatory-WAL capability boundary for real outbound HTTP.
+pub mod external_http;
 pub mod github;
 pub mod google_tasks;
 /// GOLD-ADOPT-26 — zero-config web-to-Markdown via https://r.jina.ai/<url>.

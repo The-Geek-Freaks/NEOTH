@@ -95,10 +95,20 @@ pub struct KvOffloadCache {
     /// `<disk_dir>/<key_hex>.kv.bin`. `None` = disk tier disabled.
     disk_dir: Option<PathBuf>,
     /// KV-04 quota: max total bytes for `<disk_dir>/*.kv.bin`, enforced by
-    /// `prune_disk` (LRU-by-mtime) at construction and after every disk write.
+    /// an LRU-by-mtime prune at construction and whenever a write crosses it.
     /// From `NEOTH_OURO_KV_DISK_CAP_MB` (default 512 MB). Unused when
     /// `disk_dir` is `None`.
     disk_cap_bytes: u64,
+    /// Exact byte total measured at startup, then maintained by successful
+    /// writes and quota deletions. Avoids an O(number-of-files) directory scan
+    /// after every cold-tier spill while the cache remains below quota.
+    disk_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DiskWriteStats {
+    previous_bytes: u64,
+    written_bytes: u64,
 }
 
 impl KvOffloadCache {
@@ -110,24 +120,58 @@ impl KvOffloadCache {
     /// created on construction (non-fatal: disk I/O errors degrade to RAM-only
     /// behaviour).
     pub fn new(hot_cap: usize, cold_cap: usize, device: Device, disk_dir: Option<PathBuf>) -> Self {
+        Self::new_with_disk_cap(
+            hot_cap,
+            cold_cap,
+            device,
+            disk_dir,
+            Self::disk_cap_bytes_from_env(),
+        )
+    }
+
+    fn new_with_disk_cap(
+        hot_cap: usize,
+        cold_cap: usize,
+        device: Device,
+        disk_dir: Option<PathBuf>,
+        disk_cap_bytes: u64,
+    ) -> Self {
         let hot = LruCache::new(NonZeroUsize::new(hot_cap.max(1)).unwrap());
         let cold = LruCache::new(NonZeroUsize::new(cold_cap.max(1)).unwrap());
-        let disk_cap_bytes = Self::disk_cap_bytes_from_env();
-        if let Some(ref dir) = disk_dir {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                tracing::warn!(
-                    dir = %dir.display(),
-                    err = %e,
-                    "KV-04: could not create kv_cache dir; disk tier disabled"
-                );
-                return Self { hot, cold, device, disk_dir: None, disk_cap_bytes };
-            }
-            // Enforce the quota at startup so a cache that grew past the cap in a
-            // previous run (or under a since-lowered cap) is trimmed before we
-            // start adding more entries this run.
-            Self::prune_disk(dir, disk_cap_bytes);
+        let (disk_dir, disk_bytes) = match disk_dir {
+            None => (None, 0),
+            Some(dir) => match std::fs::create_dir_all(&dir) {
+                Err(e) => {
+                    tracing::warn!(
+                        dir = %dir.display(),
+                        err = %e,
+                        "KV-04: could not create kv_cache dir; disk tier disabled"
+                    );
+                    (None, 0)
+                }
+                Ok(()) => match Self::measure_and_prune_disk(&dir, disk_cap_bytes) {
+                    Ok(bytes) => (Some(dir), bytes),
+                    Err(e) => {
+                        // A running counter cannot start from an unknown value.
+                        // Keep inference fail-soft by disabling only the disk tier.
+                        tracing::warn!(
+                            dir = %dir.display(),
+                            err = %e,
+                            "KV-04: could not measure kv_cache dir; disk tier disabled"
+                        );
+                        (None, 0)
+                    }
+                },
+            },
+        };
+        Self {
+            hot,
+            cold,
+            device,
+            disk_dir,
+            disk_cap_bytes,
+            disk_bytes,
         }
-        Self { hot, cold, device, disk_dir, disk_cap_bytes }
     }
 
     /// Disk-tier quota in bytes from `NEOTH_OURO_KV_DISK_CAP_MB` (default 512 MB).
@@ -144,37 +188,48 @@ impl KvOffloadCache {
     /// KV-04 quota enforcement: keep `<dir>/*.kv.bin` under `cap_bytes` by
     /// deleting the least-recently-modified entries first (mtime is the LRU
     /// signal — `read_from_disk` touches it on every hit). Also sweeps stale
-    /// `*.kv.bin.tmp` files left by a crash mid-write. All errors are non-fatal:
-    /// a full or unwritable disk must never abort inference.
-    fn prune_disk(dir: &Path, cap_bytes: u64) {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return;
-        };
+    /// `*.kv.bin*.tmp` files left by a crash mid-write. Returns the exact
+    /// retained byte total so callers can continue with O(1) accounting.
+    fn measure_and_prune_disk(dir: &Path, cap_bytes: u64) -> Result<u64> {
+        let rd = std::fs::read_dir(dir)
+            .with_context(|| format!("KV-04: list disk cache {}", dir.display()))?;
         let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
         let mut total: u64 = 0;
-        for entry in rd.flatten() {
+        for entry in rd {
+            let entry = entry.with_context(|| format!("KV-04: read entry in {}", dir.display()))?;
             let path = entry.path();
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
             // Sweep stale temp files from interrupted atomic writes.
-            if name.ends_with(".kv.bin.tmp") {
-                let _ = std::fs::remove_file(&path);
+            if name.ends_with(".kv.bin.tmp")
+                || (name.contains(".kv.bin.") && name.ends_with(".tmp"))
+            {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    tracing::warn!(
+                        file = %path.display(),
+                        err = %e,
+                        "KV-04: could not remove stale atomic-write temp"
+                    );
+                }
                 continue;
             }
             if !name.ends_with(".kv.bin") {
                 continue;
             }
-            let Ok(meta) = entry.metadata() else {
+            let meta = entry
+                .metadata()
+                .with_context(|| format!("KV-04: stat disk cache entry {}", path.display()))?;
+            if !meta.is_file() {
                 continue;
-            };
+            }
             let size = meta.len();
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
             total = total.saturating_add(size);
             files.push((path, size, mtime));
         }
         if total <= cap_bytes {
-            return;
+            return Ok(total);
         }
         // Least-recently-modified first.
         files.sort_by_key(|(_, _, mtime)| *mtime);
@@ -182,14 +237,24 @@ impl KvOffloadCache {
             if total <= cap_bytes {
                 break;
             }
-            if std::fs::remove_file(&path).is_ok() {
-                total = total.saturating_sub(size);
-                tracing::debug!(
-                    file = %path.display(),
-                    "KV-04: pruned disk cache entry over quota"
-                );
+            match std::fs::remove_file(&path) {
+                Ok(()) => {
+                    total = total.saturating_sub(size);
+                    tracing::debug!(
+                        file = %path.display(),
+                        "KV-04: pruned disk cache entry over quota"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        file = %path.display(),
+                        err = %e,
+                        "KV-04: could not prune disk cache entry over quota"
+                    );
+                }
             }
         }
+        Ok(total)
     }
 
     /// Probe hot → cold → disk. Returns `Ok(Some(snap))` on any tier hit,
@@ -337,16 +402,37 @@ impl KvOffloadCache {
         }
         if let Some(ref dir) = self.disk_dir.clone() {
             if let Some((evicted_key, cold_entry)) = self.cold.pop_lru() {
-                if let Err(e) = Self::write_to_disk(dir, evicted_key, &cold_entry) {
-                    tracing::warn!(
-                        key = evicted_key,
-                        err = %e,
-                        "KV-04: disk write failed on cold eviction — entry dropped"
-                    );
-                } else {
-                    tracing::debug!(key = evicted_key, "KV-04: cold eviction → disk");
-                    // Enforce the disk quota after growing the cache.
-                    Self::prune_disk(dir, self.disk_cap_bytes);
+                match Self::write_to_disk(dir, evicted_key, &cold_entry) {
+                    Err(e) => {
+                        tracing::warn!(
+                            key = evicted_key,
+                            err = %e,
+                            "KV-04: disk write failed on cold eviction — entry dropped"
+                        );
+                    }
+                    Ok(stats) => {
+                        self.disk_bytes = self
+                            .disk_bytes
+                            .saturating_sub(stats.previous_bytes)
+                            .saturating_add(stats.written_bytes);
+                        tracing::debug!(
+                            key = evicted_key,
+                            disk_bytes = self.disk_bytes,
+                            "KV-04: cold eviction → disk"
+                        );
+                        // The common below-cap path stays O(1). Only crossing
+                        // the quota requires an LRU directory scan and deletes.
+                        if self.disk_bytes > self.disk_cap_bytes {
+                            match Self::measure_and_prune_disk(dir, self.disk_cap_bytes) {
+                                Ok(bytes) => self.disk_bytes = bytes,
+                                Err(e) => tracing::warn!(
+                                    dir = %dir.display(),
+                                    err = %e,
+                                    "KV-04: disk quota rescan failed after write"
+                                ),
+                            }
+                        }
+                    }
                 }
                 // Re-insert so cold.put below finds room (we manually popped the LRU).
                 // Note: we DON'T re-insert the cold entry — it's been written to disk;
@@ -367,7 +453,7 @@ impl KvOffloadCache {
     ///
     /// Uses `std::fs` (NOT `tokio::fs`) — this is called from a
     /// `spawn_blocking` thread where blocking I/O is correct.
-    fn write_to_disk(dir: &Path, key: u64, cold: &ColdEntry) -> Result<()> {
+    fn write_to_disk(dir: &Path, key: u64, cold: &ColdEntry) -> Result<DiskWriteStats> {
         let mut buf: Vec<u8> = Vec::with_capacity(256 + cold.slots.len() * 64);
 
         // Magic header.
@@ -389,7 +475,11 @@ impl KvOffloadCache {
                 SerialSlot::Empty => {
                     buf.push(0u8); // tag = Empty
                 }
-                SerialSlot::Kv { k_shape, v_shape, bytes } => {
+                SerialSlot::Kv {
+                    k_shape,
+                    v_shape,
+                    bytes,
+                } => {
                     buf.push(1u8); // tag = Kv
                     // K shape.
                     buf.extend_from_slice(&(k_shape.len() as u32).to_le_bytes());
@@ -408,14 +498,23 @@ impl KvOffloadCache {
             }
         }
 
-        // Atomic write: tmp → rename.
+        // Account for replacement before the atomic write. An unexpected stat
+        // error must not corrupt the running byte total.
         let final_path = dir.join(format!("{:016x}.kv.bin", key));
-        let tmp_path = dir.join(format!("{:016x}.kv.bin.tmp", key));
-        std::fs::write(&tmp_path, &buf)
-            .with_context(|| format!("KV-04: write tmp {}", tmp_path.display()))?;
-        std::fs::rename(&tmp_path, &final_path)
-            .with_context(|| format!("KV-04: rename {} -> {}", tmp_path.display(), final_path.display()))?;
-        Ok(())
+        let previous_bytes = match std::fs::metadata(&final_path) {
+            Ok(meta) => meta.len(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("KV-04: stat existing {}", final_path.display()));
+            }
+        };
+        crate::util::atomic_write::atomic_write(&final_path, &buf)
+            .with_context(|| format!("KV-04: atomic write {}", final_path.display()))?;
+        Ok(DiskWriteStats {
+            previous_bytes,
+            written_bytes: buf.len() as u64,
+        })
     }
 
     /// Read and deserialize a `ColdEntry` from `<dir>/<key_hex>.kv.bin`.
@@ -431,7 +530,7 @@ impl KvOffloadCache {
             Err(e) => return Err(e).with_context(|| format!("KV-04: read {}", path.display())),
         };
 
-        // LRU bump: touch mtime on a disk hit so `prune_disk` evicts genuinely
+        // LRU bump: touch mtime on a disk hit so quota pruning evicts genuinely
         // cold entries last (mtime is the LRU signal). Best-effort — a read-only
         // or racing FS just keeps the old mtime. `write(true)` opens without
         // truncating the file we just read.
@@ -478,7 +577,9 @@ impl KvOffloadCache {
         if file_key != key {
             anyhow::bail!(
                 "KV-04: key mismatch in {} (expected {:016x}, got {:016x})",
-                path.display(), key, file_key
+                path.display(),
+                key,
+                file_key
             );
         }
 
@@ -516,17 +617,22 @@ impl KvOffloadCache {
                     // Bytes.
                     let bytes_len = read_u64!() as usize;
                     let bytes = need!(bytes_len).to_vec();
-                    slots.push(SerialSlot::Kv { k_shape, v_shape, bytes });
+                    slots.push(SerialSlot::Kv {
+                        k_shape,
+                        v_shape,
+                        bytes,
+                    });
                 }
-                other => anyhow::bail!(
-                    "KV-04: unknown slot tag {} in {}",
-                    other,
-                    path.display()
-                ),
+                other => anyhow::bail!("KV-04: unknown slot tag {} in {}", other, path.display()),
             }
         }
 
-        Ok(Some(ColdEntry { prefix_ids, slots, num_layers, num_loops }))
+        Ok(Some(ColdEntry {
+            prefix_ids,
+            slots,
+            num_layers,
+            num_loops,
+        }))
     }
 
     /// Serialize a `KvSnapshot` into a `ColdEntry` using suffix-first layer
@@ -577,8 +683,7 @@ impl KvOffloadCache {
                             .to_vec1()
                             .context("KV-03 serialize: V to_vec1")?;
 
-                        let mut bytes =
-                            Vec::with_capacity((k_vec.len() + v_vec.len()) * 4);
+                        let mut bytes = Vec::with_capacity((k_vec.len() + v_vec.len()) * 4);
                         for f in &k_vec {
                             bytes.extend_from_slice(&f.to_le_bytes());
                         }
@@ -624,13 +729,11 @@ impl KvOffloadCache {
         }
 
         // Rebuild in suffix-first order first, then reverse layers back.
-        let mut layers_rev: Vec<Vec<Option<(Tensor, Tensor)>>> =
-            Vec::with_capacity(*num_layers);
+        let mut layers_rev: Vec<Vec<Option<(Tensor, Tensor)>>> = Vec::with_capacity(*num_layers);
 
         let mut slot_iter = slots.iter();
         for _ in 0..*num_layers {
-            let mut loop_slots: Vec<Option<(Tensor, Tensor)>> =
-                Vec::with_capacity(*num_loops);
+            let mut loop_slots: Vec<Option<(Tensor, Tensor)>> = Vec::with_capacity(*num_loops);
             for _ in 0..*num_loops {
                 let s = slot_iter.next().ok_or_else(|| {
                     anyhow::anyhow!("KV-03 deserialize: slot iterator exhausted early")
@@ -655,15 +758,11 @@ impl KvOffloadCache {
 
                         let k_f32: Vec<f32> = bytes[..k_len * 4]
                             .chunks_exact(4)
-                            .map(|b| {
-                                f32::from_le_bytes([b[0], b[1], b[2], b[3]])
-                            })
+                            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                             .collect();
                         let v_f32: Vec<f32> = bytes[k_len * 4..]
                             .chunks_exact(4)
-                            .map(|b| {
-                                f32::from_le_bytes([b[0], b[1], b[2], b[3]])
-                            })
+                            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                             .collect();
 
                         let k_tensor = Tensor::from_vec(k_f32, k_shape.as_slice(), device)
@@ -695,19 +794,13 @@ mod tests {
     /// Build a minimal KvSnapshot: 1 layer × 1 loop slot, small 2×2 F32 tensor.
     /// Exercises the full serialize/deserialize round-trip without model weights.
     fn stub_snap(marker: f32) -> KvSnapshot {
-        let t = Tensor::new(
-            &[[marker, marker], [marker, marker]],
-            &Device::Cpu,
-        )
-        .unwrap();
+        let t = Tensor::new(&[[marker, marker], [marker, marker]], &Device::Cpu).unwrap();
         vec![vec![Some((t.clone(), t))]]
     }
 
     /// 2-layer snapshot so suffix-first ordering is non-trivial.
     fn stub_snap_2layer(a: f32, b: f32) -> KvSnapshot {
-        let mk = |v: f32| {
-            Tensor::new(&[[v, v], [v, v]], &Device::Cpu).unwrap()
-        };
+        let mk = |v: f32| Tensor::new(&[[v, v], [v, v]], &Device::Cpu).unwrap();
         vec![
             vec![Some((mk(a), mk(a)))], // layer 0 (prefix)
             vec![Some((mk(b), mk(b)))], // layer 1 (suffix)
@@ -721,8 +814,7 @@ mod tests {
         let snap = stub_snap(1.5);
         let ids = vec![1u32, 2, 3];
         let cold = KvOffloadCache::serialize(&snap, &ids).unwrap();
-        let restored =
-            KvOffloadCache::deserialize(&cold, &Device::Cpu).unwrap();
+        let restored = KvOffloadCache::deserialize(&cold, &Device::Cpu).unwrap();
 
         assert_eq!(restored.len(), 1);
         let (k, _v) = restored[0][0].as_ref().unwrap();
@@ -738,8 +830,7 @@ mod tests {
         let snap = stub_snap_2layer(1.0, 2.0);
         let ids = vec![4u32, 5];
         let cold = KvOffloadCache::serialize(&snap, &ids).unwrap();
-        let restored =
-            KvOffloadCache::deserialize(&cold, &Device::Cpu).unwrap();
+        let restored = KvOffloadCache::deserialize(&cold, &Device::Cpu).unwrap();
 
         assert_eq!(restored.len(), 2);
         let layer0_val: Vec<f32> = restored[0][0]
@@ -774,9 +865,11 @@ mod tests {
         let t = Tensor::new(&[[9.0f32]], &Device::Cpu).unwrap();
         let snap: KvSnapshot = vec![vec![None, Some((t.clone(), t))]];
         let cold = KvOffloadCache::serialize(&snap, &[]).unwrap();
-        let restored =
-            KvOffloadCache::deserialize(&cold, &Device::Cpu).unwrap();
-        assert!(restored[0][0].is_none(), "None slot must round-trip as None");
+        let restored = KvOffloadCache::deserialize(&cold, &Device::Cpu).unwrap();
+        assert!(
+            restored[0][0].is_none(),
+            "None slot must round-trip as None"
+        );
         assert!(
             restored[0][1].is_some(),
             "Some slot must round-trip as Some"
@@ -876,20 +969,46 @@ mod tests {
         let kb = PrefixKvCache::key(&ids_b);
 
         cache
-            .insert(ka, PrefixKvEntry { snapshot: stub_snap(10.0), prefix_ids: ids_a.clone() })
+            .insert(
+                ka,
+                PrefixKvEntry {
+                    snapshot: stub_snap(10.0),
+                    prefix_ids: ids_a.clone(),
+                },
+            )
             .unwrap();
         cache
-            .insert(kb, PrefixKvEntry { snapshot: stub_snap(20.0), prefix_ids: ids_b.clone() })
+            .insert(
+                kb,
+                PrefixKvEntry {
+                    snapshot: stub_snap(20.0),
+                    prefix_ids: ids_b.clone(),
+                },
+            )
             .unwrap();
 
         // Promote A from cold (evicts B from hot to cold):
         let snap_a = cache.get(ka, &ids_a).unwrap().expect("cold hit A");
-        let va: Vec<f32> = snap_a[0][0].as_ref().unwrap().0.flatten_all().unwrap().to_vec1().unwrap();
+        let va: Vec<f32> = snap_a[0][0]
+            .as_ref()
+            .unwrap()
+            .0
+            .flatten_all()
+            .unwrap()
+            .to_vec1()
+            .unwrap();
         assert!(va.iter().all(|x| (x - 10.0).abs() < 1e-5), "A marker");
 
         // B must now be cold:
         let snap_b = cache.get(kb, &ids_b).unwrap().expect("B now cold");
-        let vb: Vec<f32> = snap_b[0][0].as_ref().unwrap().0.flatten_all().unwrap().to_vec1().unwrap();
+        let vb: Vec<f32> = snap_b[0][0]
+            .as_ref()
+            .unwrap()
+            .0
+            .flatten_all()
+            .unwrap()
+            .to_vec1()
+            .unwrap();
         assert!(vb.iter().all(|x| (x - 20.0).abs() < 1e-5), "B marker");
     }
 
@@ -952,7 +1071,10 @@ mod tests {
 
         // Correct ids → hit (entry was re-inserted on collision path):
         let hit = cache.get(key, &ids_real).unwrap();
-        assert!(hit.is_some(), "correct ids must still hit after collision probe");
+        assert!(
+            hit.is_some(),
+            "correct ids must still hit after collision probe"
+        );
     }
 
     #[test]
@@ -963,10 +1085,34 @@ mod tests {
         let ka = PrefixKvCache::key(&ids_a);
         let kb = PrefixKvCache::key(&ids_b);
 
-        cache.insert(ka, PrefixKvEntry { snapshot: stub_snap(1.0), prefix_ids: ids_a.clone() }).unwrap();
-        cache.insert(kb, PrefixKvEntry { snapshot: stub_snap(2.0), prefix_ids: ids_b.clone() }).unwrap();
+        cache
+            .insert(
+                ka,
+                PrefixKvEntry {
+                    snapshot: stub_snap(1.0),
+                    prefix_ids: ids_a.clone(),
+                },
+            )
+            .unwrap();
+        cache
+            .insert(
+                kb,
+                PrefixKvEntry {
+                    snapshot: stub_snap(2.0),
+                    prefix_ids: ids_b.clone(),
+                },
+            )
+            .unwrap();
         // Re-insert existing key at cap — must replace in place:
-        cache.insert(ka, PrefixKvEntry { snapshot: stub_snap(1.1), prefix_ids: ids_a.clone() }).unwrap();
+        cache
+            .insert(
+                ka,
+                PrefixKvEntry {
+                    snapshot: stub_snap(1.1),
+                    prefix_ids: ids_a.clone(),
+                },
+            )
+            .unwrap();
 
         // Both keys still accessible in hot:
         assert!(cache.get(ka, &ids_a).unwrap().is_some(), "A still in hot");
@@ -991,21 +1137,63 @@ mod tests {
         let kc = PrefixKvCache::key(&ids_c);
 
         // Insert A → hot.
-        cache.insert(ka, PrefixKvEntry { snapshot: stub_snap(1.0), prefix_ids: ids_a.clone() }).unwrap();
+        cache
+            .insert(
+                ka,
+                PrefixKvEntry {
+                    snapshot: stub_snap(1.0),
+                    prefix_ids: ids_a.clone(),
+                },
+            )
+            .unwrap();
         // Insert B → A evicts to cold (cold was empty; disk not yet needed).
-        cache.insert(kb, PrefixKvEntry { snapshot: stub_snap(2.0), prefix_ids: ids_b.clone() }).unwrap();
+        cache
+            .insert(
+                kb,
+                PrefixKvEntry {
+                    snapshot: stub_snap(2.0),
+                    prefix_ids: ids_b.clone(),
+                },
+            )
+            .unwrap();
         // Insert C → B evicts to cold; cold was full (cap=1 has A), so A cascades to DISK.
-        cache.insert(kc, PrefixKvEntry { snapshot: stub_snap(3.0), prefix_ids: ids_c.clone() }).unwrap();
+        cache
+            .insert(
+                kc,
+                PrefixKvEntry {
+                    snapshot: stub_snap(3.0),
+                    prefix_ids: ids_c.clone(),
+                },
+            )
+            .unwrap();
 
         // Verify disk file for A exists.
         let disk_file = disk_dir.join(format!("{:016x}.kv.bin", ka));
-        assert!(disk_file.exists(), "A must be written to disk on cold eviction cascade");
+        assert!(
+            disk_file.exists(),
+            "A must be written to disk on cold eviction cascade"
+        );
+        assert_eq!(
+            cache.disk_bytes,
+            std::fs::metadata(&disk_file).unwrap().len(),
+            "successful spills must update the running byte total"
+        );
 
         // Simulate process restart: new KvOffloadCache pointing at same dir.
         // Fresh hot + cold are empty; disk probe must find A.
         let mut cache2 = KvOffloadCache::new(4, 4, Device::Cpu, Some(disk_dir.clone()));
-        let snap = cache2.get(ka, &ids_a).unwrap().expect("disk hit on new cache instance");
-        let v: Vec<f32> = snap[0][0].as_ref().unwrap().0.flatten_all().unwrap().to_vec1().unwrap();
+        let snap = cache2
+            .get(ka, &ids_a)
+            .unwrap()
+            .expect("disk hit on new cache instance");
+        let v: Vec<f32> = snap[0][0]
+            .as_ref()
+            .unwrap()
+            .0
+            .flatten_all()
+            .unwrap()
+            .to_vec1()
+            .unwrap();
         assert!(
             v.iter().all(|x| (x - 1.0).abs() < 1e-5),
             "A marker 1.0 must survive disk round-trip; got {v:?}"
@@ -1013,7 +1201,10 @@ mod tests {
 
         // Verify collision guard on disk: wrong prefix_ids → miss (not corrupt restore).
         let miss = cache2.get(kb, &[99u32]).unwrap();
-        assert!(miss.is_none(), "wrong prefix_ids on disk lookup must be a miss");
+        assert!(
+            miss.is_none(),
+            "wrong prefix_ids on disk lookup must be a miss"
+        );
     }
 
     #[test]
@@ -1040,12 +1231,21 @@ mod tests {
         // A stale temp file from a crashed atomic write must be swept regardless of cap.
         let tmp_file = dir.join("00000000deadbeef.kv.bin.tmp");
         std::fs::write(&tmp_file, vec![0u8; 50]).unwrap();
+        let pid_tmp_file = dir.join("00000000feedface.kv.bin.1234.tmp");
+        std::fs::write(&pid_tmp_file, vec![0u8; 50]).unwrap();
 
         // Cap = 250 bytes: 3×100 = 300 > 250 → exactly the oldest entry is pruned.
-        KvOffloadCache::prune_disk(dir, 250);
+        let retained = KvOffloadCache::measure_and_prune_disk(dir, 250).unwrap();
 
-        assert!(!p_old.exists(), "least-recently-modified entry must be pruned over cap");
+        assert!(
+            !p_old.exists(),
+            "least-recently-modified entry must be pruned over cap"
+        );
         assert!(!tmp_file.exists(), "stale .kv.bin.tmp must be swept");
+        assert!(
+            !pid_tmp_file.exists(),
+            "stale pid-scoped atomic-write temp must be swept"
+        );
         let total: u64 = std::fs::read_dir(dir)
             .unwrap()
             .flatten()
@@ -1058,7 +1258,27 @@ mod tests {
             })
             .map(|e| e.metadata().unwrap().len())
             .sum();
-        assert!(total <= 250, "disk total {total} must be ≤ cap 250 after prune");
+        assert!(
+            total <= 250,
+            "disk total {total} must be ≤ cap 250 after prune"
+        );
+        assert_eq!(
+            retained, total,
+            "prune must return the exact retained bytes"
+        );
+    }
+
+    #[test]
+    fn disk_startup_measures_existing_bytes_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("0000000000000001.kv.bin"), vec![0u8; 73]).unwrap();
+        std::fs::write(dir.join("0000000000000002.kv.bin"), vec![0u8; 41]).unwrap();
+
+        let cache =
+            KvOffloadCache::new_with_disk_cap(1, 1, Device::Cpu, Some(dir.to_path_buf()), u64::MAX);
+
+        assert_eq!(cache.disk_bytes, 114);
     }
 
     #[test]
@@ -1072,7 +1292,14 @@ mod tests {
         let cold = KvOffloadCache::serialize(&snap, &ids).unwrap();
         let key: u64 = 0xdeadbeefcafe0001;
 
-        KvOffloadCache::write_to_disk(dir, key, &cold).expect("write_to_disk");
+        let first = KvOffloadCache::write_to_disk(dir, key, &cold).expect("write_to_disk");
+        assert_eq!(first.previous_bytes, 0);
+        assert_eq!(
+            first.written_bytes,
+            std::fs::metadata(dir.join(format!("{key:016x}.kv.bin")))
+                .unwrap()
+                .len()
+        );
         let restored = KvOffloadCache::read_from_disk(dir, key)
             .expect("read_from_disk Ok")
             .expect("read_from_disk Some");
@@ -1085,17 +1312,48 @@ mod tests {
         // Deserialize and verify layer markers survive the disk round-trip.
         let snap_back = KvOffloadCache::deserialize(&restored, &Device::Cpu).unwrap();
         assert_eq!(snap_back.len(), 2);
-        let l0: Vec<f32> = snap_back[0][0].as_ref().unwrap().0.flatten_all().unwrap().to_vec1().unwrap();
-        let l1: Vec<f32> = snap_back[1][0].as_ref().unwrap().0.flatten_all().unwrap().to_vec1().unwrap();
-        assert!(l0.iter().all(|x| (x - 7.0).abs() < 1e-5), "layer0 marker 7.0; got {l0:?}");
-        assert!(l1.iter().all(|x| (x - 9.0).abs() < 1e-5), "layer1 marker 9.0; got {l1:?}");
+        let l0: Vec<f32> = snap_back[0][0]
+            .as_ref()
+            .unwrap()
+            .0
+            .flatten_all()
+            .unwrap()
+            .to_vec1()
+            .unwrap();
+        let l1: Vec<f32> = snap_back[1][0]
+            .as_ref()
+            .unwrap()
+            .0
+            .flatten_all()
+            .unwrap()
+            .to_vec1()
+            .unwrap();
+        assert!(
+            l0.iter().all(|x| (x - 7.0).abs() < 1e-5),
+            "layer0 marker 7.0; got {l0:?}"
+        );
+        assert!(
+            l1.iter().all(|x| (x - 9.0).abs() < 1e-5),
+            "layer1 marker 9.0; got {l1:?}"
+        );
+
+        let replacement =
+            KvOffloadCache::serialize(&stub_snap_2layer(7.0, 9.0), &[10, 20, 30, 40, 50, 60])
+                .unwrap();
+        let second =
+            KvOffloadCache::write_to_disk(dir, key, &replacement).expect("replace disk entry");
+        assert_eq!(second.previous_bytes, first.written_bytes);
+        assert!(second.written_bytes > second.previous_bytes);
     }
 
     #[test]
     fn disk_read_nonexistent_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
         let result = KvOffloadCache::read_from_disk(tmp.path(), 0xffffffffffffffff).unwrap();
-        assert!(result.is_none(), "missing file must return Ok(None), not Err");
+        assert!(
+            result.is_none(),
+            "missing file must return Ok(None), not Err"
+        );
     }
 
     #[test]
@@ -1110,13 +1368,40 @@ mod tests {
         let kb = PrefixKvCache::key(&ids_b);
         let kc = PrefixKvCache::key(&ids_c);
 
-        cache.insert(ka, PrefixKvEntry { snapshot: stub_snap(1.0), prefix_ids: ids_a.clone() }).unwrap();
-        cache.insert(kb, PrefixKvEntry { snapshot: stub_snap(2.0), prefix_ids: ids_b.clone() }).unwrap();
+        cache
+            .insert(
+                ka,
+                PrefixKvEntry {
+                    snapshot: stub_snap(1.0),
+                    prefix_ids: ids_a.clone(),
+                },
+            )
+            .unwrap();
+        cache
+            .insert(
+                kb,
+                PrefixKvEntry {
+                    snapshot: stub_snap(2.0),
+                    prefix_ids: ids_b.clone(),
+                },
+            )
+            .unwrap();
         // A is now in cold (evicted from hot). Insert C: A evicts from cold → dropped (no disk).
-        cache.insert(kc, PrefixKvEntry { snapshot: stub_snap(3.0), prefix_ids: ids_c.clone() }).unwrap();
+        cache
+            .insert(
+                kc,
+                PrefixKvEntry {
+                    snapshot: stub_snap(3.0),
+                    prefix_ids: ids_c.clone(),
+                },
+            )
+            .unwrap();
 
         // A must be gone (dropped cold eviction, no disk).
         let miss = cache.get(ka, &ids_a).unwrap();
-        assert!(miss.is_none(), "cold eviction without disk must be a miss, not a panic");
+        assert!(
+            miss.is_none(),
+            "cold eviction without disk must be a miss, not a panic"
+        );
     }
 }

@@ -127,6 +127,14 @@ impl ReloadController {
         self.inner.load_full()
     }
 
+    /// Immutable snapshot of the currently active autonomy policy.
+    ///
+    /// Calling this at the side-effect leaf makes successful config reloads
+    /// visible without sharing a mutable policy object across awaits.
+    pub fn autonomy_policy(&self) -> crate::permissions::AutonomyPolicySnapshot {
+        self.latest().autonomy_policy()
+    }
+
     /// Source path the controller re-reads on `try_reload`.
     pub fn source_path(&self) -> &Path {
         &self.source_path
@@ -172,8 +180,10 @@ impl ReloadController {
         // Identical content → no-op. Compare via YAML round-trip so
         // deep-equal works without requiring `PartialEq` on every
         // nested config struct (which several lack).
-        let old_yaml = serde_yaml::to_string(&*old).unwrap_or_default();
-        let new_yaml = serde_yaml::to_string(&candidate).unwrap_or_default();
+        let old_yaml = serde_yaml::to_string(&*old)
+            .context("serialize active config for reload comparison")?;
+        let new_yaml = serde_yaml::to_string(&candidate)
+            .context("serialize candidate config for reload comparison")?;
         if old_yaml == new_yaml {
             return Ok(ReloadResult::Unchanged);
         }
@@ -183,8 +193,10 @@ impl ReloadController {
             return Ok(ReloadResult::Rejected { reason });
         }
 
-        // Compute changed top-level fields (best-effort diff).
-        let changed_fields = diff_top_level(&old, &candidate);
+        // Compute changed top-level fields before publishing the new snapshot.
+        // A serialization failure must reject the reload rather than silently
+        // reporting an empty diff for a config that is about to become active.
+        let changed_fields = diff_top_level(&old, &candidate)?;
 
         // Atomic swap. Lock-free, no reader contention.
         self.inner.store(Arc::new(candidate));
@@ -256,14 +268,12 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<String> {
 /// pointer-store, not this diff. By the time this runs the caller has already
 /// established the two configs differ AND that no immutable field changed
 /// (`validate_reload` passed), so every reported key is a tunable.
-fn diff_top_level(old: &FreedomConfig, new: &FreedomConfig) -> Vec<String> {
+fn diff_top_level(old: &FreedomConfig, new: &FreedomConfig) -> Result<Vec<String>> {
     use serde_yaml::Value;
-    let old_v = serde_yaml::to_value(old).unwrap_or(Value::Null);
-    let new_v = serde_yaml::to_value(new).unwrap_or(Value::Null);
+    let old_v = serde_yaml::to_value(old).context("serialize active config for reload diff")?;
+    let new_v = serde_yaml::to_value(new).context("serialize candidate config for reload diff")?;
     let (Value::Mapping(old_map), Value::Mapping(new_map)) = (&old_v, &new_v) else {
-        // Non-mapping serialisation (should never happen for a struct) — no
-        // field-level diff possible; the caller still swapped on the byte diff.
-        return Vec::new();
+        anyhow::bail!("FreedomConfig serialized to a non-mapping YAML value");
     };
     // Union of keys: a key whose value differs — or that exists in only one of
     // the two configs — counts as changed. BTreeSet dedups the shared keys
@@ -276,7 +286,7 @@ fn diff_top_level(old: &FreedomConfig, new: &FreedomConfig) -> Vec<String> {
             }
         }
     }
-    changed.into_iter().collect()
+    Ok(changed.into_iter().collect())
 }
 
 /// Q-4 (hermes port, Session 19): compute the
@@ -380,7 +390,7 @@ mod tests {
         let old = fresh_config();
         let mut new = old.clone();
         new.review_gate_enabled = !old.review_gate_enabled;
-        let changed = diff_top_level(&old, &new);
+        let changed = diff_top_level(&old, &new).unwrap();
         assert!(
             changed.contains(&"review_gate_enabled".to_string()),
             "expected review_gate_enabled in diff; got: {changed:?}",
@@ -390,7 +400,7 @@ mod tests {
     #[test]
     fn diff_top_level_is_empty_for_identical_configs() {
         let cfg = fresh_config();
-        let diff = diff_top_level(&cfg, &cfg);
+        let diff = diff_top_level(&cfg, &cfg).unwrap();
         assert!(
             diff.is_empty(),
             "identical configs must have empty diff; got: {diff:?}"
@@ -403,7 +413,7 @@ mod tests {
         let mut new = old.clone();
         new.review_gate_enabled = !old.review_gate_enabled;
         new.code_map.auto_context_max_files = 5;
-        let changed = diff_top_level(&old, &new);
+        let changed = diff_top_level(&old, &new).unwrap();
         assert!(changed.contains(&"review_gate_enabled".to_string()));
         assert!(changed.contains(&"code_map".to_string()));
     }
@@ -483,6 +493,45 @@ mod tests {
             ctrl.latest().review_gate_enabled,
             !initial.review_gate_enabled,
             "latest() must reflect the swapped value"
+        );
+    }
+
+    #[test]
+    fn custom_policy_reload_swaps_atomically_and_old_snapshot_stays_immutable() {
+        use crate::permissions::{Action, ActionKind, AutonomyLevel, CustomDecision, evaluate};
+
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let mut initial = fresh_config();
+        initial.autonomy = AutonomyLevel::Custom;
+        initial
+            .custom_autonomy
+            .overrides
+            .insert(ActionKind::ExecArbitrary, CustomDecision::Allow);
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        let ctrl = ReloadController::new(initial.clone(), yaml_path.clone());
+        let before = ctrl.autonomy_policy();
+        assert!(evaluate(&Action::ExecArbitrary, &before).is_allow());
+
+        let mut changed = initial;
+        changed
+            .custom_autonomy
+            .overrides
+            .insert(ActionKind::ExecArbitrary, CustomDecision::Deny);
+        write_yaml(&yaml_path, &serde_yaml::to_string(&changed).unwrap());
+        match ctrl.try_reload().unwrap() {
+            ReloadResult::Reloaded { changed_fields } => assert!(
+                changed_fields.contains(&"custom_autonomy".to_string()),
+                "custom policy must appear in reload diff: {changed_fields:?}"
+            ),
+            other => panic!("expected Reloaded, got {other:?}"),
+        }
+
+        let after = ctrl.autonomy_policy();
+        assert!(evaluate(&Action::ExecArbitrary, &after).is_deny());
+        assert!(
+            evaluate(&Action::ExecArbitrary, &before).is_allow(),
+            "previous immutable snapshot must not mutate after reload"
         );
     }
 
@@ -627,9 +676,9 @@ mod tests {
     /// config swap that happened since the previous tick — no restart required.
     #[test]
     fn trail03_latest_reflects_arcswap_after_config_swap() {
-        use std::sync::Arc;
-        use arc_swap::ArcSwap;
         use crate::config::automation::PatternCronConfig;
+        use arc_swap::ArcSwap;
+        use std::sync::Arc;
 
         // Boot config: pattern_cron interval = 3600s.
         let boot_cfg = FreedomConfig {
@@ -661,10 +710,16 @@ mod tests {
         // Simulate tick-2: cron loop calls ctrl.latest().pattern_cron...
         // Uses the same load() path that ReloadController::latest() wraps.
         let tick2_interval = store.load().pattern_cron.interval_secs;
-        assert_eq!(tick2_interval, 7200, "tick-2 sees swapped value — no restart needed");
+        assert_eq!(
+            tick2_interval, 7200,
+            "tick-2 sees swapped value — no restart needed"
+        );
 
         // Tick-1 guard: the previous load (already stored in tick1_interval)
         // was a snapshot at that moment; the new load is independent.
-        assert_ne!(tick1_interval, tick2_interval, "swap is visible to subsequent loads");
+        assert_ne!(
+            tick1_interval, tick2_interval,
+            "swap is visible to subsequent loads"
+        );
     }
 }

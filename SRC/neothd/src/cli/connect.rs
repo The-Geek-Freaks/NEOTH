@@ -39,10 +39,10 @@ pub enum ConnectStatus {
     Partial,
     /// No credentials configured for this channel.
     NotConnected,
-    /// Channel implementation exists but is not credentials.yaml-backed
-    /// yet (Discord gateway / Keet pairing) — operator wires it via
-    /// `neoth channel`, not here.
+    /// Channel implementation exists but is not credentials.yaml-backed yet.
     Experimental,
+    /// Known product name, but no supported upstream API/adapter exists.
+    Unavailable,
 }
 
 impl ConnectStatus {
@@ -52,6 +52,7 @@ impl ConnectStatus {
             ConnectStatus::Partial => "partial",
             ConnectStatus::NotConnected => "not connected",
             ConnectStatus::Experimental => "experimental",
+            ConnectStatus::Unavailable => "unavailable",
         }
     }
 
@@ -88,9 +89,9 @@ pub fn connect_rows(creds: &Credentials) -> Vec<ChannelRow> {
         },
         ChannelRow {
             name: "keet",
-            status: ConnectStatus::Experimental,
-            note: "P2P pairing (not token-based)".to_string(),
-            onramp: "experimental — wire via `neoth channel add keet`",
+            status: ConnectStatus::Unavailable,
+            note: "no supported public Keet chat API; legacy credentials are ignored".to_string(),
+            onramp: "unavailable — `neoth channel remove keet` clears legacy state",
         },
     ]
 }
@@ -208,8 +209,9 @@ pub fn channel_details(name: &str) -> Option<&'static str> {
              credentials.yaml field yet. Track via `neoth channel add discord`.",
         ),
         "keet" => Some(
-            "Keet is experimental: P2P pairing-based (not a token). Use\n\
-             `neoth channel add keet` to start the pairing flow.",
+            "Keet integration is unavailable: Keet exposes no supported public\n\
+             room/message API. NEOTH does not store a seed or call a guessed\n\
+             Pear endpoint. `neoth channel remove keet` clears legacy state.",
         ),
         _ => None,
     }
@@ -364,9 +366,9 @@ mod tests {
         assert_eq!(find(&rows, "telegram").status, ConnectStatus::NotConnected);
         assert_eq!(find(&rows, "slack").status, ConnectStatus::NotConnected);
         assert_eq!(find(&rows, "whatsapp").status, ConnectStatus::NotConnected);
-        // discord + keet are experimental regardless of credentials.
+        // Discord is experimental; Keet is explicitly unavailable.
         assert_eq!(find(&rows, "discord").status, ConnectStatus::Experimental);
-        assert_eq!(find(&rows, "keet").status, ConnectStatus::Experimental);
+        assert_eq!(find(&rows, "keet").status, ConnectStatus::Unavailable);
     }
 
     #[test]

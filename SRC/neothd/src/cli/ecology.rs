@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -130,15 +130,14 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
             Ok(())
         }
         EcologyAction::Genealogy { wal_dir, home, top } => {
-            run_genealogy(wal_dir, home, top, args.output).await;
-            Ok(())
+            run_genealogy(wal_dir, home, top, args.output).await
         }
         EcologyAction::WinnerChain { wal_dir, top } => {
             run_winner_chain(wal_dir, top, args.output);
             Ok(())
         }
         EcologyAction::Status => {
-            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = FreedomConfig::load_from_default_path_or_default()?;
             run_status(cfg.ecology.enabled, args.output);
             Ok(())
         }
@@ -146,7 +145,7 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
             min_streak,
             wal_dir,
         } => {
-            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = FreedomConfig::load_from_default_path_or_default()?;
             let min_streak = min_streak
                 .unwrap_or(cfg.ecology.correlation_min_streak)
                 .max(1);
@@ -302,17 +301,20 @@ async fn run_genealogy(
     home: Option<PathBuf>,
     top: Option<usize>,
     output: OutputFormat,
-) {
+) -> Result<()> {
     let wal_dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
     let home = home.unwrap_or_else(FreedomConfig::default_neoth_home);
     let skills_dir = home.join("skills");
 
-    // Installed-skill ids (best-effort — a missing/empty skills dir just yields
-    // no skill nodes; the WAL-derived tool nodes still report).
-    let skill_ids: Vec<String> = match crate::skills::load_all(&skills_dir).await {
-        Ok(skills) => skills.iter().map(|s| s.id().to_string()).collect(),
-        Err(_) => Vec::new(),
-    };
+    // Missing skills remain a valid bundled-only state. Existing malformed or
+    // unreadable registry inputs invalidate the diagnostic instead of
+    // fabricating an incomplete genealogy.
+    let skill_ids: Vec<String> = crate::skills::load_all(&skills_dir)
+        .await
+        .with_context(|| format!("load skill inventory from {}", skills_dir.display()))?
+        .iter()
+        .map(|skill| skill.id().to_string())
+        .collect();
 
     let genealogy = crate::ecology::genealogy::build_tool_genealogy(&wal_dir, &skill_ids);
     let shown: Vec<&crate::ecology::genealogy::ToolNode> = match top {
@@ -344,7 +346,7 @@ async fn run_genealogy(
         OutputFormat::Table => {
             if genealogy.nodes.is_empty() {
                 println!("(no tools recorded yet — install a skill/plugin or invoke an MCP tool)");
-                return;
+                return Ok(());
             }
             println!(
                 "tool genealogy — {} tool(s) (use-count = recorded MCP calls / plugin hostcalls; \
@@ -361,6 +363,7 @@ async fn run_genealogy(
             }
         }
     }
+    Ok(())
 }
 
 /// F4-01 — build + render the council winner-chain. Read-only: walks the `0x63`
@@ -463,5 +466,22 @@ mod tests {
         assert_eq!(sched.maturity, "experimental");
         assert_eq!(sched.access, "review-gated");
         assert!(sched.note.contains("NEVER auto-applies"));
+    }
+
+    #[tokio::test]
+    async fn genealogy_propagates_an_existing_invalid_skill_inventory() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("skills"), "not a directory").unwrap();
+        let error = run_genealogy(
+            Some(home.path().join("wal")),
+            Some(home.path().to_path_buf()),
+            None,
+            OutputFormat::Json,
+        )
+        .await
+        .unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("load skill inventory"));
+        assert!(detail.contains("read skills directory"));
     }
 }

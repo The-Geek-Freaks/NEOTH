@@ -18,7 +18,7 @@ pub mod schema;
 pub mod stages;
 
 pub use dispatcher::{StageOutcome, run_stage};
-pub use loader::load_all;
+pub use loader::{load_all, load_all_strict};
 pub use stages::HookStage;
 
 // Compiled-plugin trait surface — still available for advanced (Rust)

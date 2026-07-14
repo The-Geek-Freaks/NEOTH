@@ -515,7 +515,7 @@ pub fn sanitize_theme_label(raw: &str, fallback: &str) -> String {
 /// summarisation NEVER fails the dreaming pass (the dreams are the product;
 /// the label is a nicety).
 async fn summarise_or_fallback(
-    chat: Option<&dyn Provider>,
+    chat: Option<&crate::providers::cost_authorization::AuthorizedProvider>,
     cluster_events: &[EventRef],
     fallback: &str,
 ) -> String {
@@ -720,7 +720,7 @@ pub async fn compose_dreams_with_embeddings(
     day: &str,
     events: &[EventRef],
     provider: &dyn crate::providers::embed::EmbedProvider,
-    chat: Option<&dyn Provider>,
+    chat: Option<&crate::providers::cost_authorization::AuthorizedProvider>,
     threshold: f32,
     merge_cross_themes: bool,
 ) -> anyhow::Result<Vec<Dream>> {
@@ -1221,6 +1221,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
                 text: self.reply.into(),
+                identity: Default::default(),
                 model: "fixed_label_chat".into(),
                 latency: std::time::Duration::from_micros(1),
                 input_tokens: None,
@@ -1241,6 +1242,19 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<crate::providers::Completion> {
             anyhow::bail!("chat provider down")
         }
+    }
+
+    fn authorized(
+        provider: impl Provider + 'static,
+    ) -> crate::providers::cost_authorization::AuthorizedProvider {
+        crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            std::sync::Arc::new(provider),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            Some("mock".to_string()),
+            "dreaming.test",
+        )
     }
 
     #[test]
@@ -1327,9 +1341,9 @@ mod tests {
             cluster_ev(1, "weather forecast for monday"),
             cluster_ev(2, "weather pattern shifting"),
         ];
-        let chat = FixedLabelChat {
+        let chat = authorized(FixedLabelChat {
             reply: "  monday weather outlook  ",
-        };
+        });
         let dreams =
             compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&chat), 0.5, false)
                 .await
@@ -1344,16 +1358,11 @@ mod tests {
     async fn compose_dreams_falls_back_to_deterministic_on_chat_error() {
         let day = "2026-06-03";
         let events = vec![cluster_ev(1, "weather forecast for monday")];
-        let dreams = compose_dreams_with_embeddings(
-            day,
-            &events,
-            &DreamSlotMock,
-            Some(&FailingChat),
-            0.5,
-            false,
-        )
-        .await
-        .unwrap();
+        let chat = authorized(FailingChat);
+        let dreams =
+            compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&chat), 0.5, false)
+                .await
+                .unwrap();
         assert_eq!(dreams.len(), 1);
         // Chat error must degrade the label, never fail the pass.
         assert!(

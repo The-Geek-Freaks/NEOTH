@@ -389,18 +389,19 @@ quotas + retry; NEOTH stays out of OAuth flows entirely. The original
 per-vendor connector matrix (CL-1..CL-9) is kept here as the
 "Phase-2 headless-server escape hatch" — the only situation where
 direct API transports beat the local-mirror approach is a literal
-headless server with no desktop client. The OpenDAL-based fallback
-path remains a follow-up, not a v0.x blocker.
+headless server with no desktop client. No direct-API connector or OpenDAL
+dependency ships in Gold; adopting one later requires a fresh security and
+product decision rather than carrying an unused scaffold.
 
 - [x] **CL-1** SUPERSEDED by local-folder-mirror design (`cli/cloud.rs` +
       `freedom.yaml::cloud_archive_dest` shipped). `CloudConnector` trait
-      not built; when the headless-server use-case appears, OpenDAL will
-      provide the same surface.
+      not built; a future headless-server use case must justify and implement
+      a direct transport as a fresh adoption.
 - [x] **CL-2..CL-7** SUPERSEDED — operators install the vendor's desktop
       client (Dropbox.exe / Google Drive for Desktop / OneDrive.exe /
       iCloud Drive); NEOTH writes into the synced folder via cloud_archive_dest.
-- [x] **CL-8** SUPERSEDED — same path as CL-2..CL-7. OpenDAL deferred to
-      the eventual headless-server escape hatch.
+- [x] **CL-8** SUPERSEDED — same path as CL-2..CL-7. No dormant direct-API
+      connector dependency remains in the release.
 - [x] **CL-9** SUPERSEDED — `cloud_archive_dest` field in freedom.yaml.example
       captures the operator's choice without a multi-select grid.
 
@@ -487,6 +488,7 @@ Hard rule: NEOTH never requires "remember this" — every turn auto-persists. Th
 - [x] **AU-1** Wizard step 7 `step7_autonomy` in `cli/init.rs` — 5-option Select with one-line consequence preview per level, hardware-2FA-style extra confirm when `full` is picked. Non-interactive honours `--autonomy <level>`, defaults to `standard`.
 - [x] **AU-2** `FreedomConfig.autonomy: AutonomyLevel` field + `WizardState.autonomy`. snake_case serde, `#[serde(default)]` keeps old freedom.yaml round-trip clean.
 - [x] **AU-3** `permissions::evaluate(action, level) -> Decision` matrix (5 levels × 8 actions). `Decision::tag()` for WAL audit, helpers `is_allow/is_deny`. 8 unit tests cover paid-provider thresholds (€0.50/€5), dangerous-target progression deny→confirm, Custom→Standard fallback.
+  - **CURRENT GOLD STATUS (2026-07-14):** superseded by the exhaustive 27-entry `ActionKind` vocabulary and immutable `AutonomyPolicySnapshot`. Production evaluation accepts snapshots only; Custom is a typed per-action map with Standard fallback and a non-bypassable safety floor.
 - [x] **AU-4** `permissions::confirm` module: `confirm_interactive` (dialoguer y/n), `confirm_channel` (caller-supplied future + timeout), `confirm_daemon_only` (best-effort flag or fail-closed). Top-level `resolve(decision, mode, ask) -> Decision` plumbs `Confirm` through the right path. Default channel timeout 90s. 8 tests including timeout race.
 - [x] **AU-5** WAL events `0xA0 PERMISSION_GRANTED`, `0xA1 PERMISSION_DENIED`, `0xA2 LEVEL_ELEVATED`, `0xA3 LEVEL_DEROGATED`. Compile-time invariants + uniqueness regression. `permissions::gate` helper emits frames via the writer.
 - [x] **AU-6** `~/.neoth/policy.yaml` reader: `PolicyConfig { dangerous_targets, dangerous_patterns }`. `target_is_dangerous` case-insensitive exact match, `command_is_dangerous` substring match. Missing file → empty defaults, bad YAML → loud error. 4 tests.
@@ -1649,13 +1651,13 @@ The local Qwen adapter was already shipping a full forward pass + sampling loop 
 
 - [x] **Swappability confirmed already-shipped** — operators wanting "local Qwen, but actually LM Studio" can use the existing `provider_kind: openai_compat` flow with `provider_endpoint: http://localhost:1234/v1`. No new code needed; the abstraction has been in place since the OpenAI-compat adapter shipped. Per-hemisphere variant via `HemisphereSlot::provider = OpenAiCompat` also works. The `InferenceProvider` enum already enumerates all 8 backends (claude_cli / anthropic_api / openai_api / openai_compat / gemini / local_qwen / hermes / openclaw).
 
-- [x] **MCP client scaffold** — `SRC/neothd/src/mcp/` (NEW module, ~600 LOC + 24 tests)
-  - **`mcp::transport`** — JSON-RPC 2.0 framing per LSP/MCP spec (`Content-Length: N\r\n\r\n<body>`). Pure-function `frame(body) -> Vec<u8>` + `parse_frame(buf) -> Result<Option<(Vec<u8>, usize)>, FrameError>` so framing is trivially unit-testable. 9 transport tests cover roundtrip, incomplete header, incomplete body, multi-header tolerance, malformed `Content-Length`, and serde round-trips for `JsonRpcRequest`/`Response`/`Error`.
+- [x] **MCP client scaffold** — `SRC/neothd/src/mcp/` (historical baseline; subsequently hardened and fully wired)
+  - **`mcp::transport`** — **2026-07-13 correction:** MCP stdio is compact newline-delimited JSON, not LSP `Content-Length` framing. `frame`/`parse_frame` now implement the correct transport with a 16 MiB per-message ceiling and preserve multiple buffered messages; LSP owns its separate bounded codec.
   - **`mcp::config`** — `McpServerConfig { id, description, command, args, env, enabled }` loaded from `~/.neoth/mcp_servers.yaml` via `serde_yaml`. Missing file → empty list. Bad YAML → loud error. `env: "from_env"` sentinel resolves to the NEOTH process environment at spawn time so secrets stay out of the YAML. 5 tests cover empty load, well-formed YAML, enabled-filter, literal-value passthrough, missing-env error.
-  - **`mcp::client::McpClient`** — `tokio::process::Command` spawn with `kill_on_drop(true)` + stdin/stdout piped. `spawn(config)` runs the `initialize` handshake (advertising NEOTH as the client + protocol version `2024-11-05`). `list_tools()` → `Vec<McpTool>`. `call_tool(name, args)` → `ToolCallResult` with content fragments (`Text` / `Image` / catch-all `Other`). All requests bounded by `DEFAULT_REQUEST_TIMEOUT = 30s` via `tokio::time::timeout` so a hung server cannot wedge the caller. Typed `McpError` covers `Spawn` / `Handshake` / `Timeout` / `Protocol` / `RpcError { server, code, message }` / `Io`. 4 client tests cover bad-command spawn error, tool deserialisation, content shape, and error-flag round-trip.
-  - **`neoth mcp {list, tools <server>, call <server> <tool> [--args JSON]}` CLI** — `cli/mcp.rs` (NEW). `list` is pure config read (no process spawning). `tools <server>` spawns + invokes `tools/list` end-to-end. `call <server> <tool>` invokes one tool with operator-supplied JSON args. Live-verified: `neoth mcp list` on the operator's real `~/.neoth/` prints the "none configured — create ~/.neoth/mcp_servers.yaml" hint cleanly.
+  - **`mcp::client::McpClient`** — `tokio::process::Command` spawn with `kill_on_drop(true)` + stdin/stdout piped, bounded requests, protocol negotiation across the supported revisions, and the required `notifications/initialized` lifecycle transition. `list_tools()` and `call_tool()` share the bounded newline-delimited transport.
+  - **`neoth mcp` CLI + built-in server** — `list`, `tools`, and audited `call` remain the external-client surface. `codegraph-serve [--db]` now hosts all six read-only native codegraph tools over real MCP stdio; `codegraph-install [--db]` atomically/idempotently registers the current executable with an exact allowlist. Outline access is restricted to canonical paths represented in the persisted code map.
 
-**LLM-side tool routing is a future addition** — today's scaffold lets NEOTH discover + invoke external MCP tools manually via the CLI. Wiring `tools/list` into the chat dispatcher's tool catalogue + threading `tools/call` responses back into the LLM's next turn is Phase-2 work that depends on the council architecture's tool-router design.
+**2026-07-13 status correction:** LLM-side MCP routing is no longer future work. The production chat dispatcher already assembles sanitized/allowlisted catalogues, invokes through the autonomy/WAL gate, and threads tool results into bounded follow-up turns. The built-in codegraph server closes the remaining external-host consumer path.
 
 **Test count after this round**: **978 neothd unit + 7 multimodal smoke + 1 no_outbound_network + 3 plugin-sdk + 8 GUI + 2 ignored = 999 total**, all green. fmt + clippy `-D warnings` clean (no warnings on `cargo build` either). **Session delta**: 615 → 978 = **+363 tests** across **~62 shipped items**.
 
@@ -2590,7 +2592,7 @@ The new `0x19 REFUSAL_REROUTED` event code is reserved with band invariant + reg
 External Codex review surfaced 8 valid findings during this session. Three convergent quick-wins applied:
 
 - [x] **`cargo fmt --all` applied** — Codex correctly identified that `cargo fmt --all -- --check` was red across ~30 files (agents.rs, arxiv.rs, github.rs, hooks.rs, mcp/*.rs, profile/*.rs, providers/*, etc.). I had been verifying `clippy` but never `fmt`. Now clean. `cargo fmt --all -- --check` exits 0. Workspace-wide `clippy --workspace --tests -- -D warnings` also clean.
-- [x] **C-14 fail-safe** — `providers/cost.rs:98`. Previous behaviour: `lookup_price(provider, model).unwrap_or(PriceRow::free())` silently mapped unknown cloud models to €0, bypassing the autonomy gate's `Action::PaidProviderCall` threshold check. Now uses `PriceRow::unknown_high_estimate()` (€15/Mtok in, €60/Mtok out — top-of-market Opus-4-class rates) so an operator pointing NEOTH at a brand-new GPT/Claude/Gemini model sees a non-trivial cost preview + the permission gate decides on the safe side. Local providers (`local_qwen` / `hermes` / `openclaw`) still genuinely return free via the `_` arm in `lookup_price`. Added 2 tests:
+- [x] **C-14 fail-safe** — `providers/cost.rs:98`. Previous behaviour: `lookup_price(provider, model).unwrap_or(PriceRow::free())` silently mapped unknown cloud models to €0, bypassing the autonomy gate's `Action::PaidProviderCall` threshold check. Now uses `PriceRow::unknown_high_estimate()` (€15/Mtok in, €60/Mtok out — a deliberately conservative policy ceiling, not a claim about current vendor pricing) so an operator pointing NEOTH at a brand-new GPT/Claude/Gemini model sees a non-trivial cost preview + the permission gate decides on the safe side. Canonically local providers still remain free. Added 2 tests:
   - `predict_unknown_cloud_model_uses_high_estimate_not_zero` — asserts `est.total_eur > 0.0` for `openai_api` + `gpt-99-future`.
   - `predict_unknown_local_model_stays_zero` — asserts `local_qwen` + any unknown model still returns 0.0.
 - [x] **Codex findings logged into Master Open Items Checklist** — see Wave B items below for the remaining 5 (C-15 WAL tombstone, Rollback Pre-Mutation-Snapshot, MCP allowlist/sanitizer, mocked HTTP tests for fetch/search/arxiv/github, Windows MSVC env onboarding doc).
@@ -2681,6 +2683,8 @@ cargo test -p neothd providers::claude     ✅ 46/46 green incl. 9 new ClaudeBac
 - [x] **B-6 Item 4d** Stuck-cleaner PID hunt — **Primitive shipped Session 21.** `providers/claude_pid_hunter.rs` ships the PID-CPU hunter as a pure surface: `is_claude_process_name(name)` (matches `claude` / `claude-cli` + `.exe` on Windows + case-insensitive); `StuckThresholds { min_runtime: 15min, idle_cpu_pct: 1.0 }` defaults pinned to bridge.py with drift guard; `classify_stuck(meta, thresholds)` pure-fn gate requires BOTH long-runtime AND low-CPU (newborn workers never false-flag); `scan_stuck_processes(thresholds).await` enumerates via `sysinfo::System` (already in tree) with a two-refresh pattern so CPU deltas are non-zero. Catches the failure mode `tmux_sweeper` misses: tmux session looks live (low idle_secs) but the inner `claude` is hung mid tool-call / waiting on a closed OAuth browser. 13 tests cover the full classifier matrix + name-match alphabet (canonical + uppercase + `.exe` + lookalike-rejection) + threshold defaults + strict-less-than CPU boundary + live-scan no-panic. Auto-kill stays OFF by default per the AGENTER hard rule "no destructive auto-action without operator GO per command" — operator surface ships when the `neoth doctor stuck-clean` UX is locked in.
 - [x] **B-6 Item 4e** Provider-cooldown pair state machine — **Primitive shipped Session 21.** `providers/cooldown_pair.rs` ships the `CooldownPair { left_provider, right_provider, *_cooling_until }` orchestration layer + `PairSide::{Left,Right}` + `pick_active(now)` returning `PickOutcome::{Both,Single(side),None}` for the dispatcher. `record_failure(side, RetryClass, now)` consults `cooldown_for_class` (Auth→1h / Transient→60s / EmptyStdout→10s / SessionCollision→5s) to set the per-side window; `record_success(side)` clears it. Builds on top of B-6 3h's RetryClass so the cooldown windows track the same classifier the retry loop uses. 10 tests pin fresh→Both / single-failure→isolated / both-failures→None / cooldown-expiry / record_success-clears / per-class cooldown table / 1h Auth window. Wiring into the council dispatcher follows when the per-conversation slot threading lands.
 - [x] **B-6 Item 4f** Error-pattern effort-override — **Primitive shipped Session 21.** `providers/effort_override.rs` ships `RefusalPattern::{Policy,Ambiguity,Capacity,None}` + `detect_refusal(text)` (case-insensitive substring scan, priority Policy→Ambiguity→Capacity→None) with curated fragment tables for each category, plus `EffortBudget::{Low,Medium,High,Max}` (Ord-derived for explicit downgrade math) + `step_down` (saturates at Low) + `override_effort(current, pattern)` policy (Policy→step_down×2 / Ambiguity→keep / Capacity→step_down×1 / None→keep). Builds on top of B-6 3h's retry classifier so a Policy refusal on the next retry pays cheap-tier tokens for the rephrase prompt. 16 tests pin every fragment match + case-insensitivity + priority-Policy-over-Capacity + step_down saturation + per-pattern override policy + Ord-explicit budget ordering.
+
+> **CURRENT GOLD STATUS (2026-07-14; historical entries above retained):** B-6 3h is wired through `claude_cli::plan_tmux_retry`. The zero-caller `cooldown_pair` primitive from 4e was removed; the live Claude retry loop already owns bounded transient/session/auth handling. From 4f only the consumed `EffortBudget`/`effort_to_tokens` reasoning-budget path remains; the zero-caller `RefusalPattern`/`detect_refusal`/`step_down`/`override_effort` future subset was deleted rather than advertised as runtime behavior.
 
 ---
 
@@ -4609,4 +4613,3 @@ council:
 keeps existing 1787 tests passing without changes.
 
 **Implementation status**: design ratified, code in progress.
-

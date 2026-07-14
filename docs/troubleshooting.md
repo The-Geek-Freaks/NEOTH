@@ -186,63 +186,57 @@ If this fails, the key is invalid or the env variable is not set in the shell Ne
 **Symptom:**
 
 ```
-[neoth] WARN: Local inference unavailable — CUDA out of memory
-[neoth] Profile extraction skipped (allow_cloud_fallback=false)
-event 0x3A LOCAL_INFERENCE_UNAVAILABLE
+local inference failed: ... out of memory ...
+profile.learn pass skipped: learn_provider build failed and
+allow_cloud_fallback=false
 ```
 
-**Cause:** Another process is using the GPU memory that Qwen3-4B needs (~3 GB VRAM).
+**Cause:** The selected local checkpoint plus its activation/KV-cache budget
+does not fit the available GPU or system memory, or another process already
+occupies that memory.
 
 **Fixes:**
 
-Option 1 — Free GPU memory and restart Neoth:
+Option 1 — Stop the running `neoth serve`, free GPU memory, and start it again:
 
-```
-kill $(cat ~/.neoth/neothd.pid)
-# stop whatever is using the GPU
+```bash
+# stop the foreground service with Ctrl-C, then stop other GPU workloads
 neoth serve
 ```
 
-Option 2 — Configure Neoth to use a different GPU:
+Option 2 — Ask the hardware-aware selectors what fits, then re-run onboarding
+with a compatible local provider/checkpoint:
 
-```toml
-# ~/.neoth/inference.toml
-[runtime]
-device = "cuda:1"      # try the second GPU if you have one
+```bash
+neoth hardware
+neoth models recommend
+neoth models fit
+neoth init --force
 ```
 
-Option 3 — Use a smaller model (less VRAM):
-
-```
-neoth model fetch qwen3-1.7b-int4   # ~1.5 GB VRAM
-```
-
-Update `inference.toml`:
-
-```toml
-[models.generative.priority]
-order = ["local_qwen3_1b7", "local_qwen3_4b"]
-```
-
-Option 4 — CPU fallback (slow but works):
-
-```toml
-[runtime]
-device = "cpu"
-```
-
-Extraction will take several minutes per turn on CPU. Consider reducing extraction frequency.
-
-Option 5 — Allow cloud fallback when local is down:
+Option 3 — Force CPU inference. Configuration lives in
+`~/.neoth/freedom.yaml`, not `inference.toml`:
 
 ```yaml
-# freedom.yaml
 inference:
+  accelerator_override: cpu
+```
+
+CPU inference can be much slower. Keep `profile.learn_enabled: false` when the
+extra extraction latency is not acceptable.
+
+Option 4 — Allow cloud fallback for profile extraction only when that egress is
+intentional:
+
+```yaml
+# ~/.neoth/freedom.yaml
+profile:
   allow_cloud_fallback: true
 ```
 
-This sends conversation text to the cloud for extraction when local is unavailable. Read
-[local-models.md](local-models.md) before enabling.
+This may send the profile-extraction conversation window to the configured main
+cloud provider when the local learn provider cannot be built. Read
+[local-models.md](local-models.md) before enabling it.
 
 ---
 

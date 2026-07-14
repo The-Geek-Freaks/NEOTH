@@ -264,12 +264,7 @@ pub fn spawn_guidance_cron_loop(
             let wal2 = wal_dir.clone();
             let sw = config.signal_window_secs;
             let _ = tokio::task::spawn_blocking(move || {
-                run_guidance_snapshot_tick(
-                    &home2,
-                    &wal2,
-                    crate::time::now_unix_i64(),
-                    sw,
-                )
+                run_guidance_snapshot_tick(&home2, &wal2, crate::time::now_unix_i64(), sw)
             })
             .await;
         }
@@ -340,11 +335,8 @@ mod tests {
             enabled: false,
             ..Default::default()
         };
-        let handle = spawn_guidance_cron_loop(
-            cfg,
-            dir.path().to_path_buf(),
-            dir.path().to_path_buf(),
-        );
+        let handle =
+            spawn_guidance_cron_loop(cfg, dir.path().to_path_buf(), dir.path().to_path_buf());
         assert!(handle.is_none());
     }
 }

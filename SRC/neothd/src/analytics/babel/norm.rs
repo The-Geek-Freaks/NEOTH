@@ -20,9 +20,13 @@
 //! );
 //! ```
 //!
-//! ## norm_d formula
+//! ## B_raw normalisation formula
 //!
-//! `norm_d(x) = clamp((x - p1) / (p99 - p1 + 1e-9), 0.0, 1.0)`
+//! `normalise(x) = clamp((x - p1) / (p99 - p1 + 1e-9), 0.0, 1.0)`
+//!
+//! The table stores only the consumed [`B_RAW_VARIABLE`] distribution. The
+//! seven component features are already normalised by `feature.rs`; retaining
+//! separate C/K/M/A/V/D/H percentile rows would create producer-only data.
 //!
 //! Cold-start guard: emit `b_mult = null` when `sample_count < MIN_SAMPLES`.
 
@@ -52,7 +56,11 @@ impl Normaliser {
     /// Cold-start sentinel — used when no calibration data is available yet.
     /// Score computation returns None for b_mult when this is the active state.
     pub fn cold_start() -> Self {
-        Self { p1: 0.0, p99: 1.0, sample_count: 0 }
+        Self {
+            p1: 0.0,
+            p99: 1.0,
+            sample_count: 0,
+        }
     }
 
     /// Whether we have enough samples to trust normalisation.
@@ -75,7 +83,9 @@ impl Normaliser {
 /// Pinned rule: `0.01 * median((D/A)*(H/V))`, tag
 /// `0.01_median_buffer_ratio_calibration`. Returns None when empty.
 pub fn compute_calibration_epsilon(buffer_ratio_products: &[f64]) -> Option<f64> {
-    if buffer_ratio_products.is_empty() { return None; }
+    if buffer_ratio_products.is_empty() {
+        return None;
+    }
     let mut sorted = buffer_ratio_products.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
@@ -100,18 +110,32 @@ fn percentile(values: &[f64], q: f64) -> Option<f64> {
 
 /// GOLD-DELTA-05 — 7-day p1/p99 sweep for one window granularity.
 ///
-/// Reads every window row of the last 7 days for `window_secs`, extracts the
-/// seven variables from the stored JSON, and upserts one `idx_babel_norm`
-/// row per variable. When `epsilon` is frozen, additionally recomputes the
-/// RAW ratio-form score per row and upserts it as [`B_RAW_VARIABLE`] — the
-/// calibration source for [`load_normaliser`]. Returns the number of rows
-/// upserted.
+/// When `epsilon` is frozen, reads every window row of the last 7 days for
+/// `window_secs`, recomputes the raw multiplicative score, and upserts its
+/// p1/p99 distribution as [`B_RAW_VARIABLE`] — the sole calibration source
+/// consumed by [`load_normaliser`]. Before epsilon freeze, any stale b_raw row
+/// is deleted and no percentile row is written. Legacy per-feature rows from
+/// the superseded producer are pruned. Returns 0 or 1 rows upserted.
 pub fn sweep_norm(
     conn: &Connection,
     window_secs: u64,
     now_unix: i64,
     epsilon: Option<f64>,
 ) -> Result<usize> {
+    // PR3-036: feature percentile rows never had a production reader. Remove
+    // legacy rows once and keep future sweeps single-purpose.
+    conn.execute(
+        "DELETE FROM idx_babel_norm WHERE variable <> ?1 AND window_secs = ?2",
+        rusqlite::params![B_RAW_VARIABLE, window_secs as i64],
+    )?;
+    let Some(epsilon) = epsilon else {
+        conn.execute(
+            "DELETE FROM idx_babel_norm WHERE variable = ?1 AND window_secs = ?2",
+            rusqlite::params![B_RAW_VARIABLE, window_secs as i64],
+        )?;
+        return Ok(0);
+    };
+
     const SEVEN_DAYS_SECS: i64 = 7 * 24 * 3600;
     let mut stmt = conn.prepare(
         "SELECT variables FROM idx_babel_windows
@@ -125,7 +149,6 @@ pub fn sweep_norm(
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     const VARS: [&str; 7] = ["C", "K", "M", "A", "V", "D", "H"];
-    let mut series: [Vec<f64>; 7] = Default::default();
     let mut b_raw: Vec<f64> = Vec::new();
     let mut parse_failures = 0usize;
     for raw in &rows {
@@ -139,19 +162,19 @@ pub fn sweep_norm(
             match v.get(*name).and_then(|x| x.as_f64()) {
                 Some(x) if x.is_finite() => {
                     vals[i] = x;
-                    series[i].push(x);
                 }
                 _ => complete = false,
             }
         }
-        if let (Some(eps), true) = (epsilon, complete) {
+        if complete {
             // vals order mirrors VARS: C K M A V D H.
-            let (c, k, m, a, vv, d, h) =
-                (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6]);
+            let (c, k, m, a, vv, d, h) = (
+                vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6],
+            );
             // Same preconditions as score.rs::compute — including eps > 0,
             // or a hand-edited epsilon of 0.0 pushes +Inf into the series.
-            if a > 0.0 && vv > 0.0 && eps > 0.0 {
-                b_raw.push((c * k * m) / ((d / a) * (h / vv) + eps));
+            if a > 0.0 && vv > 0.0 && epsilon > 0.0 {
+                b_raw.push((c * k * m) / ((d / a) * (h / vv) + epsilon));
             }
         }
     }
@@ -163,34 +186,32 @@ pub fn sweep_norm(
         );
     }
 
-    let mut upserts = 0usize;
-    let mut upsert = |variable: &str, values: &[f64]| -> Result<()> {
-        let (Some(p1), Some(p99)) = (percentile(values, 0.01), percentile(values, 0.99)) else {
-            // Empty 7-day series: a stale row from an earlier sweep would keep
-            // passing is_calibrated() forever — delete it so readers fall back
-            // to cold-start semantics.
-            conn.execute(
-                "DELETE FROM idx_babel_norm WHERE variable = ?1 AND window_secs = ?2",
-                rusqlite::params![variable, window_secs as i64],
-            )?;
-            return Ok(());
-        };
+    let (Some(p1), Some(p99)) = (percentile(&b_raw, 0.01), percentile(&b_raw, 0.99)) else {
+        // Empty 7-day series: a stale row from an earlier sweep would keep
+        // passing is_calibrated() forever — delete it so readers fall back
+        // to cold-start semantics.
         conn.execute(
-            "INSERT INTO idx_babel_norm (variable, window_secs, p1, p99, sample_count, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (variable, window_secs) DO UPDATE SET
-               p1 = excluded.p1, p99 = excluded.p99,
-               sample_count = excluded.sample_count, updated_at = excluded.updated_at",
-            rusqlite::params![variable, window_secs as i64, p1, p99, values.len() as i64, now_unix],
+            "DELETE FROM idx_babel_norm WHERE variable = ?1 AND window_secs = ?2",
+            rusqlite::params![B_RAW_VARIABLE, window_secs as i64],
         )?;
-        upserts += 1;
-        Ok(())
+        return Ok(0);
     };
-    for (i, name) in VARS.iter().enumerate() {
-        upsert(name, &series[i])?;
-    }
-    upsert(B_RAW_VARIABLE, &b_raw)?;
-    Ok(upserts)
+    conn.execute(
+        "INSERT INTO idx_babel_norm (variable, window_secs, p1, p99, sample_count, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT (variable, window_secs) DO UPDATE SET
+           p1 = excluded.p1, p99 = excluded.p99,
+           sample_count = excluded.sample_count, updated_at = excluded.updated_at",
+        rusqlite::params![
+            B_RAW_VARIABLE,
+            window_secs as i64,
+            p1,
+            p99,
+            b_raw.len() as i64,
+            now_unix
+        ],
+    )?;
+    Ok(1)
 }
 
 /// GOLD-DELTA-06 — compute the calibration epsilon from stored windows.
@@ -262,7 +283,11 @@ mod tests {
 
     #[test]
     fn normalise_clamps_to_unit_interval() {
-        let n = Normaliser { p1: 1.0, p99: 10.0, sample_count: 100 };
+        let n = Normaliser {
+            p1: 1.0,
+            p99: 10.0,
+            sample_count: 100,
+        };
         assert_eq!(n.normalise(-5.0), 0.0);
         assert_eq!(n.normalise(100.0), 1.0);
         let mid = n.normalise(5.5);
@@ -312,29 +337,31 @@ mod tests {
     }
 
     #[test]
-    fn sweep_p99_within_two_percent_for_variable_v() {
+    fn sweep_without_epsilon_prunes_legacy_feature_rows() {
         let conn = seeded_db(60);
+        conn.execute(
+            "INSERT INTO idx_babel_norm
+             (variable, window_secs, p1, p99, sample_count, updated_at)
+             VALUES ('V', 900, 0.01, 0.59, 60, ?1)",
+            [NOW],
+        )
+        .expect("seed legacy feature row");
         let n = sweep_norm(&conn, 900, NOW, None).expect("sweep");
-        assert_eq!(n, 7, "7 variables upserted, no b_raw without epsilon");
-        let (p1, p99, count): (f64, f64, i64) = conn
-            .query_row(
-                "SELECT p1, p99, sample_count FROM idx_babel_norm
-                 WHERE variable = 'V' AND window_secs = 900",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .expect("row");
-        assert_eq!(count, 60);
-        assert!((p99 - 0.59).abs() / 0.59 < 0.02, "p99 {p99} within 2% of 0.59");
-        assert!(p1 <= 0.02, "p1 {p1} near the bottom of the series");
+        assert_eq!(n, 0, "no b_raw distribution exists before epsilon freeze");
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_babel_norm", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(rows, 0, "legacy producer-only rows must be removed");
     }
 
     #[test]
     fn sweep_with_epsilon_produces_loadable_normaliser() {
         let conn = seeded_db(60);
         let n = sweep_norm(&conn, 900, NOW, Some(0.01)).expect("sweep");
-        assert_eq!(n, 8, "7 variables + b_raw");
-        let norm = load_normaliser(&conn, 900).expect("query ok").expect("b_raw row present");
+        assert_eq!(n, 1, "only the consumed b_raw distribution is persisted");
+        let norm = load_normaliser(&conn, 900)
+            .expect("query ok")
+            .expect("b_raw row present");
         assert_eq!(norm.sample_count, 60);
         assert!(norm.is_calibrated());
         assert!(norm.p99 > norm.p1);
@@ -343,7 +370,7 @@ mod tests {
         let rows: i64 = conn
             .query_row("SELECT COUNT(*) FROM idx_babel_norm", [], |r| r.get(0))
             .expect("count");
-        assert_eq!(rows, 8);
+        assert_eq!(rows, 1);
     }
 
     #[test]
@@ -360,15 +387,20 @@ mod tests {
             ],
         )
         .expect("insert old");
-        sweep_norm(&conn, 900, NOW, None).expect("sweep");
-        let p99: f64 = conn
+        sweep_norm(&conn, 900, NOW, Some(0.01)).expect("sweep");
+        let (p99, sample_count): (f64, i64) = conn
             .query_row(
-                "SELECT p99 FROM idx_babel_norm WHERE variable = 'V' AND window_secs = 900",
+                "SELECT p99, sample_count FROM idx_babel_norm
+                 WHERE variable = 'b_raw' AND window_secs = 900",
                 [],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .expect("row");
-        assert!(p99 < 1.0, "stale 99.0 outlier excluded, got {p99}");
+        assert_eq!(sample_count, 10, "ancient row must not enter the sweep");
+        assert!(
+            p99.is_finite(),
+            "calibrated b_raw percentile must stay finite"
+        );
     }
 
     #[test]

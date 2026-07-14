@@ -74,7 +74,9 @@ pub fn extract_deep_links(text: &str) -> Vec<DeepLink> {
         // ascii-lower/digit/underscore; id is a tight token charset —
         // this ALSO defuses the greedy-')' case (an id that swallowed
         // ` [good](#nav` fails the charset and is rejected).
-        let Some(dash) = target.find('-') else { continue };
+        let Some(dash) = target.find('-') else {
+            continue;
+        };
         let (kind, id) = (&target[..dash], &target[dash + 1..]);
         if kind.is_empty()
             || id.is_empty()

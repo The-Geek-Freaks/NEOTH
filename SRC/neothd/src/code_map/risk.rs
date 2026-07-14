@@ -72,8 +72,7 @@ pub fn change_risk(ownership: &FileOwnership, churn_commits: u32) -> f64 {
     let ownership_risk = (1.0 - ownership.primary_share) * (1.0 / bus);
 
     // Churn risk: log-dampened, capped at CHURN_CAP.
-    let churn_norm =
-        (churn_commits as f64 + 1.0).ln() / (CHURN_CAP + 1.0).ln();
+    let churn_norm = (churn_commits as f64 + 1.0).ln() / (CHURN_CAP + 1.0).ln();
     let churn_risk = churn_norm.clamp(0.0, 1.0);
 
     // Weighted sum → logistic squash.
@@ -223,13 +222,9 @@ pub fn assess_edit_risk(repo: &Path, files: &[String]) -> Vec<RiskWarning> {
                 return None;
             }
             let reason = match (high_risk, single_owner) {
-                (true, true) => format!(
-                    "risk={score:.2} (HIGH), bus_factor=1 (single-owner)"
-                ),
+                (true, true) => format!("risk={score:.2} (HIGH), bus_factor=1 (single-owner)"),
                 (true, false) => format!("risk={score:.2} (HIGH)"),
-                (false, true) => format!(
-                    "bus_factor=1 (single-owner), risk={score:.2}"
-                ),
+                (false, true) => format!("bus_factor=1 (single-owner), risk={score:.2}"),
                 _ => unreachable!(),
             };
             Some(RiskWarning {
@@ -326,10 +321,7 @@ mod tests {
         let safe_ow = ownership(5, 0.5, 4);
         let safe = change_risk(&safe_ow, 5);
 
-        assert!(
-            risky > safe,
-            "risky={risky:.4} should be > safe={safe:.4}"
-        );
+        assert!(risky > safe, "risky={risky:.4} should be > safe={safe:.4}");
     }
 
     // --- rank_files returns deterministic descending order ----------------
@@ -353,7 +345,10 @@ mod tests {
             );
         }
         // Most risky file should be first.
-        assert_eq!(ranked[0].path, "risky.rs", "expected risky.rs first, got {ranked:?}");
+        assert_eq!(
+            ranked[0].path, "risky.rs",
+            "expected risky.rs first, got {ranked:?}"
+        );
     }
 
     // --- determinism: same input → same output ---------------------------
@@ -383,7 +378,11 @@ mod tests {
     }
 
     fn init_repo(dir: &Path) -> std::io::Result<()> {
-        Command::new("git").arg("-C").arg(dir).args(["init", "-q"]).status()?;
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["init", "-q"])
+            .status()?;
         Command::new("git")
             .arg("-C")
             .arg(dir)

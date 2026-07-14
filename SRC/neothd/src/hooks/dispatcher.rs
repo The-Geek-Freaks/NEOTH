@@ -172,7 +172,8 @@ pub fn run_stage_with_config(
     invoker: Option<&dyn PluginInvoker>,
     fail_fast: bool,
 ) -> Result<StageOutcome> {
-    let (outcome, _blocks) = run_stage_with_config_returning_blocks(stage, body, hooks, invoker, fail_fast)?;
+    let (outcome, _blocks) =
+        run_stage_with_config_returning_blocks(stage, body, hooks, invoker, fail_fast)?;
     Ok(outcome)
 }
 
@@ -216,13 +217,16 @@ pub fn run_stage_with_config_returning_blocks(
                             error = %e,
                             "fail_fast: bad regex in hook matcher — blocking stage",
                         );
-                        return Ok((StageOutcome::Block {
-                            name: hook.name.clone(),
-                            reason: format!(
-                                "fail_fast: regex compile failed for hook `{name}`: {e}",
-                                name = hook.name,
-                            ),
-                        }, Vec::new()));
+                        return Ok((
+                            StageOutcome::Block {
+                                name: hook.name.clone(),
+                                reason: format!(
+                                    "fail_fast: regex compile failed for hook `{name}`: {e}",
+                                    name = hook.name,
+                                ),
+                            },
+                            Vec::new(),
+                        ));
                     }
                     tracing::warn!(
                         hook = %hook.name,
@@ -253,10 +257,13 @@ pub fn run_stage_with_config_returning_blocks(
                 current = template.clone();
             }
             HookAction::Block { reason } => {
-                return Ok((StageOutcome::Block {
-                    name: hook.name.clone(),
-                    reason: reason.clone(),
-                }, Vec::new()));
+                return Ok((
+                    StageOutcome::Block {
+                        name: hook.name.clone(),
+                        reason: reason.clone(),
+                    },
+                    Vec::new(),
+                ));
             }
             HookAction::Plugin {
                 plugin_id,
@@ -277,10 +284,15 @@ pub fn run_stage_with_config_returning_blocks(
                                     error = %e,
                                     "required plugin invocation failed — blocking stage"
                                 );
-                                return Ok((StageOutcome::Block {
-                                    name: hook.name.clone(),
-                                    reason: format!("required plugin `{plugin_id}` failed: {e}"),
-                                }, Vec::new()));
+                                return Ok((
+                                    StageOutcome::Block {
+                                        name: hook.name.clone(),
+                                        reason: format!(
+                                            "required plugin `{plugin_id}` failed: {e}"
+                                        ),
+                                    },
+                                    Vec::new(),
+                                ));
                             }
                             tracing::warn!(
                                 hook = %hook.name,
@@ -302,12 +314,15 @@ pub fn run_stage_with_config_returning_blocks(
                                 "required plugin hook has no PluginInvoker — \
                                  blocking stage (safety contract violation)"
                             );
-                            return Ok((StageOutcome::Block {
-                                name: hook.name.clone(),
-                                reason: format!(
-                                    "required plugin `{plugin_id}` unavailable — no invoker registered"
-                                ),
-                            }, Vec::new()));
+                            return Ok((
+                                StageOutcome::Block {
+                                    name: hook.name.clone(),
+                                    reason: format!(
+                                        "required plugin `{plugin_id}` unavailable — no invoker registered"
+                                    ),
+                                },
+                                Vec::new(),
+                            ));
                         }
                         tracing::warn!(
                             hook = %hook.name,
@@ -340,10 +355,13 @@ pub fn run_stage_with_config_returning_blocks(
         }
     }
 
-    Ok((StageOutcome::Continue {
-        body: current,
-        hits,
-    }, accumulated_blocks))
+    Ok((
+        StageOutcome::Continue {
+            body: current,
+            hits,
+        },
+        accumulated_blocks,
+    ))
 }
 
 #[cfg(test)]
@@ -907,7 +925,11 @@ mod tests {
         //
         // Stage: PreProviderCall (omc's PreToolUse — the ONLY pre-tool gate).
         // Action: HookAction::Block { reason: "not allowed" }.
-        let hooks = vec![block_hook("deny", HookStage::PreProviderCall, "not allowed")];
+        let hooks = vec![block_hook(
+            "deny",
+            HookStage::PreProviderCall,
+            "not allowed",
+        )];
         let out = run_stage(HookStage::PreProviderCall, "tool input text", &hooks).unwrap();
         match out {
             StageOutcome::Block { name, reason } => {

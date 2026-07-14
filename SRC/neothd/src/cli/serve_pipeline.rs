@@ -36,9 +36,13 @@ use crate::wal::writer::WalWriterHandle;
 /// re-listing every captured value.
 pub(crate) struct PipelineHandlerDeps {
     pub(crate) provider: Arc<dyn Provider>,
+    /// Concrete outbound adapter for progressive send-then-edit delivery.
+    /// Only adapters that advertise native edit support are supplied here;
+    /// webhook/final-only channels keep `None` and use the existing return-to-
+    /// adapter path.
+    pub(crate) live_channel: Option<Arc<dyn crate::channels::Channel>>,
     pub(crate) writer: WalWriterHandle,
     pub(crate) operator_id: Option<String>,
-    pub(crate) autonomy: crate::permissions::AutonomyLevel,
     /// GM-01 — operator-tunable MCP dispatch-loop iteration ceiling
     /// (`freedom.yaml::goal.max_turns`).
     pub(crate) goal_max_turns: u32,
@@ -48,6 +52,10 @@ pub(crate) struct PipelineHandlerDeps {
     /// reading idx_episode. Same path the daemon's tail-indexer uses;
     /// `indexer::replay_once` is cursor-based + idempotent.
     pub(crate) segment_path: std::path::PathBuf,
+    /// Authoritative profile/model home derived from the active config path.
+    /// Media speaker profiles must never fall back to the process default when
+    /// `serve --config` points at an isolated operator home.
+    pub(crate) neoth_home: std::path::PathBuf,
     /// Opt-in profile-learning policy. When `learn_enabled: true`,
     /// channels (Telegram / WhatsApp / Slack) grow the operator-profile
     /// passively the same way `neoth chat` does. Default off — paid-
@@ -275,9 +283,11 @@ pub(crate) async fn audit_inbound_edit(
 pub(crate) async fn resolve_inbound_effective_text(
     inbound: &InboundMessage,
     writer: &WalWriterHandle,
+    config: &FreedomConfig,
+    neoth_home: &std::path::Path,
 ) -> Option<String> {
     if let Some(media) = inbound.media.clone() {
-        match handle_media_attachment(inbound, &media, Some(writer)).await {
+        match handle_media_attachment(inbound, &media, Some(writer), config, neoth_home).await {
             Ok(text) => Some(text),
             Err(e) => {
                 tracing::warn!(error = %e, "media attachment pipeline failed");
@@ -356,7 +366,8 @@ pub(crate) async fn sanitize_inbound(
     audit_dir: &std::path::Path,
     identity_locked: bool,
 ) -> Option<crate::security::ingress_sanitizer::SanitizeReport> {
-    let report = crate::security::ingress_sanitizer::sanitize(raw_text, channel_str, identity_locked);
+    let report =
+        crate::security::ingress_sanitizer::sanitize(raw_text, channel_str, identity_locked);
     if let Err(e) = crate::security::ingress_sanitizer::audit_append(&report, audit_dir).await {
         warn!(error = %e, "ingress audit append failed; continuing");
     }
@@ -383,6 +394,7 @@ pub(crate) async fn sanitize_inbound(
 /// `report.text` into `sanitized_text` afterward.
 pub(crate) async fn emit_inbound_ingress(
     writer: &WalWriterHandle,
+    neoth_home: &std::path::Path,
     report: &crate::security::ingress_sanitizer::SanitizeReport,
     inbound: &InboundMessage,
     sender_hash: &str,
@@ -399,10 +411,8 @@ pub(crate) async fn emit_inbound_ingress(
     // wired surface — refresh the last-active marker so the briefing-gate's
     // inactivity check treats this as a real engagement signal. Best-effort: a
     // permission failure on the marker file MUST NOT fail the inbound handler.
-    let _ = crate::profile::briefing_gate::record_last_active(
-        &crate::config::FreedomConfig::default_neoth_home(),
-        crate::time::now_unix_i64(),
-    );
+    let _ =
+        crate::profile::briefing_gate::record_last_active(neoth_home, crate::time::now_unix_i64());
 
     // CHANNEL_INGRESS (hashed metadata).
     let ingress_payload = serde_json::to_vec(&serde_json::json!({
@@ -438,6 +448,55 @@ pub(crate) struct ReplyProvenance {
     pub(crate) output_tokens: Option<u32>,
 }
 
+/// Evaluate the `ChannelSend` boundary once for a reply. Live delivery calls
+/// this before opening the provider stream so no partial text can escape under
+/// a denied policy; the final egress tail receives `send_preauthorized = true`
+/// and does not prompt a second time. Non-streaming replies call it from the
+/// final egress tail exactly as before.
+async fn authorize_channel_send<P: crate::permissions::PolicyArgument>(
+    writer: &WalWriterHandle,
+    neoth_home: &std::path::Path,
+    autonomy_policy: P,
+    inbound: &InboundMessage,
+    channel_str: &str,
+    channel_asker: Option<&Arc<dyn crate::permissions::gate::ChannelAsker>>,
+) -> Result<bool> {
+    use crate::permissions::lease::LeaseStore;
+    use crate::permissions::{Action, ConfirmStrategy, Gate};
+
+    let action = Action::ChannelSend;
+    let lease_store = {
+        let path = LeaseStore::default_path(neoth_home);
+        tokio::task::spawn_blocking(move || LeaseStore::load(&path))
+            .await
+            .context("join channel lease-store load")?
+            .context("load channel lease store")?
+    };
+    let now = crate::time::now_unix_i64();
+    let gate = {
+        let base = Gate::for_policy(autonomy_policy.policy_snapshot()).with_lease_snapshot(
+            &lease_store,
+            &inbound.sender_id,
+            now,
+        );
+        if let Some(asker) = channel_asker {
+            base.with_confirm(ConfirmStrategy::Channel)
+                .with_channel_asker(Arc::clone(asker))
+        } else {
+            base.with_confirm(ConfirmStrategy::FailClosed)
+        }
+    };
+    if let Err(error) = gate.check(&action, Some(writer)).await {
+        warn!(
+            channel = channel_str,
+            error = %error,
+            "channel outbound blocked by autonomy gate (ChannelSend)"
+        );
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 /// GOLD-WIRE-02b — the shared outbound-release tail used by BOTH the normal
 /// provider reply and the conversational-recall short-circuit. Runs the
 /// `PreEgress` hooks, then the `ChannelSend` autonomy gate (lease-aware), then
@@ -454,10 +513,11 @@ pub(crate) struct ReplyProvenance {
 /// Hooks with `once = true` that are already in the set are pre-filtered before
 /// the dispatcher runs; on first firing the name is inserted.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn release_channel_reply(
+pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument + Copy>(
     writer: &WalWriterHandle,
+    neoth_home: &std::path::Path,
     hooks: &[crate::hooks::schema::HookDef],
-    autonomy: crate::permissions::AutonomyLevel,
+    autonomy_policy: P,
     inbound: &InboundMessage,
     channel_str: &str,
     sender_hash: &str,
@@ -468,6 +528,12 @@ pub(crate) async fn release_channel_reply(
     // the reply from their chat. `None` preserves the pre-GOOSE-03
     // fail-closed behaviour for all non-channel and test call sites.
     channel_asker: Option<Arc<dyn crate::permissions::gate::ChannelAsker>>,
+    // The live-preview path already passed the exact same ChannelSend gate
+    // before its first partial left the process.
+    send_preauthorized: bool,
+    // When present, the egress tail performs the final in-place edit itself
+    // and returns `None`, preventing the adapter loop from sending a duplicate.
+    live_delivery: Option<&mut crate::channels::LiveDelivery>,
     // GOLD-CCPARITY-ONCE: session-scoped fired set. Created once per channel
     // session (outside the per-message loop) and passed by &mut ref so the
     // PreEgress once-gate is shared across turns.
@@ -578,13 +644,6 @@ pub(crate) async fn release_channel_reply(
         }
     };
 
-    // GOLD-DELTA-16 — content-free K_d histogram for the Babel observer
-    // (try_send, never blocks; the text is reduced to token counts in place).
-    crate::analytics::babel::khist::submit_response_text(
-        crate::time::now_unix_i64(),
-        &reply_text,
-    );
-
     // ── Permission gate: ChannelSend ──────────────────────────────────
     // Before the channel adapter ships the reply outbound, gate it through
     // the autonomy ladder. Strict: denies + emits a WAL audit frame. An
@@ -595,37 +654,29 @@ pub(crate) async fn release_channel_reply(
     // GOLD-ADAPT-GOOSE-03: when a ChannelAsker (BusAsker) is wired, the gate
     // switches from FailClosed to Channel strategy — a Confirm outcome delivers
     // a UUID elicitation to the operator and suspends until they reply.
+    if !send_preauthorized
+        && !authorize_channel_send(
+            writer,
+            neoth_home,
+            autonomy_policy,
+            inbound,
+            channel_str,
+            channel_asker.as_ref(),
+        )
+        .await?
     {
-        use crate::permissions::lease::LeaseStore;
-        use crate::permissions::{Action, ConfirmStrategy, Gate};
-        let action = Action::ChannelSend;
-        let lease_store = {
-            let path =
-                LeaseStore::default_path(&crate::config::FreedomConfig::default_neoth_home());
-            tokio::task::spawn_blocking(move || LeaseStore::load(&path).unwrap_or_default())
-                .await
-                .unwrap_or_default()
-        };
-        let now = crate::time::now_unix_i64();
-        let gate = {
-            let base = Gate::for_level(autonomy)
-                .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
-            if let Some(asker) = channel_asker {
-                base.with_confirm(ConfirmStrategy::Channel)
-                    .with_channel_asker(asker)
-            } else {
-                base.with_confirm(ConfirmStrategy::FailClosed)
-            }
-        };
-        if let Err(e) = gate.check(&action, Some(writer)).await {
-            warn!(
-                channel = channel_str,
-                error = %e,
-                "channel outbound blocked by autonomy gate (ChannelSend)"
-            );
-            return Ok(::std::option::Option::None);
-        }
+        return Ok(::std::option::Option::None);
     }
+
+    // For a progressive reply, the shared tail owns the mandatory clean final
+    // edit. Do it before attesting CHANNEL_EGRESS so a failed edit cannot be
+    // recorded as a successfully released final response.
+    let handled_by_live_delivery = if let Some(delivery) = live_delivery {
+        delivery.send_or_edit(writer, &reply_text, true).await?;
+        true
+    } else {
+        false
+    };
 
     // ── Emit CHANNEL_EGRESS (post-gate) ───────────────────────────────
     // The reply passed every PreEgress hook + the ChannelSend gate, so it is
@@ -648,10 +699,17 @@ pub(crate) async fn release_channel_reply(
         .await
         .context("write CHANNEL_EGRESS WAL frame")?;
 
-    Ok(Some(OutboundMessage {
-        recipient_id: inbound.sender_id.clone(),
-        text: reply_text,
-    }))
+    if handled_by_live_delivery {
+        Ok(None)
+    } else {
+        Ok(Some(OutboundMessage {
+            // Replies belong in the originating conversation/channel, not in
+            // a direct message to the sender (Slack group replies previously
+            // used sender_id here by mistake).
+            recipient_id: inbound.chat_id.clone(),
+            text: reply_text,
+        }))
+    }
 }
 
 /// Build the per-channel pipeline handler closure. Captured: provider trait
@@ -661,13 +719,14 @@ pub(crate) async fn release_channel_reply(
 pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
     let PipelineHandlerDeps {
         provider,
+        live_channel,
         writer,
         operator_id,
-        autonomy,
         goal_max_turns,
         meter,
         rate_limiter,
         segment_path,
+        neoth_home,
         profile_config,
         reload_controller,
         views_conn,
@@ -694,12 +753,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 
     Box::new(move |inbound: InboundMessage| {
         let provider = Arc::clone(&provider);
+        let live_channel = live_channel.as_ref().map(Arc::clone);
         let writer = writer.clone();
         let operator_id = operator_id.clone();
         let meter = meter.clone();
         let rate_limiter = Arc::clone(&rate_limiter);
         let segment_path = segment_path.clone();
+        let neoth_home = neoth_home.clone();
         let profile_config = profile_config.clone();
+        let reload_controller = Arc::clone(&reload_controller);
         // GOLD-ADAPT-GOOSE-03: clone the optional asker Arc into this message's closure.
         let channel_asker = channel_asker_arc.as_ref().map(Arc::clone);
         let confirm_bus_reply = confirm_bus_for_reply.as_ref().map(Arc::clone);
@@ -710,6 +772,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         // reload-time. Single `latest()` call per inbound means
         // mid-message config-flip is impossible.
         let config_for_handler = reload_controller.latest();
+        let autonomy_policy = config_for_handler.autonomy_policy();
+        let autonomy = autonomy_policy.level();
         let views_conn = views_conn.clone();
         // TRAIL-04: clone executor Arc per-turn so the async future owns it.
         let views_executor = views_executor.clone();
@@ -722,6 +786,33 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // inbound path — the plaintext id stays in-process only (rate
             // limiter, permission gate, identity resolve), never on disk.
             let sender_hash = sender_hash_of(&inbound.sender_id);
+
+            // One immutable, fail-loud MCP snapshot per inbound turn. Prompt
+            // catalogue, checkpoint metadata and dispatch all consume this
+            // exact value so a mid-turn registry edit cannot create split
+            // scope. Invalid YAML blocks tool-capable processing rather than
+            // silently fabricating an empty registry.
+            let channel_mcp_servers = match crate::mcp::McpServers::load() {
+                Ok(servers) => servers,
+                Err(error) => {
+                    warn!(
+                        channel = inbound.channel.as_str(),
+                        sender_hash = %sender_hash,
+                        error = %error,
+                        "mcp_servers.yaml load failed on channel path; turn blocked fail-closed"
+                    );
+                    return Ok(::std::option::Option::Some(OutboundMessage {
+                        recipient_id: inbound.sender_id.clone(),
+                        text: "[NEOTH] MCP configuration is invalid. Fix mcp_servers.yaml on the host before retrying."
+                            .to_string(),
+                    }));
+                }
+            };
+            let channel_mcp_scope: Vec<String> = channel_mcp_servers
+                .enabled()
+                .into_iter()
+                .map(|server| server.id.clone())
+                .collect();
 
             // PWF-02: channel-turn SessionStart MODE_CHECKPOINT (0x9A).
             // Emit before the ingress/audit pipeline so crash-recovery can
@@ -736,9 +827,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // Stable per-turn id: xxh3-64 of sender_hash + ts_unix.
                 let turn_id = format!(
                     "{:016x}-{ts_unix}",
-                    xxhash_rust::xxh3::xxh3_64(
-                        format!("{sender_hash}-{ts_unix}").as_bytes()
-                    )
+                    xxhash_rust::xxh3::xxh3_64(format!("{sender_hash}-{ts_unix}").as_bytes())
                 );
                 // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
                 let council_mode_str = if config_for_handler.council.mode.is_single() {
@@ -754,7 +843,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     mode: "channel".to_string(),
                     provider_target: provider.name().to_string(),
                     council_mode: council_mode_str,
-                    scoped_mcp_servers: Vec::new(),
+                    scoped_mcp_servers: channel_mcp_scope,
+                    mcp_scope_recorded: true,
                     phase: "channel:session-start".to_string(),
                     ts_unix,
                 };
@@ -776,7 +866,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 
             // GOLD-ARCH-01 phase 2: R-9 multimodal — resolve the effective text
             // (media → transcript/ack, else the plain text payload).
-            let effective_text = resolve_inbound_effective_text(&inbound, &writer).await;
+            let effective_text =
+                resolve_inbound_effective_text(&inbound, &writer, &config_for_handler, &neoth_home)
+                    .await;
 
             let Some(raw_text) = effective_text.as_deref() else {
                 info!(
@@ -798,9 +890,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let ody26_ts = crate::time::now_unix_i64();
                 let ody26_session = format!(
                     "{:016x}-{ody26_ts}",
-                    xxhash_rust::xxh3::xxh3_64(
-                        format!("{sender_hash}-{ody26_ts}").as_bytes()
-                    )
+                    xxhash_rust::xxh3::xxh3_64(format!("{sender_hash}-{ody26_ts}").as_bytes())
                 );
                 // Store session key on the stack for the agent-turn insert below.
                 // Shadowed by the handler-scope variable if turn_id is computed later.
@@ -833,18 +923,22 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // redact secrets that the operator typo'd into a channel);
             // a Block silently drops the turn (no reply, no WAL ingress
             // frame). Empty hook set → no-op.
-            let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
-            // Pick #34 (Session 14, silent-failure audit-fix): hook load
-            // failures now surface at warn level. Prior `unwrap_or_default()`
-            // silently disabled every hook on a single bad TOML file.
-            let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
-                warn!(
-                    error = %e,
-                    dir = %hook_dir.display(),
-                    "hook load failed — proceeding with empty hook set"
-                );
-                Default::default()
-            });
+            let hook_dir = neoth_home.join("hooks");
+            let hooks = match crate::hooks::load_all_strict(&hook_dir).await {
+                Ok(hooks) => hooks,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        dir = %hook_dir.display(),
+                        "hook policy invalid at channel ingress; turn blocked fail-closed"
+                    );
+                    return Ok(Some(OutboundMessage {
+                        recipient_id: inbound.sender_id.clone(),
+                        text: "[NEOTH] Hook policy is invalid. Fix the file in ~/.neoth/hooks before retrying."
+                            .to_string(),
+                    }));
+                }
+            };
             let ingress_ts_unix = crate::time::now_unix_secs();
             // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
             let mut skipped_once_ingress: Vec<String> = Vec::new();
@@ -971,14 +1065,19 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             }
             // GOLD-ARCH-01 phase 2: Phase-11a ingress sanitize (quarantine →
             // silent drop). The raw input never touches the WAL or the provider.
-            let audit_dir = crate::config::FreedomConfig::default_neoth_home().join("audit");
+            let audit_dir = neoth_home.join("audit");
             // GOLD-ADAPT-JV-MODE-01: load persona mode here (before sanitize) so
             // the ingress gate can block persona-override attempts in locked mode.
-            let _serve_persona_mode =
-                crate::cli::profile::load_persona_mode(&crate::config::FreedomConfig::default_neoth_home());
+            let _serve_persona_mode = crate::cli::profile::load_persona_mode(&neoth_home);
             let serve_identity_locked = _serve_persona_mode.is_some();
-            let Some(report) =
-                sanitize_inbound(raw_text, channel_str, &sender_hash, &audit_dir, serve_identity_locked).await
+            let Some(report) = sanitize_inbound(
+                raw_text,
+                channel_str,
+                &sender_hash,
+                &audit_dir,
+                serve_identity_locked,
+            )
+            .await
             else {
                 return Ok(::std::option::Option::None);
             };
@@ -987,9 +1086,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // the post-reply profile pipeline's extract_window. Borrows `report`,
             // so move `report.text` into `sanitized_text` afterward for the
             // provider call + downstream stages.
-            let ingress_event_id =
-                emit_inbound_ingress(&writer, &report, &inbound, &sender_hash, &operator_id)
-                    .await?;
+            let ingress_event_id = emit_inbound_ingress(
+                &writer,
+                &neoth_home,
+                &report,
+                &inbound,
+                &sender_hash,
+                &operator_id,
+            )
+            .await?;
             let sanitized_text = report.text;
 
             // ── GOLD-ADAPT-GOOSE-03: UUID-reply fast-path ─────────────────
@@ -1060,7 +1165,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     operator_uuid,
                 ) {
                     let recall_started = Instant::now();
-                    let db_path = crate::memory::store::default_path();
+                    let db_path = neoth_home.join("views.db");
                     if let Some(recall_reply) =
                         crate::cli::recall::answer_conversational_recall(&sanitized_text, &db_path)
                             .await
@@ -1073,12 +1178,22 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // PreEgress hooks need the hook set; the normal path
                         // loads it at PreProviderCall, which is BELOW this
                         // short-circuit — so load it here.
-                        let hook_dir =
-                            crate::config::FreedomConfig::default_neoth_home().join("hooks");
-                        let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
-                            warn!(error = %e, "hook load failed for recall egress — empty set");
-                            Default::default()
-                        });
+                        let hook_dir = neoth_home.join("hooks");
+                        let hooks = match crate::hooks::load_all_strict(&hook_dir).await {
+                            Ok(hooks) => hooks,
+                            Err(error) => {
+                                warn!(
+                                    error = %error,
+                                    dir = %hook_dir.display(),
+                                    "hook policy invalid for recall egress; turn blocked fail-closed"
+                                );
+                                return Ok(Some(OutboundMessage {
+                                    recipient_id: inbound.sender_id.clone(),
+                                    text: "[NEOTH] Hook policy is invalid. Fix the file in ~/.neoth/hooks before retrying."
+                                        .to_string(),
+                                }));
+                            }
+                        };
                         let provenance = ReplyProvenance {
                             provider: "local-recall".to_string(),
                             model: "conversational-recall".to_string(),
@@ -1089,14 +1204,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         let mut fired = session_fired_once.lock().await;
                         return release_channel_reply(
                             &writer,
+                            &neoth_home,
                             &hooks,
-                            autonomy,
+                            &autonomy_policy,
                             &inbound,
                             channel_str,
                             &sender_hash,
                             &recall_reply,
                             &provenance,
                             channel_asker.as_ref().map(Arc::clone),
+                            false,
+                            None,
                             &mut fired,
                         )
                         .await;
@@ -1116,59 +1234,24 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 }
             }
 
-            // ── Permission gate (Phase 28b AU-4 + Pick #10 fix) ──────────
-            // Daemon path has no TTY — use FailClosed strategy. Channel-driven
-            // confirm (AU-4-part-2) wires here once the channel callback is
-            // ready: switch to `ConfirmStrategy::Channel` and provide the
-            // adapter hook.
-            //
-            // Pick #10 (Session 14, 2026-05-18 Codex feedback): the prior
-            // `eur_estimate: 0.0` hardcode silently bypassed Standard +
-            // Elevated cost thresholds (€0.50 / €5.00). Now uses
-            // `cost::predict` over the configured provider+model so the
-            // channel path enforces the same cost contract as `chat.rs`.
+            // B22: keep the caller's confirmation surface, but move the actual
+            // PaidProviderCall decision to each final provider request. This
+            // context is reused by /research, /background, MCP/loop rounds,
+            // council leaves and the direct fallback path below.
+            let provider_call_authorizer = if let Some(asker) =
+                channel_asker.as_ref().map(Arc::clone)
             {
-                use crate::permissions::{Action, ConfirmStrategy, Gate};
-                use crate::providers::cost::predict as predict_cost;
-                use crate::providers::meter::Meter;
-                // COR-13: canonical provider-id (Skip/None -> "none");
-                // cost::predict treats it the same as the old "unknown".
-                let provider_id = config_for_handler
-                    .provider_kind
-                    .map(|k| k.as_provider_id())
-                    .unwrap_or("none");
-                let model_str = config_for_handler
-                    .provider_model
-                    .as_deref()
-                    .unwrap_or("unknown");
-                let meter = Meter::with_default_window();
-                let cost = predict_cost(provider_id, model_str, &sanitized_text, &meter);
-                let action = Action::PaidProviderCall {
-                    eur_estimate: cost.total_eur,
-                };
-                // GOLD-ADAPT-GOOSE-03: switch from FailClosed to Channel when the
-                // bus asker is wired so the operator can approve costly calls.
-                let gate = {
-                    let base = Gate::for_level(autonomy);
-                    if let Some(asker) = channel_asker.as_ref().map(Arc::clone) {
-                        base.with_confirm(ConfirmStrategy::Channel)
-                            .with_channel_asker(asker)
-                    } else {
-                        base.with_confirm(ConfirmStrategy::FailClosed)
-                    }
-                };
-                if let Err(e) = gate.check(&action, Some(&writer)).await {
-                    warn!(
-                        channel = channel_str,
-                        provider = provider_id,
-                        model = model_str,
-                        eur_estimate = cost.total_eur,
-                        error = %e,
-                        "channel pipeline blocked by autonomy gate (PaidProviderCall)"
-                    );
-                    return Ok(::std::option::Option::None);
-                }
-            }
+                crate::providers::cost_authorization::ProviderCallAuthorizer::channel_reload(
+                    Arc::clone(&reload_controller),
+                    Some(writer.clone()),
+                    asker,
+                )
+            } else {
+                crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
+                    Arc::clone(&reload_controller),
+                    Some(writer.clone()),
+                )
+            };
 
             // ── GOLD-TASK-01 — general-task routing branch ────────────────
             // Non-coding inbound prompts (reminders, scheduling, research,
@@ -1203,9 +1286,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     autonomy,
                 )
             {
-                let detected = crate::coding::general_task_intent::detect_general_task_intent(
-                    &sanitized_text,
-                );
+                let detected =
+                    crate::coding::general_task_intent::detect_general_task_intent(&sanitized_text);
                 let category_label = detected
                     .as_ref()
                     .map(|i| i.category.as_str())
@@ -1213,7 +1295,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 
                 // Open the coding DB (same views.db the CLI `neoth code` uses).
                 // One connection per routed message — matches task_executor pattern.
-                let db_path = crate::memory::store::default_path();
+                let db_path = neoth_home.join("views.db");
                 match crate::memory::store::open(&db_path) {
                     Err(e) => {
                         tracing::warn!(
@@ -1301,27 +1383,25 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // skills dir + mcp_servers.yaml + tweaks.toml + code_map
             // sqlite probe). Matches `chat.rs::run_chat_with` cost; on
             // a healthy filesystem the combined latency is sub-30ms.
-            let channel_home = crate::config::FreedomConfig::default_neoth_home();
+            let channel_home = neoth_home.clone();
             let channel_cwd = std::env::current_dir().unwrap_or_else(|_| channel_home.clone());
-            // GOLD-CCPARITY-SUBDIR-MD-01 — resolve operator_md_extra_dirs from
-            // a fresh config snapshot. channel_home is a pure path derivation
-            // (no full config load), so we need a separate load here. Falls
-            // back to empty on error (same policy as all channel-path config reads).
-            let channel_extra_dirs: Vec<std::path::PathBuf> = {
-                let snap = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
-                snap.memory
-                    .operator_md_extra_dirs
-                    .iter()
-                    .map(|s| {
-                        let p = std::path::PathBuf::from(s);
-                        if p.is_absolute() {
-                            p
-                        } else {
-                            channel_cwd.join(s)
-                        }
-                    })
-                    .collect()
-            };
+            // GOLD-CCPARITY-SUBDIR-MD-01 — use the validated per-turn reload
+            // snapshot captured at handler entry. Re-reading freedom.yaml here
+            // used to turn a malformed existing file into empty defaults and
+            // could split policy within one inbound turn.
+            let channel_extra_dirs: Vec<std::path::PathBuf> = config_for_handler
+                .memory
+                .operator_md_extra_dirs
+                .iter()
+                .map(|s| {
+                    let p = std::path::PathBuf::from(s);
+                    if p.is_absolute() {
+                        p
+                    } else {
+                        channel_cwd.join(s)
+                    }
+                })
+                .collect();
             let operator_blocks = crate::memory::operator_md::assemble(
                 &channel_home,
                 &channel_cwd,
@@ -1342,7 +1422,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     "bytes": b.content.len(),
                     "ts_unix": now_unix,
                 }))
-                .unwrap_or_default();
+                .expect("SUBDIR_MD_LOADED payload contains only serializable primitives");
                 let header = crate::wal::HeaderBuilder::new(
                     crate::wal::events::EVENT_TYPE_SUBDIR_MD_LOADED,
                     &payload,
@@ -1367,22 +1447,19 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // per-call load when the global wasn't initialised.
             let installed_skills = match crate::skills::registry::global() {
                 Some(reg) => reg.snapshot_owned(),
-                None => {
-                    match crate::skills::SkillRegistry::load(&channel_home.join("skills")).await {
-                        Ok(reg) => reg.snapshot_owned(),
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                "skill registry load failed on channel path; empty set"
-                            );
-                            std::sync::Arc::new(Vec::new())
-                        }
-                    }
-                }
+                None => crate::skills::SkillRegistry::load(&channel_home.join("skills"))
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "load channel skill registry from {}",
+                            channel_home.join("skills").display()
+                        )
+                    })?
+                    .snapshot_owned(),
             };
             let mode_registry =
                 crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
-                    .unwrap_or_default();
+                    .context("build channel skill mode registry")?;
             let mode_hit = mode_registry.match_trigger(&sanitized_text);
             // SC-11 (Session 28d) — the channel path now threads the
             // matched skill's `tool_allowlist` into the MCP dispatch loop
@@ -1431,17 +1508,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
                 // when a mode is active (mode inherits parent effort setting).
                 let skill_effort = parent.and_then(|s| s.manifest.effort);
+                crate::analytics::babel::signals::emit(
+                    crate::analytics::babel::signals::SignalKind::SkillMode,
+                );
                 (layer, None, allowlist, skill_model, skill_effort)
             } else {
                 // Full-auto mode raises the Stage-1 confidence floor so the
                 // now-fully-populated skill library can't false-activate on a
-                // lone generic single-word trigger. Read fresh per message
-                // (best-effort; mirrors the council.disabled fresh-read below)
-                // so `neoth autonomy full-auto` takes effect without a restart.
-                let stage1_floor = if crate::config::FreedomConfig::load_from_default_path()
-                    .map(|c| c.skills.enable_all_bundled)
-                    .unwrap_or(false)
-                {
+                // lone generic single-word trigger. The validated per-turn
+                // reload snapshot already reflects hot changes and prevents a
+                // malformed file from becoming a false disabled default.
+                let stage1_floor = if config_for_handler.skills.enable_all_bundled {
                     crate::skills::router::FULL_AUTO_MIN_WEIGHT
                 } else {
                     crate::skills::router::DEFAULT_MIN_WEIGHT
@@ -1454,19 +1531,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let channel_vis_filtered: std::sync::Arc<Vec<crate::skills::schema::Skill>>;
                 let routing_skills: &[crate::skills::schema::Skill] = {
                     let needs_filter = installed_skills.iter().any(|s| {
-                        !matches!(
-                            s.manifest.visibility,
-                            crate::config::SkillVisibility::On
-                        )
+                        !matches!(s.manifest.visibility, crate::config::SkillVisibility::On)
                     });
                     if needs_filter {
                         let filtered: Vec<_> = installed_skills
                             .iter()
                             .filter(|s| {
-                                matches!(
-                                    s.manifest.visibility,
-                                    crate::config::SkillVisibility::On
-                                )
+                                matches!(s.manifest.visibility, crate::config::SkillVisibility::On)
                             })
                             .cloned()
                             .collect();
@@ -1490,6 +1561,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         "skill activated (channel path)"
                     );
                 }
+                crate::analytics::babel::signals::emit(if skill_match.is_some() {
+                    crate::analytics::babel::signals::SignalKind::SkillKeyword
+                } else {
+                    crate::analytics::babel::signals::SignalKind::SkillNoMatch
+                });
                 let layer = skill_match
                     .as_ref()
                     .map(|m| m.skill.system_prompt().to_string());
@@ -1500,20 +1576,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .as_ref()
                     .and_then(|m| m.skill.manifest.model.clone());
                 // GOLD-CCPARITY-EFFORT-03: capture per-skill effort override.
-                let skill_effort = skill_match
-                    .as_ref()
-                    .and_then(|m| m.skill.manifest.effort);
+                let skill_effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
                 let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
                 (layer, id, allowlist, skill_model, skill_effort)
             };
 
-            let channel_mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
-                warn!(
-                    error = %e,
-                    "mcp_servers.yaml load failed on channel path — proceeding without MCP tools"
-                );
-                Default::default()
-            });
             let channel_mcp_catalogue: Option<String> = if channel_mcp_servers.enabled().is_empty()
             {
                 None
@@ -1535,8 +1602,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // (Telegram / WhatsApp) also get per-turn tone adaptation when
             // `config_for_handler.tone_modifier.enabled`. Kill-switch default OFF.
             let channel_persona = if config_for_handler.tone_modifier.enabled {
-                let intensity =
-                    crate::council::mds_tone::classify_intensity(&sanitized_text);
+                let intensity = crate::council::mds_tone::classify_intensity(&sanitized_text);
                 if intensity >= config_for_handler.tone_modifier.min_intensity {
                     let augmented = crate::council::mds_tone::modifier_for_intensity(
                         intensity,
@@ -1562,7 +1628,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // active preset on every inbound so a mid-day
             // `neoth profile preset apply` flips the channel-side
             // system prompt without restarting the daemon.
-            let channel_preset_home = crate::config::FreedomConfig::default_neoth_home();
+            let channel_preset_home = neoth_home.clone();
             let channel_preset_addendum =
                 crate::cli::profile::load_active_preset(&channel_preset_home)
                     .map(|p| crate::profile::presets::apply_preset(p).system_addendum)
@@ -1579,13 +1645,35 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 None
             };
 
-            let channel_repo_context = crate::cli::chat::maybe_repo_context_block(
+            let mut channel_repo_context = crate::cli::chat::maybe_repo_context_block(
                 config_for_handler.as_ref(),
                 &sanitized_text,
             );
+            if let Some(findings) = crate::cli::chat::maybe_architecture_findings_for_skill(
+                used_skill_id.as_deref(),
+                &channel_cwd,
+            ) {
+                info!(
+                    channel = channel_str,
+                    roots_scanned = findings.roots_scanned,
+                    edges_scanned = findings.edges_scanned,
+                    cycles_injected = findings.cycles_injected,
+                    truncated = findings.truncated,
+                    "GRAPH-02: automatic architecture cycle findings injected (channel path)"
+                );
+                crate::cli::chat::emit_architecture_findings_audit(&writer, &findings, "channel")
+                    .await;
+                channel_repo_context =
+                    crate::cli::chat::append_architecture_findings(channel_repo_context, &findings);
+            }
 
             // GOLD-FEAT-07 — moral core for channel turns too (position 0).
-            let channel_moral_core = crate::memory::moral_core::compact_for_injection();
+            // Existing unreadable policy blocks before any provider call.
+            let channel_moral_core = crate::memory::moral_core::compact_for_injection(
+                config_for_handler.as_ref(),
+                &neoth_home,
+            )
+            .context("load moral core for channel turn")?;
             // ── GOLD-ADAPT-PWF-01: plan-attestation fence injection (channel) ──
             // Mirror of the CLI-path attest_and_fence call in cli/chat.rs.
             // Runs BEFORE build_enriched_request so the fenced plan block
@@ -1594,7 +1682,6 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let channel_plan_attest_hash: Option<String> =
                 if let Some(id) = used_skill_id.as_deref() {
                     if crate::skills::plan_attestation::APPLICABLE_SKILLS.contains(&id) {
-                        let neoth_home = crate::config::FreedomConfig::default_neoth_home();
                         match crate::skills::plan_attestation::attest_and_fence(
                             &neoth_home,
                             id,
@@ -1621,7 +1708,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // GOLD-FEAT-11 — load cross-turn goal (best-effort; None on missing/corrupt).
             let channel_goal_persist =
                 crate::daemon::goal_persist::GoalPersist::load(&channel_preset_home);
-            let channel_goal_layer = channel_goal_persist.as_ref().and_then(|g| g.as_system_layer());
+            let channel_goal_layer = channel_goal_persist
+                .as_ref()
+                .and_then(|g| g.as_system_layer());
 
             let channel_enriched =
                 crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
@@ -1656,7 +1745,6 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // to drop the inbound message silently (same as PreChannelIngress
             // Block pattern — no error response sent to channel sender).
             if let Some(ref expected_hash) = channel_plan_attest_hash {
-                let neoth_home = crate::config::FreedomConfig::default_neoth_home();
                 if !crate::skills::plan_attestation::verify_plan_hash(&neoth_home, expected_hash) {
                     let payload = match serde_json::to_vec(&serde_json::json!({
                         "name": "plan-attest-guard",
@@ -1689,173 +1777,207 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // command's prompt template REPLACES the enriched system
             // prompt (slash semantics preserved); non-matches fall back
             // to the layered enrichment from the helper above.
-            let (final_prompt, system_override) =
-                match crate::slash::parse_invocation(&sanitized_text) {
-                    crate::slash::Invocation::Command { name, args } => {
-                        // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
-                        // Read-only: no system mutation → not blocked by the channel
-                        // privilege ceiling. Runs the multi-step search→read→synthesize
-                        // loop and returns the result as an OutboundMessage reply.
-                        if name == "research" {
-                            let topic = args.trim();
-                            let reply_text = if topic.is_empty() {
-                                "Usage: /research <topic>".to_string()
-                            } else {
-                                let search_provider =
-                                    crate::tools::deep_research::resolve_search_provider();
-                                match crate::tools::deep_research::resolve_search_key(
-                                    search_provider,
-                                ) {
-                                    Err(e) => format!("deep-research: {e}"),
-                                    Ok(search_key) => {
-                                        info!(
-                                            channel = channel_str,
-                                            topic = topic,
-                                            "slash /research: starting deep-research engine"
-                                        );
-                                        match crate::tools::deep_research::run_deep_research(
-                                            topic,
-                                            provider.as_ref(),
-                                            &search_key,
-                                            search_provider,
-                                            &config_for_handler.deep_research,
-                                            &writer,
-                                        )
-                                        .await
-                                        {
-                                            Ok(report) => {
-                                                let mut out = report.article.clone();
-                                                if !report.citations.is_empty() {
-                                                    out.push_str("\n\n---\nSources:\n");
-                                                    for (i, c) in
-                                                        report.citations.iter().enumerate()
-                                                    {
-                                                        out.push_str(&format!(
-                                                            "[{}] {} — {}\n",
-                                                            i + 1,
-                                                            c.title,
-                                                            c.url
-                                                        ));
-                                                    }
-                                                }
-                                                out
-                                            }
-                                            Err(e) => format!("deep-research error: {e:#}"),
-                                        }
-                                    }
-                                }
-                            };
-                            return Ok(::std::option::Option::Some(OutboundMessage {
-                                recipient_id: inbound.sender_id.clone(),
-                                text: reply_text,
-                            }));
-                        }
-
-                        // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ──
-                        // Not destructive — no channel privilege ceiling applies.
-                        // Spawns a headless provider call; returns an immediate ack
-                        // to the sender. Result is delivered to the next CLI idle turn
-                        // (channel path does not have a persistent "next turn" session
-                        // — the result file stays in bgjobs/ for the CLI to pick up).
-                        if name == "background" || name == "btw" {
-                            let prompt_body = args.trim().to_string();
-                            let reply_text = if prompt_body.is_empty() {
-                                format!("Usage: /{name} <prompt>")
-                            } else {
-                                crate::cli::bg_session::spawn_background_session(
-                                    &name,
-                                    prompt_body,
-                                    config_for_handler.as_ref().clone(),
-                                    Arc::clone(&provider),
-                                    Some(&writer),
-                                )
-                                .await;
-                                format!(
-                                    "[NEOTH] /{name}: running in background — \
-                                     result ready at next idle"
-                                )
-                            };
-                            return Ok(::std::option::Option::Some(OutboundMessage {
-                                recipient_id: inbound.sender_id.clone(),
-                                text: reply_text,
-                            }));
-                        }
-
-                        let slash_dir =
-                            crate::config::FreedomConfig::default_neoth_home().join("commands");
-                        let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
-                        if let Some(cmd) = commands.iter().find(|c| c.name == name) {
-                            // ADV-09: a command carrying a typed ACTION is
-                            // dispatched here with `CommandSource::Channel`
-                            // (mirrors the CLI action short-circuit in
-                            // `cli/chat.rs`). The privilege ceiling rejects a
-                            // destructive action (`/autonomy`, `/config set`,
-                            // `/consent`, ...) — previously it fell through to
-                            // the render path below + reached the LLM with no
-                            // gate + no audit. Read-only / Pending actions
-                            // return their handler text directly. Either way
-                            // the provider call is skipped — return early.
-                            if let Some(action) = cmd.action {
-                                let outcome = crate::slash::dispatch_action(
-                                    action,
-                                    &args,
-                                    config_for_handler.as_ref(),
-                                    crate::slash::CommandSource::Channel,
-                                );
-                                if outcome.is_channel_blocked() {
-                                    emit_channel_privilege_blocked(
-                                        &writer,
-                                        channel_str,
-                                        &inbound.sender_id,
-                                        action.as_str(),
-                                    )
-                                    .await;
-                                    warn!(
-                                        channel = channel_str,
-                                        sender_hash = %sender_hash,
-                                        action = action.as_str(),
-                                        "ADV-09: destructive slash action rejected from channel"
-                                    );
-                                } else {
+            let (final_prompt, system_override) = match crate::slash::parse_invocation(
+                &sanitized_text,
+            ) {
+                crate::slash::Invocation::Command { name, args } => {
+                    // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
+                    // Read-only: no system mutation → not blocked by the channel
+                    // privilege ceiling. Runs the multi-step search→read→synthesize
+                    // loop and returns the result as an OutboundMessage reply.
+                    if name == "research" {
+                        let topic = args.trim();
+                        let reply_text = if topic.is_empty() {
+                            "Usage: /research <topic>".to_string()
+                        } else {
+                            let search_provider =
+                                crate::tools::deep_research::resolve_search_provider();
+                            match crate::tools::deep_research::resolve_search_key(search_provider) {
+                                Err(e) => format!("deep-research: {e}"),
+                                Ok(search_key) => {
                                     info!(
                                         channel = channel_str,
-                                        action = action.as_str(),
-                                        "channel slash action dispatched (read-only / pending)"
+                                        topic = topic,
+                                        "slash /research: starting deep-research engine"
                                     );
+                                    let research_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+                                            provider.as_ref(),
+                                            provider_call_authorizer.clone(),
+                                            config_for_handler.provider_model.clone(),
+                                            "channel_deep_research_round",
+                                        );
+                                    let http = match channel_asker.as_ref() {
+                                        Some(asker) => crate::tools::external_http::ExternalHttpAuthorizer::with_channel_writer(
+                                            config_for_handler.autonomy_policy(),
+                                            writer.clone(),
+                                            Arc::clone(asker),
+                                        ),
+                                        None => crate::tools::external_http::ExternalHttpAuthorizer::with_writer(
+                                            config_for_handler.autonomy_policy(),
+                                            crate::permissions::ConfirmStrategy::FailClosed,
+                                            writer.clone(),
+                                        ),
+                                    };
+                                    match crate::tools::deep_research::run_deep_research(
+                                        topic,
+                                        &research_provider,
+                                        &search_key,
+                                        search_provider,
+                                        &config_for_handler.deep_research,
+                                        &writer,
+                                        &http,
+                                    )
+                                    .await
+                                    {
+                                        Ok(report) => {
+                                            let mut out = report.article.clone();
+                                            if !report.citations.is_empty() {
+                                                out.push_str("\n\n---\nSources:\n");
+                                                for (i, c) in report.citations.iter().enumerate() {
+                                                    out.push_str(&format!(
+                                                        "[{}] {} — {}\n",
+                                                        i + 1,
+                                                        c.title,
+                                                        c.url
+                                                    ));
+                                                }
+                                            }
+                                            out
+                                        }
+                                        Err(e) => format!("deep-research error: {e:#}"),
+                                    }
                                 }
-                                // `/quit` (ActionOutcome::Exit) is a
-                                // local-CLI-only lifecycle command — the
-                                // channel handler deliberately never acts on
-                                // `should_exit()` (a channel must not kill the
-                                // daemon). Return a clarifying message instead
-                                // of the CLI-flavoured "Exiting chat session".
-                                let reply_text = if outcome.should_exit() {
-                                    "/quit applies only to the local CLI session — the daemon \
-                                     keeps serving this channel."
-                                        .to_string()
-                                } else {
-                                    outcome.text().to_string()
-                                };
-                                return Ok(::std::option::Option::Some(OutboundMessage {
-                                    recipient_id: inbound.sender_id.clone(),
-                                    text: reply_text,
-                                }));
                             }
-                            let rendered = cmd.render(&args, operator_id.as_deref());
-                            info!(slash_command = %name, "slash dispatch");
-                            (args, Some(rendered))
-                        } else {
-                            // Unknown command — pass through with the
-                            // enriched system so the model can still
-                            // respond with "unknown command, try /help".
-                            (sanitized_text.clone(), channel_enriched_system)
-                        }
+                        };
+                        return Ok(::std::option::Option::Some(OutboundMessage {
+                            recipient_id: inbound.sender_id.clone(),
+                            text: reply_text,
+                        }));
                     }
-                    crate::slash::Invocation::Escaped { text } => (text, channel_enriched_system),
-                    crate::slash::Invocation::NotACommand => {
+
+                    // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ──
+                    // Not destructive — no channel privilege ceiling applies.
+                    // Spawns a headless provider call; returns an immediate ack
+                    // to the sender. Result is delivered to the next CLI idle turn
+                    // (channel path does not have a persistent "next turn" session
+                    // — the result file stays in bgjobs/ for the CLI to pick up).
+                    if name == "background" || name == "btw" {
+                        let prompt_body = args.trim().to_string();
+                        let reply_text = if prompt_body.is_empty() {
+                            format!("Usage: /{name} <prompt>")
+                        } else {
+                            match crate::cli::bg_session::spawn_background_session(
+                                &name,
+                                prompt_body,
+                                config_for_handler.as_ref().clone(),
+                                Arc::clone(&provider),
+                                Some(&writer),
+                                provider_call_authorizer.clone(),
+                            )
+                            .await
+                            {
+                                Ok(_) => format!(
+                                    "[NEOTH] /{name}: running in background — \
+                                         result ready at next idle"
+                                ),
+                                Err(e) => format!("/{name}: authorization failed: {e:#}"),
+                            }
+                        };
+                        return Ok(::std::option::Option::Some(OutboundMessage {
+                            recipient_id: inbound.sender_id.clone(),
+                            text: reply_text,
+                        }));
+                    }
+
+                    let slash_dir = neoth_home.join("commands");
+                    let commands = match crate::slash::load_all(&slash_dir).await {
+                        Ok(commands) => commands,
+                        Err(error) => {
+                            warn!(
+                                error = %error,
+                                dir = %slash_dir.display(),
+                                "slash-command registry invalid; turn blocked fail-closed"
+                            );
+                            return Ok(Some(OutboundMessage {
+                                recipient_id: inbound.sender_id.clone(),
+                                text: "[NEOTH] Slash-command configuration is invalid. Fix ~/.neoth/commands before retrying."
+                                    .to_string(),
+                            }));
+                        }
+                    };
+                    if let Some(cmd) = commands.iter().find(|c| c.name == name) {
+                        // ADV-09: a command carrying a typed ACTION is
+                        // dispatched here with `CommandSource::Channel`
+                        // (mirrors the CLI action short-circuit in
+                        // `cli/chat.rs`). The privilege ceiling rejects a
+                        // destructive action (`/autonomy`, `/config set`,
+                        // `/consent`, ...) — previously it fell through to
+                        // the render path below + reached the LLM with no
+                        // gate + no audit. Read-only / Pending actions
+                        // return their handler text directly. Either way
+                        // the provider call is skipped — return early.
+                        if let Some(action) = cmd.action {
+                            let outcome = crate::slash::dispatch_action(
+                                action,
+                                &args,
+                                config_for_handler.as_ref(),
+                                crate::slash::CommandSource::Channel,
+                            )
+                            .await;
+                            if outcome.is_channel_blocked() {
+                                emit_channel_privilege_blocked(
+                                    &writer,
+                                    channel_str,
+                                    &inbound.sender_id,
+                                    action.as_str(),
+                                )
+                                .await;
+                                warn!(
+                                    channel = channel_str,
+                                    sender_hash = %sender_hash,
+                                    action = action.as_str(),
+                                    "ADV-09: destructive slash action rejected from channel"
+                                );
+                            } else {
+                                info!(
+                                    channel = channel_str,
+                                    action = action.as_str(),
+                                    "channel slash action dispatched (read-only / pending)"
+                                );
+                            }
+                            // `/quit` (ActionOutcome::Exit) is a
+                            // local-CLI-only lifecycle command — the
+                            // channel handler deliberately never acts on
+                            // `should_exit()` (a channel must not kill the
+                            // daemon). Return a clarifying message instead
+                            // of the CLI-flavoured "Exiting chat session".
+                            let reply_text = if outcome.should_exit() {
+                                "/quit applies only to the local CLI session — the daemon \
+                                     keeps serving this channel."
+                                    .to_string()
+                            } else {
+                                outcome.text().to_string()
+                            };
+                            return Ok(::std::option::Option::Some(OutboundMessage {
+                                recipient_id: inbound.sender_id.clone(),
+                                text: reply_text,
+                            }));
+                        }
+                        let rendered = cmd.render(&args, operator_id.as_deref());
+                        info!(slash_command = %name, "slash dispatch");
+                        (args, Some(rendered))
+                    } else {
+                        // Unknown command — pass through with the
+                        // enriched system so the model can still
+                        // respond with "unknown command, try /help".
                         (sanitized_text.clone(), channel_enriched_system)
                     }
-                };
+                }
+                crate::slash::Invocation::Escaped { text } => (text, channel_enriched_system),
+                crate::slash::Invocation::NotACommand => {
+                    (sanitized_text.clone(), channel_enriched_system)
+                }
+            };
 
             // ── Operator hooks at PreProviderCall (Phase 29 R-15 H-3
             //    + GOLD-CCPARITY-ONCE) ──────────────────────────────────────
@@ -1863,18 +1985,22 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // take effect without daemon restart. Block-action stops the
             // turn (no provider call, no reply); replace mutates the
             // outbound prompt. Empty hook set is the common case.
-            let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
-            // Pick #34 (Session 14, silent-failure audit-fix): hook load
-            // failures now surface at warn level. Prior `unwrap_or_default()`
-            // silently disabled every hook on a single bad TOML file.
-            let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
-                warn!(
-                    error = %e,
-                    dir = %hook_dir.display(),
-                    "hook load failed — proceeding with empty hook set"
-                );
-                Default::default()
-            });
+            let hook_dir = neoth_home.join("hooks");
+            let hooks = match crate::hooks::load_all_strict(&hook_dir).await {
+                Ok(hooks) => hooks,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        dir = %hook_dir.display(),
+                        "hook policy invalid before provider call; turn blocked fail-closed"
+                    );
+                    return Ok(Some(OutboundMessage {
+                        recipient_id: inbound.sender_id.clone(),
+                        text: "[NEOTH] Hook policy is invalid. Fix the file in ~/.neoth/hooks before retrying."
+                            .to_string(),
+                    }));
+                }
+            };
             let provider_call_ts_unix = crate::time::now_unix_secs();
             // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
             let mut skipped_once_provider: Vec<String> = Vec::new();
@@ -2052,6 +2178,22 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             } else {
                 final_prompt
             };
+            let channel_effective_model =
+                channel_skill_model.or_else(|| config_for_handler.provider_model.clone());
+            let channel_thinking_budget = match channel_skill_effort {
+                Some(effort) if provider.request_controls().supports_thinking_budget() => {
+                    Some(crate::providers::effort_override::effort_to_tokens(effort))
+                }
+                Some(effort) => {
+                    tracing::warn!(
+                        provider = provider.name(),
+                        effort = effort.as_str(),
+                        "channel skill effort omitted because the selected provider cannot wire a thinking budget"
+                    );
+                    None
+                }
+                None => None,
+            };
             let req = Request {
                 prompt: final_prompt.clone(),
                 // HERMES-03b hook A — inject the clarification protocol into the
@@ -2064,14 +2206,21 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // GOLD-CCPARITY-MODEL-02: apply per-skill model override on the
                 // channel path. The channel path has no agent dispatch, so only
                 // the skill tier of the priority chain applies here.
-                model: channel_skill_model,
+                model: channel_effective_model.clone(),
                 // GOLD-CCPARITY-EFFORT-03: apply per-skill reasoning-budget on the
-                // channel path. Maps EffortBudget variant → token count so the
-                // claude_cli adapter can inject MAX_THINKING_TOKENS before spawn.
-                thinking_budget: channel_skill_effort
-                    .map(crate::providers::effort_override::effort_to_tokens),
+                // channel path when the selected leaf supports it. Claude CLI
+                // injects MAX_THINKING_TOKENS; other leaves were warned above and
+                // receive no unsupported field.
+                thinking_budget: channel_thinking_budget,
                 ..Default::default()
             };
+            let authorized_provider =
+                crate::providers::cost_authorization::CostAuthorizingProvider::new(
+                    provider.as_ref(),
+                    provider_call_authorizer.clone(),
+                    req.model.clone(),
+                    "channel_provider_round",
+                );
             // K-Wire-3 v2 2026-05-17: council smart-trigger for channels.
             // Same evaluation logic as `cli/chat.rs::run_chat_with` —
             // promoted via `chat::evaluate_council_trigger`. Operators
@@ -2092,29 +2241,38 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // budget control raise `policy.budget_multiplier` in
             // freedom.yaml.
             // SPEC-03 suppress: read `freedom.yaml::council.disabled` fresh
-            // per message (best-effort — load failure ⇒ not disabled) so
-            // `neoth council suppress` gates the channel path too, without a
-            // daemon restart. Mirrors how the trigger already re-reads
-            // council_last.json per message.
-            // One fresh load yields both the suppress flag AND the SPEC-03b
-            // operator trigger thresholds (`council.trigger`); load failure ⇒
-            // not-disabled + default policy (prior behaviour).
-            let council_cfg = crate::config::FreedomConfig::load_from_default_path()
-                .map(|c| c.council)
-                .ok();
+            // per message so `neoth council suppress` gates the channel path
+            // without a daemon restart. Use the daemon instance's captured
+            // home and fail closed when an existing policy file is unreadable
+            // or invalid; falling back here could autonomously convene a
+            // council that the operator explicitly disabled.
+            let config_path = neoth_home.join("freedom.yaml");
+            let council_cfg = match crate::config::FreedomConfig::load_from_path_or_default(
+                &config_path,
+            ) {
+                Ok(config) => config.council,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        path = %config_path.display(),
+                        "council policy reload failed; turn blocked fail-closed"
+                    );
+                    return Ok(Some(OutboundMessage {
+                        recipient_id: inbound.sender_id.clone(),
+                        text: "[NEOTH] freedom.yaml is unreadable or invalid. Fix the operator policy before retrying."
+                            .to_string(),
+                    }));
+                }
+            };
             // GOLD-ADAPT-G-01: OR-in mode=single alongside disabled=true.
             // Both force the single-hemisphere path; they are orthogonal knobs.
-            // `mode` hot-reloads per message (load_from_default_path above) —
+            // `mode` hot-reloads per message from the instance-local path above —
             // no daemon restart needed after editing freedom.yaml.
-            let council_disabled = council_cfg
-                .as_ref()
-                .map(|c| c.disabled.unwrap_or(false) || c.mode.is_single())
-                .unwrap_or(false);
-            let council_policy = council_cfg
-                .as_ref()
-                .map(|c| c.trigger.to_policy())
-                .unwrap_or_default();
+            let council_disabled =
+                council_cfg.disabled.unwrap_or(false) || council_cfg.mode.is_single();
+            let council_policy = council_cfg.trigger.to_policy();
             let council_decision = crate::cli::chat::evaluate_council_trigger(
+                &neoth_home,
                 &req.prompt,
                 0.01,
                 council_disabled,
@@ -2124,36 +2282,36 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // (autonomous) path — enforced before convening and independent of
             // the EUR budget gate, so a runaway loop can't fan out council
             // calls without bound.
-            let council_home = FreedomConfig::default_neoth_home();
+            let council_home = neoth_home.clone();
             let council_now = crate::council::last_ts::now_unix() as i64;
             // B-25: atomic OS-locked admission on the channel (autonomous) path.
             // No council_force on this path — channel path is always autonomous.
-            let (council_enable, council_cap_hit, council_deny_reason) =
-                if council_decision.should_convene() {
-                    use crate::council::day_counter::AdmitResult;
-                    match crate::council::day_counter::try_admit_convene(
-                        &council_home,
-                        council_now,
-                    ) {
-                        AdmitResult::Admitted => (true, false, None::<&'static str>),
-                        AdmitResult::Capped => {
-                            warn!(
-                                cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
-                                "channel council daily convene cap reached — \
+            let (council_enable, council_cap_hit, council_deny_reason) = if council_decision
+                .should_convene()
+            {
+                use crate::council::day_counter::AdmitResult;
+                match crate::council::day_counter::try_admit_convene(&council_home, council_now) {
+                    AdmitResult::Admitted => (true, false, None::<&'static str>),
+                    AdmitResult::Capped => {
+                        warn!(
+                            cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                            "channel council daily convene cap reached — \
                                  single-provider for this turn"
-                            );
-                            (false, true, None)
-                        }
-                        AdmitResult::StateInvalid => {
-                            warn!(
-                                "council day-counter state invalid — fail-closed for this turn"
-                            );
-                            (false, true, Some("council day-counter state invalid — fail-closed"))
-                        }
+                        );
+                        (false, true, None)
                     }
-                } else {
-                    (false, false, None)
-                };
+                    AdmitResult::StateInvalid => {
+                        warn!("council day-counter state invalid — fail-closed for this turn");
+                        (
+                            false,
+                            true,
+                            Some("council day-counter state invalid — fail-closed"),
+                        )
+                    }
+                }
+            } else {
+                (false, false, None)
+            };
             // B-1 (Session 13) — channel-side COUNCIL_SKIP audit. Same
             // contract as the CLI path: every Skip decision lands in
             // the WAL so the operator can reconstruct why a channel
@@ -2178,9 +2336,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // rather than silently fanning out to the no-longer-consented
             // provider.
             {
-                let home_revoke = crate::config::FreedomConfig::default_neoth_home();
                 if let Err(e) = crate::consent::ensure_all_still_granted(
-                    &home_revoke,
+                    &neoth_home,
                     config_for_handler.as_ref(),
                 ) {
                     warn!(
@@ -2199,22 +2356,25 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let mcp_servers_for_loop = if council_enable {
                 crate::mcp::McpServers::default()
             } else {
-                // Pick #34 (Session 14, silent-failure audit-fix):
-                // surface YAML parse errors so operators discover broken
-                // mcp_servers.yaml instead of silently losing tools on
-                // every channel message.
-                crate::mcp::McpServers::load().unwrap_or_else(|e| {
-                    warn!(error = %e, "mcp_servers.yaml load failed in channel autoroute — proceeding without MCP tools");
-                    Default::default()
-                })
+                channel_mcp_servers
             };
             let autoroute_decision =
                 mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
             // GOLD-LOOP-06 — a matched loop-skill engages the loop path even
             // when MCP autoroute is off (iteration without tool dispatch is
             // legitimate: pure refine rounds). Council still wins over both.
-            let use_loop =
-                !council_enable && (autoroute_decision.is_on() || skill_loop_trigger);
+            let use_loop = !council_enable && (autoroute_decision.is_on() || skill_loop_trigger);
+            // SPEC-11 live delivery is deliberately limited to the direct,
+            // native-streaming provider path. Council and MCP/loop replies are
+            // multi-hop final products; pretending they are token streams
+            // would only send a cosmetic duplicate. PreEgress hooks also force
+            // final-only delivery: a hook that may block/replace the complete
+            // body must see it before any text can leave the process.
+            let pre_egress_hook_active = hooks
+                .iter()
+                .any(|hook| hook.stage == crate::hooks::HookStage::PreEgress && hook.is_enabled());
+            let mut live_delivery: Option<crate::channels::LiveDelivery> = None;
+            let mut live_send_preauthorized = false;
             let mut completion = if council_enable {
                 info!(
                     channel = channel_str,
@@ -2224,13 +2384,19 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 match crate::cli::chat::dispatch_council_with_recovery(
                     &req,
                     config_for_handler.as_ref(),
+                    &neoth_home,
                     &writer,
+                    provider_call_authorizer.clone(),
                 )
                 .await
                 {
                     Ok(text) => crate::providers::Completion {
                         text,
-                        model: "council".to_string(),
+                        identity: crate::providers::CompletionIdentity {
+                            provider: "council".into(),
+                            wire_model: "multi-provider".into(),
+                        },
+                        model: "multi-provider".to_string(),
                         latency: started.elapsed(),
                         input_tokens: None,
                         output_tokens: None,
@@ -2242,7 +2408,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             error = %e,
                             "channel council debate failed — falling back to direct provider call",
                         );
-                        provider.complete(req).await?
+                        authorized_provider.complete(req).await?
                     }
                 }
             } else if use_loop {
@@ -2261,9 +2427,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 {
                     let mut loop_cfg = crate::loop_engine::engine::LoopConfig::from_freedom(
                         &config_for_handler.loop_config,
-                        autonomy,
+                        config_for_handler.autonomy_policy().level(),
                         vec![], // no --until on the channel path; criteria from freedom.yaml not yet surfaced here
-                        crate::config::FreedomConfig::default_neoth_home(),
+                        neoth_home.clone(),
                     );
                     if skill_loop_trigger {
                         // A loop-skill must actually iterate — floor at 2
@@ -2281,11 +2447,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     );
                     match crate::loop_engine::engine::run_loop(
                         &loop_cfg,
-                        &*provider,
+                        &authorized_provider,
                         req.clone(),
                         &mcp_servers_for_loop,
                         &writer,
                         &config_for_handler,
+                        provider_call_authorizer.clone(),
                         // P4 — channel path is headless (no TTY): elicitation off.
                         &crate::cli::elicitation::ElicitationHandler::Disabled,
                     )
@@ -2300,7 +2467,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             );
                             crate::providers::Completion {
                                 text: record.final_text,
-                                model: String::new(),
+                                identity: crate::providers::CompletionIdentity {
+                                    provider: "loop_engine".into(),
+                                    wire_model: "multi-hop".into(),
+                                },
+                                model: "multi-hop".into(),
                                 latency: started.elapsed(),
                                 input_tokens: None,
                                 output_tokens: None,
@@ -2313,133 +2484,217 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 error = %e,
                                 "GOLD-LOOP-01: channel loop engine failed — falling back to direct provider call"
                             );
-                            provider.complete(req).await?
+                            authorized_provider.complete(req).await?
                         }
                     }
                 } else {
-                let loop_req = req.clone();
-                match crate::cli::chat::run_mcp_dispatch_loop(
-                    &*provider,
-                    loop_req,
-                    &mcp_servers_for_loop,
-                    autonomy,
-                    &writer,
-                    None,
-                    // SC-11 (Session 28d) — the matched skill's
-                    // tool_allowlist now scopes the channel MCP gate the
-                    // same way it does on `neoth chat`. None only when no
-                    // skill matched this inbound (gate allows all);
-                    // Some(empty) also allows all; Some(non-empty)
-                    // enforces.
-                    channel_skill_allowlist.as_deref(),
-                    // GM-01 — operator-tunable dispatch-loop ceiling.
-                    goal_max_turns,
-                    // GOLD-ADOPT-23 P0 — risk policy gate (live config snapshot).
-                    &config_for_handler.security,
-                    // GOLD-CCPARITY-SA-DENY-01 — no sub-agent dispatch on
-                    // the channel path today; denylist is always None here.
-                    None,
-                    // GOLD-ADOPT-22 — Goal/Grind nudge context (live snapshot).
-                    crate::mcp::goal_tracker::GoalContext {
-                        goal: config_for_handler.goal.goal.clone(),
-                        grind: config_for_handler.goal.grind.clone(),
-                    },
-                    // GOLD-ADOPT-18 — subdir-hint toggle (live config snapshot).
-                    config_for_handler.hints.enabled,
-                    // GOLD-ADOPT-19 — auto context-compaction (live snapshot).
-                    // The channel agentic path accumulates the same growing
-                    // tool-loop prompt as `neoth chat`, so it compacts too.
-                    crate::context::compaction::CompactionPolicy::from_config(
-                        config_for_handler.compaction.enabled,
-                        config_for_handler.compaction.progressive,
-                        config_for_handler.tokens.max_per_request,
-                        config_for_handler.compaction.threshold_fraction,
-                    ),
-                    // GOLD-HR-08/10 — tool-result compression (live snapshot;
-                    // None when disabled). Persistent store + savings metering.
-                    crate::context::compress::CompressionRuntime::persistent(
-                        config_for_handler.compression.gate(),
-                        config_for_handler.compression.thresholds(),
-                        crate::context::compress::default_ccr_dir(),
-                    ),
-                    // HERMES-04 — judge provider for channel path. Same gate as
-                    // chat.rs: opt-in only when judge_enabled AND a goal is set.
-                    if config_for_handler.goal.judge_enabled
-                        && config_for_handler.goal.goal.is_some()
-                    {
-                        Some(provider.as_ref())
-                    } else {
-                        None
-                    },
-                    // GOLD-ADOPT-17 — no TTY available on the channel path;
-                    // elicitation is unconditionally disabled here.
-                    &crate::cli::elicitation::ElicitationHandler::Disabled,
-                    // GOLD-ADAPT-AWE-CODE-01 — channel path: pass the
-                    // platform-verified sender_id as the lease subject so a
-                    // covering McpTool lease upgrades Confirm → Allow for this
-                    // caller. The sender_id is already HMAC/platform-verified
-                    // by the channel adapter before this closure runs (L620
-                    // ChannelSend gate also uses it as the lease subject).
-                    Some(inbound.sender_id.clone()),
-                    // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
-                    &config_for_handler.tools.harness,
-                )
-                .await
-                {
-                    Ok(outcome) => {
-                        info!(
-                            iterations = outcome.iterations,
-                            successful_calls = outcome.successful_calls,
-                            failed_calls = outcome.failed_calls,
-                            hit_cap = outcome.hit_cap,
-                            "channel MCP dispatch loop complete",
-                        );
-                        // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for
-                        // goal lifecycle outcomes that were NOT already covered by
-                        // the inline judge call (budget_exhausted path only; the
-                        // "met" frame is emitted inside judge_goal_met itself).
+                    let loop_req = req.clone();
+                    match crate::cli::chat::run_mcp_dispatch_loop(
+                        &authorized_provider,
+                        loop_req,
+                        &mcp_servers_for_loop,
+                        &autonomy_policy,
+                        &writer,
+                        None,
+                        // SC-11 (Session 28d) — the matched skill's
+                        // tool_allowlist now scopes the channel MCP gate the
+                        // same way it does on `neoth chat`. None only when no
+                        // skill matched this inbound (gate allows all);
+                        // Some(empty) also allows all; Some(non-empty)
+                        // enforces.
+                        channel_skill_allowlist.as_deref(),
+                        // GM-01 — operator-tunable dispatch-loop ceiling.
+                        goal_max_turns,
+                        // GOLD-ADOPT-23 P0 — risk policy gate (live config snapshot).
+                        &config_for_handler.security,
+                        // GOLD-CCPARITY-SA-DENY-01 — no sub-agent dispatch on
+                        // the channel path today; denylist is always None here.
+                        None,
+                        // GOLD-ADOPT-22 — Goal/Grind nudge context (live snapshot).
+                        crate::mcp::goal_tracker::GoalContext {
+                            goal: config_for_handler.goal.goal.clone(),
+                            grind: config_for_handler.goal.grind.clone(),
+                        },
+                        // GOLD-ADOPT-18 — subdir-hint toggle (live config snapshot).
+                        config_for_handler.hints.enabled,
+                        // GOLD-ADOPT-19 — auto context-compaction (live snapshot).
+                        // The channel agentic path accumulates the same growing
+                        // tool-loop prompt as `neoth chat`, so it compacts too.
+                        crate::context::compaction::CompactionPolicy::from_config(
+                            config_for_handler.compaction.enabled,
+                            config_for_handler.compaction.progressive,
+                            config_for_handler.tokens.max_per_request,
+                            config_for_handler.compaction.threshold_fraction,
+                        ),
+                        // GOLD-HR-08/10 — tool-result compression (live snapshot;
+                        // None when disabled). Persistent store + savings metering.
+                        crate::context::compress::CompressionRuntime::persistent(
+                            config_for_handler.compression.gate(),
+                            config_for_handler.compression.thresholds(),
+                            crate::context::compress::default_ccr_dir(),
+                        ),
+                        // HERMES-04 — judge provider for channel path. Same gate as
+                        // chat.rs: opt-in only when judge_enabled AND a goal is set.
+                        if config_for_handler.goal.judge_enabled
+                            && config_for_handler.goal.goal.is_some()
                         {
-                            use crate::mcp::dispatch_loop::GoalOutcome;
-                            let goal_hash = config_for_handler
-                                .goal
-                                .goal
-                                .as_deref()
-                                .map(|g| format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes())))
-                                .unwrap_or_default();
-                            match &outcome.goal_outcome {
-                                GoalOutcome::BudgetExhausted => {
-                                    crate::mcp::goal_judge::emit_goal_judged_wal(
-                                        Some(&writer),
-                                        &goal_hash,
-                                        "budget_exhausted",
-                                    )
-                                    .await;
+                            Some(&authorized_provider)
+                        } else {
+                            None
+                        },
+                        // GOLD-ADOPT-17 — no TTY available on the channel path;
+                        // elicitation is unconditionally disabled here.
+                        &crate::cli::elicitation::ElicitationHandler::Disabled,
+                        // GOLD-ADAPT-AWE-CODE-01 — channel path: pass the
+                        // platform-verified sender_id as the lease subject so a
+                        // covering McpTool lease upgrades Confirm → Allow for this
+                        // caller. The sender_id is already HMAC/platform-verified
+                        // by the channel adapter before this closure runs (L620
+                        // ChannelSend gate also uses it as the lease subject).
+                        Some(inbound.sender_id.clone()),
+                        // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
+                        &config_for_handler.tools.harness,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => {
+                            info!(
+                                iterations = outcome.iterations,
+                                successful_calls = outcome.successful_calls,
+                                failed_calls = outcome.failed_calls,
+                                hit_cap = outcome.hit_cap,
+                                "channel MCP dispatch loop complete",
+                            );
+                            // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for
+                            // goal lifecycle outcomes that were NOT already covered by
+                            // the inline judge call (budget_exhausted path only; the
+                            // "met" frame is emitted inside judge_goal_met itself).
+                            {
+                                use crate::mcp::dispatch_loop::GoalOutcome;
+                                let goal_hash = config_for_handler
+                                    .goal
+                                    .goal
+                                    .as_deref()
+                                    .map(|g| {
+                                        format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes()))
+                                    })
+                                    .unwrap_or_default();
+                                match &outcome.goal_outcome {
+                                    GoalOutcome::BudgetExhausted => {
+                                        crate::mcp::goal_judge::emit_goal_judged_wal(
+                                            Some(&writer),
+                                            &goal_hash,
+                                            "budget_exhausted",
+                                        )
+                                        .await;
+                                    }
+                                    GoalOutcome::None | GoalOutcome::Met => {}
                                 }
-                                GoalOutcome::None | GoalOutcome::Met => {}
+                            }
+                            crate::providers::Completion {
+                                text: outcome.final_text,
+                                identity: crate::providers::CompletionIdentity {
+                                    provider: "mcp_dispatch_loop".into(),
+                                    wire_model: "multi-hop".into(),
+                                },
+                                model: "multi-hop".into(),
+                                latency: started.elapsed(),
+                                input_tokens: None,
+                                output_tokens: None,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
                             }
                         }
-                        crate::providers::Completion {
-                            text: outcome.final_text,
-                            model: String::new(),
-                            latency: started.elapsed(),
-                            input_tokens: None,
-                            output_tokens: None,
-                            cache_creation_tokens: None,
-                            cache_read_tokens: None,
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "channel MCP dispatch loop failed — falling back to direct provider call",
+                            );
+                            authorized_provider.complete(req).await?
                         }
                     }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "channel MCP dispatch loop failed — falling back to direct provider call",
-                        );
-                        provider.complete(req).await?
-                    }
-                }
                 } // end GOLD-LOOP-01 else (single-dispatch path)
             } else {
-                provider.complete(req).await?
+                let can_stream_live = live_channel.as_ref().is_some_and(|channel| {
+                    config_for_handler.live_delivery.edits_enabled
+                        && channel.supports_message_edits()
+                        && authorized_provider.streams_on_wire()
+                        && !pre_egress_hook_active
+                });
+                if can_stream_live {
+                    // Gate BEFORE opening the provider stream. A denied or
+                    // unanswered ChannelSend can therefore never leak even its
+                    // first token, and the final tail reuses this authorization.
+                    if !authorize_channel_send(
+                        &writer,
+                        &neoth_home,
+                        &autonomy_policy,
+                        &inbound,
+                        channel_str,
+                        channel_asker.as_ref(),
+                    )
+                    .await?
+                    {
+                        return Ok(::std::option::Option::None);
+                    }
+                    live_send_preauthorized = true;
+                    let channel = Arc::clone(
+                        live_channel
+                            .as_ref()
+                            .expect("can_stream_live requires a live channel"),
+                    );
+                    let delivery = crate::channels::LiveDelivery::new(
+                        channel,
+                        inbound.chat_id.clone(),
+                        inbound.channel,
+                        config_for_handler.live_delivery.clone(),
+                    );
+                    // UTF-8 output is normally <= 4 bytes/token; use 8 as a
+                    // conservative allowance for provider tokenisation drift,
+                    // still hard-clamped by the accumulator to 1 MiB.
+                    let response_byte_limit =
+                        usize::try_from(config_for_handler.tokens.max_per_request)
+                            .unwrap_or(crate::channels::live_delivery::MAX_LIVE_RESPONSE_BYTES)
+                            .saturating_mul(8)
+                            .clamp(
+                                4096,
+                                crate::channels::live_delivery::MAX_LIVE_RESPONSE_BYTES,
+                            );
+                    let stream = authorized_provider.stream(req).await?;
+                    match crate::channels::live_delivery::collect_provider_stream(
+                        stream,
+                        delivery,
+                        &writer,
+                        response_byte_limit,
+                    )
+                    .await?
+                    {
+                        crate::channels::live_delivery::LiveStreamResult::Complete(streamed) => {
+                            let crate::channels::live_delivery::LiveStreamCompletion {
+                                completion,
+                                delivery,
+                            } = *streamed;
+                            live_delivery = Some(delivery);
+                            completion
+                        }
+                        crate::channels::live_delivery::LiveStreamResult::Interrupted(reason) => {
+                            warn!(
+                                channel = channel_str,
+                                reason = ?reason,
+                                "live provider stream interrupted; operator notice finalized"
+                            );
+                            return Ok(::std::option::Option::None);
+                        }
+                    }
+                } else {
+                    authorized_provider.complete(req).await?
+                }
             };
+            if !completion.identity.is_bound() {
+                anyhow::bail!(
+                    "channel provider pipeline returned no authenticated response identity"
+                );
+            }
             // GOLD-ADAPT-HERMES-03b hook C — if the model asked for clarification,
             // record the pending prompt (keyed on channel+sender) and surface the
             // STRIPPED question; the operator's NEXT inbound message routes back as
@@ -2481,8 +2736,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         "operator_id": operator_id,
                         "channel": inbound.channel,
                         "sender_id_hash": sender_hash,
-                        "provider": provider.name(),
-                        "model": completion.model,
+                        "provider": completion.identity.provider,
+                        "model": completion.identity.wire_model,
                         "refusal_class": report.class.as_str(),
                         "confidence": report.confidence,
                         "matched_patterns": report.matched_patterns,
@@ -2540,12 +2795,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     let recovery_req = crate::providers::Request {
                         prompt: final_prompt.clone(),
                         system: system_override.clone(),
-                        model: None,
+                        model: channel_effective_model.clone(),
                         ..Default::default()
                     };
                     let now_unix = crate::time::now_unix_secs();
                     match crate::security::refusal_recovery::try_recover_multi(
-                        &*provider,
+                        &authorized_provider,
                         &recovery_req,
                         &completion.text,
                         &config_for_handler.refusal_recovery.disabled_reframings,
@@ -2630,6 +2885,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         system_override.as_deref(),
                         (*provider).name(),
                         &config_for_handler,
+                        &provider_call_authorizer,
                         Some(&writer),
                         now_unix_ch,
                     )
@@ -2732,9 +2988,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // configured scope trusts, so a non-operator on a shared/open
                 // channel can't poison the recall ranking. `learn_factor`
                 // returns None (skip) or the weight factor (1.0 / tiny).
-                let cw_cfg = crate::config::FreedomConfig::load_from_default_path()
-                    .unwrap_or_default()
-                    .channel_weights;
+                let cw_cfg = &config_for_handler.channel_weights;
                 let factor = crate::memory::channel_weights::learn_factor(
                     cw_cfg.learn_scope,
                     inbound.human_uuid.as_deref(),
@@ -2746,7 +3000,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         inbound.text.as_deref().unwrap_or("").as_bytes(),
                     );
                     let now = crate::time::now_unix_secs();
-                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    let home = neoth_home.clone();
                     if let Err(e) = crate::memory::channel_weights::record_channel_acceptance_scoped(
                         &home,
                         channel_str,
@@ -2758,14 +3012,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     }
 
                     // GOLD-ADAPT-OH-10 — record the per-person relationship
-                    // signal alongside the channel-weight. Same in-scope gate
-                    // (only learn from operator/allowlisted senders so a
-                    // stranger can't manufacture a high-priority contact), same
-                    // `home`/`now`. Best-effort; a write error is non-fatal.
+                    // signal alongside the channel-weight. The same scope and
+                    // weight apply: trusted senders contribute 1.0, while
+                    // `all_tiny` strangers contribute 0.1. Same `home`/`now`;
+                    // best-effort, so a write error is non-fatal.
                     let person_key = inbound
                         .human_uuid
-                        .as_deref()
-                        .unwrap_or(inbound.sender_id.as_str());
+                        .clone()
+                        .unwrap_or_else(|| format!("native:{channel_str}:{}", inbound.sender_id));
                     let is_reply_to_bot = matches!(
                         inbound.mention_kind,
                         Some(
@@ -2773,15 +3027,18 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 | crate::channels::MentionKind::QuotedBot
                         )
                     );
-                    let msg_len = inbound.text.as_deref().unwrap_or("").chars().count() as u32;
+                    let msg_len =
+                        u32::try_from(inbound.text.as_deref().unwrap_or("").chars().count())
+                            .unwrap_or(u32::MAX);
                     if let Err(e) = crate::memory::people::record_interaction(
                         &home,
                         &crate::memory::people::Interaction {
-                            person_key,
+                            person_key: &person_key,
                             channel: channel_str,
                             display: inbound.sender_display.as_deref(),
                             is_reply_to_bot,
                             msg_len,
+                            weight: factor,
                         },
                         now,
                     ) {
@@ -2804,7 +3061,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let learn_on = !env_disable && (env_force || profile_config.learn_enabled);
             if learn_on {
                 let timeout = std::time::Duration::from_secs(profile_config.timeout_secs.max(1));
-                let views_path = crate::memory::store::default_path();
+                let views_path = neoth_home.join("views.db");
                 // K-Wire-3 v3 Send-escape: `rusqlite::Transaction` is
                 // !Send. The channel handler's outer future must be
                 // Send (PipelineHandler = Pin<Box<dyn Future + Send>>),
@@ -2817,6 +3074,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // is moved off the worker pool.
                 let writer_for_pipeline = writer.clone();
                 let provider_for_pipeline = Arc::clone(&provider);
+                let authorizer_for_pipeline = provider_call_authorizer.clone();
+                let model_for_pipeline = channel_effective_model.clone();
                 let segment_path_for_pipeline = segment_path.clone();
                 let channel_str_for_pipeline = channel_str.to_string();
                 let sender_id_for_pipeline = inbound.sender_id.clone();
@@ -2824,6 +3083,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 tokio::task::block_in_place(|| {
                     let handle = tokio::runtime::Handle::current();
                     handle.block_on(async move {
+                        let authorized_profile_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+                            provider_for_pipeline.as_ref(),
+                            authorizer_for_pipeline,
+                            model_for_pipeline,
+                            "channel_profile_learning",
+                        );
                         // Pick #38 (Session 14, Perf #11 fix): prefer the
                         // shared `views.db` connection from startup; fall
                         // back to per-call open if startup couldn't open
@@ -2840,10 +3105,18 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // DB mutex. The owned fallback (per-call open) is used only
                         // when startup couldn't open the shared connection.
                         let pipeline_fut = async {
+                            let extensions = match crate::profile::extension_registry::TypedExtensionRegistry::load() {
+                                Ok(extensions) => extensions,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        path = %crate::profile::extension_registry::TypedExtensionRegistry::default_path().display(),
+                                        error = %error,
+                                        "profile extension registry unavailable — skipping channel profile pipeline"
+                                    );
+                                    return;
+                                }
+                            };
                             let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
-                            let extensions =
-                                crate::profile::extension_registry::TypedExtensionRegistry::load()
-                                    .unwrap_or_default();
                             let now_unix = crate::time::now_unix_secs();
                             let run = if let Some(shared) = &views_conn_for_pipeline {
                                 // replay needs the conn too — take a short lock
@@ -2866,7 +3139,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 crate::profile::run_pipeline(
                                     crate::profile::PipelineConn::Shared(shared),
                                     &writer_for_pipeline,
-                                    &*provider_for_pipeline,
+                                    &authorized_profile_provider,
                                     ingress_event_id,
                                     2,
                                     &guard,
@@ -2903,7 +3176,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 crate::profile::run_pipeline(
                                     crate::profile::PipelineConn::Owned(&mut owned),
                                     &writer_for_pipeline,
-                                    &*provider_for_pipeline,
+                                    &authorized_profile_provider,
                                     ingress_event_id,
                                     2,
                                     &guard,
@@ -2996,8 +3269,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // (no policy drift). `sender_hash` is the closure-level binding
             // computed once at the top of the handler.
             let provenance = ReplyProvenance {
-                provider: provider.name().to_string(),
-                model: completion.model.clone(),
+                provider: completion.identity.provider.clone(),
+                model: completion.identity.wire_model.clone(),
                 latency,
                 input_tokens: completion.input_tokens,
                 output_tokens: completion.output_tokens,
@@ -3005,14 +3278,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let mut fired = session_fired_once.lock().await;
             release_channel_reply(
                 &writer,
+                &neoth_home,
                 &hooks,
-                autonomy,
+                &autonomy_policy,
                 &inbound,
                 channel_str,
                 &sender_hash,
                 &completion.text,
                 &provenance,
                 channel_asker,
+                live_send_preauthorized,
+                live_delivery.as_mut(),
                 &mut fired,
             )
             .await
@@ -3039,6 +3315,8 @@ pub(crate) async fn handle_media_attachment(
     inbound: &InboundMessage,
     media: &crate::channels::MediaPayload,
     writer: Option<&WalWriterHandle>,
+    config: &FreedomConfig,
+    neoth_home: &std::path::Path,
 ) -> Result<String> {
     use crate::channels::MediaKind;
     use crate::media::{Asset, AssetKind, route_to_first_match};
@@ -3073,9 +3351,32 @@ pub(crate) async fn handle_media_attachment(
         Arc::new(crate::media::audio::AudioExtractor),
         Arc::new(crate::media::video::VideoExtractor),
     ];
-    let extraction = route_to_first_match(&backends, &asset)
-        .await
-        .map_err(|e| anyhow::anyhow!("extractor: {e}"))?;
+    let extraction = match asset_kind {
+        AssetKind::Audio => {
+            crate::media::audio::AudioExtractor
+                .extract_with_context(
+                    &asset,
+                    &config.media,
+                    &config.updater,
+                    neoth_home,
+                    writer.cloned(),
+                )
+                .await
+        }
+        AssetKind::Video => {
+            crate::media::video::VideoExtractor
+                .extract_with_context(
+                    &asset,
+                    &config.media,
+                    &config.updater,
+                    neoth_home,
+                    writer.cloned(),
+                )
+                .await
+        }
+        _ => route_to_first_match(&backends, &asset).await,
+    }
+    .map_err(|e| anyhow::anyhow!("extractor: {e}"))?;
 
     // Persist embedding (image today; future audio/video variants).
     let source_kind = match asset_kind {
@@ -3128,7 +3429,7 @@ pub(crate) async fn handle_media_attachment(
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect();
         if !embedding.is_empty() {
-            let db_path = store::default_path();
+            let db_path = neoth_home.join("views.db");
             let conn = store::open(&db_path).context("open views.db")?;
             let model = clip_engine::DEFAULT_CLIP_REPO.to_string();
             let dim = embedding.len();
@@ -3229,7 +3530,49 @@ pub(crate) async fn handle_media_attachment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channels::ChannelKind;
+    use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct LiveReleaseChannel {
+        sends: AtomicUsize,
+        edits: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Channel for LiveReleaseChannel {
+        fn name(&self) -> &'static str {
+            "live_release_test"
+        }
+
+        fn supports_message_edits(&self) -> bool {
+            true
+        }
+
+        async fn run(&self, _handler: PipelineHandler) -> Result<()> {
+            Ok(())
+        }
+
+        async fn send_text(
+            &self,
+            _chat_id: &str,
+            _text: &str,
+        ) -> std::result::Result<MessageId, ChannelError> {
+            self.sends.fetch_add(1, Ordering::SeqCst);
+            Ok(MessageId("live-1".into()))
+        }
+
+        async fn edit_message(
+            &self,
+            _chat_id: &str,
+            _message_id: &MessageId,
+            _new_text: &str,
+        ) -> std::result::Result<(), ChannelError> {
+            self.edits.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
 
     fn inbound(text: Option<&str>, edit_unix: Option<i64>) -> InboundMessage {
         InboundMessage {
@@ -3304,12 +3647,24 @@ mod tests {
         let (writer, join) = crate::wal::spawn(dir.path().join("000001.wal")).unwrap();
         let with_text = inbound(Some("hello there"), None);
         assert_eq!(
-            resolve_inbound_effective_text(&with_text, &writer).await,
+            resolve_inbound_effective_text(
+                &with_text,
+                &writer,
+                &FreedomConfig::default(),
+                dir.path(),
+            )
+            .await,
             Some("hello there".to_string())
         );
         let no_text = inbound(None, None); // no text, no media
         assert_eq!(
-            resolve_inbound_effective_text(&no_text, &writer).await,
+            resolve_inbound_effective_text(
+                &no_text,
+                &writer,
+                &FreedomConfig::default(),
+                dir.path(),
+            )
+            .await,
             None
         );
         drop(writer);
@@ -3395,9 +3750,16 @@ mod tests {
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
         let report = crate::security::ingress_sanitizer::sanitize("hello world", "telegram", false);
         let msg = inbound(Some("hello world"), None);
-        let eid = emit_inbound_ingress(&writer, &report, &msg, "h1", &Some("op1".to_string()))
-            .await
-            .expect("emit ingress");
+        let eid = emit_inbound_ingress(
+            &writer,
+            dir.path(),
+            &report,
+            &msg,
+            "h1",
+            &Some("op1".to_string()),
+        )
+        .await
+        .expect("emit ingress");
         assert!(eid > 0, "ingress_event_id must be a real event id");
         drop(writer);
         let _ = join.await;
@@ -3461,6 +3823,7 @@ mod tests {
             std::collections::HashSet::new();
         let out = release_channel_reply(
             &writer,
+            dir.path(),
             &[], // no hooks → Continue verbatim
             crate::permissions::AutonomyLevel::Standard,
             &msg,
@@ -3469,12 +3832,14 @@ mod tests {
             "here is what I recall about rust",
             &prov,
             None, // no confirm bus in this test
+            false,
+            None,
             &mut session_fired_once_test,
         )
         .await
         .expect("release ok");
         let out = out.expect("Standard ChannelSend must Allow → Some(reply)");
-        assert_eq!(out.recipient_id, msg.sender_id);
+        assert_eq!(out.recipient_id, msg.chat_id);
         assert_eq!(out.text, "here is what I recall about rust");
         drop(writer);
         let _ = join.await;
@@ -3508,6 +3873,7 @@ mod tests {
             std::collections::HashSet::new();
         let out = release_channel_reply(
             &writer,
+            dir.path(),
             &[],
             crate::permissions::AutonomyLevel::Strict,
             &msg,
@@ -3516,6 +3882,8 @@ mod tests {
             "secret operator memory",
             &prov,
             None, // no confirm bus in this test
+            false,
+            None,
             &mut session_fired_once_test2,
         )
         .await
@@ -3532,5 +3900,68 @@ mod tests {
             egress, 0,
             "a gate-denied reply must NOT emit a CHANNEL_EGRESS frame"
         );
+    }
+
+    #[tokio::test]
+    async fn live_release_finalizes_in_place_and_returns_no_duplicate_outbound() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let channel = Arc::new(LiveReleaseChannel::default());
+        let mut delivery = crate::channels::LiveDelivery::new(
+            channel.clone(),
+            "chat1".into(),
+            ChannelKind::Telegram,
+            crate::config::LiveDeliveryConfig {
+                edits_enabled: true,
+                min_edit_interval_ms: 0,
+                max_edits_per_message: 10,
+                final_edit_always_allowed: true,
+            },
+        );
+        delivery
+            .send_or_edit(&writer, "partial\n\n…", false)
+            .await
+            .unwrap();
+        let msg = inbound(Some("question"), None);
+        let provenance = ReplyProvenance {
+            provider: "mock_provider".into(),
+            model: "mock_model".into(),
+            latency: std::time::Duration::from_millis(5),
+            input_tokens: Some(2),
+            output_tokens: Some(3),
+        };
+        let mut fired = std::collections::HashSet::new();
+
+        let outbound = release_channel_reply(
+            &writer,
+            dir.path(),
+            &[],
+            crate::permissions::AutonomyLevel::Strict,
+            &msg,
+            "telegram",
+            "deadbeefdeadbeef",
+            "clean final",
+            &provenance,
+            None,
+            true, // already authorized before the first preview
+            Some(&mut delivery),
+            &mut fired,
+        )
+        .await
+        .unwrap();
+        assert!(
+            outbound.is_none(),
+            "adapter must not send a duplicate final"
+        );
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(channel.edits.load(Ordering::SeqCst), 1);
+
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(seg).unwrap();
+        let (egress, saw_provider) = count_egress_with_provider(&bytes, "mock_provider");
+        assert_eq!(egress, 1, "final edit is attested exactly once");
+        assert!(saw_provider);
     }
 }

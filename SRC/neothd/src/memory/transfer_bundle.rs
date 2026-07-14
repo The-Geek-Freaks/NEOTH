@@ -548,8 +548,13 @@ mod tests {
         let pub_b64 = transfer_pubkey_b64(&k1);
         let recipient_pub = parse_b64_32(&pub_b64, "pub").unwrap();
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
-        let bundle = encrypt_for(b"crypto-03 zeroizing integration", &recipient_pub, &signing_key, 1_700_000_000)
-            .expect("encrypt succeeds");
+        let bundle = encrypt_for(
+            b"crypto-03 zeroizing integration",
+            &recipient_pub,
+            &signing_key,
+            1_700_000_000,
+        )
+        .expect("encrypt succeeds");
         let plaintext = decrypt_with(&bundle, &k1).expect("decrypt with Zeroizing-wrapped key");
         assert_eq!(plaintext, b"crypto-03 zeroizing integration");
     }

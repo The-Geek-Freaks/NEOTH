@@ -23,6 +23,8 @@ Quick taste:
 neoth babel status        # enabled flag, threshold, epsilon, latest scores
 neoth babel windows --n 10
 neoth babel label <window_id> agent_loop
+neoth babel negative-control set <window_id> synthetic_stable
+neoth babel negative-control clear <window_id>
 neoth babel export --out babel.jsonl
 neoth babel federate      # prints federation state (OFF by default)
 ```
@@ -32,8 +34,8 @@ neoth babel federate      # prints federation state (OFF by default)
 The observer is deliberately boring where it must be:
 
 - **Async-only.** It never blocks inference, tool calls, or routing. Feature
-  extraction happens off the hot path; the in-process response histogram feed
-  drops on backpressure rather than waiting.
+  extraction happens off the hot path; the bounded in-process response and
+  optional posture feeds drop on backpressure rather than waiting.
 - **Content-free.** Only derived metrics leave the extractors — never prompts,
   never responses. Session ids are HMAC pseudonyms keyed by your local WAL
   key; no raw id exists in the stored rows to leak.
@@ -54,7 +56,7 @@ WAL band codes:
 | Variable | Meaning | Source events |
 | :-- | :-- | :-- |
 | `C_d` | Tool/agent coupling density | `0xC0 MCP_TOOL_CALLED`, `0xFC AGENT_DISPATCHED` |
-| `K_d` | Semantic convergence pressure (are outputs collapsing toward sameness?) | `0x20/0x21` output-token histograms |
+| `K_d` | Semantic convergence pressure (are outputs collapsing toward sameness?) | Successful provider completions reduced at the central provider lifecycle boundary to `K_d_v0` token histograms, or to local `K_d_embed_v1` vectors when `babel.k_d_embedding_model` is set |
 | `M_d` | Resource/context pressure | context-used ratio, VRAM %, budget caps |
 | `A_d` | Autonomous agent density | distinct dispatched agents × autonomy scalar |
 | `V_d` | Throughput headroom | tokens/sec vs. p99 norm |
@@ -63,6 +65,32 @@ WAL band codes:
 
 `C/K/M/A/V` are **amplifiers** — pressure toward collapse. `D/H` are
 **buffers** — slack that absorbs it.
+
+### K_d source and optional posture signals
+
+`babel.k_d_embedding_model` is a real runtime switch, not a reserved field.
+When absent, Babel keeps the exact deterministic `K_d_v0` token-frequency
+histogram. When set, the daemon resolves that checkpoint through the configured
+local `EmbedProvider`; successful streaming and non-streaming provider calls
+feed `K_d_embed_v1` at their shared lifecycle boundary. Incognito calls are
+excluded before response text is collected. No response text is stored or
+federated. Missing providers, inference failures, invalid vectors, and sample
+capacity pressure become explicit degraded posture with deterministic `K=0`,
+never mislabeled histogram data.
+
+`babel.memory_signals` and `babel.skill_signals` are separate opt-in source
+gates (both default `false`). The bounded, content-free signal feed records:
+
+- newly persisted contradictions and true zero-hit recall attempts;
+- the final skill-routing outcome: mode, keyword, embedding, no match, or
+  policy suppression.
+
+These counters are posture only: `BabelSignalMap_v1` never changes
+`C/K/M/A/V/D/H` or fabricates a collapse label. Every current window, local
+export, and federated record carries the enabled flags, counts, K_d method,
+model identity, failures, and mapping versions. Current-schema rows with
+missing posture fail closed, and federation rejects incompatible method or
+mapping combinations.
 
 ## The score
 
@@ -92,6 +120,11 @@ Eight canonical labels, each a deterministic rule over the window's events
 | `semantic_degradation` | `K_d > 0.90` for 3 consecutive 5-minute windows |
 | `fallback_failure` | fallback attempted, no success within 60 s |
 | `objective_failure` | operator-labelled via `neoth babel label` |
+
+Deliberately stable runs can be tagged as typed negative controls with
+`neoth babel negative-control set`. Supported types are `synthetic_stable`,
+`isolated_run`, and `replay_deterministic`; `clear` removes the tag. The tag
+is persisted atomically and is included in local exports and federated records.
 | `tool_selection_failure` | schema-conflict variant (subsumed by cascade in v0) |
 
 A post-hoc pass stamps every window with "did a collapse start within the next

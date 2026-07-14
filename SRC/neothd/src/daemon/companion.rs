@@ -6,9 +6,10 @@
 //! ## Scope: localhost / local-browser companion
 //!
 //! This is a **localhost** companion — it is accessible only from the same
-//! machine (loopback bind + peer-IP check).  A phone on the LAN cannot reach
-//! it.  Real LAN pairing (bind `0.0.0.0`, Host-header allowlist, rate-limit
-//! on the pair endpoint) is tracked as a follow-up item.
+//! machine (loopback bind + peer-IP check). A phone does not connect to this
+//! HTTP listener: `companion::p2p` below provides the separate single-use
+//! Hyperswarm/Noise-XX phone-pairing path. Exposing this HTTP endpoint on a LAN
+//! interface remains deliberately unsupported.
 //!
 //! ## Sub-systems
 //!
@@ -225,10 +226,11 @@ pub const COMPANION_PSK_BYTES: usize = 16;
 ///
 /// Carries a fresh rendezvous `topic` (32 bytes) plus a pre-shared key (16
 /// bytes), both drawn from the OS CSPRNG via `getrandom` — the same primitive
-/// as [`crate::channels::keet_pairing::BearerToken::generate`]. The values are
+/// as a cryptographically random bearer secret. The values are
 /// rendered hex into a `neoth://companion/pair` URL (and its QR) for the
 /// operator to scan. Single-use; the P2P transport that validates topic+psk on
-/// connect is a follow-up (this slice is generation + display only).
+/// connect is implemented by `companion::p2p` when the `cluster` feature is
+/// compiled.
 pub struct CompanionInvite {
     /// 32-byte rendezvous topic, hex (64 chars). Not secret.
     topic_hex: String,
@@ -335,7 +337,10 @@ async fn handle_request(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // POST-only enforcement — anything else is 405.
     if req.method() != Method::POST {
-        return Ok(plain_response(StatusCode::METHOD_NOT_ALLOWED, "method not allowed"));
+        return Ok(plain_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "method not allowed",
+        ));
     }
 
     // Path routing.
@@ -345,10 +350,7 @@ async fn handle_request(
     }
 }
 
-async fn handle_pair(
-    req: Request<Incoming>,
-    state: Arc<CompanionState>,
-) -> Response<Full<Bytes>> {
+async fn handle_pair(req: Request<Incoming>, state: Arc<CompanionState>) -> Response<Full<Bytes>> {
     // CSRF guard.
     if !csrf_check_passes(&req, state.port) {
         warn!("companion: CSRF guard rejected cross-origin Origin header");
@@ -399,16 +401,14 @@ async fn handle_pair(
 
     // Emit WAL 0x0B COMPANION_PAIRED (payload: session_id + token hash, never the
     // raw token). xxh3 is already in the dep tree via the WAL writer.
-    let token_hash = format!(
-        "{:016x}",
-        xxhash_rust::xxh3::xxh3_64(token.as_bytes())
-    );
+    let token_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(token.as_bytes()));
     let payload = serde_json::json!({
         "session_id": session_id,
         "token_hash_xxh3": token_hash,
         "ts_unix": crate::time::now_unix_secs(),
     });
-    let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    let payload_bytes = serde_json::to_vec(&payload)
+        .expect("COMPANION_PAIRED payload contains only infallible JSON values");
     let hdr = HeaderBuilder::new(EVENT_TYPE_COMPANION_PAIRED, &payload_bytes).build();
     if let Err(e) = state.writer.append_no_ack(hdr, payload_bytes).await {
         // Non-fatal: log but do not fail the pairing request.
@@ -420,7 +420,8 @@ async fn handle_pair(
         "token": token,
         "session_id": session_id,
     });
-    let resp_json = serde_json::to_string(&resp_body).unwrap_or_default();
+    let resp_json = serde_json::to_string(&resp_body)
+        .expect("companion pairing response contains only infallible JSON values");
 
     // Set-Cookie: companion_token=<token>; SameSite=Lax; HttpOnly; Path=/
     let cookie = format!(
@@ -446,10 +447,9 @@ pub async fn run_companion_server(
     state: Arc<CompanionState>,
     shutdown: Arc<Notify>,
 ) {
-    let local_addr = listener.local_addr().unwrap_or(SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        state.port,
-    ));
+    let local_addr = listener
+        .local_addr()
+        .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), state.port));
     info!(addr = %local_addr, "companion server listening (GOLD-ADAPT-ODY-24)");
 
     loop {
@@ -523,13 +523,12 @@ pub fn spawn_companion_server_loop(
 
         // Log the pairing URL so the operator can see it in `neoth serve` output.
         // NOTE: The server binds 127.0.0.1 (loopback only) — the URL must reflect
-        // that.  Real LAN pairing (phone scan → 0.0.0.0 bind + host-header check)
-        // is a follow-up; advertising a LAN IP here while binding loopback would
-        // be misleading and non-functional.
+        // that. Phone pairing uses the separate authenticated P2P coordinator;
+        // advertising a LAN HTTP address here would be misleading and unsafe.
         let pairing_url = format!("http://127.0.0.1:{}/api/v1/companion/pair", config.port);
         info!(
             url = %pairing_url,
-            "companion: local pairing URL (localhost browser app; LAN pairing is a follow-up)"
+            "companion: local pairing URL (localhost browser app; phones use the P2P pairing path)"
         );
 
         run_companion_server(listener, state, shutdown).await;
@@ -556,8 +555,9 @@ pub fn spawn_companion_server_loop(
 //      - FAIL: drops the conn, emits WAL 0x0E, burns the invite.
 //   5. The topic is unannounced (`handle.leave(topic_bytes)`).
 //
-// Only one connection is accepted per invite (Semaphore(1)). A second phone
-// scanning the same QR gets a closed connection — the first pairing won.
+// Only one connection is accepted per invite: the coordinator consumes exactly
+// one item from the one-shot connection receiver and then burns/leaves the
+// invite. A second phone scanning the same QR gets a closed connection.
 //
 // IMPORTANT: the `conn.peer.stream` from peeroxide is a Noise SecretStream.
 // Its `.read()` method returns the next decrypted Noise message as
@@ -574,7 +574,7 @@ mod p2p {
     use tokio::task::JoinHandle;
     use tracing::{debug, info, warn};
 
-    use super::{CompanionInvite, CompanionState, COMPANION_PSK_BYTES, COMPANION_TOPIC_BYTES};
+    use super::{COMPANION_PSK_BYTES, COMPANION_TOPIC_BYTES, CompanionInvite, CompanionState};
     use crate::wal::builder::HeaderBuilder;
     use crate::wal::events::{EVENT_TYPE_COMPANION_P2P_PAIRED, EVENT_TYPE_COMPANION_P2P_REJECTED};
     use crate::wal::writer::WalWriterHandle;
@@ -651,10 +651,7 @@ mod p2p {
             }
         };
 
-        let topic_hash = format!(
-            "{:016x}",
-            xxhash_rust::xxh3::xxh3_64(&topic_bytes)
-        );
+        let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&topic_bytes));
 
         // ── Bring up peeroxide swarm ──────────────────────────────────────────
         let config = peeroxide::SwarmConfig::with_public_bootstrap();
@@ -684,10 +681,6 @@ mod p2p {
             ttl_secs = state.invite_ttl_secs,
             "companion_p2p: DHT announced — waiting for phone to connect"
         );
-
-        // Semaphore(1): accept at most ONE connection per invite. A second phone
-        // scanning the same QR sees a closed connection.
-        let session_limiter = Arc::new(tokio::sync::Semaphore::new(1));
 
         // ── Wait for the phone to connect ─────────────────────────────────────
         let conn_result = tokio::select! {
@@ -732,9 +725,6 @@ mod p2p {
             Some(c) => c,
         };
 
-        // Acquire the single-session slot (always succeeds — we only took one).
-        let _permit = session_limiter.try_acquire_owned();
-
         let peer_pk: [u8; 32] = *conn.remote_public_key();
         let peer_pk_hex = hex::encode(peer_pk);
 
@@ -749,11 +739,8 @@ mod p2p {
         // us one full decrypted message. We expect exactly 16 bytes (the PSK).
         // Any other size or an error is treated as a mismatch.
         let received_psk: [u8; COMPANION_PSK_BYTES] = {
-            let read_result = tokio::time::timeout(
-                Duration::from_secs(10),
-                conn.peer.stream.read(),
-            )
-            .await;
+            let read_result =
+                tokio::time::timeout(Duration::from_secs(10), conn.peer.stream.read()).await;
 
             match read_result {
                 Ok(Ok(Some(bytes))) if bytes.len() == COMPANION_PSK_BYTES => {
@@ -883,10 +870,7 @@ mod p2p {
         }
 
         // ── Emit WAL 0x0D COMPANION_P2P_PAIRED ───────────────────────────────
-        let token_hash = format!(
-            "{:016x}",
-            xxhash_rust::xxh3::xxh3_64(token.as_bytes())
-        );
+        let token_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(token.as_bytes()));
         let ts_unix = crate::time::now_unix_secs();
         let payload = serde_json::json!({
             "topic_hash_xxh3": topic_hash,
@@ -894,9 +878,9 @@ mod p2p {
             "token_hash_xxh3": token_hash,
             "ts_unix": ts_unix,
         });
-        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
-        let hdr =
-            HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_PAIRED, &payload_bytes).build();
+        let payload_bytes = serde_json::to_vec(&payload)
+            .expect("COMPANION_P2P_PAIRED payload contains only infallible JSON values");
+        let hdr = HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_PAIRED, &payload_bytes).build();
         if let Err(e) = state.writer.append_no_ack(hdr, payload_bytes).await {
             warn!(error = %e, "companion_p2p: WAL emit COMPANION_P2P_PAIRED failed (non-fatal)");
         }
@@ -929,9 +913,9 @@ mod p2p {
             "reason": reason,
             "ts_unix": ts_unix,
         });
-        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
-        let hdr =
-            HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_REJECTED, &payload_bytes).build();
+        let payload_bytes = serde_json::to_vec(&payload)
+            .expect("COMPANION_P2P_REJECTED payload contains only infallible JSON values");
+        let hdr = HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_REJECTED, &payload_bytes).build();
         if let Err(e) = writer.append_no_ack(hdr, payload_bytes).await {
             warn!(error = %e, "companion_p2p: WAL emit COMPANION_P2P_REJECTED failed (non-fatal)");
         }
@@ -992,7 +976,9 @@ pub fn spawn_companion_p2p_listener(
     _ttl_secs: u64,
     _shutdown: Arc<Notify>,
 ) -> JoinHandle<()> {
-    warn!("companion_p2p: `cluster` feature not enabled — P2P pairing unavailable; use loopback HTTP instead");
+    warn!(
+        "companion_p2p: `cluster` feature not enabled — P2P pairing unavailable; use loopback HTTP instead"
+    );
     tokio::spawn(async {})
 }
 
@@ -1006,7 +992,11 @@ mod tests {
     /// and the join-handle; the test can drop the join-handle (the writer task
     /// exits when all handles are dropped). This is the standard pattern used
     /// across the daemon test suite (see `daemon/auto_update.rs`, `audit_rpc/tests.rs`).
-    fn temp_writer() -> (WalWriterHandle, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+    fn temp_writer() -> (
+        WalWriterHandle,
+        tokio::task::JoinHandle<()>,
+        tempfile::TempDir,
+    ) {
         let dir = tempfile::tempdir().expect("tempdir");
         let seg = dir.path().join("test.wal");
         let (handle, join) = crate::wal::writer::spawn(seg).expect("spawn WAL writer for test");
@@ -1128,7 +1118,8 @@ mod tests {
         assert_eq!(tok.len(), 43);
         // All chars must be valid base64url-NOPAD (A-Z a-z 0-9 - _).
         assert!(
-            tok.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            tok.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
             "token contains non-base64url chars: {tok}"
         );
     }
@@ -1137,7 +1128,10 @@ mod tests {
     fn render_pairing_qr_returns_nonempty_for_valid_url() {
         let qr = render_pairing_qr("http://192.168.1.1:9745/pair?hint=operator");
         // The QR renderer produces at minimum a few lines of block chars.
-        assert!(!qr.is_empty(), "QR render must not be empty for a valid URL");
+        assert!(
+            !qr.is_empty(),
+            "QR render must not be empty for a valid URL"
+        );
     }
 
     #[tokio::test]
@@ -1154,7 +1148,10 @@ mod tests {
     fn token_entry_expiry() {
         // A freshly minted entry must NOT be expired.
         let fresh = TokenEntry::new("t2".to_string());
-        assert!(!fresh.is_expired(), "freshly minted entry must not be expired");
+        assert!(
+            !fresh.is_expired(),
+            "freshly minted entry must not be expired"
+        );
 
         // An entry whose minted_at is earlier than TOKEN_TTL_SECS ago IS expired.
         // We test this by directly checking the TTL logic: elapsed() < TOKEN_TTL_SECS
@@ -1253,8 +1250,7 @@ mod tests {
     fn invite_from_hex_roundtrip() {
         let orig = CompanionInvite::generate().unwrap();
         let url1 = orig.pairing_url(300);
-        let reconstructed =
-            CompanionInvite::from_hex(orig.topic_hex.clone(), orig.psk_hex.clone());
+        let reconstructed = CompanionInvite::from_hex(orig.topic_hex.clone(), orig.psk_hex.clone());
         let url2 = reconstructed.pairing_url(300);
         assert_eq!(url1, url2, "from_hex must produce the same pairing URL");
     }
@@ -1331,14 +1327,17 @@ mod tests {
             let mut guard = p2p_state.pending_invite.write().await;
             guard.take()
         };
-        assert!(taken2.is_none(), "second take must return None (single-use)");
+        assert!(
+            taken2.is_none(),
+            "second take must return None (single-use)"
+        );
     }
 
     /// `from_hex` with known hex strings produces the expected pairing URL.
     #[test]
     fn invite_from_hex_known_values() {
         let topic = "a".repeat(64); // 32 bytes as 64 hex chars
-        let psk = "b".repeat(32);   // 16 bytes as 32 hex chars
+        let psk = "b".repeat(32); // 16 bytes as 32 hex chars
         let inv = CompanionInvite::from_hex(topic.clone(), psk.clone());
         let url = inv.pairing_url(300);
         assert!(url.contains(&format!("topic={topic}")));

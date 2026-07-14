@@ -5,12 +5,13 @@
 //! turn cost". The structural fix is to display + gate on a price
 //! estimate BEFORE the provider call happens, not after.
 //!
-//! This module owns a static per-model price table + a rolling-output-
-//! token predictor that reads `providers::meter::Meter` and feeds the
-//! existing `permissions::Action::PaidProviderCall { eur_estimate }`
-//! gate. Operators on `strict` / `standard` autonomy see a confirm
-//! prompt with the projected euro cost before the daemon dispatches.
+//! This module owns a static per-model price table and two deliberately
+//! separate estimates: a rolling chars/4 preview for UI display, and a
+//! conservative UTF-8-byte/request-overhead bound for the mandatory
+//! request-bound `permissions::Action::PaidProviderCall { .. }` gate. The display
+//! heuristic must never become an authorization input.
 
+use crate::providers::Request;
 use crate::providers::meter::Meter;
 
 /// One row in the static pricing table — input + output cost per
@@ -32,10 +33,9 @@ impl PriceRow {
 
     /// Conservative high-end fallback for unknown cloud models. Used by
     /// `predict()` when `lookup_price` returns `None` for a non-local
-    /// provider. Picked from the top-of-market August 2026 rates (rough
-    /// Opus-4-class input + Opus-4-class output) so the autonomy gate
-    /// errs on the side of "confirm before spending". Codex audit
-    /// fail-safe fix 2026-05-16.
+    /// provider. This is a deliberately high policy ceiling, not a claim
+    /// about current vendor pricing, so the autonomy gate errs on the side
+    /// of "confirm before spending" when a model has no reviewed price row.
     const fn unknown_high_estimate() -> Self {
         Self {
             input_eur_per_mtok: 15.0,
@@ -56,83 +56,61 @@ pub struct CostEstimate {
 }
 
 /// Look up a `PriceRow` for a provider/model pair. Returns the free
-/// row for local providers (`local_qwen` / `local_ouro`) + when the table doesn't
-/// know about the model. Unknown-model behaviour is intentional: we
-/// don't want to surprise-bill an operator who points NEOTH at a
-/// brand-new release; the gate falls back to "estimate unknown" +
-/// confirms at `Strict` anyway.
+/// row for every provider recognized by the canonical
+/// [`super::is_local_provider`] predicate. Cloud rows are exact, release-reviewed
+/// model identifiers: a new model, alias, deployment name, or typo returns
+/// `None` and the authorization boundary treats its price as unknown.
 pub fn lookup_price(provider: &str, model: &str) -> Option<PriceRow> {
-    // Static for v0.1.x. Updated at release time. Dynamic pricing
-    // (pulled from provider APIs at startup) is Phase 2.
-    //
-    // Audit 2026-05-19 (Session 15 Pick #9): C-3 (AWS Bedrock) and
-    // C-4 (Azure OpenAI) adapters shipped in Session 14 but pricing
-    // branches were never added — Bedrock + Azure operators fell into
-    // `_ => None` → `unknown_high_estimate()` (€15/€60 per Mtok). The
-    // ceiling was safe (always over-quoted) but never matched reality.
-    // Per AWS Bedrock pricing tables and Azure OpenAI Service tiered
-    // pricing (standard deployment), both platforms match their
-    // upstream vendor's $/Mtok within 1-2 cents — so we share the
-    // branch bodies by widening the provider-name match arms.
+    if super::is_local_provider(provider) {
+        return Some(PriceRow::free());
+    }
+    // Static, release-reviewed estimates. Matching must stay exact: family
+    // substring matching lets a new, premium, or misspelled model silently
+    // inherit an old approval estimate. Azure deployment names and generic
+    // OpenAI-compatible endpoints cannot prove their underlying model and are
+    // therefore intentionally absent.
     match (provider, model) {
-        // Anthropic (incl. Bedrock — same $/Mtok as direct API)
-        ("claude_cli" | "anthropic_api" | "aws_bedrock", m) if m.contains("opus-4") => {
-            Some(PriceRow {
-                input_eur_per_mtok: 13.8, // $15/Mtok × 0.92
-                output_eur_per_mtok: 69.0,
-            })
-        }
-        ("claude_cli" | "anthropic_api" | "aws_bedrock", m) if m.contains("sonnet-4") => {
-            Some(PriceRow {
-                input_eur_per_mtok: 2.76,  // $3
-                output_eur_per_mtok: 13.8, // $15
-            })
-        }
-        ("claude_cli" | "anthropic_api" | "aws_bedrock", m) if m.contains("haiku-4") => {
-            Some(PriceRow {
-                input_eur_per_mtok: 0.92, // $1
-                output_eur_per_mtok: 4.6, // $5
-            })
-        }
-        // OpenAI (incl. Azure OpenAI Service standard deployment —
-        // PTU / commitment deployments get separate pricing the
-        // operator overrides via `freedom.yaml::cost_override`)
-        ("openai_api" | "openai_compat" | "azure_openai", m) if m.contains("gpt-4o") => {
-            Some(PriceRow {
-                input_eur_per_mtok: 4.6, // $5
-                output_eur_per_mtok: 13.8,
-            })
-        }
-        ("openai_api" | "openai_compat" | "azure_openai", m) if m.contains("gpt-5") => {
-            Some(PriceRow {
-                input_eur_per_mtok: 9.2, // $10
-                output_eur_per_mtok: 27.6,
-            })
-        }
-        // Gemini
-        ("gemini_api", m) if m.contains("2.5-pro") || m.contains("3-pro") => Some(PriceRow {
-            input_eur_per_mtok: 1.15, // $1.25
-            output_eur_per_mtok: 9.2,
+        ("claude_cli" | "anthropic_api", "claude-opus-4-7" | "claude-opus-4-7[1m]")
+        | ("aws_bedrock", "anthropic.claude-opus-4-7-v1:0") => Some(PriceRow {
+            input_eur_per_mtok: 13.8,
+            output_eur_per_mtok: 69.0,
         }),
-        // Cohere v2 (command-a / command-r family). Approximate USD→EUR
-        // snapshots; operators override via freedom.yaml::cost_override
-        // for exact billing. `command-a` + `r-plus` are the premium tier;
-        // plain `command-r`/`command` is the cheaper tier.
-        ("cohere_api", m) if m.contains("command-a") || m.contains("r-plus") => Some(PriceRow {
+        ("claude_cli" | "anthropic_api", "claude-sonnet-4-6")
+        | ("aws_bedrock", "anthropic.claude-sonnet-4-6-v1:0") => Some(PriceRow {
+            input_eur_per_mtok: 2.76,
+            output_eur_per_mtok: 13.8,
+        }),
+        ("claude_cli" | "anthropic_api", "claude-haiku-4-5-20251001") => Some(PriceRow {
+            input_eur_per_mtok: 0.92,
+            output_eur_per_mtok: 4.6,
+        }),
+        ("openai_api", "gpt-4o" | "gpt-4o-2024-08-06" | "gpt-4o-mini") => Some(PriceRow {
+            input_eur_per_mtok: 4.6,
+            output_eur_per_mtok: 13.8,
+        }),
+        ("openai_api", "gpt-5" | "gpt-5.5") => Some(PriceRow {
+            input_eur_per_mtok: 9.2,
+            output_eur_per_mtok: 27.6,
+        }),
+        ("gemini_api", "gemini-2.5-pro" | "gemini-3-pro" | "gemini-3.1-pro-preview") => {
+            Some(PriceRow {
+                input_eur_per_mtok: 1.15, // $1.25
+                output_eur_per_mtok: 9.2,
+            })
+        }
+        ("cohere_api", "command-a-plus-05-2026" | "command-r-plus-08-2024") => Some(PriceRow {
             input_eur_per_mtok: 2.3,  // ~$2.5
             output_eur_per_mtok: 9.2, // ~$10
         }),
-        ("cohere_api", m) if m.contains("command") => Some(PriceRow {
+        ("cohere_api", "command-r-08-2024") => Some(PriceRow {
             input_eur_per_mtok: 0.14,  // ~$0.15
             output_eur_per_mtok: 0.55, // ~$0.6
         }),
-        // Local — always free
-        ("local_qwen" | "local_ouro" | "local_abliterated", _) => Some(PriceRow::free()),
-        // GitHub Copilot — flat subscription; zero marginal per-token cost.
-        // GOLD-ADAPT-ODY-15: without this arm, predict() falls back to the
-        // €15/€60 per-Mtok unknown_high_estimate and the autonomy gate prompts
-        // on every chat turn for a subscription-free provider.
-        ("copilot_api", _) => Some(PriceRow::free()),
+        // GitHub Copilot intentionally has no static row. Since 2026-06-01,
+        // normal plans use token/AI-credit billing while annual legacy plans
+        // can retain request/multiplier billing. Model, plan, allowance and
+        // overage state determine marginal cost, none of which this adapter
+        // can currently prove at the leaf boundary.
         _ => None,
     }
 }
@@ -236,17 +214,15 @@ pub fn format_amount(amount: f64, currency: Currency) -> String {
 /// Compute USD cost for an actually-completed call using the same
 /// price table as `predict()`. Unlike `predict()`, this takes the
 /// real token counts from the provider's `Completion` rather than
-/// estimating from the input. Returns `0.0` for unknown / free
-/// models — this is the post-hoc usage_log path (QM-9), not the
-/// pre-call permission gate that fails-closed on unknowns.
+/// estimating from the input. Unknown cloud models use the same
+/// conservative fallback as the pre-call gate; only canonical local
+/// providers and explicitly free price rows report zero.
 ///
 /// Storage canonical: USD. Operators who want other display
 /// currencies use `Currency::*` + `convert_from_usd` at the
 /// presentation layer.
 pub fn actual_cost_usd(provider: &str, model: &str, input_tokens: u32, output_tokens: u32) -> f64 {
-    let Some(price) = lookup_price(provider, model) else {
-        return 0.0;
-    };
+    let price = lookup_price(provider, model).unwrap_or_else(PriceRow::unknown_high_estimate);
     // PriceRow holds EUR per Mtok with the 0.92 conversion baked in.
     // Reverse the rate to recover USD per Mtok.
     const EUR_TO_USD_INV: f64 = 1.0 / 0.92;
@@ -305,15 +281,70 @@ pub fn actual_cost_in(
 /// Output-token estimate comes from the meter's rolling output_tps +
 /// p50 latency; fallback to a sensible default for cold meters.
 pub fn predict(provider: &str, model: &str, input_text: &str, meter: &Meter) -> CostEstimate {
-    let input_tokens = approx_tokens(input_text);
+    let input_tokens = approx_tokens_for_display(input_text);
     let output_tokens_est = predict_output_tokens(meter);
 
-    // Fail-safe: unknown cloud models do NOT default to free
-    // (silent-bypass of the autonomy gate). Fall back to a
-    // conservative high estimate so the operator sees a non-zero
-    // EUR figure and the permission gate decides on the safe side.
-    // Local providers (local_qwen / local_ouro) genuinely
-    // are free and `lookup_price` returns Some(free) for those.
+    estimate_for_tokens(provider, model, input_tokens, output_tokens_est)
+}
+
+/// Fixed reserve for the provider's request envelope and control tokens. A
+/// [`Request`] has at most one system and one user message today; any future
+/// history/tool-message expansion must update this bound before it can use the
+/// paid-call boundary.
+const AUTHORIZATION_REQUEST_OVERHEAD_TOKENS: u64 = 4096;
+const AUTHORIZATION_PER_MESSAGE_OVERHEAD_TOKENS: u64 = 256;
+
+/// Provable upper bound for all caller-controlled input text: a tokenizer
+/// token cannot consume less than one byte of the UTF-8 input. Model and stop
+/// strings are included even though current vendors generally do not bill
+/// them as prompt tokens. The fixed reserves cover the two message roles,
+/// separators, JSON/request framing, and provider control tokens.
+pub(crate) fn authorization_input_token_upper_bound(req: &Request, model: &str) -> u32 {
+    let system = req.system.as_deref().unwrap_or("");
+    let message_count = 1_u64 + u64::from(req.system.is_some());
+    let stop_bytes = req.stop_sequences.iter().fold(0_u64, |total, stop| {
+        total.saturating_add(stop.len() as u64).saturating_add(1)
+    });
+    let controlled_bytes = (req.prompt.len() as u64)
+        .saturating_add(system.len() as u64)
+        .saturating_add(model.len() as u64)
+        .saturating_add(stop_bytes);
+
+    controlled_bytes
+        .saturating_add(AUTHORIZATION_REQUEST_OVERHEAD_TOKENS)
+        .saturating_add(message_count.saturating_mul(AUTHORIZATION_PER_MESSAGE_OVERHEAD_TOKENS))
+        .min(u32::MAX as u64) as u32
+}
+
+/// Cost bound used by the mandatory provider-leaf authorization boundary.
+/// Unlike [`predict`], this uses neither the display-only chars/4 heuristic nor
+/// rolling averages: input is a UTF-8 byte upper bound plus request/message
+/// overhead, and output is the concrete cap enforced by the leaf adapter.
+pub fn predict_authorization_bound(
+    provider: &str,
+    model: &str,
+    req: &Request,
+    output_token_ceiling: u32,
+) -> CostEstimate {
+    estimate_for_tokens(
+        provider,
+        model,
+        authorization_input_token_upper_bound(req, model),
+        output_token_ceiling.max(1),
+    )
+}
+
+fn estimate_for_tokens(
+    provider: &str,
+    model: &str,
+    input_tokens: u32,
+    output_tokens_est: u32,
+) -> CostEstimate {
+    // Display fail-safe: unknown cloud models do not look free. The provider
+    // leaf authorization path does not use this fabricated display estimate;
+    // it routes unknown pricing through `UnboundedPaidProviderCall`.
+    // Canonically local providers genuinely are free and `lookup_price`
+    // returns Some(free) for every name accepted by `is_local_provider`.
     let price = lookup_price(provider, model).unwrap_or_else(|| {
         tracing::warn!(
             provider,
@@ -350,12 +381,9 @@ pub fn render_preview(provider: &str, model: &str, est: &CostEstimate) -> String
     }
 }
 
-fn approx_tokens(text: &str) -> u32 {
-    // 4 chars/token is the cl100k average for English. For non-ASCII
-    // and code-heavy text, real tokens are ~30% higher; we round up
-    // generously so the operator sees a conservative-high estimate
-    // rather than a surprise underbill. Real tokenizer integration
-    // (tiktoken-rs) is a Phase 2 lift.
+fn approx_tokens_for_display(text: &str) -> u32 {
+    // UI-only English-average estimate. Authorization MUST NOT use this:
+    // code and non-ASCII text can tokenize far above chars/4.
     let chars = text.chars().count();
     chars.div_ceil(4).min(u32::MAX as usize) as u32
 }
@@ -464,11 +492,16 @@ mod tests {
     }
 
     #[test]
-    fn actual_cost_unknown_model_returns_zero() {
-        // Post-hoc usage_log path returns 0 for unknown models.
-        // The pre-call gate is the one that fails closed.
+    fn actual_cost_unknown_cloud_model_uses_conservative_fallback() {
+        let actual = actual_cost_usd("brand-new-cloud", "future-model", 1_000_000, 1_000_000);
+        let expected = (15.0 + 60.0) / 0.92;
+        assert!((actual - expected).abs() < 1e-6, "got {actual}");
+    }
+
+    #[test]
+    fn actual_cost_unknown_local_model_stays_zero() {
         assert_eq!(
-            actual_cost_usd("brand-new-cloud", "future-model", 1_000_000, 1_000_000),
+            actual_cost_usd("local_ollama", "future-local-model", 1_000_000, 1_000_000),
             0.0
         );
     }
@@ -496,8 +529,7 @@ mod tests {
 
     #[test]
     fn predict_unknown_local_model_stays_zero() {
-        // Local providers (local_qwen/local_ouro) match the
-        // generic-local arm in lookup_price + return free. The
+        // Every canonical local provider returns free. The
         // fail-safe high-estimate kicks in only for truly unknown
         // provider names.
         let meter = Meter::with_default_window();
@@ -512,6 +544,18 @@ mod tests {
             &meter,
         );
         assert_eq!(ouro.total_eur, 0.0);
+        assert_eq!(
+            predict("local_ollama", "llama3.2", "hello", &meter).total_eur,
+            0.0
+        );
+        assert_eq!(
+            predict("local_abliterated", "operator/model", "hello", &meter).total_eur,
+            0.0
+        );
+        assert!(
+            predict("recursive_mas", "recursive_mas", "hello", &meter).total_eur > 0.0,
+            "operator-installed sidecars with inherited network access are not cost-free local providers"
+        );
     }
 
     #[test]
@@ -522,10 +566,10 @@ mod tests {
     }
 
     #[test]
-    fn approx_tokens_4_chars_per_token() {
-        assert_eq!(approx_tokens(""), 0);
-        assert_eq!(approx_tokens("abcd"), 1);
-        assert_eq!(approx_tokens("hello world"), 3); // 11 chars / 4 → 3 (rounded up)
+    fn display_estimate_uses_four_chars_per_token() {
+        assert_eq!(approx_tokens_for_display(""), 0);
+        assert_eq!(approx_tokens_for_display("abcd"), 1);
+        assert_eq!(approx_tokens_for_display("hello world"), 3); // 11 chars / 4 → 3
     }
 
     #[test]
@@ -534,6 +578,102 @@ mod tests {
         let est = predict("openai_api", "gpt-4o", "hello", &meter);
         assert_eq!(est.output_tokens_est, 250);
         assert!(est.total_eur > 0.0);
+    }
+
+    #[test]
+    fn leaf_prediction_uses_wire_output_ceiling_not_cold_meter_default() {
+        let est = predict_authorization_bound(
+            "openai_api",
+            "gpt-4o",
+            &Request {
+                prompt: "hello".into(),
+                ..Request::default()
+            },
+            4096,
+        );
+        assert_eq!(est.output_tokens_est, 4096);
+        assert!(est.total_eur > 0.0);
+    }
+
+    #[test]
+    fn leaf_prediction_carries_large_reasoning_budget() {
+        let est = predict_authorization_bound(
+            "claude_cli",
+            "claude-opus-4-7",
+            &Request {
+                prompt: "hello".into(),
+                ..Request::default()
+            },
+            10_000,
+        );
+        assert_eq!(est.output_tokens_est, 10_000);
+        assert!(est.total_eur > 0.0);
+    }
+
+    #[test]
+    fn authorization_bound_covers_utf8_bytes_and_message_overhead() {
+        let req = Request {
+            prompt: "世界".into(),
+            system: Some("system".into()),
+            model: Some("ignored-here".into()),
+            stop_sequences: vec!["停止".into()],
+            ..Request::default()
+        };
+        let controlled_bytes = req.prompt.len()
+            + req.system.as_deref().unwrap().len()
+            + "gpt-5".len()
+            + req.stop_sequences[0].len()
+            + 1;
+        let bound = authorization_input_token_upper_bound(&req, "gpt-5");
+        assert!(bound as usize >= controlled_bytes);
+        assert_eq!(
+            bound as u64,
+            controlled_bytes as u64
+                + AUTHORIZATION_REQUEST_OVERHEAD_TOKENS
+                + 2 * AUTHORIZATION_PER_MESSAGE_OVERHEAD_TOKENS
+        );
+    }
+
+    #[test]
+    fn code_input_crosses_paid_gate_threshold_under_byte_bound() {
+        let prompt = "let value = parse::<Payload>(input)?;\n".repeat(700);
+        let req = Request {
+            prompt: prompt.clone(),
+            ..Request::default()
+        };
+        let old_display_estimate = estimate_for_tokens(
+            "unknown_cloud",
+            "future-model",
+            approx_tokens_for_display(&prompt),
+            4096,
+        );
+        let authorized = predict_authorization_bound("unknown_cloud", "future-model", &req, 4096);
+        assert!(old_display_estimate.total_eur < 0.50);
+        assert!(
+            authorized.total_eur > 0.50,
+            "code-heavy input must not auto-pass Standard after a chars/4 undercount: {authorized:?}"
+        );
+    }
+
+    #[test]
+    fn cjk_input_crosses_paid_gate_threshold_under_utf8_byte_bound() {
+        let prompt = "界".repeat(7_000);
+        let req = Request {
+            prompt: prompt.clone(),
+            ..Request::default()
+        };
+        let old_display_estimate = estimate_for_tokens(
+            "unknown_cloud",
+            "future-model",
+            approx_tokens_for_display(&prompt),
+            4096,
+        );
+        let authorized = predict_authorization_bound("unknown_cloud", "future-model", &req, 4096);
+        assert!(old_display_estimate.total_eur < 0.50);
+        assert!(
+            authorized.total_eur > 0.50,
+            "CJK input must use UTF-8 bytes rather than chars/4: {authorized:?}"
+        );
     }
 
     #[test]
@@ -570,30 +710,27 @@ mod tests {
         assert!(s.contains("€0.1500"));
     }
 
-    // ── Bedrock + Azure pricing parity (Pick #9 / Session 15) ─────────
+    // ── Exact reviewed-model matching ──────────────────────────────────
 
     #[test]
     fn bedrock_claude_matches_anthropic_pricing() {
         // C-3 Bedrock adapter must produce the same price row as
         // direct Anthropic API — same upstream model, same $/Mtok.
         let opus_direct = lookup_price("anthropic_api", "claude-opus-4-7").unwrap();
-        let opus_bedrock = lookup_price("aws_bedrock", "anthropic.claude-opus-4-7-v1").unwrap();
+        let opus_bedrock = lookup_price("aws_bedrock", "anthropic.claude-opus-4-7-v1:0").unwrap();
         assert_eq!(opus_direct, opus_bedrock);
 
         let sonnet_direct = lookup_price("anthropic_api", "claude-sonnet-4-6").unwrap();
-        let sonnet_bedrock = lookup_price("aws_bedrock", "anthropic.claude-sonnet-4-6").unwrap();
+        let sonnet_bedrock =
+            lookup_price("aws_bedrock", "anthropic.claude-sonnet-4-6-v1:0").unwrap();
         assert_eq!(sonnet_direct, sonnet_bedrock);
     }
 
     #[test]
-    fn azure_openai_matches_direct_openai_pricing() {
-        let gpt5_direct = lookup_price("openai_api", "gpt-5.5").unwrap();
-        let gpt5_azure = lookup_price("azure_openai", "gpt-5.5").unwrap();
-        assert_eq!(gpt5_direct, gpt5_azure);
-
-        let gpt4o_direct = lookup_price("openai_api", "gpt-4o").unwrap();
-        let gpt4o_azure = lookup_price("azure_openai", "gpt-4o-2024-08-06").unwrap();
-        assert_eq!(gpt4o_direct, gpt4o_azure);
+    fn opaque_azure_deployment_names_never_inherit_openai_pricing() {
+        assert!(lookup_price("azure_openai", "gpt-5.5").is_none());
+        assert!(lookup_price("azure_openai", "gpt-4o-2024-08-06").is_none());
+        assert!(lookup_price("azure_openai", "custom-deployment-xyz").is_none());
     }
 
     #[test]
@@ -605,9 +742,18 @@ mod tests {
     }
 
     #[test]
-    fn azure_unknown_model_still_returns_none_for_fallback_path() {
-        // Azure with a deployment name that doesn't contain a known
-        // model substring — caller falls back via predict().
-        assert!(lookup_price("azure_openai", "custom-deployment-xyz").is_none());
+    fn known_family_substrings_do_not_authorize_unknown_models() {
+        for (provider, model) in [
+            ("openai_api", "gpt-5-future-premium"),
+            ("openai_api", "typo-gpt-4o"),
+            ("anthropic_api", "claude-opus-4-unknown"),
+            ("gemini_api", "gemini-3-pro-future"),
+            ("cohere_api", "command-a-unreviewed"),
+        ] {
+            assert!(
+                lookup_price(provider, model).is_none(),
+                "{provider}/{model} must use the unknown-price gate"
+            );
+        }
     }
 }

@@ -215,7 +215,187 @@ pub const MIGRATIONS: &[Migration] = &[
                       (decay_task refreshes after each link decay sweep).",
         run: migration_v25_to_v26,
     },
+    Migration {
+        from: 26,
+        to: 27,
+        description: "OMI-MULTIMODAL-01: add durable OMI conversation, aligned segment, \
+                      media, action, and cursor ledgers for idempotent REST/live reconciliation",
+        run: migration_v26_to_v27,
+    },
+    Migration {
+        from: 27,
+        to: 28,
+        description: "GOLD-ADAPT-MEM-BULK-DEDUP: persist scope-qualified canonical \
+                      bulk-text identities with collision-safe equality and tombstones",
+        run: migration_v27_to_v28,
+    },
 ];
+
+/// v27 -> v28: durable, collision-safe bulk-text import identities.
+///
+/// Existing rows are backfilled active-first per scope/canonical statement so
+/// old databases gain restart-stable dedup immediately. Historical duplicate
+/// facts are not deleted or merged during schema migration; the ledger merely
+/// prevents new duplicates. A revoked-only canonical claim remains a tombstone.
+fn migration_v27_to_v28(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS ground_truth_fingerprints (
+            scope                  TEXT NOT NULL,
+            fingerprint            BLOB NOT NULL
+                                       CHECK (typeof(fingerprint) = 'blob' AND length(fingerprint) = 8),
+            normalised_statement   TEXT NOT NULL,
+            groundtruth_id         INTEGER,
+            first_seen_at          INTEGER NOT NULL,
+            PRIMARY KEY (scope, normalised_statement),
+            FOREIGN KEY (groundtruth_id) REFERENCES idx_groundtruth(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ground_truth_fingerprints_hash
+            ON ground_truth_fingerprints (scope, fingerprint);
+        "#,
+    )
+    .context("migration_v27_to_v28: create ground_truth_fingerprints")?;
+
+    let rows = {
+        let mut statement = conn
+            .prepare(
+                "SELECT id, statement, scope, asserted_at \
+                 FROM idx_groundtruth \
+                 ORDER BY scope ASC, \
+                          CASE WHEN revoked_at IS NULL THEN 0 ELSE 1 END ASC, \
+                          asserted_at DESC, id DESC",
+            )
+            .context("migration_v27_to_v28: prepare ground-truth backfill")?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .context("migration_v27_to_v28: query ground-truth backfill")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("migration_v27_to_v28: collect ground-truth backfill")?
+    };
+
+    for (id, statement, scope, asserted_at) in rows {
+        let normalised = crate::memory::bulk_text::normalise_for_dedup(&statement);
+        if normalised.is_empty() {
+            continue;
+        }
+        let fingerprint =
+            crate::memory::bulk_text::fingerprint_for_normalised(&normalised).to_be_bytes();
+        conn.execute(
+            "INSERT INTO ground_truth_fingerprints \
+                 (scope, fingerprint, normalised_statement, groundtruth_id, first_seen_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(scope, normalised_statement) DO NOTHING",
+            rusqlite::params![scope, &fingerprint[..], normalised, id, asserted_at],
+        )
+        .context("migration_v27_to_v28: backfill ground-truth fingerprint")?;
+    }
+
+    Ok(())
+}
+
+/// v26 -> v27: OMI-MULTIMODAL-01 durable reconciliation ledger.
+///
+/// External conversation ids and revisions make repeated polling and
+/// live-stream -> completed-REST reconciliation idempotent. Segment text is
+/// nullable so the default privacy posture retains alignment metadata and a
+/// hash without retaining raw transcripts. Media payload bytes are never
+/// stored in views.db; only bounded processing metadata is recorded.
+fn migration_v26_to_v27(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_omi_conversations (
+            source_id              TEXT PRIMARY KEY,
+            revision               TEXT NOT NULL,
+            projection_hash        TEXT NOT NULL,
+            status                 TEXT NOT NULL,
+            source                 TEXT,
+            language               TEXT,
+            started_at_ms          INTEGER,
+            finished_at_ms         INTEGER,
+            call_id                TEXT,
+            title                  TEXT,
+            summary                TEXT,
+            metadata_json          TEXT,
+            transcript_hash        TEXT NOT NULL,
+            segment_count          INTEGER NOT NULL DEFAULT 0,
+            photo_count            INTEGER NOT NULL DEFAULT 0,
+            audio_count            INTEGER NOT NULL DEFAULT 0,
+            video_count            INTEGER NOT NULL DEFAULT 0,
+            summary_groundtruth_id INTEGER,
+            kanban_session_id      INTEGER,
+            retain_transcript      INTEGER NOT NULL DEFAULT 0 CHECK (retain_transcript IN (0, 1)),
+            audio_consent          INTEGER NOT NULL DEFAULT 0 CHECK (audio_consent IN (0, 1)),
+            image_consent          INTEGER NOT NULL DEFAULT 0 CHECK (image_consent IN (0, 1)),
+            video_consent          INTEGER NOT NULL DEFAULT 0 CHECK (video_consent IN (0, 1)),
+            first_seen_ts          INTEGER NOT NULL,
+            ingested_at_ts         INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_omi_conversations_ingested
+            ON idx_omi_conversations (ingested_at_ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_omi_conversations_call
+            ON idx_omi_conversations (call_id) WHERE call_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS idx_omi_segments (
+            conversation_id TEXT NOT NULL,
+            segment_id      TEXT NOT NULL,
+            ordinal         INTEGER NOT NULL,
+            start_ms        INTEGER NOT NULL,
+            end_ms          INTEGER NOT NULL,
+            speaker         TEXT,
+            speaker_id      INTEGER,
+            is_user         INTEGER CHECK (is_user IN (0, 1)),
+            person_id       TEXT,
+            stt_provider    TEXT,
+            text_hash       TEXT NOT NULL,
+            text            TEXT,
+            PRIMARY KEY (conversation_id, segment_id),
+            FOREIGN KEY (conversation_id) REFERENCES idx_omi_conversations(source_id)
+                ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_omi_segments_ordinal
+            ON idx_omi_segments (conversation_id, ordinal);
+        CREATE INDEX IF NOT EXISTS idx_omi_segments_timeline
+            ON idx_omi_segments (conversation_id, start_ms, end_ms);
+        CREATE TABLE IF NOT EXISTS idx_omi_media (
+            conversation_id   TEXT NOT NULL,
+            media_id          TEXT NOT NULL,
+            kind              TEXT NOT NULL CHECK (kind IN ('audio', 'image', 'video')),
+            created_at_ms     INTEGER,
+            duration_ms       INTEGER,
+            content_hash      TEXT,
+            processing_status TEXT NOT NULL,
+            metadata_json     TEXT,
+            processed_at_ts   INTEGER,
+            PRIMARY KEY (conversation_id, media_id, kind),
+            FOREIGN KEY (conversation_id) REFERENCES idx_omi_conversations(source_id)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_omi_media_status
+            ON idx_omi_media (processing_status, kind);
+        CREATE TABLE IF NOT EXISTS idx_omi_actions (
+            conversation_id TEXT NOT NULL,
+            action_hash     TEXT NOT NULL,
+            task_id         INTEGER NOT NULL,
+            created_at_ts   INTEGER NOT NULL,
+            PRIMARY KEY (conversation_id, action_hash),
+            FOREIGN KEY (conversation_id) REFERENCES idx_omi_conversations(source_id)
+                ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS idx_omi_state (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_ts INTEGER NOT NULL
+        );
+        "#,
+    )
+    .context("migration_v26_to_v27: create OMI reconciliation ledger")
+}
 
 /// v25 → v26: GOLD-ADAPT-GRAPH-03 — create `idx_memory_communities`.
 ///
@@ -313,10 +493,7 @@ fn migration_v23_to_v24(conn: &Connection) -> Result<()> {
 /// this migration against a partially-migrated database is idempotent,
 /// matching the pattern used by every prior migration.
 fn migration_v22_to_v23(conn: &Connection) -> Result<()> {
-    let _ = conn.execute(
-        "ALTER TABLE idx_relations ADD COLUMN valid_to TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE idx_relations ADD COLUMN valid_to TEXT", []);
     Ok(())
 }
 
@@ -985,6 +1162,88 @@ mod tests {
         let mut conn = open_with_meta(5);
         let final_v = migrate(&mut conn, 5, 3).unwrap();
         assert_eq!(final_v, 5);
+    }
+
+    #[test]
+    fn migration_v26_to_v27_creates_complete_omi_ledger() {
+        let mut conn = open_with_meta(26);
+        let final_v = migrate(&mut conn, 26, 27).unwrap();
+        assert_eq!(final_v, 27);
+        for table in [
+            "idx_omi_conversations",
+            "idx_omi_segments",
+            "idx_omi_media",
+            "idx_omi_actions",
+            "idx_omi_state",
+        ] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap_or_else(|error| panic!("{table} missing after v26->v27: {error}"));
+            assert_eq!(count, 0);
+        }
+    }
+
+    #[test]
+    fn migration_v27_to_v28_backfills_collision_safe_canonical_identities() {
+        let mut conn = open_with_meta(27);
+        conn.execute_batch(
+            r#"
+            CREATE TABLE idx_groundtruth (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                statement       TEXT NOT NULL,
+                source          TEXT NOT NULL,
+                scope           TEXT NOT NULL,
+                asserted_at     INTEGER NOT NULL,
+                revoked_at      INTEGER,
+                fact_state      TEXT NOT NULL DEFAULT 'verified',
+                source_weight   TEXT NOT NULL DEFAULT '{}',
+                confidence      REAL NOT NULL DEFAULT 0.5,
+                evidence        TEXT NOT NULL DEFAULT '[]',
+                maturity        TEXT NOT NULL DEFAULT 'emerging',
+                confirmed_count INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO idx_groundtruth
+                (id, statement, source, scope, asserted_at, revoked_at)
+            VALUES
+                (1, 'The operator builds on Windows.', 'bulk-text', 'global', 10, 20),
+                (2, '  THE   OPERATOR builds on windows  ', 'operator-runtime', 'global', 30, NULL),
+                (3, 'The operator builds on Windows.', 'bulk-text', 'host:lab', 40, NULL);
+            "#,
+        )
+        .unwrap();
+
+        let final_v = migrate(&mut conn, 27, 28).unwrap();
+        assert_eq!(final_v, 28);
+        let global_id: i64 = conn
+            .query_row(
+                "SELECT groundtruth_id FROM ground_truth_fingerprints \
+                 WHERE scope = 'global'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            global_id, 2,
+            "active canonical row wins over revoked history"
+        );
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ground_truth_fingerprints",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "same canonical claim remains separate by scope");
+        let hash_len: i64 = conn
+            .query_row(
+                "SELECT length(fingerprint) FROM ground_truth_fingerprints LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hash_len, 8);
     }
 
     #[test]

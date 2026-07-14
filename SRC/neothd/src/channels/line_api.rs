@@ -274,7 +274,7 @@ struct TextMessage<'a> {
 }
 
 /// `POST /v2/bot/message/push` 200 response (`{ "sentMessages": [{ "id": ".." }] }`).
-/// Tolerant: a 2xx with an unexpected body still counts as sent (`MessageId("sent")`).
+/// A valid JSON body without an ID still counts as sent; malformed JSON does not.
 #[derive(Debug, Clone, Deserialize, Default)]
 struct PushResponse {
     #[serde(default, rename = "sentMessages")]
@@ -329,7 +329,10 @@ pub async fn send_line_push(
         .await
         .map_err(|e| ChannelError::Transport(format!("line POST {url}: {e}")))?;
     map_status(&response, "line push")?;
-    let parsed: PushResponse = response.json().await.unwrap_or_default();
+    let parsed: PushResponse = response
+        .json()
+        .await
+        .map_err(|error| ChannelError::Transport(format!("line push response parse: {error}")))?;
     Ok(MessageId(
         parsed
             .sent_messages
@@ -575,5 +578,28 @@ mod tests {
             serde_json::from_str(r#"{"sentMessages":[{"id":"4611...","quoteToken":"q"}]}"#)
                 .unwrap();
         assert_eq!(parsed.sent_messages[0].id, "4611...");
+    }
+
+    #[tokio::test]
+    async fn malformed_success_response_is_not_reported_as_sent() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/bot/message/push"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .mount(&server)
+            .await;
+        let error = send_line_push(
+            &reqwest::Client::new(),
+            &server.uri(),
+            &crate::secret::SecretString::from("token"),
+            "Ualice",
+            "hello",
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("response parse"), "got: {error}");
     }
 }

@@ -166,6 +166,6 @@ $wrapperLines -join "`r`n" | Set-Content -Path $Path -Encoding ASCII -Force
 Write-Ok "wrote $Path"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  - From any shell:  cmd //c `"$Path test --bin neothd`""
+Write-Host "  - From any shell:  cmd //c `"$Path test --bin neoth`""
 Write-Host "  - Or PowerShell:   .\scripts\cargo-msvc.ps1 test --workspace"
 Write-Host "  - Run again with -CheckOnly to verify the toolchain is still healthy."

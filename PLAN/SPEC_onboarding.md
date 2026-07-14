@@ -95,7 +95,7 @@ Progress: `[1/7]`, `[2/7]`, ... prefix on each section header.
 ================================================================
 
 Neoth is open-source software distributed under the MIT OR Apache-2.0 license.
-Full license text: https://github.com/<owner>/neoth/blob/main/LICENSE
+Full license text: https://github.com/The-Geek-Freaks/NEOTH/blob/main/README.md#license
 
 Telemetry: ZERO. Neoth never phones home. Your data stays on your machine.
 Optional opt-in later: neoth telemetry on
@@ -282,7 +282,8 @@ Connection: [stub] OK
 #### 5d -- Skip
 
 ```
-Skipping provider. neoth chat will error until you run: neoth provider add
+Skipping provider. `neoth chat` will error until you run `neoth init` or
+`neoth hemispheres set`.
 ```
 
 Storage (`~/.neoth/credentials/providers.yaml`, mode 0600):
@@ -412,7 +413,7 @@ Next steps:
   If Telegram configured: send a message to @{bot_username} to test.
   Start the daemon: neothd
 
-Docs: https://github.com/<owner>/neoth/blob/main/docs/install.md
+Docs: https://github.com/The-Geek-Freaks/NEOTH/blob/main/docs/install.md
 
 Neoth knows. Good luck.
 ```

@@ -9,7 +9,8 @@
 //!
 //!   2. **WASM (Phase 2, V10-04)** — `.wasm` modules loaded by
 //!      `wasmtime` at startup. Fuel-capped, memory-capped, hostcall-
-//!      gated. Hot-toggle via `freedom.yaml::plugins.<id>.enabled`.
+//!      gated. Activation is explicit and binds permission plus canonical
+//!      manifest/WASM digests in `plugins.wasm.activations`.
 //!      Each plugin runs in its own `wasmtime::Store` so a crash in
 //!      plugin A cannot corrupt plugin B's state.
 //!
@@ -96,11 +97,8 @@ pub enum Phase {
     /// against `neoth-plugin-sdk` but cannot drop them in as `.wasm`.
     CompiledInOnly,
 
-    /// Reserved for V10-04 work: wasmtime runtime initialised, modules
-    /// can be loaded from `~/.neoth/plugins/*.wasm`. Not reachable
-    /// from current main-line code — the variant exists so consumers
-    /// (CLI, doctor, GUI) write the match arm now and the V10-04 PR
-    /// only has to flip the `current()` switch.
+    /// Wasmtime runtime is built in and modules can be loaded from
+    /// `~/.neoth/plugins/<id>/plugin.wasm` after exact operator approval.
     WasmtimeRuntimeLive,
 }
 
@@ -131,21 +129,19 @@ impl Phase {
     }
 }
 
-/// V10-04 design pin: the host-side WAL event codes the wasmtime
-/// integration will emit. Reserved in the 0xC0..=0xCF tool band per
+/// Host-side WASM event codes live in the 0xC0..=0xCF tool band per
 /// `wal/events.rs` register table — same band as MCP tool calls
 /// because both are "operator authorised something to run code that
-/// isn't neothd's own". Concrete `pub const EVENT_TYPE_PLUGIN_*`
-/// allocations land alongside the wasmtime PR; sketched here so the
-/// band reservation is auditable today.
+/// isn't neothd's own". Concrete `EVENT_TYPE_PLUGIN_*` allocations and emit
+/// sites are live.
 ///
 /// All four are LIVE (emit sites in parentheses):
-///   - `0xC2 PLUGIN_LOADED`        — full-auto activation anchor (`cli/serve_tasks.rs`)
+///   - `0xC2 PLUGIN_LOADED`        — approved plugin loaded (`cli/serve_tasks.rs`)
 ///   - `0xC3 PLUGIN_REJECTED`      — SC-03 integrity-gate refusal (`cli/serve_tasks.rs`)
 ///   - `0xC4 PLUGIN_HOSTCALL`      — capability API hostcall fired (`hostcalls.rs`)
 ///   - `0xC5 PLUGIN_FUEL_EXHAUSTED` — wasmtime OutOfFuel trap (`dispatch.rs::invoke_plugin_with_state`)
 pub const RESERVED_WAL_BAND_HINT: &str =
-    "0xC0..=0xCF (tool band). Concrete codes land with V10-04 implementation PR.";
+    "0xC0..=0xCF (tool band). Plugin codes are allocated in wal/events.rs.";
 
 #[cfg(test)]
 mod tests {

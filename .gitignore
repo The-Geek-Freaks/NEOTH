@@ -119,14 +119,13 @@ nul
 # Machine-local inference cache — never belongs in the public repo.
 .serena/
 
-# --- Local MSVC / build helper scripts (operator-path + username leak) ---
-# check_msvc.bat contains a hardcoded local path and OS username.
-# Any *.bat at crate root is local-operator tooling, not public code.
+# --- Local MSVC / build helper scripts ---
+# check_msvc.bat is operator-local. Public underscore-prefixed wrappers at the
+# Cargo-workspace root (`SRC/`) are portable and intentionally tracked.
 SRC/neothd/check_msvc.bat
-# Belt-and-suspenders: catch any future operator batch scripts in crate roots
+# Belt-and-suspenders: catch future operator batch scripts in crate roots.
 SRC/**/*.bat
-# Tracked MSVC wrapper used by VSCode tasks and coding agents.
-!SRC/_run.bat
+!SRC/_*.bat
 
 # Python bytecode caches (plugin-sdk examples)
 __pycache__/

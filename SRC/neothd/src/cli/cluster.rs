@@ -1,11 +1,9 @@
 //! `neoth cluster` — operator-facing cluster status surface (R-7).
 //!
-//! The Hyperswarm transport that R-7 needs for real peer discovery is
-//! deferred (R-A1 research note). v0.1.x ships single-node operation
-//! via the `LocalOnly` policy. This CLI surfaces what the daemon
-//! would do today + what the operator would configure once the
-//! transport lands so the experience is concrete now and the
-//! upgrade path is visible.
+//! The daemon ships authenticated Hyperswarm discovery and an opt-in iroh
+//! transport. `LocalOnly` remains the honest fallback when clustering is
+//! disabled or no peer transport is active. This CLI reports that live
+//! posture and exposes routing, restore, topology, and swarm operations.
 
 use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
@@ -42,9 +40,10 @@ pub enum ClusterAction {
     /// DES-13 — export this node's backup-at-rest for a crashed peer:
     /// dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL
     /// file so an operator can pull a failed node's replicated data off a
-    /// surviving peer. This is a RAW BACKUP DUMP — it is NOT auto-restore:
-    /// the file cannot be merged back into local recall/memory (that step
-    /// is unbuilt). One JSON object per line:
+    /// surviving peer. This is the auditable input accepted by
+    /// `neoth cluster restore`; restore still applies the replication
+    /// allowlist, CRC checks, conflict policy, and dry-run gate. One JSON
+    /// object per line:
     /// `{origin_peer_pk, origin_seq, event_type, payload_b64, received_at}`.
     #[command(name = "export-foreign")]
     ExportForeign {
@@ -83,10 +82,9 @@ pub enum ClusterAction {
     List,
     /// SL-02: cluster topology view — confirmed peers + per-peer
     /// last-seen age + a recent/stale/uncontacted status, table or
-    /// `--output json`. Read-only over `~/.neoth/cluster.yaml`. Live
-    /// health/TPS/RTT/stability are daemon-in-memory only and surface
-    /// in a follow-on (SL-02b) — this view renders the persisted
-    /// registry data the operator can see from any one-shot.
+    /// `--output json`. Read-only over `~/.neoth/cluster.yaml`, including
+    /// the last persisted heartbeat RTT and stability score. Instantaneous
+    /// daemon-only health/TPS is intentionally outside this one-shot view.
     Topology,
     /// SPEC Phase 2 mDNS scan — spawn the `mdns-sd` daemon for
     /// `--timeout` seconds, print every authenticated announce
@@ -431,10 +429,13 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
     // a coffee shop SSID. The verdict + suggested fix go out
     // first; `--force` bypasses the gate for operators who want
     // the listen-only scan anyway.
-    let freedom_path = FreedomConfig::default_neoth_home().join("freedom.yaml");
-    let (mdns_enabled, policy) = crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+    let config = FreedomConfig::load_from_default_path_or_default()?;
     let ssid = crate::cluster::policy::current_ssid();
-    let gate = crate::cluster::policy::gate_discover(mdns_enabled, &policy, ssid.as_deref());
+    let gate = crate::cluster::policy::gate_discover(
+        config.cluster.mdns.enabled,
+        &config.cluster.policy,
+        ssid.as_deref(),
+    );
     match gate {
         crate::cluster::policy::DiscoverGate::Proceed => {
             let ssid_label = ssid
@@ -468,7 +469,7 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
     // Listen port comes from `freedom.yaml::cluster.listen_port`
     // (operator-tweakable) with `DEFAULT_NEOTH_LISTEN_PORT` (49737)
     // as the fallback.
-    let ts_port = crate::cluster::policy::load_listen_port_from_freedom(&freedom_path);
+    let ts_port = config.cluster.listen_port;
     let ts_candidates = match crate::cluster::tailscale::enumerate(ts_port).await {
         Ok(c) => c,
         Err(e) => {
@@ -740,8 +741,8 @@ fn run_topology(output: &OutputFormat) -> Result<()> {
             let rows = build_topology_rows(&reg.peers, now);
             print!("{}", render_topology_table(&rows));
             println!(
-                "note: health / RTT / stability are daemon-in-memory only and not \
-                 shown in this one-shot view (SL-02b follow-on)."
+                "note: RTT and stability are the latest values persisted in cluster.yaml; \
+                 status derives from the persisted last-seen timestamp."
             );
         }
     }
@@ -897,41 +898,10 @@ fn run_revoke(pub_key: &str) -> Result<()> {
 fn run_toggle(enabled: bool) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let freedom_path = home.join("freedom.yaml");
-    let body = if freedom_path.exists() {
-        std::fs::read_to_string(&freedom_path)?
-    } else {
-        String::new()
-    };
-    let mut root: serde_yaml::Value = if body.is_empty() {
-        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
-    } else {
-        serde_yaml::from_str(&body)?
-    };
-    let map = match &mut root {
-        serde_yaml::Value::Mapping(m) => m,
-        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
-    };
-    let cluster_key_val = serde_yaml::Value::from("cluster");
-    let mut cluster_map = map
-        .get(&cluster_key_val)
-        .and_then(|v| v.as_mapping())
-        .cloned()
-        .unwrap_or_default();
-    let mdns_key = serde_yaml::Value::from("mdns");
-    let mut mdns_map = cluster_map
-        .get(&mdns_key)
-        .and_then(|v| v.as_mapping())
-        .cloned()
-        .unwrap_or_default();
-    mdns_map.insert(
-        serde_yaml::Value::from("enabled"),
-        serde_yaml::Value::from(enabled),
-    );
-    cluster_map.insert(mdns_key, serde_yaml::Value::Mapping(mdns_map));
-    map.insert(cluster_key_val, serde_yaml::Value::Mapping(cluster_map));
-    let tmp = freedom_path.with_extension("yaml.tmp");
-    std::fs::write(&tmp, serde_yaml::to_string(&root)?)?;
-    std::fs::rename(&tmp, &freedom_path)?;
+    FreedomConfig::update_at(&freedom_path, |config| {
+        config.cluster.mdns.enabled = enabled;
+        Ok(())
+    })?;
     println!(
         "cluster.mdns.enabled = {} (in {})",
         enabled,
@@ -976,32 +946,28 @@ fn status_mode_policy(
 }
 
 fn run_status(output: &OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path().ok();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
     let operator = cfg
-        .as_ref()
-        .and_then(|c| c.operator_id.clone())
+        .operator_id
+        .clone()
         .unwrap_or_else(|| "(unset)".to_string());
 
     // SL-00(1a): cluster identity status (public name + whether a shared
     // passphrase is set). Reads freedom.yaml::cluster.name + credentials
     // cluster_passphrase via the fail-closed resolver; never exposes the key.
-    let identity = match &cfg {
-        Some(c) => {
-            let creds = crate::config::credentials::Credentials::load().unwrap_or_default();
-            crate::cluster::identity::cluster_identity_status(c, &creds)
-        }
-        None => crate::cluster::identity::ClusterIdentityStatus {
-            name: None,
-            has_passphrase: false,
-            configured: false,
-            enabled: false,
-            transport_active: false,
-        },
-    };
+    let creds = crate::config::credentials::Credentials::load()?;
+    let identity = crate::cluster::identity::cluster_identity_status(&cfg, &creds);
 
     // SL-00(1b): honest transport state derived from the activation gate.
     let transport_state = if identity.transport_active {
-        "active (Hyperswarm DHT — joined while the daemon runs)"
+        match cfg.cluster.transport {
+            crate::config::ClusterTransport::Peeroxide => {
+                "active (peeroxide Hyperswarm DHT — joined while the daemon runs)"
+            }
+            crate::config::ClusterTransport::Iroh => {
+                "active (iroh QUIC — joined while the daemon runs)"
+            }
+        }
     } else if identity.configured && !identity.enabled {
         "disabled (identity ready; set cluster.enabled: true to activate)"
     } else {
@@ -1017,12 +983,10 @@ fn run_status(output: &OutputFormat) -> Result<()> {
     // `cluster.yaml` surfaces as a hard error (load() never silently
     // empties) rather than a false "0 peers".
     let peer_count = status_peer_count(&home)?;
-    let (mdns_enabled, announce_policy) =
-        crate::cluster::policy::load_policy_from_freedom(&home.join("freedom.yaml"));
     let (mode, policy_name) = status_mode_policy(
         identity.enabled,
-        mdns_enabled,
-        announce_policy.announce_on_untrusted_wifi,
+        cfg.cluster.mdns.enabled,
+        cfg.cluster.policy.announce_on_untrusted_wifi,
     );
 
     match output {
@@ -1190,12 +1154,10 @@ fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
     Ok(out)
 }
 
-
 /// GOLD-G02-CLUSTER-01 — render the foreign-event ledger.
 /// DES-13 — the fixed warning banner every export carries. Honest framing:
 /// this file is a raw backup dump, NOT an importable restore package.
-const EXPORT_FOREIGN_WARNING: &str =
-    "# WARNING: raw backup dump of replicated peer events (idx_foreign_events).\n\
+const EXPORT_FOREIGN_WARNING: &str = "# WARNING: raw backup dump of replicated peer events (idx_foreign_events).\n\
      # These are raw gossip frames. Use `neoth cluster restore <this-file>` to\n\
      # apply same-origin frames back into local recall/memory. Cross-peer rows\n\
      # are skipped. Archive as an off-node backup (DES-13-AUTO-RESTORE-01).";
@@ -1246,12 +1208,9 @@ fn run_export_foreign(
         // Clobber guard: refuse to overwrite an existing file unless --force
         // (a bad path must never silently truncate views.db / a WAL segment).
         if path.exists() && !force {
-            anyhow::bail!(
-                "refusing to overwrite existing file `{out}` (pass --force to replace)"
-            );
+            anyhow::bail!("refusing to overwrite existing file `{out}` (pass --force to replace)");
         }
-        std::fs::write(path, body.as_bytes())
-            .with_context(|| format!("write export to {out}"))?;
+        std::fs::write(path, body.as_bytes()).with_context(|| format!("write export to {out}"))?;
         eprintln!(
             "exported {} foreign event(s){} → {out}",
             rows.len(),
@@ -1328,7 +1287,7 @@ fn run_restore(
             validate_pub_key_hex(pk)?;
             pk.to_string()
         }
-        None => crate::cluster::wal_sync::local_node_pubkey(&home).ok_or_else(|| {
+        None => crate::cluster::wal_sync::local_node_pubkey(&home)?.ok_or_else(|| {
             anyhow::anyhow!(
                 "Cannot derive local node pubkey — no cluster passphrase configured.\n\
                  Either run `neoth init` with a cluster passphrase, or pass --peer <pubkey>."
@@ -1385,8 +1344,7 @@ fn run_restore(
     let mut rows_malformed: usize = 0;
 
     // Deduplicate cross-peer WARNs: one per unique foreign pk, not per row.
-    let mut warned_cross_peer: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut warned_cross_peer: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Audit log opened lazily so --dry-run never creates the file.
     let audit_path = home.join("restore-audit.jsonl");
@@ -1447,21 +1405,20 @@ fn run_restore(
         };
 
         // Decode base64 payload — malformed → skip row.
-        let payload_bytes = match base64::engine::general_purpose::STANDARD
-            .decode(&export_row.payload_b64)
-        {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(
-                    line = line_idx + 1,
-                    error = %e,
-                    "restore: base64 decode failed — skipped"
-                );
-                rows_malformed += 1;
-                rows_skipped += 1;
-                continue;
-            }
-        };
+        let payload_bytes =
+            match base64::engine::general_purpose::STANDARD.decode(&export_row.payload_b64) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        line = line_idx + 1,
+                        error = %e,
+                        "restore: base64 decode failed — skipped"
+                    );
+                    rows_malformed += 1;
+                    rows_skipped += 1;
+                    continue;
+                }
+            };
 
         // Per-row savepoint so a Skip/error on one row doesn't roll back
         // previously Applied rows.
@@ -1473,6 +1430,8 @@ fn run_restore(
 
         let apply_result = crate::cluster::wal_sync::apply_restore_frame(
             &conn,
+            &export_row.origin_peer_pk,
+            export_row.origin_seq,
             event_type,
             &payload_bytes,
             export_row.received_at,
@@ -1505,13 +1464,10 @@ fn run_restore(
 
         // Append to the off-WAL audit log (never in dry-run).
         if !dry_run {
-            let (outcome_tag, skip_reason) =
-                match &outcome {
-                    crate::cluster::wal_sync::RestoreOutcome::Applied => ("applied", String::new()),
-                    crate::cluster::wal_sync::RestoreOutcome::Skipped(r) => {
-                        ("skipped", r.to_string())
-                    }
-                };
+            let (outcome_tag, skip_reason) = match &outcome {
+                crate::cluster::wal_sync::RestoreOutcome::Applied => ("applied", String::new()),
+                crate::cluster::wal_sync::RestoreOutcome::Skipped(r) => ("skipped", r.to_string()),
+            };
             let audit_entry = serde_json::json!({
                 "ts": crate::time::now_unix_i64(),
                 "origin_peer_pk": export_row.origin_peer_pk,
@@ -2017,7 +1973,7 @@ mod tests {
 
     #[test]
     fn build_topology_rows_carries_rtt_and_stability() {
-        // SL-02b: rtt + stability flow from the peer into the row + render.
+        // Persisted cluster.yaml registry values flow into the row + render.
         let mut p = peer("laptop", TNOW - 10);
         p.rtt_ms = Some(37);
         p.stability_score = 0.83;
@@ -2184,7 +2140,8 @@ mod tests {
 
     fn make_restore_db() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch(r#"
+        conn.execute_batch(
+            r#"
             CREATE TABLE idx_episode (
                 event_id   INTEGER PRIMARY KEY,
                 importance REAL    NOT NULL DEFAULT 0.5
@@ -2194,7 +2151,9 @@ mod tests {
                 revoked_at INTEGER,
                 fact_state TEXT NOT NULL DEFAULT 'verified'
             );
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         conn
     }
 
@@ -2220,6 +2179,8 @@ mod tests {
         );
         let r1 = crate::cluster::wal_sync::apply_restore_frame(
             &conn,
+            "local",
+            1,
             crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
             &frame,
             0,
@@ -2230,6 +2191,8 @@ mod tests {
 
         let r2 = crate::cluster::wal_sync::apply_restore_frame(
             &conn,
+            "local",
+            1,
             crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
             &frame,
             0,
@@ -2275,41 +2238,82 @@ mod tests {
 
         // 0x90 EPISODE_CONSOLIDATED
         let p90 = serde_json::json!({"event_id": 1, "importance": 0.8, "ts": 0}).to_string();
-        let f90 = make_wal_frame(crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, p90.as_bytes());
+        let f90 = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            p90.as_bytes(),
+        );
         assert_eq!(
             crate::cluster::wal_sync::apply_restore_frame(
-                &conn, crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, &f90, 0, false
-            ).unwrap(),
+                &conn,
+                "local",
+                90,
+                crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+                &f90,
+                0,
+                false
+            )
+            .unwrap(),
             crate::cluster::wal_sync::RestoreOutcome::Applied
         );
 
         // 0x91 EPISODE_PROMOTED
         let p91 = serde_json::json!({"event_id": 2, "from_importance": 0.1, "to_importance": 0.7, "ts": 0}).to_string();
-        let f91 = make_wal_frame(crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED, p91.as_bytes());
+        let f91 = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED,
+            p91.as_bytes(),
+        );
         assert_eq!(
             crate::cluster::wal_sync::apply_restore_frame(
-                &conn, crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED, &f91, 0, false
-            ).unwrap(),
+                &conn,
+                "local",
+                91,
+                crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED,
+                &f91,
+                0,
+                false
+            )
+            .unwrap(),
             crate::cluster::wal_sync::RestoreOutcome::Applied
         );
 
         // 0x92 EPISODE_ARCHIVED
-        let p92 = serde_json::json!({"event_id": 3, "reason": "below_forget_floor", "ts": 0}).to_string();
-        let f92 = make_wal_frame(crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED, p92.as_bytes());
+        let p92 =
+            serde_json::json!({"event_id": 3, "reason": "below_forget_floor", "ts": 0}).to_string();
+        let f92 = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED,
+            p92.as_bytes(),
+        );
         assert_eq!(
             crate::cluster::wal_sync::apply_restore_frame(
-                &conn, crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED, &f92, 0, false
-            ).unwrap(),
+                &conn,
+                "local",
+                92,
+                crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED,
+                &f92,
+                0,
+                false
+            )
+            .unwrap(),
             crate::cluster::wal_sync::RestoreOutcome::Applied
         );
 
         // 0x98 GROUNDTRUTH_REVOKED
         let p98 = serde_json::json!({"id": 1, "ts": 0}).to_string();
-        let f98 = make_wal_frame(crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED, p98.as_bytes());
+        let f98 = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED,
+            p98.as_bytes(),
+        );
         assert_eq!(
             crate::cluster::wal_sync::apply_restore_frame(
-                &conn, crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED, &f98, 999, false
-            ).unwrap(),
+                &conn,
+                "local",
+                98,
+                crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED,
+                &f98,
+                999,
+                false
+            )
+            .unwrap(),
             crate::cluster::wal_sync::RestoreOutcome::Applied
         );
     }
@@ -2326,6 +2330,8 @@ mod tests {
         );
         let outcome = crate::cluster::wal_sync::apply_restore_frame(
             &conn,
+            "local",
+            97,
             crate::wal::events::EVENT_TYPE_GROUNDTRUTH_ADDED,
             &frame,
             0,
@@ -2358,8 +2364,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let payload =
-            serde_json::json!({"event_id": 7, "importance": 0.9, "ts": 0}).to_string();
+        let payload = serde_json::json!({"event_id": 7, "importance": 0.9, "ts": 0}).to_string();
         let frame = make_wal_frame(
             crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
             payload.as_bytes(),
@@ -2368,6 +2373,8 @@ mod tests {
         // dry_run=true — must NOT write to DB.
         let outcome = crate::cluster::wal_sync::apply_restore_frame(
             &conn,
+            "local",
+            90,
             crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
             &frame,
             0,
@@ -2380,12 +2387,102 @@ mod tests {
 
         // Importance unchanged — no write occurred.
         let imp: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 7", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 7",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(
             (imp - 0.2).abs() < 1e-9,
             "dry-run must not change importance; got {imp}"
         );
+    }
+
+    #[test]
+    fn restore_dry_run_reports_idempotent_boosts_exactly() {
+        let conn = make_restore_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (70, 0.9), (71, 0.9)",
+            [],
+        )
+        .unwrap();
+        for (seq, event_type, payload) in [
+            (
+                70,
+                crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+                serde_json::json!({"event_id": 70, "importance": 0.8, "ts": 0}),
+            ),
+            (
+                71,
+                crate::wal::events::EVENT_TYPE_EPISODE_PROMOTED,
+                serde_json::json!({"event_id": 71, "to_importance": 0.8, "ts": 0}),
+            ),
+        ] {
+            let frame = make_wal_frame(event_type, payload.to_string().as_bytes());
+            let outcome = crate::cluster::wal_sync::apply_restore_frame(
+                &conn, "local", seq, event_type, &frame, 0, true,
+            )
+            .unwrap();
+            assert_eq!(
+                outcome,
+                crate::cluster::wal_sync::RestoreOutcome::Skipped(
+                    crate::cluster::wal_sync::RestoreSkipReason::Idempotent
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn restore_decay_is_idempotent_across_repeated_runs() {
+        let conn = make_restore_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, importance) VALUES (80, 0.8)",
+            [],
+        )
+        .unwrap();
+        let payload = serde_json::json!({"event_id": 80, "reason": "archived", "ts": 0});
+        let frame = make_wal_frame(
+            crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED,
+            payload.to_string().as_bytes(),
+        );
+
+        let first = crate::cluster::wal_sync::apply_restore_frame(
+            &conn,
+            "local",
+            920,
+            crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED,
+            &frame,
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(first, crate::cluster::wal_sync::RestoreOutcome::Applied);
+
+        let second = crate::cluster::wal_sync::apply_restore_frame(
+            &conn,
+            "local",
+            920,
+            crate::wal::events::EVENT_TYPE_EPISODE_ARCHIVED,
+            &frame,
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            second,
+            crate::cluster::wal_sync::RestoreOutcome::Skipped(
+                crate::cluster::wal_sync::RestoreSkipReason::Idempotent
+            )
+        );
+        let importance: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 80",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((importance - 0.4).abs() < 1e-9);
     }
 
     // T-5: cross-peer skip — `parse_event_type_hex` correctness + cross-peer
@@ -2428,39 +2525,57 @@ mod tests {
         )
         .unwrap();
 
-        let apply = |et: u8, payload: &str, dry: bool| {
+        let apply = |seq: u64, et: u8, payload: &str, dry: bool| {
             let frame = make_wal_frame(et, payload.as_bytes());
-            crate::cluster::wal_sync::apply_restore_frame(&conn, et, &frame, 0, dry).unwrap()
+            crate::cluster::wal_sync::apply_restore_frame(&conn, "local", seq, et, &frame, 0, dry)
+                .unwrap()
         };
 
         // Row A: 0x90 → Applied.
-        let pa =
-            serde_json::json!({"event_id": 20, "importance": 0.8, "ts": 0}).to_string();
+        let pa = serde_json::json!({"event_id": 20, "importance": 0.8, "ts": 0}).to_string();
         assert_eq!(
-            apply(crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, &pa, false),
+            apply(
+                1,
+                crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+                &pa,
+                false
+            ),
             crate::cluster::wal_sync::RestoreOutcome::Applied
         );
 
         // Row B: 0x97 (DoNotGossip) → Skipped(DoNotGossip).
         let pb = serde_json::json!({"id": 99, "ts": 0}).to_string();
         assert!(matches!(
-            apply(crate::wal::events::EVENT_TYPE_GROUNDTRUTH_ADDED, &pb, false),
+            apply(
+                2,
+                crate::wal::events::EVENT_TYPE_GROUNDTRUTH_ADDED,
+                &pb,
+                false
+            ),
             crate::cluster::wal_sync::RestoreOutcome::Skipped(
                 crate::cluster::wal_sync::RestoreSkipReason::DoNotGossip
             )
         ));
 
         // Row C: 0x90 → Applied (proves Row B did not abort the sequence).
-        let pc =
-            serde_json::json!({"event_id": 21, "importance": 0.9, "ts": 0}).to_string();
+        let pc = serde_json::json!({"event_id": 21, "importance": 0.9, "ts": 0}).to_string();
         assert_eq!(
-            apply(crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED, &pc, false),
+            apply(
+                3,
+                crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+                &pc,
+                false
+            ),
             crate::cluster::wal_sync::RestoreOutcome::Applied
         );
 
         // Row A's importance changed; Row B left no groundtruth rows.
         let imp20: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 20", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 20",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((imp20 - 0.8).abs() < 1e-9);
         let gt_count: i64 = conn

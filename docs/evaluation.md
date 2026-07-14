@@ -8,14 +8,15 @@ No account, no telemetry, no phone-home. Everything below runs locally.
 
 ## 0. Build it from source (5 min)
 
-Don't trust a bootstrap script you haven't read? Fine — both installers are
-short and reviewable ([SRC/install.sh](../SRC/install.sh),
-[SRC/install.ps1](../SRC/install.ps1)), or skip them entirely:
+The signed release is not published yet, so evaluate the source directly. The
+future release installers are short and reviewable
+([SRC/install.sh](../SRC/install.sh), [SRC/install.ps1](../SRC/install.ps1));
+they become runnable once a compatible signed archive exists.
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH/SRC
-cargo install --path neothd
+cargo install --locked --path neothd --features release-server
 neoth doctor
 ```
 
@@ -30,9 +31,10 @@ neoth preset apply fully-local
 neoth privacy audit --last 30d
 ```
 
-The audit lists every provider call, profile write, and channel egress.
-Fully-local mode should show zero cloud destinations. This is not a settings
-toggle you have to believe — it is an audit log you read.
+The audit lists recorded provider-call, profile-write, and channel-egress
+frames. Fully-local mode should show zero recorded cloud destinations. This is
+an audit log you can inspect, while the threat model separately defines which
+callers have mandatory, best-effort, or no typed coverage.
 
 ## 2. Verify the audit trail is tamper-evident (2 min)
 
@@ -41,9 +43,12 @@ neoth verify
 neoth wal show --last 20
 ```
 
-Every sensitive action lands in an append-only, HMAC-chained WAL.
-`neoth verify` recomputes the chain — corrupt or edit a frame and it fails.
+Core governed paths emit typed events into an append-only, HMAC-chained WAL.
+`neoth verify` recomputes the chain — corrupt or edit a recorded frame and it fails.
 The trust anchor is a key on **your** disk, not a promise in a README.
+This proves integrity, not completeness: the
+[threat model](security/threat-model.md#3-audit-trail-coverage) lists exact WAL
+coverage plus best-effort and log-only exceptions.
 
 ## 3. Verify consent gates fail closed (2 min)
 
@@ -53,9 +58,10 @@ neoth plugin ledger       # every plugin capability that was actually used
 neoth wal show --type plugin_cap_denied   # over-level calls, refused + logged
 ```
 
-Boundary crossings — cloud calls, profile extraction, channel egress, plugin
-capabilities — are denied by default and audited in both directions
-(grant and refusal). Details: [privacy.md](privacy.md).
+The profile, plugin, provider, and channel gates exercised here deny unapproved
+crossings and expose their typed audit records. Dedicated integration opt-ins
+and any audit exceptions are documented separately. Details:
+[privacy.md](privacy.md) and the [threat model](security/threat-model.md).
 
 ## 4. Watch it watch itself (2 min)
 

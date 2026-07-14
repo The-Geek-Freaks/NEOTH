@@ -56,14 +56,13 @@ pub struct Tweaks {
     pub theme: ThemeConfig,
 }
 
-/// HO-05 (R-21) `[theme]` block — ~18 appearance/layout keys the GUI +
+/// HO-05 (R-21) `[theme]` block — appearance/layout keys the GUI +
 /// statusline read at render time. Every field optional so partial
-/// `tweaks.toml` overrides only what the operator set; unknown keys are
-/// ignored by serde so a newer GUI can add keys without breaking older
-/// configs. Colours are free-form strings (`"#ff00aa"` / named) validated
-/// at render time, not here.
+/// `tweaks.toml` overrides only what the operator set. Unknown keys fail
+/// loudly: a retained configuration value may never parse and then disappear.
+/// Colours use `#RGB`, `#RRGGBB`, or `#RRGGBBAA` and are validated before use.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
     pub accent_color: Option<String>,
     pub background_color: Option<String>,
@@ -77,10 +76,8 @@ pub struct ThemeConfig {
     pub show_model_badge: Option<bool>,
     /// `"rounded"` | `"square"` | `"minimal"` — chat bubble shape.
     pub chat_bubble_style: Option<String>,
-    pub icon_set: Option<String>,
     /// `"none"` | `"reduced"` | `"full"` — respects reduce-motion prefs.
     pub animation_speed: Option<String>,
-    pub scrollbar_style: Option<String>,
     pub input_height_lines: Option<u8>,
     pub panel_opacity: Option<f32>,
     pub header_hidden: Option<bool>,
@@ -251,8 +248,8 @@ impl Default for ThemeSource {
 ///
 /// Status strings:
 /// - `"active/<sink-name>"` — wired to a named Slint property or TUI surface.
-/// - `"reserved/<reason>"` — parsed but no sink implemented yet; a visible
-///   diagnostic is emitted when the field is set by the operator.
+/// Every entry is active. Fields without an honest production sink are removed
+/// from the schema instead of being accepted and ignored.
 ///
 /// Every field that appears in `ThemeConfig` PLUS `color_theme` and `statusline`
 /// (top-level `Tweaks` fields that belong to the theme surface) is listed here.
@@ -260,29 +257,25 @@ impl Default for ThemeSource {
 /// must appear in `EffectiveGuiTheme::unsupported_keys`.
 pub const THEME_SUPPORT_MATRIX: &[(&str, &str)] = &[
     // ── top-level Tweaks fields that touch the theme surface ───────────────
-    ("color_theme",        "active/Theme.dark"),
-    ("statusline",         "reserved/no-tui-sink"),
-    // ── [theme] block — 5 actively wired fields ────────────────────────────
-    ("compact_mode",       "active/Theme.density-mode"),
-    ("font_family",        "active/Theme.font-sans-override"),
-    ("font_size_pt",       "active/Theme.font-size-pt-override"),
-    ("sidebar_width_px",   "active/Theme.sidebar-w-override"),
-    ("input_height_lines", "active/Theme.input-height-lines-override"),
-    // ── [theme] block — validated, no Slint sink yet ───────────────────────
-    ("panel_opacity",      "reserved/validated-no-sink"),
-    // ── [theme] block — 11 reserved, no sink ──────────────────────────────
-    ("accent_color",       "reserved/no-sink"),
-    ("background_color",   "reserved/no-sink"),
-    ("foreground_color",   "reserved/no-sink"),
-    ("border_radius_px",   "reserved/no-sink"),
-    ("show_token_count",   "reserved/no-sink"),
-    ("show_model_badge",   "reserved/no-sink"),
-    ("chat_bubble_style",  "reserved/no-sink"),
-    ("icon_set",           "reserved/no-sink"),
-    ("animation_speed",    "reserved/no-sink"),
-    ("scrollbar_style",    "reserved/no-sink"),
-    ("header_hidden",      "reserved/no-sink"),
-    ("sidebar_collapsed",  "reserved/no-sink"),
+    ("color_theme", "active/Theme.dark"),
+    ("statusline", "active/cli-chat.stderr"),
+    // ── [theme] block ──────────────────────────────────────────────────────
+    ("compact_mode", "active/Theme.density-mode"),
+    ("font_family", "active/Theme.font-sans-override"),
+    ("font_size_pt", "active/Theme.font-size-override"),
+    ("sidebar_width_px", "active/Theme.sidebar-w-override"),
+    ("input_height_lines", "active/Theme.input-height-override"),
+    ("panel_opacity", "active/Theme.panel-opacity"),
+    ("accent_color", "active/Theme.accent-color-override"),
+    ("background_color", "active/Theme.background-color-override"),
+    ("foreground_color", "active/Theme.foreground-color-override"),
+    ("border_radius_px", "active/Theme.border-radius-override"),
+    ("show_token_count", "active/Theme.show-token-count"),
+    ("show_model_badge", "active/ChatMessage.model-badge"),
+    ("chat_bubble_style", "active/Theme.chat-bubble-style"),
+    ("animation_speed", "active/Theme.animation-mode"),
+    ("header_hidden", "active/Theme.header-hidden"),
+    ("sidebar_collapsed", "active/Theme.sidebar-collapsed"),
 ];
 
 /// Resolved effective GUI theme values with per-field source attribution.
@@ -301,15 +294,25 @@ pub struct EffectiveGuiTheme {
     pub density_source: ThemeSource,
     /// Font family override — maps to `Theme.font-sans-override`.
     pub font_family: Option<String>,
-    /// Font size in points — maps to `Theme.font-size-pt-override`.
+    /// Font size in points — converted to `Theme.font-size-override` pixels.
     pub font_size_pt: Option<u8>,
     /// Sidebar width in pixels — maps to `Theme.sidebar-w-override`.
     pub sidebar_width_px: Option<u32>,
-    /// Input-area height in lines — maps to `Theme.input-height-lines-override`.
+    /// Input-area height in lines — converted to `Theme.input-height-override`.
     pub input_height_lines: Option<u8>,
-    /// Panel opacity (0.0–1.0), validated; no Slint sink yet.
+    /// Panel opacity (0.0–1.0), mapped to `Theme.panel-opacity`.
     pub panel_opacity: Option<f32>,
-    /// Field names that are set in `tweaks.toml` but have no active sink.
+    pub accent_color: Option<String>,
+    pub background_color: Option<String>,
+    pub foreground_color: Option<String>,
+    pub border_radius_px: Option<u32>,
+    pub show_token_count: bool,
+    pub show_model_badge: bool,
+    pub chat_bubble_style: String,
+    pub animation_speed: String,
+    pub header_hidden: bool,
+    pub sidebar_collapsed: bool,
+    /// Field names rejected by validation before reaching a sink.
     pub unsupported_keys: Vec<String>,
     /// Human-readable diagnostics: invalid values, dotfile fall-through, etc.
     pub diagnostics: Vec<String>,
@@ -327,6 +330,16 @@ impl Default for EffectiveGuiTheme {
             sidebar_width_px: None,
             input_height_lines: None,
             panel_opacity: None,
+            accent_color: None,
+            background_color: None,
+            foreground_color: None,
+            border_radius_px: None,
+            show_token_count: true,
+            show_model_badge: false,
+            chat_bubble_style: "rounded".to_string(),
+            animation_speed: "full".to_string(),
+            header_hidden: false,
+            sidebar_collapsed: false,
             unsupported_keys: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -394,65 +407,113 @@ pub fn resolve_effective_gui_theme(
         }
     }
 
-    // ── font_family ───────────────────────────────────────────────────────
-    e.font_family = tweaks.theme.font_family.clone();
+    // ── scalar overrides ──────────────────────────────────────────────────
+    e.font_family = tweaks.theme.font_family.as_ref().and_then(|value| {
+        if value.trim().is_empty() {
+            reject_theme_value(&mut e, "font_family", "must not be empty");
+            None
+        } else {
+            Some(value.clone())
+        }
+    });
+    e.font_size_pt = tweaks.theme.font_size_pt.and_then(|value| {
+        if value == 0 {
+            reject_theme_value(&mut e, "font_size_pt", "must be greater than zero");
+            None
+        } else {
+            Some(value)
+        }
+    });
+    e.sidebar_width_px = tweaks.theme.sidebar_width_px.and_then(|value| {
+        if value == 0 {
+            reject_theme_value(&mut e, "sidebar_width_px", "must be greater than zero");
+            None
+        } else {
+            Some(value)
+        }
+    });
+    e.input_height_lines = tweaks.theme.input_height_lines.and_then(|value| {
+        if value == 0 {
+            reject_theme_value(&mut e, "input_height_lines", "must be greater than zero");
+            None
+        } else {
+            Some(value)
+        }
+    });
 
-    // ── font_size_pt ──────────────────────────────────────────────────────
-    e.font_size_pt = tweaks.theme.font_size_pt;
-
-    // ── sidebar_width_px ──────────────────────────────────────────────────
-    e.sidebar_width_px = tweaks.theme.sidebar_width_px;
-
-    // ── input_height_lines ────────────────────────────────────────────────
-    e.input_height_lines = tweaks.theme.input_height_lines;
-
-    // ── panel_opacity (validated; no Slint sink yet) ──────────────────────
+    // ── panel_opacity ─────────────────────────────────────────────────────
     if let Some(v) = tweaks.theme.panel_opacity {
         if v.is_finite() && (0.0..=1.0).contains(&v) {
             e.panel_opacity = Some(v);
         } else {
-            e.diagnostics.push(format!(
-                "panel_opacity {} is not finite or out of range 0.0..=1.0; ignoring",
-                v
-            ));
-            e.unsupported_keys.push("panel_opacity".to_string());
+            reject_theme_value(
+                &mut e,
+                "panel_opacity",
+                &format!("{v} is not finite or outside 0.0..=1.0"),
+            );
         }
     }
 
-    // ── reserved fields — emit diagnostic when set ────────────────────────
-    macro_rules! reserved_opt {
-        ($field:expr, $key:literal) => {
-            if $field.is_some() {
-                e.unsupported_keys.push($key.to_string());
-                e.diagnostics.push(format!(
-                    "'{}' is set but has no active sink (reserved/no-sink)",
-                    $key
-                ));
-            }
-        };
+    // ── palette + shape + visibility + motion ─────────────────────────────
+    e.accent_color = validate_color_override(&mut e, "accent_color", &tweaks.theme.accent_color);
+    e.background_color =
+        validate_color_override(&mut e, "background_color", &tweaks.theme.background_color);
+    e.foreground_color =
+        validate_color_override(&mut e, "foreground_color", &tweaks.theme.foreground_color);
+    e.border_radius_px = tweaks.theme.border_radius_px.and_then(|value| {
+        if value == 0 {
+            reject_theme_value(&mut e, "border_radius_px", "must be at least 1px");
+            None
+        } else {
+            Some(value)
+        }
+    });
+    e.show_token_count = tweaks.theme.show_token_count.unwrap_or(true);
+    e.show_model_badge = tweaks.theme.show_model_badge.unwrap_or(false);
+    if let Some(value) = tweaks.theme.chat_bubble_style.as_deref() {
+        if matches!(value, "rounded" | "square" | "minimal") {
+            e.chat_bubble_style = value.to_string();
+        } else {
+            reject_theme_value(
+                &mut e,
+                "chat_bubble_style",
+                "must be rounded, square, or minimal",
+            );
+        }
     }
-    reserved_opt!(tweaks.theme.accent_color,     "accent_color");
-    reserved_opt!(tweaks.theme.background_color,  "background_color");
-    reserved_opt!(tweaks.theme.foreground_color,  "foreground_color");
-    reserved_opt!(tweaks.theme.border_radius_px,  "border_radius_px");
-    reserved_opt!(tweaks.theme.show_token_count,  "show_token_count");
-    reserved_opt!(tweaks.theme.show_model_badge,  "show_model_badge");
-    reserved_opt!(tweaks.theme.chat_bubble_style, "chat_bubble_style");
-    reserved_opt!(tweaks.theme.icon_set,          "icon_set");
-    reserved_opt!(tweaks.theme.animation_speed,   "animation_speed");
-    reserved_opt!(tweaks.theme.scrollbar_style,   "scrollbar_style");
-    reserved_opt!(tweaks.theme.header_hidden,     "header_hidden");
-    reserved_opt!(tweaks.theme.sidebar_collapsed, "sidebar_collapsed");
-
-    // ── statusline (top-level) ────────────────────────────────────────────
-    if tweaks.statusline.is_some() {
-        e.unsupported_keys.push("statusline".to_string());
-        e.diagnostics.push(
-            "'statusline' is set but has no TUI sink yet (reserved/no-tui-sink)".to_string(),
-        );
+    if let Some(value) = tweaks.theme.animation_speed.as_deref() {
+        if matches!(value, "none" | "reduced" | "full") {
+            e.animation_speed = value.to_string();
+        } else {
+            reject_theme_value(&mut e, "animation_speed", "must be none, reduced, or full");
+        }
     }
+    e.header_hidden = tweaks.theme.header_hidden.unwrap_or(false);
+    e.sidebar_collapsed = tweaks.theme.sidebar_collapsed.unwrap_or(false);
 
     e
+}
+
+fn reject_theme_value(e: &mut EffectiveGuiTheme, key: &str, reason: &str) {
+    e.unsupported_keys.push(key.to_string());
+    e.diagnostics.push(format!(
+        "'{key}' rejected before its runtime sink: {reason}"
+    ));
+}
+
+fn validate_color_override(
+    e: &mut EffectiveGuiTheme,
+    key: &str,
+    value: &Option<String>,
+) -> Option<String> {
+    let value = value.as_ref()?;
+    let hex = value.strip_prefix('#').unwrap_or("");
+    if matches!(hex.len(), 3 | 6 | 8) && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(value.clone())
+    } else {
+        reject_theme_value(e, key, "must use #RGB, #RRGGBB, or #RRGGBBAA");
+        None
+    }
 }
 
 /// Resolve `dark` from `tweaks.color_theme`, falling back to built-in dark.
@@ -582,6 +643,17 @@ animation_speed = "reduced"
     }
 
     #[test]
+    fn removed_no_sink_theme_fields_fail_loud() {
+        for field in ["icon_set", "scrollbar_style"] {
+            let body = format!("[theme]\n{field} = \"legacy\"\n");
+            assert!(
+                toml::from_str::<Tweaks>(&body).is_err(),
+                "removed field {field} must not parse and disappear"
+            );
+        }
+    }
+
+    #[test]
     fn renders_statusline_with_substitutions() {
         let t = Tweaks {
             statusline: Some("[{operator}/{model}/{autonomy}]".into()),
@@ -639,8 +711,7 @@ animation_speed = "reduced"
         assert_eq!(src, ModelSource::Dispatch);
 
         // skill wins when no dispatch
-        let (m, src) =
-            resolve_effective_model(None, Some("s"), Some("c"), Some("t"), Some("f"));
+        let (m, src) = resolve_effective_model(None, Some("s"), Some("c"), Some("t"), Some("f"));
         assert_eq!(m, Some("s"));
         assert_eq!(src, ModelSource::Skill);
 
@@ -726,7 +797,13 @@ animation_speed = "reduced"
     fn resolve_model_tweaks_beats_freedom_when_no_higher_tier() {
         // Confirms the tweaks tier wins over freedom when cli/dispatch/skill are absent
         // (regression guard for the token-cap + error-log sites that use effective_model).
-        let (m, src) = resolve_effective_model(None, None, None, Some("tweaks-opus"), Some("freedom-sonnet"));
+        let (m, src) = resolve_effective_model(
+            None,
+            None,
+            None,
+            Some("tweaks-opus"),
+            Some("freedom-sonnet"),
+        );
         assert_eq!(m, Some("tweaks-opus"));
         assert_eq!(src, ModelSource::Tweaks);
     }
@@ -759,7 +836,10 @@ animation_speed = "reduced"
 
     #[test]
     fn b23_dotfile_dark_beats_tweaks_light() {
-        let t = Tweaks { color_theme: Some("light".into()), ..Default::default() };
+        let t = Tweaks {
+            color_theme: Some("light".into()),
+            ..Default::default()
+        };
         let e = resolve_effective_gui_theme(&t, Some("dark"), None);
         assert!(e.dark, "dotfile dark must win over tweaks light");
         assert_eq!(e.dark_source, ThemeSource::Dotfile);
@@ -767,7 +847,10 @@ animation_speed = "reduced"
 
     #[test]
     fn b23_dotfile_light_beats_tweaks_dark() {
-        let t = Tweaks { color_theme: Some("dark".into()), ..Default::default() };
+        let t = Tweaks {
+            color_theme: Some("dark".into()),
+            ..Default::default()
+        };
         let e = resolve_effective_gui_theme(&t, Some("light"), None);
         assert!(!e.dark, "dotfile light must win over tweaks dark");
         assert_eq!(e.dark_source, ThemeSource::Dotfile);
@@ -775,7 +858,10 @@ animation_speed = "reduced"
 
     #[test]
     fn b23_invalid_dotfile_theme_falls_through_with_diagnostic() {
-        let t = Tweaks { color_theme: Some("dark".into()), ..Default::default() };
+        let t = Tweaks {
+            color_theme: Some("dark".into()),
+            ..Default::default()
+        };
         let e = resolve_effective_gui_theme(&t, Some("solarized"), None);
         assert!(e.dark, "should fall through to tweaks dark");
         assert_eq!(e.dark_source, ThemeSource::Tweaks);
@@ -787,7 +873,10 @@ animation_speed = "reduced"
 
     #[test]
     fn b23_tweaks_light_beats_builtin_dark() {
-        let t = Tweaks { color_theme: Some("light".into()), ..Default::default() };
+        let t = Tweaks {
+            color_theme: Some("light".into()),
+            ..Default::default()
+        };
         let e = resolve_effective_gui_theme(&t, None, None);
         assert!(!e.dark);
         assert_eq!(e.dark_source, ThemeSource::Tweaks);
@@ -795,7 +884,10 @@ animation_speed = "reduced"
 
     #[test]
     fn b23_auto_color_theme_resolves_to_dark() {
-        let t = Tweaks { color_theme: Some("auto".into()), ..Default::default() };
+        let t = Tweaks {
+            color_theme: Some("auto".into()),
+            ..Default::default()
+        };
         let e = resolve_effective_gui_theme(&t, None, None);
         assert!(e.dark, "auto must resolve to dark");
         assert_eq!(e.dark_source, ThemeSource::Tweaks);
@@ -803,7 +895,10 @@ animation_speed = "reduced"
 
     #[test]
     fn b23_invalid_tweaks_color_theme_falls_to_builtin_dark_with_diagnostic() {
-        let t = Tweaks { color_theme: Some("matrix".into()), ..Default::default() };
+        let t = Tweaks {
+            color_theme: Some("matrix".into()),
+            ..Default::default()
+        };
         let e = resolve_effective_gui_theme(&t, None, None);
         assert!(e.dark);
         assert_eq!(e.dark_source, ThemeSource::BuiltIn);
@@ -854,7 +949,11 @@ animation_speed = "reduced"
         let t = Tweaks::default();
         let e = resolve_effective_gui_theme(&t, None, Some(99));
         assert_eq!(e.density_mode, 1, "should fall to built-in normal");
-        assert!(e.diagnostics.iter().any(|d| d.contains("density") && d.contains("99")));
+        assert!(
+            e.diagnostics
+                .iter()
+                .any(|d| d.contains("density") && d.contains("99"))
+        );
     }
 
     #[test]
@@ -915,26 +1014,36 @@ animation_speed = "reduced"
         let e = resolve_effective_gui_theme(&t, None, None);
         assert!(e.panel_opacity.is_none());
         assert!(e.unsupported_keys.contains(&"panel_opacity".to_string()));
-        assert!(e.diagnostics.iter().any(|d| d.contains("panel_opacity") && d.contains("1.5")));
+        assert!(
+            e.diagnostics
+                .iter()
+                .any(|d| d.contains("panel_opacity") && d.contains("1.5"))
+        );
     }
 
     #[test]
     fn b23_panel_opacity_zero_and_one_are_valid_boundaries() {
         let mut t = Tweaks::default();
         t.theme.panel_opacity = Some(0.0);
-        assert_eq!(resolve_effective_gui_theme(&t, None, None).panel_opacity, Some(0.0));
+        assert_eq!(
+            resolve_effective_gui_theme(&t, None, None).panel_opacity,
+            Some(0.0)
+        );
         t.theme.panel_opacity = Some(1.0);
-        assert_eq!(resolve_effective_gui_theme(&t, None, None).panel_opacity, Some(1.0));
+        assert_eq!(
+            resolve_effective_gui_theme(&t, None, None).panel_opacity,
+            Some(1.0)
+        );
     }
 
     #[test]
-    fn b23_reserved_keys_produce_unsupported_and_diagnostics() {
+    fn b23_invalid_active_values_are_rejected_with_diagnostics() {
         let mut t = Tweaks::default();
-        t.theme.accent_color = Some("#ff0000".into());
-        t.theme.icon_set = Some("feather".into());
-        t.theme.animation_speed = Some("none".into());
+        t.theme.accent_color = Some("not-a-color".into());
+        t.theme.animation_speed = Some("turbo".into());
+        t.theme.chat_bubble_style = Some("cloud".into());
         let e = resolve_effective_gui_theme(&t, None, None);
-        for key in &["accent_color", "icon_set", "animation_speed"] {
+        for key in &["accent_color", "animation_speed", "chat_bubble_style"] {
             assert!(
                 e.unsupported_keys.contains(&(*key).to_string()),
                 "missing from unsupported_keys: {}",
@@ -949,33 +1058,44 @@ animation_speed = "reduced"
     }
 
     #[test]
-    fn b23_all_reserved_theme_fields_produce_diagnostics() {
+    fn b23_all_retained_theme_fields_resolve_to_runtime_values() {
         let mut t = Tweaks::default();
-        t.theme.accent_color     = Some("x".into());
-        t.theme.background_color = Some("x".into());
-        t.theme.foreground_color = Some("x".into());
+        t.theme.accent_color = Some("#123".into());
+        t.theme.background_color = Some("#112233".into());
+        t.theme.foreground_color = Some("#112233ff".into());
         t.theme.border_radius_px = Some(4);
         t.theme.show_token_count = Some(true);
-        t.theme.show_model_badge = Some(false);
-        t.theme.chat_bubble_style = Some("rounded".into());
-        t.theme.icon_set         = Some("feather".into());
-        t.theme.animation_speed  = Some("none".into());
-        t.theme.scrollbar_style  = Some("thin".into());
-        t.theme.header_hidden    = Some(true);
-        t.theme.sidebar_collapsed = Some(false);
+        t.theme.show_model_badge = Some(true);
+        t.theme.chat_bubble_style = Some("minimal".into());
+        t.theme.animation_speed = Some("reduced".into());
+        t.theme.header_hidden = Some(true);
+        t.theme.sidebar_collapsed = Some(true);
         let e = resolve_effective_gui_theme(&t, None, None);
-        assert_eq!(e.unsupported_keys.len(), 12, "all 12 reserved fields must appear");
+        assert!(
+            e.unsupported_keys.is_empty(),
+            "all retained fields have sinks"
+        );
+        assert_eq!(e.accent_color.as_deref(), Some("#123"));
+        assert_eq!(e.background_color.as_deref(), Some("#112233"));
+        assert_eq!(e.foreground_color.as_deref(), Some("#112233ff"));
+        assert_eq!(e.border_radius_px, Some(4));
+        assert!(e.show_token_count);
+        assert!(e.show_model_badge);
+        assert_eq!(e.chat_bubble_style, "minimal");
+        assert_eq!(e.animation_speed, "reduced");
+        assert!(e.header_hidden);
+        assert!(e.sidebar_collapsed);
     }
 
     #[test]
-    fn b23_statusline_set_produces_reserved_diagnostic() {
+    fn b23_statusline_is_an_active_cli_sink() {
         let t = Tweaks {
             statusline: Some("neoth • {operator}".into()),
             ..Default::default()
         };
         let e = resolve_effective_gui_theme(&t, None, None);
-        assert!(e.unsupported_keys.contains(&"statusline".to_string()));
-        assert!(e.diagnostics.iter().any(|d| d.contains("statusline")));
+        assert!(!e.unsupported_keys.contains(&"statusline".to_string()));
+        assert!(!e.diagnostics.iter().any(|d| d.contains("statusline")));
     }
 
     #[test]
@@ -985,10 +1105,10 @@ animation_speed = "reduced"
             statusline: Some("s".into()),
             ..Default::default()
         };
-        t.theme.compact_mode      = Some(true);
-        t.theme.font_family       = Some("Inter".into());
-        t.theme.font_size_pt      = Some(14);
-        t.theme.sidebar_width_px  = Some(300);
+        t.theme.compact_mode = Some(true);
+        t.theme.font_family = Some("Inter".into());
+        t.theme.font_size_pt = Some(14);
+        t.theme.sidebar_width_px = Some(300);
         t.theme.input_height_lines = Some(4);
         // Dotfile wins for color and density
         let e = resolve_effective_gui_theme(&t, Some("dark"), Some(1));
@@ -1003,21 +1123,43 @@ animation_speed = "reduced"
     }
 
     #[test]
-    fn b23_support_matrix_covers_all_18_theme_fields_plus_color_and_statusline() {
+    fn b23_support_matrix_covers_all_16_retained_theme_fields_plus_color_and_statusline() {
         let keys: Vec<&str> = THEME_SUPPORT_MATRIX.iter().map(|(k, _)| *k).collect();
-        // All 18 ThemeConfig fields
+        // All retained ThemeConfig fields. icon_set and scrollbar_style were
+        // removed because Slint has no honest application-wide sink for them.
         for field in &[
-            "accent_color", "background_color", "foreground_color", "font_family",
-            "font_size_pt", "sidebar_width_px", "border_radius_px", "compact_mode",
-            "show_token_count", "show_model_badge", "chat_bubble_style", "icon_set",
-            "animation_speed", "scrollbar_style", "input_height_lines", "panel_opacity",
-            "header_hidden", "sidebar_collapsed",
+            "accent_color",
+            "background_color",
+            "foreground_color",
+            "font_family",
+            "font_size_pt",
+            "sidebar_width_px",
+            "border_radius_px",
+            "compact_mode",
+            "show_token_count",
+            "show_model_badge",
+            "chat_bubble_style",
+            "animation_speed",
+            "input_height_lines",
+            "panel_opacity",
+            "header_hidden",
+            "sidebar_collapsed",
         ] {
-            assert!(keys.contains(field), "support matrix missing ThemeConfig field: {}", field);
+            assert!(
+                keys.contains(field),
+                "support matrix missing ThemeConfig field: {}",
+                field
+            );
         }
         // Top-level theme-surface fields
-        assert!(keys.contains(&"color_theme"), "support matrix missing top-level: color_theme");
-        assert!(keys.contains(&"statusline"),  "support matrix missing top-level: statusline");
+        assert!(
+            keys.contains(&"color_theme"),
+            "support matrix missing top-level: color_theme"
+        );
+        assert!(
+            keys.contains(&"statusline"),
+            "support matrix missing top-level: statusline"
+        );
     }
 
     #[test]
@@ -1027,12 +1169,12 @@ animation_speed = "reduced"
             .filter(|(_, s)| s.starts_with("active/"))
             .map(|(k, _)| *k)
             .collect();
-        // Exactly the 5 wired fields + color_theme
-        for key in &["color_theme", "compact_mode", "font_family", "font_size_pt",
-                     "sidebar_width_px", "input_height_lines"] {
-            assert!(active.contains(key), "expected '{}' to be active in support matrix", key);
-        }
-        assert_eq!(active.len(), 6, "exactly 6 active entries (color_theme + 5 theme fields)");
+        assert_eq!(active.len(), THEME_SUPPORT_MATRIX.len());
+        assert_eq!(
+            active.len(),
+            18,
+            "16 theme fields + color_theme + statusline"
+        );
     }
 
     #[test]

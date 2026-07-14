@@ -44,12 +44,11 @@
 #![allow(clippy::empty_line_after_doc_comments)]
 #![allow(clippy::derivable_impls)]
 #![allow(clippy::manual_pattern_char_comparison)]
-// V03-06: lib/bin split flipped previously-private modules to `pub mod`,
-// which means clippy now scrutinises enums with `#[doc(hidden)]` test-only
-// variants under the pub-API `manual_non_exhaustive` heuristic. We use the
-// hidden-variant idiom on purpose (e.g. `permissions::gate::ConfirmStrategy`)
-// so external callers can't construct AlwaysAllow yet exhaustive matches in
-// the crate keep working.
+// V03-06: lib/bin split flipped previously-private modules to `pub mod`, so
+// clippy now scrutinises enums that carry hidden test-only variants under the
+// pub-API `manual_non_exhaustive` heuristic. Those variants (for example
+// `permissions::gate::ConfirmStrategy::AlwaysAllow`) are compiled out of
+// production with `#[cfg(test)]`.
 #![allow(clippy::manual_non_exhaustive)]
 
 /// Process-global serialization lock for tests that mutate or read the
@@ -92,11 +91,8 @@ pub mod adr;
 /// federation protocol.  Never blocks inference; consent-gated federation
 /// requires `freedom.yaml :: babel.federate = true` AND AutonomyLevel >= Elevated.
 pub mod analytics;
-pub mod bosk;
 pub mod channels;
-pub mod claude_plugins;
 pub mod cli;
-pub mod cloud;
 // GOLD-SEC-16: the cluster subsystem is gated behind the `cluster` feature
 // (default-ON in release, opt-out via `--no-default-features` for a slimmer
 // solo-node binary).
@@ -115,7 +111,6 @@ pub mod daemon;
 pub mod domain_events;
 pub mod ecology;
 pub mod email;
-pub mod event_ledger;
 pub mod feedback;
 pub mod hooks;
 /// GOLD-ADAPT-ODY-13 — hardware-fit model scorer (GPU-bandwidth → tok/s

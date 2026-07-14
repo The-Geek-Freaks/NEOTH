@@ -13,8 +13,7 @@
 //! the same code path.
 //!
 //! Cons: doesn't work on a literal headless server with no desktop
-//! client. The Phase-2 follow-up wires OpenDAL for direct API
-//! transports there.
+//! client. A future direct-API transport would be a separate capability.
 
 use std::path::PathBuf;
 
@@ -68,22 +67,10 @@ pub async fn run_cloud(args: CloudArgs) -> Result<()> {
 }
 
 fn run_status(output: &OutputFormat) -> Result<()> {
-    // Don't silently swallow YAML parse errors — operator running
-    // `neoth cloud status` against a corrupt freedom.yaml should see
-    // the actual failure, not a misleading "not configured" line.
-    // Missing-file is fine (legitimately "not configured yet").
-    let cfg = match FreedomConfig::load_from_default_path() {
-        Ok(c) => Some(c),
-        Err(e) => {
-            let s = format!("{e:#}");
-            if s.contains("not found") {
-                None
-            } else {
-                eprintln!("warning: could not load freedom.yaml: {s}");
-                None
-            }
-        }
-    };
+    // Missing-file is a legitimate fresh-install state. Existing but
+    // unreadable/malformed policy must fail loudly; treating it as absent could
+    // mirror data using defaults the operator never approved.
+    let cfg = load_optional_config()?;
     let dest = cfg.as_ref().and_then(|c| c.cloud_archive_dest.clone());
     let subdir = cfg
         .as_ref()
@@ -143,7 +130,7 @@ async fn run_sync(
     dry_run: bool,
     output: &OutputFormat,
 ) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path().ok();
+    let cfg = load_optional_config()?;
     let dest = dest_override
         .or_else(|| {
             cfg.as_ref()
@@ -163,9 +150,15 @@ async fn run_sync(
 
     // GOLD-ADAPT-IGNIS-04: cloud mirror has no daemon WAL writer in scope;
     // conflict detection still gates the write, it just emits no audit frame.
-    let stats = sync_archive(&archive_root, &dest, std::path::Path::new(&subdir), dry_run, None)
-        .await
-        .context("cloud sync pass")?;
+    let stats = sync_archive(
+        &archive_root,
+        &dest,
+        std::path::Path::new(&subdir),
+        dry_run,
+        None,
+    )
+    .await
+    .context("cloud sync pass")?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -190,6 +183,16 @@ async fn run_sync(
         }
     }
     Ok(())
+}
+
+fn load_optional_config() -> Result<Option<FreedomConfig>> {
+    let path = FreedomConfig::default_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    FreedomConfig::load_from_path(&path)
+        .map(Some)
+        .with_context(|| format!("load cloud archive policy from {}", path.display()))
 }
 
 #[cfg(test)]
@@ -293,5 +296,37 @@ mod tests {
         }
         assert!(r.is_err());
         assert!(r.unwrap_err().to_string().contains("no cloud destination"));
+    }
+
+    #[test]
+    fn existing_malformed_config_is_not_treated_as_absent() {
+        let _env = crate::test_env::lock();
+        let tmp = tempdir().unwrap();
+        let prev_home = std::env::var("HOME").ok();
+        let prev_user = std::env::var("USERPROFILE").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+            std::env::set_var("USERPROFILE", tmp.path());
+        }
+
+        let path = FreedomConfig::default_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "autonomy: [not valid").unwrap();
+        let error = load_optional_config().unwrap_err();
+
+        if let Some(v) = prev_home {
+            unsafe { std::env::set_var("HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("HOME") };
+        }
+        if let Some(v) = prev_user {
+            unsafe { std::env::set_var("USERPROFILE", v) };
+        } else {
+            unsafe { std::env::remove_var("USERPROFILE") };
+        }
+
+        let message = format!("{error:#}");
+        assert!(message.contains("load cloud archive policy"));
+        assert!(message.contains("parse YAML"));
     }
 }

@@ -18,7 +18,7 @@
 
 use crate::daemon::dreaming::Dream;
 use crate::proactive::action_staging::{
-    ProposalKind, ProposalStatus, ProposedAction, make_proposal_id,
+    ProposalKind, ProposalStatus, ProposedAction, make_proposal_id, make_proposal_id_content_only,
 };
 use crate::skills::creator::{CreateParams, build_manifest};
 
@@ -130,6 +130,71 @@ fn theme_keywords(theme: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// GOLD-ADAPT-KB-03 — forge an operator-reviewed skill draft from a tool-call
+/// sequence that passed the independent-session confidence gate.
+pub fn build_proposal_from_distill_pattern(
+    sequence: &[String],
+    occurrences: usize,
+    supporting_sessions: usize,
+    eligible_sessions: usize,
+    confidence: f64,
+    ts_unix: i64,
+) -> Option<ProposedAction> {
+    if sequence.len() < 2
+        || supporting_sessions < 4
+        || eligible_sessions < supporting_sessions
+        || !confidence.is_finite()
+        || confidence <= 0.8
+        || confidence > 1.0
+    {
+        return None;
+    }
+    let sequence_label = sequence.join(" -> ");
+    let slug = slugify_theme(&sequence_label)?;
+    let core = slug.strip_prefix("dream_").unwrap_or(&slug);
+    let id: String = format!("distill_{core}").chars().take(64).collect();
+    let steps = sequence
+        .iter()
+        .enumerate()
+        .map(|(index, tool)| format!("{}. Invoke `{tool}` and verify its result.", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let params = CreateParams {
+        id,
+        description: format!(
+            "Candidate workflow distilled from repeated tool sequence: {sequence_label}"
+        ),
+        keywords: theme_keywords(&sequence_label),
+        system_prompt: format!(
+            "When the operator's task matches this recurring workflow, use the observed tool-call \
+             order below. Validate prerequisites before the first call, preserve each call's output \
+             for the next step, and stop with the concrete error if a step fails. Never claim a step \
+             completed unless its tool result confirms it.\n\n{steps}"
+        ),
+    };
+    let (_, draft_yaml) = build_manifest(&params).ok()?;
+    let title = format!("Skill: {sequence_label}");
+    let proposal_id = make_proposal_id_content_only(ProposalKind::Skill, &title, &draft_yaml);
+    let rationale = format!(
+        "The nightly self-improvement pass observed this exact tool workflow {occurrences} times \
+         across {supporting_sessions}/{eligible_sessions} independent session traces \
+         ({:.1}% confidence). The draft remains pending until explicit operator approval; NEOTH \
+         never activates it automatically.",
+        confidence * 100.0
+    );
+
+    Some(ProposedAction {
+        id: proposal_id,
+        kind: ProposalKind::Skill,
+        title,
+        rationale,
+        draft_yaml,
+        generated_ts_unix: ts_unix,
+        status: ProposalStatus::Pending,
+        operator_note: String::new(),
+    })
 }
 
 /// KF-04 — forge a candidate skill proposal from one dream. Pure;
@@ -296,24 +361,55 @@ mod tests {
     fn collector_signal_empty_topic_or_reason_yields_none() {
         assert!(build_proposal_from_collector_signal("", "some reason", 1_700_000_100).is_none());
         assert!(build_proposal_from_collector_signal("topic", "", 1_700_000_100).is_none());
-        assert!(
-            build_proposal_from_collector_signal("   ", "  ", 1_700_000_100).is_none()
-        );
+        assert!(build_proposal_from_collector_signal("   ", "  ", 1_700_000_100).is_none());
     }
 
     #[test]
     fn collector_signal_proposal_id_deterministic() {
-        let a = build_proposal_from_collector_signal("docker", "reason text", 1_700_000_200)
-            .unwrap();
-        let b = build_proposal_from_collector_signal("docker", "reason text", 1_700_000_200)
-            .unwrap();
+        let a =
+            build_proposal_from_collector_signal("docker", "reason text", 1_700_000_200).unwrap();
+        let b =
+            build_proposal_from_collector_signal("docker", "reason text", 1_700_000_200).unwrap();
         assert_eq!(a.id, b.id, "same inputs -> same proposal id");
     }
 
     #[test]
     fn collector_signal_un_slugifiable_yields_none() {
+        assert!(build_proposal_from_collector_signal("!!! ???", "reason", 1_700_000_300).is_none());
+    }
+
+    #[test]
+    fn distill_pattern_forges_loader_compatible_pending_skill() {
+        let sequence = vec!["filesystem/read".to_string(), "editor/apply".to_string()];
+        let proposal =
+            build_proposal_from_distill_pattern(&sequence, 6, 5, 6, 5.0 / 6.0, 1_700_000_400)
+                .expect("high-confidence repeated sequence must forge a proposal");
+        assert_eq!(proposal.kind, ProposalKind::Skill);
+        assert!(matches!(proposal.status, ProposalStatus::Pending));
         assert!(
-            build_proposal_from_collector_signal("!!! ???", "reason", 1_700_000_300).is_none()
+            proposal
+                .draft_yaml
+                .contains("distill_filesystem_read_editor_apply")
+        );
+        assert!(proposal.draft_yaml.contains("filesystem/read"));
+        assert!(proposal.rationale.contains("5/6"));
+
+        let duplicate =
+            build_proposal_from_distill_pattern(&sequence, 6, 5, 6, 5.0 / 6.0, 1_800_000_000)
+                .unwrap();
+        assert_eq!(proposal.id, duplicate.id, "proposal dedup is content-bound");
+    }
+
+    #[test]
+    fn distill_pattern_rejects_weak_or_non_independent_evidence() {
+        let sequence = vec!["read".to_string(), "edit".to_string()];
+        assert!(
+            build_proposal_from_distill_pattern(&sequence, 20, 1, 1, 1.0, 1).is_none(),
+            "one looping session is not independent evidence"
+        );
+        assert!(
+            build_proposal_from_distill_pattern(&sequence, 4, 4, 5, 0.8, 1).is_none(),
+            "confidence must be strictly greater than 0.8"
         );
     }
 }

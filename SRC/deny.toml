@@ -146,12 +146,10 @@ ignore = [
     # attribute check (0194) + unbounded NsReader namespace allocation (0195).
     # neothd's DIRECT quick-xml (CalDAV parser) is bumped to 0.41 (fixed).
     # The remaining <0.41 copies are transitive: feed-rs 2.3.1 (RSS/Atom from
-    # operator-configured feeds), opendal-core 0.56 (XML replies from
-    # operator-configured storage endpoints), wayland-scanner (build-time
-    # proc-macro over static protocol XML — zero runtime exposure). All
-    # DoS-only, no memory unsafety. Plan: drop both ignores when feed-rs and
-    # opendal release against quick-xml >=0.41.
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic attr-check DoS — transitive via feed-rs/opendal/wayland-scanner; neothd's own copy bumped to 0.41. Drop when upstreams bump." },
+    # operator-configured feeds) and wayland-scanner (build-time proc-macro over
+    # static protocol XML — zero runtime exposure). All DoS-only, no memory
+    # unsafety. Plan: drop both ignores when those upstreams bump.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic attr-check DoS — transitive via feed-rs/wayland-scanner; neothd's own copy bumped to 0.41. Drop when upstreams bump." },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.41 NsReader memory-exhaustion DoS — same transitive chains, DoS-only. Drop when upstreams bump." },
 ]
 

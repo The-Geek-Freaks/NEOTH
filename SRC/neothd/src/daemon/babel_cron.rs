@@ -14,12 +14,12 @@
 //! 4. logs every 15-min threshold breach via `tracing::warn!` (no WAL
 //!    event — the byte space is exhausted, 255/256).
 //!
-//! ## v0 mapping gaps (deliberate, tracked)
+//! ## Mapping notes
 //!
-//! - **K_d**: the WAL never carries response text, so output-token
-//!   histograms cannot come from a WAL scan. Windows built here have
-//!   `k = 0` → `b_log = None` until the in-process K_d feed ships
-//!   (tracker: GOLD-DELTA-16). `b_bottleneck`/`b_mult` still compute.
+//! - **K_d**: the WAL never carries response text. The in-process bounded
+//!   feed reduces each final response at its source to either the original
+//!   K_d_v0 histogram or a local K_d_embed_v1 vector; raw text is never
+//!   persisted or federated.
 //! - **Retry**: NEOTH has no retry WAL event; a repeat of the identical
 //!   `(server::tool, arguments_hash)` MCP call within 120 s is synthesised
 //!   as a Retry (the `arguments_hash` makes this precise, not fuzzy).
@@ -48,9 +48,8 @@ use crate::coding::feed::FeedEntry;
 use crate::memory::store::ViewsExecutor;
 use crate::permissions::AutonomyLevel;
 use crate::wal::events::{
-    EVENT_TYPE_AGENT_DISPATCHED, EVENT_TYPE_BUDGET_EXCEEDED,
-    EVENT_TYPE_CONTEXT_COMPACTION_START, EVENT_TYPE_MCP_TOOL_CALLED,
-    EVENT_TYPE_PROVIDER_ERROR, EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
+    EVENT_TYPE_AGENT_DISPATCHED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_CONTEXT_COMPACTION_START,
+    EVENT_TYPE_MCP_TOOL_CALLED, EVENT_TYPE_PROVIDER_ERROR, EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
     EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RESOURCE_PRESSURE_ALERT,
 };
 
@@ -90,12 +89,21 @@ fn publish_sse(
                     if w.collapse.collapse_within_5m { 1 } else { 0 },
                 )
             }
-            CronEvent::ThresholdBreached { window_id, score, threshold } => format!(
+            CronEvent::ThresholdBreached {
+                window_id,
+                score,
+                threshold,
+            } => format!(
                 "babel THRESHOLD BREACH on 15-min window {window_id}: b_mult {score:.4} >= {threshold:.4}"
             ),
             CronEvent::WindowComputed(_) => continue,
         };
-        let entry = FeedEntry { ts_ns: now_ns, event_type: 0x00, actor: "babel".to_string(), message };
+        let entry = FeedEntry {
+            ts_ns: now_ns,
+            event_type: 0x00,
+            actor: "babel".to_string(),
+            message,
+        };
         if sse.send(entry).is_ok() {
             published += 1;
         }
@@ -115,6 +123,23 @@ fn autonomy_scalar(level: AutonomyLevel) -> u8 {
     }
 }
 
+/// Derive the privacy-preserving provider/family value carried by federated
+/// windows from the same provider configuration used by inference.
+fn configured_primary_model_family(config: Option<&crate::config::FreedomConfig>) -> String {
+    let Some(config) = config else {
+        return "unknown".to_string();
+    };
+    let Some(provider) = config.provider_kind else {
+        return "unknown".to_string();
+    };
+    let model = config
+        .provider_model
+        .as_deref()
+        .map(|id| config.resolve_model_alias(id))
+        .unwrap_or("default");
+    anonymize::coarsen_model(provider.as_provider_id(), model)
+}
+
 /// Mapper state for the synthesised events (see module doc).
 #[derive(Default)]
 struct MapperState {
@@ -128,7 +153,8 @@ struct MapperState {
 impl MapperState {
     /// Drop repeat-tracking entries older than the synthesis horizon.
     fn prune(&mut self, now: i64) {
-        self.recent_tool_calls.retain(|_, ts| now - *ts <= SYNTH_HORIZON_SECS);
+        self.recent_tool_calls
+            .retain(|_, ts| now - *ts <= SYNTH_HORIZON_SECS);
         if let Some((_, ts)) = &self.pending_fallback {
             if now - *ts > SYNTH_HORIZON_SECS {
                 self.pending_fallback = None;
@@ -147,7 +173,10 @@ fn map_frame(
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(payload) else {
         return Vec::new(); // non-JSON payloads carry nothing we consume
     };
-    let ts = v.get("ts_unix").and_then(|t| t.as_i64()).unwrap_or(header_ts_unix);
+    let ts = v
+        .get("ts_unix")
+        .and_then(|t| t.as_i64())
+        .unwrap_or(header_ts_unix);
     let mut out = Vec::new();
     match event_type {
         EVENT_TYPE_MCP_TOOL_CALLED => {
@@ -156,12 +185,18 @@ fn map_frame(
             let tool = format!("{server}::{tool_name}");
             out.push(WalEventRecord {
                 ts_unix: ts,
-                kind: WalEventKind::McpToolCalled { tool: tool.clone(), agent_id: None },
+                kind: WalEventKind::McpToolCalled {
+                    tool: tool.clone(),
+                    agent_id: None,
+                },
             });
             if v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false) {
                 out.push(WalEventRecord {
                     ts_unix: ts,
-                    kind: WalEventKind::ToolError { tool: Some(tool.clone()), error_kind: None },
+                    kind: WalEventKind::ToolError {
+                        tool: Some(tool.clone()),
+                        error_kind: None,
+                    },
                 });
             }
             if let Some(hash) = v.get("arguments_hash").and_then(|s| s.as_str()) {
@@ -170,7 +205,10 @@ fn map_frame(
                     if ts - prev <= SYNTH_HORIZON_SECS {
                         out.push(WalEventRecord {
                             ts_unix: ts,
-                            kind: WalEventKind::Retry { tool: Some(tool), agent_id: None },
+                            kind: WalEventKind::Retry {
+                                tool: Some(tool),
+                                agent_id: None,
+                            },
                         });
                     }
                 }
@@ -181,13 +219,14 @@ fn map_frame(
             if let Some(name) = v.get("agent_name").and_then(|s| s.as_str()) {
                 out.push(WalEventRecord {
                     ts_unix: ts,
-                    kind: WalEventKind::AgentDispatched { agent_id: name.to_string() },
+                    kind: WalEventKind::AgentDispatched {
+                        agent_id: name.to_string(),
+                    },
                 });
             }
         }
         EVENT_TYPE_PROVIDER_RESPONSE => {
-            let output_tokens =
-                v.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0) as u32;
+            let output_tokens = v.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0) as u32;
             out.push(WalEventRecord {
                 ts_unix: ts,
                 kind: WalEventKind::LlmResponse {
@@ -201,7 +240,10 @@ fn map_frame(
                 if ts - attempt_ts <= SYNTH_HORIZON_SECS {
                     out.push(WalEventRecord {
                         ts_unix: ts,
-                        kind: WalEventKind::FallbackResult { route, success: true },
+                        kind: WalEventKind::FallbackResult {
+                            route,
+                            success: true,
+                        },
                     });
                 }
             }
@@ -221,7 +263,9 @@ fn map_frame(
             );
             out.push(WalEventRecord {
                 ts_unix: ts,
-                kind: WalEventKind::FallbackAttempt { route: route.clone() },
+                kind: WalEventKind::FallbackAttempt {
+                    route: route.clone(),
+                },
             });
             mapper.pending_fallback = Some((route, ts));
         }
@@ -249,7 +293,9 @@ fn map_frame(
             // model's true window size).
             out.push(WalEventRecord {
                 ts_unix: ts,
-                kind: WalEventKind::ContextBoundary { context_used_ratio: 0.95 },
+                kind: WalEventKind::ContextBoundary {
+                    context_used_ratio: 0.95,
+                },
             });
         }
         _ => {}
@@ -326,8 +372,7 @@ impl ScanState {
                 let advance = cursor + dec.header.total_len as usize;
                 if cursor >= start {
                     if emit {
-                        let header_ts =
-                            (dec.header.hlc.physical_ns() / 1_000_000_000) as i64;
+                        let header_ts = (dec.header.hlc.physical_ns() / 1_000_000_000) as i64;
                         events.extend(map_frame(
                             dec.header.event_type,
                             header_ts,
@@ -342,8 +387,13 @@ impl ScanState {
             if let Err(e) = walk {
                 tracing::warn!(segment = %p.display(), error = %e, "babel scan: segment walk aborted");
             }
-            self.offsets
-                .insert(p, SegmentCursor { next_logical: next, physical_len: bytes.len() });
+            self.offsets.insert(
+                p,
+                SegmentCursor {
+                    next_logical: next,
+                    physical_len: bytes.len(),
+                },
+            );
         }
         // Rotated-away segments never come back — drop their cursors.
         self.offsets.retain(|p, _| p.exists());
@@ -357,9 +407,11 @@ impl ScanState {
 pub fn spawn_babel_cron_loop(
     mut cfg: BabelConfig,
     autonomy: AutonomyLevel,
+    home: PathBuf,
     wal_dir: PathBuf,
     views: Arc<ViewsExecutor>,
     sse: Option<Arc<tokio::sync::broadcast::Sender<FeedEntry>>>,
+    provider_config: Option<crate::config::FreedomConfig>,
 ) -> Option<JoinHandle<()>> {
     if !cfg.enabled {
         tracing::info!("babel observer disabled (babel.enabled = false)");
@@ -430,24 +482,21 @@ pub fn spawn_babel_cron_loop(
             &crate::wal::signing::default_signing_key_path(),
         )
         .ok();
+        let primary_model_family = configured_primary_model_family(provider_config.as_ref());
         let federation_meta = crate::analytics::babel::anonymize::SubmissionMetadata {
             contributor_id: crate::analytics::babel::anonymize::derive_contributor_id(
                 &salt,
                 "The-Geek-Freaks/NEOTH",
             ),
-            deployment_context:
-                crate::analytics::babel::anonymize::DeploymentContext::SingleUser,
+            deployment_context: crate::analytics::babel::anonymize::DeploymentContext::SingleUser,
             hardware_tier: crate::analytics::babel::anonymize::HardwareTier::Workstation,
-            primary_model_family: "unknown".to_string(),
+            primary_model_family,
             avg_tasks_per_day_bucket: 0,
             protocol_version:
                 crate::analytics::babel::anonymize::SubmissionMetadata::PROTOCOL_VERSION,
-            runtime_class:
-                crate::analytics::babel::anonymize::SubmissionMetadata::RUNTIME_CLASS,
+            runtime_class: crate::analytics::babel::anonymize::SubmissionMetadata::RUNTIME_CLASS,
         };
-        let pending_dir = crate::config::FreedomConfig::default_neoth_home()
-            .join("babel")
-            .join("pending");
+        let pending_dir = home.join("babel").join("pending");
         // Panel decision Q3 (2026-07-02): the consent prompt fires ONCE per
         // boot, the first time the gate preconditions all hold while
         // federate is still off — informed consent at calibration maturity.
@@ -460,14 +509,42 @@ pub fn spawn_babel_cron_loop(
         const PREDICTOR_PULL_SECS: i64 = 86_400;
         let mut predictor_advisory_logged = false;
 
-        // GOLD-DELTA-16 — live K_d histogram feed from the inference paths.
-        // Without it every WAL-scanned window has k = 0 and b_log stays NULL.
-        let mut khist_rx = crate::analytics::babel::khist::register(1024);
-        if khist_rx.is_none() {
-            tracing::warn!(
-                "babel: K_d feed already registered elsewhere; running without live histograms"
-            );
-        }
+        // GOLD-DELTA-16 — live K_d feed from the inference paths. The default
+        // is the exact v0 histogram; an explicit local model selects v1
+        // embeddings without relabelling histogram data.
+        let k_d_embed_provider = if let Some(model) = cfg.k_d_embedding_model.clone() {
+            match provider_config {
+                Some(mut provider_config) => {
+                    // Select real weights through the existing local provider
+                    // factory; EmbedRequest::model alone is only an identity
+                    // field on current adapters and must not relabel another
+                    // checkpoint's vectors.
+                    provider_config.provider_model = Some(model);
+                    crate::providers::embed_provider_from_config(&provider_config).await
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let k_mode = match cfg.k_d_embedding_model.clone() {
+            Some(requested_model) => {
+                if k_d_embed_provider.is_none() {
+                    tracing::warn!(
+                        model = %requested_model,
+                        "babel: K_d embedding requested but no configured local EmbedProvider is available; windows degrade deterministically"
+                    );
+                }
+                crate::analytics::babel::khist::KdFeedMode::EmbeddingV1 {
+                    requested_model,
+                    provider: k_d_embed_provider,
+                }
+            }
+            None => crate::analytics::babel::khist::KdFeedMode::HistogramV0,
+        };
+        let mut khist_rx = crate::analytics::babel::khist::register(1024, k_mode);
+        let mut signal_rx =
+            crate::analytics::babel::signals::register(cfg.memory_signals, cfg.skill_signals, 1024);
         tracing::info!(
             interval_secs,
             threshold = cfg.threshold,
@@ -499,17 +576,40 @@ pub fn spawn_babel_cron_loop(
             // GOLD-DELTA-16 — merge live K_d histograms into this tick's
             // event stream (token counts stay WAL-sourced: output_tokens 0
             // here avoids double-counting V_d).
-            if let Some(rx) = khist_rx.as_mut() {
-                while let Ok(sample) = rx.try_recv() {
-                    events.push(WalEventRecord {
-                        ts_unix: sample.ts_unix,
-                        kind: WalEventKind::LlmResponse {
+            while let Ok(sample) = khist_rx.try_recv() {
+                let kind = match sample.value {
+                    crate::analytics::babel::khist::KSampleValue::Histogram(token_histogram) => {
+                        WalEventKind::LlmResponse {
                             output_tokens: 0,
-                            token_histogram: sample.histogram,
+                            token_histogram,
                             context_used_ratio: None,
-                        },
-                    });
-                }
+                        }
+                    }
+                    crate::analytics::babel::khist::KSampleValue::Embedding {
+                        vector,
+                        model_identity,
+                    } => WalEventKind::LlmEmbedding {
+                        vector,
+                        model_identity,
+                    },
+                    crate::analytics::babel::khist::KSampleValue::EmbeddingFailure {
+                        model_identity,
+                        reason,
+                    } => WalEventKind::LlmEmbeddingFailure {
+                        model_identity,
+                        reason,
+                    },
+                };
+                events.push(WalEventRecord {
+                    ts_unix: sample.ts_unix,
+                    kind,
+                });
+            }
+            while let Ok(sample) = signal_rx.try_recv() {
+                events.push(WalEventRecord {
+                    ts_unix: sample.ts_unix,
+                    kind: WalEventKind::AuxSignal(sample.kind),
+                });
             }
             let now = crate::time::now_unix_i64();
             let tick_result = views
@@ -530,7 +630,11 @@ pub fn spawn_babel_cron_loop(
                     }
                     for ev in &out {
                         match ev {
-                            CronEvent::ThresholdBreached { window_id, score, threshold } => {
+                            CronEvent::ThresholdBreached {
+                                window_id,
+                                score,
+                                threshold,
+                            } => {
                                 tracing::warn!(
                                     window_id = %window_id,
                                     score,
@@ -636,8 +740,7 @@ pub fn spawn_babel_cron_loop(
                             );
                             let persist = tokio::task::spawn_blocking(move || {
                                 let path = crate::config::FreedomConfig::default_path();
-                                let mut fc =
-                                    crate::config::FreedomConfig::load_from_path(&path)?;
+                                let mut fc = crate::config::FreedomConfig::load_from_path(&path)?;
                                 if fc.babel.epsilon_calibrated.is_none() {
                                     fc.babel.epsilon_calibrated = Some(eps);
                                     fc.save_public_to_default_path()?;
@@ -774,10 +877,9 @@ pub fn spawn_babel_cron_loop(
                             // transport is available.
                             #[cfg(feature = "cluster-iroh")]
                             if let Some(endpoint) = &cfg.federation_endpoint {
-                                let uploader =
-                                    crate::analytics::babel::federation::IrohUploader {
-                                        endpoint: endpoint.clone(),
-                                    };
+                                let uploader = crate::analytics::babel::federation::IrohUploader {
+                                    endpoint: endpoint.clone(),
+                                };
                                 match crate::analytics::babel::federation::drain_pending(
                                     &pending_dir,
                                     &uploader,
@@ -811,9 +913,7 @@ pub fn spawn_babel_cron_loop(
                             // set_threshold — DELTA-15 stays the only mutator.
                             let pubkey = cfg.federation_aggregator_pubkey.as_deref();
                             #[cfg(feature = "cluster-iroh")]
-                            if let (Some(endpoint), Some(_)) =
-                                (&cfg.federation_endpoint, pubkey)
-                            {
+                            if let (Some(endpoint), Some(_)) = (&cfg.federation_endpoint, pubkey) {
                                 if now - last_predictor_pull >= PREDICTOR_PULL_SECS {
                                     last_predictor_pull = now;
                                     let uploader =
@@ -848,9 +948,10 @@ pub fn spawn_babel_cron_loop(
                             }
                             if !predictor_advisory_logged {
                                 predictor_advisory_logged = true;
-                                let cache_dir =
-                                    pending_dir.parent().map(std::path::Path::to_path_buf)
-                                        .unwrap_or_else(|| pending_dir.clone());
+                                let cache_dir = pending_dir
+                                    .parent()
+                                    .map(std::path::Path::to_path_buf)
+                                    .unwrap_or_else(|| pending_dir.clone());
                                 match crate::analytics::babel::federation::load_cached_predictor(
                                     &cache_dir, &gate, pubkey,
                                 ) {
@@ -930,14 +1031,19 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_returns_none_when_disabled() {
-        let cfg = BabelConfig { enabled: false, ..BabelConfig::default() };
+        let cfg = BabelConfig {
+            enabled: false,
+            ..BabelConfig::default()
+        };
         let dir = tempfile::tempdir().expect("tempdir");
         let views = ViewsExecutor::open(&dir.path().join("views.db"), 1).expect("views");
         let h = spawn_babel_cron_loop(
             cfg,
             AutonomyLevel::Standard,
             dir.path().to_path_buf(),
+            dir.path().to_path_buf(),
             views,
+            None,
             None,
         );
         assert!(h.is_none(), "disabled observer must not spawn a task");
@@ -953,20 +1059,54 @@ mod tests {
     }
 
     #[test]
+    fn federation_model_family_uses_resolved_primary_provider_config() {
+        let mut config = crate::config::FreedomConfig::default();
+        config.provider_kind = Some(crate::cli::init::ProviderKind::AnthropicApi);
+        config.provider_model = Some("@primary".to_string());
+        config.models_aliases.insert(
+            "@primary".to_string(),
+            "claude-3-5-sonnet-20241022".to_string(),
+        );
+
+        assert_eq!(
+            configured_primary_model_family(Some(&config)),
+            "anthropic_api/claude-3"
+        );
+        assert_eq!(configured_primary_model_family(None), "unknown");
+    }
+
+    #[test]
     fn repeated_identical_mcp_call_synthesises_retry() {
         let mut m = MapperState::default();
-        let first = map_frame(EVENT_TYPE_MCP_TOOL_CALLED, 0, &mcp_payload("bash", "abc", 100), &mut m);
+        let first = map_frame(
+            EVENT_TYPE_MCP_TOOL_CALLED,
+            0,
+            &mcp_payload("bash", "abc", 100),
+            &mut m,
+        );
         assert_eq!(first.len(), 1, "first call: tool-called only");
-        let second =
-            map_frame(EVENT_TYPE_MCP_TOOL_CALLED, 0, &mcp_payload("bash", "abc", 150), &mut m);
+        let second = map_frame(
+            EVENT_TYPE_MCP_TOOL_CALLED,
+            0,
+            &mcp_payload("bash", "abc", 150),
+            &mut m,
+        );
         assert!(
-            second.iter().any(|e| matches!(e.kind, WalEventKind::Retry { .. })),
+            second
+                .iter()
+                .any(|e| matches!(e.kind, WalEventKind::Retry { .. })),
             "identical (tool, arguments_hash) within horizon → Retry"
         );
-        let much_later =
-            map_frame(EVENT_TYPE_MCP_TOOL_CALLED, 0, &mcp_payload("bash", "abc", 400), &mut m);
+        let much_later = map_frame(
+            EVENT_TYPE_MCP_TOOL_CALLED,
+            0,
+            &mcp_payload("bash", "abc", 400),
+            &mut m,
+        );
         assert!(
-            !much_later.iter().any(|e| matches!(e.kind, WalEventKind::Retry { .. })),
+            !much_later
+                .iter()
+                .any(|e| matches!(e.kind, WalEventKind::Retry { .. })),
             "repeat beyond the horizon is not a retry"
         );
     }
@@ -979,17 +1119,19 @@ mod tests {
         }))
         .unwrap();
         let attempt = map_frame(EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED, 0, &fb, &mut m);
-        assert!(attempt.iter().any(|e| matches!(e.kind, WalEventKind::FallbackAttempt { .. })));
+        assert!(
+            attempt
+                .iter()
+                .any(|e| matches!(e.kind, WalEventKind::FallbackAttempt { .. }))
+        );
         let resp = serde_json::to_vec(&serde_json::json!({
             "output_tokens": 42, "ts_unix": 130,
         }))
         .unwrap();
         let out = map_frame(EVENT_TYPE_PROVIDER_RESPONSE, 0, &resp, &mut m);
         assert!(
-            out.iter().any(|e| matches!(
-                &e.kind,
-                WalEventKind::FallbackResult { success: true, .. }
-            )),
+            out.iter()
+                .any(|e| matches!(&e.kind, WalEventKind::FallbackResult { success: true, .. })),
             "response within horizon completes the pending fallback"
         );
         assert!(m.pending_fallback.is_none(), "pending slot consumed");
@@ -999,8 +1141,10 @@ mod tests {
     fn scan_cursor_only_emits_new_frames() {
         let dir = tempfile::tempdir().expect("tempdir");
         let seg_path = dir.path().join("000001.wal");
-        let f1 = frame_bytes(EVENT_TYPE_AGENT_DISPATCHED,
-            &serde_json::to_vec(&serde_json::json!({"agent_name": "a1", "ts_unix": 10})).unwrap());
+        let f1 = frame_bytes(
+            EVENT_TYPE_AGENT_DISPATCHED,
+            &serde_json::to_vec(&serde_json::json!({"agent_name": "a1", "ts_unix": 10})).unwrap(),
+        );
         std::fs::write(&seg_path, segment(&f1)).expect("write seg");
 
         let mut scan = ScanState::default();
@@ -1010,8 +1154,10 @@ mod tests {
         // No new frames → no events.
         assert!(scan.scan(dir.path(), true).is_empty());
         // Append a second frame → exactly that one is emitted.
-        let f2 = frame_bytes(EVENT_TYPE_AGENT_DISPATCHED,
-            &serde_json::to_vec(&serde_json::json!({"agent_name": "a2", "ts_unix": 20})).unwrap());
+        let f2 = frame_bytes(
+            EVENT_TYPE_AGENT_DISPATCHED,
+            &serde_json::to_vec(&serde_json::json!({"agent_name": "a2", "ts_unix": 20})).unwrap(),
+        );
         let mut all = segment(&f1);
         all.extend_from_slice(&f2);
         std::fs::write(&seg_path, all).expect("rewrite seg");
@@ -1026,7 +1172,9 @@ mod tests {
     #[test]
     fn publish_sse_pushes_fifteen_min_windows_and_breaches_only() {
         use crate::analytics::babel::collapse::CollapseDetection;
-        use crate::analytics::babel::feature::{BabelFeatures, FeatureAlgorithmVersions};
+        use crate::analytics::babel::feature::{
+            BabelFeatures, FeatureAlgorithmVersions, KdPosture,
+        };
         use crate::analytics::babel::score::BabelScores;
         use crate::analytics::babel::window::BabelWindow;
 
@@ -1038,7 +1186,14 @@ mod tests {
                 ts_start: 0,
                 ts_end: granularity.secs() as i64,
                 features: BabelFeatures {
-                    c: 0.5, k: 0.5, m: 0.5, a: 0.5, v: 0.5, d: 1.0, h: 1.0,
+                    c: 0.5,
+                    k: 0.5,
+                    m: 0.5,
+                    a: 0.5,
+                    v: 0.5,
+                    d: 1.0,
+                    h: 1.0,
+                    k_d_posture: KdPosture::default(),
                     algorithm_versions: FeatureAlgorithmVersions::default(),
                 },
                 scores: BabelScores {
@@ -1049,6 +1204,7 @@ mod tests {
                     b_bottleneck: 0.5,
                 },
                 collapse: CollapseDetection::default(),
+                signal_posture: crate::analytics::babel::signals::SignalPosture::default(),
                 schema_version: BabelWindow::SCHEMA_VERSION.into(),
                 algorithm_version_c: "C_d_v0".into(),
                 algorithm_version_k: "K_d_v0".into(),
@@ -1073,7 +1229,11 @@ mod tests {
         assert_eq!(published, 2, "5-min window stays off the feed");
         let first = rx.try_recv().expect("15-min line");
         assert_eq!(first.actor, "babel");
-        assert!(first.message.contains("900s"), "carries window_secs: {}", first.message);
+        assert!(
+            first.message.contains("900s"),
+            "carries window_secs: {}",
+            first.message
+        );
         let second = rx.try_recv().expect("breach line");
         assert!(second.message.contains("THRESHOLD BREACH"));
         assert!(rx.try_recv().is_err(), "nothing else published");
@@ -1083,10 +1243,14 @@ mod tests {
     fn shrunken_segment_resets_cursor_instead_of_stalling() {
         let dir = tempfile::tempdir().expect("tempdir");
         let seg_path = dir.path().join("000001.wal");
-        let f1 = frame_bytes(EVENT_TYPE_AGENT_DISPATCHED,
-            &serde_json::to_vec(&serde_json::json!({"agent_name": "a1", "ts_unix": 10})).unwrap());
-        let f2 = frame_bytes(EVENT_TYPE_AGENT_DISPATCHED,
-            &serde_json::to_vec(&serde_json::json!({"agent_name": "a2", "ts_unix": 20})).unwrap());
+        let f1 = frame_bytes(
+            EVENT_TYPE_AGENT_DISPATCHED,
+            &serde_json::to_vec(&serde_json::json!({"agent_name": "a1", "ts_unix": 10})).unwrap(),
+        );
+        let f2 = frame_bytes(
+            EVENT_TYPE_AGENT_DISPATCHED,
+            &serde_json::to_vec(&serde_json::json!({"agent_name": "a2", "ts_unix": 20})).unwrap(),
+        );
         let mut both = segment(&f1);
         both.extend_from_slice(&f2);
         std::fs::write(&seg_path, &both).expect("write seg");

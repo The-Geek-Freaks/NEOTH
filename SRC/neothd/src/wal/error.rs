@@ -113,4 +113,9 @@ pub enum WalError {
     /// refuse to apply and quarantine both `.cpt` + `.cpt.hmac`.
     #[error("WAL compaction file failed authenticity check: {reason}")]
     CompactionAuthFailed { reason: String },
+
+    /// The daemon must not continue without the key/recovery state that makes
+    /// compaction markers tamper-evident.
+    #[error("WAL compaction state unavailable: {reason}")]
+    CompactionStateUnavailable { reason: String },
 }

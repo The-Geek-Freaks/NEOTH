@@ -4,12 +4,12 @@ NEOTH is a Rust-first, local-first operator runtime. The visible product is a lo
 
 ## System map
 
-<img src="../.github/assets/neoth-readme-system.svg" alt="NEOTH 1.0 control plane — every route crosses trust gates and lands in the WAL-backed memory core" width="100%">
+<img src="../.github/assets/neoth-readme-system.svg" alt="NEOTH 1.0 control plane — governed routes cross trust gates and emit typed events into the WAL-backed memory core" width="100%">
 
 ```text
 Operator
   |
-  | GUI / CLI / Telegram / WhatsApp / Slack / Discord / Keet / email / calendar
+  | GUI / CLI / Telegram / WhatsApp / Slack / Discord / CalDAV / optional IMAP
   v
 Channel + Surface Adapters
   |
@@ -42,13 +42,17 @@ Response + Action Gate
 WAL + SQLite Views + Obsidian Mirror
 ```
 
-Every sensitive path is designed to cross the same trust boundary: policy, permission, WAL event, and operator-visible audit.
+Governed sensitive paths are designed to cross an explicit trust boundary:
+policy or a dedicated opt-in, permission where the action engine applies, and
+an operator-visible audit event where the path has WAL coverage. The exact
+per-surface controls and documented best-effort/log-only exceptions are in the
+[threat model](security/threat-model.md).
 
 ## Core components
 
 | Component | Job |
 | :-- | :-- |
-| **Surface adapters** | Normalize GUI, CLI, chat apps, email, calendar, n8n, cron, and coding sessions into a shared request shape. |
+| **Surface adapters** | Normalize GUI, CLI, chat apps, CalDAV, source-build IMAP triage, n8n, cron, and coding sessions into a shared request shape. |
 | **Ingress sanitizer** | Blocks prompt-injection surfaces, quoted content, hostile markup, and unsafe inbound payloads before memory or profile learning. |
 | **Pipeline router** | Builds the enriched request: profile, recall, skills, tools, operator rules, channel context, and active task state. |
 | **Provider router** | Picks cloud/local providers by role, cost, latency, privacy, model capability, and circuit-breaker state. |
@@ -58,13 +62,13 @@ Every sensitive path is designed to cross the same trust boundary: policy, permi
 | **Babel-Index observer** | Async, content-free collapse scoring over the WAL stream: seven variables per rolling window, pre-registered failure labels, early warning before degradation ([babel-index.md](babel-index.md)). |
 | **Obsidian mirror** | Human-readable knowledge layer for decisions, notes, reflections, project memory, and operator inspection. |
 | **Plugin runtime** | Skills as data, WASM plugins as sandboxed code with capability gates. |
-| **Private mesh** | LAN/mDNS, Tailscale, Hysteria, Keet, and consent-gated cluster nodes. |
+| **Private mesh** | LAN/mDNS, Tailscale, Hysteria, peeroxide/Hyperswarm, and consent-gated cluster nodes. This is a NEOTH protocol, not Keet interop. |
 
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.
 
-It records:
+Its typed event families record core activity including:
 
 - inbound and outbound messages
 - provider calls and destinations
@@ -76,6 +80,10 @@ It records:
 - recovery and verification events
 - cluster and capability lease events
 
+This list describes event families, not a proof that every external side effect
+successfully appended a frame. `neoth verify` proves integrity of recorded
+frames; coverage and fail-closed versus best-effort behavior are surface-specific.
+
 Why this matters:
 
 | Property | Result |
@@ -84,7 +92,7 @@ Why this matters:
 | Rebuildable views | SQLite projections are convenient, not irreplaceable. |
 | Checks and authentication | Corruption and tamper paths become visible. |
 | Redaction semantics | Sensitive values can be removed while preserving integrity events. |
-| Operator commands | `neoth wal verify`, `neoth privacy audit`, and profile evidence views have real backing data. |
+| Operator commands | `neoth verify`, `neoth privacy audit`, and profile evidence views have real backing data. |
 
 ## Memory regions
 
@@ -178,7 +186,7 @@ NEOTH can run as one node or as a consent-gated private mesh.
 | LAN/mDNS | Local discovery at home or office. |
 | Tailscale/WireGuard | Private cross-device mesh. |
 | Hysteria | Restricted-network relay path. |
-| Keet | P2P channel and future swarm direction. |
+| peeroxide/Hyperswarm | Optional transport for NEOTH's own authenticated cluster protocol; not a Keet room/message adapter. |
 | Cluster policy | Node pairing, capability leases, topology view, health and resource state. |
 
 Keys identify peers; operator approval grants membership and capabilities.

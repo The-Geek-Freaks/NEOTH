@@ -379,8 +379,7 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
     };
 
     let cred_path = default_path();
-    let creds = Credentials::load_or_default(&cred_path)
-        .context("load credentials.yaml")?;
+    let creds = Credentials::load_or_default(&cred_path).context("load credentials.yaml")?;
 
     let store = keychain::open_store()
         .context("open OS credential store — is the `keychain` feature compiled in?")?;
@@ -420,7 +419,11 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
                 keychain::MigrationDirection::ToKeychain => store.backend_name(),
                 keychain::MigrationDirection::ToFile => "credentials.yaml",
             };
-            println!("{verb} {} secret(s) → {}:", report.moved.len(), backend_label);
+            println!(
+                "{verb} {} secret(s) → {}:",
+                report.moved.len(),
+                backend_label
+            );
             for k in &report.moved {
                 println!("  + {k}");
             }
@@ -469,15 +472,16 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
         match direction {
             keychain::MigrationDirection::ToFile => {
                 // Phase 1: write the populated file (atomic inside `.write`).
-                updated_creds
-                    .write(&cred_path)
-                    .with_context(|| format!("write updated credentials to {}", cred_path.display()))?;
+                updated_creds.write(&cred_path).with_context(|| {
+                    format!("write updated credentials to {}", cred_path.display())
+                })?;
 
                 // Phase 2: VERIFY the file holds every migrated secret before we
                 // switch the backend or delete anything from the keychain. If a
                 // secret is missing, the keychain is still intact — no data lost.
-                let reloaded = Credentials::load_or_default(&cred_path)
-                    .context("re-load credentials.yaml to verify the migration before purging keychain")?;
+                let reloaded = Credentials::load_or_default(&cred_path).context(
+                    "re-load credentials.yaml to verify the migration before purging keychain",
+                )?;
                 let reloaded_yaml = serde_yaml::to_value(&reloaded)
                     .context("serialize reloaded credentials for verification")?;
                 let map = reloaded_yaml
@@ -488,7 +492,9 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
                     .iter()
                     .filter(|key| {
                         let k = serde_yaml::Value::String((*key).clone());
-                        map.get(&k).and_then(|v| v.as_str()).is_none_or(|s| s.is_empty())
+                        map.get(&k)
+                            .and_then(|v| v.as_str())
+                            .is_none_or(|s| s.is_empty())
                     })
                     .collect();
                 if !missing.is_empty() {
@@ -497,7 +503,11 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
                          ({}); the keychain is left INTACT — no data lost. Re-run `neoth credential \
                          migrate --to file`.",
                         missing.len(),
-                        missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                        missing
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
                 }
 
@@ -560,9 +570,9 @@ fn run_migrate(to: &str, dry_run: bool, output: OutputFormat) -> Result<()> {
                 // Phase 3: backend now reads the keychain → safe to blank the
                 // file. A crash before this leaves plaintext in the file, still
                 // reachable and correct; the next run re-blanks it.
-                updated_creds
-                    .write(&cred_path)
-                    .with_context(|| format!("write updated credentials to {}", cred_path.display()))?;
+                updated_creds.write(&cred_path).with_context(|| {
+                    format!("write updated credentials to {}", cred_path.display())
+                })?;
             }
         }
     }
@@ -598,8 +608,8 @@ fn switch_secrets_backend(direction: keychain::MigrationDirection) -> anyhow::Re
         }
         return Ok(());
     }
-    let body = std::fs::read_to_string(&freedom_path)
-        .context("read freedom.yaml for backend update")?;
+    let body =
+        std::fs::read_to_string(&freedom_path).context("read freedom.yaml for backend update")?;
     let updated = update_or_append_secrets_backend(&body, new_backend);
     atomic_write_str(&freedom_path, &updated).context("write updated freedom.yaml")
 }
@@ -627,10 +637,7 @@ fn missing_freedom_backend_content(direction: keychain::MigrationDirection) -> O
 /// behind (not a half-written `path`).
 fn atomic_write_str(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
     let parent = path.parent().unwrap_or(std::path::Path::new("."));
-    let file_stem = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file");
+    let file_stem = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     let tmp = parent.join(format!(".~{}.{}.tmp", file_stem, std::process::id()));
     std::fs::write(&tmp, content.as_bytes())
         .with_context(|| format!("write temp file {}", tmp.display()))?;
@@ -664,7 +671,7 @@ fn update_or_append_secrets_backend(body: &str, value: &str) -> String {
         let eol_pos = bytes[pos..]
             .iter()
             .position(|&b| b == b'\n')
-            .map(|p| pos + p + 1)   // include the \n
+            .map(|p| pos + p + 1) // include the \n
             .unwrap_or(bytes.len()); // no trailing newline on last line
 
         let raw_line = &body[pos..eol_pos];
@@ -844,7 +851,10 @@ mod tests {
             .lines()
             .filter(|l| !l.trim_start().starts_with('#') && l.contains("secrets_backend:"))
             .count();
-        assert_eq!(live_count, 1, "must have exactly one live secrets_backend key");
+        assert_eq!(
+            live_count, 1,
+            "must have exactly one live secrets_backend key"
+        );
     }
 
     #[test]

@@ -79,15 +79,33 @@ impl LoopConfig {
     pub fn for_dissent_invoke(
         autonomy: AutonomyLevel,
         neoth_home: PathBuf,
+        tool_call_budget: Option<u64>,
     ) -> Self {
         Self {
             max_rounds: 1,
             until: Vec::new(),
-            tool_call_budget: None,
+            tool_call_budget,
             autonomy,
             refine_enabled: false,
             neoth_home,
         }
+    }
+
+    /// Validate invariants at the shared engine boundary so every caller
+    /// (chat, channels, standalone CLI, dissent auto-invoke) receives the same
+    /// fail-closed safety contract.
+    pub fn validate_safety(&self) -> Result<()> {
+        if self.max_rounds == 0 {
+            anyhow::bail!("loop max_rounds must be at least 1");
+        }
+        if self.autonomy == AutonomyLevel::Full
+            && self.tool_call_budget.is_none_or(|budget| budget == 0)
+        {
+            anyhow::bail!(
+                "full-autonomy loops require a positive tool_call_budget — uncapped L3 execution is blocked"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -123,6 +141,10 @@ pub struct LoopRound {
     pub failed_calls: u32,
     pub stop_approved: bool,
     pub refine_fired: bool,
+    /// Response-local score used by the refine threshold before any refine
+    /// call. Defaults to zero when reading records written by older versions.
+    #[serde(default)]
+    pub quality_score: f32,
     pub ts_start: i64,
     pub ts_end: i64,
 }
@@ -232,6 +254,17 @@ fn extract_evidence(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Score one loop round using the two quality components observable on a
+/// single-provider response: provider tier and response-local signals. Council
+/// memory/diversity components require competing hemispheres, so their weights
+/// are excluded and the remaining 0.75 weight is normalized back to `[0, 1]`.
+fn round_quality_score(provider_id: &str, text: &str) -> f32 {
+    const OBSERVED_WEIGHT: f32 = 0.40 + 0.35;
+    let tier = crate::council::quality_score::provider_tier(provider_id);
+    let dynamic = crate::council::quality_score::dynamic_signal_from_text(text);
+    ((0.40 * tier + 0.35 * dynamic) / OBSERVED_WEIGHT).clamp(0.0, 1.0)
+}
+
 // ---------------------------------------------------------------------------
 // Core entry point
 // ---------------------------------------------------------------------------
@@ -257,13 +290,25 @@ pub async fn run_loop(
     servers: &crate::mcp::McpServers,
     writer: &WalWriterHandle,
     freedom: &crate::config::FreedomConfig,
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     elicitation: &crate::cli::elicitation::ElicitationHandler,
 ) -> Result<LoopRunRecord> {
-    let loop_id = new_loop_id();
-    let prompt_hash = format!(
-        "{:016x}",
-        xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes())
+    config.validate_safety()?;
+
+    // Own the boundary here as well as at the chat/channel entry point. Most
+    // callers already pass an authorized decorator, but the council
+    // dissent-invoke path builds the winning role provider just in time. The
+    // nested decorator deliberately forwards `complete_authorized`, so every
+    // loop/goal-judge/compaction round reaches exactly one leaf authorization.
+    let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+        provider,
+        authorizer.clone(),
+        req.model.clone(),
+        "loop_provider_round",
     );
+    let provider: &dyn crate::providers::Provider = &authorized_provider;
+    let loop_id = new_loop_id();
+    let prompt_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()));
     let ts_start = now_unix();
     let has_until = !config.until.is_empty();
     // P2 — the stable task prompt. Each round after the first re-bases `req.prompt`
@@ -353,7 +398,7 @@ pub async fn run_loop(
             provider,
             req.clone(),
             servers,
-            config.autonomy,
+            &freedom.autonomy_policy(),
             writer,
             Some(rollback),
             // No skill allowlist at the loop-engine level; the inner dispatch
@@ -388,14 +433,17 @@ pub async fn run_loop(
 
         // --- Self-reflect refine pass (L2+ autonomy + refine_enabled) ---
         let mut refine_fired = false;
+        let quality_score = round_quality_score(provider.name(), &outcome.final_text);
         let round_text = if config.refine_enabled
             && is_elevated_or_full(config.autonomy)
-            && crate::council::self_reflect::should_refine(freedom, 0.0, 0)
+            && crate::council::self_reflect::should_refine(freedom, quality_score, 0)
         {
             match crate::cli::chat::build_hemisphere_for_loop(
                 freedom,
+                &config.neoth_home,
                 crate::config::inference::HemisphereRole::Left,
                 &req,
+                authorizer.clone(),
             )
             .await
             {
@@ -456,6 +504,7 @@ pub async fn run_loop(
                 "successful_calls": outcome.successful_calls,
                 "failed_calls": outcome.failed_calls,
                 "stop_approved": stop_approved,
+                "quality_score": quality_score,
                 "ts_unix": round_ts_end,
             }),
         )
@@ -469,6 +518,7 @@ pub async fn run_loop(
             failed_calls: outcome.failed_calls,
             stop_approved,
             refine_fired,
+            quality_score,
             ts_start: round_ts_start,
             ts_end: round_ts_end,
         });
@@ -522,8 +572,7 @@ pub async fn run_loop(
         "ts_unix": ts_end,
     });
     if matches!(stop_reason, StopReason::BudgetExceeded) {
-        completed["accumulated_tool_calls"] =
-            serde_json::json!(state.accumulated_tool_calls);
+        completed["accumulated_tool_calls"] = serde_json::json!(state.accumulated_tool_calls);
         completed["budget"] = serde_json::json!(config.tool_call_budget);
     }
     emit_wal(writer, EVENT_TYPE_LOOP_COMPLETED, completed).await;
@@ -604,6 +653,7 @@ mod tests {
                 failed_calls: 0,
                 stop_approved: false,
                 refine_fired: false,
+                quality_score: 0.75,
                 ts_start: 1000,
                 ts_end: 1001,
             }],
@@ -691,10 +741,49 @@ mod tests {
         let lc = LoopConfig::for_dissent_invoke(
             AutonomyLevel::Standard,
             PathBuf::from("/tmp/neoth"),
+            None,
         );
         assert_eq!(lc.max_rounds, 1);
         assert!(lc.until.is_empty());
         assert!(!lc.refine_enabled);
+    }
+
+    #[test]
+    fn shared_entry_rejects_uncapped_or_zero_budget_full_autonomy() {
+        for budget in [None, Some(0)] {
+            let cfg = LoopConfig {
+                max_rounds: 1,
+                until: vec![],
+                tool_call_budget: budget,
+                autonomy: AutonomyLevel::Full,
+                refine_enabled: false,
+                neoth_home: PathBuf::from("/tmp"),
+            };
+            assert!(cfg.validate_safety().is_err(), "budget={budget:?}");
+        }
+
+        let capped = LoopConfig {
+            max_rounds: 1,
+            until: vec![],
+            tool_call_budget: Some(1),
+            autonomy: AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: PathBuf::from("/tmp"),
+        };
+        assert!(capped.validate_safety().is_ok());
+    }
+
+    #[test]
+    fn shared_entry_rejects_zero_rounds_for_every_caller() {
+        let cfg = LoopConfig {
+            max_rounds: 0,
+            until: vec![],
+            tool_call_budget: None,
+            autonomy: AutonomyLevel::Standard,
+            refine_enabled: false,
+            neoth_home: PathBuf::from("/tmp"),
+        };
+        assert!(cfg.validate_safety().is_err());
     }
 
     #[test]
@@ -703,6 +792,25 @@ mod tests {
         assert!(!is_elevated_or_full(AutonomyLevel::Standard));
         assert!(is_elevated_or_full(AutonomyLevel::Elevated));
         assert!(is_elevated_or_full(AutonomyLevel::Full));
+    }
+
+    #[test]
+    fn round_refine_gate_uses_measured_quality_instead_of_constant_zero() {
+        let high_quality = format!("{}\n\n- verified\n- complete", "substantive ".repeat(80));
+        let high = round_quality_score("claude_cli", &high_quality);
+        let low = round_quality_score("claude_cli", "I'm sorry, but I cannot help.");
+        assert!(high >= 0.90, "high-quality score was {high}");
+        assert!(low < 0.90, "low-quality score was {low}");
+
+        let mut freedom = crate::config::FreedomConfig::default();
+        freedom.council.self_reflect_enabled = true;
+        freedom.council.refine_threshold = Some(0.90);
+        assert!(!crate::council::self_reflect::should_refine(
+            &freedom, high, 0
+        ));
+        assert!(crate::council::self_reflect::should_refine(
+            &freedom, low, 0
+        ));
     }
 
     /// Verifies that the LoopState stop verifier approves an unconstrained stop.
@@ -722,7 +830,10 @@ mod tests {
             claimed_evidence: vec![],
         };
         let j = state.stop_verifier.judge(&proposal, AutonomyLevel::Full);
-        assert!(j.is_approved(), "no-criteria verifier must approve any stop");
+        assert!(
+            j.is_approved(),
+            "no-criteria verifier must approve any stop"
+        );
     }
 
     /// Verifies that the LoopState stop verifier rejects an unmet criterion.

@@ -8,7 +8,7 @@
 id = "hello"
 name = "hello"
 version = "0.1.0"
-description = "Minimal NEOTH plugin — exports neoth_run() -> 0"
+description = "Minimal NEOTH ABI v1 plugin built through neoth-plugin-sdk"
 
 # Memory cap (bytes). Defaults to 64 MiB if unset. Optional.
 # memory_limit_bytes = 16777216
@@ -24,4 +24,4 @@ hook_stages = ["pre_provider_call"]
 
 # Hostcall permissions requested. This plugin uses none — the
 # `neoth_run()` body has no host imports.
-requested_permissions = []
+requested_permissions = "none"

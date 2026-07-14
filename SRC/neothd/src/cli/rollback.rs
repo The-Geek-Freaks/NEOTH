@@ -419,7 +419,7 @@ fn apply_plan_mcp_tool_invoke(
 /// - **WhatsApp**: (d) bookmark-only — the WhatsApp Business API has no
 ///   delete or edit primitive. Render explicit manual-action guidance
 ///   (operator sends an apology + marks the original in their notes).
-/// - **keet / other**: bail with not-yet-implemented + format-hint.
+/// - **other**: bail with not-yet-implemented + format-hint.
 ///
 /// Target format pinned: `"<platform>:<chat_id>:<message_id>"` (3-part)
 /// or `"<platform>:<message_id>"` (2-part legacy fallback — chat_id
@@ -865,9 +865,9 @@ fn json_value_to_sql(v: &serde_json::Value) -> rusqlite::types::Value {
             }
         }
         serde_json::Value::String(s) => Value::Text(s.clone()),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            Value::Text(serde_json::to_string(v).unwrap_or_default())
-        }
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Value::Text(
+            serde_json::to_string(v).expect("serde_json::Value serialization is infallible"),
+        ),
     }
 }
 

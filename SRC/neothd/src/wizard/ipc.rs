@@ -145,7 +145,7 @@ pub enum WizardIpcMessage {
     RecommendationReady { recommendation: Recommendation },
 
     /// Operator overrode the recommended channel (CLI → Telegram
-    /// → Keet → Slack).
+    /// → Telegram → Slack).
     ChannelOverride { channel: ChannelRecommendation },
 
     /// Operator overrode the recommended VPN posture.
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn channel_override_round_trip() {
         let m = WizardIpcMessage::ChannelOverride {
-            channel: ChannelRecommendation::Keet,
+            channel: ChannelRecommendation::Telegram,
         };
         let json = serde_json::to_string(&m).unwrap();
         let back: WizardIpcMessage = serde_json::from_str(&json).unwrap();

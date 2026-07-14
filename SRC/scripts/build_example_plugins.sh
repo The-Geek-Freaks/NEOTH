@@ -69,4 +69,4 @@ build_plugin recall_summariser
 echo ""
 echo "==> All example plugins built."
 echo "    Activate with: neoth plugin enable echo"
-echo "    Activate with: neoth plugin enable recall-summariser"
+echo "    Activate with: neoth plugin enable recall_summariser"

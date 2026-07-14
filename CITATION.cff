@@ -10,8 +10,7 @@ url: "https://github.com/The-Geek-Freaks/NEOTH"
 license:
   - MIT
   - Apache-2.0
-version: 1.0.0-beta.1
-date-released: 2026-07-03
+version: 1.0.0
 keywords:
   - personal-ai
   - local-first

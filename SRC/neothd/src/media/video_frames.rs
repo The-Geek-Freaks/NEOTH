@@ -1,10 +1,10 @@
 //! MM-02 — video frame extraction + multimodal council request
 //! primitives.
 //!
-//! Pure-data + sampler logic + multimodal request builder. The
-//! actual `ffmpeg` subprocess + multimodal-LLM HTTP calls land in
-//! MM-02b once a `FrameDecoder` trait + provider impls wire — same
-//! pattern as MM-01/MM-03.
+//! Pure-data sampler logic + multimodal request builder. MM-02b is now wired:
+//! [`super::frame_decoder`] supplies the ffmpeg-backed decoder and
+//! [`super::video_dispatch`] caps frames, enforces the upload/audit policy,
+//! calls the selected vision synthesizer, and records the result.
 //!
 //! ## Frame sampling strategies
 //!
@@ -232,9 +232,6 @@ pub enum MultimodalProvider {
     OpenAiGpt4o,
     #[serde(rename = "google_gemini")]
     GoogleGemini,
-    /// Local LLaVA via llama.cpp / vLLM (subprocess).
-    #[serde(rename = "local_llava")]
-    LocalLlava,
 }
 
 impl MultimodalProvider {
@@ -243,16 +240,7 @@ impl MultimodalProvider {
             Self::AnthropicClaude => "anthropic_claude",
             Self::OpenAiGpt4o => "openai_gpt4o",
             Self::GoogleGemini => "google_gemini",
-            Self::LocalLlava => "local_llava",
         }
-    }
-
-    pub fn is_local(self) -> bool {
-        matches!(self, Self::LocalLlava)
-    }
-
-    pub fn requires_credentials(self) -> bool {
-        !self.is_local()
     }
 
     /// Provider's documented max frames per request. Adaptive
@@ -262,7 +250,6 @@ impl MultimodalProvider {
             Self::AnthropicClaude => 20,
             Self::OpenAiGpt4o => 10,
             Self::GoogleGemini => 16,
-            Self::LocalLlava => 8,
         }
     }
 }
@@ -424,21 +411,6 @@ mod tests {
         );
         assert_eq!(MultimodalProvider::OpenAiGpt4o.as_str(), "openai_gpt4o");
         assert_eq!(MultimodalProvider::GoogleGemini.as_str(), "google_gemini");
-        assert_eq!(MultimodalProvider::LocalLlava.as_str(), "local_llava");
-    }
-
-    #[test]
-    fn multimodal_provider_locality() {
-        assert!(MultimodalProvider::LocalLlava.is_local());
-        assert!(!MultimodalProvider::AnthropicClaude.is_local());
-    }
-
-    #[test]
-    fn multimodal_provider_credentials() {
-        assert!(MultimodalProvider::AnthropicClaude.requires_credentials());
-        assert!(MultimodalProvider::OpenAiGpt4o.requires_credentials());
-        assert!(MultimodalProvider::GoogleGemini.requires_credentials());
-        assert!(!MultimodalProvider::LocalLlava.requires_credentials());
     }
 
     #[test]
@@ -452,7 +424,6 @@ mod tests {
             MultimodalProvider::GoogleGemini.max_frames_per_request(),
             16
         );
-        assert_eq!(MultimodalProvider::LocalLlava.max_frames_per_request(), 8);
     }
 
     // ── serde ─────────────────────────────────────────────────────

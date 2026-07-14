@@ -348,7 +348,9 @@ pub fn read_memory_stats(
     // ── freshness — hot-tier rows accessed within last 7 days ────────────────
     let seven_days_ago_ns = (now_unix - 7 * 86_400) * 1_000_000_000i64;
     let hot_episode_count: u64 = conn
-        .query_row("SELECT COUNT(*) FROM idx_episode", [], |r| r.get::<_, i64>(0))
+        .query_row("SELECT COUNT(*) FROM idx_episode", [], |r| {
+            r.get::<_, i64>(0)
+        })
         .unwrap_or(0) as u64;
     let recently_accessed_count: u64 = conn
         .query_row(
@@ -1079,7 +1081,11 @@ mod tests {
         let now = 1_700_000_000i64;
         let sc = compute_quality_scorecard(&conn, now, 200).unwrap();
         // empty store → all fallback values → should be healthy
-        assert!(sc.is_healthy, "empty store should not trigger alarm: {:?}", sc.grade);
+        assert!(
+            sc.is_healthy,
+            "empty store should not trigger alarm: {:?}",
+            sc.grade
+        );
         assert_eq!(sc.ts_unix, now);
     }
 
@@ -1156,10 +1162,20 @@ mod tests {
         let mut scores: Vec<(&'static str, f64)> = (0..14)
             .map(|i| {
                 let names: &[&'static str] = &[
-                    "indexer", "episodic_store", "recall_hit_rate", "recall_latency",
-                    "groundtruth", "contradictions", "gc_pressure", "decay_freshness",
-                    "consolidation", "ingress", "knowledge_graph", "assoc_graph",
-                    "embedding_coverage", "contradiction_resolution",
+                    "indexer",
+                    "episodic_store",
+                    "recall_hit_rate",
+                    "recall_latency",
+                    "groundtruth",
+                    "contradictions",
+                    "gc_pressure",
+                    "decay_freshness",
+                    "consolidation",
+                    "ingress",
+                    "knowledge_graph",
+                    "assoc_graph",
+                    "embedding_coverage",
+                    "contradiction_resolution",
                 ];
                 (names[i], 1.0f64)
             })
@@ -1175,9 +1191,16 @@ mod tests {
             expected
         );
         // 14/15 ≈ 0.933 → grade A, still healthy
-        assert!(sc.is_healthy, "14/15 healthy subsystems → still overall healthy");
+        assert!(
+            sc.is_healthy,
+            "14/15 healthy subsystems → still overall healthy"
+        );
         // The bad subsystem must have grade F
-        let bad = sc.subsystems.iter().find(|s| s.name == "people_staleness").unwrap();
+        let bad = sc
+            .subsystems
+            .iter()
+            .find(|s| s.name == "people_staleness")
+            .unwrap();
         assert_eq!(bad.grade, Grade::F);
     }
 
@@ -1188,7 +1211,11 @@ mod tests {
         let conn = crate::memory::store::open(std::path::Path::new(":memory:")).unwrap();
         let now = 1_700_000_000i64;
         let sc = read_and_compute_pipeline_scorecard(&conn, now).unwrap();
-        assert_eq!(sc.subsystems.len(), 15, "must produce exactly 15 subsystems on empty store");
+        assert_eq!(
+            sc.subsystems.len(),
+            15,
+            "must produce exactly 15 subsystems on empty store"
+        );
         assert_eq!(sc.ts_unix, now);
         // Empty store with fallback values should be neutral/healthy (not alarm)
         assert!(
@@ -1208,7 +1235,11 @@ mod tests {
             let sc = compute_pipeline_scorecard_from_raw(scores, i as i64);
             hist.push(sc);
         }
-        assert_eq!(hist.len(), HISTORY_CAP, "ring buffer must cap at HISTORY_CAP");
+        assert_eq!(
+            hist.len(),
+            HISTORY_CAP,
+            "ring buffer must cap at HISTORY_CAP"
+        );
         assert_eq!(
             hist.latest().unwrap().ts_unix as usize,
             HISTORY_CAP + 3,
@@ -1225,10 +1256,16 @@ mod tests {
         for i in 0..3 {
             hist.push(compute_pipeline_scorecard_from_raw(&bad_scores, i));
         }
-        assert!(hist.is_persistently_unhealthy(), "all-bad entries → persistently unhealthy");
+        assert!(
+            hist.is_persistently_unhealthy(),
+            "all-bad entries → persistently unhealthy"
+        );
 
         let good_scores: &[(&str, f64)] = &[("s", 1.0)];
         hist.push(compute_pipeline_scorecard_from_raw(good_scores, 3));
-        assert!(!hist.is_persistently_unhealthy(), "one healthy entry breaks the run");
+        assert!(
+            !hist.is_persistently_unhealthy(),
+            "one healthy entry breaks the run"
+        );
     }
 }

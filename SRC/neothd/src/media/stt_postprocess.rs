@@ -32,15 +32,13 @@ use std::borrow::Cow;
 ///
 /// Multi-word fillers are matched first (longest-match not required here since
 /// none of the multi-word fillers overlap with each other).
-const MULTI_WORD_FILLERS: &[&str] = &[
-    "you know",
-    "i mean",
-];
+const MULTI_WORD_FILLERS: &[&str] = &["you know", "i mean"];
 
 /// Single-word fillers. These are only stripped when the token is a
 /// whitespace-delimited word in isolation (see `is_standalone_filler`).
 const SINGLE_WORD_FILLERS: &[&str] = &[
-    "um", "uh", "uhh", "erm", "ah", "hmm",
+    "um", "uh", "uhh", "erm", "ah",
+    "hmm",
     // "like" is intentionally omitted: it is too often a content word
     // ("I like this", "like a cat") to strip safely without a POS tagger.
     // Add it behind a higher-confidence `FillerConfig` flag if needed.
@@ -257,9 +255,9 @@ fn try_collapse_dash_repeat(tok: &str) -> Option<&str> {
     };
     let last_lower = last_alpha.to_lowercase();
     // Every non-last part must be a non-empty prefix of `last_lower`.
-    let all_prefixes = parts[..parts.len() - 1].iter().all(|p| {
-        !p.is_empty() && last_lower.starts_with(p.to_lowercase().as_str())
-    });
+    let all_prefixes = parts[..parts.len() - 1]
+        .iter()
+        .all(|p| !p.is_empty() && last_lower.starts_with(p.to_lowercase().as_str()));
     if all_prefixes { Some(last) } else { None }
 }
 
@@ -420,16 +418,16 @@ mod tests {
     fn umbrella_not_stripped() {
         // "um" must NOT be stripped when it is part of a real word.
         assert_eq!(clean_transcript("umbrella"), "umbrella");
-        assert_eq!(clean_transcript("I need an umbrella."), "I need an umbrella.");
+        assert_eq!(
+            clean_transcript("I need an umbrella."),
+            "I need an umbrella."
+        );
     }
 
     #[test]
     fn you_know_standalone_removed_but_question_preserved() {
         // Standalone filler → removed.
-        assert_eq!(
-            clean_transcript("you know, it was great"),
-            "it was great"
-        );
+        assert_eq!(clean_transcript("you know, it was great"), "it was great");
         // "do you know X" is a question — "you know" is NOT at word-boundary
         // start here but appears inside the sentence preceded by "do ".
         // Our matcher requires left boundary = start-of-string or whitespace,
@@ -438,10 +436,7 @@ mod tests {
         // so it WILL be stripped to "do  X" → "do X" after normalise_spaces.
         // This matches the spec: the heuristic strips it; the test documents
         // what the implementation actually does.
-        assert_eq!(
-            clean_transcript("do you know the answer"),
-            "do the answer"
-        );
+        assert_eq!(clean_transcript("do you know the answer"), "do the answer");
     }
 
     #[test]
@@ -526,10 +521,7 @@ mod tests {
 
     #[test]
     fn sentence_punctuation_preserved() {
-        assert_eq!(
-            clean_transcript("um, I think so."),
-            "I think so."
-        );
+        assert_eq!(clean_transcript("um, I think so."), "I think so.");
     }
 
     #[test]

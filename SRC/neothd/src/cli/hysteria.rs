@@ -1,7 +1,7 @@
 //! `neoth hysteria` — inspect + test the Hysteria transport config.
 //!
 //! No `start`/`stop` subcommands today: the supervisor is spawned by
-//! `neothd serve` from `freedom.yaml::hysteria` so there's only one
+//! `neoth serve` from `freedom.yaml::hysteria` so there's only one
 //! authoritative start path. This CLI lets operators verify the binary
 //! is reachable, the config renders, and the SOCKS5 port is up while
 //! the daemon is running.
@@ -30,7 +30,7 @@ pub enum HysteriaAction {
     Status,
     /// Render `~/.neoth/freedom.yaml::hysteria` as the YAML the
     /// subprocess would receive on disk. No spawn, no probe — pure
-    /// preview so operators can verify before `neothd serve`.
+    /// preview so operators can verify before `neoth serve`.
     RenderConfig,
     /// TCP-probe the SOCKS5 port from freedom.yaml. Exits non-zero if
     /// the probe fails, so it composes in shell scripts:
@@ -47,8 +47,8 @@ pub async fn run_hysteria(args: HysteriaArgs) -> Result<()> {
 }
 
 fn run_status(output: &OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path().ok();
-    let hysteria = cfg.as_ref().and_then(|c| c.hysteria.clone());
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
+    let hysteria = cfg.hysteria;
     let binary = locate_binary().ok().map(|p| p.display().to_string());
     let configured = hysteria
         .as_ref()
@@ -85,7 +85,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
             }
             if !configured {
                 println!();
-                println!("  configure via freedom.yaml::hysteria, then restart `neothd serve`.");
+                println!("  configure via freedom.yaml::hysteria, then restart `neoth serve`.");
             }
         }
     }

@@ -53,17 +53,16 @@ pub enum InferenceProvider {
     /// C-3 (Session 13) — AWS Bedrock Runtime. Enterprise-class: SigV4
     /// auth via AWS SDK credentials chain (env vars / shared config /
     /// IAM role), region-bound model IDs (e.g. `anthropic.claude-opus-4`
-    /// in `us-east-1`). NEOTH v0.1 ships the variant + provider-list
-    /// surface + consent gate; actual `BedrockAdapter` runtime wiring
-    /// is C-3 Phase 2 (separate session). `is_implemented()` returns
-    /// `false` so operators selecting it see `[stub]` in the wizard.
+    /// in `us-east-1`). The native adapter signs Converse API requests,
+    /// applies the paid-call/consent boundary, and is configurable through
+    /// both the wizard and `freedom.yaml`.
     AwsBedrock,
     /// C-4 (Session 13) — Azure OpenAI Service. Enterprise-class:
     /// `api-version` query param (e.g. `2024-10-01-preview`) + deployment
     /// name as model id (operator-managed in Azure portal). Uses an
     /// Azure-issued API key (header `api-key`) NOT a `Bearer` token.
-    /// NEOTH v0.1 ships the variant + provider-list surface + consent
-    /// gate; actual `AzureOpenAiAdapter` ships in C-4 Phase 2.
+    /// The native adapter is wired end-to-end, including deployment, endpoint,
+    /// API version, secret handling, consent, and paid-call authorization.
     AzureOpenAi,
     /// Ouro O-2 (Session 22) — local Ouro thinking-models via the
     /// `LocalOuroAdapter` shipped in O-1b. Looped decoder-only transformer
@@ -77,9 +76,10 @@ pub enum InferenceProvider {
     /// `system` role) + Anthropic-like response (`message.content[].text`).
     Cohere,
     /// GOLD-ADAPT-ODY-15 — GitHub Copilot via OAuth PAT + short-lived session
-    /// token. Zero per-token cost for GitHub Copilot subscribers. Uses the
-    /// OpenAI-compatible `api.githubcopilot.com` endpoint; session token is
-    /// refreshed from `api.github.com/copilot_internal/v2/token` as needed.
+    /// token. Billing varies by plan, model, allowance and overage state, so
+    /// calls are cost-unbounded until the adapter has live billing context.
+    /// Uses the OpenAI-compatible `api.githubcopilot.com` endpoint; session
+    /// token is refreshed from `api.github.com/copilot_internal/v2/token`.
     GitHubCopilot,
     /// GOLD-ADAPT-AWE-NANO-01 — native Ollama /api/chat NDJSON adapter.
     /// No API key needed. Defaults to http://localhost:11434. Treated as a
@@ -135,7 +135,7 @@ impl InferenceProvider {
             }
             InferenceProvider::Cohere => "Cohere v2 Chat API (key required, BILLED per-token)",
             InferenceProvider::GitHubCopilot => {
-                "GitHub Copilot (OAuth PAT, zero per-token cost for GH Copilot subscribers)"
+                "GitHub Copilot (OAuth PAT; billing varies, so each call is cost-gated as unbounded)"
             }
             InferenceProvider::LocalOllama => {
                 "Local Ollama via its native /api/chat NDJSON endpoint (no API key; point at a running `ollama serve`)"
@@ -165,7 +165,7 @@ impl InferenceProvider {
         }
     }
 
-    /// Variants the v0.1 dispatcher can actually drive end-to-end. Used by
+    /// Variants the dispatcher can actually drive end-to-end. Used by
     /// the wizard to flag a stub choice with `[stub]` in the label.
     /// All variants are wired as of the D14b Phase 2c land — LocalQwen
     /// now runs candle forward-pass + sampling locally. Future variants
@@ -219,24 +219,24 @@ impl InferenceProvider {
         }
     }
 
-    /// Returns `true` for providers whose compute runs entirely on the
-    /// operator's machine — data never leaves the local process.
+    /// Returns `true` only for providers guaranteed to keep data on the
+    /// operator's machine.
     ///
     /// Used by COUNCIL-WEIGHTING-01 (locality weighting in `cli/chat.rs::select_winner_role_agnostic`)
     /// to classify hemispheres without hardcoding provider-name lists inside
     /// scoring logic. Mirrors the string-based `council::quality_score::is_local_provider`.
     ///
     /// `ClaudeCli` is explicitly **excluded**: the `claude` CLI uses local
-    /// OAuth but inference runs on Anthropic's servers (data leaves the
-    /// local process). `RecursiveMas` is included as a VRAM-gated local
-    /// sidecar with no external inference calls.
+    /// OAuth but inference runs on Anthropic's servers. `RecursiveMas` is also
+    /// excluded: its operator-installed Python sidecar inherits network access
+    /// and can perform external retrieval, so local model weights are not an
+    /// offline guarantee.
     pub fn is_local(self) -> bool {
         matches!(
             self,
             InferenceProvider::LocalQwen
                 | InferenceProvider::LocalOuro
                 | InferenceProvider::LocalOllama
-                | InferenceProvider::RecursiveMas
         )
     }
 }
@@ -376,7 +376,7 @@ pub struct InferenceTopology {
     pub right: HemisphereSlot,
     #[serde(default)]
     pub cerebellum: HemisphereSlot,
-    /// E-1 (Session 13) — recursion cap for "fraktale Dimensionen" of
+    /// E-1/E-2 — recursion cap for "fraktale Dimensionen" of
     /// hemispheres. Default `1` means "one outer council, no inner
     /// councils" — equivalent to the v0.1 flat dispatch. `0` is
     /// equivalent (no recursion). `2` enables one level of inner
@@ -384,8 +384,9 @@ pub struct InferenceTopology {
     /// hemisphere can itself convene a 3-hemisphere debate before
     /// returning). Capped at 4 on deserialise — deeper trees blow
     /// the token budget faster than they add value. Actual recursion
-    /// wiring lands in E-2; today this field is type-scaffold only
-    /// (read by `run_one` for future use).
+    /// `cli::chat` threads this value into the council orchestrator; depths
+    /// above one construct budget-bounded recursive sub-councils and resolve
+    /// their providers through `hemisphere_sub_slots`.
     #[serde(default)]
     pub hemisphere_council_depth: HemisphereCouncilDepth,
 
@@ -1141,7 +1142,10 @@ mod tests {
 
     #[test]
     fn self_score_action_defaults_to_warn() {
-        assert_eq!(CouncilConfig::default().self_score_action, SelfScoreAction::Warn);
+        assert_eq!(
+            CouncilConfig::default().self_score_action,
+            SelfScoreAction::Warn
+        );
         assert_eq!(SelfScoreAction::default(), SelfScoreAction::Warn);
     }
 
@@ -1967,6 +1971,17 @@ trigger:
         assert_eq!(
             p.budget_multiplier,
             crate::council::TriggerPolicy::default().budget_multiplier
+        );
+    }
+
+    #[test]
+    fn recursive_mas_is_not_classified_as_offline() {
+        assert!(InferenceProvider::LocalQwen.is_local());
+        assert!(InferenceProvider::LocalOuro.is_local());
+        assert!(InferenceProvider::LocalOllama.is_local());
+        assert!(
+            !InferenceProvider::RecursiveMas.is_local(),
+            "a network-capable sidecar must not receive offline-provider semantics"
         );
     }
 }

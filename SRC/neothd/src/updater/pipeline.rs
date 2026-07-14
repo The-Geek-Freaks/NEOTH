@@ -93,7 +93,7 @@ pub fn compute_outcome(spec: &ComponentSpec) -> ComponentOutcome {
     }
 }
 
-/// U-01: build the spec list for the `neothd` binary self-update
+/// U-01: build the spec list for the public `neoth` binary self-update
 /// pass. Today's single-component pass — future extensions add
 /// `neoth-plugin-sdk`, `neothd-gui`.
 pub fn neoth_self_specs(
@@ -102,7 +102,7 @@ pub fn neoth_self_specs(
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
     vec![ComponentSpec {
-        name: "neothd".to_string(),
+        name: "neoth".to_string(),
         current_version: current_version.into(),
         latest_version,
         gate_decision: gate,
@@ -129,7 +129,7 @@ pub fn skill_plugin_specs(
 /// U-03: build the spec list for the detected-CLI version pass.
 /// Pinned set: claude-cli, codex, antigravity-cli. Caller resolves
 /// each component's current+latest via the per-CLI probe in
-/// `installers::node`/`installers::pears`/etc. The third argument is
+/// installer-specific post-update work. The third argument is
 /// still named `antigravity` post-2026-05-19 transition (was `gemini`
 /// when Google shipped gemini-cli via npm).
 pub fn cli_version_specs(
@@ -267,10 +267,10 @@ mod tests {
     // ── builders ──────────────────────────────────────────────────
 
     #[test]
-    fn neoth_self_specs_emits_neothd_component() {
+    fn neoth_self_specs_emits_neoth_component() {
         let specs = neoth_self_specs("0.3.0", Ok("0.3.1".to_string()), GateDecision::Allow);
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].name, "neothd");
+        assert_eq!(specs[0].name, "neoth");
         assert_eq!(specs[0].current_version, "0.3.0");
     }
 
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn u01_full_self_update_pass_produces_clean_payload() {
-        // Operator runs `neoth updater check` for U-01 — neothd is
+        // Operator runs `neoth updater check` for U-01 — neoth is
         // current.
         let specs = neoth_self_specs("0.3.0", Ok("0.3.0".to_string()), GateDecision::Allow);
         let r = run_updater_pass(UpdaterTaskKind::NeothSelf, specs);

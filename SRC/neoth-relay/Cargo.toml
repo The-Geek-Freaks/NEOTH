@@ -1,11 +1,11 @@
 [package]
 name        = "neoth-relay"
-version     = "0.1.0-alpha.0"
+version     = "1.0.0"
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 repository.workspace   = true
-description = "Standalone NEOTH relay daemon — Cluster Phase 5 Hysteria-shared peer registry."
+description = "Standalone authenticated NEOTH peer-registry relay for external Hysteria sidecars."
 
 # Architect verdict (Session 21, `neoth_open_decisions_verdicts`):
 # the relay is a SEPARATE binary, not embedded in `neothd` and not
@@ -13,12 +13,9 @@ description = "Standalone NEOTH relay daemon — Cluster Phase 5 Hysteria-shared
 # path, operators can deploy the relay on a cheap edge node without
 # pulling in the daemon's full memory / channels / providers stack.
 #
-# v0.1 scope = minimal serve loop + in-memory PeerRoster. The
-# `cluster::relay` primitive shape is duplicated here intentionally
-# (Rule of Three — two callers today, factor into a shared
-# `neoth-cluster-types` crate when the third lands). Real Hysteria
-# socket plumbing + relay-to-relay mesh ship in multi-week
-# follow-ups per `PLAN/SPEC_cluster_phase5_hysteria_relay_2026-05-22.md`.
+# Hysteria remains an external operator-managed sidecar: it owns the public
+# QUIC/TLS/auth listener and forwards to neoth-relay's loopback TCP bind.
+# neoth-relay deliberately contains no embedded Hysteria/QUIC implementation.
 #
 # Build/run:
 #   cargo build -p neoth-relay --release

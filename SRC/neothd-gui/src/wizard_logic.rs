@@ -13,7 +13,7 @@
 //!
 //! Express path (enforced in main.slint): Welcome → License → Identity →
 //! PresetPicker → Done. Custom path additionally walks the parity screens
-//! HmacSetup → ObsidianSetup → N8nSetup → KeetTip → WasmSetup.
+//! HmacSetup → ObsidianSetup → N8nSetup → PrivateMeshInfo → WasmSetup.
 //!
 //! YAML keys each wizard screen writes (documentation):
 //!
@@ -33,9 +33,8 @@
 //!   wasm-setup:
 //!     plugins.wasm.enabled            — bool
 //!
-//!   keet-tip: informational only — no yaml writes from wizard screen
-//!     (Keet seed phrase lives in credentials.yaml; the wizard screen
-//!     explains how to pair via `neoth keet pair` at runtime).
+//!   keet-tip: legacy checkpoint id; informational private-mesh screen only.
+//!     It writes no YAML and explicitly does not collect Keet credentials.
 
 /// The four built-in presets + custom, in display order.
 /// Mirrors `neothd::config::preset_builtins::builtin_by_name` names.
@@ -109,7 +108,11 @@ mod tests {
         //   obsidian_vault                 → Option<String>
         //   obsidian_subdir                → Option<String>  (default "NEOTH-sessions")
         //   obsidian_vault_reader_enabled  → bool
-        let keys = ["obsidian_vault", "obsidian_subdir", "obsidian_vault_reader_enabled"];
+        let keys = [
+            "obsidian_vault",
+            "obsidian_subdir",
+            "obsidian_vault_reader_enabled",
+        ];
         assert_eq!(keys.len(), 3);
     }
 
@@ -145,12 +148,13 @@ mod tests {
     }
 
     #[test]
-    fn keet_wizard_is_informational_only() {
-        // The Keet tip screen writes nothing to freedom.yaml.
-        // Keet seed phrases go to credentials.yaml at runtime (`neoth keet pair`).
-        // This test documents the intentional absence of YAML writes.
+    fn private_mesh_info_screen_collects_no_keet_credentials() {
+        // The legacy `keet-tip` step writes nothing and collects no secrets.
         let yaml_keys: Vec<&str> = vec![];
-        assert!(yaml_keys.is_empty(), "keet-tip wizard screen must not write yaml");
+        assert!(
+            yaml_keys.is_empty(),
+            "private-mesh info screen must not write yaml"
+        );
     }
 
     // ── Preset-to-yaml-key mapping ────────────────────────────────────────────

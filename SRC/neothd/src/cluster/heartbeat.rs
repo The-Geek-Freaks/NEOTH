@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Protocol identifier in the Hello frame. Hard-coded so a
-/// peer running a different NEOTH protocol (Keet, channel
+/// peer running a different NEOTH protocol (channel
 /// adapter, ...) on the same HyperDHT topic is detected at
 /// handshake and disconnected cleanly.
 pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";

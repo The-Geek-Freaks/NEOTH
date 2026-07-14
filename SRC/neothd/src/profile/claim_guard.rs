@@ -100,7 +100,8 @@ pub enum GuardOutcome {
 /// output for `ProfileDelta` because every field is statically named).
 fn delta_hash(delta: &ProfileDelta) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    let bytes = serde_json::to_vec(delta).unwrap_or_else(|_| b"<unserialisable>".to_vec());
+    let bytes = serde_json::to_vec(delta)
+        .expect("ProfileDelta contains only infallibly serializable fields");
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     hasher.finalize().into()
@@ -196,11 +197,10 @@ impl ProfileClaimGuard {
         self.check_with_redactions(delta, window, &[], now_unix)
     }
 
-    /// H2-aware variant: also consults the redaction registry. Any
-    /// claim whose `field` matches an active `never_recreate=true`
-    /// redaction rejects the whole delta with `FieldRedacted`. The
-    /// caller passes the registry as `&[String]` of redacted field
-    /// names so this method stays SQL-free and unit-testable. Does
+    /// H2-aware variant: also consults the redaction registry. Exact-field
+    /// redactions and `_tombstone.<topic>` value sentinels reject the whole
+    /// delta with `FieldRedacted`. The caller passes the registry as
+    /// `&[String]` so this method stays SQL-free and unit-testable. Does
     /// NOT enforce M2 (extension-registry) — call `check_full` for
     /// the full H1+H2+H5+M2 chain.
     pub fn check_with_redactions(
@@ -292,13 +292,18 @@ impl ProfileClaimGuard {
             };
         }
 
-        // 3. H2 — redaction registry. Any claim against a redacted
-        //    field rejects the whole delta. We don't silently drop the
-        //    individual claim because that would let an attacker pad
-        //    the delta with redacted-field probes; a hard reject is
-        //    safer + matches the spec.
+        // 3. H2 — redaction registry. Exact-field redactions and
+        //    `_tombstone.<topic>` anti-resurrection sentinels both reject the
+        //    whole delta. The topic matcher inspects structured values too, so
+        //    forgetting "Berlin" cannot reappear under a different field.
         for claim in &delta.claims {
-            if redacted_fields.iter().any(|f| f == &claim.field) {
+            if redacted_fields.iter().any(|field| {
+                crate::memory::forget::redaction_blocks_claim(
+                    field,
+                    &claim.field,
+                    &claim.value_json,
+                )
+            }) {
                 let hash = delta_hash(&delta);
                 return GuardOutcome::Rejected {
                     reason: GuardReason::FieldRedacted {
@@ -587,6 +592,44 @@ mod tests {
                 ));
             }
             _ => panic!("expected Rejected on redacted field"),
+        }
+    }
+
+    #[test]
+    fn forget_topic_sentinel_rejects_topic_in_any_claim_value() {
+        let g = ProfileClaimGuard::default();
+        let mut location = claim("preferences.city", 0.9);
+        location.value_json = serde_json::json!({
+            "current": "BERLIN",
+            "history": ["Hamburg"]
+        });
+        let redacted = vec!["_tombstone.berlin".to_string()];
+        let outcome = g.check_with_redactions(
+            delta(vec![location]),
+            &window_with_user_speech(),
+            &redacted,
+            T0,
+        );
+        assert!(matches!(
+            outcome,
+            GuardOutcome::Rejected {
+                reason: GuardReason::FieldRedacted { ref field },
+                ..
+            } if field == "preferences.city"
+        ));
+    }
+
+    #[test]
+    fn empty_or_unrelated_tombstone_does_not_block_claims() {
+        let g = ProfileClaimGuard::default();
+        let d = delta(vec![claim("skills.rust", 0.8)]);
+        for redacted in [
+            vec!["_tombstone.".to_string()],
+            vec!["_tombstone.berlin".to_string()],
+        ] {
+            let outcome =
+                g.check_with_redactions(d.clone(), &window_with_user_speech(), &redacted, T0);
+            assert!(matches!(outcome, GuardOutcome::Accepted(_)));
         }
     }
 

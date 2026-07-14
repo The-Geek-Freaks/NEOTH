@@ -3,9 +3,10 @@
 //!
 //! v0.1 surface: takes an existing Provider trait object, renders a
 //! deterministic system prompt instructing the LLM to output strict
-//! `ProfileDelta` JSON, parses the response. Temperature 0 + a hash-
-//! derived seed mean the same window always produces the same delta
-//! (G.1 conformance).
+//! `ProfileDelta` JSON, parses the response. Providers that support sampling
+//! controls additionally receive temperature 0 + a hash-derived seed; other
+//! providers retain deterministic prompt construction and log the omitted
+//! quality hints.
 //!
 //! What this stage does NOT do — they live downstream:
 //!   - Schema validation (stage 4).
@@ -180,7 +181,7 @@ only. Output the JSON object now:",
 /// depends on the operator's actual user-speech text, which the attacker
 /// doesn't control end-to-end.
 fn render_nonce(window: &AttributedWindow) -> String {
-    format!("{:016x}", seed_from_window(window))
+    format!("{:016x}", window_seed_hash(window))
 }
 
 /// Strip the private-use boundary chars (U+E000..=U+E003) from operator
@@ -332,13 +333,24 @@ pub async fn extract(
         });
     }
 
+    let temperature = crate::providers::internal_temperature(provider, 0.0, "profile.extract");
+    let sampling_seed = if provider.request_controls().supports_sampling_seed() {
+        Some(seed_from_window(window))
+    } else {
+        tracing::warn!(
+            provider = provider.name(),
+            call_scope = "profile.extract",
+            "internal sampling seed omitted because the selected provider cannot wire it"
+        );
+        None
+    };
     let req = Request {
         prompt: render_user_prompt(window, max_window_chars),
         system: Some(build_system_prompt()),
         model: None,
-        temperature: Some(0.0),
+        temperature,
         top_p: None,
-        sampling_seed: Some(seed_from_window(window)),
+        sampling_seed,
         stop_sequences: vec![],
         thinking_budget: None,
     };
@@ -372,10 +384,10 @@ pub fn parse_delta(raw: &str, window: &AttributedWindow) -> Result<ProfileDelta>
     Ok(delta)
 }
 
-/// Deterministic seed derived from the user-speech text the LLM sees.
-/// G.1: same input → same seed → same output (subject to provider
-/// honouring the seed).
-fn seed_from_window(window: &AttributedWindow) -> u64 {
+/// Full-width deterministic hash derived from the user-speech text the LLM
+/// sees. It remains 64-bit so prompt-boundary nonces retain their structural
+/// entropy even though provider sampling seeds use a narrower portable range.
+fn window_seed_hash(window: &AttributedWindow) -> u64 {
     let user_speech: String = window
         .extraction_eligible()
         .iter()
@@ -383,6 +395,13 @@ fn seed_from_window(window: &AttributedWindow) -> u64 {
         .collect::<Vec<_>>()
         .join("\n");
     xxhash_rust::xxh3::xxh3_64(user_speech.as_bytes())
+}
+
+/// Deterministic provider seed in the shared portable unsigned 32-bit range.
+/// G.1: same input → same seed → same output (subject to the provider
+/// honouring the seed).
+fn seed_from_window(window: &AttributedWindow) -> u64 {
+    window_seed_hash(window) & u64::from(u32::MAX)
 }
 
 /// Stable extraction id derived from the trigger + first event_id.
@@ -419,7 +438,9 @@ mod tests {
     use crate::profile::types::{
         AttributedSegment, Attribution, ConversationSegment, SegmentOrigin,
     };
-    use crate::providers::{Completion, Provider, Request};
+    use crate::providers::{
+        Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+    };
     use async_trait::async_trait;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -445,10 +466,24 @@ mod tests {
         fn name(&self) -> &'static str {
             "mock"
         }
-        async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
+
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::SAMPLING
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("mock-1")
+        }
+
+        async fn complete_raw(
+            &self,
+            req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> anyhow::Result<Completion> {
             *self.last_request.lock().unwrap() = Some(req);
             Ok(Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "mock-1".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(10),
@@ -530,7 +565,7 @@ mod tests {
         assert_eq!(delta.extraction_id, "ext-abc");
         assert_eq!(delta.claims.len(), 1);
         assert_eq!(delta.claims[0].field, "identity.location");
-        // Request used temperature 0 + a deterministic seed.
+        // The sampling-capable provider received temperature 0 + a deterministic seed.
         let req = provider.last_request.lock().unwrap().clone().unwrap();
         assert_eq!(req.temperature, Some(0.0));
         assert!(req.sampling_seed.is_some());
@@ -563,6 +598,10 @@ mod tests {
             .sampling_seed
             .unwrap();
         assert_eq!(seed_1, seed_2, "same input must produce same seed");
+        assert!(
+            seed_1 <= u64::from(u32::MAX),
+            "profile seed must fit every advertised provider wire"
+        );
     }
 
     #[test]
@@ -699,7 +738,7 @@ mod tests {
     #[test]
     fn render_nonce_is_stable_for_identical_windows() {
         // G.1 determinism: same operator content → same nonce → same
-        // prompt → reproducible LLM output (with temp 0 + seed).
+        // prompt → reproducible LLM output when the leaf supports temp 0 + seed.
         let w1 = user_speech_window();
         let w2 = user_speech_window();
         assert_eq!(render_nonce(&w1), render_nonce(&w2));
@@ -837,7 +876,10 @@ mod tests {
         };
         let p = render_user_prompt(&w, 250);
         // Only event_id=3 and event_id=4 (the two newest) should appear.
-        assert!(p.contains("event_id=3"), "newest-1 segment must be included");
+        assert!(
+            p.contains("event_id=3"),
+            "newest-1 segment must be included"
+        );
         assert!(p.contains("event_id=4"), "newest segment must be included");
         for excluded in 0..3 {
             assert!(
@@ -969,9 +1011,8 @@ mod tests {
         };
 
         // Use in-process MockProvider to capture the request cheaply.
-        let provider = MockProvider::new(
-            r#"{"extraction_id":"x","conversation_hash":"y","claims":[]}"#,
-        );
+        let provider =
+            MockProvider::new(r#"{"extraction_id":"x","conversation_hash":"y","claims":[]}"#);
         let _ = extract(&provider, &w, SMALL_BUDGET).await.unwrap();
 
         let req = provider.last_request.lock().unwrap().clone().unwrap();
@@ -1014,8 +1055,7 @@ mod tests {
         let cfg: crate::config::ops::ProfileConfig =
             serde_yaml::from_str("{}").expect("empty YAML must deserialize ProfileConfig");
         assert_eq!(
-            cfg.extract_window_chars,
-            DEFAULT_WINDOW_CHARS,
+            cfg.extract_window_chars, DEFAULT_WINDOW_CHARS,
             "serde default for extract_window_chars must equal DEFAULT_WINDOW_CHARS constant"
         );
     }
@@ -1059,7 +1099,9 @@ mod tests {
         // happy + the assertion focuses on "provider was invoked".
         let provider = MockProvider::new(VALID_JSON_REPLY);
         let window = user_speech_window();
-        let _ = extract(&provider, &window, DEFAULT_WINDOW_CHARS).await.unwrap();
+        let _ = extract(&provider, &window, DEFAULT_WINDOW_CHARS)
+            .await
+            .unwrap();
         // Provider WAS invoked — no skip-extraction short-circuit fired.
         assert!(
             provider.last_request.lock().unwrap().is_some(),

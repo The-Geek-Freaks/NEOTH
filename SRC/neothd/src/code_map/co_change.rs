@@ -308,9 +308,9 @@ mod tests {
         let pairs = hidden_coupling(repo, &g, 2).unwrap();
 
         assert!(
-            pairs.iter().any(|p| {
-                (p.a == "a.rs" && p.b == "b.rs") || (p.a == "b.rs" && p.b == "a.rs")
-            }),
+            pairs
+                .iter()
+                .any(|p| { (p.a == "a.rs" && p.b == "b.rs") || (p.a == "b.rs" && p.b == "a.rs") }),
             "expected a.rs/b.rs pair, got {pairs:?}"
         );
         let pair = pairs
@@ -342,8 +342,7 @@ mod tests {
 
         assert!(
             !pairs.iter().any(|p| {
-                (p.a == "mod_a.rs" || p.b == "mod_a.rs")
-                    && (p.a == "mod_b.rs" || p.b == "mod_b.rs")
+                (p.a == "mod_a.rs" || p.b == "mod_a.rs") && (p.a == "mod_b.rs" || p.b == "mod_b.rs")
             }),
             "pair with edge should be suppressed, got {pairs:?}"
         );

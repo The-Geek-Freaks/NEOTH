@@ -137,8 +137,8 @@ impl Default for CheckinCronConfig {
             enabled: false,
             interval_secs: DEFAULT_CHECKIN_CRON_INTERVAL_SECS,
             idle_threshold_secs: 3 * 24 * 3600,  // 3 days
-            resume_gap_secs: 7 * 24 * 3600,       // 7 days
-            unfinished_gap_secs: 14 * 24 * 3600,  // 14 days
+            resume_gap_secs: 7 * 24 * 3600,      // 7 days
+            unfinished_gap_secs: 14 * 24 * 3600, // 14 days
         }
     }
 }
@@ -1075,6 +1075,8 @@ pub const DEFAULT_SELF_IMPROVEMENT_COLLECTOR_INTERVAL_SECS: u64 = 24 * 3600;
 ///   for overlaps that suggest `ConfigChange` signals.
 /// - `~/.neoth/self_improve_log.json` for skills with score regressions
 ///   (`PatchSkill`) or unverified artifact deployments (`Escalate`).
+/// - `~/.neoth/trajectories/*.jsonl` for tool-call sequences supported by
+///   more than three independent sessions with confidence above 0.8.
 ///
 /// The classified signals are written atomically to
 /// `~/.neoth/self_improvement_signals.json` for HERMES-06 to consume.
@@ -1095,7 +1097,8 @@ pub struct SelfImprovementCollectorConfig {
     /// treated as a signal candidate. Default 3 — a topic mentioned once or
     /// twice is noise.
     pub min_freq_threshold: u32,
-    /// HERMES-06 GAP-A: when `true`, `PromptEdit` signals are converted to
+    /// HERMES-06 GAP-A / GOLD-ADAPT-KB-03: when `true`, `PromptEdit` signals
+    /// and high-confidence repeated tool-call sequences are converted to
     /// `ProposalKind::Skill` candidates and staged in the OB-03 proactive
     /// review queue (`~/.neoth/proposals/`). Requires `enabled = true`.
     /// Default `false` — opt-in; the ledger needs data before proposals are
@@ -1205,7 +1208,8 @@ pub struct WebhookEndpointConfig {
     /// RFC-1918 / CGNAT / loopback / link-local / multicast targets).
     pub url: String,
     /// HMAC-SHA256 signing secret. Sent as `X-NEOTH-Signature: hmac-sha256=<hex>`.
-    /// Required (empty string ⇒ no signature header, logs a warning).
+    /// Required. An empty value rejects the delivery fail-closed and records a
+    /// permanent configuration failure; unsigned webhooks are never sent.
     pub secret: crate::secret::SecretString,
     /// Events that trigger delivery to this endpoint. Empty ⇒ all three.
     pub events: Vec<WebhookEvent>,
@@ -1361,6 +1365,21 @@ impl Default for CompanionConfig {
             port: default_companion_port(),
             p2p_enabled: false,
         }
+    }
+}
+
+impl CompanionConfig {
+    /// A serve-side P2P invite returns a bearer token that is consumed by the
+    /// companion HTTP server. Starting only the P2P half would mint an
+    /// unusable token, so the HTTP master switch is a required dependency.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.p2p_enabled && !self.enabled {
+            return Err(
+                "companion.p2p_enabled requires companion.enabled=true so paired tokens have a loopback HTTP consumer"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 }
 

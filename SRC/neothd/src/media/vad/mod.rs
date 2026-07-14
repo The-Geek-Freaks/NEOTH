@@ -31,26 +31,13 @@
 //! | `DEFAULT_SPEECH_PROB` | 0.60 | Handy audio_toolkit |
 //! | `DEFAULT_HANGOVER_MS` | 750 ms | shared with `stt_dispatch::LiveTranscriptBuffer` |
 //!
-//! # Feature gate
-//!
-//! The `vad` Cargo feature is reserved for a future Silero ONNX backend that
-//! replaces the energy decision (step 1) with a neural per-frame probability.
-//! The `SmoothedVad` smoothing + hangover layer (steps 2–3) is always compiled;
-//! the Silero backend sits behind `#[cfg(feature = "vad")]` and supplies the
-//! per-frame probability instead of RMS-based energy.
-//!
 //! # Testing
 //!
 //! All tests use synthetic PCM (constant amplitudes) so no model weights are
-//! required. The `SileroBackend` is mocked via a `VadBackend` trait.
+//! required. Alternative probability sources can be injected through the
+//! internal `VadBackend` trait without exposing an inert backend publicly.
 
 pub use smoothed::SmoothedVad;
 pub use smoothed::VadDecision;
 
 mod smoothed;
-
-#[cfg(feature = "vad")]
-mod silero_backend;
-
-#[cfg(feature = "vad")]
-pub use silero_backend::SileroBackend;

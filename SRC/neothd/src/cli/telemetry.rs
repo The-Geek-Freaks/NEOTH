@@ -69,7 +69,7 @@ pub async fn run_telemetry(args: TelemetryArgs) -> Result<()> {
 }
 
 async fn run_status() -> Result<()> {
-    let config = load_config_or_default();
+    let config = load_config_or_default()?;
     let endpoint = config.telemetry.effective_endpoint();
     println!("telemetry:");
     println!("  enabled       : {}", config.telemetry.enabled);
@@ -91,7 +91,7 @@ async fn run_status() -> Result<()> {
 }
 
 async fn run_preview() -> Result<()> {
-    let config = load_config_or_default();
+    let config = load_config_or_default()?;
     let operator_id = config.operator_id.as_deref().unwrap_or("anonymous");
     let payload = build_payload(env!("CARGO_PKG_VERSION"), operator_id);
     println!("{}", preview_for_operator(&payload));
@@ -128,7 +128,7 @@ async fn run_flip(enabled: bool) -> Result<()> {
 }
 
 async fn run_send_now(force: bool) -> Result<()> {
-    let config = load_config_or_default();
+    let config = load_config_or_default()?;
     let endpoint = config.telemetry.effective_endpoint().to_string();
     let opted_in = should_send(&config.telemetry);
 
@@ -146,7 +146,8 @@ async fn run_send_now(force: bool) -> Result<()> {
     println!("POST {endpoint}");
     println!(
         "body : {}",
-        serde_json::to_string(&payload).unwrap_or_else(|_| "<encode failure>".into())
+        serde_json::to_string(&payload)
+            .expect("telemetry payload contains only infallibly serializable fields")
     );
     println!();
 
@@ -161,8 +162,8 @@ async fn run_send_now(force: bool) -> Result<()> {
     Ok(())
 }
 
-fn load_config_or_default() -> FreedomConfig {
-    FreedomConfig::load_from_default_path().unwrap_or_default()
+fn load_config_or_default() -> Result<FreedomConfig> {
+    FreedomConfig::load_from_default_path_or_default()
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
-//! JSON-RPC 2.0 framing helpers — pure functions over byte buffers.
+//! JSON-RPC 2.0 stdio transport helpers — pure functions over byte buffers.
 //!
-//! MCP servers exchange JSON-RPC messages over stdio. Each message is
-//! framed with a `Content-Length: N\r\n\r\n` header followed by N bytes
-//! of JSON body. The Microsoft LSP family uses the same framing — MCP
-//! servers reuse it for transport symmetry.
+//! MCP stdio messages are compact UTF-8 JSON, one message per line. This is
+//! deliberately **not** LSP's `Content-Length` framing: the MCP transport
+//! specification requires newline-delimited JSON and forbids raw embedded
+//! newlines in a message.
 //!
 //! This module owns the framing + serde-typed request/response structs
 //! that the client uses. No I/O happens here so the framing logic is
@@ -51,87 +51,57 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-/// Maximum allowed MCP frame body in bytes (16 MiB). Frames larger than this
-/// are rejected before any allocation is attempted, preventing OOM from a
-/// malicious or misbehaving child MCP process.
+/// Maximum allowed MCP message body in bytes (16 MiB). The parser rejects an
+/// unterminated or delimited message as soon as it crosses this ceiling, so the
+/// client's receive buffer remains bounded even for a malicious child process.
 pub const MAX_MCP_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
-/// Frame a JSON body with the `Content-Length` header per LSP/MCP spec.
+/// Encode one compact JSON body for MCP stdio by appending its line delimiter.
+///
+/// Callers pass bytes produced by `serde_json::to_vec`, so a raw newline cannot
+/// occur inside the body (newlines in JSON strings are escaped as `\\n`).
 pub fn frame(body: &[u8]) -> Vec<u8> {
-    let header = format!("Content-Length: {}\r\n\r\n", body.len());
-    let mut out = Vec::with_capacity(header.len() + body.len());
-    out.extend_from_slice(header.as_bytes());
+    debug_assert!(
+        !body.contains(&b'\n'),
+        "MCP stdio JSON must not contain raw newlines"
+    );
+    let mut out = Vec::with_capacity(body.len() + 1);
     out.extend_from_slice(body);
+    out.push(b'\n');
     out
 }
 
-/// Parse a framed message from a byte buffer. Returns `(message_body,
-/// bytes_consumed)` on success, or `None` if the buffer doesn't yet
-/// contain a complete frame. Returns `Err` if the header is malformed.
+/// Parse one newline-delimited MCP stdio message from a byte buffer. Returns
+/// `(message_body, bytes_consumed)` on success, or `None` until the delimiter
+/// arrives. Multiple buffered messages are consumed one at a time.
 ///
 /// Pure function over the byte slice — the caller owns buffering +
 /// drains `bytes_consumed` after a successful parse.
 pub fn parse_frame(buf: &[u8]) -> Result<Option<(Vec<u8>, usize)>, FrameError> {
-    let header_end = match find_double_crlf(buf) {
-        Some(end) => end,
-        None => return Ok(None), // header not yet complete
+    let Some(line_end) = buf.iter().position(|byte| *byte == b'\n') else {
+        if buf.len() > MAX_MCP_FRAME_BYTES {
+            return Err(FrameError::FrameTooLarge(buf.len()));
+        }
+        return Ok(None);
     };
-    let header_bytes = &buf[..header_end];
-    let header_str = std::str::from_utf8(header_bytes).map_err(|_| FrameError::HeaderNotUtf8)?;
-    let mut content_length: Option<usize> = None;
-    for line in header_str.split("\r\n") {
-        if line.is_empty() {
-            continue;
-        }
-        let mut parts = line.splitn(2, ':');
-        let key = parts.next().unwrap_or("").trim();
-        let val = parts.next().ok_or_else(|| {
-            FrameError::HeaderMalformed(format!("missing colon in line {line:?}"))
-        })?;
-        if key.eq_ignore_ascii_case("Content-Length") {
-            content_length =
-                Some(val.trim().parse().map_err(|e| {
-                    FrameError::HeaderMalformed(format!("bad Content-Length: {e}"))
-                })?);
-        }
+    if line_end > MAX_MCP_FRAME_BYTES {
+        return Err(FrameError::FrameTooLarge(line_end));
     }
-    let content_length = content_length
-        .ok_or_else(|| FrameError::HeaderMalformed("missing Content-Length".into()))?;
-    let body_start = header_end + 4;
-    let body_end = body_start
-        .checked_add(content_length)
-        .ok_or(FrameError::Overflow)?;
-    if content_length > MAX_MCP_FRAME_BYTES {
-        return Err(FrameError::FrameTooLarge(content_length));
+    if line_end == 0 {
+        return Err(FrameError::EmptyMessage);
     }
-    if buf.len() < body_end {
-        return Ok(None); // body not yet complete
-    }
-    let body = buf[body_start..body_end].to_vec();
-    Ok(Some((body, body_end)))
+    // JSON permits trailing whitespace, so a CRLF sender remains harmlessly
+    // interoperable: the `\r` stays in the body and serde_json accepts it.
+    Ok(Some((buf[..line_end].to_vec(), line_end + 1)))
 }
 
 /// Errors the framer can produce.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum FrameError {
-    #[error("header bytes are not valid UTF-8")]
-    HeaderNotUtf8,
-    #[error("malformed header: {0}")]
-    HeaderMalformed(String),
-    #[error("frame too large: claimed Content-Length {0} exceeds limit")]
+    #[error("empty MCP stdio message")]
+    EmptyMessage,
+    #[error("MCP stdio message is too large: {0} bytes exceeds limit")]
     FrameTooLarge(usize),
-    #[error("frame header overflow: body_start + content_length overflows usize")]
-    Overflow,
-}
-
-/// Find the index of the `\r\n\r\n` sequence that terminates the
-/// header block. Returns `None` if not yet present.
-fn find_double_crlf(buf: &[u8]) -> Option<usize> {
-    const NEEDLE: &[u8] = b"\r\n\r\n";
-    if buf.len() < NEEDLE.len() {
-        return None;
-    }
-    (0..=buf.len() - NEEDLE.len()).find(|&i| &buf[i..i + NEEDLE.len()] == NEEDLE)
 }
 
 #[cfg(test)]
@@ -139,23 +109,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frame_prepends_content_length_header() {
+    fn frame_appends_exactly_one_newline() {
         let body = b"{\"jsonrpc\":\"2.0\"}";
         let framed = frame(body);
-        let text = String::from_utf8(framed).unwrap();
-        assert!(text.starts_with("Content-Length: 17\r\n\r\n"));
-        assert!(text.ends_with("{\"jsonrpc\":\"2.0\"}"));
+        assert_eq!(framed, b"{\"jsonrpc\":\"2.0\"}\n");
     }
 
     #[test]
-    fn parse_frame_returns_none_on_incomplete_header() {
-        let r = parse_frame(b"Content-Length: 1").unwrap();
-        assert!(r.is_none());
-    }
-
-    #[test]
-    fn parse_frame_returns_none_on_incomplete_body() {
-        let r = parse_frame(b"Content-Length: 10\r\n\r\nhalfbody").unwrap();
+    fn parse_frame_returns_none_until_newline() {
+        let r = parse_frame(b"{\"jsonrpc\":\"2.0\"}").unwrap();
         assert!(r.is_none());
     }
 
@@ -169,54 +131,45 @@ mod tests {
     }
 
     #[test]
-    fn parse_frame_tolerates_multiple_headers() {
-        let mut framed = b"Content-Length: 2\r\nContent-Type: application/json\r\n\r\n{}".to_vec();
-        let (body, _) = parse_frame(&framed).unwrap().unwrap();
-        assert_eq!(body, b"{}");
-        // Ensure the second-header order doesn't break parsing.
-        framed = b"Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}".to_vec();
-        let (body2, _) = parse_frame(&framed).unwrap().unwrap();
-        assert_eq!(body2, b"{}");
+    fn parse_frame_consumes_only_first_of_multiple_messages() {
+        let bytes = b"{\"id\":1}\n{\"id\":2}\n";
+        let (first, consumed) = parse_frame(bytes).unwrap().unwrap();
+        assert_eq!(first, b"{\"id\":1}");
+        let (second, consumed_second) = parse_frame(&bytes[consumed..]).unwrap().unwrap();
+        assert_eq!(second, b"{\"id\":2}");
+        assert_eq!(consumed + consumed_second, bytes.len());
     }
 
     #[test]
-    fn parse_frame_rejects_oversized_content_length() {
-        // 999_999_999 bytes (~954 MiB) is rejected as FrameTooLarge without
-        // allocating a body buffer.
-        let header = b"Content-Length: 999999999\r\n\r\n";
-        let r = parse_frame(header);
-        assert!(matches!(r, Err(FrameError::FrameTooLarge(999_999_999))));
-    }
-
-    #[test]
-    fn parse_frame_rejects_overflow_content_length() {
-        // content_length = usize::MAX causes body_start.checked_add() to overflow
-        // before the size check fires, returning Overflow.
-        let header = format!("Content-Length: {}\r\n\r\n", usize::MAX);
-        let r = parse_frame(header.as_bytes());
-        assert!(matches!(r, Err(FrameError::Overflow)));
+    fn parse_frame_rejects_oversized_undelimited_message() {
+        let bytes = vec![b'x'; MAX_MCP_FRAME_BYTES + 1];
+        assert!(matches!(
+            parse_frame(&bytes),
+            Err(FrameError::FrameTooLarge(n)) if n == MAX_MCP_FRAME_BYTES + 1
+        ));
     }
 
     #[test]
     fn parse_frame_accepts_exactly_at_limit() {
-        // content_length == MAX_MCP_FRAME_BYTES passes the size guard.
-        // Body is absent so parse_frame returns Ok(None) — no body allocation.
-        let header = format!("Content-Length: {}\r\n\r\n", MAX_MCP_FRAME_BYTES);
-        let r = parse_frame(header.as_bytes());
-        assert!(r.is_ok());
-        assert!(r.unwrap().is_none());
+        let mut bytes = vec![b'x'; MAX_MCP_FRAME_BYTES];
+        bytes.push(b'\n');
+        let (body, consumed) = parse_frame(&bytes).unwrap().unwrap();
+        assert_eq!(body.len(), MAX_MCP_FRAME_BYTES);
+        assert_eq!(consumed, bytes.len());
     }
 
     #[test]
-    fn parse_frame_errors_on_missing_content_length() {
-        let r = parse_frame(b"Content-Type: x\r\n\r\n{}");
-        assert!(matches!(r, Err(FrameError::HeaderMalformed(_))));
+    fn parse_frame_rejects_empty_message() {
+        assert!(matches!(parse_frame(b"\n"), Err(FrameError::EmptyMessage)));
     }
 
     #[test]
-    fn parse_frame_errors_on_bad_content_length_value() {
-        let r = parse_frame(b"Content-Length: abc\r\n\r\n{}");
-        assert!(matches!(r, Err(FrameError::HeaderMalformed(_))));
+    fn parse_frame_tolerates_crlf_as_json_whitespace() {
+        let (body, consumed) = parse_frame(b"{}\r\n").unwrap().unwrap();
+        assert_eq!(body, b"{}\r");
+        assert_eq!(consumed, 4);
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value, serde_json::json!({}));
     }
 
     #[test]

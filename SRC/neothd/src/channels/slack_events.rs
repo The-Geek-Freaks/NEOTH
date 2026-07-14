@@ -1,17 +1,17 @@
 //! Slack events_api envelope decoder — the parsing layer that the
-//! Phase-2 socket-mode WebSocket loop will feed.
+//! live Socket Mode WebSocket loop feeds into the channel pipeline.
 //!
 //! Slack socket mode delivers messages as JSON envelopes over a WSS
 //! connection. Each envelope carries an `envelope_id` (NEOTH ACKs it
 //! back to Slack to confirm receipt) plus a `payload.event` block
-//! with the actual message data. This module parses both — the
-//! transport (tokio-tungstenite) is the only piece left to wire when
-//! the operator opts in.
+//! with the actual message data. This module parses both; the live
+//! `slack_socket` transport dials, reads, ACKs, and dispatches them when
+//! the operator enables Slack.
 //!
-//! Shipping the decoder before the transport means:
+//! Keeping the decoder separate from the transport means:
 //!   - The conversion from Slack JSON → NEOTH `InboundMessage` is
 //!     unit-tested against real Slack event fixtures.
-//!   - The Phase-2 WS loop becomes a thin glue layer (dial → read →
+//!   - The live WS loop stays a thin glue layer (dial → read →
 //!     parse → emit → ACK) rather than a from-scratch port.
 //!   - Format drift between Slack API revisions surfaces in the
 //!     parser tests, not in production at 3am.
@@ -110,7 +110,7 @@ pub enum DecodedFrame {
 }
 
 /// Parse one raw WS-text payload into a `DecodedFrame`. Pure function;
-/// no I/O. The Phase-2 WS loop calls this on every received frame.
+/// no I/O. The live WS loop calls this on every received frame.
 pub fn decode_frame(raw: &str) -> DecodedFrame {
     let envelope: SocketEnvelope = match serde_json::from_str(raw) {
         Ok(e) => e,

@@ -1,18 +1,18 @@
 //! W-02 — OMI installer primitive (self-hosted local mode).
 //!
-//! OMI = Open Memory Interface. NEOTH's OM-01 lane consumes OMI
-//! transcript streams via the operator's OWN self-hosted local OMI
-//! backend (NOT `api.omi.me`). SC-14 codifies the constraint as
-//! a hard rule: the daemon refuses to start if `omi.endpoint`
-//! points at the cloud-managed service.
+//! OMI = Open Memory Interface. Legacy `/v1/memories` ingestion consumes the
+//! operator's own self-hosted backend and stays strictly local under SC-14.
+//! Modern Developer API import may use a public HTTPS endpoint only when the
+//! operator explicitly sets `omi.allow_cloud_api: true`; native PCM/media
+//! ingestion binds locally and does not call OMI cloud services.
 //!
 //! This primitive ships:
 //!
 //!   - Default self-hosted local endpoint constant.
 //!   - The forbidden cloud-managed hostname so SC-14 has one
 //!     central source of truth.
-//!   - `is_local_endpoint(url)` validator the wizard +
-//!     daemon both call.
+//!   - Strict `is_local_endpoint(url)` validator for legacy/local paths.
+//!   - Explicit cloud-opt-in validator for the Developer API path.
 //!   - Probe for the operator's local OMI backend health.
 
 use std::time::Duration;
@@ -23,9 +23,8 @@ use serde::{Deserialize, Serialize};
 /// Operators override via `freedom.yaml::omi.endpoint`.
 pub const DEFAULT_OMI_ENDPOINT: &str = "http://127.0.0.1:8002";
 
-/// The cloud-managed OMI hostname SC-14 forbids. Anything that
-/// resolves to or names this host is rejected by
-/// [`is_local_endpoint`].
+/// The cloud-managed OMI hostname SC-14 forbids on legacy/local paths.
+/// [`validate_developer_api_endpoint`] handles the separate explicit opt-in.
 pub const FORBIDDEN_CLOUD_HOSTNAME: &str = "api.omi.me";
 
 /// Upstream docs URL for operators wanting to self-host the OMI
@@ -71,6 +70,41 @@ pub fn is_local_endpoint(url: &str) -> Result<(), String> {
              See {OMI_SELF_HOST_DOCS_URL}.",
         ));
     }
+    Ok(())
+}
+
+/// Validate the modern OMI Developer API endpoint.
+///
+/// Local/self-hosted endpoints always pass through the unchanged SC-14
+/// validator. A public endpoint is accepted only when the operator explicitly
+/// opted into public cloud API access, and must use HTTPS without URL userinfo. This
+/// wrapper intentionally does not loosen [`is_local_endpoint`], which remains
+/// the hard rule for legacy `/v1/memories` ingestion.
+pub fn validate_developer_api_endpoint(url: &str, allow_cloud_api: bool) -> Result<(), String> {
+    if is_local_endpoint(url).is_ok() {
+        return Ok(());
+    }
+    if !allow_cloud_api {
+        return Err(format!(
+            "OMI Developer API endpoint {url:?} is not local; set omi.allow_cloud_api: true \
+             only if the API key and request metadata may be sent to a public service"
+        ));
+    }
+
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|error| format!("invalid OMI Developer API endpoint {url:?}: {error}"))?;
+    if parsed.scheme() != "https" {
+        return Err(format!(
+            "public OMI Developer API endpoint {url:?} must use https://"
+        ));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("OMI Developer API endpoint must not contain URL userinfo".to_string());
+    }
+    parsed
+        .host_str()
+        .filter(|host| !host.trim().is_empty())
+        .ok_or_else(|| format!("OMI Developer API endpoint {url:?} has an empty host"))?;
     Ok(())
 }
 
@@ -236,6 +270,21 @@ mod tests {
         assert!(err.contains(FORBIDDEN_CLOUD_HOSTNAME));
         assert!(err.contains("SC-14"));
         assert!(err.contains("self-host"));
+    }
+
+    #[test]
+    fn developer_api_cloud_requires_explicit_opt_in_and_https() {
+        assert!(validate_developer_api_endpoint("http://127.0.0.1:8002", false).is_ok());
+
+        let official = "https://api.omi.me";
+        assert!(validate_developer_api_endpoint(official, false).is_err());
+        assert!(validate_developer_api_endpoint(official, true).is_ok());
+        assert!(validate_developer_api_endpoint("http://api.omi.me", true).is_err());
+        assert!(validate_developer_api_endpoint("https://user@api.omi.me", true).is_err());
+
+        // The legacy/local validator remains strict even though the separate
+        // Developer API wrapper accepts the official host after explicit opt-in.
+        assert!(is_local_endpoint(official).is_err());
     }
 
     #[test]

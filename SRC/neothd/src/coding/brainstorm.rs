@@ -117,11 +117,7 @@ impl Decision {
 ///
 /// The [`Decision`] for this round. When `Deadlock` is returned the
 /// caller MUST stop the loop.
-pub fn evaluate_with_rounds(
-    prompt: &str,
-    round: u32,
-    unresolved: Vec<String>,
-) -> Decision {
+pub fn evaluate_with_rounds(prompt: &str, round: u32, unresolved: Vec<String>) -> Decision {
     let decision = evaluate(prompt);
     match decision {
         // Terminal decisions — return immediately.

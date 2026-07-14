@@ -42,17 +42,29 @@ export global Theme {
     // on the on_density_changed callback. Default=1 (normal).
     in-out property <int> density-mode: 1;
 
-    // B23 — THEME-TWEAKS-RUNTIME: override properties set from tweaks.toml
-    // at startup via read_gui_tweaks(). Default sentinel = "no override".
-    //   font-sans-override: ""   → no override, built-in font-sans token wins.
-    //   font-size-pt-override: 0 → no override, consumers keep their px token.
-    //   sidebar-w-override: 0px  → no override, sidebar-w resolves to 248px.
-    //   input-height-lines-override: 0 → no override, consumers use their default.
-    // Rust must set these before window.run() so the first paint is correct.
+    // B23 — THEME-TWEAKS-RUNTIME: every retained tweaks.toml appearance key
+    // terminates in one of these first-paint properties. Empty/zero sentinels
+    // mean "use the built-in design-system token".
     in-out property <string> font-sans-override: "";
-    in-out property <int>    font-size-pt-override: 0;
+    in-out property <length> font-size-override: 0px;
     in-out property <length> sidebar-w-override: 0px;
-    in-out property <int>    input-height-lines-override: 0;
+    in-out property <length> input-height-override: 0px;
+    in-out property <bool>   accent-override-enabled: false;
+    in-out property <color>  accent-color-override: transparent;
+    in-out property <bool>   background-override-enabled: false;
+    in-out property <color>  background-color-override: transparent;
+    in-out property <bool>   foreground-override-enabled: false;
+    in-out property <color>  foreground-color-override: transparent;
+    in-out property <length> border-radius-override: 0px;
+    in-out property <float>  panel-opacity: 1.0;
+    in-out property <bool>   show-token-count: true;
+    in-out property <bool>   show-model-badge: false;
+    // 0=rounded, 1=square (minimum accessible radius), 2=minimal.
+    in-out property <int>    chat-bubble-style: 0;
+    // 0=none, 1=reduced, 2=full.
+    in-out property <int>    animation-mode: 2;
+    in-out property <bool>   header-hidden: false;
+    in-out property <bool>   sidebar-collapsed: false;
 
     // ══ INK SCALE — near-black canvas the brand lives on ════════════════
     out property <color> ink-1000: #050505;
@@ -98,18 +110,18 @@ export global Theme {
     out property <color> amber-tint: #ffb6271f;    // rgba(255,182,39,.12)
 
     // ══ SEMANTIC SURFACES — elevation on dark ══════════════════════════
-    out property <color> bg-void:   root.dark ? #050505 : #eceae4;   // deepest
-    out property <color> bg-base:   root.dark ? #0d0d0d : #f4f2ec;   // page background
-    out property <color> bg-center: root.dark ? #0a0a0a : #e7e4dc;   // radial centre
-    out property <color> bg-sunken: root.dark ? #0a0a0a : #e7e4dc;
-    out property <color> surface-1: root.dark ? #121212 : #fbfaf6;
-    out property <color> surface-2: root.dark ? #161616 : #ffffff;
-    out property <color> surface-3: root.dark ? #1c1c1c : #ffffff;
-    out property <color> bg-card:   root.dark ? #121212 : #fbfaf6;   // card / inset
-    out property <color> surface-glass: root.dark ? #141414b8 : #ffffffbd;
+    out property <color> bg-void:   root.background-override-enabled ? root.background-color-override : (root.dark ? #050505 : #eceae4);   // deepest
+    out property <color> bg-base:   root.background-override-enabled ? root.background-color-override : (root.dark ? #0d0d0d : #f4f2ec);   // page background
+    out property <color> bg-center: root.background-override-enabled ? root.background-color-override : (root.dark ? #0a0a0a : #e7e4dc);   // radial centre
+    out property <color> bg-sunken: root.background-override-enabled ? root.background-color-override : (root.dark ? #0a0a0a : #e7e4dc);
+    out property <color> surface-1: (root.dark ? #121212 : #fbfaf6).with-alpha(root.panel-opacity);
+    out property <color> surface-2: (root.dark ? #161616 : #ffffff).with-alpha(root.panel-opacity);
+    out property <color> surface-3: (root.dark ? #1c1c1c : #ffffff).with-alpha(root.panel-opacity);
+    out property <color> bg-card:   (root.dark ? #121212 : #fbfaf6).with-alpha(root.panel-opacity);   // card / inset
+    out property <color> surface-glass: (root.dark ? #141414b8 : #ffffffbd).with-alpha(root.panel-opacity);
 
     // ══ TEXT HIERARCHY ═════════════════════════════════════════════════
-    out property <color> text-primary:   root.dark ? #ffffff : #11140f;
+    out property <color> text-primary:   root.foreground-override-enabled ? root.foreground-color-override : (root.dark ? #ffffff : #11140f);
     out property <color> text-secondary: root.dark ? #aaaaaa : #4a4d46;
     out property <color> text-tertiary:  root.dark ? #8a8a8a : #6f726a;
     out property <color> text-disabled:  root.dark ? #5a5a5a : #a7a99f;
@@ -119,13 +131,13 @@ export global Theme {
     out property <color> text-dim:       root.dark ? #909090 : #6f726a;   // back-compat caption
 
     // ══ SEMANTIC ALIASES — meaning, not colour, at the call site ═══════
-    out property <color> accent:        root.dark ? #00ff80 : #008a45;
-    out property <color> accent-hover:  root.dark ? #4dffa6 : #00a352;
-    out property <color> accent-press:  root.dark ? #00cc66 : #006f38;
-    out property <color> accent-tint:   root.dark ? #00ff801a : #008a451f;
-    out property <color> accent-glow:   root.dark ? #00ff808c : #00a3524d;
-    out property <color> memory:        root.dark ? #00ff80 : #008a45;
-    out property <color> memory-tint:   root.dark ? #00ff801a : #008a451f;
+    out property <color> accent:        root.accent-override-enabled ? root.accent-color-override : (root.dark ? #00ff80 : #008a45);
+    out property <color> accent-hover:  root.accent-override-enabled ? root.accent-color-override : (root.dark ? #4dffa6 : #00a352);
+    out property <color> accent-press:  root.accent-override-enabled ? root.accent-color-override : (root.dark ? #00cc66 : #006f38);
+    out property <color> accent-tint:   root.accent-override-enabled ? root.accent-color-override.with-alpha(0.10) : (root.dark ? #00ff801a : #008a451f);
+    out property <color> accent-glow:   root.accent-override-enabled ? root.accent-color-override.with-alpha(0.55) : (root.dark ? #00ff808c : #00a3524d);
+    out property <color> memory:        root.accent-override-enabled ? root.accent-color-override : (root.dark ? #00ff80 : #008a45);
+    out property <color> memory-tint:   root.accent-override-enabled ? root.accent-color-override.with-alpha(0.10) : (root.dark ? #00ff801a : #008a451f);
     out property <color> audit:         root.dark ? #05d5ff : #0286a8;
     out property <color> audit-tint:    root.dark ? #05d5ff1a : #0286a81f;
     out property <color> consent:       root.dark ? #ff2a6d : #d11254;
@@ -135,7 +147,7 @@ export global Theme {
 
     // Back-compat accent names the existing components reference. Values now
     // resolve to the canonical neon (the operator's "bundle is canonical" call).
-    out property <color> accent-green: root.dark ? #00ff80 : #008a45;   // neon dark · AA-green light
+    out property <color> accent-green: root.accent-override-enabled ? root.accent-color-override : (root.dark ? #00ff80 : #008a45);   // neon dark · AA-green light
     out property <color> accent-pink:  root.dark ? #ff2a6d : #d11254;
     out property <color> accent-amber: root.dark ? #ffb627 : #b8780a;
     out property <color> accent-teal:  root.dark ? #05d5ff : #0286a8;   // canonical audit-cyan
@@ -145,23 +157,23 @@ export global Theme {
     out property <color> border-subtle:  root.dark ? #ffffff0f : #11141212;
     out property <color> border-default: root.dark ? #ffffff1a : #1114121f;
     out property <color> border-strong:  root.dark ? #ffffff29 : #11141233;
-    out property <color> border-accent:  root.dark ? #00ff8066 : #008a4573;
+    out property <color> border-accent:  root.accent-override-enabled ? root.accent-color-override.with-alpha(0.45) : (root.dark ? #00ff8066 : #008a4573);
     out property <color> divider:        root.dark ? #ffffff12 : #1114121a;
-    out property <color> focus-ring:     root.dark ? #00ff808c : #008a4580;
+    out property <color> focus-ring:     root.accent-override-enabled ? root.accent-color-override.with-alpha(0.55) : (root.dark ? #00ff808c : #008a4580);
     out property <color> scrim:          root.dark ? #050505a8 : #14161257;
 
     // ══ CORNER RADII — "Noble Curve", never 0px ════════════════════════
-    out property <length> radius-xs:   4px;
-    out property <length> radius-sm:   7px;
-    out property <length> radius-md:   11px;
-    out property <length> radius-lg:   16px;
-    out property <length> radius-xl:   22px;
-    out property <length> radius-2xl:  30px;
+    out property <length> radius-xs:   root.border-radius-override > 0px ? root.border-radius-override : 4px;
+    out property <length> radius-sm:   root.border-radius-override > 0px ? root.border-radius-override : 7px;
+    out property <length> radius-md:   root.border-radius-override > 0px ? root.border-radius-override : 11px;
+    out property <length> radius-lg:   root.border-radius-override > 0px ? root.border-radius-override : 16px;
+    out property <length> radius-xl:   root.border-radius-override > 0px ? root.border-radius-override : 22px;
+    out property <length> radius-2xl:  root.border-radius-override > 0px ? root.border-radius-override : 30px;
     out property <length> radius-pill: 999px;
     // Back-compat radius names.
-    out property <length> radius-window: 30px;       // large containers / modals (= 2xl)
-    out property <length> radius-card:   16px;       // cards / inputs (= lg)
-    out property <length> radius-button: 8px;        // action elements
+    out property <length> radius-window: root.border-radius-override > 0px ? root.border-radius-override : 30px;
+    out property <length> radius-card:   root.border-radius-override > 0px ? root.border-radius-override : 16px;
+    out property <length> radius-button: root.border-radius-override > 0px ? root.border-radius-override : 8px;
 
     // ══ SPACING — 4px base grid, generous negative space ═══════════════
     out property <length> space-1:  4px;
@@ -189,13 +201,14 @@ export global Theme {
     // Layout.
     // sidebar-w: use override from tweaks.toml when > 0px, else 248px built-in.
     out property <length> sidebar-w: root.sidebar-w-override > 0px ? root.sidebar-w-override : 248px;
+    out property <length> input-height: root.input-height-override > 0px ? root.input-height-override : 38px;
     out property <length> container-max: 1200px;
 
     // ══ TYPOGRAPHY ═════════════════════════════════════════════════════
     // Space Grotesk for all UI + display; Bodoni Moda for the wordmark only;
     // JetBrains Mono for machine-truth. Fallbacks resolve on the host.
-    out property <string> font-sans:     "Space Grotesk, Inter, SF Pro Display, system-ui, sans-serif";
-    out property <string> font-display:  "Space Grotesk, Inter, SF Pro Display, system-ui, sans-serif";
+    out property <string> font-sans:     root.font-sans-override != "" ? root.font-sans-override : "Space Grotesk, Inter, SF Pro Display, system-ui, sans-serif";
+    out property <string> font-display:  root.font-sans;
     out property <string> font-wordmark: "Bodoni Moda, Didot, Times New Roman, Georgia, serif";
     out property <string> font-mono:     "JetBrains Mono, SF Mono, Consolas, monospace";
 
@@ -208,23 +221,23 @@ export global Theme {
     out property <int> weight-bold:       700;
 
     // Text sizes (grotesk steps).
-    out property <length> font-size-2xs:     11px;
-    out property <length> font-size-xs:      12px;
-    out property <length> font-size-sm:      13px;
-    out property <length> font-size-base:    15px;
-    out property <length> font-size-md:      17px;
-    out property <length> font-size-lg:      20px;
-    out property <length> font-size-xl:      24px;
+    out property <length> font-size-2xs:     root.font-size-override > 0px ? max(9px, root.font-size-override - 4px) : 11px;
+    out property <length> font-size-xs:      root.font-size-override > 0px ? max(10px, root.font-size-override - 3px) : 12px;
+    out property <length> font-size-sm:      root.font-size-override > 0px ? max(10px, root.font-size-override - 2px) : 13px;
+    out property <length> font-size-base:    root.font-size-override > 0px ? root.font-size-override : 15px;
+    out property <length> font-size-md:      root.font-size-override > 0px ? root.font-size-override + 2px : 17px;
+    out property <length> font-size-lg:      root.font-size-override > 0px ? root.font-size-override + 5px : 20px;
+    out property <length> font-size-xl:      root.font-size-override > 0px ? root.font-size-override + 9px : 24px;
     // Display steps.
     out property <length> font-size-display-sm: 32px;
     out property <length> font-size-display-md: 48px;
     out property <length> font-size-display-lg: 80px;
     out property <length> font-size-hero:       72px;   // NEOTH wordmark
     // Back-compat size names.
-    out property <length> font-size-h1:      32px;
-    out property <length> font-size-h2:      20px;
-    out property <length> font-size-body:    15px;
-    out property <length> font-size-caption: 13px;
+    out property <length> font-size-h1:      root.font-size-override > 0px ? root.font-size-override + 17px : 32px;
+    out property <length> font-size-h2:      root.font-size-override > 0px ? root.font-size-override + 5px : 20px;
+    out property <length> font-size-body:    root.font-size-override > 0px ? root.font-size-override : 15px;
+    out property <length> font-size-caption: root.font-size-override > 0px ? max(10px, root.font-size-override - 2px) : 13px;
 
     // Letter spacing (absolute px, the shipped values).
     out property <length> letter-spacing-hero:       14px;   // ≈ +20% on 72px wordmark
@@ -244,20 +257,20 @@ export global Theme {
     out property <easing> ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);
     // Ambient-motion periods (design-taste audit B8): named so a
     // theme-wide timing pass reaches them.
-    out property <duration> duration-sweep:   700ms;   // card shimmer travel
-    out property <duration> duration-spin:    900ms;   // button loading spinner
-    out property <duration> duration-breathe: 1600ms;  // Led opacity breathe
-    out property <duration> duration-fast:       120ms;
-    out property <duration> duration-micro:      220ms;
-    out property <duration> duration-base:       220ms;
-    out property <duration> duration-slow:       380ms;
-    out property <duration> duration-screen-min: 600ms;
-    out property <duration> duration-slower:     640ms;
+    out property <duration> duration-sweep:   root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 350ms : 700ms);
+    out property <duration> duration-spin:    root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 450ms : 900ms);
+    out property <duration> duration-breathe: root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 800ms : 1600ms);
+    out property <duration> duration-fast:       root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 60ms : 120ms);
+    out property <duration> duration-micro:      root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 110ms : 220ms);
+    out property <duration> duration-base:       root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 110ms : 220ms);
+    out property <duration> duration-slow:       root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 190ms : 380ms);
+    out property <duration> duration-screen-min: root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 300ms : 600ms);
+    out property <duration> duration-slower:     root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 320ms : 640ms);
     // Wave-1 motion primitives (nh-in / nh-side-in / nh-toast-in / nh-toast-bar).
     // Names mirror the CSS keyframe names in the design report so cross-medium
     // search yields the same intent.
-    out property <duration> duration-entrance:  500ms;  // nh-in: y-offset + opacity
-    out property <duration> duration-side-in:   440ms;  // nh-side-in: x-offset + opacity
-    out property <duration> duration-toast-in:  400ms;  // nh-toast-in: x-offset + opacity
-    out property <duration> duration-toast-life: 6000ms; // nh-toast-bar: progress drain
+    out property <duration> duration-entrance:  root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 250ms : 500ms);
+    out property <duration> duration-side-in:   root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 220ms : 440ms);
+    out property <duration> duration-toast-in:  root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 200ms : 400ms);
+    out property <duration> duration-toast-life: root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 3000ms : 6000ms);
 }

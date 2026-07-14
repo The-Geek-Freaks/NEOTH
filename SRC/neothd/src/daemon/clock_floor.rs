@@ -29,20 +29,29 @@ pub fn default_floor_path() -> PathBuf {
 /// drift while still catching real rollbacks.
 pub const MAX_ROLLBACK_NS: u64 = 60 * 1_000_000_000;
 
-/// Read the persisted floor. Returns `0` when the file is missing or
-/// unparseable — a fresh install has no floor, that's fine.
-pub fn read_floor(path: &Path) -> u64 {
-    let Ok(body) = std::fs::read_to_string(path) else {
-        return 0;
+/// Read the persisted floor. A missing file is a valid fresh-install state;
+/// unreadable or malformed persisted state is an error and must never be
+/// treated as floor zero.
+pub fn read_floor(path: &Path) -> Result<Option<u64>> {
+    let body = match std::fs::read_to_string(path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read clock floor at {}", path.display()));
+        }
     };
-    body.trim().parse::<u64>().unwrap_or(0)
+    let floor = body
+        .trim()
+        .parse::<u64>()
+        .with_context(|| format!("parse clock floor at {}", path.display()))?;
+    Ok(Some(floor))
 }
 
 /// Write `now_ns` as the new floor, but only when it actually exceeds the
 /// currently-stored value. Cheap call — safe to invoke from every WAL
 /// frame's hot path.
 pub fn persist_floor(path: &Path, now_ns: u64) -> Result<()> {
-    let current = read_floor(path);
+    let current = read_floor(path)?.unwrap_or(0);
     if now_ns <= current {
         return Ok(());
     }
@@ -59,11 +68,10 @@ pub fn persist_floor(path: &Path, now_ns: u64) -> Result<()> {
 /// floor. Returns `Ok(())` on the happy path, `Err` with a human-readable
 /// message that includes the gap when the clock rolled back too far.
 pub fn check(path: &Path, now_ns: u64) -> Result<()> {
-    let floor = read_floor(path);
-    if floor == 0 {
+    let Some(floor) = read_floor(path)? else {
         // Fresh install: nothing to compare against.
         return Ok(());
-    }
+    };
     if now_ns >= floor {
         return Ok(());
     }
@@ -90,15 +98,16 @@ mod tests {
     #[test]
     fn read_floor_returns_zero_when_missing() {
         let dir = tempdir().unwrap();
-        assert_eq!(read_floor(&dir.path().join("absent")), 0);
+        assert_eq!(read_floor(&dir.path().join("absent")).unwrap(), None);
     }
 
     #[test]
-    fn read_floor_tolerates_garbage_content() {
+    fn read_floor_rejects_garbage_content() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("clock.floor");
         std::fs::write(&path, "not a number").unwrap();
-        assert_eq!(read_floor(&path), 0);
+        let error = read_floor(&path).unwrap_err();
+        assert!(error.to_string().contains("parse clock floor"));
     }
 
     #[test]
@@ -106,9 +115,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("clock.floor");
         persist_floor(&path, 100).unwrap();
-        assert_eq!(read_floor(&path), 100);
+        assert_eq!(read_floor(&path).unwrap(), Some(100));
         persist_floor(&path, 200).unwrap();
-        assert_eq!(read_floor(&path), 200);
+        assert_eq!(read_floor(&path).unwrap(), Some(200));
     }
 
     #[test]
@@ -117,9 +126,9 @@ mod tests {
         let path = dir.path().join("clock.floor");
         persist_floor(&path, 500).unwrap();
         persist_floor(&path, 200).unwrap(); // earlier — must NOT overwrite
-        assert_eq!(read_floor(&path), 500);
+        assert_eq!(read_floor(&path).unwrap(), Some(500));
         persist_floor(&path, 500).unwrap(); // equal — also no-op
-        assert_eq!(read_floor(&path), 500);
+        assert_eq!(read_floor(&path).unwrap(), Some(500));
     }
 
     #[test]

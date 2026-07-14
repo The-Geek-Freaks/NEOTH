@@ -368,7 +368,10 @@ mod tests {
             kind = "allow"
         "#;
         let h: HookDef = toml::from_str(toml_src).unwrap();
-        assert!(h.once(), "once() must return true when TOML sets once = true");
+        assert!(
+            h.once(),
+            "once() must return true when TOML sets once = true"
+        );
         assert!(h.once, "once field must be true");
     }
 

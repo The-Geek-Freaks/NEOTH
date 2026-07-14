@@ -1,5 +1,6 @@
 //! Skill loader — bundled-in-binary defaults + `~/.neoth/skills/<id>/skill.yaml`
-//! user overrides. Bad manifests are logged + skipped, never block startup.
+//! user overrides. Existing malformed or unreadable manifests fail the load;
+//! only genuinely absent optional files are ignored.
 //!
 //! ## Two layers
 //!
@@ -22,11 +23,13 @@
 //!     skill.yaml
 //! ```
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use tokio::fs;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::schema::{Skill, SkillManifest};
 
@@ -35,74 +38,90 @@ use super::schema::{Skill, SkillManifest};
 ///
 /// Bundled skills always load. User skills override bundled ids
 /// (operator's customised version of `systematic_debugging` wins over
-/// the shipped default). A missing or unreadable user dir is a normal
-/// fresh-install state — the loader returns the bundled set without
-/// error.
+/// the shipped default). A missing user dir is a normal fresh-install
+/// state; an existing unreadable user dir is an error.
+///
+/// A missing user directory is the normal fresh-install state. Once the
+/// directory or an individual `skill.yaml` exists, read/parse/schema failures
+/// are fatal so startup cannot silently lose operator-installed behaviour.
 ///
 /// The output is sorted by id for deterministic ordering downstream
 /// (router picks the first keyword match in declaration order; sorting
 /// the inputs keeps that order reproducible across processes).
 pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
     // ── Layer 1: bundled skills (always present) ────────────────────────
-    let mut by_id: std::collections::HashMap<String, Skill> = parse_bundled_skills();
+    let mut by_id = parse_bundled_skills()?;
+
+    // Read the adjacent operator policy once. Missing freedom.yaml is an
+    // explicit first-run state; an existing unreadable/malformed policy must
+    // not silently relax enabled/disabled/visibility gates.
+    let policy = load_skill_policy(skills_dir).await?;
 
     // ── Layer 2: user skills (override by id) ───────────────────────────
-    if skills_dir.exists() {
-        if let Ok(mut entries) = fs::read_dir(skills_dir).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let dir_name = match path.file_name().and_then(|s| s.to_str()) {
-                    Some(n) if !n.starts_with('.') => n.to_string(),
-                    _ => continue,
-                };
-                let yaml_path = path.join("skill.yaml");
-                if !yaml_path.exists() {
-                    continue;
-                }
-
-                match parse_one(&yaml_path).await {
-                    Ok((manifest, raw_yaml)) => {
-                        if manifest.id != dir_name {
-                            warn!(
-                                dir = %dir_name,
-                                manifest_id = %manifest.id,
-                                path = %yaml_path.display(),
-                                "skill id mismatch — directory name and `id:` field differ; skipped"
-                            );
-                            continue;
-                        }
-                        let overrode = by_id.contains_key(&manifest.id);
-                        // ARCH-07 — content_hash = SHA-256(yaml || template).
-                        let content_hash = crate::skills::versioning::skill_content_hash_hex(
-                            &raw_yaml,
-                            &manifest.system_prompt,
-                        );
-                        debug!(
-                            id = %manifest.id,
-                            keywords = manifest.trigger_keywords.len(),
-                            enabled = manifest.enabled,
-                            overrode_bundled = overrode,
-                            content_hash = %content_hash,
-                            "loaded user skill"
-                        );
-                        by_id.insert(
-                            manifest.id.clone(),
-                            Skill {
-                                manifest,
-                                path: yaml_path,
-                                content_hash,
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        warn!(path = %yaml_path.display(), error = %e, "skill load failed; skipped");
-                    }
-                }
+    let mut entries = match fs::read_dir(skills_dir).await {
+        Ok(entries) => Some(entries),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read skills directory {}", skills_dir.display()));
+        }
+    };
+    while let Some(entry) = match entries.as_mut() {
+        Some(entries) => entries
+            .next_entry()
+            .await
+            .with_context(|| format!("enumerate skills directory {}", skills_dir.display()))?,
+        None => None,
+    } {
+        let path = entry.path();
+        let metadata = fs::metadata(&path)
+            .await
+            .with_context(|| format!("inspect skill entry {}", path.display()))?;
+        if !metadata.is_dir() {
+            continue;
+        }
+        let dir_name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) if !n.starts_with('.') => n.to_string(),
+            _ => continue,
+        };
+        let yaml_path = path.join("skill.yaml");
+        match fs::metadata(&yaml_path).await {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect skill manifest {}", yaml_path.display()));
             }
         }
+
+        let (manifest, raw_yaml) = parse_one(&yaml_path).await?;
+        if manifest.id != dir_name {
+            anyhow::bail!(
+                "skill id mismatch at {}: directory `{dir_name}` contains manifest id `{}`",
+                yaml_path.display(),
+                manifest.id
+            );
+        }
+        let overrode = by_id.contains_key(&manifest.id);
+        // ARCH-07 — content_hash = SHA-256(yaml || template).
+        let content_hash =
+            crate::skills::versioning::skill_content_hash_hex(&raw_yaml, &manifest.system_prompt);
+        debug!(
+            id = %manifest.id,
+            keywords = manifest.trigger_keywords.len(),
+            enabled = manifest.enabled,
+            overrode_bundled = overrode,
+            content_hash = %content_hash,
+            "loaded user skill"
+        );
+        by_id.insert(
+            manifest.id.clone(),
+            Skill {
+                manifest,
+                path: yaml_path,
+                content_hash,
+            },
+        );
     }
 
     // ── full-auto operating mode — freedom.yaml skills.enable_all_bundled ──
@@ -112,7 +131,7 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
     // `enabled: false`. Applied FIRST so the `disabled` blocklist below still
     // wins (an operator force-OFF, e.g. the RASKAL offensive register, is never
     // silently re-enabled — the GOLD-HON-11 guarantee holds even in full-auto).
-    if read_enable_all_bundled(skills_dir) {
+    if policy.enable_all_bundled {
         for skill in by_id.values_mut() {
             skill.manifest.enabled = true;
         }
@@ -124,7 +143,7 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
     // `enabled: false` (the 68 imported `pm-*` skills ship DISABLED). Applied
     // BEFORE the disabled block below so `disabled` ALWAYS wins — a force-OFF
     // can never be silently re-enabled (preserves the GOLD-HON-11 guarantee).
-    let enabled_allow = read_enabled_skill_ids(skills_dir);
+    let enabled_allow = &policy.enabled;
     if !enabled_allow.is_empty() {
         for skill in by_id.values_mut() {
             if enabled_allow.contains(&skill.manifest.id.to_lowercase()) {
@@ -141,7 +160,7 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
     // Applied here at the single load chokepoint, so every downstream
     // `is_enabled()` consumer honours it with no call-site changes. Runs AFTER
     // the enabled allowlist so disabled wins on a conflicting id.
-    let disabled = read_disabled_skill_ids(skills_dir);
+    let disabled = &policy.disabled;
     if !disabled.is_empty() {
         for skill in by_id.values_mut() {
             if disabled.contains(&skill.manifest.id.to_lowercase()) {
@@ -160,7 +179,7 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
     // manifest's `visibility` field so the router never re-reads `freedom.yaml`.
     // Note: runs AFTER the `disabled` blocklist so a conflicting `Off` + `disabled`
     // both leave the skill disabled (redundant but safe).
-    let visibility_overrides = read_visibility_overrides(skills_dir);
+    let visibility_overrides = &policy.visibility_overrides;
     if !visibility_overrides.is_empty() {
         for skill in by_id.values_mut() {
             if let Some(&vis) = visibility_overrides.get(&skill.manifest.id.to_lowercase()) {
@@ -190,190 +209,105 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
     Ok(out)
 }
 
-/// GOLD-HON-11 — read `skills.disabled: [<id>, …]` from the `freedom.yaml`
-/// that sits next to `<skills_dir>` (i.e. `<home>/freedom.yaml`). Returns
-/// lowercased ids. Missing / unreadable / unparseable freedom.yaml → empty
-/// list (no skills disabled) — identical to the pre-HON-11 behaviour, so a
-/// fresh install with no freedom.yaml is unaffected. Read as a raw
-/// `serde_yaml::Value` (house style, mirrors `cluster::policy::
-/// load_policy_from_freedom`) so the loader stays decoupled from the full
-/// `FreedomConfig` type.
-fn read_disabled_skill_ids(skills_dir: &Path) -> Vec<String> {
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SkillPolicyFile {
+    skills: SkillPolicy,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SkillPolicy {
+    enabled: HashSet<String>,
+    disabled: HashSet<String>,
+    enable_all_bundled: bool,
+    visibility_overrides: HashMap<String, crate::config::SkillVisibility>,
+}
+
+/// Read the skill-specific operator policy adjacent to `<skills_dir>` without
+/// coupling the loader to provider credentials or unrelated config sections.
+/// Missing `freedom.yaml` is optional; any error after the file exists is
+/// propagated so policy cannot silently relax to defaults.
+async fn load_skill_policy(skills_dir: &Path) -> Result<SkillPolicy> {
     let Some(home) = skills_dir.parent() else {
-        return Vec::new();
+        return Ok(SkillPolicy::default());
     };
     let freedom_path = home.join("freedom.yaml");
-    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
-        return Vec::new();
+    let body = match fs::read_to_string(&freedom_path).await {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SkillPolicy::default());
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read skill policy from {}", freedom_path.display()));
+        }
     };
-    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
-        return Vec::new();
-    };
-    value
-        .get("skills")
-        .and_then(|s| s.get("disabled"))
-        .and_then(|d| d.as_sequence())
-        .map(|seq| {
-            seq.iter()
-                .filter_map(|v| v.as_str().map(|s| s.trim().to_lowercase()))
-                .filter(|s| !s.is_empty())
-                .collect()
+    let mut policy = serde_yaml::from_str::<SkillPolicyFile>(&body)
+        .with_context(|| format!("parse skill policy at {}", freedom_path.display()))?
+        .skills;
+    policy.enabled = policy
+        .enabled
+        .into_iter()
+        .map(|id| id.trim().to_lowercase())
+        .filter(|id| !id.is_empty())
+        .collect();
+    policy.disabled = policy
+        .disabled
+        .into_iter()
+        .map(|id| id.trim().to_lowercase())
+        .filter(|id| !id.is_empty())
+        .collect();
+    policy.visibility_overrides = policy
+        .visibility_overrides
+        .into_iter()
+        .filter_map(|(id, visibility)| {
+            let id = id.trim().to_lowercase();
+            (!id.is_empty()).then_some((id, visibility))
         })
-        .unwrap_or_default()
-}
-
-/// GOLD-ADOPT-14 — read `skills.enabled: [<id>, …]` (the force-ON allowlist)
-/// from the `freedom.yaml` next to `<skills_dir>`. Same raw-`Value` walk +
-/// lowercasing + empty-on-missing semantics as [`read_disabled_skill_ids`].
-fn read_enabled_skill_ids(skills_dir: &Path) -> Vec<String> {
-    let Some(home) = skills_dir.parent() else {
-        return Vec::new();
-    };
-    let freedom_path = home.join("freedom.yaml");
-    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
-        return Vec::new();
-    };
-    value
-        .get("skills")
-        .and_then(|s| s.get("enabled"))
-        .and_then(|d| d.as_sequence())
-        .map(|seq| {
-            seq.iter()
-                .filter_map(|v| v.as_str().map(|s| s.trim().to_lowercase()))
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Read `skills.enable_all_bundled: <bool>` (the full-auto force-ON-everything
-/// switch) from the `freedom.yaml` next to `<skills_dir>`. Same raw-`Value`
-/// walk + empty/missing-is-false semantics as [`read_disabled_skill_ids`], so a
-/// fresh install (no freedom.yaml, or the key absent) is gated mode by default.
-fn read_enable_all_bundled(skills_dir: &Path) -> bool {
-    let Some(home) = skills_dir.parent() else {
-        return false;
-    };
-    let freedom_path = home.join("freedom.yaml");
-    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
-        return false;
-    };
-    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
-        return false;
-    };
-    value
-        .get("skills")
-        .and_then(|s| s.get("enable_all_bundled"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-}
-
-/// GOLD-CCPARITY-SKILLVIS-01 — read `skills.visibility_overrides: { <id>: <vis>, … }`
-/// from the `freedom.yaml` next to `<skills_dir>`. Returns a map of lowercased skill
-/// ids to their `SkillVisibility` override value. Same raw-`Value` walk + missing-
-/// is-empty semantics as [`read_disabled_skill_ids`], so a fresh install with no
-/// `freedom.yaml` (or the key absent) is unaffected.
-///
-/// Unrecognised visibility strings are silently skipped (forward-compat: a future
-/// variant in a newer NEOTH won't break an older binary). Ids not in the map stay
-/// at their manifest default (`On`).
-fn read_visibility_overrides(
-    skills_dir: &Path,
-) -> std::collections::HashMap<String, crate::config::SkillVisibility> {
-    let Some(home) = skills_dir.parent() else {
-        return std::collections::HashMap::new();
-    };
-    let freedom_path = home.join("freedom.yaml");
-    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
-        return std::collections::HashMap::new();
-    };
-    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
-        return std::collections::HashMap::new();
-    };
-    let Some(map_val) = value
-        .get("skills")
-        .and_then(|s| s.get("visibility_overrides"))
-        .and_then(|v| v.as_mapping())
-    else {
-        return std::collections::HashMap::new();
-    };
-    let mut out = std::collections::HashMap::new();
-    for (k, v) in map_val {
-        let Some(id) = k.as_str() else { continue };
-        let Some(vis_str) = v.as_str() else { continue };
-        // Deserialise from a single-value YAML snippet — reuses serde_yaml so
-        // the string values ("on", "off", "name_only", "user_invocable_only") match
-        // the `#[serde(rename_all = "snake_case")]` on `SkillVisibility`.
-        let vis_yaml = format!("\"{}\"", vis_str);
-        let Ok(vis) = serde_yaml::from_str::<crate::config::SkillVisibility>(&vis_yaml) else {
-            warn!(
-                id = %id,
-                value = %vis_str,
-                "unknown visibility_overrides value in freedom.yaml; skipped"
-            );
-            continue;
-        };
-        out.insert(id.trim().to_lowercase(), vis);
-    }
-    out
+        .collect();
+    Ok(policy)
 }
 
 /// Decode every entry in [`super::bundled::BUNDLED_SKILLS`] into a `Skill`.
 /// A bundled YAML that fails to parse is a build error (the bundled tests
 /// in `super::bundled` pin every YAML at compile time), so a failure here
-/// would only fire on a manually corrupted include_str! — we log + skip
-/// rather than panic so the daemon stays bootable even under that
-/// degenerate state.
-fn parse_bundled_skills() -> std::collections::HashMap<String, Skill> {
-    let mut out = std::collections::HashMap::new();
+/// would only fire on a corrupted compile-time asset. Propagating that error
+/// prevents a partially populated built-in registry from reaching callers.
+fn parse_bundled_skills() -> Result<HashMap<String, Skill>> {
+    let mut out = HashMap::new();
     for (expected_id, yaml_body) in super::bundled::BUNDLED_SKILLS {
-        match serde_yaml::from_str::<SkillManifest>(yaml_body) {
-            Ok(mut manifest) => {
-                if manifest.id != *expected_id {
-                    warn!(
-                        expected_id = %expected_id,
-                        manifest_id = %manifest.id,
-                        "bundled skill id mismatch — entry in BUNDLED_SKILLS disagrees with YAML; skipped"
-                    );
-                    continue;
-                }
-                manifest.trigger_keywords = manifest
-                    .trigger_keywords
-                    .into_iter()
-                    .map(|s| s.trim().to_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                // ARCH-07 — bundled skill content_hash uses the
-                // already-in-memory yaml body (no re-read needed).
-                let content_hash = crate::skills::versioning::skill_content_hash_hex(
-                    yaml_body,
-                    &manifest.system_prompt,
-                );
-                out.insert(
-                    manifest.id.clone(),
-                    Skill {
-                        manifest,
-                        // Bundled skills have no on-disk path; use a
-                        // marker path so downstream consumers can tell
-                        // bundled from user-installed.
-                        path: PathBuf::from(format!("<bundled>/{expected_id}/skill.yaml")),
-                        content_hash,
-                    },
-                );
-            }
-            Err(e) => {
-                warn!(
-                    id = %expected_id,
-                    error = %e,
-                    "bundled skill YAML failed to parse — skipped"
-                );
-            }
+        let mut manifest = serde_yaml::from_str::<SkillManifest>(yaml_body)
+            .with_context(|| format!("parse bundled skill `{expected_id}`"))?;
+        if manifest.id != *expected_id {
+            anyhow::bail!(
+                "bundled skill id mismatch: table id `{expected_id}` contains manifest id `{}`",
+                manifest.id
+            );
         }
+        manifest.trigger_keywords = manifest
+            .trigger_keywords
+            .into_iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+        // ARCH-07 — bundled skill content_hash uses the
+        // already-in-memory yaml body (no re-read needed).
+        let content_hash =
+            crate::skills::versioning::skill_content_hash_hex(yaml_body, &manifest.system_prompt);
+        out.insert(
+            manifest.id.clone(),
+            Skill {
+                manifest,
+                // Bundled skills have no on-disk path; use a
+                // marker path so downstream consumers can tell
+                // bundled from user-installed.
+                path: PathBuf::from(format!("<bundled>/{expected_id}/skill.yaml")),
+                content_hash,
+            },
+        );
     }
-    out
+    Ok(out)
 }
 
 /// Returns the parsed manifest AND the raw yaml body. The body is
@@ -599,24 +533,76 @@ system_prompt: |
     }
 
     #[tokio::test]
-    async fn id_mismatch_is_skipped_with_warning() {
+    async fn id_mismatch_rejects_the_registry_load() {
         let dir = tempdir().unwrap();
         write_manifest(dir.path(), "expected-id", "id: wrong-id\ndescription: x\n").await;
-        let skills = load_all(dir.path()).await.unwrap();
-        // Only the bundled set — the mismatched user entry was rejected.
-        assert!(!skills.iter().any(|s| s.id() == "wrong-id"));
-        assert!(!skills.iter().any(|s| s.id() == "expected-id"));
-        assert_eq!(skills.len(), super::super::bundled::BUNDLED_SKILLS.len());
+        let error = load_all(dir.path()).await.unwrap_err();
+        assert!(format!("{error:#}").contains("skill id mismatch"));
+        assert!(format!("{error:#}").contains("expected-id"));
     }
 
     #[tokio::test]
     async fn missing_description_rejected() {
         let dir = tempdir().unwrap();
         write_manifest(dir.path(), "broke", "id: broke\ndescription: \"\"\n").await;
-        let skills = load_all(dir.path()).await.unwrap();
-        // Bundled set only — broken user entry skipped.
-        assert!(!skills.iter().any(|s| s.id() == "broke"));
-        assert_eq!(skills.len(), super::super::bundled::BUNDLED_SKILLS.len());
+        let error = load_all(dir.path()).await.unwrap_err();
+        assert!(format!("{error:#}").contains("description must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn malformed_existing_manifest_rejects_the_registry_load() {
+        let dir = tempdir().unwrap();
+        write_manifest(dir.path(), "broken", "id: [not-valid\n").await;
+        let error = load_all(dir.path()).await.unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("parse YAML"));
+        assert!(detail.contains("broken"));
+    }
+
+    #[tokio::test]
+    async fn existing_non_directory_skills_path_is_not_treated_as_missing() {
+        let dir = tempdir().unwrap();
+        let skills_path = dir.path().join("skills");
+        write(&skills_path, "not a directory").await.unwrap();
+        let error = load_all(&skills_path).await.unwrap_err();
+        assert!(format!("{error:#}").contains("read skills directory"));
+    }
+
+    #[tokio::test]
+    async fn existing_skill_manifest_directory_is_not_treated_as_missing() {
+        let dir = tempdir().unwrap();
+        let manifest_path = dir.path().join("broken").join("skill.yaml");
+        create_dir_all(&manifest_path).await.unwrap();
+        let error = load_all(dir.path()).await.unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("read"));
+        assert!(detail.contains("skill.yaml"));
+    }
+
+    #[tokio::test]
+    async fn malformed_existing_freedom_yaml_does_not_relax_skill_policy() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write(home.path().join("freedom.yaml"), "skills: [broken\n")
+            .await
+            .unwrap();
+        let error = load_all(&skills_dir).await.unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("parse skill policy"));
+        assert!(detail.contains("freedom.yaml"));
+    }
+
+    #[tokio::test]
+    async fn existing_unreadable_freedom_yaml_does_not_relax_skill_policy() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        create_dir_all(home.path().join("freedom.yaml"))
+            .await
+            .unwrap();
+        let error = load_all(&skills_dir).await.unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("read skill policy"));
+        assert!(detail.contains("freedom.yaml"));
     }
 
     #[tokio::test]
@@ -961,7 +947,10 @@ system_prompt: |
             .find(|s| s.id() == "manual-skill")
             .expect("manual-skill loaded");
 
-        assert!(s.is_enabled(), "user_invocable_only skill must stay enabled");
+        assert!(
+            s.is_enabled(),
+            "user_invocable_only skill must stay enabled"
+        );
         assert_eq!(
             s.visibility(),
             crate::config::SkillVisibility::UserInvocableOnly,

@@ -68,7 +68,10 @@ mod tests {
         store("hermes03b-telegram", "u1", "deploy the cluster");
         assert!(is_pending("hermes03b-telegram", "u1"));
         let combined = take_combined("hermes03b-telegram", "u1", "staging").unwrap();
-        assert!(combined.contains("deploy the cluster"), "keeps original: {combined}");
+        assert!(
+            combined.contains("deploy the cluster"),
+            "keeps original: {combined}"
+        );
         assert!(
             combined.contains("[operator clarification]: staging"),
             "appends the answer: {combined}"
@@ -87,7 +90,15 @@ mod tests {
     fn keys_isolated_per_channel_and_sender() {
         store("hermes03b-iso", "a", "Pa");
         store("hermes03b-iso", "b", "Pb");
-        assert!(take_combined("hermes03b-iso", "a", "x").unwrap().contains("Pa"));
-        assert!(take_combined("hermes03b-iso", "b", "y").unwrap().contains("Pb"));
+        assert!(
+            take_combined("hermes03b-iso", "a", "x")
+                .unwrap()
+                .contains("Pa")
+        );
+        assert!(
+            take_combined("hermes03b-iso", "b", "y")
+                .unwrap()
+                .contains("Pb")
+        );
     }
 }

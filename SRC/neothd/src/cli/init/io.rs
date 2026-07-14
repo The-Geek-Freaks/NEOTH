@@ -12,6 +12,74 @@ use super::{
     try_inline_consent_grant, write_first_tour_marker,
 };
 
+/// Defaults owned by the onboarding contract rather than by `FreedomConfig`.
+/// The config-level audit-RPC default stays off for source/manual configs, but
+/// a successful fresh wizard enables the loopback listener so one-shot CLIs
+/// can append to the daemon-owned WAL. `--force` hydration may overwrite this
+/// with the operator's existing explicit choice.
+pub(crate) fn fresh_wizard_state() -> WizardState {
+    let mut state = WizardState::default();
+    state.audit_rpc.enabled = true;
+    state
+}
+
+/// Hydrate every complete config object owned by the init wizard before a
+/// `--force` run. Steps then mutate only the answers they actually collect;
+/// advanced known fields retain their prior values, while the YAML merge in
+/// [`write_config`] preserves unknown future fields as well.
+pub(crate) fn hydrate_existing_init_state(
+    neoth_dir: &std::path::Path,
+    state: &mut WizardState,
+) -> Result<()> {
+    let path = neoth_dir.join("freedom.yaml");
+    if !path.exists() {
+        return Ok(());
+    }
+    let existing = match crate::config::FreedomConfig::load_from_path(&path) {
+        Ok(existing) => existing,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                path = %path.display(),
+                "existing freedom.yaml is corrupt; init recovery is starting from safe defaults"
+            );
+            return Ok(());
+        }
+    };
+    state.secrets_backend = existing.secrets_backend;
+    state.operator_id = existing.operator_id;
+    state.language_primary = existing.language_primary;
+    state.language_code = existing.language_code;
+    state.role = existing.role;
+    state.role_custom = existing.role_custom;
+    state.provider_kind = existing.provider_kind;
+    state.provider_binary = existing.provider_binary;
+    state.provider_endpoint = existing.provider_endpoint;
+    state.provider_model = existing.provider_model;
+    state.provider_region = existing.provider_region;
+    state.provider_api_version = existing.provider_api_version;
+    state.telegram_user_id = existing.telegram_user_id;
+    state.autonomy = existing.autonomy;
+    state.custom_autonomy = existing.custom_autonomy;
+    state.inference = existing.inference;
+    // `load_from_path` supplements these from credentials/keychain. Hydration
+    // is for public config only: do not pull effective secrets back into wizard
+    // state and accidentally migrate keychain values into freedom.yaml/file.
+    state.inference.left.key = None;
+    state.inference.right.key = None;
+    state.inference.cerebellum.key = None;
+    state.inference.default_slot.key = None;
+    state.auto_update = existing.auto_update;
+    state.plugins = existing.plugins;
+    state.supervisor = existing.supervisor;
+    state.companion = existing.companion;
+    state.omi = existing.omi;
+    state.audit_rpc = existing.audit_rpc;
+    state.onboarding_complete = existing.onboarding_complete;
+    state.chat_onboarding_completed = existing.chat_onboarding_completed;
+    Ok(())
+}
+
 /// Step 9 (post-write) — optional ground-truth Q&A. Always interactive.
 ///
 /// Operator gets one confirm prompt. If they decline, the daemon is fully
@@ -166,23 +234,17 @@ pub(crate) fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<
     );
     println!("  Role:      {role_display}");
     println!("  Provider:  {provider_display}");
-    // K-4 (Session 21, 2026-05-23): primary/secondary channel display.
-    // Keet wins if paired (operator-private + e2e by default); Telegram
-    // is the fallback. Both paired → "Keet (primary) / Telegram
-    // (secondary)" — encodes the recommended-default flip the agent
-    // panel called for in K-4.
+    // Render the actually configured wizard channels only.
     let channels = configured_channels(state);
     let channel_line = match channels.as_slice() {
         [] => "none".to_string(),
         [one] => match one.as_str() {
-            "keet" => "Keet".to_string(),
             "telegram" => "Telegram".to_string(),
             other => other.to_string(),
         },
         [primary, secondary] => {
             fn pretty(s: &str) -> &str {
                 match s {
-                    "keet" => "Keet",
                     "telegram" => "Telegram",
                     other => other,
                 }
@@ -196,6 +258,24 @@ pub(crate) fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<
         many => many.join(", "),
     };
     println!("  Channel:   {channel_line}");
+    if state.omi.enabled {
+        let mode = match state.omi.mode {
+            crate::config::OmiIngestMode::DeveloperApi => "developer_api",
+            crate::config::OmiIngestMode::NativeIngest => "native_ingest",
+            crate::config::OmiIngestMode::Both => "both",
+            crate::config::OmiIngestMode::LegacyMemories => "legacy_memories",
+        };
+        println!(
+            "  OMI:       enabled ({mode}, {} day retention; transcript/audio/image/video = {}/{}/{}/{})",
+            state.omi.retention_days,
+            state.omi.retain_transcripts,
+            state.omi.audio_enabled,
+            state.omi.visual_enabled,
+            state.omi.video_enabled,
+        );
+    } else {
+        println!("  OMI:       disabled (privacy default)");
+    }
     // JV-IMP-08: surface import intent so migration operators see it confirmed.
     if let Some(ref p) = state.import_memory {
         println!(
@@ -243,7 +323,7 @@ pub(crate) fn run_reconfigure_menu(_args: &InitArgs) -> Result<()> {
     println!("Neoth is already initialized.");
     println!();
     println!("To reconfigure individual sections, use:");
-    println!("  neoth provider add        # change LLM provider");
+    println!("  neoth hemispheres set     # configure or change an LLM provider");
     println!("  neoth channel add <kind>  # add a chat channel");
     println!("  neoth profile show        # inspect operator profile");
     println!();
@@ -272,7 +352,7 @@ pub(crate) fn run_reconfigure_menu(_args: &InitArgs) -> Result<()> {
 ///   - `provider_kind` — which LLM the wizard configured. `neoth doctor`
 ///     surfaces this so the operator can confirm at-a-glance.
 ///   - `channels` — sorted, stable list of channel ids configured at
-///     onboarding (`["telegram"]`, `["telegram", "keet"]`, etc).
+///     onboarding (`["telegram"]`, etc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct InitializedMarker {
     pub(crate) wizard_version: u8,
@@ -400,6 +480,85 @@ pub(crate) async fn snapshot_existing_config(freedom_yaml: &std::path::Path) -> 
     Ok(())
 }
 
+/// The init wizard owns these public keys. Everything else in freedom.yaml is
+/// retained value-semantically through a YAML merge, including future
+/// top-level additions that this binary does not yet know about.
+const WIZARD_OWNED_CONFIG_KEYS: &[&str] = &[
+    "secrets_backend",
+    "operator_id",
+    "language_primary",
+    "language_code",
+    "role",
+    "role_custom",
+    "provider_kind",
+    "provider_binary",
+    "provider_key",
+    "provider_endpoint",
+    "provider_model",
+    "provider_region",
+    "provider_api_version",
+    "telegram_token",
+    "telegram_user_id",
+    "autonomy",
+    "custom_autonomy",
+    "inference",
+    "auto_update",
+    "plugins",
+    "supervisor",
+    "companion",
+    "omi",
+    "audit_rpc",
+    "import_memory",
+    "onboarding_complete",
+    "chat_onboarding_completed",
+    "obsidian_vault",
+    "obsidian_subdir",
+];
+
+fn merge_yaml_value(target: &mut serde_yaml::Value, source: &serde_yaml::Value) {
+    match (target, source) {
+        (serde_yaml::Value::Mapping(target), serde_yaml::Value::Mapping(source)) => {
+            for (key, value) in source {
+                if let Some(current) = target.get_mut(key) {
+                    merge_yaml_value(current, value);
+                } else {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        (target, source) => *target = source.clone(),
+    }
+}
+
+fn merge_wizard_owned_config(
+    existing: Option<serde_yaml::Value>,
+    wizard: &serde_yaml::Value,
+) -> Result<serde_yaml::Value> {
+    let wizard = wizard
+        .as_mapping()
+        .context("serialized WizardState must be a YAML mapping")?;
+    let mut output =
+        existing.unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    {
+        let output = output
+            .as_mapping_mut()
+            .context("existing freedom.yaml root must be a YAML mapping")?;
+
+        for &name in WIZARD_OWNED_CONFIG_KEYS {
+            let key = serde_yaml::Value::String(name.to_string());
+            let Some(incoming) = wizard.get(&key) else {
+                continue;
+            };
+            if let Some(current) = output.get_mut(&key) {
+                merge_yaml_value(current, incoming);
+            } else {
+                output.insert(key, incoming.clone());
+            }
+        }
+    }
+    Ok(output)
+}
+
 pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardState) -> Result<()> {
     ensure_dir_secure(neoth_dir)?;
     ensure_dir_secure(&neoth_dir.join("credentials"))?;
@@ -411,26 +570,35 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     let mut public_state = state.clone();
     let provider_key = public_state.provider_key.take();
     let telegram_token = public_state.telegram_token.take();
-    // K-3.5 (Session 21): keet seed + pears bearer never touch freedom.yaml.
-    let keet_seed_phrase = public_state.keet_seed_phrase.take();
-    let pears_bearer_token = public_state.pears_bearer_token.take();
+    let omi_developer_api_key = public_state.omi_developer_api_key.take();
+    let omi_ingest_token = public_state.omi_ingest_token.take();
+    let inference_left_key = public_state.inference.left.key.take();
+    let inference_right_key = public_state.inference.right.key.take();
+    let inference_cerebellum_key = public_state.inference.cerebellum.key.take();
+    let inference_default_slot_key = public_state.inference.default_slot.key.take();
+    // Legacy Keet/Pear fields are deliberately discarded. There is no
+    // supported public Keet chat API, so onboarding must never mint or persist
+    // credentials for the removed guessed transport.
+    public_state.keet_seed_phrase = None;
+    public_state.pears_bearer_token = None;
 
     // GOLD-ADAPT-OH-03: mark onboarding complete iff ≥1 channel configured.
-    // `configured_channels` checks keet + telegram (the two wizard-path channels).
+    // `configured_channels` checks the Telegram wizard path.
     // Discord/Slack/WhatsApp/Signal configured via step6g go straight to
     // credentials.yaml — the secondary boot-time probe catches those correctly.
-    public_state.onboarding_complete = !configured_channels(state).is_empty();
+    public_state.onboarding_complete =
+        public_state.onboarding_complete || !configured_channels(state).is_empty();
 
     // GOLD-ADAPT-OH-11: wizard always resets chat_onboarding_completed = false
     // so the first-chat hint fires on the next `neoth chat` after (re-)init.
     // This correctly re-arms the hint on `neoth init --force` runs too.
     public_state.chat_onboarding_completed = false;
 
-    let mut public_value =
+    let mut wizard_value =
         serde_yaml::to_value(&public_state).context("serialize WizardState as YAML value")?;
     if public_state.bootstrap_vault {
         if let Some(vault_path) = public_state.vault_path.as_ref() {
-            if let serde_yaml::Value::Mapping(map) = &mut public_value {
+            if let serde_yaml::Value::Mapping(map) = &mut wizard_value {
                 map.insert(
                     serde_yaml::Value::String("obsidian_vault".to_string()),
                     serde_yaml::Value::String(vault_path.display().to_string()),
@@ -447,8 +615,110 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     }
 
     let freedom_yaml = neoth_dir.join("freedom.yaml");
+    // Parse and merge before touching credentials. A malformed existing file
+    // must fail closed without leaving a half-applied cross-file update.
+    let existing_value = if freedom_yaml.exists() {
+        let raw = std::fs::read(&freedom_yaml)
+            .with_context(|| format!("read existing {} for merge", freedom_yaml.display()))?;
+        Some(
+            serde_yaml::from_slice(&raw)
+                .with_context(|| format!("parse existing {} for merge", freedom_yaml.display()))?,
+        )
+    } else {
+        None
+    };
+    let public_value = merge_wizard_owned_config(existing_value, &wizard_value)?;
     let serialized = serde_yaml::to_string(&public_value)
-        .context("serialize WizardState as YAML for freedom.yaml")?;
+        .context("serialize losslessly merged init config for freedom.yaml")?;
+
+    let cred_path = neoth_dir.join("credentials.yaml");
+    let omi_update = crate::cli::omi::OmiCredentialUpdate {
+        developer_api_key: omi_developer_api_key,
+        native_ingest_token: omi_ingest_token,
+    };
+    if omi_update.developer_api_key.is_some() || omi_update.native_ingest_token.is_some() {
+        omi_update.validate()?;
+    }
+
+    // Validate the exact effective cross-file state before either file changes.
+    // This prevents an enabled OMI config from ever being published without
+    // the dedicated credential for every active network surface.
+    if public_state.omi.enabled
+        || omi_update.developer_api_key.is_some()
+        || omi_update.native_ingest_token.is_some()
+    {
+        let mut candidate = crate::config::credentials::Credentials::load_effective(
+            &cred_path,
+            public_state.secrets_backend,
+        )
+        .with_context(|| format!("load effective credentials from {}", cred_path.display()))?;
+        if let Some(value) = omi_update.developer_api_key.as_ref() {
+            candidate.omi_developer_api_key = Some(value.clone());
+        }
+        if let Some(value) = omi_update.native_ingest_token.as_ref() {
+            candidate.omi_ingest_token = Some(value.clone());
+        }
+        public_state
+            .omi
+            .validate_with_credentials(&candidate)
+            .map_err(anyhow::Error::msg)
+            .context("validate OMI config and credentials before init write")?;
+    } else {
+        public_state
+            .omi
+            .validate()
+            .map_err(anyhow::Error::msg)
+            .context("validate disabled OMI config before init write")?;
+    }
+
+    // Credentials land first. A later config-write failure leaves only dormant
+    // secrets; the inverse ordering briefly exposed an enabled but unauthenticated
+    // OMI surface. Locked read-modify-write preserves imported and unrelated
+    // credentials instead of rebuilding credentials.yaml from two fields.
+    let mut credentials_updated = false;
+    if provider_key.is_some()
+        || telegram_token.is_some()
+        || inference_left_key.is_some()
+        || inference_right_key.is_some()
+        || inference_cerebellum_key.is_some()
+        || inference_default_slot_key.is_some()
+    {
+        crate::config::credentials::Credentials::update_at(&cred_path, |credentials| {
+            if let Some(value) = provider_key.as_ref() {
+                credentials.provider_key = Some(value.clone());
+            }
+            if let Some(value) = telegram_token.as_ref() {
+                credentials.telegram_token = Some(value.clone());
+            }
+            if let Some(value) = inference_left_key.as_ref() {
+                credentials.inference_left_key = Some(value.clone());
+            }
+            if let Some(value) = inference_right_key.as_ref() {
+                credentials.inference_right_key = Some(value.clone());
+            }
+            if let Some(value) = inference_cerebellum_key.as_ref() {
+                credentials.inference_cerebellum_key = Some(value.clone());
+            }
+            if let Some(value) = inference_default_slot_key.as_ref() {
+                credentials.inference_default_slot_key = Some(value.clone());
+            }
+            Ok(())
+        })
+        .context("merge provider/channel credentials during init")?;
+        credentials_updated = true;
+    }
+    if omi_update.developer_api_key.is_some() || omi_update.native_ingest_token.is_some() {
+        crate::cli::omi::persist_omi_credential_update(
+            neoth_dir,
+            public_state.secrets_backend,
+            &omi_update,
+        )
+        .context("persist OMI credentials during init")?;
+        credentials_updated = true;
+    }
+    if credentials_updated {
+        info!(path = %cred_path.display(), "credential store updated without replacing unrelated fields");
+    }
 
     // A3-tail mutation-site wiring: when freedom.yaml ALREADY exists
     // (reconfigure flow, not first-run), capture its prior bytes
@@ -467,19 +737,6 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
 
     write_atomically(&freedom_yaml, serialized.as_bytes())?;
     info!(path = %freedom_yaml.display(), "freedom.yaml written (mode 0600 on unix)");
-
-    let creds = crate::config::credentials::Credentials {
-        provider_key,
-        telegram_token,
-        keet_seed_phrase,
-        pears_bearer_token,
-        ..Default::default()
-    };
-    let cred_path = neoth_dir.join("credentials.yaml");
-    creds.write(&cred_path).context("write credentials.yaml")?;
-    if creds.has_any() {
-        info!(path = %cred_path.display(), "credentials.yaml written (mode 0600 on unix)");
-    }
     Ok(())
 }
 
@@ -523,24 +780,11 @@ pub(crate) fn format_iso8601(unix_secs: u64) -> String {
 /// Sorted, stable list of channel ids the wizard configured. Operators
 /// reading the marker via `neoth doctor` see exactly which inbound
 /// surfaces are live without parsing freedom.yaml. Extend this when a
-/// future channel (keet, whatsapp, slack) lands.
+/// future channel (whatsapp, slack) lands.
 pub(crate) fn configured_channels(state: &WizardState) -> Vec<String> {
-    // K-4 (Session 21, 2026-05-23): primary-channel ordering. Once
-    // Keet pairing succeeded, surface Keet FIRST in the configured
-    // list — `.initialized` marker + post-init wizard summary both
-    // read this as "first entry = primary". Telegram still listed
-    // but becomes the fallback channel. This is the minimal-first
-    // K-4 verdict: change the recommended-primary signal without
-    // restructuring step6_channel's dispatch (full default flip
-    // gated on cluster live-test against `pear`).
     let mut out = Vec::new();
-    if state.keet_seed_phrase.is_some() {
-        out.push("keet".to_string());
-    }
     if state.telegram_token.is_some() {
         out.push("telegram".to_string());
     }
-    // No .sort() — K-4 ordering is intentional. The Vec is the
-    // primary-first list operators see in `neoth status` output.
     out
 }

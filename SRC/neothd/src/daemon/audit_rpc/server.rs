@@ -17,7 +17,9 @@ use tokio::task::JoinHandle;
 
 use crate::n8n_api::auth::AuthCooldown;
 use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
-use crate::wal::events::{EVENT_TYPE_AUDIT_RPC_ACCEPT, EVENT_TYPE_AUDIT_RPC_REJECT};
+use crate::wal::events::{
+    EVENT_TYPE_AUDIT_RPC_ACCEPT, EVENT_TYPE_AUDIT_RPC_REJECT, EVENT_TYPE_EXTENDED, ExtendedSubtype,
+};
 use crate::wal::writer::WalWriterHandle;
 
 /// The ONLY event types a one-shot CLI may forward over the audit-RPC channel —
@@ -52,13 +54,22 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xD2, // SELF_UPDATE_APPLIED    — `neoth update --apply` replaced the binary
     0xD7, // MODEL_DOWNLOAD_START   — `neoth model pull` began a fetch
     0xD8, // MODEL_DOWNLOAD_COMPLETE — `neoth model pull` finished a fetch
-    0xD9, // HMAC_KEY_ROTATED       — `neoth security rewrap-hmac-key` replaced the key
+    0xD9, // HMAC_KEY_ROTATED       — security rewrap / keys rotate boundary
     0xDA, // PRESET_APPLIED         — `neoth preset apply` merged a preset into freedom.yaml
     0xDB, // CONSENT_GRANTED        — `neoth consent grant` wrote a cloud-provider consent marker
     0xDC, // CONSENT_REVOKED        — `neoth consent revoke` removed a consent marker
     0x54, // RISK_CONFIRM_GRANTED   — `neoth risk-confirm` granted a risk-override lease
     0xF5, // MEMORY_TRANSFER_EXPORTED — `neoth transfer export` sealed a bundle
     0xF6, // RECON_RUN              — `neoth recon uncover/tlsx` ran a gated recon tool
+];
+
+/// The ONLY EXTENDED subtypes accepted from one-shot clients. This list is
+/// intentionally separate from the top-level allowlist so `(0x00, 0)` and a
+/// non-zero subtype attached to any top-level event are both rejected.
+pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
+    ExtendedSubtype::ProofKeyRotated as u8,
+    ExtendedSubtype::ExternalHttpIntent as u8,
+    ExtendedSubtype::ExternalHttpResult as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.
@@ -77,6 +88,17 @@ const MAX_CONCURRENT_CONNS: usize = 32;
 /// `true` iff `event_type` may be forwarded by a one-shot CLI.
 pub fn is_allowed_client_event(event_type: u8) -> bool {
     ALLOWED_CLIENT_EVENT_TYPES.contains(&event_type)
+}
+
+/// Strict event identity gate for the subtype-aware protocol. Existing clients
+/// omit `event_subtype` and therefore decode as zero, preserving their exact
+/// top-level behavior.
+pub fn is_allowed_client_event_pair(event_type: u8, event_subtype: u8) -> bool {
+    if event_type == EVENT_TYPE_EXTENDED {
+        event_subtype != 0 && ALLOWED_CLIENT_EXTENDED_SUBTYPES.contains(&event_subtype)
+    } else {
+        event_subtype == 0 && is_allowed_client_event(event_type)
+    }
 }
 
 /// Spawn-time state for the audit-RPC listener.
@@ -262,10 +284,11 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
 
     // GR-RESID-D34 — FULL-AUTO single-use token endpoints (auth already passed).
     if req_path == "/fullauto-token/mint" {
-        let resp = match state.fullauto.mint(super::fullauto_token::FULLAUTO_TOKEN_TTL) {
-            Some(tok) => {
-                http_response_json(200, &format!("{{\"token\":{:?}}}", tok))
-            }
+        let resp = match state
+            .fullauto
+            .mint(super::fullauto_token::FULLAUTO_TOKEN_TTL)
+        {
+            Some(tok) => http_response_json(200, &format!("{{\"token\":{:?}}}", tok)),
             None => http_response(500, "token mint failed (RNG unavailable)"),
         };
         let _ = stream.write_all(resp.as_bytes()).await;
@@ -287,14 +310,23 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         return Ok(());
     }
 
-    // Body: {"event_type": u8, "payload_b64": "<base64-standard>"}.
-    let parsed: Result<(u8, Vec<u8>), &str> = (|| {
+    // Body: {"event_type": u8, "event_subtype"?: u8,
+    //        "payload_b64": "<base64-standard>"}. Missing subtype is zero for
+    // backward compatibility with pre-subtype clients.
+    let parsed: Result<(u8, u8, Vec<u8>), &str> = (|| {
         let v: serde_json::Value = serde_json::from_slice(&req.body).map_err(|_| "bad json")?;
         let event_type = v
             .get("event_type")
             .and_then(|e| e.as_u64())
             .and_then(|e| u8::try_from(e).ok())
             .ok_or("missing event_type")?;
+        let event_subtype = match v.get("event_subtype") {
+            None => 0,
+            Some(value) => value
+                .as_u64()
+                .and_then(|value| u8::try_from(value).ok())
+                .ok_or("invalid event_subtype")?,
+        };
         let payload_b64 = v
             .get("payload_b64")
             .and_then(|p| p.as_str())
@@ -302,10 +334,10 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         let payload = base64::engine::general_purpose::STANDARD
             .decode(payload_b64)
             .map_err(|_| "bad payload base64")?;
-        Ok((event_type, payload))
+        Ok((event_type, event_subtype, payload))
     })();
 
-    let (event_type, payload) = match parsed {
+    let (event_type, event_subtype, payload) = match parsed {
         Ok(x) => x,
         Err(reason) => {
             emit_reject(state, reason).await;
@@ -318,20 +350,29 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
     };
 
     // Layer 3 — compile-time event-type allowlist (anti-poisoning gate).
-    if !is_allowed_client_event(event_type) {
-        emit_reject(state, "event_type_not_allowed").await;
+    if !is_allowed_client_event_pair(event_type, event_subtype) {
+        let reason = if event_subtype == 0 && event_type != EVENT_TYPE_EXTENDED {
+            // Preserve the historical rejection contract for old top-level
+            // clients; subtype-aware identity failures use the new reason.
+            "event_type_not_allowed"
+        } else {
+            "event_identity_not_allowed"
+        };
+        emit_reject(state, reason).await;
         let _ = stream
-            .write_all(http_response(422, "event_type_not_allowed").as_bytes())
+            .write_all(http_response(422, reason).as_bytes())
             .await;
         let _ = stream.shutdown().await;
         return Ok(());
     }
 
     // Forward the frame into the daemon's single writer.
-    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+    let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+        .event_subtype(event_subtype)
+        .build();
     match state.writer.append(header, payload).await {
         Ok(offset) => {
-            emit_accept(state, event_type).await;
+            emit_accept(state, event_type, event_subtype).await;
             let body = format!("{{\"ok\":true,\"offset\":{offset}}}");
             let _ = stream
                 .write_all(http_response_json(200, &body).as_bytes())
@@ -347,20 +388,25 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
     Ok(())
 }
 
-async fn emit_accept(state: &AuditRpcState, forwarded_event_type: u8) {
+async fn emit_accept(state: &AuditRpcState, forwarded_event_type: u8, forwarded_event_subtype: u8) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "forwarded_event_type": forwarded_event_type,
+        "forwarded_event_subtype": forwarded_event_subtype,
     }))
-    .unwrap_or_else(|_| b"{}".to_vec());
+    .expect("audit-RPC accept payload contains only infallible JSON values");
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_AUDIT_RPC_ACCEPT, &payload).build();
-    let _ = state.writer.append(header, payload).await;
+    if let Err(error) = state.writer.append(header, payload).await {
+        tracing::warn!(%error, "audit-RPC accept marker append failed");
+    }
 }
 
 async fn emit_reject(state: &AuditRpcState, reason: &str) {
     let payload = serde_json::to_vec(&serde_json::json!({ "reason": reason }))
-        .unwrap_or_else(|_| b"{}".to_vec());
+        .expect("audit-RPC reject payload contains only infallible JSON values");
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_AUDIT_RPC_REJECT, &payload).build();
-    let _ = state.writer.append(header, payload).await;
+    if let Err(error) = state.writer.append(header, payload).await {
+        tracing::warn!(%error, "audit-RPC reject marker append failed");
+    }
 }
 
 fn http_response(status: u16, msg: &str) -> String {

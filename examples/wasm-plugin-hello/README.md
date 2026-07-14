@@ -1,7 +1,8 @@
 # wasm-plugin-hello — minimal NEOTH plugin
 
-Smallest WASM plugin that satisfies the NEOTH plugin ABI. Exports
-one function: `neoth_run() -> i32` that returns 0 (success).
+Smallest WASM plugin built against `neoth-plugin-sdk`. The SDK macro exports
+`neoth_abi_version() -> i32` and `neoth_run() -> i32`; the host validates ABI
+v1 before calling the entry point.
 
 ## Build
 
@@ -48,7 +49,7 @@ neoth plugins list
 Pick #34's daemon-side bootstrap (`cli/serve.rs::bootstrap_plugin_invoker`)
 runs the full
 ```
-discover → compile → instantiate → call neoth_run
+discover → approval check → compile → instantiate → validate ABI → call neoth_run
 ```
 chain. Unit tests cover every step in isolation; this fixture is
 the only built artefact that exercises the happy path end-to-end.

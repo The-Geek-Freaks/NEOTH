@@ -83,20 +83,17 @@ pub async fn run_cost(args: CostArgs) -> Result<()> {
 
 async fn run_estimate(args: CostArgs) -> Result<()> {
     let prompt = resolve_prompt(&args).await?;
-    let cfg = FreedomConfig::load_from_default_path().ok();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
 
     let provider = args
         .provider
         .clone()
-        .or_else(|| {
-            cfg.as_ref()
-                .and_then(|c| c.provider_kind.map(|p| format!("{p:?}").to_lowercase()))
-        })
+        .or_else(|| cfg.provider_kind.map(|p| format!("{p:?}").to_lowercase()))
         .unwrap_or_else(|| "openai_api".to_string());
     let model = args
         .model
         .clone()
-        .or_else(|| cfg.as_ref().and_then(|c| c.provider_model.clone()))
+        .or_else(|| cfg.provider_model.clone())
         .unwrap_or_else(|| "gpt-5.5".to_string());
 
     // Use a fresh meter — CLI is one-shot, so we don't have rolling

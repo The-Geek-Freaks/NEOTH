@@ -154,8 +154,7 @@ mod tests {
     fn pick_greeting_rotates_across_consecutive_days() {
         // Over POOL_LEN consecutive days we must see at least 2 distinct greetings.
         let len = GREETING_POOL.len() as u64;
-        let greetings: std::collections::HashSet<&str> =
-            (0..len).map(pick_greeting).collect();
+        let greetings: std::collections::HashSet<&str> = (0..len).map(pick_greeting).collect();
         assert!(
             greetings.len() == GREETING_POOL.len(),
             "all greetings should appear once across len days: {greetings:?}"
@@ -200,7 +199,8 @@ mod tests {
     fn render_prompt_contains_no_fabricate_rule() {
         let prompt = render_briefing_system_prompt("UTC", "Sunday, 2026-06-22 06:00");
         assert!(
-            prompt.to_ascii_lowercase().contains("fabricat") || prompt.to_ascii_lowercase().contains("invent"),
+            prompt.to_ascii_lowercase().contains("fabricat")
+                || prompt.to_ascii_lowercase().contains("invent"),
             "system prompt must include no-fabricate rule: {prompt}"
         );
     }

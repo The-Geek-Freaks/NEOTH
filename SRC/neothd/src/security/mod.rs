@@ -10,6 +10,11 @@
 /// Token lifecycle: create (hash stored, plaintext shown once) / list / revoke.
 /// Verification uses PBKDF2-HMAC-SHA256 with constant-time compare (subtle).
 pub mod api_tokens;
+/// GOLD-ADAPT-JV-PAPERLESS-01 — 29-entry regex pattern table ported verbatim
+/// from the Jarvis Python content scanner. Classifies email/document content
+/// into severity buckets (Low/Medium/High) before anything leaves the box.
+/// HIGH severity → quarantine gate; scanner error → same quarantine path.
+pub mod content_scanner;
 pub mod credential_redact;
 pub mod dangerous_command;
 /// GOLD-ADAPT-SNYK-03 — offline typosquatting heuristic for packages about to
@@ -22,11 +27,11 @@ pub mod egress;
 pub mod email_sanitizer;
 pub mod email_threat;
 pub mod ingress_sanitizer;
+pub mod jailbreak_retry;
 /// GOLD-ADAPT-GOOSE-01 — OSV (api.osv.dev) supply-chain malware gate run before
 /// `npm install -g` of any CLI toolchain package. Blocks confirmed `MAL-*`
 /// packages, fails open on a lookup error.
 pub mod osv_check;
-pub mod jailbreak_retry;
 pub mod paperless_ingest;
 pub mod redact;
 pub mod refusal_abliterated;
@@ -40,11 +45,6 @@ pub mod risk_gate;
 /// `neoth credential scan <path>`. Findings redact the matched value.
 pub mod secrets_scan;
 pub mod stream_batch_sanitizer;
-/// GOLD-ADAPT-JV-PAPERLESS-01 — 29-entry regex pattern table ported verbatim
-/// from the Jarvis Python content scanner. Classifies email/document content
-/// into severity buckets (Low/Medium/High) before anything leaves the box.
-/// HIGH severity → quarantine gate; scanner error → same quarantine path.
-pub mod content_scanner;
 
 /// GOLD-ADOPT-23 — a combined egress + dangerous-command finding for one tool
 /// call, for operator-visible surfacing in the dispatch loop.

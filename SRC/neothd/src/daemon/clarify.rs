@@ -122,7 +122,10 @@ pub enum AnswerError {
     /// the current pending request.
     NotWaiting,
     /// The request id does not match the pending request.
-    IdMismatch { expected: ClarificationId, got: ClarificationId },
+    IdMismatch {
+        expected: ClarificationId,
+        got: ClarificationId,
+    },
 }
 
 impl std::fmt::Display for AnswerError {
@@ -130,7 +133,10 @@ impl std::fmt::Display for AnswerError {
         match self {
             AnswerError::NotWaiting => write!(f, "clarification gate is not in Waiting state"),
             AnswerError::IdMismatch { expected, got } => {
-                write!(f, "clarification id mismatch: expected {expected}, got {got}")
+                write!(
+                    f,
+                    "clarification id mismatch: expected {expected}, got {got}"
+                )
             }
         }
     }
@@ -172,7 +178,11 @@ impl ClarificationGate {
     /// Current state of the gate (non-blocking snapshot for the
     /// operator-facing status surface).
     pub fn state(&self) -> GateState {
-        self.slot.lock().unwrap_or_else(|p| p.into_inner()).state.clone()
+        self.slot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .state
+            .clone()
     }
 
     /// The current pending request, if the gate is in `Waiting` state.
@@ -195,10 +205,7 @@ impl ClarificationGate {
     ///
     /// Returns `Err` when the gate is already in a non-Idle state (callers
     /// must create a fresh gate per run).
-    pub async fn park(
-        &self,
-        question: impl Into<String>,
-    ) -> Result<ParkOutcome, String> {
+    pub async fn park(&self, question: impl Into<String>) -> Result<ParkOutcome, String> {
         let question = question.into();
         let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -349,7 +356,10 @@ mod tests {
     #[test]
     fn clarification_id_display_contains_prefix() {
         let id = ClarificationId::new();
-        assert!(id.to_string().starts_with("clarify-"), "id must carry prefix");
+        assert!(
+            id.to_string().starts_with("clarify-"),
+            "id must carry prefix"
+        );
     }
 
     // ── is_ambiguous ──────────────────────────────────────────────────────────
@@ -409,11 +419,14 @@ mod tests {
         tokio::task::yield_now().await;
 
         // Verify the gate is now Waiting.
-        let pending = gate.pending_request().expect("gate must be in Waiting state");
+        let pending = gate
+            .pending_request()
+            .expect("gate must be in Waiting state");
         assert!(pending.question.contains("which environment"));
 
         // Provide the answer.
-        gate.answer(&pending.id, "staging").expect("answer must succeed");
+        gate.answer(&pending.id, "staging")
+            .expect("answer must succeed");
 
         // Worker must resume with the answer.
         let outcome = worker.await.expect("worker task panicked");
@@ -464,9 +477,7 @@ mod tests {
         let gate = Arc::new(ClarificationGate::new(Duration::from_secs(10)));
         let gate2 = Arc::clone(&gate);
 
-        let worker = tokio::spawn(async move {
-            gate2.park("[[ambiguous]] target?").await
-        });
+        let worker = tokio::spawn(async move { gate2.park("[[ambiguous]] target?").await });
 
         tokio::task::yield_now().await;
 
@@ -478,7 +489,8 @@ mod tests {
         assert!(matches!(err, AnswerError::IdMismatch { .. }));
 
         // Clean up — answer with the correct id so the worker task ends.
-        gate.answer(&pending.id, "staging").expect("correct id must work");
+        gate.answer(&pending.id, "staging")
+            .expect("correct id must work");
         let _ = worker.await;
     }
 
@@ -490,9 +502,8 @@ mod tests {
         let gate2 = Arc::clone(&gate);
 
         // Park the gate.
-        let _worker = tokio::spawn(async move {
-            gate2.park("[[ambiguous]] first question?").await
-        });
+        let _worker =
+            tokio::spawn(async move { gate2.park("[[ambiguous]] first question?").await });
         tokio::task::yield_now().await;
 
         // A second park on the same gate (not allowed — create a new gate).
@@ -500,7 +511,10 @@ mod tests {
             .park("[[ambiguous]] second question?")
             .await
             .unwrap_err();
-        assert!(err.contains("create a new gate per run"), "error must guide caller: {err}");
+        assert!(
+            err.contains("create a new gate per run"),
+            "error must guide caller: {err}"
+        );
 
         // Resolve the worker cleanly.
         if let Some(pending) = gate.pending_request() {

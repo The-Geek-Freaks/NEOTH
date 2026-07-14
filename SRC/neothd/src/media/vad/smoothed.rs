@@ -23,14 +23,13 @@ pub const DEFAULT_SPEECH_PROB: f32 = 0.60;
 /// long after the last above-threshold frame, preventing mid-word dips.
 pub const DEFAULT_HANGOVER_MS: u32 = 750;
 
-// ── VadBackend trait (seam for Silero replacement) ───────────────────────────
+// ── VadBackend trait (test/extension seam) ───────────────────────────────────
 
 /// Per-frame voice-activity probability source.
 ///
 /// The default implementation derives probability from RMS energy (linear,
-/// no model). The `vad` feature replaces this with a Silero ONNX backend that
-/// supplies a neural per-frame probability. Callers that want a mock in tests
-/// can supply any type implementing this trait.
+/// no model). Callers and tests can supply another implementation without
+/// changing the smoothing/hangover state machine.
 pub trait VadBackend: Send {
     /// Return a probability in `[0.0, 1.0]` that `frame` contains speech.
     /// `sample_rate_hz` is provided so the backend can compute its own
@@ -181,8 +180,7 @@ impl SmoothedVad {
             // slots count as silence) — this is what makes a single hot
             // frame a 1-of-5 minority instead of a 1-of-1 majority. Real
             // speech pays a ~3-frame (60 ms) onset latency for it.
-            let smoothed: f32 =
-                self.window.iter().sum::<f32>() / self.window.len() as f32;
+            let smoothed: f32 = self.window.iter().sum::<f32>() / self.window.len() as f32;
 
             if smoothed >= self.speech_prob_threshold {
                 // Speech frame: reset silence counter.
@@ -252,7 +250,11 @@ mod tests {
         let mut vad = SmoothedVad::default();
         // 200 ms of loud speech (well above threshold) fills ≥ 5 frames.
         let decision = vad.process(&pcm(0.1, 200, SR), SR);
-        assert_eq!(decision, VadDecision::Speaking, "loud speech must be detected");
+        assert_eq!(
+            decision,
+            VadDecision::Speaking,
+            "loud speech must be detected"
+        );
     }
 
     #[test]
@@ -264,7 +266,11 @@ mod tests {
         samples.extend(pcm(0.0, 80, SR));
         let decision = vad.process(&samples, SR);
         // Should be Silence because smoothed probability = 0.20 < 0.60.
-        assert_eq!(decision, VadDecision::Silence, "spike must be rejected by smoothing");
+        assert_eq!(
+            decision,
+            VadDecision::Silence,
+            "spike must be rejected by smoothing"
+        );
     }
 
     #[test]
@@ -274,7 +280,11 @@ mod tests {
         vad.process(&pcm(0.1, 200, SR), SR);
         // 400 ms of silence (< 750 ms hangover).
         let decision = vad.process(&pcm(0.0, 400, SR), SR);
-        assert_eq!(decision, VadDecision::Speaking, "hangover must hold through a short dip");
+        assert_eq!(
+            decision,
+            VadDecision::Speaking,
+            "hangover must hold through a short dip"
+        );
     }
 
     #[test]
@@ -284,7 +294,11 @@ mod tests {
         vad.process(&pcm(0.1, 200, SR), SR);
         // 800 ms of silence (> 750 ms hangover).
         let decision = vad.process(&pcm(0.0, 800, SR), SR);
-        assert_eq!(decision, VadDecision::Silence, "hangover must expire after 750 ms");
+        assert_eq!(
+            decision,
+            VadDecision::Silence,
+            "hangover must expire after 750 ms"
+        );
     }
 
     #[test]

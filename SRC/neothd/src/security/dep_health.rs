@@ -29,10 +29,11 @@
 //! This covers the AI-agent-driven `npm install` from a manifest path, which the
 //! per-package wizard gate misses.
 //!
-//! // neoth: wire `scan_manifest` to a `neoth deps scan <manifest>` CLI subcommand
-//! // and/or call it when a manifest-change is detected before a bulk install.
-//! // The building block is shipped here; the CLI dispatch lives in cli/deps.rs
-//! // (not yet wired — add `Deps(deps::DepsArgs)` to Commands enum + mod deps).
+//! The operator-facing scanner is wired as `neoth deps scan <manifest>` through
+//! `cli/deps.rs`. MCP package-manager calls use the stricter immutable-lockfile
+//! path below: inconclusive parsing, OSV responses, lifecycle policy, or a
+//! changed manifest all block installation instead of falling back to this
+//! warning-oriented command.
 //!
 //! ## Distance thresholds
 //!
@@ -219,7 +220,7 @@ pub fn manifest_packages(manifest_path: &Path) -> Vec<String> {
 pub enum StrictManifestScan {
     /// Every parsed dependency received a conclusive OSV response and none met
     /// the operator's blocking policy.
-    ProvenClean {
+    DependencyPolicyClean {
         /// SHA-256 of the exact manifest bytes parsed for this scan. Callers
         /// must compare this digest with the file again at authorization time.
         manifest_sha256: String,
@@ -234,8 +235,8 @@ pub enum StrictManifestScan {
 }
 
 impl StrictManifestScan {
-    pub fn is_proven_clean(&self) -> bool {
-        matches!(self, Self::ProvenClean { .. })
+    pub fn is_dependency_policy_clean(&self) -> bool {
+        matches!(self, Self::DependencyPolicyClean { .. })
     }
 }
 
@@ -246,12 +247,15 @@ impl StrictManifestScan {
 #[serde(rename_all = "snake_case")]
 pub enum StrictScanCode {
     ManifestReadFailed,
+    ManifestTooLarge,
     ManifestDecodeFailed,
     ManifestParseFailed,
     UnsupportedDependencySource,
     UnsupportedManifest,
     NoScannableDependencies,
     MissingExactVersion,
+    PackageLimitExceeded,
+    ScanTimeBudgetExceeded,
     OsvUnverified,
     OsvResultMismatch,
 }
@@ -260,16 +264,47 @@ impl StrictScanCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ManifestReadFailed => "manifest_read_failed",
+            Self::ManifestTooLarge => "manifest_too_large",
             Self::ManifestDecodeFailed => "manifest_decode_failed",
             Self::ManifestParseFailed => "manifest_parse_failed",
             Self::UnsupportedDependencySource => "unsupported_dependency_source",
             Self::UnsupportedManifest => "unsupported_manifest",
             Self::NoScannableDependencies => "no_scannable_dependencies",
             Self::MissingExactVersion => "missing_exact_version",
+            Self::PackageLimitExceeded => "package_limit_exceeded",
+            Self::ScanTimeBudgetExceeded => "scan_time_budget_exceeded",
             Self::OsvUnverified => "osv_unverified",
             Self::OsvResultMismatch => "osv_result_mismatch",
         }
     }
+}
+
+/// Hard resource ceilings for the fail-closed agent install gate. These are
+/// deliberately generous for real lockfiles while bounding local memory and
+/// remote OSV work from untrusted tool arguments.
+pub const STRICT_MAX_MANIFEST_BYTES: usize = 32 * 1024 * 1024;
+pub const STRICT_MAX_PACKAGE_COUNT: usize = 5_000;
+pub const STRICT_SCAN_TIME_BUDGET: Duration = Duration::from_secs(60);
+
+fn read_manifest_bytes_capped(
+    path: &Path,
+    max_bytes: usize,
+) -> std::result::Result<Vec<u8>, StrictScanCode> {
+    use std::io::Read as _;
+
+    let file = std::fs::File::open(path).map_err(|_| StrictScanCode::ManifestReadFailed)?;
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| StrictScanCode::ManifestReadFailed)?;
+    if bytes.len() > max_bytes {
+        return Err(StrictScanCode::ManifestTooLarge);
+    }
+    Ok(bytes)
+}
+
+fn read_manifest_bytes_strict(path: &Path) -> std::result::Result<Vec<u8>, StrictScanCode> {
+    read_manifest_bytes_capped(path, STRICT_MAX_MANIFEST_BYTES)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,7 +317,7 @@ pub struct StrictPackageQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum StrictPackageScan {
-    ProvenClean {
+    DependencyPolicyClean {
         packages_scanned: usize,
         warnings: Vec<String>,
     },
@@ -926,6 +961,239 @@ fn parse_yarn_lock(
     Ok(())
 }
 
+fn jsonc_without_comments_or_trailing_commas(body: &str, path: &Path) -> Result<String, String> {
+    let mut without_comments = String::with_capacity(body.len());
+    let mut chars = body.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if in_string {
+            without_comments.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            without_comments.push(ch);
+            continue;
+        }
+        if ch != '/' {
+            without_comments.push(ch);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('/') => {
+                chars.next();
+                without_comments.push_str("  ");
+                for comment in chars.by_ref() {
+                    if matches!(comment, '\n' | '\r') {
+                        without_comments.push(comment);
+                        break;
+                    }
+                    without_comments.push(' ');
+                }
+            }
+            Some('*') => {
+                chars.next();
+                without_comments.push_str("  ");
+                let mut closed = false;
+                while let Some(comment) = chars.next() {
+                    if comment == '*' && chars.peek() == Some(&'/') {
+                        chars.next();
+                        without_comments.push_str("  ");
+                        closed = true;
+                        break;
+                    }
+                    without_comments.push(if matches!(comment, '\n' | '\r') {
+                        comment
+                    } else {
+                        ' '
+                    });
+                }
+                if !closed {
+                    return Err(format!(
+                        "{} contains an unterminated JSONC comment",
+                        path.display()
+                    ));
+                }
+            }
+            _ => without_comments.push(ch),
+        }
+    }
+
+    let chars: Vec<char> = without_comments.chars().collect();
+    let mut normalized = String::with_capacity(without_comments.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, ch) in chars.iter().copied().enumerate() {
+        if in_string {
+            normalized.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            normalized.push(ch);
+            continue;
+        }
+        if ch == ',' {
+            let next = chars[index + 1..]
+                .iter()
+                .copied()
+                .find(|candidate| !candidate.is_whitespace());
+            if matches!(next, Some('}' | ']')) {
+                continue;
+            }
+        }
+        normalized.push(ch);
+    }
+    Ok(normalized)
+}
+
+fn bun_lock_package(
+    coordinate: &str,
+    source: &str,
+    integrity: &str,
+) -> Result<ManifestPackage, String> {
+    if ["file:", "link:", "workspace:", "git+", "github:"]
+        .iter()
+        .any(|protocol| coordinate.contains(protocol) || source.contains(protocol))
+    {
+        return Err("unsupported_dependency_source".to_string());
+    }
+    let split_at = coordinate
+        .rfind('@')
+        .filter(|index| *index > 0)
+        .ok_or_else(|| format!("bun lock package `{coordinate}` has no version separator"))?;
+    let package = &coordinate[..split_at];
+    let version = exact_version(&coordinate[split_at + 1..])
+        .ok_or_else(|| format!("bun lock package `{coordinate}` has no exact version"))?;
+    if !valid_registry_package_name(package) {
+        return Err(format!(
+            "bun lock package `{coordinate}` has an invalid registry name"
+        ));
+    }
+    if !source.is_empty() && !canonical_npm_tarball(source, package, &version, false) {
+        return Err("unsupported_dependency_source".to_string());
+    }
+    if !valid_subresource_integrity(integrity) {
+        return Err(format!(
+            "bun lock dependency `{package}` has no valid integrity"
+        ));
+    }
+    Ok(ManifestPackage {
+        name: package.to_string(),
+        ecosystem: "npm",
+        version: Some(version),
+    })
+}
+
+fn bun_metadata_uses_registry_sources_only(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(value) => ![
+            "file:",
+            "link:",
+            "workspace:",
+            "git+",
+            "github:",
+            "http://",
+            "https://",
+        ]
+        .iter()
+        .any(|protocol| value.contains(protocol)),
+        serde_json::Value::Array(values) => {
+            values.iter().all(bun_metadata_uses_registry_sources_only)
+        }
+        serde_json::Value::Object(values) => {
+            values.values().all(bun_metadata_uses_registry_sources_only)
+        }
+        _ => true,
+    }
+}
+
+fn parse_bun_lock(
+    body: &str,
+    path: &Path,
+    packages: &mut std::collections::BTreeSet<ManifestPackage>,
+) -> Result<(), String> {
+    let normalized = jsonc_without_comments_or_trailing_commas(body, path)?;
+    let doc: serde_json::Value = serde_json::from_str(&normalized)
+        .map_err(|error| format!("parse {}: {error}", path.display()))?;
+    let root = doc
+        .as_object()
+        .ok_or_else(|| format!("{} root is not a JSON object", path.display()))?;
+    if root
+        .keys()
+        .any(|key| !matches!(key.as_str(), "lockfileVersion" | "workspaces" | "packages"))
+    {
+        return Err("unsupported_dependency_source".to_string());
+    }
+    if root
+        .get("lockfileVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err(format!(
+            "{} has an unsupported Bun lockfile version",
+            path.display()
+        ));
+    }
+    if let Some(workspaces) = root.get("workspaces") {
+        let workspaces = workspaces
+            .as_object()
+            .ok_or_else(|| format!("{} `workspaces` is not an object", path.display()))?;
+        if workspaces.keys().any(|workspace| !workspace.is_empty())
+            || !workspaces
+                .values()
+                .all(bun_metadata_uses_registry_sources_only)
+        {
+            return Err("unsupported_dependency_source".to_string());
+        }
+    }
+    let entries = root
+        .get("packages")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| format!("{} `packages` is not an object", path.display()))?;
+    for (key, value) in entries {
+        let tuple = value
+            .as_array()
+            .filter(|tuple| tuple.len() == 4)
+            .ok_or_else(|| format!("{} package `{key}` is not a Bun lock tuple", path.display()))?;
+        let coordinate = tuple[0].as_str().ok_or_else(|| {
+            format!(
+                "{} package `{key}` has a non-string coordinate",
+                path.display()
+            )
+        })?;
+        let source = tuple[1]
+            .as_str()
+            .ok_or_else(|| format!("{} package `{key}` has a non-string source", path.display()))?;
+        if !tuple[2].is_object() || !bun_metadata_uses_registry_sources_only(&tuple[2]) {
+            return Err("unsupported_dependency_source".to_string());
+        }
+        let integrity = tuple[3].as_str().ok_or_else(|| {
+            format!(
+                "{} package `{key}` has a non-string integrity",
+                path.display()
+            )
+        })?;
+        packages.insert(bun_lock_package(coordinate, source, integrity)?);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn parse_manifest_strict(path: &Path) -> Result<Vec<ManifestPackage>, String> {
     let body =
@@ -1395,6 +1663,9 @@ fn parse_manifest_body_strict(path: &Path, body: &str) -> Result<Vec<ManifestPac
                 });
             }
         }
+        "bun.lock" => {
+            parse_bun_lock(body, path, &mut packages)?;
+        }
         "pnpm-lock.yaml" => {
             let doc: serde_yaml::Value =
                 serde_yaml::from_str(body).map_err(|e| format!("parse {}: {e}", path.display()))?;
@@ -1594,16 +1865,29 @@ pub async fn scan_manifest_strict(
     manifest_path: &Path,
     block_threshold: crate::security::osv_check::SeverityLevel,
 ) -> StrictManifestScan {
+    match tokio::time::timeout(
+        STRICT_SCAN_TIME_BUDGET,
+        scan_manifest_strict_inner(manifest_path, block_threshold),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => StrictManifestScan::Unverified {
+            code: StrictScanCode::ScanTimeBudgetExceeded,
+        },
+    }
+}
+
+async fn scan_manifest_strict_inner(
+    manifest_path: &Path,
+    block_threshold: crate::security::osv_check::SeverityLevel,
+) -> StrictManifestScan {
     // Read once: the digest and dependency parse must describe identical
     // bytes. Re-reading after network-bound OSV calls would create a TOCTOU
     // window where a clean verdict could be attached to different contents.
-    let manifest_bytes = match std::fs::read(manifest_path) {
+    let manifest_bytes = match read_manifest_bytes_strict(manifest_path) {
         Ok(bytes) => bytes,
-        Err(_) => {
-            return StrictManifestScan::Unverified {
-                code: StrictScanCode::ManifestReadFailed,
-            };
-        }
+        Err(code) => return StrictManifestScan::Unverified { code },
     };
     let manifest_sha256 = sha256_hex(&manifest_bytes);
     let manifest_body = match std::str::from_utf8(&manifest_bytes) {
@@ -1627,6 +1911,11 @@ pub async fn scan_manifest_strict(
             return StrictManifestScan::Unverified { code };
         }
     };
+    if packages.len() > STRICT_MAX_PACKAGE_COUNT {
+        return StrictManifestScan::Unverified {
+            code: StrictScanCode::PackageLimitExceeded,
+        };
+    }
     if packages.iter().any(|package| package.version.is_none()) {
         return StrictManifestScan::Unverified {
             code: StrictScanCode::MissingExactVersion,
@@ -1665,7 +1954,7 @@ pub async fn scan_manifest_strict(
         }
     }
     if findings.is_empty() {
-        StrictManifestScan::ProvenClean {
+        StrictManifestScan::DependencyPolicyClean {
             manifest_sha256,
             packages_scanned: packages.len(),
             warnings,
@@ -1681,9 +1970,31 @@ pub async fn scan_registry_packages_strict(
     requests: &[StrictPackageQuery],
     block_threshold: crate::security::osv_check::SeverityLevel,
 ) -> StrictPackageScan {
+    match tokio::time::timeout(
+        STRICT_SCAN_TIME_BUDGET,
+        scan_registry_packages_strict_inner(requests, block_threshold),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => StrictPackageScan::Unverified {
+            code: StrictScanCode::ScanTimeBudgetExceeded,
+        },
+    }
+}
+
+async fn scan_registry_packages_strict_inner(
+    requests: &[StrictPackageQuery],
+    block_threshold: crate::security::osv_check::SeverityLevel,
+) -> StrictPackageScan {
     if requests.is_empty() {
         return StrictPackageScan::Unverified {
             code: StrictScanCode::NoScannableDependencies,
+        };
+    }
+    if requests.len() > STRICT_MAX_PACKAGE_COUNT {
+        return StrictPackageScan::Unverified {
+            code: StrictScanCode::PackageLimitExceeded,
         };
     }
     let packages: Vec<ManifestPackage> = requests
@@ -1743,7 +2054,7 @@ pub async fn scan_registry_packages_strict(
         }
     }
     if findings.is_empty() {
-        StrictPackageScan::ProvenClean {
+        StrictPackageScan::DependencyPolicyClean {
             packages_scanned: packages.len(),
             warnings,
         }
@@ -2420,6 +2731,69 @@ mod tests {
     }
 
     #[test]
+    fn strict_bun_text_lock_parses_jsonc_registry_coordinates() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bun.lock");
+        std::fs::write(
+            &path,
+            r#"{
+                // Bun emits JSONC, including comments and trailing commas.
+                "lockfileVersion": 1,
+                "workspaces": {
+                    "": {
+                        "dependencies": {"left-pad": "^1.0.0"},
+                    },
+                },
+                "packages": {
+                    "left-pad": [
+                        "left-pad@1.3.0",
+                        "",
+                        {},
+                        "sha512-Zml4dHVyZQ==",
+                    ],
+                    "@scope/pkg": [
+                        "@scope/pkg@2.0.0",
+                        "https://registry.npmjs.org/%40scope%2fpkg/-/pkg-2.0.0.tgz",
+                        {},
+                        "sha512-Zml4dHVyZQ==",
+                    ],
+                },
+            }"#,
+        )
+        .unwrap();
+        let packages = parse_manifest_strict(&path).expect("strict Bun text lock parse");
+        let coordinates = packages
+            .iter()
+            .map(|package| (package.name.as_str(), package.version.as_deref()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            coordinates,
+            vec![("@scope/pkg", Some("2.0.0")), ("left-pad", Some("1.3.0"))]
+        );
+        assert!(packages.iter().all(|package| package.ecosystem == "npm"));
+    }
+
+    #[test]
+    fn strict_bun_text_lock_rejects_unproven_resolution_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bun.lock");
+        for body in [
+            r#"{"lockfileVersion":1,"packages":{"x":["x@1.x","",{},"sha512-Zml4dHVyZQ=="]}}"#,
+            r#"{"lockfileVersion":1,"packages":{"x":["x@1.0.0","https://example.invalid/x-1.0.0.tgz",{},"sha512-Zml4dHVyZQ=="]}}"#,
+            r#"{"lockfileVersion":1,"packages":{"x":["x@1.0.0","",{},""]}}"#,
+            r#"{"lockfileVersion":1,"packages":{"x":["x@1.0.0","",{"source":"workspace:../x"},"sha512-Zml4dHVyZQ=="]}}"#,
+            r#"{"lockfileVersion":1,"workspaces":{"packages/x":{}},"packages":{}}"#,
+            r#"{"lockfileVersion":2,"packages":{}}"#,
+        ] {
+            std::fs::write(&path, body).unwrap();
+            assert!(
+                parse_manifest_strict(&path).is_err(),
+                "Bun lock case must fail closed: {body}"
+            );
+        }
+    }
+
+    #[test]
     fn exact_versions_are_ecosystem_specific_and_never_wildcards() {
         assert_eq!(exact_version("1.2.3").as_deref(), Some("1.2.3"));
         assert!(exact_version("1.x").is_none());
@@ -2729,6 +3103,60 @@ __metadata:
         );
     }
 
+    #[test]
+    fn strict_manifest_reader_rejects_input_beyond_the_byte_ceiling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("package-lock.json");
+        std::fs::write(&path, b"0123456789abcdefX").unwrap();
+
+        assert_eq!(
+            read_manifest_bytes_capped(&path, 16),
+            Err(StrictScanCode::ManifestTooLarge)
+        );
+        assert_eq!(
+            read_manifest_bytes_capped(&path, 17).unwrap(),
+            b"0123456789abcdefX"
+        );
+    }
+
+    #[tokio::test]
+    async fn strict_direct_package_scan_rejects_input_beyond_the_count_ceiling() {
+        let requests = (0..=STRICT_MAX_PACKAGE_COUNT)
+            .map(|index| StrictPackageQuery {
+                name: format!("fixture-{index}"),
+                ecosystem: "npm",
+                version: Some("1.0.0".into()),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            scan_registry_packages_strict(
+                &requests,
+                crate::security::osv_check::SeverityLevel::High,
+            )
+            .await,
+            StrictPackageScan::Unverified {
+                code: StrictScanCode::PackageLimitExceeded,
+            }
+        );
+    }
+
+    #[test]
+    fn strict_resource_limit_codes_are_stable_for_audit_consumers() {
+        assert_eq!(
+            StrictScanCode::ManifestTooLarge.as_str(),
+            "manifest_too_large"
+        );
+        assert_eq!(
+            StrictScanCode::PackageLimitExceeded.as_str(),
+            "package_limit_exceeded"
+        );
+        assert_eq!(
+            StrictScanCode::ScanTimeBudgetExceeded.as_str(),
+            "scan_time_budget_exceeded"
+        );
+    }
+
     #[tokio::test]
     async fn strict_scan_never_queries_osv_without_an_exact_version() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2752,7 +3180,7 @@ __metadata:
         let result =
             scan_manifest_strict(&path, crate::security::osv_check::SeverityLevel::High).await;
         match result {
-            StrictManifestScan::ProvenClean {
+            StrictManifestScan::DependencyPolicyClean {
                 manifest_sha256,
                 packages_scanned,
                 ..

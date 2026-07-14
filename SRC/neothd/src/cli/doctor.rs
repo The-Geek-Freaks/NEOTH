@@ -24,6 +24,7 @@ use clap::Args;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::providers::Provider;
 
 mod checks;
 mod types;
@@ -246,7 +247,7 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
 
     // GOLD-ADOPT-24 — optional LLM root-cause pass over the check results.
     if args.diagnose {
-        diagnose_with_llm(&outcomes).await;
+        diagnose_with_llm(&outcomes, &home).await;
     }
 
     if any_fail {
@@ -262,7 +263,7 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
 /// health, an absent provider, or a provider error all just print a note and
 /// return (diagnosis never changes the doctor exit code). The structured check
 /// outcomes ARE the context — richer than goose's raw-log LLM dump.
-async fn diagnose_with_llm(outcomes: &[CheckOutcome]) {
+async fn diagnose_with_llm(outcomes: &[CheckOutcome], home: &Path) {
     let problems: Vec<&CheckOutcome> = outcomes
         .iter()
         .filter(|o| matches!(o.status, CheckStatus::Warn | CheckStatus::Fail))
@@ -271,7 +272,8 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome]) {
         println!("\ndiagnose: all checks pass — nothing to root-cause.");
         return;
     }
-    let config = match FreedomConfig::load_from_default_path() {
+    let config_path = home.join("freedom.yaml");
+    let config = match FreedomConfig::load_from_path(&config_path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("diagnose: cannot load freedom.yaml ({e}); skipping LLM pass.");
@@ -279,7 +281,22 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome]) {
         }
     };
     let provider = match crate::providers::from_config_for_utility(&config).await {
-        Ok(p) => p,
+        Ok(p) => {
+            let wal_dir = home.join("wal");
+            let authorizer = match crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot_at(config.autonomy_policy(), &wal_dir) {
+                Ok(authorizer) => authorizer,
+                Err(error) => {
+                    eprintln!("diagnose: cannot open provider-call audit WAL ({error}); skipping LLM pass.");
+                    return;
+                }
+            };
+            crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                p,
+                authorizer,
+                crate::providers::utility_model_for_config(&config),
+                "doctor.diagnose",
+            )
+        }
         Err(e) => {
             eprintln!("diagnose: no usable provider ({e}); skipping LLM pass.");
             return;
@@ -412,8 +429,10 @@ mod tests {
         // +1 post-init readiness (GOLD-FEAT-11) = 43;
         // +2 advisable-config hints (groundtruth injection, consolidation sweep) = 45;
         // +7 ZF-08 advisable hints (proactive, dreaming, ecology, companion,
-        // synthesis_cron, skill_curator, auto_skill_extract) = 52.
-        assert_eq!(all_check_docs().count(), 52);
+        // synthesis_cron, skill_curator, auto_skill_extract) = 52;
+        // + OMI runtime config/credential/ledger/supervisor posture = 53;
+        // + canonical TTS runtime/provider readiness = 54.
+        assert_eq!(all_check_docs().count(), 54);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -551,6 +570,27 @@ mod tests {
         let dir = tempdir().unwrap();
         let outcome = check_local_qwen_weights(dir.path());
         assert_eq!(outcome.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn local_qwen_doctor_ignores_non_runtime_hf_cache_directory() {
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.profile.learn_provider = Some("local_qwen".to_string());
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        let legacy = dir
+            .path()
+            .join(".cache/huggingface/hub/models--Qwen--Qwen2.5-3B-Instruct");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("download-metadata.json"), b"{}").unwrap();
+
+        let outcome = check_local_qwen_weights(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("not cached"));
     }
 
     #[test]
@@ -1166,8 +1206,10 @@ mod tests {
         // + post-init readiness (GOLD-FEAT-11) = 43;
         // + 2 advisable-config hints (groundtruth injection, consolidation sweep) = 45;
         // + 7 ZF-08 advisable hints (proactive, dreaming, ecology, companion,
-        // synthesis_cron, skill_curator, auto_skill_extract) = 52.
-        assert_eq!(outs.len(), 52);
+        // synthesis_cron, skill_curator, auto_skill_extract) = 52;
+        // + OMI runtime config/credential/ledger/supervisor posture = 53;
+        // + canonical TTS runtime/provider readiness = 54.
+        assert_eq!(outs.len(), 54);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
@@ -1389,11 +1431,11 @@ mod tests {
 servers:
   - id: hardened
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem@1.0.0"]
     allow_tools: ["read_file"]
   - id: legacy
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
+    args: ["-y", "@modelcontextprotocol/server-github@1.0.0"]
 "#;
         std::fs::write(dir.path().join("mcp_servers.yaml"), yaml).unwrap();
         let o = check_mcp_servers(dir.path());
@@ -1414,7 +1456,7 @@ servers:
 servers:
   - id: filesystem
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem@1.0.0"]
     allow_tools: ["read_file", "list_directory"]
 "#;
         std::fs::write(dir.path().join("mcp_servers.yaml"), yaml).unwrap();
@@ -1430,6 +1472,23 @@ servers:
         let o = check_mcp_servers(dir.path());
         assert_eq!(o.status, CheckStatus::Fail);
         assert!(o.detail.contains("unreadable"));
+    }
+
+    #[test]
+    fn check_mcp_servers_fails_on_enabled_unpinned_runtime_fetch() {
+        let dir = tempdir().unwrap();
+        let yaml = r#"
+servers:
+  - id: drifting
+    command: npx
+    args: ["-y", "example-mcp@latest"]
+    allow_tools: ["read"]
+"#;
+        std::fs::write(dir.path().join("mcp_servers.yaml"), yaml).unwrap();
+        let outcome = check_mcp_servers(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("cannot spawn"));
+        assert!(outcome.detail.contains("exact-version"));
     }
 
     #[test]

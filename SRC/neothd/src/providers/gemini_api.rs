@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
-use super::{Completion, Provider, Request};
+use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
 pub struct GeminiAdapter {
@@ -40,7 +40,23 @@ impl Provider for GeminiAdapter {
         "gemini_api"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.default_model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("gemini_api", async {
             let started = Instant::now();
@@ -63,6 +79,14 @@ impl Provider for GeminiAdapter {
                     role: "system".into(),
                     parts: vec![GeminiPart { text: s.clone() }],
                 }),
+                generation_config: GeminiGenerationConfig {
+                    max_output_tokens: super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+                    temperature: req.temperature,
+                    top_p: req.top_p,
+                    seed: req.sampling_seed,
+                    stop_sequences: (!req.stop_sequences.is_empty())
+                        .then(|| req.stop_sequences.clone()),
+                },
             };
 
             // Pick #33 (Session 14, security audit-fix Security#2): Gemini
@@ -150,6 +174,7 @@ impl Provider for GeminiAdapter {
 
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model,
                 latency,
                 input_tokens: parsed.usage_metadata.as_ref().map(|u| u.prompt_token_count),
@@ -172,6 +197,22 @@ struct GeminiRequest {
     contents: Vec<GeminiContent>,
     #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
     system_instruction: Option<GeminiContent>,
+    #[serde(rename = "generationConfig")]
+    generation_config: GeminiGenerationConfig,
+}
+
+#[derive(Serialize)]
+struct GeminiGenerationConfig {
+    #[serde(rename = "maxOutputTokens")]
+    max_output_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(rename = "topP", skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<u64>,
+    #[serde(rename = "stopSequences", skip_serializing_if = "Option::is_none")]
+    stop_sequences: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -218,5 +259,46 @@ mod tests {
         )
         .expect("construct");
         assert_eq!(a.name(), "gemini_api");
+    }
+
+    #[test]
+    fn request_serializes_bounded_generation_config() {
+        let body = GeminiRequest {
+            contents: vec![GeminiContent {
+                role: "user".into(),
+                parts: vec![GeminiPart {
+                    text: "ping".into(),
+                }],
+            }],
+            system_instruction: None,
+            generation_config: GeminiGenerationConfig {
+                max_output_tokens: crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+                temperature: None,
+                top_p: None,
+                seed: None,
+                stop_sequences: None,
+            },
+        };
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(json["generationConfig"]["maxOutputTokens"], 4096);
+        for field in ["temperature", "topP", "seed", "stopSequences"] {
+            assert!(json["generationConfig"].get(field).is_none());
+        }
+    }
+
+    #[test]
+    fn request_serializes_sampling_controls() {
+        let config = GeminiGenerationConfig {
+            max_output_tokens: 4096,
+            temperature: Some(0.6),
+            top_p: Some(0.75),
+            seed: Some(17),
+            stop_sequences: Some(vec!["END".into()]),
+        };
+        let json = serde_json::to_value(config).unwrap();
+        assert_eq!(json["temperature"], 0.6);
+        assert_eq!(json["topP"], 0.75);
+        assert_eq!(json["seed"], 17);
+        assert_eq!(json["stopSequences"], serde_json::json!(["END"]));
     }
 }

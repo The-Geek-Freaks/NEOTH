@@ -1,10 +1,10 @@
-//! Hysteria transport manager — R-3 skeleton.
+//! Hysteria transport manager.
 //!
 //! Hysteria (https://github.com/apernet/hysteria) is a QUIC-based proxy
-//! that gives NEOTH encrypted egress for provider HTTP traffic. v0.1.x
-//! scope: detect the binary, spawn it as a subprocess, expose a local
-//! SOCKS5 listener that operators (or future reqwest clients) can point
-//! at. Wiring the providers through the SOCKS5 endpoint is Phase 3b.
+//! that gives NEOTH encrypted egress for provider HTTP traffic. The manager
+//! detects and supervises the binary, exposes a loopback SOCKS5 listener, and
+//! installs that listener into the shared reqwest client builder before
+//! provider construction.
 //!
 //! Design pins:
 //!   - **Operator supplies the server config.** NEOTH never hardcodes a

@@ -13,9 +13,9 @@
 //!     malicious plugin cannot exhaust host RAM.
 //!   - **No WASI by default.** Plugins talk to NEOTH only through the
 //!     `host_*` hostcalls we explicitly link. No `wasi-filesystem`, no
-//!     `wasi-sockets`. Operators who need a filesystem plugin enable
-//!     the `wasi-fs` feature in a future PR + grant
-//!     `FreedomGrant<Execute>`.
+//!     `wasi-sockets`. Any future filesystem surface needs an explicit linker
+//!     binding, operator approval, runtime permission check, audit event, and
+//!     tests; an SDK `FreedomGrant` marker would not authorize it.
 //!   - **Bulk memory + reference types: OFF.** Smaller attack surface
 //!     than the cranelift default. Re-enable when an actual plugin
 //!     needs them.
@@ -47,8 +47,8 @@ pub type RecallDbHandle = std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>
 
 /// Default per-instance memory ceiling. Conservative — enough for
 /// indexer / formatter plugins, far short of a misbehaving plugin
-/// pinning the daemon's RAM. Operators can override per-plugin via
-/// `freedom.yaml::plugins.<id>.memory_limit_bytes`.
+/// pinning the daemon's RAM. A validated `plugin.toml` can request a
+/// per-instance cap up to `MAX_MEMORY_LIMIT_BYTES`.
 pub const DEFAULT_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Default fuel budget per `host_call`. Cranelift charges 1 fuel unit
@@ -96,9 +96,8 @@ pub struct PluginStoreState {
     /// never wired to wasmtime — a plugin could grow until the host
     /// OOM-killed the daemon.
     pub memory_limit_bytes: usize,
-    /// SC-04: the permission level the operator granted this plugin —
-    /// derived from its manifest `requested_permissions` (approved at
-    /// `neoth plugin enable`). Every hostcall closure reads this via
+    /// SC-04: the exact permission level bound into the operator's approval
+    /// record at `neoth plugin enable`. Every hostcall closure reads this via
     /// `caller.data().granted` and refuses fail-closed when a call
     /// requires more than the grant. Defaults to
     /// [`HostcallPermission::None`] so a store built without an explicit
@@ -158,7 +157,7 @@ impl PluginStoreState {
             memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
             // Fail-closed: a store built without an explicit grant gets
             // NO privileged capability. The daemon's plugin-load path
-            // sets the real level via `with_granted` from the manifest.
+            // sets the real level via `with_granted` from the exact approval.
             granted: HostcallPermission::None,
         }
     }
@@ -169,8 +168,8 @@ impl PluginStoreState {
     }
 
     /// Reviewer-1 P0-A (2026-05-20): override the default 64 MiB cap.
-    /// `freedom.yaml::plugins.<id>.memory_limit_bytes` flows through
-    /// here. Cap of 0 is rejected by the caller (manifest parser);
+    /// The validated `plugin.toml::memory_limit_bytes` flows through here.
+    /// Cap of 0 is rejected by the caller (manifest parser);
     /// this builder trusts its input.
     #[must_use]
     pub fn with_memory_limit(mut self, bytes: usize) -> Self {
@@ -207,11 +206,9 @@ impl PluginStoreState {
         self
     }
 
-    /// SC-04: set the permission level the operator granted this plugin
-    /// (from the manifest `requested_permissions`). The daemon's
-    /// plugin-load path calls this with
-    /// `HostcallPermission::from(manifest.requested_permissions)` so the
-    /// hostcall gate enforces exactly what the operator approved.
+    /// SC-04: set the permission level from the immutable approval binding.
+    /// The daemon never derives this authority from a mutable manifest during
+    /// invocation, so manifest edits cannot escalate a running plugin.
     #[must_use]
     pub fn with_granted(mut self, granted: HostcallPermission) -> Self {
         self.granted = granted;

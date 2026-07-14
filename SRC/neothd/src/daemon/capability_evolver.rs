@@ -50,8 +50,8 @@ use std::path::Path;
 use crate::daemon::self_improvement_collector::{
     CollectorReport, CollectorSignal, is_verified_deployed,
 };
-use crate::wal::{EventFlags, HeaderBuilder, events::EVENT_TYPE_CAPABILITY_EVOLVER_RAN};
 use crate::wal::writer::WalWriterHandle;
+use crate::wal::{EventFlags, HeaderBuilder, events::EVENT_TYPE_CAPABILITY_EVOLVER_RAN};
 
 /// Minimum age in seconds a skill artifact must have been on disk to be
 /// considered "already deployed". Mirrors the constant in
@@ -116,11 +116,7 @@ impl Default for EvolverReport {
 ///
 /// Only proposals staged THIS tick (`staged_ids`) are verified — not the
 /// whole queue — so the check is O(staged) not O(queue).
-fn verify_staged_report(
-    home: &Path,
-    staged_ids: &[String],
-    result: &mut EvolverReport,
-) {
+fn verify_staged_report(home: &Path, staged_ids: &[String], result: &mut EvolverReport) {
     use crate::proactive::ProactiveQueue;
     use crate::proactive::action_staging::proposal_path;
 
@@ -173,7 +169,10 @@ fn verify_staged_report(
             //    the staging succeeded. Log at debug so it is operator-visible
             //    without alarming the operator.
             let expected_key = format!("ob_03_proposal:{id}");
-            let key_in_queue = queue.peek().iter().any(|item| item.dedup_key == expected_key);
+            let key_in_queue = queue
+                .peek()
+                .iter()
+                .any(|item| item.dedup_key == expected_key);
 
             if artifact_ok && !key_in_queue {
                 tracing::debug!(
@@ -228,7 +227,12 @@ fn is_auto_safe(signal: &CollectorSignal) -> bool {
 
 // ── WAL emit helper ───────────────────────────────────────────────────────────
 
-async fn emit_evolver_ran(writer: &WalWriterHandle, signals_in: usize, report: &EvolverReport, ts_unix: i64) {
+async fn emit_evolver_ran(
+    writer: &WalWriterHandle,
+    signals_in: usize,
+    report: &EvolverReport,
+    ts_unix: i64,
+) {
     let payload = match serde_json::to_vec(&serde_json::json!({
         "signals_in": signals_in,
         "proposals_staged": report.proposals_staged,
@@ -315,8 +319,7 @@ pub async fn run_evolver_pass(
                 _ => unreachable!("is_auto_safe only passes PromptEdit"),
             };
 
-            let Some(proposal) =
-                build_proposal_from_collector_signal(target, reason, ts_unix)
+            let Some(proposal) = build_proposal_from_collector_signal(target, reason, ts_unix)
             else {
                 tracing::debug!(
                     topic = target,
@@ -409,6 +412,7 @@ mod tests {
             ledger_records_checked: 0,
             deployed_artifacts_checked: 0,
             ts_unix: 1_000_000,
+            ..Default::default()
         }
     }
 
@@ -600,10 +604,11 @@ mod tests {
             propose_skills: false,
             ..Default::default()
         };
-        let report = crate::daemon::self_improvement_collector::run_self_improvement_collector_tick(
-            &db_path, &home, cfg, &writer,
-        )
-        .await;
+        let report =
+            crate::daemon::self_improvement_collector::run_self_improvement_collector_tick(
+                &db_path, &home, cfg, &writer,
+            )
+            .await;
 
         assert!(
             report.signals.iter().any(|s| matches!(
@@ -611,7 +616,8 @@ mod tests {
                 CollectorSignal::PromptEdit { target, .. }
                 if target == "kubernetes"
             )),
-            "10 kubernetes episodes must produce PromptEdit signal; got: {:?}", report.signals
+            "10 kubernetes episodes must produce PromptEdit signal; got: {:?}",
+            report.signals
         );
 
         // Run evolver.
@@ -620,7 +626,8 @@ mod tests {
 
         assert!(
             evolver.proposals_staged >= 1,
-            "evolver must stage >= 1 proposal; got staged={}", evolver.proposals_staged
+            "evolver must stage >= 1 proposal; got staged={}",
+            evolver.proposals_staged
         );
 
         // Verify WAL contains 0x0F CAPABILITY_EVOLVER_RAN.
@@ -669,10 +676,10 @@ mod tests {
 
     #[tokio::test]
     async fn verify_staged_report_detects_missing_artifact() {
-        use crate::proactive::action_staging::{
-            proposals_dir, ProposalKind, ProposedAction, ProposalStatus, stage_and_enqueue,
-        };
         use crate::proactive::ProactiveQueue;
+        use crate::proactive::action_staging::{
+            ProposalKind, ProposalStatus, ProposedAction, proposals_dir, stage_and_enqueue,
+        };
 
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
@@ -726,10 +733,10 @@ mod tests {
 
     #[tokio::test]
     async fn verify_staged_report_drained_not_lied_stays_verified_ok() {
-        use crate::proactive::action_staging::{
-            ProposalKind, ProposedAction, ProposalStatus, stage_and_enqueue,
-        };
         use crate::proactive::ProactiveQueue;
+        use crate::proactive::action_staging::{
+            ProposalKind, ProposalStatus, ProposedAction, stage_and_enqueue,
+        };
 
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();

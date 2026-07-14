@@ -53,30 +53,30 @@ pub trait SidecarPayload: Serialize + DeserializeOwned {
 /// lexicographic == chronological for free.
 ///
 /// Missing home dir → empty vec, NOT an error: pre-wizard fresh
-/// installs land here. Malformed JSON / unreadable file → skip
-/// and leave on disk for operator inspection rather than losing
-/// the disk-side evidence.
+/// installs land here. Directory-entry, read, and parse failures are
+/// returned with the offending path and leave every sidecar on disk.
+/// This deliberately blocks ordered ingestion instead of silently
+/// skipping audit evidence.
 pub fn list_pending<T: SidecarPayload>(home: &Path) -> Result<Vec<(PathBuf, T)>> {
     if !home.exists() {
         return Ok(Vec::new());
     }
-    let mut entries: Vec<PathBuf> = fs::read_dir(home)
+    let entries = fs::read_dir(home)
         .with_context(|| format!("read {}", home.display()))?
-        .filter_map(|r| r.ok())
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("enumerate {}", home.display()))?;
+    let mut entries: Vec<PathBuf> = entries
+        .into_iter()
         .map(|e| e.path())
         .filter(|p| is_sidecar_for::<T>(p))
         .collect();
     entries.sort();
     let mut out = Vec::with_capacity(entries.len());
     for path in entries {
-        let body = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let parsed = match serde_json::from_str::<T>(&body) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+        let body = fs::read_to_string(&path)
+            .with_context(|| format!("read sidecar {}", path.display()))?;
+        let parsed = serde_json::from_str::<T>(&body)
+            .with_context(|| format!("parse sidecar {}", path.display()))?;
         out.push((path, parsed));
     }
     Ok(out)
@@ -99,7 +99,8 @@ pub fn remove_sidecar(path: &Path) -> Result<bool> {
 /// print / field-order quirks of the disk file — the WAL body is
 /// the canonical record.
 pub fn build_wal_frame_body<T: SidecarPayload>(payload: &T) -> Vec<u8> {
-    serde_json::to_vec(payload).unwrap_or_default()
+    serde_json::to_vec(payload)
+        .expect("SidecarPayload implementations must serialize to JSON without failure")
 }
 
 fn is_sidecar_for<T: SidecarPayload>(p: &Path) -> bool {
@@ -167,14 +168,17 @@ mod tests {
     }
 
     #[test]
-    fn list_pending_skips_malformed_json_keeps_valid() {
+    fn list_pending_rejects_malformed_json_and_preserves_all_evidence() {
         let dir = tempdir().unwrap();
+        let malformed = dir.path().join("sample_1.json");
         write(dir.path(), "sample_1.json", "{not json");
         let valid = serde_json::to_string(&sample(2)).unwrap();
+        let valid_path = dir.path().join("sample_2.json");
         write(dir.path(), "sample_2.json", &valid);
-        let listed = list_pending::<Sample>(dir.path()).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].1.ts, 2);
+        let error = list_pending::<Sample>(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("sample_1.json"));
+        assert!(malformed.exists());
+        assert!(valid_path.exists());
     }
 
     #[test]

@@ -331,30 +331,330 @@ impl Default for HintsConfig {
     }
 }
 
-/// OM-01 — local OMI transcript-ingest knobs.
+/// OMI-MULTIMODAL-01 — which OMI ingestion surfaces are active.
+///
+/// `developer_api` is the supported conversation import. Operators who still
+/// run the old local `/v1/memories` endpoint select `legacy_memories`
+/// explicitly. Native ingest is NEOTH's local authenticated PCM/media webhook;
+/// it is not an emulation of OMI's private `/v4/listen` backend socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OmiIngestMode {
+    /// Import conversations from `/v1/dev/user/conversations` with an
+    /// `omi_dev_*` bearer key.
+    DeveloperApi,
+    /// Accept NEOTH's authenticated local PCM/media ingest protocol.
+    NativeIngest,
+    /// Run Developer API import and native ingest together.
+    Both,
+    /// Compatibility for the old unauthenticated local `/v1/memories` poller.
+    /// This mode trusts the configured local backend and private network; it is
+    /// intentionally forbidden for public endpoints.
+    LegacyMemories,
+}
+
+impl Default for OmiIngestMode {
+    fn default() -> Self {
+        Self::DeveloperApi
+    }
+}
+
+impl OmiIngestMode {
+    /// True when the self-hosted OMI backend must be polled.
+    pub const fn polls(self) -> bool {
+        matches!(self, Self::DeveloperApi | Self::Both | Self::LegacyMemories)
+    }
+
+    /// True when NEOTH must accept authenticated native PCM/media ingestion.
+    pub const fn listens(self) -> bool {
+        matches!(self, Self::NativeIngest | Self::Both)
+    }
+}
+
+/// OMI-MULTIMODAL-01 — local OMI conversation and media-ingest knobs.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OmiConfig {
-    /// Off by default — opt-in. When `true` the daemon polls `endpoint` and the
-    /// SC-14 startup gate REFUSES a non-local `endpoint` (e.g. `api.omi.me`).
+    /// Off by default — opt-in. SC-14 refuses non-local poll endpoints and
+    /// public/unspecified native-listener addresses.
     pub enabled: bool,
-    /// The LOCAL OMI backend base URL. Default `http://127.0.0.1:8002`.
+    /// Select polling, native live ingestion, both, or the old `/v1/memories`
+    /// compatibility endpoint. Defaults to `developer_api`.
+    pub mode: OmiIngestMode,
+    /// OMI backend/API base URL. Default `http://127.0.0.1:8002` remains local.
     pub endpoint: String,
+    /// Permit Developer API mode to call a public HTTPS endpoint. Separate
+    /// external-network opt-in; never relaxes the legacy local-only rule.
+    pub allow_cloud_api: bool,
     /// Poll interval (seconds). Default 30; floored at 5.
     pub poll_interval_secs: u64,
     /// A transcript item at/above this score is promoted to ground-truth +
-    /// audited (`0x9C`). Default 0.75.
+    /// audited (`extended/omi_lifecycle_audit`). Default 0.75.
     pub confidence_threshold: f32,
+    /// Native OMI listener socket. Private/LAN addresses are allowed so a
+    /// physical OMI device can reach NEOTH; wildcard and public binds are not.
+    pub listen_addr: String,
+    /// How far the first conversation poll may look back. Default one day.
+    pub initial_lookback_secs: u64,
+    /// Hard cap on conversations fetched and processed per poll.
+    pub max_conversations_per_poll: usize,
+    /// Persist raw transcript text locally. Default false; aligned metadata and
+    /// derived summaries remain available without retaining verbatim speech.
+    pub retain_transcripts: bool,
+    /// Accept and process audio from OMI. Separate opt-in from text ingestion.
+    pub audio_enabled: bool,
+    /// Accept and process still images from OMI.
+    pub visual_enabled: bool,
+    /// Accept and process video/call media from OMI.
+    pub video_enabled: bool,
+    /// Promote OMI action items into the local task system.
+    pub create_actions: bool,
+    /// Seed corroborated OMI statements into ground truth.
+    pub seed_groundtruth: bool,
+    /// Produce bounded conversation summaries.
+    pub summary_enabled: bool,
+    /// Permit summaries to use a configured cloud model. Default false.
+    pub allow_cloud_summary: bool,
+    /// Retention window for OMI-derived records and retained transcripts.
+    pub retention_days: u64,
+    /// Per-stream audio byte cap, enforced before buffering/decoding.
+    pub max_audio_bytes_per_stream: u64,
+    /// Per-image byte cap, enforced before base64 decode/reassembly.
+    pub max_image_bytes: u64,
+    /// Maximum concurrent native OMI connections.
+    pub max_connections: usize,
+    /// Maximum simultaneously active native calls. Terminal calls are evicted
+    /// from memory and served idempotently from their bounded journals.
+    pub max_active_calls: usize,
+    /// Close native streams that make no progress for this many seconds.
+    pub idle_timeout_secs: u64,
+    /// Optional exact OMI UID allowlist. Empty means any authenticated/local UID.
+    pub allowed_uids: Vec<String>,
 }
 
 impl Default for OmiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            mode: OmiIngestMode::default(),
             endpoint: crate::installers::omi::DEFAULT_OMI_ENDPOINT.to_string(),
+            allow_cloud_api: false,
             poll_interval_secs: 30,
             confidence_threshold: 0.75,
+            listen_addr: "127.0.0.1:8003".to_string(),
+            initial_lookback_secs: 86_400,
+            max_conversations_per_poll: 100,
+            retain_transcripts: false,
+            audio_enabled: false,
+            visual_enabled: false,
+            video_enabled: false,
+            create_actions: true,
+            seed_groundtruth: true,
+            summary_enabled: true,
+            allow_cloud_summary: false,
+            retention_days: 30,
+            max_audio_bytes_per_stream: 64 * 1024 * 1024,
+            max_image_bytes: 16 * 1024 * 1024,
+            max_connections: 4,
+            max_active_calls: 64,
+            idle_timeout_secs: 120,
+            allowed_uids: Vec::new(),
         }
+    }
+}
+
+impl OmiConfig {
+    /// Parse the native listener once and return an operator-facing error.
+    pub fn listen_socket_addr(&self) -> Result<std::net::SocketAddr, String> {
+        self.listen_addr.parse().map_err(|_| {
+            format!(
+                "omi.listen_addr {:?} must be an IP socket address (for example 127.0.0.1:8003)",
+                self.listen_addr
+            )
+        })
+    }
+
+    /// Validate OMI's security and memory/DoS bounds before starting workers.
+    ///
+    /// Memory/connection bounds are validated even while their feature toggle
+    /// is off. Endpoint policy follows the selected pull mode; native-only
+    /// ingest does not require an otherwise-unused backend URL.
+    pub fn validate(&self) -> Result<(), String> {
+        const MAX_POLL_INTERVAL_SECS: u64 = 86_400;
+        const MAX_INITIAL_LOOKBACK_SECS: u64 = 366 * 86_400;
+        const MAX_CONVERSATIONS_PER_POLL: usize = 1_000;
+        const MAX_RETENTION_DAYS: u64 = 3_650;
+        const MAX_AUDIO_BYTES: u64 = 512 * 1024 * 1024;
+        const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+        const MAX_CONNECTIONS: usize = 64;
+        const MAX_ACTIVE_CALLS: usize = 4_096;
+        const MAX_IDLE_TIMEOUT_SECS: u64 = 3_600;
+        const MAX_ALLOWED_UIDS: usize = 256;
+        const MAX_UID_BYTES: usize = 256;
+
+        match self.mode {
+            OmiIngestMode::LegacyMemories => {
+                crate::installers::omi::is_local_endpoint(&self.endpoint)?;
+            }
+            OmiIngestMode::DeveloperApi | OmiIngestMode::Both => {
+                crate::installers::omi::validate_developer_api_endpoint(
+                    &self.endpoint,
+                    self.allow_cloud_api,
+                )?;
+            }
+            OmiIngestMode::NativeIngest => {}
+        }
+
+        if self.allow_cloud_api
+            && !matches!(self.mode, OmiIngestMode::DeveloperApi | OmiIngestMode::Both)
+        {
+            return Err("omi.allow_cloud_api requires developer_api or both mode".to_string());
+        }
+        if self.allow_cloud_summary && (!self.summary_enabled || !self.mode.listens()) {
+            return Err(
+                "omi.allow_cloud_summary requires summary_enabled and native_ingest/both mode"
+                    .to_string(),
+            );
+        }
+        if self.video_enabled && !self.visual_enabled {
+            return Err("omi.video_enabled requires omi.visual_enabled".to_string());
+        }
+        if !self.mode.listens()
+            && (self.audio_enabled
+                || self.visual_enabled
+                || self.video_enabled
+                || !self.allowed_uids.is_empty())
+        {
+            return Err(
+                "OMI media controls and allowed_uids require native_ingest or both mode"
+                    .to_string(),
+            );
+        }
+
+        let listen_addr = self.listen_socket_addr()?;
+        if listen_addr.port() == 0 {
+            return Err("omi.listen_addr port must be non-zero".to_string());
+        }
+        crate::installers::omi::is_local_endpoint(&format!("http://{listen_addr}"))
+            .map_err(|reason| format!("unsafe omi.listen_addr: {reason}"))?;
+
+        if !(1..=MAX_POLL_INTERVAL_SECS).contains(&self.poll_interval_secs) {
+            return Err(format!(
+                "omi.poll_interval_secs must be between 1 and {MAX_POLL_INTERVAL_SECS}"
+            ));
+        }
+        if !self.confidence_threshold.is_finite()
+            || !(f32::EPSILON..=1.0).contains(&self.confidence_threshold)
+        {
+            return Err("omi.confidence_threshold must be finite and in (0, 1]".to_string());
+        }
+        if !(1..=MAX_INITIAL_LOOKBACK_SECS).contains(&self.initial_lookback_secs) {
+            return Err(format!(
+                "omi.initial_lookback_secs must be between 1 and {MAX_INITIAL_LOOKBACK_SECS}"
+            ));
+        }
+        if !(1..=MAX_CONVERSATIONS_PER_POLL).contains(&self.max_conversations_per_poll) {
+            return Err(format!(
+                "omi.max_conversations_per_poll must be between 1 and {MAX_CONVERSATIONS_PER_POLL}"
+            ));
+        }
+        if !(1..=MAX_RETENTION_DAYS).contains(&self.retention_days) {
+            return Err(format!(
+                "omi.retention_days must be between 1 and {MAX_RETENTION_DAYS}"
+            ));
+        }
+        if !(1..=MAX_AUDIO_BYTES).contains(&self.max_audio_bytes_per_stream) {
+            return Err(format!(
+                "omi.max_audio_bytes_per_stream must be between 1 and {MAX_AUDIO_BYTES}"
+            ));
+        }
+        if !(1..=MAX_IMAGE_BYTES).contains(&self.max_image_bytes) {
+            return Err(format!(
+                "omi.max_image_bytes must be between 1 and {MAX_IMAGE_BYTES}"
+            ));
+        }
+        if !(1..=MAX_CONNECTIONS).contains(&self.max_connections) {
+            return Err(format!(
+                "omi.max_connections must be between 1 and {MAX_CONNECTIONS}"
+            ));
+        }
+        if !(1..=MAX_ACTIVE_CALLS).contains(&self.max_active_calls) {
+            return Err(format!(
+                "omi.max_active_calls must be between 1 and {MAX_ACTIVE_CALLS}"
+            ));
+        }
+        if !(1..=MAX_IDLE_TIMEOUT_SECS).contains(&self.idle_timeout_secs) {
+            return Err(format!(
+                "omi.idle_timeout_secs must be between 1 and {MAX_IDLE_TIMEOUT_SECS}"
+            ));
+        }
+        if self.allowed_uids.len() > MAX_ALLOWED_UIDS {
+            return Err(format!(
+                "omi.allowed_uids may contain at most {MAX_ALLOWED_UIDS} entries"
+            ));
+        }
+        if self
+            .allowed_uids
+            .iter()
+            .any(|uid| uid.trim().is_empty() || uid.trim() != uid || uid.len() > MAX_UID_BYTES)
+        {
+            return Err(format!(
+                "each omi.allowed_uids entry must be trimmed and contain 1..={MAX_UID_BYTES} bytes"
+            ));
+        }
+        let mut unique_uids = std::collections::HashSet::with_capacity(self.allowed_uids.len());
+        if self
+            .allowed_uids
+            .iter()
+            .any(|uid| !unique_uids.insert(uid.as_str()))
+        {
+            return Err("omi.allowed_uids entries must be unique".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Validate the cross-file OMI authentication contract without exposing
+    /// either secret. Disabled OMI remains credential-free; every enabled
+    /// network surface fails closed when its dedicated bearer is absent.
+    pub fn validate_with_credentials(
+        &self,
+        credentials: &crate::config::credentials::Credentials,
+    ) -> Result<(), String> {
+        self.validate()?;
+        if !self.enabled {
+            return Ok(());
+        }
+        if matches!(self.mode, OmiIngestMode::DeveloperApi | OmiIngestMode::Both) {
+            let key = credentials.omi_developer_api_key.as_ref().ok_or_else(|| {
+                "enabled OMI Developer API ingestion requires omi_developer_api_key in credentials"
+                    .to_string()
+            })?;
+            let exposed = key.expose();
+            if !exposed.starts_with("omi_dev_")
+                || exposed.len() == "omi_dev_".len()
+                || exposed.trim() != exposed
+            {
+                return Err(
+                    "omi_developer_api_key must be trimmed and use the non-empty omi_dev_* format"
+                        .to_string(),
+                );
+            }
+        }
+        if self.mode.listens() {
+            let token = credentials.omi_ingest_token.as_ref().ok_or_else(|| {
+                "enabled native OMI ingestion requires omi_ingest_token in credentials".to_string()
+            })?;
+            if token.expose().len() < 32 || token.expose().trim() != token.expose() {
+                return Err(
+                    "omi_ingest_token must be trimmed and contain at least 32 bytes".to_string(),
+                );
+            }
+        }
+        // LegacyMemories intentionally has no credential gate: the historical
+        // local protocol has no auth. Its reduced trust boundary is compensated
+        // by the strict local/private endpoint validator above.
+        Ok(())
     }
 }
 
@@ -385,22 +685,19 @@ pub struct MediaConfig {
     /// best-effort. Default `false` — the normal posture audits best-effort; flip
     /// on when every cloud-media call must be provable or not happen at all.
     ///
-    /// COVERAGE NOTE: this flag is enforced by the audited wrappers
+    /// This flag is enforced by the audited wrappers
     /// (`media::stt_provider::transcribe_and_audit`,
     /// `media::tts_cloud::synth_and_audit`,
-    /// `media::video_dispatch::dispatch_video_analysis`). Until the channel
-    /// pipeline routes cloud media THROUGH those wrappers, the protection only
-    /// applies where they are called. The `tests/no_unaudited_media_calls.rs`
-    /// source guard prevents a new caller from bypassing them; wiring them onto
-    /// the production hot path is the remaining step before this flag is a
-    /// whole-product guarantee.
+    /// `media::video_dispatch::dispatch_video_analysis`). The inbound audio
+    /// pipeline passes the daemon WAL writer into the canonical STT dispatcher;
+    /// the source guard prevents new direct cloud-media callers from bypassing
+    /// the audited boundaries.
     pub required_audit_for_cloud_media: bool,
     /// SPEAKR-02b — when true, the STT dispatch labels speakers by matching each
     /// utterance's voice embedding against the persisted profile store
-    /// (`media::speaker_profile`). Default `false`. Inert until a per-utterance
-    /// voice-embedding source (a speaker encoder over the raw PCM) is wired —
-    /// the matcher is a no-op on empty embeddings, so labelling activates
-    /// automatically the moment embeddings flow.
+    /// (`media::speaker_profile`). Default `false`. The canonical STT path feeds
+    /// raw PCM/WAV through ECAPA, x-vector, or the log-mel fallback before
+    /// matching profiles.
     pub auto_speaker_labels: bool,
     /// GOLD-ADAPT-HANDY-05 — idle unload window for the local candle Whisper engine.
     ///
@@ -409,8 +706,8 @@ pub struct MediaConfig {
     /// transcription request reloads the model from the cached safetensors
     /// (~1-5 s). `None` or `Some(0)` = keep loaded forever after first use.
     ///
-    /// Default `Some(120)` (2 minutes). Applies to both the `transcribe_if_cached`
-    /// audio-ingest path and the `WhisperRsLocal` STT-provider path.
+    /// Default `Some(120)` (2 minutes). Applied by the canonical
+    /// `WhisperRsLocal` provider factory.
     #[serde(default = "default_whisper_idle_unload_secs")]
     pub whisper_idle_unload_secs: Option<u64>,
     /// GOLD-ADAPT-AWE-DOC-01 — enable the Docling subprocess extractor in
@@ -427,29 +724,28 @@ pub struct MediaConfig {
     /// GOLD-ADAPT-HANDY-02 — enable `media::vad::SmoothedVad` as a pre-STT
     /// energy gate in the dictation capture path.
     ///
-    /// When `true`, PCM frames from the microphone are passed through
-    /// `SmoothedVad` before being forwarded to the STT provider. Silence
+    /// When `true`, caller-supplied PCM frames are passed through `SmoothedVad`
+    /// before being forwarded to the STT provider. Silence
     /// frames (VAD says `VadDecision::Silence`) are dropped, saving STT calls
     /// for quiet stretches between utterances.
     ///
     /// Default `false` — gate is bypassed; all captured audio reaches STT.
     /// Flip to `true` in `freedom.yaml` under `media.vad_enabled`.
     ///
-    /// The `vad` Cargo feature replaces the energy backend with a Silero ONNX
-    /// neural backend (scaffold; see `media::vad::SileroBackend`). The config
-    /// flag is backend-independent.
+    /// The shipped backend is the deterministic energy/smoothing/hangover
+    /// implementation; no feature flag advertises an unavailable neural model.
     #[serde(default)]
     pub vad_enabled: bool,
     /// GOLD-ADOPT-25 — opt-in dictation input mode.
     ///
-    /// When `true`, `neoth dictate` (or the in-chat push-to-talk shortcut)
-    /// captures microphone audio, gates it through the VAD (if `vad_enabled`),
-    /// and routes the utterance to the active local STT provider (candle
-    /// `WhisperEngine` or `faster-whisper`). The transcribed text is injected
-    /// into the chat turn as if the operator had typed it.
+    /// When `true`, `neoth dictate <file>` decodes the operator-selected audio,
+    /// gates it through the VAD (if `vad_enabled`), and routes the utterance
+    /// through `media.stt` (local by default; cloud only when separately and
+    /// explicitly enabled). Chat and daemon media attachments use the same
+    /// dispatcher but do not depend on this file-dictation consent flag.
     ///
-    /// Default `false` — microphone capture is opt-in because it records audio.
-    /// First use prints a consent notice regardless of this flag.
+    /// Default `false` — file dictation is opt-in because transcription handles
+    /// sensitive audio. Live microphone capture is not implemented.
     ///
     /// Configure in `freedom.yaml` under `media.dictation_enabled`.
     #[serde(default)]
@@ -462,6 +758,10 @@ pub struct MediaConfig {
     /// local-candle default (no cloud, no egress).
     #[serde(default)]
     pub stt: crate::media::stt_dispatch::MediaSttConfig,
+    /// Canonical text-to-speech provider, fallback, local asset, voice, locale,
+    /// and request-limit contract. Defaults to offline `system_native`.
+    #[serde(default)]
+    pub tts: crate::media::tts_dispatch::TtsDispatcherConfig,
 }
 
 fn default_whisper_idle_unload_secs() -> Option<u64> {
@@ -486,6 +786,9 @@ impl Default for MediaConfig {
             dictation_enabled: false,
             // B20 — default to local candle Whisper; no cloud egress.
             stt: crate::media::stt_dispatch::MediaSttConfig::default(),
+            // TTS Gold — default is guaranteed offline; cloud choices remain
+            // separately gated by `cloud_tts_enabled`.
+            tts: crate::media::tts_dispatch::TtsDispatcherConfig::default(),
         }
     }
 }

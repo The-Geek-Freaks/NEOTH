@@ -189,7 +189,7 @@ fn lease_payload(event_type: u8, lease: &CapabilityLease) -> Vec<u8> {
     if event_type == EVENT_TYPE_LEASE_GRANTED {
         v["expires_unix"] = serde_json::json!(lease.expires_unix);
     }
-    serde_json::to_vec(&v).unwrap_or_else(|_| b"{}".to_vec())
+    serde_json::to_vec(&v).expect("lease audit payload is a serde_json::Value")
 }
 
 /// Best-effort one-shot WAL emit (mirrors `cli::ingest`): if `neothd

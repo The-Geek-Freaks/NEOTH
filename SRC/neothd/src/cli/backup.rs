@@ -23,12 +23,15 @@ pub struct BackupArgs {
     /// to re-index from scratch).
     #[arg(long = "no-wal")]
     pub skip_wal: bool,
-    /// Exclude `credentials.yaml` (API keys, channel tokens) from the
-    /// tarball. By default it IS bundled — otherwise a restore is
-    /// missing every key — but the archive is plaintext, so backup
-    /// prints a warning and `--no-credentials` lets you opt out (e.g.
-    /// when the archive will live on untrusted storage).
-    #[arg(long = "no-credentials")]
+    /// Include `credentials.yaml` (API keys, channel tokens) in the plaintext
+    /// tarball. Excluded by default; use this only when the destination is
+    /// operator-controlled encrypted storage. A complete credential restore
+    /// requires this explicit opt-in.
+    #[arg(long, conflicts_with = "skip_credentials")]
+    pub include_credentials: bool,
+    /// Deprecated compatibility no-op: credentials are already excluded by
+    /// default. Kept so existing safe backup scripts do not break.
+    #[arg(long = "no-credentials", hide = true)]
     pub skip_credentials: bool,
     /// Override the ~/.neoth source dir (mostly for tests).
     #[arg(long, value_name = "DIR")]
@@ -57,7 +60,7 @@ pub async fn run_backup(args: BackupArgs) -> Result<()> {
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
     let out = args.out.unwrap_or_else(backup::default_backup_path);
     let include_wal = !args.skip_wal;
-    let include_credentials = !args.skip_credentials;
+    let include_credentials = args.include_credentials && !args.skip_credentials;
     let outcome = backup::write_backup(&home, &out, include_wal, include_credentials)
         .with_context(|| format!("write backup to {}", out.display()))?;
     match args.output {
@@ -83,6 +86,11 @@ pub async fn run_backup(args: BackupArgs) -> Result<()> {
             } else {
                 println!("(WAL segments bundled — full consistent restore)");
             }
+            if !include_credentials {
+                println!(
+                    "(credentials excluded by default; use --include-credentials only for encrypted storage)"
+                );
+            }
         }
     }
     // Loud plaintext-secrets warning regardless of output format — the
@@ -90,7 +98,7 @@ pub async fn run_backup(args: BackupArgs) -> Result<()> {
     if outcome.included_plaintext_credentials {
         eprintln!(
             "⚠  WARNING: this backup contains credentials.yaml in PLAINTEXT (API keys, channel tokens).\n\
-             ⚠  Store it on encrypted media. Re-run with --no-credentials to exclude them."
+             ⚠  Store it on encrypted media. Re-run without --include-credentials to exclude them."
         );
     }
     Ok(())
@@ -115,4 +123,38 @@ pub async fn run_restore(args: RestoreArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct BackupCli {
+        #[command(flatten)]
+        args: BackupArgs,
+    }
+
+    #[test]
+    fn backup_credentials_are_excluded_by_default() {
+        let parsed = BackupCli::try_parse_from(["backup"]).expect("parse default backup args");
+        assert!(!parsed.args.include_credentials);
+        assert!(!parsed.args.skip_credentials);
+    }
+
+    #[test]
+    fn backup_credentials_require_explicit_opt_in() {
+        let parsed = BackupCli::try_parse_from(["backup", "--include-credentials"])
+            .expect("parse explicit credential opt-in");
+        assert!(parsed.args.include_credentials);
+        assert!(!parsed.args.skip_credentials);
+    }
+
+    #[test]
+    fn contradictory_credential_flags_are_rejected() {
+        let parsed =
+            BackupCli::try_parse_from(["backup", "--include-credentials", "--no-credentials"]);
+        assert!(parsed.is_err());
+    }
 }

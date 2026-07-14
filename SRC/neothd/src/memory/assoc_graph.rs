@@ -150,18 +150,19 @@ pub fn associated(conn: &Connection, event_id: i64, limit: usize) -> Result<Vec<
             let raw_weight: f64 = r.get(1)?;
             let success: i64 = r.get(2)?;
             let failure: i64 = r.get(3)?;
-            let eff = link_effective_weight(
-                raw_weight,
-                success.max(0) as u32,
-                failure.max(0) as u32,
-            );
+            let eff =
+                link_effective_weight(raw_weight, success.max(0) as u32, failure.max(0) as u32);
             Ok((other_id, eff))
         })
         .context("run associated query")?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect associated memory links")?;
     // Sort by effective weight DESC (stable within ties by id for determinism).
-    rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    rows.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
     rows.truncate(limit);
     Ok(rows)
 }
@@ -210,8 +211,11 @@ pub fn decay_links(conn: &Connection, floor: f64, now_unix: i64) -> Result<usize
         let days_since = (now_unix - last_co_access).max(0) as f64 / 86400.0;
         let new_weight = weight * (-days_since / stability.max(f64::EPSILON)).exp();
         if new_weight < floor {
-            tx.execute("DELETE FROM idx_memory_links WHERE rowid = ?1", params![rowid])
-                .context("prune decayed link")?;
+            tx.execute(
+                "DELETE FROM idx_memory_links WHERE rowid = ?1",
+                params![rowid],
+            )
+            .context("prune decayed link")?;
             pruned += 1;
         } else {
             tx.execute(
@@ -236,15 +240,26 @@ pub fn memory_hubs(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<(i64
              SELECT lo_id AS node_id FROM idx_memory_links \
              UNION ALL \
              SELECT hi_id AS node_id FROM idx_memory_links \
-         ) GROUP BY node_id ORDER BY degree DESC LIMIT ?1",
+         ) GROUP BY node_id ORDER BY degree DESC, node_id ASC LIMIT ?1",
     )?;
-    let rows = stmt
-        .query_map(rusqlite::params![limit as i64], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? as u32))
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(rows)
+    stmt.query_map(rusqlite::params![limit as i64], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? as u32))
+    })?
+    .collect()
+}
+
+/// Return the number of live association edges touching `event_id`.
+///
+/// Recall uses this as a deliberately bounded ranking signal: a memory that
+/// repeatedly co-occurs with other useful memories gets a small hub boost, but
+/// degree can never replace textual relevance, recency, importance, or trust.
+pub fn event_degree(conn: &Connection, event_id: i64) -> rusqlite::Result<u32> {
+    let degree: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM idx_memory_links WHERE lo_id = ?1 OR hi_id = ?1",
+        params![event_id],
+        |row| row.get(0),
+    )?;
+    Ok(degree.max(0) as u32)
 }
 
 /// GDPR forget cascade: delete every link touching `event_id`. Called from
@@ -302,7 +317,11 @@ pub fn record_link_feedback(
     b_id: i64,
     success: bool,
 ) -> rusqlite::Result<bool> {
-    let (lo, hi) = if a_id < b_id { (a_id, b_id) } else { (b_id, a_id) };
+    let (lo, hi) = if a_id < b_id {
+        (a_id, b_id)
+    } else {
+        (b_id, a_id)
+    };
     let col = if success {
         "feedback_success"
     } else {
@@ -316,6 +335,30 @@ pub fn record_link_feedback(
     );
     let rows_changed = conn.execute(&sql, rusqlite::params![lo, hi])?;
     Ok(rows_changed > 0)
+}
+
+/// Record explicit operator feedback for every association touching one
+/// memory. This is the production producer for both feedback dimensions:
+/// `neoth recall --upvote <id>` increments `feedback_success`, while
+/// `--downvote <id>` increments `feedback_failure`.
+///
+/// The update is one SQLite statement and therefore atomic. It never creates
+/// edges: feedback may only refine associations learned by co-access.
+pub fn record_event_feedback(
+    conn: &Connection,
+    event_id: i64,
+    success: bool,
+) -> rusqlite::Result<usize> {
+    let column = if success {
+        "feedback_success"
+    } else {
+        "feedback_failure"
+    };
+    let sql = format!(
+        "UPDATE idx_memory_links SET {column} = {column} + 1 \
+         WHERE lo_id = ?1 OR hi_id = ?1"
+    );
+    conn.execute(&sql, params![event_id])
 }
 
 /// Accumulate all unordered canonical (lo<hi) pairs of one window's episode ids
@@ -521,8 +564,7 @@ pub fn louvain(edges: &[(i64, i64, f64)]) -> Vec<Vec<i64>> {
             let c_u = comm[u];
 
             // k_{u, c} = sum of edge weights from u to nodes in community c.
-            let mut k_u_c: std::collections::HashMap<usize, f64> =
-                std::collections::HashMap::new();
+            let mut k_u_c: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
             for &(v, w) in &adj[u] {
                 *k_u_c.entry(comm[v]).or_insert(0.0) += w;
             }
@@ -565,8 +607,7 @@ pub fn louvain(edges: &[(i64, i64, f64)]) -> Vec<Vec<i64>> {
     }
 
     // Collect communities: label → members.
-    let mut groups: std::collections::HashMap<usize, Vec<i64>> =
-        std::collections::HashMap::new();
+    let mut groups: std::collections::HashMap<usize, Vec<i64>> = std::collections::HashMap::new();
     for (u, &c) in comm.iter().enumerate() {
         groups.entry(c).or_default().push(node_set[u]);
     }
@@ -579,9 +620,7 @@ pub fn louvain(edges: &[(i64, i64, f64)]) -> Vec<Vec<i64>> {
             v
         })
         .collect();
-    result.sort_by(|a, b| {
-        b.len().cmp(&a.len()).then_with(|| a[0].cmp(&b[0]))
-    });
+    result.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a[0].cmp(&b[0])));
     result
 }
 
@@ -598,8 +637,7 @@ pub fn detect_communities(conn: &Connection) -> rusqlite::Result<Vec<Vec<i64>>> 
         conn.prepare("SELECT lo_id, hi_id, weight FROM idx_memory_links WHERE weight > 0")?;
     let edges: Vec<(i64, i64, f64)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<rusqlite::Result<_>>()?;
     Ok(louvain(&edges))
 }
 
@@ -701,6 +739,24 @@ mod tests {
     }
 
     #[test]
+    fn associated_breaks_equal_weight_ties_by_event_id() {
+        let (_d, c) = conn();
+        for id in [1, 2, 3, 4] {
+            seed_episode(&c, id);
+        }
+        reinforce_co_access(&c, &[1, 4], 1).unwrap();
+        reinforce_co_access(&c, &[1, 2], 1).unwrap();
+        reinforce_co_access(&c, &[1, 3], 1).unwrap();
+
+        let ids: Vec<i64> = associated(&c, 1, 10)
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec![2, 3, 4]);
+    }
+
+    #[test]
     fn associated_unknown_event_is_empty() {
         let (_d, c) = conn();
         assert!(associated(&c, 999, 10).unwrap().is_empty());
@@ -735,7 +791,10 @@ mod tests {
         let now = crate::time::now_unix_i64();
         // All three should be driven near-zero and pruned below a 0.05 floor.
         let pruned = decay_links(&c, 0.05, now).unwrap();
-        assert_eq!(pruned, 3, "all three links must be pruned below floor after 100d");
+        assert_eq!(
+            pruned, 3,
+            "all three links must be pruned below floor after 100d"
+        );
         let remaining: i64 = c
             .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
             .unwrap();
@@ -949,6 +1008,11 @@ mod tests {
         // id=1 must rank first with degree 3.
         assert_eq!(hubs[0].0, 1, "id=1 has highest degree (3 links)");
         assert_eq!(hubs[0].1, 3, "degree of id=1 is 3");
+        assert_eq!(
+            hubs.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4],
+            "equal-degree hubs must use the stable node-id tie-break"
+        );
 
         // All other nodes (2, 3, 4) must have degree 1.
         for &(node_id, degree) in &hubs[1..] {
@@ -1088,10 +1152,7 @@ mod tests {
 
         // Never negative regardless of extreme failure counts.
         let eff_extreme = link_effective_weight(1.0, 0, 1_000_000);
-        assert!(
-            eff_extreme >= 0.0,
-            "floored at zero: {eff_extreme}"
-        );
+        assert!(eff_extreme >= 0.0, "floored at zero: {eff_extreme}");
 
         // All-success approaches weight * 2 as counts grow large.
         let eff_big_success = link_effective_weight(1.0, 10_000, 0);
@@ -1184,6 +1245,46 @@ mod tests {
         assert_eq!(f, 1, "one failure call");
     }
 
+    #[test]
+    fn event_degree_counts_both_canonical_endpoints() {
+        let (_d, c) = conn();
+        reinforce_co_access(&c, &[1, 2, 3], 1).unwrap();
+        assert_eq!(event_degree(&c, 1).unwrap(), 2);
+        assert_eq!(event_degree(&c, 2).unwrap(), 2);
+        assert_eq!(event_degree(&c, 99).unwrap(), 0);
+    }
+
+    #[test]
+    fn record_event_feedback_updates_every_touching_edge_only() {
+        let (_d, c) = conn();
+        reinforce_co_access(&c, &[1, 2, 3], 1).unwrap();
+        reinforce_co_access(&c, &[4, 5], 2).unwrap();
+
+        assert_eq!(record_event_feedback(&c, 1, false).unwrap(), 2);
+        assert_eq!(record_event_feedback(&c, 1, true).unwrap(), 2);
+
+        for (lo, hi) in [(1, 2), (1, 3)] {
+            let counters: (i64, i64) = c
+                .query_row(
+                    "SELECT feedback_success, feedback_failure \
+                     FROM idx_memory_links WHERE lo_id = ?1 AND hi_id = ?2",
+                    params![lo, hi],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(counters, (1, 1));
+        }
+        let untouched: (i64, i64) = c
+            .query_row(
+                "SELECT feedback_success, feedback_failure \
+                 FROM idx_memory_links WHERE lo_id = 4 AND hi_id = 5",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(untouched, (0, 0));
+    }
+
     /// `associated` with positive feedback ranks the boosted link above the plain one.
     #[test]
     fn associated_ranks_feedback_boosted_link_higher() {
@@ -1201,11 +1302,15 @@ mod tests {
 
         let assoc = associated(&c, 1, 10).unwrap();
         assert_eq!(assoc.len(), 2);
-        assert_eq!(assoc[0].0, 2, "node 2 (boosted by feedback) should rank first");
+        assert_eq!(
+            assoc[0].0, 2,
+            "node 2 (boosted by feedback) should rank first"
+        );
         assert!(
             assoc[0].1 > assoc[1].1,
             "boosted eff weight {:.4} must exceed raw eff weight {:.4}",
-            assoc[0].1, assoc[1].1
+            assoc[0].1,
+            assoc[1].1
         );
     }
 
@@ -1231,7 +1336,8 @@ mod tests {
         assert!(
             assoc[0].1 > assoc[1].1,
             "plain eff weight {:.4} must exceed penalised eff weight {:.4}",
-            assoc[0].1, assoc[1].1
+            assoc[0].1,
+            assoc[1].1
         );
     }
 }

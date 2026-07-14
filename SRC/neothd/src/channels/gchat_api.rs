@@ -134,7 +134,11 @@ pub fn event_to_inbound(event: &ChatEvent, ts_unix: u64) -> Option<InboundMessag
     if space.is_empty() {
         return None;
     }
-    let text = msg.text.as_deref().map(str::trim).filter(|t| !t.is_empty())?;
+    let text = msg
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())?;
     Some(InboundMessage {
         channel: ChannelKind::GoogleChat,
         chat_id: space.to_string(),
@@ -204,10 +208,7 @@ mod tests {
             inbound.message_id.as_deref(),
             Some("spaces/AAA/messages/BBB")
         );
-        assert_eq!(
-            inbound.thread_id.as_deref(),
-            Some("spaces/AAA/threads/TTT")
-        );
+        assert_eq!(inbound.thread_id.as_deref(), Some("spaces/AAA/threads/TTT"));
     }
 
     #[test]
@@ -248,6 +249,9 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&c).unwrap();
         assert_eq!(v["iss"], "bot@proj.iam.gserviceaccount.com");
         assert_eq!(v["aud"], "https://oauth2.googleapis.com/token");
-        assert_eq!(v["exp"].as_u64().unwrap() - v["iat"].as_u64().unwrap(), 3600);
+        assert_eq!(
+            v["exp"].as_u64().unwrap() - v["iat"].as_u64().unwrap(),
+            3600
+        );
     }
 }

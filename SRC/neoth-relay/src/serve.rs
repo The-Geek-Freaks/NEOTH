@@ -1,17 +1,16 @@
-//! Minimal HTTP-line-framed serve loop.
+//! Bounded HTTP/1.1 peer-registry serve loop.
 //!
-//! v0.1 ships a hand-rolled `tokio::net::TcpListener` accepting:
+//! The deliberately small protocol accepts one request per connection:
 //!   - `POST /register` — JSON body = `RelayRegistration`, response =
 //!     JSON `RegistrationOutcome`
 //!   - `POST /unregister?cluster=<hex>&peer=<hex>` — response = JSON
 //!     `{ "removed": bool }`
 //!   - `GET  /status` — JSON `{ "total_peers", "buckets" }`
 //!
-//! Real axum integration + auth + TLS via Hysteria socket plumbing
-//! lands in multi-week follow-ups. This scaffold is deliberately
-//! minimal so the relay binary ships + operators can sanity-check
-//! the wire protocol against `neothd`'s outbound register call
-//! before the production wire arrives.
+//! Bearer authentication, public-bind refusal, request/read limits, read
+//! timeouts, and connection concurrency caps are enforced here. TLS/QUIC/auth
+//! at the public transport boundary belongs to the external Hysteria sidecar;
+//! this listener is the sidecar's plaintext loopback `forward_to` target.
 
 use std::net::SocketAddr;
 use std::sync::Arc;

@@ -1,7 +1,7 @@
 //! GOLD-ADAPT-SYS-01 — mobile-mcp (`@mobilenext/mobile-mcp`) MCP registration.
 //!
 //! mobile-mcp is an MCP server that drives iOS and Android devices via the
-//! WebDriverAgent + ADB stack. It is launched via `npx -y @mobilenext/mobile-mcp@latest`
+//! WebDriverAgent + ADB stack. It is launched via `npx -y @mobilenext/mobile-mcp@0.0.62`
 //! (no local install step — npx fetches + caches on first run). There is no
 //! secret token: mobile-mcp connects to whatever local device ADB/WDA is already
 //! attached, so `mcp_servers.yaml` carries only the command, args, and telemetry
@@ -75,27 +75,26 @@ pub async fn auto_register(neoth_home: &Path) -> Result<bool> {
         return Ok(false);
     }
 
+    register_at(neoth_home)?;
+
+    Ok(true)
+}
+
+fn register_at(neoth_home: &Path) -> Result<()> {
     let mcp_path = neoth_home.join("mcp_servers.yaml");
     crate::mcp::config::McpServers::update_at(&mcp_path, |servers| {
         let mut cfg = crate::mcp::config::mobile_mcp_recommended_config();
         cfg.enabled = true;
+        cfg.validate_launcher()?;
         if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
-            // Re-enable + always enforce the telemetry opt-out sentinel.
-            existing.enabled = true;
-            existing
-                .env
-                .insert("MOBILEMCP_DISABLE_TELEMETRY".to_string(), "1".to_string());
-            // Refresh allow_tools and autonomy_gate from the factory in case
-            // the operator is upgrading from an older config.
-            existing.allow_tools = cfg.allow_tools;
-            existing.autonomy_gate = cfg.autonomy_gate;
+            // Explicit wizard consent upgrades old @latest entries to the
+            // complete canonical exact-pin + telemetry/security posture.
+            *existing = cfg;
         } else {
             servers.servers.push(cfg);
         }
         Ok(true)
-    })?;
-
-    Ok(true)
+    })
 }
 
 #[cfg(test)]
@@ -128,13 +127,17 @@ mod tests {
         // Command + args stable.
         assert_eq!(srv.command, "npx");
         assert!(
-            srv.args.iter().any(|a| a.contains("@mobilenext/mobile-mcp")),
+            srv.args
+                .iter()
+                .any(|a| a.contains("@mobilenext/mobile-mcp")),
             "args must reference @mobilenext/mobile-mcp"
         );
 
         // Telemetry sentinel present — PostHog must be disabled.
         assert_eq!(
-            srv.env.get("MOBILEMCP_DISABLE_TELEMETRY").map(String::as_str),
+            srv.env
+                .get("MOBILEMCP_DISABLE_TELEMETRY")
+                .map(String::as_str),
             Some("1"),
             "MOBILEMCP_DISABLE_TELEMETRY must be forced to 1"
         );
@@ -188,6 +191,43 @@ mod tests {
     }
 
     #[test]
+    fn auto_register_replaces_legacy_latest_launcher_with_exact_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp_path = dir.path().join("mcp_servers.yaml");
+        let legacy = crate::mcp::config::McpServers {
+            smart_loading: true,
+            servers: vec![crate::mcp::config::McpServerConfig {
+                id: "mobile-mcp".into(),
+                description: Some("legacy".into()),
+                command: "npx".into(),
+                args: vec!["-y".into(), "@mobilenext/mobile-mcp@latest".into()],
+                env: std::collections::HashMap::new(),
+                enabled: true,
+                allow_tools: None,
+                trust_all_tools: true,
+                smart_approve: true,
+                autonomy_gate: None,
+            }],
+        };
+        std::fs::write(&mcp_path, serde_yaml::to_string(&legacy).unwrap()).unwrap();
+
+        do_register(dir.path()).unwrap();
+        let loaded = crate::mcp::config::McpServers::load_from(&mcp_path).unwrap();
+        let server = loaded.get_enabled("mobile-mcp").unwrap();
+        assert_eq!(
+            server.args,
+            vec![
+                "-y".to_string(),
+                "@mobilenext/mobile-mcp@0.0.62".to_string()
+            ],
+            "explicit re-registration must eliminate @latest drift"
+        );
+        assert!(server.validate_launcher().is_ok());
+        assert!(!server.trust_all_tools);
+        assert!(!server.smart_approve);
+    }
+
+    #[test]
     fn auto_register_preserves_existing_servers_in_yaml() {
         // Verify that registering mobile-mcp doesn't clobber pre-existing
         // servers already in the operator's mcp_servers.yaml.
@@ -233,22 +273,7 @@ mod tests {
 
     /// Inner registration without the async npx probe — used by sync tests.
     fn do_register(neoth_home: &Path) -> Result<bool> {
-        let mcp_path = neoth_home.join("mcp_servers.yaml");
-        crate::mcp::config::McpServers::update_at(&mcp_path, |servers| {
-            let mut cfg = crate::mcp::config::mobile_mcp_recommended_config();
-            cfg.enabled = true;
-            if let Some(existing) = servers.servers.iter_mut().find(|s| s.id == cfg.id) {
-                existing.enabled = true;
-                existing
-                    .env
-                    .insert("MOBILEMCP_DISABLE_TELEMETRY".to_string(), "1".to_string());
-                existing.allow_tools = cfg.allow_tools;
-                existing.autonomy_gate = cfg.autonomy_gate;
-            } else {
-                servers.servers.push(cfg);
-            }
-            Ok(true)
-        })?;
+        register_at(neoth_home)?;
         Ok(true)
     }
 
@@ -265,7 +290,11 @@ mod tests {
         assert!(result.is_err(), "must Err on corrupt mcp_servers.yaml");
 
         let after = std::fs::read(&mcp_path).unwrap();
-        assert_eq!(after.as_slice(), bad_yaml, "file must be byte-identical after failed update");
+        assert_eq!(
+            after.as_slice(),
+            bad_yaml,
+            "file must be byte-identical after failed update"
+        );
     }
 
     /// Smoke test: the async probe path doesn't panic whether or not Node
@@ -276,7 +305,10 @@ mod tests {
         // We can't control whether Node is on PATH in CI, so only assert
         // that the function returns Ok(_) without panicking.
         let result = auto_register(dir.path()).await;
-        assert!(result.is_ok(), "auto_register must not error on probe: {result:?}");
+        assert!(
+            result.is_ok(),
+            "auto_register must not error on probe: {result:?}"
+        );
         // When it returns Ok(false) nothing should be written to disk.
         if !result.unwrap() {
             assert!(

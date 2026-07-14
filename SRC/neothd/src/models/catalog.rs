@@ -231,9 +231,14 @@ impl ModelsCatalog {
         Self::default()
     }
 
-    /// Resolve the default on-disk path: `<home>/.neoth/<CATALOG_FILE>`.
-    pub fn default_path(home: &Path) -> PathBuf {
-        home.join(".neoth").join(CATALOG_FILE)
+    /// Resolve the default on-disk path below the NEOTH state directory.
+    ///
+    /// `neoth_home` is the same path returned by
+    /// [`crate::config::FreedomConfig::default_neoth_home`] (normally
+    /// `~/.neoth`). Keeping that contract explicit prevents callers from
+    /// accidentally producing `~/.neoth/.neoth/models_catalog.json`.
+    pub fn default_path(neoth_home: &Path) -> PathBuf {
+        neoth_home.join(CATALOG_FILE)
     }
 
     /// Load from disk. Missing file → empty catalog (NOT an error).
@@ -564,12 +569,12 @@ mod tests {
     }
 
     #[test]
-    fn default_path_is_under_neoth_subdir() {
-        let home = Path::new("/tmp/fake_home");
-        let path = ModelsCatalog::default_path(home);
-        assert!(path.ends_with(".neoth/models_catalog.json"));
+    fn default_path_uses_the_supplied_neoth_home_exactly_once() {
+        let neoth_home = Path::new("/tmp/fake_home/.neoth");
+        let path = ModelsCatalog::default_path(neoth_home);
+        assert_eq!(path, neoth_home.join("models_catalog.json"));
+        assert!(!path.ends_with(".neoth/.neoth/models_catalog.json"));
     }
-
 }
 // NOTE: with_aliases / resolve_alias / aliases field were removed (FIX-4b).
 // Alias resolution lives solely in config::FreedomConfig::resolve_model_alias

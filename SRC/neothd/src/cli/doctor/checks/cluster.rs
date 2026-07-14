@@ -15,12 +15,33 @@ use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 #[cfg(feature = "cluster")]
 pub(crate) fn check_cluster_mdns_announcer(home: &Path) -> CheckOutcome {
     let freedom_path = home.join("freedom.yaml");
-    let (mdns_enabled, policy) = crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+    let config = match crate::config::FreedomConfig::load_from_path_or_default(&freedom_path) {
+        Ok(config) => config,
+        Err(error) => {
+            return CheckOutcome {
+                name: "cluster mDNS announcer",
+                status: CheckStatus::Fail,
+                detail: format!("cannot load cluster policy: {error}"),
+            };
+        }
+    };
     let ssid = crate::cluster::policy::current_ssid();
-    let peer_count = crate::cluster::registry::load(home)
-        .map(|r| r.peers.len())
-        .unwrap_or(0);
-    evaluate_announcer_state(mdns_enabled, &policy, ssid.as_deref(), peer_count)
+    let peer_count = match crate::cluster::registry::load(home) {
+        Ok(registry) => registry.peers.len(),
+        Err(error) => {
+            return CheckOutcome {
+                name: "cluster mDNS announcer",
+                status: CheckStatus::Fail,
+                detail: format!("cannot load paired-peer registry: {error}"),
+            };
+        }
+    };
+    evaluate_announcer_state(
+        config.cluster.mdns.enabled,
+        &config.cluster.policy,
+        ssid.as_deref(),
+        peer_count,
+    )
 }
 
 /// GOLD-SEC-16: slim build (no `cluster` feature) — there is no announcer to

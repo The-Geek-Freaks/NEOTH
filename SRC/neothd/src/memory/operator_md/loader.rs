@@ -33,11 +33,7 @@ use super::{BlockSource, MemoryBlock};
 /// double-loading.
 ///
 /// Never errors on missing files. Returns Ok with whatever was found.
-pub async fn assemble(
-    home: &Path,
-    cwd: &Path,
-    extra_dirs: &[PathBuf],
-) -> Result<Vec<MemoryBlock>> {
+pub async fn assemble(home: &Path, cwd: &Path, extra_dirs: &[PathBuf]) -> Result<Vec<MemoryBlock>> {
     let mut blocks: Vec<MemoryBlock> = Vec::new();
 
     // Build a set of canonical paths already covered by steps 1 + 2, used as
@@ -356,7 +352,9 @@ mod tests {
             .await
             .unwrap();
 
-        let blocks = assemble(&home, &cwd, std::slice::from_ref(&sub)).await.unwrap();
+        let blocks = assemble(&home, &cwd, std::slice::from_ref(&sub))
+            .await
+            .unwrap();
         // Global + SubDir (cwd/NEOTH.md absent)
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].source, BlockSource::Global);
@@ -372,7 +370,9 @@ mod tests {
         fs::create_dir_all(&home).await.unwrap();
         fs::write(home.join("NEOTH.md"), "Global").await.unwrap();
         // Passing home as an extra_dir must NOT double-load the global NEOTH.md.
-        let blocks = assemble(&home, &home, std::slice::from_ref(&home)).await.unwrap();
+        let blocks = assemble(&home, &home, std::slice::from_ref(&home))
+            .await
+            .unwrap();
         assert_eq!(blocks.len(), 1, "home as extra_dir must be deduped");
         assert_eq!(blocks[0].source, BlockSource::Global);
     }
@@ -386,7 +386,9 @@ mod tests {
         fs::create_dir_all(&cwd).await.unwrap();
         fs::write(cwd.join("NEOTH.md"), "Project").await.unwrap();
         // Passing cwd as an extra_dir must NOT double-load the project NEOTH.md.
-        let blocks = assemble(&home, &cwd, std::slice::from_ref(&cwd)).await.unwrap();
+        let blocks = assemble(&home, &cwd, std::slice::from_ref(&cwd))
+            .await
+            .unwrap();
         assert_eq!(blocks.len(), 1, "cwd as extra_dir must be deduped");
         assert_eq!(blocks[0].source, BlockSource::Project);
     }
@@ -417,8 +419,12 @@ mod tests {
         fs::create_dir_all(&sub_a).await.unwrap();
         fs::create_dir_all(&sub_b).await.unwrap();
         fs::write(home.join("NEOTH.md"), "Global").await.unwrap();
-        fs::write(sub_a.join("NEOTH.md"), "Sub A rules").await.unwrap();
-        fs::write(sub_b.join("NEOTH.md"), "Sub B rules").await.unwrap();
+        fs::write(sub_a.join("NEOTH.md"), "Sub A rules")
+            .await
+            .unwrap();
+        fs::write(sub_b.join("NEOTH.md"), "Sub B rules")
+            .await
+            .unwrap();
 
         let blocks = assemble(&home, &cwd, &[sub_a, sub_b]).await.unwrap();
         assert_eq!(blocks.len(), 3);

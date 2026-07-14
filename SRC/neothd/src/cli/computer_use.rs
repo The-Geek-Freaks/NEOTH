@@ -104,7 +104,11 @@ fn status(output: OutputFormat) -> Result<()> {
     println!("NEOTH computer-use (cua-driver)");
     println!(
         "  driver installed : {}",
-        if installed { "yes" } else { "NO — run `neoth computer-use install`" }
+        if installed {
+            "yes"
+        } else {
+            "NO — run `neoth computer-use install`"
+        }
     );
     println!(
         "  MCP server       : {}",
@@ -128,9 +132,17 @@ fn set_enabled(on: bool, output: OutputFormat) -> Result<()> {
     // Ok(false) from the closure → no write (disable of non-existent is a no-op).
     let mut action = "not registered (nothing to disable)";
     McpServers::update_at(&path, |servers| {
-        if let Some(s) = servers.servers.iter_mut().find(|s| s.id == cu::CUA_DRIVER_SERVER_ID) {
+        if let Some(s) = servers
+            .servers
+            .iter_mut()
+            .find(|s| s.id == cu::CUA_DRIVER_SERVER_ID)
+        {
             s.enabled = on;
-            action = if on { "re-enabled existing entry" } else { "disabled" };
+            action = if on {
+                "re-enabled existing entry"
+            } else {
+                "disabled"
+            };
             Ok(true)
         } else if on {
             servers.servers.push(cu::cua_driver_server());

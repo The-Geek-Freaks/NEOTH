@@ -189,9 +189,9 @@ pub enum Verdict {
     QuorumFailed { responded: u32, required: u32 },
 }
 
-/// One council session's audit record. Serialised into the WAL frame
-/// payload when the chat dispatch convenes the council (`EVENT_TYPE_*`
-/// allocation deferred until the dispatch wiring lands).
+/// One live council session's typed result and audit source. Chat and channel
+/// dispatch consume it for winner/recovery decisions and emit the allocated
+/// Council WAL family (`0x60..=0x6A`) at their durable audit boundaries.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CouncilDebate {
     /// xxh3_64 hash of the prompt — never the raw prompt, to match
@@ -352,7 +352,6 @@ impl CouncilDebate {
         }
         best.map(|(r, _)| r)
     }
-
 }
 
 /// Helper for converting a `Duration` to milliseconds without losing
@@ -1480,7 +1479,11 @@ mod tests {
 
     #[test]
     fn mif_intent_serde_roundtrip() {
-        for intent in [MifIntent::Stated, MifIntent::Inferred, MifIntent::Conflicted] {
+        for intent in [
+            MifIntent::Stated,
+            MifIntent::Inferred,
+            MifIntent::Conflicted,
+        ] {
             let json = serde_json::to_string(&intent).unwrap();
             let back: MifIntent = serde_json::from_str(&json).unwrap();
             assert_eq!(intent, back);

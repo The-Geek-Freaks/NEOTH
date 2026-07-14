@@ -159,7 +159,10 @@ impl IrcChannel {
 /// crate's `identify()` sends `CAP END`, and a `CAP REQ` issued after that is
 /// only honoured on networks with IRCv3.2 post-registration re-negotiation;
 /// requesting inside the negotiation window works everywhere.
-async fn connect(config: &Config, extra_caps: &[irc::client::prelude::Capability]) -> Result<Client> {
+async fn connect(
+    config: &Config,
+    extra_caps: &[irc::client::prelude::Capability],
+) -> Result<Client> {
     let client = Client::from_config(config.clone())
         .await
         .context("irc connect")?;

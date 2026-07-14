@@ -47,7 +47,12 @@ use tracing::{debug, info, warn};
 /// fresh session. Default cap matches bridge.py (10).
 const COMPACTION_MARKER: &str = "Memory was condensed";
 
-use super::{ChunkStream, Completion, CompletionChunk, Provider, Request};
+use super::{
+    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
+
+const DEFAULT_THINKING_TOKEN_BUDGET: u32 = 10_000;
 
 /// Subset of `claude --output-format json` envelope NEOTH cares about.
 /// Real schema is huge; ignore unknown fields with `#[serde(default)]`.
@@ -253,6 +258,12 @@ impl ClaudeCliAdapter {
         self.backend
     }
 
+    fn canonicalize_request_model(&self, req: &mut Request) {
+        if let Some(requested_model) = req.model.take() {
+            req.model = Some(normalise_model(&requested_model));
+        }
+    }
+
     /// Resolve the effective backend at call time. `Auto` consults
     /// `TmuxSession::is_available()` (cached at first call); `Tmux` /
     /// `Subprocess` return verbatim. Used by `complete` to branch.
@@ -314,9 +325,9 @@ impl ClaudeCliAdapter {
     }
 
     /// Hash the request shape that defines "identical call" for dedup.
-    /// Prompt + system + effective model — sampling parameters are
-    /// excluded so two callers asking the same question with different
-    /// temperatures still share the cache (cheap operator-side win).
+    /// Prompt + system + effective model + thinking budget define the Claude
+    /// CLI invocation. Sampling controls never reach this function because
+    /// the leaf capability gate rejects them before dispatch.
     fn dedup_key(&self, req: &Request) -> u64 {
         use xxhash_rust::xxh3::Xxh3;
         let mut h = Xxh3::new();
@@ -328,6 +339,8 @@ impl ClaudeCliAdapter {
         h.update(b"\x00");
         let model = req.model.as_deref().unwrap_or(&self.model);
         h.update(model.as_bytes());
+        h.update(b"\x00");
+        h.update(&req.thinking_budget.unwrap_or_default().to_be_bytes());
         h.digest()
     }
 }
@@ -393,7 +406,7 @@ fn join_args_for_shell(args: &[String]) -> String {
 /// HTTP_PROXY mid-daemon need to restart; the explicit "scan once"
 /// contract is documented at `cached_scrubbed_env()`.
 fn spawn_claude(binary: &str, args: &[String]) -> std::io::Result<tokio::process::Child> {
-    let scrubbed = cached_scrubbed_env();
+    let scrubbed = cached_scrubbed_env()?;
     #[cfg(windows)]
     {
         // cmd /C "<binary>" arg1 arg2 ... — quotes around the binary path so
@@ -438,9 +451,18 @@ fn spawn_claude(binary: &str, args: &[String]) -> std::io::Result<tokio::process
 /// to pick up the new value. This is consistent with the rest of
 /// the daemon (config is loaded once at startup, hooks reload via
 /// SIGHUP, but env vars stay frozen).
-fn cached_scrubbed_env() -> &'static [(String, String)] {
-    static CACHE: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
-    CACHE.get_or_init(scrub_outbound_env).as_slice()
+fn cached_scrubbed_env() -> std::io::Result<&'static [(String, String)]> {
+    static CACHE: std::sync::OnceLock<std::result::Result<Vec<(String, String)>, String>> =
+        std::sync::OnceLock::new();
+    match CACHE.get_or_init(|| {
+        scrub_outbound_env().map_err(|error| format!("load Claude CLI env-scrub policy: {error:#}"))
+    }) {
+        Ok(env) => Ok(env.as_slice()),
+        Err(message) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message.clone(),
+        )),
+    }
 }
 
 /// GOLD-CCPARITY-EFFORT-03 — spawn `claude` with a per-call env override on
@@ -459,7 +481,7 @@ fn spawn_claude_with_extra_env(
     args: &[String],
     extra_overrides: &[(&str, String)],
 ) -> std::io::Result<tokio::process::Child> {
-    let mut env: Vec<(String, String)> = cached_scrubbed_env().to_vec();
+    let mut env: Vec<(String, String)> = cached_scrubbed_env()?.to_vec();
     for (key, value) in extra_overrides {
         inject_or_override(&mut env, key, value);
     }
@@ -529,15 +551,17 @@ fn spawn_claude_with_extra_env(
 ///     the warm session.
 ///   - `MAX_THINKING_TOKENS=10000` — bound extended-thinking budget so a
 ///     pathological prompt doesn't burn 31k thinking tokens before
-///     emitting any visible output.
-fn scrub_outbound_env() -> Vec<(String, String)> {
+///     emitting any visible output. This is per internal model request and is
+///     not a finite cost ceiling for the whole Claude Code invocation.
+fn scrub_outbound_env() -> Result<Vec<(String, String)>> {
     // Operator-declared harness prefixes to strip
     // (`freedom.yaml::claude_cli.scrub_env_prefixes`); default empty.
     // Loaded once — this fn is cached behind `cached_scrubbed_env()`.
-    let harness_prefixes = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.claude_cli.scrub_env_prefixes)
-        .unwrap_or_default();
-    scrub_outbound_env_with(&harness_prefixes)
+    let harness_prefixes = crate::config::FreedomConfig::load_from_default_path_or_default()
+        .context("load Claude CLI env-scrub policy from freedom.yaml")?
+        .claude_cli
+        .scrub_env_prefixes;
+    Ok(scrub_outbound_env_with(&harness_prefixes))
 }
 
 /// Core scrub (testable). `harness_prefixes` are the operator-declared
@@ -586,7 +610,11 @@ fn scrub_outbound_env_with(harness_prefixes: &[String]) -> Vec<(String, String)>
     inject_or_override(&mut env, "DISABLE_AUTOUPDATER", "1");
     inject_or_override(&mut env, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1");
     inject_or_override(&mut env, "BASH_DEFAULT_TIMEOUT_MS", "120000");
-    inject_or_override(&mut env, "MAX_THINKING_TOKENS", "10000");
+    inject_or_override(
+        &mut env,
+        "MAX_THINKING_TOKENS",
+        &DEFAULT_THINKING_TOKEN_BUDGET.to_string(),
+    );
 
     env
 }
@@ -621,14 +649,46 @@ impl Provider for ClaudeCliAdapter {
         "claude_cli"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::THINKING_BUDGET
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        normalise_model(requested_model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        // `CLAUDE_CODE_MAX_OUTPUT_TOKENS` caps most individual model requests,
+        // not the total billable output of this adapter invocation: Claude Code
+        // may issue multiple internal model requests. `MAX_THINKING_TOKENS` is
+        // likewise an individual-request thinking budget, not a whole-call
+        // spend bound. Keep this unknown instead of inventing 4096; the paid
+        // boundary records an unbounded invocation and asks explicitly below
+        // Full autonomy.
+        None
+    }
+
+    fn streams_on_wire(&self) -> bool {
+        true
+    }
+
+    async fn complete_raw(
+        &self,
+        mut req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
+        self.canonicalize_request_model(&mut req);
         // GR-04: circuit breaker — same pattern as openai_api. Note
         // the dedup `Singleflight` already collapses concurrent
         // duplicates; the breaker counts each Singleflight outcome
         // once (which is the right denominator for failure-rate).
         crate::providers::circuit_breaker::run_with_breaker("claude_cli", async {
-            // B-9: dedup by (prompt, system, model). Concurrent identical
-            // requests share one upstream spawn for both backends.
+            // B-9: dedup by (prompt, system, model, thinking budget).
+            // Concurrent identical requests share one upstream spawn.
             let backend = self.effective_backend().await;
             let key = self.dedup_key(&req);
             let binary = self.binary.clone();
@@ -685,7 +745,12 @@ impl Provider for ClaudeCliAdapter {
     /// event types are skipped — Anthropic adds new types occasionally
     /// (e.g. tool-use blocks) and we do not want to fail the stream when
     /// the CLI version is ahead of NEOTH's parser.
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+    async fn stream_raw(
+        &self,
+        mut req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
+        self.canonicalize_request_model(&mut req);
         // GR-04 stream-wrap: same circuit-breaker semantics as
         // `complete` (fast-fail on Open, record success on final
         // done-chunk, record failure on error / premature drop).
@@ -760,6 +825,7 @@ impl Provider for ClaudeCliAdapter {
                             yield CompletionChunk {
                                 delta: text,
                                 done: false,
+                                identity: Default::default(),
                                 input_tokens: None,
                                 output_tokens: None,
                                 cache_creation_tokens: None,
@@ -802,6 +868,7 @@ impl Provider for ClaudeCliAdapter {
                 yield CompletionChunk {
                     delta: String::new(),
                     done: true,
+                    identity: Default::default(),
                     input_tokens,
                     output_tokens,
                     cache_creation_tokens: None,
@@ -830,7 +897,6 @@ async fn complete_uncached(
     let model = req
         .model
         .clone()
-        .map(|m| normalise_model(&m))
         .unwrap_or_else(|| model_default.to_string());
 
     // `claude --print --output-format json` runs non-interactively and
@@ -948,6 +1014,7 @@ async fn complete_uncached(
 
     Ok(Completion {
         text,
+        identity: Default::default(),
         model,
         latency,
         input_tokens: envelope.usage.as_ref().map(|u| u.input_tokens),
@@ -1039,15 +1106,13 @@ async fn complete_tmux_uncached(
     // that survives across prompts. A per-call `req.model` override
     // would either need a fresh session per request (defeating the
     // warm-session purpose) or risk silently sending to the wrong
-    // model. v0.1: log + use the session model. Operators who need
-    // per-call switching stay on `backend: subprocess`.
+    // model. Fail before touching the pane instead of authorizing one model
+    // and silently sending another. Operators who need per-call switching
+    // stay on `backend: subprocess`.
     if let Some(req_model) = req.model.as_ref() {
         if req_model != model_default {
-            warn!(
-                requested = %req_model,
-                session = %model_default,
-                "claude tmux: per-call model override ignored — session pinned to default. \
-                 Use `backend: subprocess` in freedom.yaml for per-call model switching."
+            anyhow::bail!(
+                "claude tmux session is pinned to model `{model_default}` and cannot send the authorized per-call model `{req_model}`; use `backend: subprocess` for per-call model switching"
             );
         }
     }
@@ -1251,6 +1316,7 @@ async fn complete_tmux_uncached(
 
     Ok(Completion {
         text: response,
+        identity: Default::default(),
         model,
         latency,
         // Interactive CLI doesn't surface token usage in the pane.
@@ -1588,8 +1654,8 @@ mod tests {
     /// path), so spawn-per-call doesn't re-iterate the OS env.
     #[test]
     fn cached_scrubbed_env_returns_same_slice_on_repeated_calls() {
-        let first = cached_scrubbed_env();
-        let second = cached_scrubbed_env();
+        let first = cached_scrubbed_env().unwrap();
+        let second = cached_scrubbed_env().unwrap();
         // Pointer identity proves the cache hit — OnceLock returns
         // a reference into the same heap-stored Vec on every call.
         assert!(
@@ -1811,7 +1877,7 @@ mod tests {
             std::env::set_var("GITHUB_ACTIONS", "true");
             std::env::set_var("JENKINS_URL", "http://ci.local");
         }
-        let scrubbed = scrub_outbound_env();
+        let scrubbed = scrub_outbound_env().unwrap();
         let keys: Vec<&str> = scrubbed.iter().map(|(k, _)| k.as_str()).collect();
         assert!(!keys.contains(&"CI"));
         assert!(!keys.contains(&"GITHUB_ACTIONS"));
@@ -1833,7 +1899,7 @@ mod tests {
             std::env::set_var("CLAUDECODE", "1");
             std::env::set_var("CLAUDE_CODE_SESSION_ID", "abc-123");
         }
-        let scrubbed = scrub_outbound_env();
+        let scrubbed = scrub_outbound_env().unwrap();
         let keys: Vec<&str> = scrubbed.iter().map(|(k, _)| k.as_str()).collect();
         assert!(!keys.contains(&"CLAUDECODE"));
         assert!(!keys.contains(&"CLAUDE_CODE_SESSION_ID"));
@@ -1852,7 +1918,7 @@ mod tests {
             std::env::set_var("TMUX", "/tmp/tmux-1000/default,1234,0");
             std::env::set_var("TMUX_PANE", "%1");
         }
-        let scrubbed = scrub_outbound_env();
+        let scrubbed = scrub_outbound_env().unwrap();
         let keys: Vec<&str> = scrubbed.iter().map(|(k, _)| k.as_str()).collect();
         assert!(!keys.contains(&"TMUX"));
         assert!(!keys.contains(&"TMUX_PANE"));
@@ -1867,7 +1933,7 @@ mod tests {
         // Bridge.py-derived knobs that MUST survive into the child
         // claude regardless of operator env. Drift-guarded so a future
         // refactor that drops one fails loudly.
-        let scrubbed = scrub_outbound_env();
+        let scrubbed = scrub_outbound_env().unwrap();
         let map: std::collections::HashMap<&str, &str> = scrubbed
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -1876,6 +1942,73 @@ mod tests {
         assert_eq!(map.get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"), Some(&"1"));
         assert_eq!(map.get("BASH_DEFAULT_TIMEOUT_MS"), Some(&"120000"));
         assert_eq!(map.get("MAX_THINKING_TOKENS"), Some(&"10000"));
+    }
+
+    #[test]
+    fn malformed_existing_config_blocks_env_scrub_initialization() {
+        let _env = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), "claude_cli: [broken\n").unwrap();
+        let previous = std::env::var_os("NEOTH_HOME");
+        // SAFETY: the crate-wide test env lock serializes process env mutation.
+        unsafe { std::env::set_var("NEOTH_HOME", home.path()) };
+        let error = scrub_outbound_env().expect_err("malformed config must fail closed");
+        match previous {
+            Some(value) => unsafe { std::env::set_var("NEOTH_HOME", value) },
+            None => unsafe { std::env::remove_var("NEOTH_HOME") },
+        }
+        assert!(error.to_string().contains("env-scrub policy"));
+    }
+
+    #[test]
+    fn multi_request_cli_invocation_exposes_no_fake_finite_ceiling() {
+        let adapter = ClaudeCliAdapter::new_with_backend(
+            "claude".into(),
+            "claude-opus-4-7".into(),
+            ClaudeBackend::Subprocess,
+            10,
+        );
+        assert_eq!(
+            adapter.output_token_ceiling(&Request {
+                thinking_budget: Some(32_000),
+                ..Request::default()
+            }),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn sampling_control_is_rejected_before_claude_process_spawn() {
+        let adapter = ClaudeCliAdapter::new(
+            "definitely-not-a-real-claude-binary".into(),
+            "claude-sonnet-4-6".into(),
+        );
+        let error = adapter
+            .complete(Request {
+                prompt: "hello".into(),
+                temperature: Some(0.4),
+                ..Request::default()
+            })
+            .await
+            .expect_err("Claude CLI must reject sampling controls");
+        assert!(error.to_string().contains("provider `claude_cli`"));
+        assert!(error.to_string().contains("temperature"));
+        assert!(
+            !error.to_string().contains("spawn"),
+            "validation must run before process I/O: {error}"
+        );
+    }
+
+    #[test]
+    fn thinking_budget_participates_in_dedup_identity() {
+        let adapter = ClaudeCliAdapter::new("claude".into(), "claude-sonnet-4-6".into());
+        let base = Request {
+            prompt: "same".into(),
+            ..Request::default()
+        };
+        let mut high = base.clone();
+        high.thinking_budget = Some(16_384);
+        assert_ne!(adapter.dedup_key(&base), adapter.dedup_key(&high));
     }
 
     #[test]
@@ -1890,7 +2023,7 @@ mod tests {
             std::env::set_var("DISABLE_AUTOUPDATER", "0");
         }
         // Bypass the OnceLock by calling the inner function directly.
-        let scrubbed = scrub_outbound_env();
+        let scrubbed = scrub_outbound_env().unwrap();
         let value = scrubbed
             .iter()
             .find(|(k, _)| k == "DISABLE_AUTOUPDATER")
@@ -1905,6 +2038,25 @@ mod tests {
     fn normalise_model_maps_opusplan_to_canonical_one_million_context() {
         assert_eq!(normalise_model("opusplan"), "claude-opus-4-7[1m]");
         assert_eq!(normalise_model("opus-plan"), "claude-opus-4-7[1m]");
+    }
+
+    #[test]
+    fn request_alias_is_canonical_before_complete_or_stream_dispatch() {
+        let adapter = ClaudeCliAdapter::new_with_backend(
+            "claude".into(),
+            "claude-sonnet-4-6".into(),
+            ClaudeBackend::Subprocess,
+            10,
+        );
+        for alias in ["opusplan", "opus-plan"] {
+            let mut req = Request {
+                model: Some(alias.into()),
+                ..Request::default()
+            };
+            adapter.canonicalize_request_model(&mut req);
+            assert_eq!(req.model.as_deref(), Some("claude-opus-4-7[1m]"));
+            assert_eq!(adapter.resolve_model_for_wire(alias), "claude-opus-4-7[1m]");
+        }
     }
 
     #[test]

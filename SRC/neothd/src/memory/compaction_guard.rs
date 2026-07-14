@@ -345,9 +345,21 @@ mod tests {
     fn latest_backup_returns_highest_index() {
         let h = home();
         // Write backups in non-sequential order to confirm sorting is by name.
-        write_backup(h.path(), &CompactionBackup::new(1, 1_000, ctx("x", "a"), None)).unwrap();
-        write_backup(h.path(), &CompactionBackup::new(3, 3_000, ctx("x", "c"), None)).unwrap();
-        write_backup(h.path(), &CompactionBackup::new(2, 2_000, ctx("x", "b"), None)).unwrap();
+        write_backup(
+            h.path(),
+            &CompactionBackup::new(1, 1_000, ctx("x", "a"), None),
+        )
+        .unwrap();
+        write_backup(
+            h.path(),
+            &CompactionBackup::new(3, 3_000, ctx("x", "c"), None),
+        )
+        .unwrap();
+        write_backup(
+            h.path(),
+            &CompactionBackup::new(2, 2_000, ctx("x", "b"), None),
+        )
+        .unwrap();
         let latest = latest_backup(h.path()).unwrap();
         let name = latest.file_name().unwrap().to_string_lossy();
         assert!(
@@ -359,8 +371,16 @@ mod tests {
     #[test]
     fn restore_latest_round_trips_last_written() {
         let h = home();
-        write_backup(h.path(), &CompactionBackup::new(1, 1_000, ctx("a", "1"), None)).unwrap();
-        write_backup(h.path(), &CompactionBackup::new(2, 2_000, ctx("b", "2"), None)).unwrap();
+        write_backup(
+            h.path(),
+            &CompactionBackup::new(1, 1_000, ctx("a", "1"), None),
+        )
+        .unwrap();
+        write_backup(
+            h.path(),
+            &CompactionBackup::new(2, 2_000, ctx("b", "2"), None),
+        )
+        .unwrap();
         let restored = restore_latest(h.path()).expect("restore_latest must succeed");
         assert_eq!(restored.compaction_index, 2, "latest index must be 2");
         assert_eq!(restored.context["b"], serde_json::json!("2"));

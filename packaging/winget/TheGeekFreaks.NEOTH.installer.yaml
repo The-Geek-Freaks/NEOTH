@@ -1,24 +1,40 @@
 PackageIdentifier: TheGeekFreaks.NEOTH
-PackageVersion: 0.3.0
+PackageVersion: 1.0.0
 InstallerType: zip
 InstallerLocale: en-US
 Installers:
   - Architecture: x64
     InstallerType: zip
-    InstallerUrl: https://github.com/The-Geek-Freaks/NEOTH/releases/download/v0.3.0/neothd-v0.3.0-x86_64-pc-windows-msvc.zip
+    InstallerUrl: https://github.com/The-Geek-Freaks/NEOTH/releases/download/v1.0.0/neoth-v1.0.0-x86_64-pc-windows-msvc.zip
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
     NestedInstallerType: portable
     NestedInstallerFiles:
-      - RelativeFilePath: neothd-v0.3.0-x86_64-pc-windows-msvc\neothd.exe
+      - RelativeFilePath: neoth-v1.0.0-x86_64-pc-windows-msvc\neoth.exe
+        PortableCommandAlias: neoth
+      - RelativeFilePath: neoth-v1.0.0-x86_64-pc-windows-msvc\neothd.exe
         PortableCommandAlias: neothd
+      - RelativeFilePath: neoth-v1.0.0-x86_64-pc-windows-msvc\neothd-gui.exe
+        PortableCommandAlias: neothd-gui
+      - RelativeFilePath: neoth-v1.0.0-x86_64-pc-windows-msvc\neoth-migrate.exe
+        PortableCommandAlias: neoth-migrate
+      - RelativeFilePath: neoth-v1.0.0-x86_64-pc-windows-msvc\neoth-relay.exe
+        PortableCommandAlias: neoth-relay
   - Architecture: arm64
     InstallerType: zip
-    InstallerUrl: https://github.com/The-Geek-Freaks/NEOTH/releases/download/v0.3.0/neothd-v0.3.0-aarch64-pc-windows-msvc.zip
+    InstallerUrl: https://github.com/The-Geek-Freaks/NEOTH/releases/download/v1.0.0/neoth-v1.0.0-aarch64-pc-windows-msvc.zip
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
     NestedInstallerType: portable
     NestedInstallerFiles:
-      - RelativeFilePath: neothd-v0.3.0-aarch64-pc-windows-msvc\neothd.exe
+      - RelativeFilePath: neoth-v1.0.0-aarch64-pc-windows-msvc\neoth.exe
+        PortableCommandAlias: neoth
+      - RelativeFilePath: neoth-v1.0.0-aarch64-pc-windows-msvc\neothd.exe
         PortableCommandAlias: neothd
+      - RelativeFilePath: neoth-v1.0.0-aarch64-pc-windows-msvc\neothd-gui.exe
+        PortableCommandAlias: neothd-gui
+      - RelativeFilePath: neoth-v1.0.0-aarch64-pc-windows-msvc\neoth-migrate.exe
+        PortableCommandAlias: neoth-migrate
+      - RelativeFilePath: neoth-v1.0.0-aarch64-pc-windows-msvc\neoth-relay.exe
+        PortableCommandAlias: neoth-relay
 ManifestType: installer
 ManifestVersion: 1.6.0
 # ─── R-08 NOTE ────────────────────────────────────────────────────────
@@ -26,21 +42,18 @@ ManifestVersion: 1.6.0
 # values are placeholders until the first Windows release-matrix run
 # publishes the actual artifacts + the SHA-256 sidecars. Workflow:
 #
-#   1. Extend `.github/workflows/release.yml` matrix with the two
-#      Windows targets (x86_64-pc-windows-msvc + aarch64-pc-windows-msvc).
-#      Use .zip not .tar.gz for Windows convention.
-#   2. Cut a release tag (e.g. v0.3.0). The matrix builds + uploads
-#      neothd-vX.Y.Z-{x86_64,aarch64}-pc-windows-msvc.zip + .sha256.
-#   3. Update this manifest:
-#        - PackageVersion → vX.Y.Z
+#   1. Cut the explicitly approved v1.0.0 release tag. The matrix builds and
+#      uploads neoth-v1.0.0-{x86_64,aarch64}-pc-windows-msvc.zip + .sha256.
+#   2. Update this manifest:
+#        - PackageVersion → X.Y.Z (winget versions do not carry the tag's v prefix)
 #        - InstallerUrl   → paste the release-download URLs
 #        - InstallerSha256 → paste from the published .sha256 sidecars
-#   4. Open a PR to microsoft/winget-pkgs with this manifest in:
-#        manifests/t/TheGeekFreaks/NEOTH/0.3.0/
+#   3. Open a PR to microsoft/winget-pkgs with this manifest in:
+#        manifests/t/TheGeekFreaks/NEOTH/1.0.0/
 #      plus the matching version + locale YAMLs:
 #        - TheGeekFreaks.NEOTH.yaml          (version manifest)
 #        - TheGeekFreaks.NEOTH.locale.en-US.yaml (locale + metadata)
-#   5. Once merged, operators install via:
+#   4. Once merged, operators install via:
 #        winget install TheGeekFreaks.NEOTH
 #
 # The full multi-file submission lives at packaging/winget/ alongside

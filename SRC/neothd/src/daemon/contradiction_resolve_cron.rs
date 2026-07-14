@@ -74,7 +74,9 @@ impl ContradictionResolveCronConfig {
 /// crosses an async await boundary.
 ///
 /// Returns `Ok(summary)` — callers log counts and continue.
-pub async fn run_contradiction_resolve_tick(db_path: &std::path::Path) -> Result<AutoResolveSummary, String> {
+pub async fn run_contradiction_resolve_tick(
+    db_path: &std::path::Path,
+) -> Result<AutoResolveSummary, String> {
     let path = db_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let conn = store::open(&path).map_err(|e| format!("open db: {e}"))?;
@@ -139,10 +141,8 @@ pub fn spawn_contradiction_resolve_cron_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::contradiction::{DECISION_HUMAN_REVIEW, list_contradictions};
     use crate::memory::groundtruth::{self, Source};
-    use crate::memory::contradiction::{
-        DECISION_HUMAN_REVIEW, list_contradictions,
-    };
 
     #[tokio::test]
     async fn cron_tick_supersedes_older_of_two_same_entity_facts() {
@@ -151,19 +151,39 @@ mod tests {
         let conn = store::open(&db_path).unwrap();
 
         // Insert two same-entity facts with different timestamps.
-        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 1).unwrap();
-        groundtruth::insert(&conn, "nas is at 10.0.0.5", &Source::OperatorRuntime, "global", 500).unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 192.168.1.20",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            500,
+        )
+        .unwrap();
         drop(conn); // release so the tick can reopen
 
         let summary = run_contradiction_resolve_tick(&db_path).await.unwrap();
-        assert_eq!(summary.superseded, 1, "one pair resolved as temporal-supersede");
+        assert_eq!(
+            summary.superseded, 1,
+            "one pair resolved as temporal-supersede"
+        );
 
         let conn2 = store::open(&db_path).unwrap();
         // The older fact (ts=1) must be Superseded.
-        let st: String = conn2.query_row(
-            "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let st: String = conn2
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(st, "superseded");
         // No pending rows remain.
         assert!(list_contradictions(&conn2, false).unwrap().is_empty());
@@ -176,8 +196,22 @@ mod tests {
         let conn = store::open(&db_path).unwrap();
 
         // Same timestamp → no temporal rule; different values → no semantic-equiv.
-        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 77).unwrap();
-        groundtruth::insert(&conn, "nas is at 10.0.0.5", &Source::OperatorRuntime, "global", 77).unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 192.168.1.20",
+            &Source::OperatorRuntime,
+            "global",
+            77,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            77,
+        )
+        .unwrap();
         drop(conn);
 
         let summary = run_contradiction_resolve_tick(&db_path).await.unwrap();
@@ -205,7 +239,10 @@ mod tests {
         let cfg = ContradictionResolveCronConfig::default();
         assert!(!cfg.enabled, "off by default");
         assert_eq!(cfg.interval_secs, DEFAULT_INTERVAL_SECS);
-        assert_eq!(cfg.interval_duration(), Duration::from_secs(DEFAULT_INTERVAL_SECS));
+        assert_eq!(
+            cfg.interval_duration(),
+            Duration::from_secs(DEFAULT_INTERVAL_SECS)
+        );
     }
 
     #[test]
@@ -219,7 +256,10 @@ mod tests {
 
     #[test]
     fn spawn_returns_none_when_disabled() {
-        let cfg = ContradictionResolveCronConfig { enabled: false, interval_secs: 86_400 };
+        let cfg = ContradictionResolveCronConfig {
+            enabled: false,
+            interval_secs: 86_400,
+        };
         let handle = spawn_contradiction_resolve_cron_loop(cfg, "/nonexistent".into());
         assert!(handle.is_none(), "disabled config must return None");
     }

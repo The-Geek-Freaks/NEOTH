@@ -180,7 +180,11 @@ fn git_status_compress(text: &str) -> String {
         .lines()
         .find(|l| l.starts_with("On branch"))
         .unwrap_or("On branch (unknown)");
-    let staged = count_lines(text, |l| l.starts_with('\t') && !l.contains("modified:") || l.contains("new file:") || l.contains("deleted:"));
+    let staged = count_lines(text, |l| {
+        l.starts_with('\t') && !l.contains("modified:")
+            || l.contains("new file:")
+            || l.contains("deleted:")
+    });
     let modified = count_lines(text, |l| l.contains("modified:"));
     let untracked = count_lines(text, |l| l.starts_with('\t') && !l.contains(':'));
     format!(
@@ -219,7 +223,10 @@ fn git_fetch_compress(text: &str) -> String {
         .take(10)
         .collect();
     if keep.is_empty() {
-        text.lines().next().unwrap_or("(git fetch output)").to_string()
+        text.lines()
+            .next()
+            .unwrap_or("(git fetch output)")
+            .to_string()
     } else {
         keep.join("\n")
     }
@@ -284,7 +291,10 @@ fn git_blame_compress(text: &str) -> String {
 /// cargo build output.
 fn git_branch_matches(text: &str) -> bool {
     // Must have the `* ` current-branch marker.
-    if !text.lines().any(|l| l.starts_with("* ") || l.starts_with("  ")) {
+    if !text
+        .lines()
+        .any(|l| l.starts_with("* ") || l.starts_with("  "))
+    {
         return false;
     }
     // Must not look like a git log (SHA prefixes at column 0).
@@ -415,7 +425,8 @@ fn npm_audit_compress(text: &str) -> String {
 
 /// NPM-03  npm/yarn run script output preamble
 fn npm_run_preamble_matches(text: &str) -> bool {
-    contains_any(text, &["> ", "yarn run v", "$ "]) && text.lines().count() >= 4
+    contains_any(text, &["> ", "yarn run v", "$ "])
+        && text.lines().count() >= 4
         && contains_any(text, &["Done in", "npm run ", "info Visit"])
 }
 
@@ -457,7 +468,13 @@ fn pnpm_install_compress(text: &str) -> String {
 fn yarn_install_matches(text: &str) -> bool {
     contains_any(
         text,
-        &["yarn add v", "[1/4] Resolving", "[2/4] Fetching", "[3/4] Linking", "[4/4] Building"],
+        &[
+            "yarn add v",
+            "[1/4] Resolving",
+            "[2/4] Fetching",
+            "[3/4] Linking",
+            "[4/4] Building",
+        ],
     )
 }
 
@@ -471,10 +488,10 @@ fn yarn_install_compress(text: &str) -> String {
 
 /// NPM-06  lockfile diff noise
 fn lockfile_diff_matches(text: &str) -> bool {
-    let lock_hunks = count_lines(text, |l| {
-        l.starts_with('+') || l.starts_with('-')
-    });
-    (text.contains("package-lock.json") || text.contains("yarn.lock") || text.contains("pnpm-lock.yaml"))
+    let lock_hunks = count_lines(text, |l| l.starts_with('+') || l.starts_with('-'));
+    (text.contains("package-lock.json")
+        || text.contains("yarn.lock")
+        || text.contains("pnpm-lock.yaml"))
         && lock_hunks > 20
 }
 
@@ -517,11 +534,15 @@ fn cargo_compiling_compress(text: &str) -> String {
 
 /// CARGO-02  cargo test output — individual test pass lines
 fn cargo_test_passing_matches(text: &str) -> bool {
-    count_lines(text, |l| l.trim_start().starts_with("test ") && l.contains("... ok")) >= 5
+    count_lines(text, |l| {
+        l.trim_start().starts_with("test ") && l.contains("... ok")
+    }) >= 5
 }
 
 fn cargo_test_passing_compress(text: &str) -> String {
-    let pass = count_lines(text, |l| l.trim_start().starts_with("test ") && l.contains("... ok"));
+    let pass = count_lines(text, |l| {
+        l.trim_start().starts_with("test ") && l.contains("... ok")
+    });
     let fail_lines: Vec<&str> = text
         .lines()
         .filter(|l| l.contains("FAILED") || l.contains("failures:") || l.starts_with("error"))
@@ -592,8 +613,14 @@ fn cargo_build_error_compress(text: &str) -> String {
 
 /// CARGO-05  cargo update / fetch dependency download
 fn cargo_download_matches(text: &str) -> bool {
-    contains_any(text, &["Downloading crates", "Updating crates.io", "Blocking waiting"])
-        && text.lines().count() >= 3
+    contains_any(
+        text,
+        &[
+            "Downloading crates",
+            "Updating crates.io",
+            "Blocking waiting",
+        ],
+    ) && text.lines().count() >= 3
 }
 
 fn cargo_download_compress(text: &str) -> String {
@@ -634,7 +661,10 @@ fn cargo_finished_tail_compress(text: &str) -> String {
 /// LINT-01  ESLint file listing with error/warning counts
 fn eslint_matches(text: &str) -> bool {
     (text.contains("problems (") || text.contains("error") && text.contains("warning"))
-        && (text.contains(".js") || text.contains(".ts") || text.contains(".jsx") || text.contains(".tsx"))
+        && (text.contains(".js")
+            || text.contains(".ts")
+            || text.contains(".jsx")
+            || text.contains(".tsx"))
         && count_lines(text, |l| l.contains("error") || l.contains("warning")) >= 3
 }
 
@@ -747,7 +777,9 @@ fn ruff_matches(text: &str) -> bool {
 fn ruff_compress(text: &str) -> String {
     let diags: Vec<&str> = text
         .lines()
-        .filter(|l| l.contains(".py:") && (l.contains(" E") || l.contains(" W") || l.contains(" F")))
+        .filter(|l| {
+            l.contains(".py:") && (l.contains(" E") || l.contains(" W") || l.contains(" F"))
+        })
         .take(20)
         .collect();
     let summary = text
@@ -773,14 +805,12 @@ fn flake8_compress(text: &str) -> String {
     let diags: Vec<&str> = text
         .lines()
         .filter(|l| {
-            l.contains(".py:")
-                && (l.contains(": E") || l.contains(": W") || l.contains(": F"))
+            l.contains(".py:") && (l.contains(": E") || l.contains(": W") || l.contains(": F"))
         })
         .take(20)
         .collect();
     let total = count_lines(text, |l| {
-        l.contains(".py:")
-            && (l.contains(": E") || l.contains(": W") || l.contains(": F"))
+        l.contains(".py:") && (l.contains(": E") || l.contains(": W") || l.contains(": F"))
     });
     let mut out = diags.join("\n");
     if total > 20 {
@@ -823,40 +853,160 @@ fn mypy_compress(text: &str) -> String {
 /// `cargo_build_error`) come before broad ones (e.g. `cargo_compiling`).
 pub const RULES: &[CompressionRule] = &[
     // git — more specific matchers first to avoid false positives
-    CompressionRule { tag: "git-show",        matches: git_show_matches,        compress: git_show_compress },
-    CompressionRule { tag: "git-log",         matches: git_log_matches,         compress: git_log_compress },
-    CompressionRule { tag: "git-diff-stat",   matches: git_diff_stat_matches,   compress: git_diff_stat_compress },
-    CompressionRule { tag: "git-status",      matches: git_status_matches,      compress: git_status_compress },
-    CompressionRule { tag: "git-fetch",       matches: git_fetch_matches,       compress: git_fetch_compress },
-    CompressionRule { tag: "git-stash",       matches: git_stash_list_matches,  compress: git_stash_list_compress },
-    CompressionRule { tag: "git-blame",       matches: git_blame_matches,       compress: git_blame_compress },
-    CompressionRule { tag: "git-branch",      matches: git_branch_matches,      compress: git_branch_compress },
-    CompressionRule { tag: "git-remote",      matches: git_remote_matches,      compress: git_remote_compress },
+    CompressionRule {
+        tag: "git-show",
+        matches: git_show_matches,
+        compress: git_show_compress,
+    },
+    CompressionRule {
+        tag: "git-log",
+        matches: git_log_matches,
+        compress: git_log_compress,
+    },
+    CompressionRule {
+        tag: "git-diff-stat",
+        matches: git_diff_stat_matches,
+        compress: git_diff_stat_compress,
+    },
+    CompressionRule {
+        tag: "git-status",
+        matches: git_status_matches,
+        compress: git_status_compress,
+    },
+    CompressionRule {
+        tag: "git-fetch",
+        matches: git_fetch_matches,
+        compress: git_fetch_compress,
+    },
+    CompressionRule {
+        tag: "git-stash",
+        matches: git_stash_list_matches,
+        compress: git_stash_list_compress,
+    },
+    CompressionRule {
+        tag: "git-blame",
+        matches: git_blame_matches,
+        compress: git_blame_compress,
+    },
+    CompressionRule {
+        tag: "git-branch",
+        matches: git_branch_matches,
+        compress: git_branch_compress,
+    },
+    CompressionRule {
+        tag: "git-remote",
+        matches: git_remote_matches,
+        compress: git_remote_compress,
+    },
     // npm / yarn / pnpm
-    CompressionRule { tag: "lockfile-diff",   matches: lockfile_diff_matches,   compress: lockfile_diff_compress },
-    CompressionRule { tag: "npm-install",     matches: npm_install_matches,     compress: npm_install_compress },
-    CompressionRule { tag: "npm-audit",       matches: npm_audit_matches,       compress: npm_audit_compress },
-    CompressionRule { tag: "npm-run",         matches: npm_run_preamble_matches, compress: npm_run_preamble_compress },
-    CompressionRule { tag: "pnpm-install",    matches: pnpm_install_matches,    compress: pnpm_install_compress },
-    CompressionRule { tag: "yarn-install",    matches: yarn_install_matches,    compress: yarn_install_compress },
+    CompressionRule {
+        tag: "lockfile-diff",
+        matches: lockfile_diff_matches,
+        compress: lockfile_diff_compress,
+    },
+    CompressionRule {
+        tag: "npm-install",
+        matches: npm_install_matches,
+        compress: npm_install_compress,
+    },
+    CompressionRule {
+        tag: "npm-audit",
+        matches: npm_audit_matches,
+        compress: npm_audit_compress,
+    },
+    CompressionRule {
+        tag: "npm-run",
+        matches: npm_run_preamble_matches,
+        compress: npm_run_preamble_compress,
+    },
+    CompressionRule {
+        tag: "pnpm-install",
+        matches: pnpm_install_matches,
+        compress: pnpm_install_compress,
+    },
+    CompressionRule {
+        tag: "yarn-install",
+        matches: yarn_install_matches,
+        compress: yarn_install_compress,
+    },
     // cargo / rust
-    CompressionRule { tag: "cargo-error",     matches: cargo_build_error_matches, compress: cargo_build_error_compress },
-    CompressionRule { tag: "cargo-compiling", matches: cargo_compiling_matches, compress: cargo_compiling_compress },
-    CompressionRule { tag: "cargo-test",      matches: cargo_test_passing_matches, compress: cargo_test_passing_compress },
-    CompressionRule { tag: "cargo-clippy",    matches: cargo_clippy_clean_matches, compress: cargo_clippy_clean_compress },
-    CompressionRule { tag: "cargo-download",  matches: cargo_download_matches,  compress: cargo_download_compress },
-    CompressionRule { tag: "cargo-doc",       matches: cargo_doc_matches,       compress: cargo_doc_compress },
-    CompressionRule { tag: "cargo-finished",  matches: cargo_finished_tail_matches, compress: cargo_finished_tail_compress },
+    CompressionRule {
+        tag: "cargo-error",
+        matches: cargo_build_error_matches,
+        compress: cargo_build_error_compress,
+    },
+    CompressionRule {
+        tag: "cargo-compiling",
+        matches: cargo_compiling_matches,
+        compress: cargo_compiling_compress,
+    },
+    CompressionRule {
+        tag: "cargo-test",
+        matches: cargo_test_passing_matches,
+        compress: cargo_test_passing_compress,
+    },
+    CompressionRule {
+        tag: "cargo-clippy",
+        matches: cargo_clippy_clean_matches,
+        compress: cargo_clippy_clean_compress,
+    },
+    CompressionRule {
+        tag: "cargo-download",
+        matches: cargo_download_matches,
+        compress: cargo_download_compress,
+    },
+    CompressionRule {
+        tag: "cargo-doc",
+        matches: cargo_doc_matches,
+        compress: cargo_doc_compress,
+    },
+    CompressionRule {
+        tag: "cargo-finished",
+        matches: cargo_finished_tail_matches,
+        compress: cargo_finished_tail_compress,
+    },
     // eslint / ts
-    CompressionRule { tag: "eslint",          matches: eslint_matches,          compress: eslint_compress },
-    CompressionRule { tag: "prettier",        matches: prettier_matches,        compress: prettier_compress },
-    CompressionRule { tag: "tsc",             matches: tsc_matches,             compress: tsc_compress },
-    CompressionRule { tag: "lint-clean",      matches: lint_clean_matches,      compress: lint_clean_compress },
+    CompressionRule {
+        tag: "eslint",
+        matches: eslint_matches,
+        compress: eslint_compress,
+    },
+    CompressionRule {
+        tag: "prettier",
+        matches: prettier_matches,
+        compress: prettier_compress,
+    },
+    CompressionRule {
+        tag: "tsc",
+        matches: tsc_matches,
+        compress: tsc_compress,
+    },
+    CompressionRule {
+        tag: "lint-clean",
+        matches: lint_clean_matches,
+        compress: lint_clean_compress,
+    },
     // rust / python linters
-    CompressionRule { tag: "clippy-warn",     matches: clippy_warn_matches,     compress: clippy_warn_compress },
-    CompressionRule { tag: "ruff",            matches: ruff_matches,            compress: ruff_compress },
-    CompressionRule { tag: "flake8",          matches: flake8_matches,          compress: flake8_compress },
-    CompressionRule { tag: "mypy",            matches: mypy_matches,            compress: mypy_compress },
+    CompressionRule {
+        tag: "clippy-warn",
+        matches: clippy_warn_matches,
+        compress: clippy_warn_compress,
+    },
+    CompressionRule {
+        tag: "ruff",
+        matches: ruff_matches,
+        compress: ruff_compress,
+    },
+    CompressionRule {
+        tag: "flake8",
+        matches: flake8_matches,
+        compress: flake8_compress,
+    },
+    CompressionRule {
+        tag: "mypy",
+        matches: mypy_matches,
+        compress: mypy_compress,
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -922,11 +1072,7 @@ mod tests {
 
     #[test]
     fn rule_count_is_at_least_30() {
-        assert!(
-            RULES.len() >= 30,
-            "expected ≥30 rules, got {}",
-            RULES.len()
-        );
+        assert!(RULES.len() >= 30, "expected ≥30 rules, got {}", RULES.len());
     }
 
     #[test]
@@ -959,12 +1105,19 @@ mod tests {
         // Build a fake git log with 20 SHA lines.
         let mut log = String::new();
         for i in 0u32..20 {
-            log.push_str(&format!("{:07x} fix: commit message #{}\n", i + 0xabc_def0, i));
+            log.push_str(&format!(
+                "{:07x} fix: commit message #{}\n",
+                i + 0xabc_def0,
+                i
+            ));
         }
         let result = apply_rules(&log);
         assert_eq!(result.matched_rule, Some("git-log"), "should match git-log");
         let out = result.text.as_ref();
-        assert!(out.contains("more commits"), "should summarise tail commits");
+        assert!(
+            out.contains("more commits"),
+            "should summarise tail commits"
+        );
         // Compressed must be shorter than the original.
         assert!(
             out.len() < log.len(),
@@ -1072,10 +1225,17 @@ mod tests {
                           --> src/main.rs:10:5\naborting due to 1 error";
         let result = apply_rules(build_out);
         // cargo-error fires first (more specific).
-        assert_eq!(result.matched_rule, Some("cargo-error"), "error rule should win");
+        assert_eq!(
+            result.matched_rule,
+            Some("cargo-error"),
+            "error rule should win"
+        );
         let out = result.text.as_ref();
         assert!(out.contains("error[E0308]"), "should keep error");
-        assert!(!out.contains("Compiling serde "), "should drop Compiling lines");
+        assert!(
+            !out.contains("Compiling serde "),
+            "should drop Compiling lines"
+        );
     }
 
     #[test]
@@ -1117,7 +1277,10 @@ mod tests {
         let result = apply_rules(eslint_out);
         assert_eq!(result.matched_rule, Some("eslint"));
         let out = result.text.as_ref();
-        assert!(out.contains("error") || out.contains("problems"), "should keep diagnostics");
+        assert!(
+            out.contains("error") || out.contains("problems"),
+            "should keep diagnostics"
+        );
     }
 
     #[test]
@@ -1138,7 +1301,10 @@ mod tests {
         );
         let out = result.text.as_ref();
         // Should keep warnings, drop the Compiling line.
-        assert!(!out.contains("Compiling foo"), "should drop Compiling noise");
+        assert!(
+            !out.contains("Compiling foo"),
+            "should drop Compiling noise"
+        );
     }
 
     #[test]
@@ -1170,9 +1336,6 @@ mod tests {
     #[test]
     fn compress_fn_matches_apply_rules() {
         let npm_out = "npm warn deprecated foo@1.0.0: bar\nadded 100 packages in 5s";
-        assert_eq!(
-            compress(npm_out),
-            apply_rules(npm_out).text.into_owned()
-        );
+        assert_eq!(compress(npm_out), apply_rules(npm_out).text.into_owned());
     }
 }

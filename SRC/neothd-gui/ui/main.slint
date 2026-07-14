@@ -8,8 +8,7 @@
 //
 // Phase 3 adds three steps between provider + done:
 //   - autonomy: 5-level radio (strict / standard / elevated / full / custom)
-//   - channels: which channels NEOTH should listen on (Telegram today;
-//                Slack / Keet / Discord land when their adapters ship)
+//   - channels: which channels NEOTH should listen on
 //   - keys:     provider API key + per-channel tokens. Skipped entirely
 //               when the chosen provider needs none AND no channels are
 //               enabled (e.g. claude_cli + CLI-only mode).
@@ -20,7 +19,7 @@
 
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
@@ -102,7 +101,8 @@ export enum WizardStep {
     obsidian-setup,
     /// ZF-05 parity — n8n API enable + port.
     n8n-setup,
-    /// ZF-05 parity — Keet pairing info screen (no YAML write).
+    /// Legacy enum name retained for checkpoint compatibility. The screen now
+    /// describes NEOTH's private mesh and explicitly disclaims Keet interop.
     keet-tip,
     /// ZF-05 parity — WASM plugin host enable/disable.
     wasm-setup,
@@ -196,7 +196,7 @@ export component MainWindow inherits Window {
     in-out property <[ToastData]> toasts: [];
     in property <string> hardware-summary: "";
     /// GOLD-ADAPT-OH-01 — prior-AI migration card body (welcome step).
-    /// Empty = no canonical stores detected → card hidden.
+    /// Empty = no supported assistant homes detected → card hidden.
     in property <string> migrate-summary: "";
     // GOLD-ADAPT-GUI-04 — daemon live-state for the footer Led:
     // "live" | "connecting" | "error" (derived from probe outcomes).
@@ -249,6 +249,23 @@ export component MainWindow inherits Window {
     in-out property <string> wz-n8n-port: "9744";
     // WASM screen
     in-out property <bool> wz-wasm-enabled: false;
+    // OMI onboarding card (custom wizard path, Channels step).
+    in-out property <bool> wz-omi-enabled: false;
+    in-out property <string> wz-omi-mode: "developer_api";
+    in-out property <string> wz-omi-endpoint: "http://127.0.0.1:8002";
+    in-out property <string> wz-omi-listen-addr: "127.0.0.1:8003";
+    in-out property <string> wz-omi-retention-days: "30";
+    in-out property <string> wz-omi-developer-key: "";
+    in-out property <string> wz-omi-native-token: "";
+    in-out property <bool> wz-omi-retain-transcripts: false;
+    in-out property <bool> wz-omi-audio-enabled: false;
+    in-out property <bool> wz-omi-image-enabled: false;
+    in-out property <bool> wz-omi-video-enabled: false;
+    in-out property <bool> wz-omi-allow-cloud-api: false;
+    in-out property <bool> wz-omi-allow-cloud-summary: false;
+    in-out property <bool> wz-omi-create-actions: true;
+    in-out property <bool> wz-omi-seed-groundtruth: true;
+    in-out property <bool> wz-omi-summary-enabled: true;
     // Folder-picker for the wizard Obsidian vault field (rfd dialog in Rust).
     callback wz-obsidian-browse-clicked();
     // GOLD-ADAPT-OH-12 — first-run tour overlay (chat surface only).
@@ -315,7 +332,7 @@ export component MainWindow inherits Window {
         root.step == WizardStep.hmac-setup      ? "Webhook" :
         root.step == WizardStep.obsidian-setup  ? "Obsidian" :
         root.step == WizardStep.n8n-setup       ? "n8n" :
-        root.step == WizardStep.keet-tip        ? "Keet" :
+        root.step == WizardStep.keet-tip        ? "Private mesh" :
         root.step == WizardStep.wasm-setup      ? "Plugins" :
                                                   "Summary";
     /// `true` only when the persistent ProgressIndicator should
@@ -483,6 +500,9 @@ export component MainWindow inherits Window {
     in property <bool>   babel-federate: false;
     in property <int>    babel-total-windows: 0;
     in property <int>    babel-collapse-flagged: 0;
+    in property <string> babel-memory-signals: "";
+    in property <string> babel-skill-signals: "";
+    in property <string> babel-kd-extractor: "";
     in property <[BabelGranRow]>    babel-gran-rows: [];
     in property <[BabelWindowRow]>  babel-window-rows: [];
     in property <string> babel-refreshed-at: "";
@@ -830,6 +850,38 @@ export component MainWindow inherits Window {
     in property <[TrustRow]> trust-privacy: [];
     in property <[TrustRow]> trust-recovery: [];
     in property <[TrustRow]> trust-ledger: [];
+    in-out property <bool> omi-enabled: false;
+    in-out property <string> omi-mode: "developer_api";
+    in-out property <string> omi-endpoint: "http://127.0.0.1:8002";
+    in-out property <string> omi-listen-addr: "127.0.0.1:8003";
+    in-out property <string> omi-retention-days: "30";
+    in-out property <bool> omi-retain-transcripts: false;
+    in-out property <bool> omi-audio-enabled: false;
+    in-out property <bool> omi-image-enabled: false;
+    in-out property <bool> omi-video-enabled: false;
+    in-out property <bool> omi-allow-cloud-api: false;
+    in-out property <bool> omi-allow-cloud-summary: false;
+    in-out property <bool> omi-create-actions: true;
+    in-out property <bool> omi-seed-groundtruth: true;
+    in-out property <bool> omi-summary-enabled: true;
+    in-out property <string> omi-developer-key-draft: "";
+    in-out property <string> omi-native-token-draft: "";
+    in property <bool> omi-developer-key-present: false;
+    in property <bool> omi-native-token-present: false;
+    in property <bool> omi-config-valid: false;
+    in property <string> omi-config-error: "";
+    in property <string> omi-runtime-state: "unknown";
+    in property <string> omi-runtime-detail: "";
+    in property <int> omi-pending-audits: 0;
+    in-out property <string> omi-review-note: "";
+    in-out property <string> omi-conversation-id: "";
+    callback omi-refresh();
+    callback omi-probe();
+    callback omi-save(bool, string, string, string, string, bool, bool, bool, bool, bool, bool, bool, bool, bool, string, string);
+    callback omi-resume(string);
+    callback omi-retention();
+    callback omi-purge(string);
+    callback omi-reimport(string);
     // SL-03 — Local resources (Cluster tab), forwarded to SettingsView. Rust
     // sets these on startup from `neoth hardware --output json`.
     in property <string> hw-cpu: "";
@@ -1169,7 +1221,7 @@ export component MainWindow inherits Window {
             }
             // GOLD-ADAPT-OH-01 — migration-first onboarding, GUI mirror
             // of the CLI step-0 branch. Shown only when `neoth-migrate
-            // detect` found canonical prior-AI stores; informational —
+            // detect` found complete prior-AI homes; informational —
             // the import itself runs in a terminal (consent-gated CLI).
             if root.migrate-summary != "": Card {
                 min-height: 110px;
@@ -1192,7 +1244,7 @@ export component MainWindow inherits Window {
                         wrap: word-wrap;
                     }
                     Text {
-                        text: "Terminal: neoth-migrate detect --output manifest.yaml → review → neoth-migrate apply --manifest manifest.yaml --confirm";
+                        text: "Terminal: neoth-migrate detect --output manifest.yaml → review → neoth-migrate dry-run --manifest manifest.yaml → neoth-migrate apply --manifest manifest.yaml --confirm";
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;
@@ -1980,12 +2032,6 @@ export component MainWindow inherits Window {
                             checked: false;
                             enabled: false;
                         }
-                        CheckBox {
-                            text: "Keet — Hyperswarm / Pears mesh (preview)";
-                            checked: false;
-                            enabled: false;
-                        }
-
                         // ── On the roadmap ──────────────────────────
                         Text {
                             text: "ON THE ROADMAP";
@@ -2015,6 +2061,68 @@ export component MainWindow inherits Window {
                             checked: false;
                             enabled: false;
                         }
+                    }
+                }
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: "OMI CONVERSATIONS & MEDIA (OPTIONAL)";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-bold;
+                        color: Theme.accent-green;
+                    }
+                    Text {
+                        text: "Import OMI conversations or accept authenticated local live media. Every data type and downstream effect is separately opt-in.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-size-caption;
+                        wrap: word-wrap;
+                    }
+                    NeothCheckBox { text: "Enable OMI"; checked <=> root.wz-omi-enabled; }
+                    if root.wz-omi-enabled: VerticalBox {
+                        spacing: Theme.space-base;
+                        NeothComboBox {
+                            model: ["developer_api", "native_ingest", "both", "legacy_memories"];
+                            current-index: root.wz-omi-mode == "native_ingest" ? 1
+                                : root.wz-omi-mode == "both" ? 2
+                                : root.wz-omi-mode == "legacy_memories" ? 3 : 0;
+                            selected(i) => {
+                                root.wz-omi-mode = i == 1 ? "native_ingest"
+                                    : i == 2 ? "both"
+                                    : i == 3 ? "legacy_memories" : "developer_api";
+                            }
+                        }
+                        if root.wz-omi-mode == "both": Text {
+                            text: "Both imports OMI conversations and exports completed native transcripts to the configured Developer API endpoint.";
+                            color: Theme.accent-amber;
+                            font-size: Theme.font-size-caption;
+                            wrap: word-wrap;
+                        }
+                        NeothLineEdit { placeholder-text: "OMI endpoint"; text <=> root.wz-omi-endpoint; }
+                        NeothLineEdit { placeholder-text: "Native listener (127.0.0.1:8003)"; text <=> root.wz-omi-listen-addr; }
+                        NeothLineEdit { placeholder-text: "Retention days"; text <=> root.wz-omi-retention-days; }
+                        if root.wz-omi-mode == "developer_api" || root.wz-omi-mode == "both": NeothLineEdit {
+                            placeholder-text: "omi_dev_* Developer API key";
+                            password: true;
+                            text <=> root.wz-omi-developer-key;
+                        }
+                        if root.wz-omi-mode == "native_ingest" || root.wz-omi-mode == "both": NeothLineEdit {
+                            placeholder-text: "Native bearer token (minimum 32 bytes)";
+                            password: true;
+                            text <=> root.wz-omi-native-token;
+                        }
+                        NeothCheckBox { text: "Retain raw transcripts locally"; checked <=> root.wz-omi-retain-transcripts; }
+                        NeothCheckBox { text: "Accept/process audio"; checked <=> root.wz-omi-audio-enabled; }
+                        NeothCheckBox { text: "Accept/process images"; checked <=> root.wz-omi-image-enabled; }
+                        NeothCheckBox { text: "Accept/process video"; checked <=> root.wz-omi-video-enabled; }
+                        NeothCheckBox { text: "Allow public Developer API reads + both-mode transcript exports (HTTPS only)"; checked <=> root.wz-omi-allow-cloud-api; }
+                        NeothCheckBox { text: "Create bounded summaries"; checked <=> root.wz-omi-summary-enabled; }
+                        NeothCheckBox { text: "Allow cloud model for summaries"; checked <=> root.wz-omi-allow-cloud-summary; }
+                        NeothCheckBox { text: "Create local tasks from action items"; checked <=> root.wz-omi-create-actions; }
+                        NeothCheckBox { text: "Seed corroborated ground truth"; checked <=> root.wz-omi-seed-groundtruth; }
                     }
                 }
             }
@@ -2323,33 +2431,33 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ── Keet Tip (ZF-05) ───────────────────────────────────────────
+        // ── Private mesh info (legacy step id: keet-tip) ───────────────
         if root.step == WizardStep.keet-tip: VerticalLayout {
             spacing: Theme.space-loose;
             ScreenHeader {
-                title: "Keet P2P messaging";
-                subtitle: "NEOTH supports Keet (Holepunch) as a decentralised, end-to-end encrypted companion channel. No account, no server — your device is the relay.";
+                title: "NEOTH private mesh";
+                subtitle: "Optional node-to-node coordination over NEOTH's own peeroxide/Hyperswarm protocol. This is not a Keet room or Keet-compatible chat channel.";
             }
             Card {
                 VerticalBox {
                     padding: Theme.space-base;
                     spacing: Theme.space-base;
                     Text {
-                        text: "Pairing happens at runtime — not during setup.";
+                        text: "Inspect and enable the mesh after setup.";
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-body;
                         font-weight: Theme.weight-medium;
                         color: Theme.text-primary;
                     }
                     Text {
-                        text: "After you finish the wizard and NEOTH is running, open a terminal and run:\n\n  neoth keet pair\n\nThis prints a pairing code. Scan it with the Keet app on your phone to link your devices. The seed phrase is stored in ~/.neoth/credentials.yaml (never in freedom.yaml).";
+                        text: "After the wizard, run:\n\n  neoth cluster status\n\nThe private mesh uses NEOTH's own authenticated wire protocol. Keet exposes no supported public room/message API, so NEOTH does not request a Keet seed or claim Keet interoperability.";
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;
                         wrap: word-wrap;
                     }
                     Text {
-                        text: "Install Keet: https://keet.io";
+                        text: "No external Keet or Pear installation is required.";
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.accent-green;
@@ -2519,6 +2627,25 @@ export component MainWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "OMI";
+                            width: 100px;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            color: Theme.accent-green;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.wz-omi-enabled ? root.wz-omi-mode + " · opt-in" : "disabled";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
             }
             if root.status-line != "": Text {
@@ -2568,7 +2695,7 @@ export component MainWindow inherits Window {
                         color: Theme.text-primary;
                     }
                     Text {
-                        text: "· Keet P2P channel          →  run `neoth keet pair` in a terminal";
+                        text: "· NEOTH private mesh        →  run `neoth cluster status` in a terminal";
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-primary;
@@ -2631,7 +2758,7 @@ export component MainWindow inherits Window {
         // (chat + settings-family + the net-new mockup tabs); the wizard steps
         // above keep their own full-screen flow for first-run.
         if (root.step == WizardStep.chat || root.step == WizardStep.settings): HorizontalLayout {
-            Sidebar {
+            if !Theme.sidebar-collapsed: Sidebar {
                 active-tab: root.nav-active;
                 complexity: root.nav-complexity;
                 show-loops: root.show-loops;
@@ -2646,7 +2773,7 @@ export component MainWindow inherits Window {
                 toggle-theme => { root.theme-toggle-clicked(); }
             }
             VerticalLayout {
-                TopBar {
+                if !Theme.header-hidden: TopBar {
                     kicker: "NEOTH · SOVEREIGN";
                     title: root.shell-title;
                     // Wave-2: activity toggle button in the TopBar right slot.
@@ -2739,6 +2866,40 @@ export component MainWindow inherits Window {
             trust-privacy: root.trust-privacy;
             trust-recovery: root.trust-recovery;
             trust-ledger: root.trust-ledger;
+            omi-enabled <=> root.omi-enabled;
+            omi-mode <=> root.omi-mode;
+            omi-endpoint <=> root.omi-endpoint;
+            omi-listen-addr <=> root.omi-listen-addr;
+            omi-retention-days <=> root.omi-retention-days;
+            omi-retain-transcripts <=> root.omi-retain-transcripts;
+            omi-audio-enabled <=> root.omi-audio-enabled;
+            omi-image-enabled <=> root.omi-image-enabled;
+            omi-video-enabled <=> root.omi-video-enabled;
+            omi-allow-cloud-api <=> root.omi-allow-cloud-api;
+            omi-allow-cloud-summary <=> root.omi-allow-cloud-summary;
+            omi-create-actions <=> root.omi-create-actions;
+            omi-seed-groundtruth <=> root.omi-seed-groundtruth;
+            omi-summary-enabled <=> root.omi-summary-enabled;
+            omi-developer-key-draft <=> root.omi-developer-key-draft;
+            omi-native-token-draft <=> root.omi-native-token-draft;
+            omi-developer-key-present: root.omi-developer-key-present;
+            omi-native-token-present: root.omi-native-token-present;
+            omi-config-valid: root.omi-config-valid;
+            omi-config-error: root.omi-config-error;
+            omi-runtime-state: root.omi-runtime-state;
+            omi-runtime-detail: root.omi-runtime-detail;
+            omi-pending-audits: root.omi-pending-audits;
+            omi-review-note <=> root.omi-review-note;
+            omi-conversation-id <=> root.omi-conversation-id;
+            omi-refresh-clicked => { root.omi-refresh(); }
+            omi-probe-clicked => { root.omi-probe(); }
+            omi-save-clicked(enabled, mode, endpoint, listen, retention, transcripts, audio, images, video, cloudapi, cloudsummary, actions, groundtruth, summary, developerkey, nativetoken) => {
+                root.omi-save(enabled, mode, endpoint, listen, retention, transcripts, audio, images, video, cloudapi, cloudsummary, actions, groundtruth, summary, developerkey, nativetoken);
+            }
+            omi-resume-clicked(note) => { root.omi-resume(note); }
+            omi-retention-clicked => { root.omi-retention(); }
+            omi-purge-clicked(id) => { root.omi-purge(id); }
+            omi-reimport-clicked(id) => { root.omi-reimport(id); }
             hw-cpu: root.hw-cpu;
             hw-memory: root.hw-memory;
             hw-accelerator: root.hw-accelerator;
@@ -3084,6 +3245,9 @@ export component MainWindow inherits Window {
                     babel-federate: root.babel-federate;
                     babel-total-windows: root.babel-total-windows;
                     babel-collapse-flagged: root.babel-collapse-flagged;
+                    babel-memory-signals: root.babel-memory-signals;
+                    babel-skill-signals: root.babel-skill-signals;
+                    babel-kd-extractor: root.babel-kd-extractor;
                     babel-gran-rows: root.babel-gran-rows;
                     babel-window-rows: root.babel-window-rows;
                     babel-refreshed-at: root.babel-refreshed-at;

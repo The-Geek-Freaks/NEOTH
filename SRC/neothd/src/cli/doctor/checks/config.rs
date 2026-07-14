@@ -5,15 +5,70 @@ use std::path::Path;
 
 use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus, is_mode_0600};
 
+enum FreedomConfigState {
+    Missing,
+    Unreadable(String),
+    Malformed(String),
+    Invalid(String),
+    Loaded {
+        config: Box<crate::config::FreedomConfig>,
+        bytes: usize,
+    },
+}
+
+fn load_freedom_config_state(path: &Path) -> FreedomConfigState {
+    let body = match std::fs::read_to_string(path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return FreedomConfigState::Missing;
+        }
+        Err(error) => return FreedomConfigState::Unreadable(error.to_string()),
+    };
+    if let Err(error) = serde_yaml::from_str::<crate::config::FreedomConfig>(&body) {
+        return FreedomConfigState::Malformed(error.to_string());
+    }
+    match crate::config::FreedomConfig::load_from_path(path) {
+        Ok(config) => FreedomConfigState::Loaded {
+            config: Box::new(config),
+            bytes: body.len(),
+        },
+        Err(error) => FreedomConfigState::Invalid(format!("{error:#}")),
+    }
+}
+
 pub(crate) fn check_freedom_yaml(home: &Path) -> CheckOutcome {
     let path = home.join("freedom.yaml");
-    if !path.exists() {
-        return CheckOutcome {
-            name: "freedom.yaml",
-            status: CheckStatus::Fail,
-            detail: format!("missing at {}; run `neoth init`", path.display()),
-        };
-    }
+    let bytes = match load_freedom_config_state(&path) {
+        FreedomConfigState::Missing => {
+            return CheckOutcome {
+                name: "freedom.yaml",
+                status: CheckStatus::Fail,
+                detail: format!("missing at {}; run `neoth init`", path.display()),
+            };
+        }
+        FreedomConfigState::Unreadable(error) => {
+            return CheckOutcome {
+                name: "freedom.yaml",
+                status: CheckStatus::Fail,
+                detail: format!("unreadable at {}: {error}", path.display()),
+            };
+        }
+        FreedomConfigState::Malformed(error) => {
+            return CheckOutcome {
+                name: "freedom.yaml",
+                status: CheckStatus::Fail,
+                detail: format!("malformed YAML at {}: {error}", path.display()),
+            };
+        }
+        FreedomConfigState::Invalid(error) => {
+            return CheckOutcome {
+                name: "freedom.yaml",
+                status: CheckStatus::Fail,
+                detail: format!("invalid configuration at {}: {error}", path.display()),
+            };
+        }
+        FreedomConfigState::Loaded { bytes, .. } => bytes,
+    };
     if !is_mode_0600(&path) {
         return CheckOutcome {
             name: "freedom.yaml",
@@ -21,25 +76,10 @@ pub(crate) fn check_freedom_yaml(home: &Path) -> CheckOutcome {
             detail: format!("mode > 0600 — run `chmod 0600 {}`", path.display()),
         };
     }
-    // Cheap parse check — full parse happens in serve.
-    let Ok(body) = std::fs::read_to_string(&path) else {
-        return CheckOutcome {
-            name: "freedom.yaml",
-            status: CheckStatus::Fail,
-            detail: "unreadable".into(),
-        };
-    };
-    if serde_yaml::from_str::<serde_yaml::Value>(&body).is_err() {
-        return CheckOutcome {
-            name: "freedom.yaml",
-            status: CheckStatus::Fail,
-            detail: "YAML parse error".into(),
-        };
-    }
     CheckOutcome {
         name: "freedom.yaml",
         status: CheckStatus::Pass,
-        detail: format!("ok ({} bytes)", body.len()),
+        detail: format!("valid ({bytes} bytes)"),
     }
 }
 
@@ -245,42 +285,26 @@ pub(crate) fn check_tweaks_toml(home: &Path) -> CheckOutcome {
 ///
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_groundtruth_injection(home: &Path) -> CheckOutcome {
-    let path = home.join("freedom.yaml");
-    if !path.exists() {
-        // freedom.yaml missing is already a Fail in check_freedom_yaml; skip here.
-        return CheckOutcome {
-            name: "advisable: groundtruth injection",
+    const NAME: &str = "advisable: groundtruth injection";
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
+    };
+    if cfg.council.groundtruth_injection {
+        CheckOutcome {
+            name: NAME,
             status: CheckStatus::Pass,
-            detail: "freedom.yaml absent — skipping advisable check".into(),
-        };
-    }
-    match crate::config::FreedomConfig::load_from_path(&path) {
-        Err(_) => {
-            // Parse errors are already surfaced by check_freedom_yaml.
-            CheckOutcome {
-                name: "advisable: groundtruth injection",
-                status: CheckStatus::Pass,
-                detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
-            }
+            detail: "council.groundtruth_injection = true".into(),
         }
-        Ok(cfg) => {
-            if cfg.council.groundtruth_injection {
-                CheckOutcome {
-                    name: "advisable: groundtruth injection",
-                    status: CheckStatus::Pass,
-                    detail: "council.groundtruth_injection = true".into(),
-                }
-            } else {
-                CheckOutcome {
-                    name: "advisable: groundtruth injection",
-                    status: CheckStatus::Warn,
-                    detail: "council.groundtruth_injection is false — enabling injects \
-                             verified facts into council debates, improving factual accuracy. \
-                             Set `council.groundtruth_injection: true` in freedom.yaml, \
-                             or apply a built-in preset: `neoth preset apply balanced`."
-                        .into(),
-                }
-            }
+    } else {
+        CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "council.groundtruth_injection is false — enabling injects \
+                     verified facts into council debates, improving factual accuracy. \
+                     Set `council.groundtruth_injection: true` in freedom.yaml, \
+                     or apply a built-in preset: `neoth preset apply balanced`."
+                .into(),
         }
     }
 }
@@ -295,39 +319,27 @@ pub(crate) fn check_advisable_groundtruth_injection(home: &Path) -> CheckOutcome
 ///
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_consolidation_sweep(home: &Path) -> CheckOutcome {
-    let path = home.join("freedom.yaml");
-    if !path.exists() {
-        return CheckOutcome {
-            name: "advisable: consolidation sweep",
+    const NAME: &str = "advisable: consolidation sweep";
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
+    };
+    if cfg.consolidation_sweep.enabled {
+        CheckOutcome {
+            name: NAME,
             status: CheckStatus::Pass,
-            detail: "freedom.yaml absent — skipping advisable check".into(),
-        };
-    }
-    match crate::config::FreedomConfig::load_from_path(&path) {
-        Err(_) => CheckOutcome {
-            name: "advisable: consolidation sweep",
-            status: CheckStatus::Pass,
-            detail: "freedom.yaml unreadable — see freedom.yaml check".into(),
-        },
-        Ok(cfg) => {
-            if cfg.consolidation_sweep.enabled {
-                CheckOutcome {
-                    name: "advisable: consolidation sweep",
-                    status: CheckStatus::Pass,
-                    detail: "consolidation_sweep.enabled = true".into(),
-                }
-            } else {
-                CheckOutcome {
-                    name: "advisable: consolidation sweep",
-                    status: CheckStatus::Warn,
-                    detail: "consolidation_sweep.enabled is false — background memory \
-                             consolidation is off; recall quality degrades over long \
-                             sessions as near-duplicate facts accumulate. \
-                             Set `consolidation_sweep.enabled: true` in freedom.yaml, \
-                             or apply a built-in preset: `neoth preset apply balanced`."
-                        .into(),
-                }
-            }
+            detail: "consolidation_sweep.enabled = true".into(),
+        }
+    } else {
+        CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "consolidation_sweep.enabled is false — background memory \
+                     consolidation is off; recall quality degrades over long \
+                     sessions as near-duplicate facts accumulate. \
+                     Set `consolidation_sweep.enabled: true` in freedom.yaml, \
+                     or apply a built-in preset: `neoth preset apply balanced`."
+                .into(),
         }
     }
 }
@@ -337,14 +349,46 @@ pub(crate) fn check_advisable_consolidation_sweep(home: &Path) -> CheckOutcome {
 /// Shared preamble used by every `advisable:*` check that reads a single
 /// `enabled` bool from `freedom.yaml` via `FreedomConfig`.
 ///
-/// Returns `None` when freedom.yaml is absent or unreadable (those cases are
-/// already surfaced by `check_freedom_yaml`; we don't duplicate the noise here).
-fn load_cfg_for_advisable(home: &Path) -> Option<crate::config::FreedomConfig> {
+/// Missing config is a distinct first-run skip. Existing unreadable, malformed,
+/// or invalid config fails the advisory too: a green row must never imply the
+/// underlying setting was actually evaluated when it was not.
+fn load_cfg_for_advisable(
+    home: &Path,
+    name: &'static str,
+) -> std::result::Result<crate::config::FreedomConfig, CheckOutcome> {
     let path = home.join("freedom.yaml");
-    if !path.exists() {
-        return None;
+    match load_freedom_config_state(&path) {
+        FreedomConfigState::Missing => Err(CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml absent — skipping advisable check; see freedom.yaml check".into(),
+        }),
+        FreedomConfigState::Unreadable(error) => Err(CheckOutcome {
+            name,
+            status: CheckStatus::Fail,
+            detail: format!(
+                "cannot evaluate: freedom.yaml unreadable at {}: {error}",
+                path.display()
+            ),
+        }),
+        FreedomConfigState::Malformed(error) => Err(CheckOutcome {
+            name,
+            status: CheckStatus::Fail,
+            detail: format!(
+                "cannot evaluate: freedom.yaml malformed at {}: {error}",
+                path.display()
+            ),
+        }),
+        FreedomConfigState::Invalid(error) => Err(CheckOutcome {
+            name,
+            status: CheckStatus::Fail,
+            detail: format!(
+                "cannot evaluate: freedom.yaml invalid at {}: {error}",
+                path.display()
+            ),
+        }),
+        FreedomConfigState::Loaded { config, .. } => Ok(*config),
     }
-    crate::config::FreedomConfig::load_from_path(&path).ok()
 }
 
 /// Builds the standard Pass outcome when a group is already enabled.
@@ -353,15 +397,6 @@ fn advisable_pass(name: &'static str, key: &str) -> CheckOutcome {
         name,
         status: CheckStatus::Pass,
         detail: format!("{key}.enabled = true"),
-    }
-}
-
-/// Builds the standard Pass outcome when freedom.yaml is absent/unreadable.
-fn advisable_skip(name: &'static str) -> CheckOutcome {
-    CheckOutcome {
-        name,
-        status: CheckStatus::Pass,
-        detail: "freedom.yaml absent or unreadable — skipping advisable check".into(),
     }
 }
 
@@ -375,8 +410,9 @@ fn advisable_skip(name: &'static str) -> CheckOutcome {
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_proactive(home: &Path) -> CheckOutcome {
     const NAME: &str = "advisable: proactive messaging";
-    let Some(cfg) = load_cfg_for_advisable(home) else {
-        return advisable_skip(NAME);
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
     };
     if cfg.proactive.enabled {
         return advisable_pass(NAME, "proactive");
@@ -403,8 +439,9 @@ pub(crate) fn check_advisable_proactive(home: &Path) -> CheckOutcome {
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_dreaming(home: &Path) -> CheckOutcome {
     const NAME: &str = "advisable: dreaming";
-    let Some(cfg) = load_cfg_for_advisable(home) else {
-        return advisable_skip(NAME);
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
     };
     if cfg.dreaming.enabled {
         return advisable_pass(NAME, "dreaming");
@@ -431,8 +468,9 @@ pub(crate) fn check_advisable_dreaming(home: &Path) -> CheckOutcome {
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_ecology(home: &Path) -> CheckOutcome {
     const NAME: &str = "advisable: ecology";
-    let Some(cfg) = load_cfg_for_advisable(home) else {
-        return advisable_skip(NAME);
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
     };
     if cfg.ecology.enabled {
         return advisable_pass(NAME, "ecology");
@@ -458,8 +496,9 @@ pub(crate) fn check_advisable_ecology(home: &Path) -> CheckOutcome {
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_companion(home: &Path) -> CheckOutcome {
     const NAME: &str = "advisable: companion server";
-    let Some(cfg) = load_cfg_for_advisable(home) else {
-        return advisable_skip(NAME);
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
     };
     if cfg.companion.enabled {
         return advisable_pass(NAME, "companion");
@@ -485,8 +524,9 @@ pub(crate) fn check_advisable_companion(home: &Path) -> CheckOutcome {
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_synthesis_cron(home: &Path) -> CheckOutcome {
     const NAME: &str = "advisable: synthesis cron";
-    let Some(cfg) = load_cfg_for_advisable(home) else {
-        return advisable_skip(NAME);
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
     };
     if cfg.synthesis_cron.enabled {
         return advisable_pass(NAME, "synthesis_cron");
@@ -513,8 +553,9 @@ pub(crate) fn check_advisable_synthesis_cron(home: &Path) -> CheckOutcome {
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_skill_curator(home: &Path) -> CheckOutcome {
     const NAME: &str = "advisable: skill curator";
-    let Some(cfg) = load_cfg_for_advisable(home) else {
-        return advisable_skip(NAME);
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
     };
     if cfg.skill_curator.enabled {
         return advisable_pass(NAME, "skill_curator");
@@ -541,8 +582,9 @@ pub(crate) fn check_advisable_skill_curator(home: &Path) -> CheckOutcome {
 /// Severity: Warn (advisory only — daemon starts and runs correctly either way).
 pub(crate) fn check_advisable_auto_skill_extract(home: &Path) -> CheckOutcome {
     const NAME: &str = "advisable: auto skill extract";
-    let Some(cfg) = load_cfg_for_advisable(home) else {
-        return advisable_skip(NAME);
+    let cfg = match load_cfg_for_advisable(home, NAME) {
+        Ok(cfg) => cfg,
+        Err(outcome) => return outcome,
     };
     if cfg.auto_skill_extract.enabled {
         return advisable_pass(NAME, "auto_skill_extract");
@@ -779,3 +821,82 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               `~/.neoth/freedom.yaml`, or run `neoth preset apply balanced`.",
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn freedom_check_reports_missing_separately() {
+        let home = tempdir().unwrap();
+        let outcome = check_freedom_yaml(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("missing at"));
+        assert!(!outcome.detail.contains("unreadable"));
+    }
+
+    #[test]
+    fn freedom_check_reports_existing_unreadable_path() {
+        let home = tempdir().unwrap();
+        std::fs::create_dir(home.path().join("freedom.yaml")).unwrap();
+        let outcome = check_freedom_yaml(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("unreadable at"));
+        assert!(!outcome.detail.contains("missing at"));
+    }
+
+    #[test]
+    fn freedom_check_reports_malformed_typed_yaml() {
+        let home = tempdir().unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "autonomy: definitely-not-an-autonomy-level\n",
+        )
+        .unwrap();
+        let outcome = check_freedom_yaml(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("malformed YAML"));
+    }
+
+    #[test]
+    fn freedom_check_runs_full_config_validation() {
+        let home = tempdir().unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "cluster:\n  listen_port: 0\n",
+        )
+        .unwrap();
+        let outcome = check_freedom_yaml(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("invalid configuration"));
+        assert!(outcome.detail.contains("listen_port"));
+    }
+
+    #[test]
+    fn advisable_missing_is_an_explicit_absence_skip() {
+        let home = tempdir().unwrap();
+        let outcome = check_advisable_proactive(home.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("absent"));
+        assert!(!outcome.detail.contains("unreadable"));
+    }
+
+    #[test]
+    fn advisable_malformed_config_is_not_reported_as_pass() {
+        let home = tempdir().unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), "skills: [broken\n").unwrap();
+        let outcome = check_advisable_proactive(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("malformed"));
+    }
+
+    #[test]
+    fn advisable_unreadable_config_is_not_reported_as_pass() {
+        let home = tempdir().unwrap();
+        std::fs::create_dir(home.path().join("freedom.yaml")).unwrap();
+        let outcome = check_advisable_proactive(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("unreadable"));
+    }
+}

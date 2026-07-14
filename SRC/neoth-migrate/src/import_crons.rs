@@ -109,10 +109,7 @@ pub fn import_crons(
     for path in timer_paths {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("read timer {:?}: {}", path, e))?;
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("timer");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("timer");
         match parse_timer_unit(&content, stem) {
             Ok(Some(job)) => jobs.push(job),
             Ok(None) => skipped.push(format!(
@@ -173,16 +170,17 @@ pub fn parse_timer_unit(content: &str, name_hint: &str) -> anyhow::Result<Option
 
     // If OnUnitActiveSec is present alongside OnCalendar, note it was ignored
     if on_calendar.is_some() && on_unit_active_sec.is_some() {
-        notes.push(
-            "OnUnitActiveSec ignored (OnCalendar takes priority)".to_string(),
-        );
+        notes.push("OnUnitActiveSec ignored (OnCalendar takes priority)".to_string());
     }
 
     Ok(Some(ImportedJob {
         id: id.clone(),
         name: format!("{name_hint} (imported)"),
         enabled: true,
-        schedule: ImportedSchedule { cron: cron_expr, tz: None },
+        schedule: ImportedSchedule {
+            cron: cron_expr,
+            tz: None,
+        },
         prompt,
         timeout_seconds: 600,
         import_notes: notes,
@@ -201,30 +199,20 @@ pub fn parse_timer_unit(content: &str, name_hint: &str) -> anyhow::Result<Option
 pub fn calendar_to_cron(spec: &str) -> (String, Vec<String>) {
     let s = spec.trim().to_ascii_lowercase();
     match s.as_str() {
-        "daily" | "*-*-* 00:00:00" | "*-*-* 00:00" => {
-            ("0 0 * * *".to_string(), vec![])
-        }
-        "hourly" | "*-*-* *:00:00" | "*-*-* *:00" => {
-            ("0 * * * *".to_string(), vec![])
-        }
+        "daily" | "*-*-* 00:00:00" | "*-*-* 00:00" => ("0 0 * * *".to_string(), vec![]),
+        "hourly" | "*-*-* *:00:00" | "*-*-* *:00" => ("0 * * * *".to_string(), vec![]),
         "weekly" | "mon *-*-* 00:00:00" | "monday *-*-* 00:00:00" => {
             ("0 0 * * 1".to_string(), vec![])
         }
-        "monthly" | "*-*-01 00:00:00" | "*-*-01 00:00" => {
-            ("0 0 1 * *".to_string(), vec![])
-        }
+        "monthly" | "*-*-01 00:00:00" | "*-*-01 00:00" => ("0 0 1 * *".to_string(), vec![]),
         "yearly" | "annually" | "*-01-01 00:00:00" | "*-01-01 00:00" => {
             ("0 0 1 1 *".to_string(), vec![])
         }
-        "minutely" | "*:*:00" | "*:*" => {
-            ("* * * * *".to_string(), vec![])
-        }
-        "quarterly" | "*-01,04,07,10-01 00:00:00" => {
-            (
-                "0 0 1 1,4,7,10 *".to_string(),
-                vec!["quarterly: approximated as 1st of Jan/Apr/Jul/Oct".to_string()],
-            )
-        }
+        "minutely" | "*:*:00" | "*:*" => ("* * * * *".to_string(), vec![]),
+        "quarterly" | "*-01,04,07,10-01 00:00:00" => (
+            "0 0 1 1,4,7,10 *".to_string(),
+            vec!["quarterly: approximated as 1st of Jan/Apr/Jul/Oct".to_string()],
+        ),
         _ => parse_calendar_time_spec(spec),
     }
 }
@@ -261,7 +249,6 @@ fn parse_calendar_time_spec(spec: &str) -> (String, Vec<String>) {
         )],
     )
 }
-
 
 /// Split a possible leading weekday abbreviation/name from a calendar spec.
 /// Returns `(Some("dow_number"), rest)` or `(None, full_spec)`.
@@ -415,8 +402,9 @@ fn minutes_to_cron_expr(minutes: u64, src: &str) -> (String, Vec<String>) {
     if minutes == 0 {
         return (
             "* * * * *".to_string(),
-            vec![format!("OnUnitActiveSec={src}: 0 minutes, using every-minute"),
-            ],
+            vec![format!(
+                "OnUnitActiveSec={src}: 0 minutes, using every-minute"
+            )],
         );
     }
     if minutes == 1 {
@@ -546,7 +534,10 @@ fn parse_crontab_line(line: &str, row: usize) -> Option<ImportedJob> {
         id,
         name: format!("Crontab row {row}"),
         enabled: true,
-        schedule: ImportedSchedule { cron: cron_expr, tz: None },
+        schedule: ImportedSchedule {
+            cron: cron_expr,
+            tz: None,
+        },
         prompt: format!("Run: {cmd}"),
         timeout_seconds: 600,
         import_notes: notes,
@@ -558,7 +549,13 @@ fn parse_crontab_line(line: &str, row: usize) -> Option<ImportedJob> {
 /// Convert a string to a lowercase slug (`[a-z0-9-]`).
 fn slugify(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -570,9 +567,7 @@ fn slugify(s: &str) -> String {
 pub fn render_yaml(result: &ImportCronsResult) -> String {
     let mut out = String::new();
     out.push_str("# Generated by neoth-migrate import-crons\n");
-    out.push_str(
-        "# Paste these jobs under the `jobs:` key in your jobs.yaml.\n",
-    );
+    out.push_str("# Paste these jobs under the `jobs:` key in your jobs.yaml.\n");
     out.push_str("# Review each entry before enabling in production.\n");
     out.push('\n');
     out.push_str("jobs:\n");
@@ -586,10 +581,7 @@ pub fn render_yaml(result: &ImportCronsResult) -> String {
             out.push_str(&format!("      tz: \"{tz}\"\n"));
         }
         out.push_str(&format!("    prompt: \"{}\"\n", job.prompt));
-        out.push_str(&format!(
-            "    timeout_seconds: {}\n",
-            job.timeout_seconds
-        ));
+        out.push_str(&format!("    timeout_seconds: {}\n", job.timeout_seconds));
         for note in &job.import_notes {
             out.push_str(&format!("    # IMPORT NOTE: {note}\n"));
         }
@@ -682,7 +674,10 @@ mod tests {
         // For truly unparseable specs (no recognisable time), notes should be emitted
         let (cron2, notes2) = calendar_to_cron("*-W01-1 garbage");
         assert_eq!(cron2, "0 0 * * *", "fallback should be daily");
-        assert!(!notes2.is_empty(), "should emit a note for unrecognised spec");
+        assert!(
+            !notes2.is_empty(),
+            "should emit a note for unrecognised spec"
+        );
         let _ = notes; // notes from first case may be empty if time parsed
     }
 
@@ -763,7 +758,8 @@ mod tests {
 
     #[test]
     fn parse_timer_unit_oncalendar_time_spec() {
-        let unit = "[Timer]\nOnCalendar=*-*-* 06:00:00\n[Service]\nExecStart=/usr/local/bin/digest\n";
+        let unit =
+            "[Timer]\nOnCalendar=*-*-* 06:00:00\n[Service]\nExecStart=/usr/local/bin/digest\n";
         let job = parse_timer_unit(unit, "morning-digest").unwrap().unwrap();
         assert_eq!(job.schedule.cron, "0 6 * * *");
         assert!(job.prompt.contains("digest"));
@@ -778,11 +774,16 @@ mod tests {
 
     #[test]
     fn parse_timer_unit_oncalendar_wins_over_interval() {
-        let unit = "[Timer]\nOnCalendar=hourly\nOnUnitActiveSec=5min\n[Service]\nExecStart=/bin/foo\n";
+        let unit =
+            "[Timer]\nOnCalendar=hourly\nOnUnitActiveSec=5min\n[Service]\nExecStart=/bin/foo\n";
         let job = parse_timer_unit(unit, "foo").unwrap().unwrap();
         assert_eq!(job.schedule.cron, "0 * * * *");
         // Should note that OnUnitActiveSec was ignored
-        assert!(job.import_notes.iter().any(|n| n.contains("OnUnitActiveSec ignored")));
+        assert!(
+            job.import_notes
+                .iter()
+                .any(|n| n.contains("OnUnitActiveSec ignored"))
+        );
     }
 
     #[test]
@@ -868,7 +869,8 @@ mod tests {
 
     #[test]
     fn import_crons_crontab_file() {
-        let content = "# my crontab\n*/10 * * * * /usr/bin/check-disk\n0 0 * * 0 /usr/bin/weekly-report\n";
+        let content =
+            "# my crontab\n*/10 * * * * /usr/bin/check-disk\n0 0 * * 0 /usr/bin/weekly-report\n";
         let f = write_tmp(content);
         let result = import_crons(&[], Some(f.path())).unwrap();
         assert_eq!(result.jobs.len(), 2);
@@ -884,7 +886,11 @@ mod tests {
         let cf = write_tmp(crontab);
         let result = import_crons(&[tf.path()], Some(cf.path())).unwrap();
         assert_eq!(result.jobs.len(), 2);
-        let crons: Vec<&str> = result.jobs.iter().map(|j| j.schedule.cron.as_str()).collect();
+        let crons: Vec<&str> = result
+            .jobs
+            .iter()
+            .map(|j| j.schedule.cron.as_str())
+            .collect();
         assert!(crons.contains(&"0 * * * *"), "hourly from timer");
         assert!(crons.contains(&"0 6 * * 1-5"), "weekday from crontab");
     }
@@ -920,7 +926,10 @@ mod tests {
                 id: "test-job".to_string(),
                 name: "Test".to_string(),
                 enabled: true,
-                schedule: ImportedSchedule { cron: "0 0 * * *".to_string(), tz: None },
+                schedule: ImportedSchedule {
+                    cron: "0 0 * * *".to_string(),
+                    tz: None,
+                },
                 prompt: "Run: /bin/test".to_string(),
                 timeout_seconds: 600,
                 import_notes: vec![],
@@ -941,7 +950,10 @@ mod tests {
                 id: "foo".to_string(),
                 name: "Foo".to_string(),
                 enabled: true,
-                schedule: ImportedSchedule { cron: "0 0 * * *".to_string(), tz: None },
+                schedule: ImportedSchedule {
+                    cron: "0 0 * * *".to_string(),
+                    tz: None,
+                },
                 prompt: "Run: /bin/foo".to_string(),
                 timeout_seconds: 600,
                 import_notes: vec!["approximated as daily".to_string()],
@@ -978,6 +990,9 @@ mod tests {
     fn parse_suffix_handles_written_units() {
         assert_eq!(parse_suffix("5 minutes", &["minute", "minutes"]), Some(5));
         assert_eq!(parse_suffix("1 hour", &["h", "hour", "hours"]), Some(1));
-        assert_eq!(parse_suffix("30s", &["s", "sec", "second", "seconds"]), Some(30));
+        assert_eq!(
+            parse_suffix("30s", &["s", "sec", "second", "seconds"]),
+            Some(30)
+        );
     }
 }

@@ -1,8 +1,10 @@
 [package]
-name = "neothd"
+name = "neoth"
 version = "1.0.0"
 edition = "2024"
 rust-version = "1.86"
+default-run = "neoth"
+autobins = false
 license = "MIT OR Apache-2.0"
 description = "Local-first personal AI daemon — five-tier memory, consent-gated tools, WASM plugin sandbox, multi-provider LLM routing, signed audit log, and Babel-Index collapse prediction on its own runtime."
 repository.workspace = true
@@ -11,21 +13,43 @@ categories = ["command-line-utilities"]
 # `authors` deliberately omitted -- Neoth is multi-user.
 # Per-deployment operator identity lives in ~/.neoth/freedom.yaml, not crate metadata.
 
+# The public crate and executable are `neoth`. Keep the library target and a
+# compatibility executable named `neothd` so existing integrations and source
+# imports continue to work across the v1.0 naming correction.
+[lib]
+name = "neothd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "neoth"
+path = "src/main.rs"
+
+[[bin]]
+name = "neothd"
+path = "src/bin/neothd.rs"
+
+# `cross` builds inside a container and intentionally drops arbitrary host env.
+# Release builds must pass the compile-time updater verification key through or
+# cross targets would ship without the key while native targets remained safe.
+[package.metadata.cross.build.env]
+passthrough = ["NEOTH_RELEASE_MINISIGN_PUBKEY"]
+
 [features]
 default = ["wizard", "cluster", "keychain"]
-# GOLD-ADAPT-HANDY-02 — Silero ONNX VAD backend for `media::vad::SileroBackend`.
-# Default OFF: the pure-energy `SmoothedVad` ships in every build; this feature
-# gates the ONNX runtime (`ort`) which adds significant transitive deps + requires
-# native ONNX Runtime libraries at link time. Runtime behaviour is unchanged when
-# the feature is absent (energy-based VAD remains active).
-# The `freedom.yaml::media.vad_enabled` flag controls whether VAD gating fires
-# regardless of which backend is compiled in.
-vad = []
-# GOLD-ADOPT-25 — dictation input mode (voice-to-chat via the existing local
-# STT pipeline). No new crate deps: uses the already-present candle WhisperEngine
-# + the `media::vad::SmoothedVad` gate. Default OFF; source-build opt-in.
-# Runtime is gated by `freedom.yaml::input.dictation` (default false).
-whisper-stt = []
+# Named distribution bundles are the single source of truth for shipped and
+# source-installed capability sets. Keep target-specific workflow logic on
+# these bundles instead of repeating individual feature lists.
+release-server = [
+    "matrix-channel",
+    "irc-channel",
+    "nostr-channel",
+    "gchat-channel",
+]
+release-desktop = [
+    "release-server",
+    "os-clipboard",
+    "wasm-plugin-host",
+]
 # Interactive TTY wizard for `neoth init`. Disable for slim daemon-only builds
 # (containers, embedded targets). When off, `neoth init --non-interactive` still works.
 wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
@@ -34,10 +58,9 @@ wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
 # `.wasm` plugins with fuel + memory caps.
 #
 # Build-time default OFF here so contributor `cargo build` stays fast.
-# Shipped release binaries flip it ON in the native build step of
-# `release.yml` (`cargo build --release --features os-clipboard,wasm-plugin-host`,
-# GOLD-HON-15) — operators downloading a desktop tarball get the feature;
-# the headless cross targets (musl / aarch64-linux) omit it. Per memory
+# Shipped release binaries and full source installs enable the named
+# `release-desktop` bundle (GOLD-HON-15); the headless musl artifact uses
+# `release-server`. Per memory
 # rule `neoth-features-default-on-runtime-toggle`,
 # the actual runtime behaviour is gated by
 # `freedom.yaml::plugins.wasm.enabled` (default `true` on builds that
@@ -69,8 +92,8 @@ ssh-tunnel = ["dep:russh"]
 
 # D003-KEYCHAIN-01 — OS keychain integration for secrets at rest.
 # Windows: CredWriteW / CredReadW / CredDeleteW via windows-sys (already in tree).
-# macOS / Linux: design-note stubs — follow-on commits wire security-framework
-# and secret-service (also already in tree). Zero new dependencies.
+# macOS: Security.framework generic passwords. Linux: freedesktop Secret Service
+# over the existing encrypted D-Bus client. Zero new dependencies.
 # Default ON: feature compile-in is enabled; RUNTIME default stays `file`
 # until the operator explicitly sets `secrets_backend: keychain` in
 # freedom.yaml (or runs `neoth credential migrate --to keychain`).
@@ -80,8 +103,8 @@ keychain = []
 # OFF for source builds (same precedent as `wasm-plugin-host` / `imap_fetch`):
 # the clipboard backend is desktop-oriented + platform-specific, so keeping it
 # out of a plain `cargo build` keeps contributor/headless-server/CI builds slim
-# and free of any display-backend coupling. Shipped release binaries flip it ON
-# via the native `cargo build --release --features` step in release.yml. Per the
+# and free of any display-backend coupling. The `release-desktop` distribution
+# bundle flips it on for shipped and full source installs. Per the
 # `neoth-features-default-on-runtime-toggle` rule, the RUNTIME behaviour is gated
 # by `freedom.yaml::tools.os.clipboard.{enabled,read_enabled,write_enabled}`
 # (all default `false`) — the cargo feature only decides whether the backend is
@@ -150,17 +173,6 @@ qwen-metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal
 # backend keeps the CLI from entering CI-detection mode. Default OFF;
 # source-build opt-in only (NOT in release.yml; cargo-dist rejected, D-001).
 pty-subprocess = ["dep:portable-pty"]
-
-# M-1b (Session 21) — pdfium-render integration for form-field
-# reading + write/sign on PDF assets. Builds on pdf-extract for
-# plain text (already shipped) by adding the C++ FFI wrapper around
-# Google's PDFium. Optional because pdfium-render needs the pdfium
-# dynamic library at runtime (~5 MiB on Linux/Windows, larger on
-# macOS). Default OFF; source-build opt-in only (NOT in release.yml;
-# cargo-dist rejected, D-001 — bundle the pdfium dylib yourself). Without the feature, the form-field API
-# returns an actionable "rebuild with --features pdf-forms or use
-# `neoth ingest pdf <file>` for text-only extraction" error.
-pdf-forms = ["dep:pdfium-render"]
 
 # GOLD-FEAT-10 — Matrix client behind the `matrix-channel` feature (off by
 # default, same precedent as `wasm-plugin-host` / `imap_fetch` / `os-clipboard`).
@@ -234,6 +246,7 @@ nostr-sdk = { version = "0.44", features = ["nip59"], optional = true }
 jsonwebtoken = { version = "9", optional = true }
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
+semver             = "1"
 serde              = { version = "1", features = ["derive"] }
 serde_json         = "1"
 serde_yaml         = "0.9"
@@ -336,14 +349,6 @@ iroh = { version = "1", optional = true }
 # friendly + no extra C deps. Used only by cluster::heartbeat.
 ciborium = "0.2"
 
-# R-8 unblock (Session 19): Apache OpenDAL — unified cloud-storage
-# layer. Replaces the StubConnector per-provider deferred bail in
-# `cloud::*`. `default-features = false` strips every backend; we
-# opt into Dropbox / S3 / GCS / Azure individually as operator
-# configs land. Today: services-fs alone so the connector trait can
-# round-trip a local-folder backend for tests; cloud backends
-# enabled by operator-facing cargo features in a follow-up.
-opendal = { version = "0.56", default-features = false, features = ["services-fs", "blocking"] }
 # Promoted from dev-dependencies (Session 19) — the self-update apply
 # path stages the extracted binary in a same-volume tempdir before
 # atomic_replace_binary renames it onto the running daemon path.
@@ -440,7 +445,7 @@ x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 # TD-02 CalDAV — WebDAV `multistatus` XML parsing (REPORT calendar-query for
 # VTODO). Pure-Rust, no C deps. Pinned >=0.41 for RUSTSEC-2026-0194/-0195
 # (quadratic attr-check + NsReader memory DoS, both fixed in 0.41); the
-# transitive <0.41 copies (feed-rs, opendal, wayland-scanner) are ignored in
+# transitive <0.41 copies (feed-rs, wayland-scanner) are ignored in
 # .cargo/audit.toml + deny.toml until those upstreams bump.
 quick-xml = "0.41"
 
@@ -578,9 +583,8 @@ candle-transformers = { version = "0.8", default-features = false }
 
 # R-9 Multimodal Phase 2: pure-Rust PDF text extraction. pdf-extract is
 # more limited than pdfium (no form fields, no OCR) but ships without a
-# system-level binary, so v0.1.x operators get working text extraction
-# without a separate install. Pdfium-render lands when an operator hits
-# the form-field / OCR ceiling.
+# system-level binary, so operators get working text extraction without a
+# separate install. Form editing and OCR are not exposed capabilities.
 pdf-extract         = "0.9"
 # R-9 audio: pure-Rust audio decode (wav, mp3, flac, ogg). Doesn't bring in
 # any system codec libraries — decoders are Rust-native.
@@ -622,8 +626,9 @@ tokio-stream        = { version = "0.1", default-features = false }
 # poll boilerplate per adapter; the macro is the idiomatic choice.
 async-stream = "0.3"
 
-# Plugin SDK -- dev path-dep via workspace member.
-# Release builds will switch to `neoth-plugin-sdk = "0.1"` from crates.io.
+# Plugin SDK -- local workspace path plus the exact registry version. Cargo
+# removes `path` when packaging `neoth`, so the SDK must already be visible in
+# the crates.io index before the public package can be packaged or published.
 # `_host` feature flips on the host-only PermissionToken::mint() ctor.
 neoth-plugin-sdk = { path = "../neoth-plugin-sdk", version = "0.1.0-alpha.0", features = ["_host"] }
 
@@ -715,14 +720,6 @@ security-framework = "3"
 # release artefact does not ship the dep unless the operator opts into the
 # PTY-subprocess backend.
 [dependencies.portable-pty]
-version = "0.8"
-optional = true
-
-# M-1b (Session 21) — PDF form-field reading + write/sign via the
-# pdfium-render C++ FFI wrapper around Google's PDFium. Feature-
-# gated; without `pdf-forms` the form-field module returns an
-# actionable rebuild-or-fallback error.
-[dependencies.pdfium-render]
 version = "0.8"
 optional = true
 

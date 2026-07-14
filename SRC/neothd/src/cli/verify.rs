@@ -6,6 +6,7 @@
 //! between `from_offset` and `to_offset`. Reports a clean pass or the
 //! offending segment + offset on mismatch.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -27,7 +28,8 @@ pub struct VerifyArgs {
     #[arg(long, value_name = "PATH")]
     pub segment: Option<PathBuf>,
     /// SC-09 — verify only segments at/after the last HMAC-key rotation
-    /// (`0xD9 HMAC_KEY_ROTATED`, written by `neoth security rewrap-hmac-key`).
+    /// (`0xD9 HMAC_KEY_ROTATED`, written by `neoth keys rotate` and
+    /// `neoth security rewrap-hmac-key`).
     /// Markers in earlier segments were signed with a key that has since been
     /// replaced; skipping them avoids spurious failures after a key recovery.
     /// With no rotation recorded, verifies the full history (with a note).
@@ -50,6 +52,14 @@ struct VerifyOutcome {
     failures: Vec<String>,
     reclassified: usize,
     authorised_count: usize,
+}
+
+struct VerifyScope {
+    segments: Vec<PathBuf>,
+    /// Logical frame offset in the first retained segment. Compaction markers
+    /// before this exact in-segment boundary are excluded by
+    /// `--since-rotation`; later markers in the SAME segment remain verified.
+    first_segment_min_frame_offset: Option<usize>,
 }
 
 pub async fn run_verify(args: VerifyArgs) -> Result<()> {
@@ -81,19 +91,33 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
         }
     };
 
-    let mut segments = if let Some(s) = args.segment.clone() {
+    let all_segments = list_segments(&wal_dir)?;
+    let segments = if let Some(s) = args.segment.clone() {
         vec![s]
     } else {
-        list_segments(&wal_dir)?
+        all_segments.clone()
+    };
+    let signing_key_path = wal_dir.join("signing.key");
+    let trusted_pubkeys =
+        crate::wal::signing::trusted_signing_pubkeys(&all_segments, &signing_key_path);
+
+    let scope = if args.since_rotation {
+        apply_since_rotation_filter(segments, &trusted_pubkeys, args.output)
+    } else {
+        VerifyScope {
+            segments,
+            first_segment_min_frame_offset: None,
+        }
     };
 
-    if args.since_rotation {
-        segments = apply_since_rotation_filter(segments, args.output);
-    }
-
-    let authorised = collect_authorised_ranges(&segments)?;
-    let outcome = verify_segments(&segments, &key, &authorised)?;
-    render_verify_outcome(&segments, &outcome, args.output);
+    let authorised = collect_authorised_ranges(&scope.segments, &trusted_pubkeys)?;
+    let outcome = verify_segments(
+        &scope.segments,
+        &key,
+        &authorised,
+        scope.first_segment_min_frame_offset,
+    )?;
+    render_verify_outcome(&scope.segments, &outcome, args.output);
 
     if !outcome.failures.is_empty() {
         anyhow::bail!("{} marker(s) failed verification", outcome.failures.len());
@@ -105,20 +129,13 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
 /// (0xF3) frames across the supplied segments. Used by
 /// [`verify_segments`] to reclassify HMAC mismatches that fall inside
 /// an operator-authorised window as PASS-with-note.
-fn collect_authorised_ranges(segments: &[PathBuf]) -> Result<Vec<AuthorisedRange>> {
-    // Trust root for redaction exemptions = the operator's OWN ed25519 key, read
-    // from `<wal_dir>/signing.key` (the segments' shared parent). `None` (no key
-    // on disk) ⇒ no exemption can be authenticated ⇒ every 0xF3 frame is ignored,
-    // so a forged CRC32c-only marker can no longer reclassify a tampered HMAC
-    // window as PASS.
-    let trusted_pubkey = segments
-        .first()
-        .and_then(|s| s.parent())
-        .map(|dir| dir.join("signing.key"))
-        .and_then(|p| crate::wal::signing::load_signing_pubkey_if_present(&p));
+fn collect_authorised_ranges(
+    segments: &[PathBuf],
+    trusted_pubkeys: &BTreeSet<String>,
+) -> Result<Vec<AuthorisedRange>> {
     let mut out = Vec::new();
     for seg in segments {
-        let ranges = extract_redaction_authorisations(seg, trusted_pubkey.as_deref())?;
+        let ranges = extract_redaction_authorisations(seg, trusted_pubkeys)?;
         out.extend(ranges);
     }
     Ok(out)
@@ -133,6 +150,7 @@ fn verify_segments(
     segments: &[PathBuf],
     key: &[u8],
     authorised: &[AuthorisedRange],
+    first_segment_min_frame_offset: Option<usize>,
 ) -> Result<VerifyOutcome> {
     let mut outcome = VerifyOutcome {
         total_markers: 0,
@@ -178,8 +196,14 @@ fn verify_segments(
                 continue;
             }
         };
-        let markers = extract_markers_from(&logical, header_len);
-        for m in &markers {
+        let marker_floor = (seg == &segments[0])
+            .then_some(first_segment_min_frame_offset)
+            .flatten();
+        let markers = extract_markers_with_offsets_from(&logical, header_len);
+        for (frame_offset, m) in &markers {
+            if marker_floor.is_some_and(|floor| *frame_offset < floor) {
+                continue;
+            }
             outcome.total_markers += 1;
             match compaction::verify_marker_bytes(&logical, key, m) {
                 Ok(()) => outcome.total_verified += 1,
@@ -257,35 +281,29 @@ fn render_verify_outcome(segments: &[PathBuf], outcome: &VerifyOutcome, output: 
     }
 }
 
-/// SC-09 — drop every segment BEFORE the last one carrying a
-/// `0xD9 HMAC_KEY_ROTATED` frame (those markers were signed with a since-
-/// replaced key). Returns the original list unchanged (with an operator note)
-/// when no rotation has been recorded. Boundary is segment-granular: a marker
-/// written before the rotation frame WITHIN the rotation segment is still
-/// verified — today's `rewrap-hmac-key` restores the SAME key bytes so every
-/// marker verifies regardless; a future `rotate-hmac-key` (new key value) would
-/// want frame-granular precision, tracked as a follow-on.
-fn apply_since_rotation_filter(segments: Vec<PathBuf>, output: OutputFormat) -> Vec<PathBuf> {
-    // The rotation boundary is only trusted when its 0xD9 frame is SIGNED by the
-    // operator's OWN key (read from <wal_dir>/signing.key). `None` (no key on
-    // disk) ⇒ no boundary ⇒ the FULL history is verified (fail safe — a forged
-    // 0xD9 can no longer make `--since-rotation` skip genuine history).
-    let trusted_pubkey = segments
-        .first()
-        .and_then(|s| s.parent())
-        .map(|dir| dir.join("signing.key"))
-        .and_then(|p| crate::wal::signing::load_signing_pubkey_if_present(&p));
-    match find_last_rotation_segment(&segments, trusted_pubkey.as_deref()) {
-        Some(idx) => {
+/// SC-09 — retain frames at/after the last authenticated HMAC-key rotation.
+/// Unlike the old segment-only filter, this returns the exact frame-end offset
+/// inside the retained boundary segment, so a pre-rotation marker and a
+/// post-rotation marker in the same file are classified correctly.
+fn apply_since_rotation_filter(
+    segments: Vec<PathBuf>,
+    trusted_pubkeys: &BTreeSet<String>,
+    output: OutputFormat,
+) -> VerifyScope {
+    match find_last_rotation_boundary(&segments, trusted_pubkeys) {
+        Some((idx, frame_end)) => {
             let skipped = idx;
-            if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) && skipped > 0 {
+            if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
                 println!(
                     "# --since-rotation: skipping {skipped} pre-rotation segment(s); \
-                     verifying from {}",
-                    segments[idx].display()
+                     verifying {} from logical frame offset {frame_end}",
+                    segments[idx].display(),
                 );
             }
-            segments.into_iter().skip(idx).collect()
+            VerifyScope {
+                segments: segments.into_iter().skip(idx).collect(),
+                first_segment_min_frame_offset: Some(frame_end),
+            }
         }
         None => {
             if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
@@ -294,47 +312,52 @@ fn apply_since_rotation_filter(segments: Vec<PathBuf>, output: OutputFormat) -> 
                      verifying the full history"
                 );
             }
-            segments
+            VerifyScope {
+                segments,
+                first_segment_min_frame_offset: None,
+            }
         }
     }
 }
 
-/// Index (in the sorted `segments`) of the LAST segment containing a
-/// `0xD9 HMAC_KEY_ROTATED` frame, or `None` if no segment has one.
-fn find_last_rotation_segment(segments: &[PathBuf], trusted_pubkey: Option<&str>) -> Option<usize> {
-    segments
-        .iter()
-        .enumerate()
-        .filter(|(_, seg)| segment_has_rotation(seg, trusted_pubkey))
-        .map(|(i, _)| i)
-        .next_back()
+/// `(segment_index, logical_offset_after_rotation_frame)` for the LAST
+/// authenticated `0xD9 HMAC_KEY_ROTATED`, or `None`.
+fn find_last_rotation_boundary(
+    segments: &[PathBuf],
+    trusted_pubkeys: &BTreeSet<String>,
+) -> Option<(usize, usize)> {
+    segments.iter().enumerate().fold(None, |last, (idx, seg)| {
+        segment_last_rotation_end(seg, trusted_pubkeys)
+            .map(|frame_end| (idx, frame_end))
+            .or(last)
+    })
 }
 
-/// Does this segment contain at least one OPERATOR-SIGNED `0xD9 HMAC_KEY_ROTATED`
-/// frame? Tolerant — a torn tail / unreadable file just yields `false`. A 0xD9
-/// frame whose signature does NOT verify against the operator's own key
-/// (`trusted_pubkey`) is IGNORED — that is the forged-rotation bypass closure.
-fn segment_has_rotation(seg: &Path, trusted_pubkey: Option<&str>) -> bool {
+/// Logical end offset of this segment's last authenticated HMAC rotation.
+/// Tolerant — a torn tail / unreadable file yields `None`; forged frames grant
+/// no boundary. Historical proof keys remain valid only when connected to the
+/// current local key by dual-signed `proof_key_rotated` transitions.
+fn segment_last_rotation_end(seg: &Path, trusted_pubkeys: &BTreeSet<String>) -> Option<usize> {
     use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
-    // No operator key on disk ⇒ no rotation boundary can be authenticated ⇒ none.
-    let Some(trusted_pubkey) = trusted_pubkey else {
-        return false;
-    };
+    if trusted_pubkeys.is_empty() {
+        return None;
+    }
     let Ok(raw) = std::fs::read(seg) else {
-        return false;
+        return None;
     };
     if raw.len() < SEGMENT_HEADER_LEN {
-        return false;
+        return None;
     }
     // Decompress-aware: a 0xD9 rotation frame inside a compressed (v2) segment's
     // zstd blob must still anchor the `--since-rotation` boundary.
     let Ok((header_len, bytes)) = compaction::logical_segment_bytes(&raw) else {
-        return false;
+        return None;
     };
     let mut cursor = header_len;
+    let mut last = None;
     while cursor < bytes.len() {
         let Ok(dec) = decode_frame(&bytes[cursor..]) else {
             break;
@@ -342,21 +365,9 @@ fn segment_has_rotation(seg: &Path, trusted_pubkey: Option<&str>) -> bool {
         if dec.header.event_type == EVENT_TYPE_HMAC_KEY_ROTATED {
             // AUTHENTICATE before trusting it as a boundary — a forged CRC32c-only
             // 0xD9 has no valid operator signature ⇒ NOT a rotation point.
-            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(dec.payload) {
-                let new_key_sha256 = payload["new_key_sha256"].as_str().unwrap_or("");
-                let replaced = payload["replaced"].as_bool().unwrap_or(false);
-                let reason = payload["reason"].as_str().unwrap_or("");
-                let ts_unix = payload["ts_unix"].as_i64().unwrap_or(0);
-                let sig = payload["sig"].as_str().unwrap_or("");
-                let msg = crate::cli::security::rotation_authorisation_message(
-                    new_key_sha256,
-                    replaced,
-                    reason,
-                    ts_unix,
-                );
-                if crate::wal::signing::verify_b64(trusted_pubkey, sig, &msg).is_ok() {
-                    return true;
-                }
+            if crate::cli::security::hmac_rotation_payload_is_trusted(dec.payload, trusted_pubkeys)
+            {
+                last = Some(cursor.saturating_add(dec.header.total_len as usize));
             }
         }
         let total = dec.header.total_len as usize;
@@ -365,7 +376,7 @@ fn segment_has_rotation(seg: &Path, trusted_pubkey: Option<&str>) -> bool {
         }
         cursor += total;
     }
-    false
+    last
 }
 
 /// Enumerate `*.wal` segments under `dir`, sorted by sequence number.
@@ -417,7 +428,7 @@ struct AuthorisedRange {
 /// the marker (that's the segment whose bytes were rewritten).
 fn extract_redaction_authorisations(
     seg: &Path,
-    trusted_pubkey: Option<&str>,
+    trusted_pubkeys: &BTreeSet<String>,
 ) -> Result<Vec<AuthorisedRange>> {
     use crate::wal::events::EVENT_TYPE_REDACTION_MARKER;
     use crate::wal::frame::decode_frame;
@@ -425,9 +436,9 @@ fn extract_redaction_authorisations(
 
     // No operator key on disk ⇒ no redaction exemption can be authenticated ⇒
     // trust NONE (fail closed against forged 0xF3 frames).
-    let Some(trusted_pubkey) = trusted_pubkey else {
+    if trusted_pubkeys.is_empty() {
         return Ok(Vec::new());
-    };
+    }
     let raw = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
     if raw.len() < SEGMENT_HEADER_LEN {
         return Ok(Vec::new());
@@ -458,12 +469,14 @@ fn extract_redaction_authorisations(
                 let bytes_redacted = payload["bytes_redacted"].as_u64().unwrap_or(0);
                 let topic = payload["topic"].as_str().unwrap_or("");
                 let ts_unix = payload["ts_unix"].as_i64().unwrap_or(0);
+                let signer_pubkey = payload["signer_pubkey"].as_str().unwrap_or("");
                 let sig = payload["sig"].as_str().unwrap_or("");
                 // AUTHENTICATE: the marker's signature MUST verify against the
                 // OPERATOR's own key over the canonical authorisation. A forged
                 // CRC32c-only frame has no valid signature ⇒ ignored. We verify
-                // against the trusted ON-DISK key, NEVER the payload's
-                // `signer_pubkey` (an attacker would set that to their own key).
+                // against a key in the current operator's dual-signed predecessor
+                // chain. An attacker-controlled payload key is harmless unless
+                // that exact key is connected to the current local trust root.
                 let msg = crate::wal::redact::redaction_authorisation_message(
                     &segment,
                     &offsets,
@@ -471,7 +484,8 @@ fn extract_redaction_authorisations(
                     topic,
                     ts_unix,
                 );
-                let authentic = crate::wal::signing::verify_b64(trusted_pubkey, sig, &msg).is_ok();
+                let authentic = trusted_pubkeys.contains(signer_pubkey)
+                    && crate::wal::signing::verify_b64(signer_pubkey, sig, &msg).is_ok();
                 if authentic && !segment.is_empty() && !offsets.is_empty() {
                     out.push(AuthorisedRange { segment, offsets });
                 }
@@ -530,7 +544,18 @@ fn window_overlaps_authorised(
 /// frames in order, and pull out every COMPACTION_MARKER payload. Tolerates
 /// trailing partial frames (interrupted-writer crashes) by stopping at the first
 /// decode error.
+#[cfg(test)]
 fn extract_markers_from(logical: &[u8], header_len: usize) -> Vec<compaction::MarkerPayload> {
+    extract_markers_with_offsets_from(logical, header_len)
+        .into_iter()
+        .map(|(_, marker)| marker)
+        .collect()
+}
+
+fn extract_markers_with_offsets_from(
+    logical: &[u8],
+    header_len: usize,
+) -> Vec<(usize, compaction::MarkerPayload)> {
     use crate::wal::events::EVENT_TYPE_COMPACTION_MARKER;
     use crate::wal::frame::decode_frame;
 
@@ -547,7 +572,7 @@ fn extract_markers_from(logical: &[u8], header_len: usize) -> Vec<compaction::Ma
         let total = dec.header.total_len as usize;
         if dec.header.event_type == EVENT_TYPE_COMPACTION_MARKER {
             if let Ok(payload) = serde_json::from_slice::<compaction::MarkerPayload>(dec.payload) {
-                out.push(payload);
+                out.push((cursor, payload));
             }
         }
         if total == 0 {
@@ -558,12 +583,10 @@ fn extract_markers_from(logical: &[u8], header_len: usize) -> Vec<compaction::Ma
     out
 }
 
-/// Path-based convenience over [`extract_markers_from`]: reads the segment,
+/// Test-only path convenience over [`extract_markers_from`]: reads the segment,
 /// reconstructs its LOGICAL bytes (decompressing a compressed v2 segment so the
 /// marker frames inside the zstd blob are actually walked), and extracts the
 /// markers. Tolerant: a too-short / unparseable file yields none.
-/// Test-only — production callers already hold logical bytes and use
-/// `extract_markers_from` directly.
 #[cfg(test)]
 fn extract_markers(seg: &Path) -> Result<Vec<compaction::MarkerPayload>> {
     let raw = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
@@ -623,8 +646,15 @@ mod tests {
     /// Write a segment with an OPERATOR-SIGNED 0xD9 rotation frame (the signing
     /// key lives in `dir`, the same place verify reads its trust root from).
     async fn write_signed_rotation_seg(dir: &std::path::Path, seg: std::path::PathBuf) {
-        use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
         let key = crate::wal::signing::load_or_init_signing_key(&dir.join("signing.key")).unwrap();
+        write_signed_rotation_seg_with_key(seg, &key).await;
+    }
+
+    async fn write_signed_rotation_seg_with_key(
+        seg: std::path::PathBuf,
+        key: &ed25519_dalek::SigningKey,
+    ) {
+        use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
         let msg =
             crate::cli::security::rotation_authorisation_message("abc123", true, "rewrap", 1700);
         let payload = serde_json::to_vec(&serde_json::json!({
@@ -632,8 +662,8 @@ mod tests {
             "replaced": true,
             "reason": "rewrap",
             "ts_unix": 1700,
-            "signer_pubkey": crate::wal::signing::pubkey_b64(&key),
-            "sig": crate::wal::signing::sign_b64(&key, &msg),
+            "signer_pubkey": crate::wal::signing::pubkey_b64(key),
+            "sig": crate::wal::signing::sign_b64(key, &msg),
         }))
         .unwrap();
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
@@ -643,8 +673,11 @@ mod tests {
         join.await.ok();
     }
 
-    fn trusted_for(dir: &std::path::Path) -> Option<String> {
-        crate::wal::signing::load_signing_pubkey_if_present(&dir.join("signing.key"))
+    fn trusted_for(dir: &std::path::Path) -> BTreeSet<String> {
+        crate::wal::signing::trusted_signing_pubkeys(
+            &list_segments(dir).unwrap(),
+            &dir.join("signing.key"),
+        )
     }
 
     #[tokio::test]
@@ -655,15 +688,49 @@ mod tests {
         write_signed_rotation_seg(dir.path(), dir.path().join("000002.wal")).await;
         write_event_seg(dir.path().join("000003.wal"), EVENT_TYPE_RAW_TEXT).await;
         let segs = list_segments(dir.path()).unwrap();
+        let trusted = trusted_for(dir.path());
         assert_eq!(
-            find_last_rotation_segment(&segs, trusted_for(dir.path()).as_deref()),
+            find_last_rotation_boundary(&segs, &trusted).map(|(idx, _)| idx),
             Some(1)
         );
-        // The filter loads the trust root from the wal dir internally + keeps the
-        // rotation segment + everything after it.
-        let filtered = apply_since_rotation_filter(segs, OutputFormat::Json);
-        assert_eq!(filtered.len(), 2);
-        assert!(filtered[0].to_string_lossy().contains("000002"));
+        let filtered = apply_since_rotation_filter(segs, &trusted, OutputFormat::Json);
+        assert_eq!(filtered.segments.len(), 2);
+        assert!(filtered.segments[0].to_string_lossy().contains("000002"));
+        assert!(filtered.first_segment_min_frame_offset.is_some());
+    }
+
+    #[tokio::test]
+    async fn keys_rotate_emits_trusted_boundary_used_by_since_rotation() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+        crate::wal::compaction::rewrap_key(&key_path, &[0x42; 32]).unwrap();
+
+        crate::cli::keys::run_keys(crate::cli::keys::KeysArgs {
+            action: crate::cli::keys::KeysAction::Rotate { dry_run: false },
+            key: Some(key_path.clone()),
+            home: Some(home.path().to_path_buf()),
+            output: OutputFormat::Json,
+        })
+        .await
+        .unwrap();
+
+        let segments = list_segments(&wal_dir).unwrap();
+        let trusted = trusted_for(&wal_dir);
+        assert!(
+            find_last_rotation_boundary(&segments, &trusted).is_some(),
+            "keys rotate must emit an operator-signed 0xD9 boundary"
+        );
+        run_verify(VerifyArgs {
+            wal_dir: Some(wal_dir),
+            key: Some(key_path),
+            segment: None,
+            since_rotation: true,
+            output: OutputFormat::Json,
+        })
+        .await
+        .expect("--since-rotation must accept the keys-rotate boundary");
     }
 
     #[tokio::test]
@@ -672,9 +739,10 @@ mod tests {
         write_signed_rotation_seg(dir.path(), dir.path().join("000001.wal")).await;
         write_signed_rotation_seg(dir.path(), dir.path().join("000002.wal")).await;
         let segs = list_segments(dir.path()).unwrap();
+        let trusted = trusted_for(dir.path());
         // The MOST RECENT rotation is the boundary.
         assert_eq!(
-            find_last_rotation_segment(&segs, trusted_for(dir.path()).as_deref()),
+            find_last_rotation_boundary(&segs, &trusted).map(|(idx, _)| idx),
             Some(1)
         );
     }
@@ -691,8 +759,9 @@ mod tests {
         write_signed_rotation_seg(dir.path(), dir.path().join("000001.wal")).await;
         write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
         let segs = list_segments(dir.path()).unwrap();
+        let trusted = trusted_for(dir.path());
         assert_eq!(
-            find_last_rotation_segment(&segs, trusted_for(dir.path()).as_deref()),
+            find_last_rotation_boundary(&segs, &trusted).map(|(idx, _)| idx),
             Some(0),
             "a forged unsigned 0xD9 must be ignored",
         );
@@ -705,13 +774,99 @@ mod tests {
         write_event_seg(dir.path().join("000001.wal"), EVENT_TYPE_RAW_TEXT).await;
         write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_RAW_TEXT).await;
         let segs = list_segments(dir.path()).unwrap();
-        assert_eq!(find_last_rotation_segment(&segs, None), None);
+        assert_eq!(find_last_rotation_boundary(&segs, &BTreeSet::new()), None);
         // No rotation → the full list is returned unchanged.
         let n = segs.len();
         assert_eq!(
-            apply_since_rotation_filter(segs, OutputFormat::Json).len(),
+            apply_since_rotation_filter(segs, &BTreeSet::new(), OutputFormat::Json)
+                .segments
+                .len(),
             n
         );
+    }
+
+    #[tokio::test]
+    async fn since_rotation_is_frame_granular_within_one_segment() {
+        use crate::wal::compaction::{CompactionState, MarkerPayload, load_or_init_key};
+        use crate::wal::events::{
+            EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_HMAC_KEY_ROTATED, EVENT_TYPE_RAW_TEXT,
+        };
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader};
+
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path();
+        let segment = wal_dir.join("000001.wal");
+        let hmac_path = wal_dir.join("hmac.key");
+        let current_hmac = load_or_init_key(&hmac_path).unwrap();
+        let signing_key =
+            crate::wal::signing::load_or_init_signing_key(&wal_dir.join("signing.key")).unwrap();
+        let mut bytes = SegmentHeader::new(0, 1, 0, 0, [0; 16])
+            .to_le_bytes()
+            .to_vec();
+
+        let append_window = |bytes: &mut Vec<u8>, payload: &[u8], key: &[u8]| {
+            let from = bytes.len() as u64;
+            let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, payload).build();
+            let frame = encode_frame(&header, payload);
+            bytes.extend_from_slice(&frame);
+            let to = bytes.len() as u64;
+            let mut state = CompactionState::new(key, from);
+            state.update(&frame);
+            let marker: MarkerPayload = state.finalise_marker(key, to);
+            let marker_payload = serde_json::to_vec(&marker).unwrap();
+            let marker_header =
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_COMPACTION_MARKER, &marker_payload)
+                    .build();
+            bytes.extend_from_slice(&encode_frame(&marker_header, &marker_payload));
+        };
+
+        // This marker is intentionally signed with the wrong HMAC key. A
+        // segment-granular filter would still verify it and fail.
+        append_window(&mut bytes, b"before rotation", b"retired-hmac-key");
+
+        let msg =
+            crate::cli::security::rotation_authorisation_message("new-hash", true, "rotate", 1700);
+        let rotation_payload = serde_json::to_vec(&serde_json::json!({
+            "new_key_sha256": "new-hash",
+            "replaced": true,
+            "reason": "rotate",
+            "ts_unix": 1700,
+            "signer_pubkey": crate::wal::signing::pubkey_b64(&signing_key),
+            "sig": crate::wal::signing::sign_b64(&signing_key, &msg),
+        }))
+        .unwrap();
+        let rotation_header =
+            crate::wal::HeaderBuilder::new(EVENT_TYPE_HMAC_KEY_ROTATED, &rotation_payload).build();
+        bytes.extend_from_slice(&encode_frame(&rotation_header, &rotation_payload));
+        let boundary_end = bytes.len();
+
+        // This later marker uses the current key and must remain in scope.
+        append_window(&mut bytes, b"after rotation", &current_hmac);
+        std::fs::write(&segment, bytes).unwrap();
+
+        let trusted = trusted_for(wal_dir);
+        assert_eq!(
+            find_last_rotation_boundary(std::slice::from_ref(&segment), &trusted),
+            Some((0, boundary_end)),
+            "the boundary must be the exact frame end, not just segment zero"
+        );
+        assert!(boundary_end > SEGMENT_HEADER_LEN);
+
+        let args = |since_rotation| VerifyArgs {
+            wal_dir: Some(wal_dir.to_path_buf()),
+            key: Some(hmac_path.clone()),
+            segment: None,
+            since_rotation,
+            output: OutputFormat::Json,
+        };
+        assert!(
+            run_verify(args(false)).await.is_err(),
+            "full-history verification must see the deliberately bad old marker"
+        );
+        run_verify(args(true))
+            .await
+            .expect("frame-granular filtering must skip only the pre-rotation marker");
     }
 
     #[test]
@@ -719,11 +874,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
         std::fs::write(&seg, b"short").unwrap();
-        assert!(!segment_has_rotation(&seg, Some("anything")));
-        assert!(!segment_has_rotation(
-            &dir.path().join("does-not-exist.wal"),
-            Some("anything")
-        ));
+        let trusted = BTreeSet::from(["anything".to_string()]);
+        assert_eq!(segment_last_rotation_end(&seg, &trusted), None);
+        assert_eq!(
+            segment_last_rotation_end(&dir.path().join("does-not-exist.wal"), &trusted),
+            None
+        );
     }
 
     // V02-03 acceptance (note 2026-05-16): the end-to-end "tamper
@@ -768,13 +924,15 @@ mod tests {
         let _ = join.await;
 
         // Load the trust root the same way `collect_authorised_ranges` does.
-        let trusted =
-            crate::wal::signing::load_signing_pubkey_if_present(&dir.path().join("signing.key"));
+        let trusted = crate::wal::signing::trusted_signing_pubkeys(
+            &list_segments(dir.path()).unwrap(),
+            &dir.path().join("signing.key"),
+        );
         assert!(
-            trusted.is_some(),
+            !trusted.is_empty(),
             "emit must have created the operator signing key"
         );
-        let ranges = extract_redaction_authorisations(&audit_seg, trusted.as_deref()).unwrap();
+        let ranges = extract_redaction_authorisations(&audit_seg, &trusted).unwrap();
         assert_eq!(
             ranges.len(),
             1,
@@ -786,7 +944,7 @@ mod tests {
         // The 0xF3 bypass closure: an exemption NOT signed by the operator key is
         // IGNORED. No trust root ⇒ nothing honoured; a different key ⇒ rejected.
         assert!(
-            extract_redaction_authorisations(&audit_seg, None)
+            extract_redaction_authorisations(&audit_seg, &BTreeSet::new())
                 .unwrap()
                 .is_empty(),
             "no trust root ⇒ no exemption honoured",
@@ -794,7 +952,7 @@ mod tests {
         let wrong_key =
             crate::wal::signing::pubkey_b64(&ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]));
         assert!(
-            extract_redaction_authorisations(&audit_seg, Some(&wrong_key))
+            extract_redaction_authorisations(&audit_seg, &BTreeSet::from([wrong_key]))
                 .unwrap()
                 .is_empty(),
             "a marker signed by a DIFFERENT key must not be honoured",
@@ -923,6 +1081,57 @@ mod tests {
         w.append(header, payload).await.unwrap();
         drop(w);
         let _ = j.await;
+    }
+
+    #[tokio::test]
+    async fn retired_proof_key_remains_trusted_through_dual_signed_transition() {
+        use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
+
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path();
+        let signing_key_path = wal_dir.join("signing.key");
+        let retired = crate::wal::signing::load_or_init_signing_key(&signing_key_path).unwrap();
+        let retired_public = crate::wal::signing::pubkey_b64(&retired);
+
+        let hmac_rotation_segment = wal_dir.join("000001.wal");
+        write_signed_rotation_seg_with_key(hmac_rotation_segment.clone(), &retired).await;
+        let redaction_segment = wal_dir.join("000002.wal");
+        write_signed_redaction_frame(
+            wal_dir,
+            "000002.wal",
+            "target.wal",
+            &[123],
+            8,
+            "retired-key-test",
+            1700,
+            &retired,
+        )
+        .await;
+
+        let prepared =
+            crate::wal::signing::prepare_signing_key_rotation(&signing_key_path).unwrap();
+        let transition = prepared.payload().clone();
+        let transition_bytes = serde_json::to_vec(&transition).unwrap();
+        let (writer, join) = crate::wal::writer::spawn(wal_dir.join("000003.wal")).unwrap();
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &transition_bytes)
+            .event_subtype(ExtendedSubtype::ProofKeyRotated as u8)
+            .build();
+        writer.append(header, transition_bytes).await.unwrap();
+        drop(writer);
+        join.await.unwrap();
+        prepared.commit().unwrap();
+
+        let trusted = trusted_for(wal_dir);
+        assert!(trusted.contains(&retired_public));
+        assert!(trusted.contains(&transition.new_public_key));
+        assert!(
+            segment_last_rotation_end(&hmac_rotation_segment, &trusted).is_some(),
+            "an HMAC rotation signed before proof-key rotation remains authentic"
+        );
+        let redactions = extract_redaction_authorisations(&redaction_segment, &trusted).unwrap();
+        assert_eq!(redactions.len(), 1);
+        assert_eq!(redactions[0].segment, "target.wal");
+        assert_eq!(redactions[0].offsets, vec![123]);
     }
 
     /// AP-08 — end-to-end `run_verify` over the `0xF3` redaction-exemption path:
@@ -1231,7 +1440,7 @@ mod tests {
         // ≥ header length of bytes that do NOT form a valid segment header.
         let n = crate::wal::segment_header::SEGMENT_HEADER_LEN + 40;
         std::fs::write(&seg, vec![0xFFu8; n]).unwrap();
-        let outcome = verify_segments(std::slice::from_ref(&seg), b"any-key", &[]).unwrap();
+        let outcome = verify_segments(std::slice::from_ref(&seg), b"any-key", &[], None).unwrap();
         assert!(
             !outcome.failures.is_empty(),
             "a corrupt-header segment must be flagged as tamper-suspect, not silently clean"

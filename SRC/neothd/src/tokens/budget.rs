@@ -121,7 +121,7 @@ static KNOWN_CONTEXT_WINDOWS: &[(&str, u32)] = &[
     ("claude-opus-4-7", 200_000),
     ("claude-sonnet-4-6", 200_000),
     ("claude-haiku-4-5", 200_000),
-    ("claude-opus-4", 200_000),   // alias family
+    ("claude-opus-4", 200_000), // alias family
     ("claude-sonnet-4", 200_000),
     ("gpt-4.1", 1_047_576),
     ("gpt-4o", 128_000),
@@ -144,11 +144,7 @@ static KNOWN_CONTEXT_WINDOWS: &[(&str, u32)] = &[
 /// (e.g. Bedrock API vs. claude_cli may report different windows for
 /// the same model string). Unused today; kept in signature to avoid a
 /// later breaking change.
-pub fn effective_cap(
-    _provider_name: &str,
-    model_name: &str,
-    operator_cap: u32,
-) -> u32 {
+pub fn effective_cap(_provider_name: &str, model_name: &str, operator_cap: u32) -> u32 {
     let lower = model_name.to_ascii_lowercase();
     // Longest-key-wins: find the entry whose stem is the longest
     // substring of the lowercased model name.

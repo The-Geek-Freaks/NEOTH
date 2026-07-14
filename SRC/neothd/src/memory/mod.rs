@@ -35,10 +35,6 @@ pub mod consolidate;
 /// `idx_groundtruth`. Pure sync, no WAL; cron wrapper in
 /// `daemon::consolidation_sweep_cron` emits `0x9D`/`0x9E`.
 pub mod consolidation_sweep;
-/// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory eval harness.
-/// `neoth memory-eval` runs a synthetic recall benchmark against a fresh
-/// temp DB and reports precision so CI can detect memory-tuning regressions.
-pub mod eval_harness;
 /// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
 pub mod context_inject;
 /// GOLD-ADAPT-MEM-02 — contradiction detection + ledger over ground-truth facts.
@@ -52,6 +48,10 @@ pub mod embeddings;
 /// GOLD-ADAPT-MEM-06 — knowledge-graph layer (typed entities + weighted
 /// relations + bounded BFS neighbour expansion). `neoth recall --graph`.
 pub mod entities;
+/// GOLD-ADAPT-MEMGRAPH-02 — LongMemEval-style memory eval harness.
+/// `neoth memory-eval` runs a synthetic recall benchmark against a fresh
+/// temp DB and reports precision so CI can detect memory-tuning regressions.
+pub mod eval_harness;
 pub mod foreign_import;
 pub mod forget;
 pub mod gc;
@@ -69,6 +69,10 @@ pub mod moral_core;
 /// Open Knowledge Format (OKF) renderer — export knowledge as Obsidian-native
 /// markdown concept docs (see `cli::okf`).
 pub mod okf;
+/// OMI-MULTIMODAL-01 — idempotent, transactional projection of official OMI
+/// conversation revisions, aligned segments, media metadata, and action/fact
+/// mappings. Raw transcript retention is explicit; purge leaves a tombstone.
+pub mod omi;
 pub mod operator_md;
 /// GOLD-ADAPT-OH-10 — per-person relationship scorer (recency × frequency ×
 /// reciprocity × depth, clamped) → proactive surfacing priority. Surfaced via
@@ -83,30 +87,30 @@ pub mod recall_lanes;
 pub mod region_router;
 pub mod regions;
 pub mod routing_weights;
-/// GOLD-ADAPT-VIEW-04 — cross-agent session-transcript import (claude-code /
-/// codex / gemini → ground-truth candidates). `neoth import session`.
-pub mod session_import;
-pub mod session_search;
+pub mod scorecard;
 /// GOLD-ADAPT-JV-MODE-03 — Self-capability awareness map. Indexes every
 /// bundled skill, daemon cron, CLI command, and slash command into a
 /// structured [`self_wiki::SelfWiki`] the agent can query to reason about
 /// and select its own capabilities. Read-only; no I/O.
 pub mod self_wiki;
-pub mod scorecard;
+/// GOLD-ADAPT-VIEW-04 — cross-agent session-transcript import (claude-code /
+/// codex / gemini → ground-truth candidates). `neoth import session`.
+pub mod session_import;
+pub mod session_search;
 pub mod snapshot_refresh;
 pub mod source_weight;
 pub mod store;
+/// GOLD-ADAPT-SPEAKR-01 — 5-layer prompt composition for summarization
+/// (override/append/tag/folder/user/admin/hardcoded) + `{{var}}` substitution.
+/// Standalone, no I/O; wired to `freedom.yaml::skills.meeting_summary.prompt_layers`
+/// as a follow-up once the ingress summarise path consumes it.
+pub mod summarize_prompt;
 pub mod tiers;
 /// GOLD-ADAPT-ODY-26 — raw-turn persistence + FTS5 search with before/after
 /// context rows. `neoth recall --transcript <query>` surface.
 pub mod transcript_store;
 pub mod transfer_bundle;
 pub mod views;
-/// GOLD-ADAPT-SPEAKR-01 — 5-layer prompt composition for summarization
-/// (override/append/tag/folder/user/admin/hardcoded) + `{{var}}` substitution.
-/// Standalone, no I/O; wired to `freedom.yaml::skills.meeting_summary.prompt_layers`
-/// as a follow-up once the ingress summarise path consumes it.
-pub mod summarize_prompt;
 pub mod warm_summarize;
 
 /// Escape SQLite `LIKE` wildcards (`\`, `%`, `_`) in an untrusted string

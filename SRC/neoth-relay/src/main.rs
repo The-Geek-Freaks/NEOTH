@@ -5,9 +5,9 @@
 //! compliant install path. Operators deploy on a cheap edge node
 //! without pulling the full daemon stack.
 //!
-//! v0.1 scope = minimal serve loop + in-memory `PeerRoster`. Cluster
-//! Phase 5 wire (Hysteria socket plumbing + relay-to-relay mesh)
-//! ships in multi-week follow-ups.
+//! Hysteria is an external sidecar: it owns the public QUIC/TLS/auth listener
+//! and forwards plain TCP to this process's loopback bind. `neoth-relay` never
+//! embeds or spawns Hysteria.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -24,7 +24,7 @@ mod serve;
 
 use hysteria::{
     HealthCheckOutcome, HysteriaOnboardingPath, HysteriaTransportConfig, WHY_TUNNEL_COPY,
-    check_hysteria_listener,
+    check_relay_forward_target,
 };
 
 #[derive(Parser, Debug)]
@@ -40,10 +40,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Start the relay daemon. Binds to `--bind` + serves the
-    /// register / unregister / status endpoints over a minimal
-    /// HTTP-line framing (real axum integration follows in a
-    /// later bite).
+    /// Start the relay daemon and serve its bounded HTTP/1.1 registry API.
     Serve {
         /// Listen address. Default loopback-only for safe local
         /// testing. A non-loopback bind (e.g. `0.0.0.0:8443`) is a
@@ -65,10 +62,10 @@ enum Command {
         /// ceiling `MAX_PEERS_PER_KEY_CEILING` (50) enforced.
         #[arg(long, default_value_t = relay::DEFAULT_MAX_PEERS_PER_KEY)]
         max_peers_per_key: u32,
-        /// Optional path to the Hysteria sidecar config (YAML
-        /// matching `HysteriaTransportConfig`). Loaded at startup +
-        /// validated for operator-painful misconfigs; warnings
-        /// surface in stdout but don't block the bind.
+        /// Optional external-Hysteria deployment contract. When supplied,
+        /// `forward_to` must exactly match this process's loopback `--bind`,
+        /// and a non-empty sidecar auth scheme is mandatory. Mismatches abort
+        /// startup before any socket is opened.
         #[arg(long)]
         hysteria_config: Option<PathBuf>,
     },
@@ -77,21 +74,16 @@ enum Command {
     /// before opening firewall rules.
     Status {
         /// Optional Hysteria config (YAML) to include in the
-        /// status report. Runs `validate()` + `check_hysteria_listener`
-        /// (3s TCP probe) so operators see the live sidecar state
-        /// without binding the relay socket.
+        /// status report. Probes the relay's configured `forward_to` TCP target;
+        /// this does not verify the sidecar's public QUIC/TLS/auth listener.
         #[arg(long)]
         hysteria_config: Option<PathBuf>,
     },
-    /// Operator walkthrough screens (HW-1..HW-4): print the
-    /// "Why tunnel?" copy, the 3 onboarding paths + their
-    /// descriptions, and run a health check against an optional
-    /// Hysteria config. Used by the future GUI wizard and by
-    /// operators running `neoth-relay doctor` to debug a sidecar.
+    /// Print the external-sidecar deployment choices and diagnose an optional
+    /// Hysteria deployment contract.
     Doctor {
         /// Optional Hysteria config (YAML); when present, runs the
-        /// HW-3 health check + reports the outcome. When absent,
-        /// shows the onboarding paths + "Why tunnel?" copy only.
+        /// relay-target health check. When absent, shows deployment guidance.
         #[arg(long)]
         hysteria_config: Option<PathBuf>,
     },
@@ -120,16 +112,22 @@ async fn main() -> Result<()> {
                     relay::MAX_PEERS_PER_KEY_CEILING
                 );
             }
-            if let Some(path) = hysteria_config.as_ref() {
-                let cfg = load_hysteria_config(path)?;
-                for w in cfg.validate() {
-                    eprintln!("warning: {w}");
-                }
-                info!(hysteria = %cfg.summary(), "Hysteria sidecar metadata loaded");
-            }
             let addr: SocketAddr = bind
                 .parse()
                 .with_context(|| format!("parse --bind `{bind}`"))?;
+            if let Some(path) = hysteria_config.as_ref() {
+                let cfg = load_hysteria_config(path)?;
+                cfg.validate_for_relay_bind(addr).with_context(|| {
+                    format!(
+                        "validate external Hysteria contract {} against --bind {addr}",
+                        path.display()
+                    )
+                })?;
+                info!(
+                    hysteria = %cfg.summary(),
+                    "external Hysteria contract accepted; sidecar owns public QUIC/auth, relay owns loopback TCP target"
+                );
+            }
             // Resolve the auth token: CLI flag first, then the
             // NEOTH_RELAY_TOKEN env var (preferred — not visible in `ps`).
             // Empty values are treated as "no token".
@@ -173,17 +171,14 @@ async fn main() -> Result<()> {
                 for w in cfg.validate() {
                     println!("warning: {w}");
                 }
-                let outcome = check_hysteria_listener(&cfg).await;
-                println!("health-check: {}", outcome.summary());
+                println!(
+                    "transport-boundary: external Hysteria owns public QUIC/TLS/auth; neoth-relay owns forward_to TCP"
+                );
+                let outcome = check_relay_forward_target(&cfg).await;
+                let detail = outcome.summary();
+                println!("relay-target-health: {detail}");
                 if !outcome.is_passable() {
-                    eprintln!(
-                        "health-check failed — run `neoth-relay doctor --hysteria-config <path>` for details"
-                    );
-                }
-                // Surface the bail-message contract from the v1 stub
-                // so operators see the deferred-transport context.
-                if let Err(e) = hysteria::connect_via_hysteria(&cfg) {
-                    println!("transport: {e}");
+                    anyhow::bail!("relay forward-target health check failed: {detail}");
                 }
             }
             Ok(())
@@ -208,18 +203,26 @@ async fn main() -> Result<()> {
                 for w in cfg.validate() {
                     println!("warning: {w}");
                 }
-                let outcome = check_hysteria_listener(&cfg).await;
+                println!(
+                    "boundary: this probes forward_to only; verify public QUIC/TLS/auth with Hysteria tooling"
+                );
+                let outcome = check_relay_forward_target(&cfg).await;
                 println!();
-                println!("── Health check (HW-3) ─────────────────────────────");
+                println!("── Relay forward-target health ─────────────────────");
                 let label = match &outcome {
                     HealthCheckOutcome::Ok => "OK",
-                    HealthCheckOutcome::NotConfigured => "SKIPPED (HW-4 decline path)",
+                    HealthCheckOutcome::NotConfigured => "SKIPPED (direct TCP mode)",
                     HealthCheckOutcome::MissingForwardTo
+                    | HealthCheckOutcome::InvalidForwardTarget(_)
                     | HealthCheckOutcome::ConnectionRefused(_)
                     | HealthCheckOutcome::Timeout => "FAIL",
                 };
                 println!("status: {label}");
-                println!("detail: {}", outcome.summary());
+                let detail = outcome.summary();
+                println!("detail: {detail}");
+                if !outcome.is_passable() {
+                    anyhow::bail!("relay forward-target health check failed: {detail}");
+                }
             } else {
                 println!("(no --hysteria-config supplied — running in informational mode)");
             }

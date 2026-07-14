@@ -51,21 +51,31 @@ pub struct SanitizeReport {
     pub input_hash: String,
     /// Unix seconds of the sanitize call.
     pub ts_unix: u64,
-    /// Channel name passed in by the caller (`"telegram"`, `"keet"`, ...).
+    /// Channel name passed in by the caller (`"telegram"`, `"slack"`, ...).
     pub channel: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Finding {
-    OversizeInput { bytes: usize, limit: usize },
+    OversizeInput {
+        bytes: usize,
+        limit: usize,
+    },
     NeededNfkcNormalization,
-    BadControlChar { codepoint: u32, count: usize },
-    PromptInjectionMarker { pattern: String },
+    BadControlChar {
+        codepoint: u32,
+        count: usize,
+    },
+    PromptInjectionMarker {
+        pattern: String,
+    },
     /// GOLD-ADAPT-JV-MODE-01 — detected a persona-override attempt while
     /// identity_locked=true (loyal-buddy mode). The message is quarantined.
     /// `pattern` is the matched persona-override substring.
-    PersonaOverrideAttempt { pattern: String },
+    PersonaOverrideAttempt {
+        pattern: String,
+    },
 }
 
 /// Known prompt-injection-style markers. Case-insensitive substring match.

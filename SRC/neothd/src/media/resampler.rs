@@ -6,9 +6,10 @@
 //! band-limited sinc keeps the spectrum clean. Mono `f32` in/out at an
 //! arbitrary `src_sr → dst_sr` ratio.
 //!
-//! On the rare degenerate construction (a ratio rubato rejects) this falls
-//! back to the old linear path (`audio::linear_resample`) so the capture
-//! pipeline degrades gracefully instead of dropping audio.
+//! On the rare construction/process failure this falls back to the old linear
+//! path (`audio::linear_resample`) so valid audio still degrades gracefully.
+//! Invalid rates and non-finite PCM are rejected explicitly; they are caller
+//! bugs, not signals that should silently turn into an empty buffer.
 
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
@@ -17,21 +18,64 @@ use rubato::{
 /// Fixed input chunk fed to rubato per `process` call (frames).
 const CHUNK: usize = 1024;
 
-/// Resample mono `input` from `src_sr` to `dst_sr`. Returns the resampled
-/// mono buffer (empty for empty/degenerate input).
-pub fn resample_mono(input: &[f32], src_sr: u32, dst_sr: u32) -> Vec<f32> {
-    if input.is_empty() || src_sr == 0 || dst_sr == 0 {
-        return Vec::new();
+/// Broad sanity bounds for real-world audio. The lower bound prevents absurd
+/// resample ratios and the upper bound still covers professional PCM formats.
+pub const MIN_SAMPLE_RATE_HZ: u32 = 1_000;
+pub const MAX_SAMPLE_RATE_HZ: u32 = 768_000;
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum ResampleError {
+    #[error(
+        "invalid source sample rate {0} Hz (expected {MIN_SAMPLE_RATE_HZ}..={MAX_SAMPLE_RATE_HZ})"
+    )]
+    InvalidSourceRate(u32),
+    #[error(
+        "invalid target sample rate {0} Hz (expected {MIN_SAMPLE_RATE_HZ}..={MAX_SAMPLE_RATE_HZ})"
+    )]
+    InvalidTargetRate(u32),
+    #[error("PCM sample at index {index} is not finite")]
+    NonFiniteSample { index: usize },
+}
+
+fn validate_rate(rate: u32, source: bool) -> Result<(), ResampleError> {
+    if (MIN_SAMPLE_RATE_HZ..=MAX_SAMPLE_RATE_HZ).contains(&rate) {
+        Ok(())
+    } else if source {
+        Err(ResampleError::InvalidSourceRate(rate))
+    } else {
+        Err(ResampleError::InvalidTargetRate(rate))
+    }
+}
+
+/// Validate a source mono f32 buffer without allocating or resampling it.
+pub fn validate_mono_pcm(input: &[f32], sample_rate_hz: u32) -> Result<(), ResampleError> {
+    validate_rate(sample_rate_hz, true)?;
+    if let Some(index) = input.iter().position(|sample| !sample.is_finite()) {
+        return Err(ResampleError::NonFiniteSample { index });
+    }
+    Ok(())
+}
+
+/// Resample mono `input` from `src_sr` to `dst_sr`.
+///
+/// Empty input is valid and returns an empty buffer. Invalid rates and
+/// NaN/infinite samples are typed errors so callers cannot confuse malformed
+/// capture data with a valid silent/empty utterance.
+pub fn resample_mono(input: &[f32], src_sr: u32, dst_sr: u32) -> Result<Vec<f32>, ResampleError> {
+    validate_mono_pcm(input, src_sr)?;
+    validate_rate(dst_sr, false)?;
+    if input.is_empty() {
+        return Ok(Vec::new());
     }
     if src_sr == dst_sr {
-        return input.to_vec();
+        return Ok(input.to_vec());
     }
-    match sinc_resample_mono(input, src_sr, dst_sr) {
+    Ok(match sinc_resample_mono(input, src_sr, dst_sr) {
         Some(out) => out,
         // ponytail: rubato only errors on degenerate construction/params;
         // fall back to linear rather than fail the STT path.
         None => crate::media::audio::linear_resample(input, src_sr, dst_sr),
-    }
+    })
 }
 
 /// The rubato sinc path. `None` on any construction/process error so the
@@ -74,15 +118,33 @@ mod tests {
 
     #[test]
     fn empty_input_returns_empty() {
-        assert!(resample_mono(&[], 16000, 8000).is_empty());
-        assert!(resample_mono(&[0.1, 0.2], 0, 8000).is_empty());
-        assert!(resample_mono(&[0.1, 0.2], 16000, 0).is_empty());
+        assert!(resample_mono(&[], 16000, 8000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_rates_are_typed_errors() {
+        assert_eq!(
+            resample_mono(&[0.1, 0.2], 0, 8000),
+            Err(ResampleError::InvalidSourceRate(0))
+        );
+        assert_eq!(
+            resample_mono(&[0.1, 0.2], 16000, 0),
+            Err(ResampleError::InvalidTargetRate(0))
+        );
+    }
+
+    #[test]
+    fn non_finite_pcm_is_a_typed_error() {
+        assert_eq!(
+            resample_mono(&[0.1, f32::NAN], 16_000, 8_000),
+            Err(ResampleError::NonFiniteSample { index: 1 })
+        );
     }
 
     #[test]
     fn identity_rate_returns_clone() {
         let input: Vec<f32> = (0..100).map(|i| (i as f32 * 0.01).sin()).collect();
-        let out = resample_mono(&input, 16000, 16000);
+        let out = resample_mono(&input, 16000, 16000).unwrap();
         assert_eq!(out, input);
     }
 
@@ -92,7 +154,7 @@ mod tests {
         let input: Vec<f32> = (0..1000)
             .map(|n| (2.0 * std::f32::consts::PI * 1000.0 * (n as f32 / 8000.0)).sin())
             .collect();
-        let out = resample_mono(&input, 8000, 16000);
+        let out = resample_mono(&input, 8000, 16000).unwrap();
         // Band-limited sinc has a small group-delay warmup, so the count is
         // close to (but slightly under) the ideal 2x — assert the ratio, not
         // an exact frame count.
@@ -109,7 +171,7 @@ mod tests {
         let input: Vec<f32> = (0..1000)
             .map(|n| (2.0 * std::f32::consts::PI * 1000.0 * (n as f32 / 16000.0)).sin())
             .collect();
-        let out = resample_mono(&input, 16000, 8000);
+        let out = resample_mono(&input, 16000, 8000).unwrap();
         let ratio = out.len() as f64 / input.len() as f64;
         assert!(
             (ratio - 0.5).abs() < 0.15,
@@ -124,8 +186,11 @@ mod tests {
         let input: Vec<f32> = (0..2048)
             .map(|n| (2.0 * std::f32::consts::PI * 440.0 * (n as f32 / 8000.0)).sin())
             .collect();
-        let out = resample_mono(&input, 8000, 16000);
+        let out = resample_mono(&input, 8000, 16000).unwrap();
         let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        assert!(peak > 0.5, "resampled tone should retain amplitude, got peak {peak}");
+        assert!(
+            peak > 0.5,
+            "resampled tone should retain amplitude, got peak {peak}"
+        );
     }
 }

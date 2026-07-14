@@ -22,7 +22,10 @@ use clap::Args;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::media::{Asset, AssetKind, MediaExtractor, route_to_first_match};
-use crate::memory::{ctx::{IndexRequest, IndexReport, index_document}, embeddings, store};
+use crate::memory::{
+    ctx::{IndexReport, IndexRequest, index_document},
+    embeddings, store,
+};
 use crate::providers::clip_engine;
 use crate::wal::events::{EVENT_TYPE_EMBED_PERSISTED, EVENT_TYPE_INGEST_EXTRACTED};
 use crate::wal::{make_header, spawn as wal_spawn};
@@ -71,6 +74,7 @@ pub struct IngestArgs {
 
 pub async fn run_ingest(args: IngestArgs) -> Result<()> {
     let path = args.path.clone();
+    let neoth_home = FreedomConfig::default_neoth_home();
     if !path.exists() {
         anyhow::bail!("path does not exist: {}", path.display());
     }
@@ -82,6 +86,11 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
             path.display()
         )
     })?;
+    let stt_config = if matches!(kind, AssetKind::Audio | AssetKind::Video) {
+        Some(FreedomConfig::load_from_default_path()?)
+    } else {
+        None
+    };
 
     let asset = Asset::Path {
         kind,
@@ -89,9 +98,67 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
         path: path.clone(),
     };
     let backends = default_backends();
-    let extraction = route_to_first_match(&backends, &asset)
-        .await
-        .map_err(|e| anyhow::anyhow!("extract: {e}"))?;
+
+    // Audio STT needs the caller's effective policy and a real audit writer.
+    // Use an independent segment so a running daemon can keep exclusive
+    // ownership of its active segment. `--no-audit` deliberately supplies no
+    // sink; proof-hardline cloud STT then refuses before egress.
+    let stt_audit = if matches!(kind, AssetKind::Audio | AssetKind::Video) && !args.no_audit {
+        let wal_dir = FreedomConfig::default_wal_dir();
+        let opened = (|| -> anyhow::Result<_> {
+            std::fs::create_dir_all(&wal_dir)?;
+            Ok(wal_spawn(
+                wal_dir.join(format!("{:020}.wal", crate::time::now_unix_ns())),
+            )?)
+        })();
+        match opened {
+            Ok(pair) => Some(pair),
+            Err(error) => {
+                tracing::warn!(%error, "ingest: STT audit writer unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let extraction_result = if matches!(kind, AssetKind::Audio | AssetKind::Video) {
+        let config = stt_config
+            .as_ref()
+            .expect("audio/video kinds always load their effective STT config");
+        match kind {
+            AssetKind::Audio => {
+                crate::media::audio::AudioExtractor
+                    .extract_with_context(
+                        &asset,
+                        &config.media,
+                        &config.updater,
+                        &neoth_home,
+                        stt_audit.as_ref().map(|(writer, _)| writer.clone()),
+                    )
+                    .await
+            }
+            AssetKind::Video => {
+                crate::media::video::VideoExtractor
+                    .extract_with_context(
+                        &asset,
+                        &config.media,
+                        &config.updater,
+                        &neoth_home,
+                        stt_audit.as_ref().map(|(writer, _)| writer.clone()),
+                    )
+                    .await
+            }
+            _ => unreachable!("guarded by audio/video match"),
+        }
+    } else {
+        route_to_first_match(&backends, &asset).await
+    };
+    if let Some((writer, join)) = stt_audit {
+        drop(writer);
+        join.await
+            .context("ingest: STT audit writer task panicked")?;
+    }
+    let extraction = extraction_result.map_err(|e| anyhow::anyhow!("extract: {e}"))?;
 
     let mut persisted = false;
     let mut embedding_dim: Option<usize> = None;
@@ -551,7 +618,10 @@ mod tests {
     fn default_backends_includes_all_modalities() {
         let bs = default_backends();
         let names: Vec<&'static str> = bs.iter().map(|b| b.name()).collect();
-        assert!(names.contains(&"docling"), "docling must be in backend list");
+        assert!(
+            names.contains(&"docling"),
+            "docling must be in backend list"
+        );
         assert!(names.contains(&"pdf"));
         assert!(names.contains(&"vision"));
         assert!(names.contains(&"audio"));
@@ -592,8 +662,8 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_ctx_indexes_document_chunks() {
-        use tempfile::tempdir;
         use crate::memory::ctx::search;
+        use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
         let doc_path = dir.path().join("test_doc.docx");
@@ -637,8 +707,8 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_no_index_skips_ctx_write() {
-        use tempfile::tempdir;
         use crate::memory::ctx::search;
+        use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
         let doc_path = dir.path().join("skip_doc.docx");

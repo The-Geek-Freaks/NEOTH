@@ -57,7 +57,7 @@ CC Switch is a cross-platform desktop app (Tauri 2 + React/TypeScript frontend, 
 | Prompts editor (CLAUDE.md / AGENTS.md cross-sync) | NEOTH has memory tiers; no prompt file editor | **ADOPT-AS-GUI** | Port `MarkdownEditor.tsx` concept to `SRC/neothd-gui/ui/prompts.slint` |
 | Session manager (browse/restore conversation history) | NEOTH has 3-tier memory + session archive | **SKIP-DUPLICATE** | NEOTH `recall` already searches hot+warm+cold; cc-switch session manager re-solves this differently |
 | Workspace editor (AGENTS.md etc.) | Covered by NEOTH memory hierarchy + NEOTH.md | **SKIP-DUPLICATE** | NEOTH's NEOTH.md layer is the equivalent |
-| WebDAV cloud sync | NEOTH has OpenDAL cloud-connector matrix (R-8) | **SKIP-OUT-OF-SCOPE** | OpenDAL covers this and more; don't add WebDAV-only dependency |
+| WebDAV cloud sync | NEOTH has the live local-folder cloud-archive mirror (R-8) | **SKIP-OUT-OF-SCOPE** | Mount/sync WebDAV through the operator's trusted client and point `cloud_archive_dest` at it; don't add a WebDAV-only dependency |
 | Deep link import (`ccswitch://`) | Not in NEOTH | **SKIP-OUT-OF-SCOPE** | NEOTH is self-contained; deep links require a URI scheme registration per-OS, not worth it for v1 |
 | i18n (zh/en/ja) | Not in NEOTH | **SKIP-OUT-OF-SCOPE** | NEOTH targets solo English-primary operator today; file under backlog |
 | First-run onboarding dialog | NEOTH wizard (`cli/init.rs`) already ships | **SKIP-DUPLICATE** | `SRC/neothd/src/cli/init.rs` covers this |
@@ -105,10 +105,10 @@ CC Switch is a cross-platform desktop app (Tauri 2 + React/TypeScript frontend, 
 |------|--------|
 | **Tauri AppHandle coupling in proxy/failover** | cc-switch's proxy emits tray/window events via `tauri::Emitter`. NEOTH uses Slint + IPC; remove this coupling entirely and replace with WAL events + IPC push. Copying the Tauri coupling would pull in Tauri as a dep. |
 | **Multi-CLI config write-through** (claude/codex/gemini config file editing) | NEOTH manages its own providers in `freedom.yaml`; it does not manage external CLI tools' configs. cc-switch's entire `AppConfig.settingsConfig: Record<string,any>` approach (write arbitrary JSON to other apps' config files) is antithetical to NEOTH's self-contained model. |
-| **WebDAV sync** | NEOTH's cloud-connector matrix (R-8) uses OpenDAL which covers S3/Dropbox/OneDrive/GDrive/WebDAV uniformly. Porting cc-switch's dedicated WebDAV module would be redundant and narrower. |
+| **WebDAV sync** | NEOTH's R-8 local-folder mirror works with a WebDAV mount or vendor sync client uniformly. Porting cc-switch's dedicated WebDAV module would be redundant and add another credential/network surface. |
 | **UsageScript (JS eval for quota scraping)** | Running arbitrary JavaScript in-process to scrape provider quota pages is a security surface NEOTH doesn't need. NEOTH's quota module already handles structured API responses. |
 | **i18n + locale files** | zh/ja translations add ongoing maintenance burden with zero operator benefit today. Defer until NEOTH targets public non-English users. |
-| **Deep link URI scheme** | Requires per-OS registration (Windows registry, macOS `Info.plist`, `.desktop` entry). Not self-contained. Adds attack surface. Operator imports providers via `neoth provider add` CLI. |
+| **Deep link URI scheme** | Requires per-OS registration (Windows registry, macOS `Info.plist`, `.desktop` entry). Not self-contained. Adds attack surface. Operators configure providers through `neoth init` or `neoth hemispheres set`. |
 | **Signature bypass / plugin integration hacks** | `enableClaudePluginIntegration`, `skipClaudeOnboarding` settings patch Claude Desktop's signed bundle. Not relevant to NEOTH's architecture. |
 | **Chinese-only comments in Rust code** | cc-switch's backend is heavily commented in Simplified Chinese. Port logic only; rewrite comments in English per NEOTH coding standards. |
 | **React/TypeScript frontend** | NEOTH GUI is Slint. Do not introduce a second frontend stack. All GUI concepts must be ported to `.slint` files, not transplanted as React components. |

@@ -43,7 +43,7 @@ use crate::providers::{Provider, Request};
 /// binding; held by `HemisphereWorkerSet`.
 pub struct ProviderWorker {
     name: &'static str,
-    provider: Arc<dyn Provider>,
+    provider: Arc<crate::providers::cost_authorization::AuthorizedProvider>,
     /// Operator-configured model name for the bound provider (e.g.
     /// `"deepseek-coder"`, `"qwen3"`). Drives the GOLD-WIRE-01 two-stage
     /// tool-router decision: small-context models (`≤ 16 384`) get a
@@ -55,19 +55,6 @@ pub struct ProviderWorker {
     /// task-<task-id>.patch`. The dispatcher provides the parent dir;
     /// this struct only knows the operator's home root.
     patch_root: PathBuf,
-    /// GR-069 — operator autonomy level. Every provider round-trip this worker
-    /// makes (the Stage-1 tool-router selector AND the task call) is a paid/
-    /// external action and clears the same `PaidProviderCall` gate as the chat
-    /// path — so a Strict operator who blocked paid calls also blocks the
-    /// autonomous coding worker. Defaults to `Full` (permissive) so a worker
-    /// built without `with_autonomy` is never silently gated.
-    autonomy: crate::permissions::AutonomyLevel,
-    /// GR-069b — optional WAL writer so the `PaidProviderCall` gate decision is
-    /// AUDITED (0xA0 PERMISSION_GRANTED / 0xA1 PERMISSION_DENIED), not just
-    /// enforced. `None` (the default + the daemon-live CLI case) enforces the
-    /// gate without a frame — a second writer on the daemon's WAL segment would
-    /// corrupt it, so the CLI only binds one when no daemon owns the WAL.
-    wal_writer: Option<std::sync::Arc<crate::wal::writer::WalWriterHandle>>,
 }
 
 impl ProviderWorker {
@@ -81,7 +68,7 @@ impl ProviderWorker {
     /// and awaits the provider on the ambient runtime.
     pub fn new(
         name: &'static str,
-        provider: Arc<dyn Provider>,
+        provider: Arc<crate::providers::cost_authorization::AuthorizedProvider>,
         model_name: impl Into<String>,
         patch_root: impl Into<PathBuf>,
     ) -> Self {
@@ -90,45 +77,7 @@ impl ProviderWorker {
             provider,
             model_name: model_name.into(),
             patch_root: patch_root.into(),
-            autonomy: crate::permissions::AutonomyLevel::Full,
-            wal_writer: None,
         }
-    }
-
-    /// GR-069 — bind the operator autonomy level so the worker's provider
-    /// round-trips are gated by `PaidProviderCall` (Strict ⇒ blocked).
-    pub fn with_autonomy(mut self, autonomy: crate::permissions::AutonomyLevel) -> Self {
-        self.autonomy = autonomy;
-        self
-    }
-
-    /// GR-069b — bind a WAL writer so each gate decision emits its audit frame
-    /// (0xA0/0xA1). Caller is responsible for WAL ownership (never pass a writer
-    /// while the daemon owns the same segment).
-    pub fn with_wal_writer(
-        mut self,
-        writer: std::sync::Arc<crate::wal::writer::WalWriterHandle>,
-    ) -> Self {
-        self.wal_writer = Some(writer);
-        self
-    }
-
-    /// GR-069 — true when a paid/external provider round-trip is permitted at
-    /// the current autonomy level. eur_estimate 0.0 (the worker's provider may
-    /// be local or cloud; the gate's job is the autonomy decision, not pricing —
-    /// Strict Denies the action class, others auto-confirm). `None` writer: the
-    /// worker has no WAL handle in scope, so this enforces the gate without an
-    /// audit frame (the dispatcher's PROVIDER_REQUEST trail is the audit layer).
-    async fn paid_call_allowed(&self) -> bool {
-        use crate::permissions::{Action, Gate};
-        let action = Action::PaidProviderCall { eur_estimate: 0.0 };
-        // GR-069b — emit the gate-decision audit frame when a WAL writer is bound
-        // (best-effort; the gate's append failure never blocks the decision).
-        Gate::for_level(self.autonomy)
-            .with_confirm(Gate::auto_confirm())
-            .check(&action, self.wal_writer.as_deref())
-            .await
-            .is_ok()
     }
 
     /// Stage 1 of the two-stage tool router (GOLD-WIRE-01): ask the model
@@ -137,12 +86,6 @@ impl ProviderWorker {
     /// full set. A failed call OR an unparseable reply yields `None` —
     /// the caller then proceeds with the plain (Direct) task prompt.
     async fn select_tool_category(&self) -> Option<ToolCategory> {
-        // GR-069 — the selector is a paid/external round-trip; if the autonomy
-        // gate blocks it, skip Stage-1 and fall back to the Direct task prompt.
-        if !self.paid_call_allowed().await {
-            tracing::debug!(worker = self.name, "tool-router Stage-1 blocked by autonomy gate");
-            return None;
-        }
         let selector = Request {
             prompt: tool_router::build_selector_prompt(),
             ..Default::default()
@@ -196,16 +139,6 @@ impl Worker for ProviderWorker {
             prompt,
             ..Default::default()
         };
-        // GR-069 — the task round-trip is a paid/external action; under Strict
-        // the autonomy gate Denies it so an operator who blocked paid calls also
-        // blocks the autonomous coding worker (it auto-confirms at Standard+).
-        if !self.paid_call_allowed().await {
-            anyhow::bail!(
-                "worker {}: provider call blocked by the autonomy gate — raise autonomy \
-                 (`neoth autonomy set standard`) to let the coding worker call providers",
-                self.name
-            );
-        }
         let completion = self
             .provider
             .complete(req)
@@ -652,6 +585,7 @@ mod tests {
                 .unwrap_or_default();
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model: "test".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(0),
@@ -662,8 +596,41 @@ mod tests {
         }
     }
 
-    fn worker_with(model: &str, provider: Arc<CountingProvider>) -> ProviderWorker {
+    fn worker_with_level(
+        model: &str,
+        provider: Arc<CountingProvider>,
+        autonomy: crate::permissions::AutonomyLevel,
+        writer: Option<crate::wal::writer::WalWriterHandle>,
+    ) -> ProviderWorker {
+        let authorizer = match writer {
+            Some(writer) => {
+                crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                    autonomy,
+                    Some(writer),
+                )
+            }
+            None => {
+                crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(autonomy)
+            }
+        };
+        let provider = Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                provider,
+                authorizer,
+                Some("test".to_string()),
+                "coding.worker.test",
+            ),
+        );
         ProviderWorker::new("test/counting", provider, model, std::env::temp_dir())
+    }
+
+    fn worker_with(model: &str, provider: Arc<CountingProvider>) -> ProviderWorker {
+        worker_with_level(
+            model,
+            provider,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+        )
     }
 
     #[tokio::test]
@@ -708,21 +675,37 @@ mod tests {
         // GR-069 — under Strict the PaidProviderCall gate Denies, so the worker
         // makes NO provider round-trip and the task fails loudly.
         let provider = Arc::new(CountingProvider::new(&["```diff\n+x\n```\nSUMMARY: done"]));
-        let worker = worker_with("", provider.clone())
-            .with_autonomy(crate::permissions::AutonomyLevel::Strict);
+        let worker = worker_with_level(
+            "",
+            provider.clone(),
+            crate::permissions::AutonomyLevel::Strict,
+            None,
+        );
         let err = worker.execute(&sample_task()).await.unwrap_err();
         assert!(
             format!("{err:#}").contains("autonomy gate"),
             "expected an autonomy-gate block, got: {err:#}"
         );
-        assert_eq!(provider.count(), 0, "no paid provider call may fire under Strict");
+        assert_eq!(
+            provider.count(),
+            0,
+            "no paid provider call may fire under Strict"
+        );
 
         // Standard auto-confirms the action class → the call goes through.
         let provider2 = Arc::new(CountingProvider::new(&["```diff\n+x\n```\nSUMMARY: done"]));
-        let worker2 = worker_with("", provider2.clone())
-            .with_autonomy(crate::permissions::AutonomyLevel::Standard);
+        let worker2 = worker_with_level(
+            "",
+            provider2.clone(),
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+        );
         worker2.execute(&sample_task()).await.unwrap();
-        assert_eq!(provider2.count(), 1, "Standard allows the worker provider call");
+        assert_eq!(
+            provider2.count(),
+            1,
+            "Standard allows the worker provider call"
+        );
     }
 
     #[tokio::test]
@@ -734,9 +717,12 @@ mod tests {
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
         let writer = std::sync::Arc::new(writer);
         let provider = Arc::new(CountingProvider::new(&["unused"]));
-        let worker = worker_with("", provider.clone())
-            .with_autonomy(crate::permissions::AutonomyLevel::Strict)
-            .with_wal_writer(std::sync::Arc::clone(&writer));
+        let worker = worker_with_level(
+            "",
+            provider.clone(),
+            crate::permissions::AutonomyLevel::Strict,
+            Some(writer.as_ref().clone()),
+        );
         let _ = worker.execute(&sample_task()).await; // Strict → Err, but audited
         assert_eq!(provider.count(), 0, "Strict makes no provider call");
         drop(worker);
@@ -758,7 +744,10 @@ mod tests {
             }
             cursor += dec.header.total_len as usize;
         }
-        assert!(found, "GR-069b: gate decision must emit a PERMISSION_DENIED frame");
+        assert!(
+            found,
+            "GR-069b: gate decision must emit a PERMISSION_DENIED frame"
+        );
     }
 
     #[test]

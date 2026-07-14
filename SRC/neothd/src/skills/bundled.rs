@@ -875,8 +875,8 @@ mod tests {
             .iter()
             .find(|(id, _)| *id == "ppt_master")
             .expect("GOLD-ADAPT-DOC-01: ppt_master must be in BUNDLED_SKILLS");
-        let manifest: SkillManifest = serde_yaml::from_str(body)
-            .expect("ppt_master skill.yaml must parse cleanly");
+        let manifest: SkillManifest =
+            serde_yaml::from_str(body).expect("ppt_master skill.yaml must parse cleanly");
         assert_eq!(manifest.id, "ppt_master");
         assert!(
             manifest.enabled,
@@ -907,9 +907,8 @@ mod tests {
             "make a presentation about the new feature",
             "create pptx file for the board",
         ] {
-            let m = route(prompt, &skills).unwrap_or_else(|| {
-                panic!("ppt_master: prompt `{prompt}` routed to nothing")
-            });
+            let m = route(prompt, &skills)
+                .unwrap_or_else(|| panic!("ppt_master: prompt `{prompt}` routed to nothing"));
             assert_eq!(
                 m.skill.id(),
                 "ppt_master",
@@ -1237,17 +1236,20 @@ mod tests {
 
         // (skill-id, trigger phrase that must route exclusively to it)
         let pack: &[(&str, &str)] = &[
-            ("officecli_docx_convert",    "convert docx to pdf"),
-            ("officecli_docx_create",     "create a word document"),
-            ("officecli_docx_edit",       "edit this word document"),
-            ("officecli_docx_format",     "format word document styles"),
+            ("officecli_docx_convert", "convert docx to pdf"),
+            ("officecli_docx_create", "create a word document"),
+            ("officecli_docx_edit", "edit this word document"),
+            ("officecli_docx_format", "format word document styles"),
             ("officecli_office_pipeline", "office document pipeline"),
-            ("officecli_pdf_convert",     "convert office file to pdf"),
-            ("officecli_pptx_create",     "create pptx file with officecli"),
-            ("officecli_pptx_edit",       "edit existing pptx file"),
-            ("officecli_xlsx_create",     "create xlsx spreadsheet"),
-            ("officecli_xlsx_edit",       "edit excel spreadsheet with officecli"),
-            ("officecli_xlsx_formula",    "add formula to excel spreadsheet"),
+            ("officecli_pdf_convert", "convert office file to pdf"),
+            ("officecli_pptx_create", "create pptx file with officecli"),
+            ("officecli_pptx_edit", "edit existing pptx file"),
+            ("officecli_xlsx_create", "create xlsx spreadsheet"),
+            (
+                "officecli_xlsx_edit",
+                "edit excel spreadsheet with officecli",
+            ),
+            ("officecli_xlsx_formula", "add formula to excel spreadsheet"),
         ];
 
         // 1+2: all present, parse cleanly, ship disabled.
@@ -1278,10 +1280,7 @@ mod tests {
         let enabled_skills: Vec<Skill> = pack
             .iter()
             .map(|(id, _)| {
-                let (_, body) = BUNDLED_SKILLS
-                    .iter()
-                    .find(|(bid, _)| bid == id)
-                    .unwrap();
+                let (_, body) = BUNDLED_SKILLS.iter().find(|(bid, _)| bid == id).unwrap();
                 let mut manifest: SkillManifest = serde_yaml::from_str(body).unwrap();
                 manifest.enabled = true; // simulate freedom.yaml::skills.enabled
                 Skill {
@@ -1311,10 +1310,7 @@ mod tests {
         let gated_skills: Vec<Skill> = pack
             .iter()
             .map(|(id, _)| {
-                let (_, body) = BUNDLED_SKILLS
-                    .iter()
-                    .find(|(bid, _)| bid == id)
-                    .unwrap();
+                let (_, body) = BUNDLED_SKILLS.iter().find(|(bid, _)| bid == id).unwrap();
                 let manifest: SkillManifest = serde_yaml::from_str(body).unwrap();
                 // enabled is already false as shipped — no mutation needed.
                 assert!(!manifest.enabled);
@@ -1357,8 +1353,8 @@ mod tests {
             .iter()
             .find(|(id, _)| *id == "graphify")
             .expect("GOLD-ADAPT-GRAPH-04: graphify must be in BUNDLED_SKILLS");
-        let manifest: SkillManifest = serde_yaml::from_str(body)
-            .expect("graphify skill.yaml must parse cleanly");
+        let manifest: SkillManifest =
+            serde_yaml::from_str(body).expect("graphify skill.yaml must parse cleanly");
         assert_eq!(manifest.id, "graphify");
         assert!(manifest.enabled, "graphify must ship enabled");
         assert!(
@@ -1386,9 +1382,8 @@ mod tests {
             "what depends on recall",
             "knowledge graph",
         ] {
-            let m = route(prompt, &skills).unwrap_or_else(|| {
-                panic!("graphify: prompt `{prompt}` routed to nothing")
-            });
+            let m = route(prompt, &skills)
+                .unwrap_or_else(|| panic!("graphify: prompt `{prompt}` routed to nothing"));
             assert_eq!(
                 m.skill.id(),
                 "graphify",
@@ -1424,13 +1419,10 @@ mod tests {
             .iter()
             .find(|(id, _)| *id == "drawio_diagram")
             .expect("GOLD-ADAPT-DRAW-03: drawio_diagram must be in BUNDLED_SKILLS");
-        let manifest: SkillManifest = serde_yaml::from_str(body)
-            .expect("drawio_diagram skill.yaml must parse cleanly");
+        let manifest: SkillManifest =
+            serde_yaml::from_str(body).expect("drawio_diagram skill.yaml must parse cleanly");
         assert_eq!(manifest.id, "drawio_diagram");
-        assert!(
-            manifest.enabled,
-            "drawio_diagram must ship enabled"
-        );
+        assert!(manifest.enabled, "drawio_diagram must ship enabled");
         assert!(
             !manifest.trigger_keywords.is_empty(),
             "drawio_diagram must have trigger_keywords"
@@ -1459,7 +1451,12 @@ mod tests {
         }
 
         let scripts_dir = skill_dir.join("scripts");
-        for script in ["shapesearch.py", "aiicons.py", "encode_drawio_url.py", "validate.py"] {
+        for script in [
+            "shapesearch.py",
+            "aiicons.py",
+            "encode_drawio_url.py",
+            "validate.py",
+        ] {
             let p = scripts_dir.join(script);
             assert!(
                 Path::new(&p).exists(),
@@ -1468,7 +1465,11 @@ mod tests {
         }
 
         let data_dir = skill_dir.join("data");
-        for data_file in ["shape-index.json.gz", "lobe-icons.json", "SHAPE-INDEX-NOTICE.md"] {
+        for data_file in [
+            "shape-index.json.gz",
+            "lobe-icons.json",
+            "SHAPE-INDEX-NOTICE.md",
+        ] {
             let p = data_dir.join(data_file);
             assert!(
                 Path::new(&p).exists(),
@@ -1511,9 +1512,8 @@ mod tests {
             "create a drawio file",
             "generate drawio",
         ] {
-            let m = route(prompt, &skills).unwrap_or_else(|| {
-                panic!("drawio_diagram: prompt `{prompt}` routed to nothing")
-            });
+            let m = route(prompt, &skills)
+                .unwrap_or_else(|| panic!("drawio_diagram: prompt `{prompt}` routed to nothing"));
             assert_eq!(
                 m.skill.id(),
                 "drawio_diagram",
@@ -1617,8 +1617,8 @@ mod tests {
             .find(|(bid, _)| *bid == id)
             .unwrap_or_else(|| panic!("JV-MISC-01: `{id}` must be in BUNDLED_SKILLS"));
 
-        let manifest: SkillManifest = serde_yaml::from_str(body)
-            .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+        let manifest: SkillManifest =
+            serde_yaml::from_str(body).unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
         assert_eq!(manifest.id, id, "`{id}` manifest id mismatch");
         assert!(manifest.enabled, "`{id}` must ship enabled");
         assert!(
@@ -1673,8 +1673,8 @@ mod tests {
             .find(|(bid, _)| *bid == id)
             .unwrap_or_else(|| panic!("JV-MISC-11: `{id}` must be in BUNDLED_SKILLS"));
 
-        let manifest: SkillManifest = serde_yaml::from_str(body)
-            .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+        let manifest: SkillManifest =
+            serde_yaml::from_str(body).unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
         assert_eq!(manifest.id, id, "`{id}` manifest id mismatch");
         assert!(manifest.enabled, "`{id}` must ship enabled");
         assert!(
@@ -1728,8 +1728,8 @@ mod tests {
             .find(|(bid, _)| *bid == id)
             .unwrap_or_else(|| panic!("JV-MISC-05: `{id}` must be in BUNDLED_SKILLS"));
 
-        let manifest: SkillManifest = serde_yaml::from_str(body)
-            .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+        let manifest: SkillManifest =
+            serde_yaml::from_str(body).unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
         assert_eq!(manifest.id, id, "`{id}` manifest id mismatch");
         assert!(manifest.enabled, "`{id}` must ship enabled");
         assert!(

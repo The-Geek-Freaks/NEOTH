@@ -374,7 +374,8 @@ impl PendingAudit {
                 }),
             ),
         };
-        let payload = serde_json::to_vec(&payload_json).unwrap_or_default();
+        let payload = serde_json::to_vec(&payload_json)
+            .expect("web selector audit payload contains only infallible JSON values");
         let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
         if let Err(e) = w.append(header, payload).await {
             tracing::warn!(error = %e, event_type, "web-extract audit append failed");

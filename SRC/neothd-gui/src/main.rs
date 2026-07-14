@@ -44,8 +44,8 @@ slint::include_modules!();
 fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str, body: &str) {
     use slint::Model as _; // ModelRc::iter
     let title = title.to_string();
-    let body  = body.to_string();
-    let weak  = window.clone();
+    let body = body.to_string();
+    let weak = window.clone();
 
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
@@ -53,18 +53,28 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
         let mut current: Vec<(i32, String, String, String)> = w
             .get_toasts()
             .iter()
-            .map(|t| (t.id, t.kind.to_string(), t.title.to_string(), t.body.to_string()))
+            .map(|t| {
+                (
+                    t.id,
+                    t.kind.to_string(),
+                    t.title.to_string(),
+                    t.body.to_string(),
+                )
+            })
             .collect();
         let id = panel_logic::next_toast_id(&current);
         current.push((id, kind.to_string(), title.clone(), body.clone()));
 
         let model: slint::VecModel<ToastData> = slint::VecModel::from(
-            current.iter().map(|(i, k, ti, b)| ToastData {
-                id: *i,
-                kind: k.as_str().into(),
-                title: ti.as_str().into(),
-                body: b.as_str().into(),
-            }).collect::<Vec<_>>()
+            current
+                .iter()
+                .map(|(i, k, ti, b)| ToastData {
+                    id: *i,
+                    kind: k.as_str().into(),
+                    title: ti.as_str().into(),
+                    body: b.as_str().into(),
+                })
+                .collect::<Vec<_>>(),
         );
         w.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model)));
 
@@ -79,16 +89,26 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
                 let remaining: Vec<(i32, String, String, String)> = w2
                     .get_toasts()
                     .iter()
-                    .map(|t| (t.id, t.kind.to_string(), t.title.to_string(), t.body.to_string()))
+                    .map(|t| {
+                        (
+                            t.id,
+                            t.kind.to_string(),
+                            t.title.to_string(),
+                            t.body.to_string(),
+                        )
+                    })
                     .collect();
                 let pruned = panel_logic::prune_toast(remaining, id);
                 let model2: slint::VecModel<ToastData> = slint::VecModel::from(
-                    pruned.iter().map(|(i, k, ti, b)| ToastData {
-                        id: *i,
-                        kind: k.as_str().into(),
-                        title: ti.as_str().into(),
-                        body: b.as_str().into(),
-                    }).collect::<Vec<_>>()
+                    pruned
+                        .iter()
+                        .map(|(i, k, ti, b)| ToastData {
+                            id: *i,
+                            kind: k.as_str().into(),
+                            title: ti.as_str().into(),
+                            body: b.as_str().into(),
+                        })
+                        .collect::<Vec<_>>(),
                 );
                 w2.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model2)));
             },
@@ -110,23 +130,27 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
 
 /// Append one activity row to the sidecar.
 /// `significant`: non-metric row triggers auto-open when the panel is closed.
-fn push_activity(
-    window: &slint::Weak<MainWindow>,
-    kind: &'static str,
-    title: &str,
-    detail: &str,
-) {
+fn push_activity(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str, detail: &str) {
     use slint::Model as _;
-    let title  = title.to_string();
+    let title = title.to_string();
     let detail = detail.to_string();
     let window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = window.upgrade() else { return };
         // Collect current rows (newest-first) as plain tuples.
-        let current: Vec<panel_logic::ActivityTuple> = w.get_activity_rows()
+        let current: Vec<panel_logic::ActivityTuple> = w
+            .get_activity_rows()
             .iter()
-            .map(|r| (r.id, r.ts.to_string(), r.kind.to_string(),
-                      r.title.to_string(), r.detail.to_string(), r.active))
+            .map(|r| {
+                (
+                    r.id,
+                    r.ts.to_string(),
+                    r.kind.to_string(),
+                    r.title.to_string(),
+                    r.detail.to_string(),
+                    r.active,
+                )
+            })
             .collect();
         let id = panel_logic::next_activity_id(&current);
         let ts = format_now_hms();
@@ -134,14 +158,17 @@ fn push_activity(
         // Insert at front (newest-first).
         rows.insert(0, (id, ts, kind.to_string(), title, detail, true));
         let rows = panel_logic::cap_activity(rows, 60);
-        let slint_rows: Vec<ActivityRow> = rows.iter().map(|(id, ts, k, ti, de, ac)| ActivityRow {
-            id: *id,
-            ts: ts.as_str().into(),
-            kind: k.as_str().into(),
-            title: ti.as_str().into(),
-            detail: de.as_str().into(),
-            active: *ac,
-        }).collect();
+        let slint_rows: Vec<ActivityRow> = rows
+            .iter()
+            .map(|(id, ts, k, ti, de, ac)| ActivityRow {
+                id: *id,
+                ts: ts.as_str().into(),
+                kind: k.as_str().into(),
+                title: ti.as_str().into(),
+                detail: de.as_str().into(),
+                active: *ac,
+            })
+            .collect();
         w.set_activity_rows(slint::ModelRc::new(slint::VecModel::from(slint_rows)));
         // Auto-open on first significant row of a burst (kind != "metric").
         if !w.get_activity_open() && kind != "metric" {
@@ -156,20 +183,32 @@ fn settle_activity_kind(window: &slint::Weak<MainWindow>, kind: &'static str) {
     let window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = window.upgrade() else { return };
-        let current: Vec<panel_logic::ActivityTuple> = w.get_activity_rows()
+        let current: Vec<panel_logic::ActivityTuple> = w
+            .get_activity_rows()
             .iter()
-            .map(|r| (r.id, r.ts.to_string(), r.kind.to_string(),
-                      r.title.to_string(), r.detail.to_string(), r.active))
+            .map(|r| {
+                (
+                    r.id,
+                    r.ts.to_string(),
+                    r.kind.to_string(),
+                    r.title.to_string(),
+                    r.detail.to_string(),
+                    r.active,
+                )
+            })
             .collect();
         let settled = panel_logic::settle_activity(current, kind);
-        let slint_rows: Vec<ActivityRow> = settled.iter().map(|(id, ts, k, ti, de, ac)| ActivityRow {
-            id: *id,
-            ts: ts.as_str().into(),
-            kind: k.as_str().into(),
-            title: ti.as_str().into(),
-            detail: de.as_str().into(),
-            active: *ac,
-        }).collect();
+        let slint_rows: Vec<ActivityRow> = settled
+            .iter()
+            .map(|(id, ts, k, ti, de, ac)| ActivityRow {
+                id: *id,
+                ts: ts.as_str().into(),
+                kind: k.as_str().into(),
+                title: ti.as_str().into(),
+                detail: de.as_str().into(),
+                active: *ac,
+            })
+            .collect();
         w.set_activity_rows(slint::ModelRc::new(slint::VecModel::from(slint_rows)));
     });
 }
@@ -236,7 +275,7 @@ struct TaskDetailEnvelope {
 /// Step 5 (2026-05-20): `Clone` lets the click-handler clone the
 /// last-applied snapshot out of the shared Mutex so the detail-pane
 /// lookup runs lock-free.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq)]
 struct KanbanBoardSnapshot {
     backlog: Vec<KanbanTaskRow>,
     todo: Vec<KanbanTaskRow>,
@@ -253,6 +292,18 @@ struct KanbanBoardSnapshot {
 }
 
 impl KanbanBoardSnapshot {
+    /// Replace the cached board and report whether its visible state changed.
+    /// The live timer uses this to avoid flooding the activity sidecar with
+    /// identical "Board updated" rows every two seconds.
+    fn replace_if_changed(&mut self, next: Self) -> bool {
+        if *self == next {
+            false
+        } else {
+            *self = next;
+            true
+        }
+    }
+
     /// Step 5 (2026-05-20): find a task by its `task-id` string
     /// ("#42") across the 5 status buckets. Returns the task row +
     /// the wire-form status name so the detail-pane can render both.
@@ -272,6 +323,21 @@ impl KanbanBoardSnapshot {
         }
         None
     }
+}
+
+#[cfg(test)]
+#[test]
+fn unchanged_board_snapshot_does_not_emit_activity_change() {
+    let mut cached = KanbanBoardSnapshot {
+        summary: "1 active session".into(),
+        ..Default::default()
+    };
+    assert!(!cached.replace_if_changed(cached.clone()));
+
+    let mut changed = cached.clone();
+    changed.summary = "2 active sessions".into();
+    assert!(cached.replace_if_changed(changed));
+    assert_eq!(cached.summary, "2 active sessions");
 }
 
 fn main() -> Result<()> {
@@ -347,30 +413,102 @@ fn main() -> Result<()> {
             // font-sans-override: non-empty string overrides the built-in font-sans token.
             if let Some(ref family) = tc.theme.font_family {
                 if !family.is_empty() {
-                    window.global::<Theme>().set_font_sans_override(family.as_str().into());
+                    window
+                        .global::<Theme>()
+                        .set_font_sans_override(family.as_str().into());
                 }
             }
-            // font-size-pt-override: non-zero value overrides; 0 = no override.
+            // Convert points to logical pixels at the CSS/Slint 96dpi ratio.
             if let Some(pt) = tc.theme.font_size_pt {
                 if pt > 0 {
-                    window.global::<Theme>().set_font_size_pt_override(pt as i32);
+                    window
+                        .global::<Theme>()
+                        .set_font_size_override(pt as f32 * (96.0 / 72.0));
                 }
             }
             // sidebar-w-override: non-zero px overrides the 248px built-in.
             if let Some(px) = tc.theme.sidebar_width_px {
                 if px > 0 {
-                    window
-                        .global::<Theme>()
-                        .set_sidebar_w_override(px as f32);
+                    window.global::<Theme>().set_sidebar_w_override(px as f32);
                 }
             }
-            // input-height-lines-override: non-zero value overrides.
+            // Convert requested text lines to the composer's logical-pixel floor.
             if let Some(lines) = tc.theme.input_height_lines {
                 if lines > 0 {
                     window
                         .global::<Theme>()
-                        .set_input_height_lines_override(lines as i32);
+                        .set_input_height_override(lines as f32 * 22.0 + 16.0);
                 }
+            }
+            if let Some(raw) = tc.theme.accent_color.as_deref() {
+                if let Some(color) = parse_theme_color(raw) {
+                    window.global::<Theme>().set_accent_color_override(color);
+                    window.global::<Theme>().set_accent_override_enabled(true);
+                } else {
+                    tracing::warn!(value = raw, "invalid accent_color; ignoring");
+                }
+            }
+            if let Some(raw) = tc.theme.background_color.as_deref() {
+                if let Some(color) = parse_theme_color(raw) {
+                    window
+                        .global::<Theme>()
+                        .set_background_color_override(color);
+                    window
+                        .global::<Theme>()
+                        .set_background_override_enabled(true);
+                } else {
+                    tracing::warn!(value = raw, "invalid background_color; ignoring");
+                }
+            }
+            if let Some(raw) = tc.theme.foreground_color.as_deref() {
+                if let Some(color) = parse_theme_color(raw) {
+                    window
+                        .global::<Theme>()
+                        .set_foreground_color_override(color);
+                    window
+                        .global::<Theme>()
+                        .set_foreground_override_enabled(true);
+                } else {
+                    tracing::warn!(value = raw, "invalid foreground_color; ignoring");
+                }
+            }
+            if let Some(radius) = tc.theme.border_radius_px {
+                if radius > 0 {
+                    window
+                        .global::<Theme>()
+                        .set_border_radius_override(radius as f32);
+                }
+            }
+            if let Some(opacity) = tc.theme.panel_opacity {
+                if opacity.is_finite() && (0.0..=1.0).contains(&opacity) {
+                    window.global::<Theme>().set_panel_opacity(opacity);
+                }
+            }
+            if let Some(show) = tc.theme.show_token_count {
+                window.global::<Theme>().set_show_token_count(show);
+            }
+            if let Some(show) = tc.theme.show_model_badge {
+                window.global::<Theme>().set_show_model_badge(show);
+            }
+            if let Some(style) = tc.theme.chat_bubble_style.as_deref() {
+                if let Some(mode) = chat_bubble_style_mode(style) {
+                    window.global::<Theme>().set_chat_bubble_style(mode);
+                } else {
+                    tracing::warn!(value = style, "invalid chat_bubble_style; ignoring");
+                }
+            }
+            if let Some(speed) = tc.theme.animation_speed.as_deref() {
+                if let Some(mode) = animation_speed_mode(speed) {
+                    window.global::<Theme>().set_animation_mode(mode);
+                } else {
+                    tracing::warn!(value = speed, "invalid animation_speed; ignoring");
+                }
+            }
+            if let Some(hidden) = tc.theme.header_hidden {
+                window.global::<Theme>().set_header_hidden(hidden);
+            }
+            if let Some(collapsed) = tc.theme.sidebar_collapsed {
+                window.global::<Theme>().set_sidebar_collapsed(collapsed);
             }
             // compact_mode → density_mode, only when .gui-density dotfile is absent
             // (dotfile wins: already applied by the density block above).
@@ -418,7 +556,7 @@ fn main() -> Result<()> {
 
     // GOLD-ADAPT-OH-01 — prior-AI detection for the welcome migrate
     // card. Worker thread (subprocess must never block the window);
-    // the card only appears when detect finds canonical stores, so a
+    // the card only appears when detect finds complete assistant homes, so a
     // missing neoth-migrate binary or empty result is silent.
     let weak_migrate = window.as_weak();
     std::thread::spawn(move || {
@@ -566,6 +704,22 @@ fn main() -> Result<()> {
                 window.set_provider_choice(cfg.provider_kind.into());
                 window.set_autonomy_choice(cfg.autonomy.into());
                 window.set_enable_telegram(cfg.channels.iter().any(|c| c == "telegram"));
+                if let Some(omi) = cfg.omi {
+                    window.set_wz_omi_enabled(omi.enabled);
+                    window.set_wz_omi_mode(omi.mode.into());
+                    window.set_wz_omi_endpoint(omi.endpoint.into());
+                    window.set_wz_omi_listen_addr(omi.listen_addr.into());
+                    window.set_wz_omi_retention_days(omi.retention_days.to_string().into());
+                    window.set_wz_omi_retain_transcripts(omi.retain_transcripts);
+                    window.set_wz_omi_audio_enabled(omi.audio_enabled);
+                    window.set_wz_omi_image_enabled(omi.visual_enabled);
+                    window.set_wz_omi_video_enabled(omi.video_enabled);
+                    window.set_wz_omi_allow_cloud_api(omi.allow_cloud_api);
+                    window.set_wz_omi_allow_cloud_summary(omi.allow_cloud_summary);
+                    window.set_wz_omi_create_actions(omi.create_actions);
+                    window.set_wz_omi_seed_groundtruth(omi.seed_groundtruth);
+                    window.set_wz_omi_summary_enabled(omi.summary_enabled);
+                }
                 // Config loaded successfully — Finish is safe to overwrite.
                 reentry_config_ok.store(true, std::sync::atomic::Ordering::Release);
             }
@@ -585,6 +739,7 @@ fn main() -> Result<()> {
         // click the Cluster tab. Lossless reader — doesn't touch
         // unrelated fields.
         let cluster_state = load_cluster_settings(&neoth_dir.join("freedom.yaml"));
+        window.set_cluster_discovery_disabled(!cluster_state.mdns_enabled);
         window.set_cluster_mdns_enabled(cluster_state.mdns_enabled);
         window.set_cluster_listen_port(cluster_state.listen_port as i32);
         window.set_cluster_trusted_ssids_summary(cluster_state.trusted_ssids_summary.into());
@@ -604,68 +759,145 @@ fn main() -> Result<()> {
                 .unwrap_or_default();
             window.set_cfg_council_daily_usd(cap_str.into());
             let mc = read_nested_i64_in_freedom(fp, "council.max_calls_per_user_message", 0);
-            window.set_cfg_council_max_calls(if mc == 0 { "".into() } else { mc.to_string().into() });
+            window.set_cfg_council_max_calls(if mc == 0 {
+                "".into()
+            } else {
+                mc.to_string().into()
+            });
             let md = read_nested_i64_in_freedom(fp, "council.max_recursion_depth", 0);
-            window.set_cfg_council_max_depth(if md == 0 { "".into() } else { md.to_string().into() });
+            window.set_cfg_council_max_depth(if md == 0 {
+                "".into()
+            } else {
+                md.to_string().into()
+            });
             let sm = read_nested_str_in_freedom(fp, "council.selection_mode", "legacy_majority");
             // FIX 5 — 3 variants: 0=legacy_majority 1=consensus_or_best 2=best_always
             window.set_cfg_council_selection_mode_idx(match sm.as_str() {
                 "consensus_or_best" => 1,
-                "best_always"       => 2,
-                _                   => 0,
+                "best_always" => 2,
+                _ => 0,
             });
             // Welle A — provider
-            window.set_cfg_provider_model(read_nested_str_in_freedom(fp, "provider_model", "").into());
-            window.set_cfg_provider_endpoint(read_nested_str_in_freedom(fp, "provider_endpoint", "").into());
-            window.set_cfg_provider_region(read_nested_str_in_freedom(fp, "provider_region", "").into());
-            window.set_cfg_provider_api_version(read_nested_str_in_freedom(fp, "provider_api_version", "").into());
+            window.set_cfg_provider_model(
+                read_nested_str_in_freedom(fp, "provider_model", "").into(),
+            );
+            window.set_cfg_provider_endpoint(
+                read_nested_str_in_freedom(fp, "provider_endpoint", "").into(),
+            );
+            window.set_cfg_provider_region(
+                read_nested_str_in_freedom(fp, "provider_region", "").into(),
+            );
+            window.set_cfg_provider_api_version(
+                read_nested_str_in_freedom(fp, "provider_api_version", "").into(),
+            );
             // Welle A — profile + behavior
             let pm = read_nested_str_in_freedom(fp, "persona_mode", "");
             window.set_cfg_persona_mode_idx(if pm == "loyal_buddy" { 1 } else { 0 });
             window.set_cfg_user_tz(read_nested_str_in_freedom(fp, "user_tz", "").into());
-            window.set_cfg_elicitation_enabled(read_nested_bool_in_freedom(fp, "elicitation.enabled", false));
+            window.set_cfg_elicitation_enabled(read_nested_bool_in_freedom(
+                fp,
+                "elicitation.enabled",
+                false,
+            ));
             window.set_cfg_elicitation_min_intensity_idx(
-                match read_nested_str_in_freedom(fp, "elicitation.min_intensity", "medium").as_str() {
+                match read_nested_str_in_freedom(fp, "elicitation.min_intensity", "medium").as_str()
+                {
                     "low" => 0,
                     "high" => 2,
                     "urgent" => 3,
                     _ => 1,
                 },
             );
-            window.set_cfg_tone_modifier_enabled(read_nested_bool_in_freedom(fp, "tone_modifier.enabled", false));
+            window.set_cfg_tone_modifier_enabled(read_nested_bool_in_freedom(
+                fp,
+                "tone_modifier.enabled",
+                false,
+            ));
             // Welle B — privacy
-            window.set_cfg_review_gate_enabled(read_nested_bool_in_freedom(fp, "review_gate_enabled", false));
-            window.set_cfg_cloud_stt_enabled(read_nested_bool_in_freedom(fp, "media.cloud_stt_enabled", false));
-            window.set_cfg_cloud_tts_enabled(read_nested_bool_in_freedom(fp, "media.cloud_tts_enabled", false));
-            window.set_cfg_cloud_vision_enabled(read_nested_bool_in_freedom(fp, "media.cloud_vision_enabled", false));
+            window.set_cfg_review_gate_enabled(read_nested_bool_in_freedom(
+                fp,
+                "review_gate_enabled",
+                false,
+            ));
+            window.set_cfg_cloud_stt_enabled(read_nested_bool_in_freedom(
+                fp,
+                "media.cloud_stt_enabled",
+                false,
+            ));
+            window.set_cfg_cloud_tts_enabled(read_nested_bool_in_freedom(
+                fp,
+                "media.cloud_tts_enabled",
+                false,
+            ));
+            window.set_cfg_cloud_vision_enabled(read_nested_bool_in_freedom(
+                fp,
+                "media.cloud_vision_enabled",
+                false,
+            ));
             window.set_cfg_vad_enabled(read_nested_bool_in_freedom(fp, "media.vad_enabled", false));
-            window.set_cfg_dictation_enabled(read_nested_bool_in_freedom(fp, "media.dictation_enabled", false));
-            window.set_cfg_proactive_idle_only(read_nested_bool_in_freedom(fp, "proactive.idle_only", false));
+            window.set_cfg_dictation_enabled(read_nested_bool_in_freedom(
+                fp,
+                "media.dictation_enabled",
+                false,
+            ));
+            window.set_cfg_proactive_idle_only(read_nested_bool_in_freedom(
+                fp,
+                "proactive.idle_only",
+                false,
+            ));
             // Welle C — memory
-            window.set_cfg_memory_name_sessions(read_nested_bool_in_freedom(fp, "memory.name_sessions", false));
-            window.set_cfg_memory_recall_shortcut(read_nested_bool_in_freedom(fp, "memory.recall_shortcut", false));
+            window.set_cfg_memory_name_sessions(read_nested_bool_in_freedom(
+                fp,
+                "memory.name_sessions",
+                false,
+            ));
+            window.set_cfg_memory_recall_shortcut(read_nested_bool_in_freedom(
+                fp,
+                "memory.recall_shortcut",
+                false,
+            ));
             let vb = read_nested_str_in_freedom(fp, "memory.vector_index.backend", "brute_force");
             window.set_cfg_memory_vector_backend_idx(if vb == "hnsw" { 1 } else { 0 });
-            window.set_cfg_consolidation_enabled(read_nested_bool_in_freedom(fp, "consolidation_sweep.enabled", false));
+            window.set_cfg_consolidation_enabled(read_nested_bool_in_freedom(
+                fp,
+                "consolidation_sweep.enabled",
+                false,
+            ));
             let csi = read_nested_i64_in_freedom(fp, "consolidation_sweep.interval_secs", 0);
-            window.set_cfg_consolidation_interval_secs(if csi == 0 { "".into() } else { csi.to_string().into() });
+            window.set_cfg_consolidation_interval_secs(if csi == 0 {
+                "".into()
+            } else {
+                csi.to_string().into()
+            });
             let csc = read_nested_f64_in_freedom(fp, "consolidation_sweep.cosine_threshold")
                 .map(|v| v.to_string())
                 .unwrap_or_default();
             window.set_cfg_consolidation_cosine(csc.into());
             // Welle E — obsidian edit fields
-            window.set_obs_vault_path_edit(read_nested_str_in_freedom(fp, "obsidian_vault", "").into());
-            window.set_obs_subdir_edit(read_nested_str_in_freedom(fp, "obsidian_subdir", "").into());
+            window.set_obs_vault_path_edit(
+                read_nested_str_in_freedom(fp, "obsidian_vault", "").into(),
+            );
+            window
+                .set_obs_subdir_edit(read_nested_str_in_freedom(fp, "obsidian_subdir", "").into());
             let asx = read_nested_i64_in_freedom(fp, "obsidian_auto_sync_secs", 0);
             window.set_obs_auto_sync_secs_edit(asx as i32);
-            window.set_obs_reader_enabled_edit(read_nested_bool_in_freedom(fp, "obsidian_vault_reader_enabled", false));
+            window.set_obs_reader_enabled_edit(read_nested_bool_in_freedom(
+                fp,
+                "obsidian_vault_reader_enabled",
+                false,
+            ));
             // GUI-DES-SETTINGS-PRELOAD-01 — preload config fields
             window.set_obs_preload_template_dir_edit(
-                read_nested_str_in_freedom(fp, "obsidian_preload_template_dir", "").into());
+                read_nested_str_in_freedom(fp, "obsidian_preload_template_dir", "").into(),
+            );
             window.set_obs_preload_subdir_edit(
-                read_nested_str_in_freedom(fp, "obsidian_preload_subdir", "").into());
+                read_nested_str_in_freedom(fp, "obsidian_preload_subdir", "").into(),
+            );
             window.set_obs_knowledge_preload_dirs_edit(
-                read_nested_seq_in_freedom(fp, "knowledge_preload_dirs").join("\n").into());
+                read_nested_seq_in_freedom(fp, "knowledge_preload_dirs")
+                    .join("\n")
+                    .into(),
+            );
         }
 
         window.set_status_line(
@@ -899,8 +1131,7 @@ fn main() -> Result<()> {
                         Ok(n) => {
                             acc.extend_from_slice(&buf[..n]);
                             // ODY-04 — feed the watchdog clock.
-                            last_chunk
-                                .store(now_epoch_ms(), std::sync::atomic::Ordering::Relaxed);
+                            last_chunk.store(now_epoch_ms(), std::sync::atomic::Ordering::Relaxed);
                             // Re-decode the whole buffer each chunk so a
                             // split multi-byte char never bakes a U+FFFD.
                             let (live, _done) =
@@ -968,10 +1199,9 @@ fn main() -> Result<()> {
                         let weak_settle = weak_for_loop.clone();
                         settle_activity_kind(&weak_settle, "plan");
                         let metric_detail = match &outcome {
-                            Ok((_, stats, _)) => format!(
-                                "{}t out · {}ms",
-                                stats.output_tokens, stats.elapsed_ms
-                            ),
+                            Ok((_, stats, _)) => {
+                                format!("{}t out · {}ms", stats.output_tokens, stats.elapsed_ms)
+                            }
                             Err(e) => format!("error: {}", &e[..e.len().min(60)]),
                         };
                         push_activity(&weak_settle, "metric", "Reply done", &metric_detail);
@@ -991,13 +1221,12 @@ fn main() -> Result<()> {
                     };
                     // Wave-2 feed B: one activity row per deep-link chip.
                     for chip in &chips {
-                        let kind = if chip.kind.as_str() == "kanban" { "kanban" } else { "link" };
-                        push_activity(
-                            &weak_for_loop,
-                            kind,
-                            chip.label.as_str(),
-                            chip.id.as_str(),
-                        );
+                        let kind = if chip.kind.as_str() == "kanban" {
+                            "kanban"
+                        } else {
+                            "link"
+                        };
+                        push_activity(&weak_for_loop, kind, chip.label.as_str(), chip.id.as_str());
                     }
                     w.set_chat_link_chips(slint::ModelRc::new(slint::VecModel::from(chips)));
                     use slint::{Model, ModelRc, VecModel};
@@ -1034,6 +1263,7 @@ fn main() -> Result<()> {
                                 stats.output_tokens,
                                 stats.elapsed_ms,
                             );
+                            let response_model = stats.model.clone();
                             segs.into_iter()
                                 .enumerate()
                                 .map(|(i, seg)| {
@@ -1046,6 +1276,11 @@ fn main() -> Result<()> {
                                         streaming: false,
                                         metrics: chip.into(),
                                         metrics_detail: detail.into(),
+                                        model: if i == last {
+                                            response_model.clone().into()
+                                        } else {
+                                            "".into()
+                                        },
                                     }
                                 })
                                 .collect()
@@ -1094,9 +1329,7 @@ fn main() -> Result<()> {
                     // operator turn (honest: the nudge shows in scrollback).
                     if auto_nudge {
                         auto_flag.store(true, std::sync::atomic::Ordering::Release);
-                        w.set_status_line(
-                            "stream truncated — auto-continue fired (1/1)".into(),
-                        );
+                        w.set_status_line("stream truncated — auto-continue fired (1/1)".into());
                         w.invoke_chat_send_clicked("continue".into());
                     }
                 }
@@ -1200,13 +1433,11 @@ fn main() -> Result<()> {
             if title.is_empty() {
                 return;
             }
-            let desc =
-                panel_logic::compose_spec_description(goal.as_str(), acceptance.as_str());
+            let desc = panel_logic::compose_spec_description(goal.as_str(), acceptance.as_str());
             let weak = weak_spec.clone();
             std::thread::spawn(move || {
                 let outcome: Result<String, String> = (|| {
-                    let bin =
-                        which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
+                    let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                     let mut cmd = spawn_neothd_plain(&bin);
                     cmd.arg("kanban").arg("add").arg(&title);
                     if let Some(d) = &desc {
@@ -1501,8 +1732,7 @@ fn main() -> Result<()> {
                             .map(|c| format!("{}: {} → {}", c.path, c.old, c.new))
                             .collect::<Vec<_>>()
                             .join("\n");
-                        let needs_fa =
-                            plan.autonomy_requested.as_deref() == Some("full");
+                        let needs_fa = plan.autonomy_requested.as_deref() == Some("full");
                         let field_count = plan.fields_changed_count as i32;
                         let preset_name = plan.name;
                         let _ = slint::invoke_from_event_loop(move || {
@@ -1705,6 +1935,7 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         let rails = fetch_safe_mode_snapshot();
         let trust = fetch_trust_snapshot();
+        let omi = fetch_omi_snapshot();
         let hardware = fetch_hardware_snapshot();
         let topology = fetch_topology_snapshot();
         let usage = fetch_usage_meter();
@@ -1722,6 +1953,7 @@ fn main() -> Result<()> {
             if let Some(w) = weak.upgrade() {
                 apply_safe_mode(&w, rails);
                 apply_trust(&w, trust);
+                apply_omi_snapshot(&w, omi);
                 apply_hardware(&w, hardware);
                 apply_topology(&w, topology);
                 apply_usage_meter(&w, usage);
@@ -1734,6 +1966,176 @@ fn main() -> Result<()> {
                 apply_memory(&w, memory);
                 apply_channels(&w, channels);
             }
+        });
+    });
+
+    // OMI-MULTIMODAL-01 — complete Privacy-tab wiring. All filesystem and
+    // subprocess work runs off the UI thread. Secret updates use bounded child
+    // stdin and the daemon's credential backend; they never enter argv or UI
+    // read-back state.
+    let weak_omi_refresh = window.as_weak();
+    window.on_omi_refresh(move || {
+        let weak = weak_omi_refresh.clone();
+        std::thread::spawn(move || {
+            let snapshot = fetch_omi_snapshot();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    apply_omi_snapshot(&window, snapshot);
+                    window.set_status_line("OMI state refreshed.".into());
+                }
+            });
+        });
+    });
+
+    let weak_omi_save = window.as_weak();
+    window.on_omi_save(
+        move |enabled,
+              mode,
+              endpoint,
+              listen_addr,
+              retention_days,
+              retain_transcripts,
+              audio_enabled,
+              image_enabled,
+              video_enabled,
+              allow_cloud_api,
+              allow_cloud_summary,
+              create_actions,
+              seed_groundtruth,
+              summary_enabled,
+              developer_key,
+              native_token| {
+            let weak = weak_omi_save.clone();
+            let draft = OmiSettingsDraft {
+                enabled,
+                mode: mode.to_string(),
+                endpoint: endpoint.to_string(),
+                listen_addr: listen_addr.to_string(),
+                retention_days: retention_days.to_string(),
+                retain_transcripts,
+                audio_enabled,
+                image_enabled,
+                video_enabled,
+                allow_cloud_api,
+                allow_cloud_summary,
+                create_actions,
+                seed_groundtruth,
+                summary_enabled,
+                developer_key: developer_key.to_string(),
+                native_token: native_token.to_string(),
+            };
+            std::thread::spawn(move || {
+                let existing = fetch_omi_snapshot();
+                let result = save_omi_settings(
+                    &default_neoth_home(),
+                    &draft,
+                    existing.developer_credential_present,
+                    existing.native_credential_present,
+                );
+                let snapshot = fetch_omi_snapshot();
+                let status = match result {
+                    Ok(()) => "OMI settings saved; reload requested.".to_string(),
+                    Err(error) => format!("OMI settings rejected: {error:#}"),
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(window) = weak.upgrade() {
+                        apply_omi_snapshot(&window, snapshot);
+                        window.set_status_line(status.into());
+                    }
+                });
+            });
+        },
+    );
+
+    let weak_omi_probe = window.as_weak();
+    window.on_omi_probe(move || {
+        let weak = weak_omi_probe.clone();
+        std::thread::spawn(move || {
+            let result = run_omi_subcommand(&default_neoth_home(), &["probe".to_string()]);
+            let status = result.unwrap_or_else(|error| format!("OMI probe failed: {error:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    window.set_status_line(status.into());
+                }
+            });
+        });
+    });
+
+    let weak_omi_resume = window.as_weak();
+    window.on_omi_resume(move |note| {
+        let weak = weak_omi_resume.clone();
+        let note = note.to_string();
+        std::thread::spawn(move || {
+            let result = run_omi_subcommand(
+                &default_neoth_home(),
+                &["resume".into(), "--review-note".into(), note],
+            );
+            let snapshot = fetch_omi_snapshot();
+            let status = result.unwrap_or_else(|error| format!("OMI resume failed: {error:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    apply_omi_snapshot(&window, snapshot);
+                    window.set_omi_review_note("".into());
+                    window.set_status_line(status.into());
+                }
+            });
+        });
+    });
+
+    let weak_omi_retention = window.as_weak();
+    window.on_omi_retention(move || {
+        let weak = weak_omi_retention.clone();
+        std::thread::spawn(move || {
+            let result = run_omi_subcommand(&default_neoth_home(), &["enforce-retention".into()]);
+            let snapshot = fetch_omi_snapshot();
+            let status = result.unwrap_or_else(|error| format!("OMI retention failed: {error:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    apply_omi_snapshot(&window, snapshot);
+                    window.set_status_line(status.into());
+                }
+            });
+        });
+    });
+
+    let weak_omi_purge = window.as_weak();
+    window.on_omi_purge(move |conversation_id| {
+        let weak = weak_omi_purge.clone();
+        let conversation_id = conversation_id.to_string();
+        std::thread::spawn(move || {
+            let result = run_omi_subcommand(
+                &default_neoth_home(),
+                &["purge".into(), conversation_id, "--yes".into()],
+            );
+            let snapshot = fetch_omi_snapshot();
+            let status = result.unwrap_or_else(|error| format!("OMI purge failed: {error:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    apply_omi_snapshot(&window, snapshot);
+                    window.set_status_line(status.into());
+                }
+            });
+        });
+    });
+
+    let weak_omi_reimport = window.as_weak();
+    window.on_omi_reimport(move |conversation_id| {
+        let weak = weak_omi_reimport.clone();
+        let conversation_id = conversation_id.to_string();
+        std::thread::spawn(move || {
+            let result = run_omi_subcommand(
+                &default_neoth_home(),
+                &["allow-reimport".into(), conversation_id, "--yes".into()],
+            );
+            let snapshot = fetch_omi_snapshot();
+            let status =
+                result.unwrap_or_else(|error| format!("OMI allow-reimport failed: {error:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    apply_omi_snapshot(&window, snapshot);
+                    window.set_status_line(status.into());
+                }
+            });
         });
     });
 
@@ -1860,7 +2262,9 @@ fn main() -> Result<()> {
     // GAP-05 — Status probe: `neoth status` → DoctorView status panel.
     let weak_status = window.as_weak();
     window.on_doctor_status_run_clicked(move || {
-        let Some(w0) = weak_status.upgrade() else { return; };
+        let Some(w0) = weak_status.upgrade() else {
+            return;
+        };
         w0.set_doctor_status_running(true);
         let weak = weak_status.clone();
         std::thread::spawn(move || {
@@ -1894,19 +2298,19 @@ fn main() -> Result<()> {
     // GAP-13 — Security audit probe: `neoth security audit` → DoctorView audit panel.
     let weak_secaudit = window.as_weak();
     window.on_doctor_security_run_clicked(move || {
-        let Some(w0) = weak_secaudit.upgrade() else { return; };
+        let Some(w0) = weak_secaudit.upgrade() else {
+            return;
+        };
         w0.set_doctor_security_running(true);
         let weak = weak_secaudit.clone();
         std::thread::spawn(move || {
-            let output = match which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("security")
-                        .arg("audit")
-                        .output()
-                        .ok()
-                })
-            {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("security")
+                    .arg("audit")
+                    .output()
+                    .ok()
+            }) {
                 Some(o) => {
                     let mut s = String::from_utf8_lossy(&o.stdout).to_string();
                     let err = String::from_utf8_lossy(&o.stderr);
@@ -1964,40 +2368,60 @@ fn main() -> Result<()> {
 
         // Add — build arg list, omit empty optional flags.
         let weak_cron_add = window.as_weak();
-        window.on_cron_add_clicked(move |id, name, cron, prompt, tz, channel, recipient, timeout| {
-            let id        = id.to_string();
-            let name      = name.to_string();
-            let cron      = cron.to_string();
-            let prompt    = prompt.to_string();
-            let tz        = tz.to_string();
-            let channel   = channel.to_string();
-            let recipient = recipient.to_string();
-            let timeout   = timeout.to_string();
-            let weak = weak_cron_add.clone();
-            std::thread::spawn(move || {
-                let mut args: Vec<&str> = vec!["cron", "add",
-                    "--id",     id.trim(),
-                    "--name",   name.trim(),
-                    "--cron",   cron.trim(),
-                    "--prompt", prompt.trim(),
-                ];
-                // Optional flags — only appended when non-empty.
-                if !tz.trim().is_empty()        { args.extend(["--tz",        tz.trim()]); }
-                if !channel.trim().is_empty()   { args.extend(["--channel",   channel.trim()]); }
-                if !recipient.trim().is_empty() { args.extend(["--recipient", recipient.trim()]); }
-                if !timeout.trim().is_empty()   { args.extend(["--timeout",   timeout.trim()]); }
-                let out = run_neothd_probe(&args);
-                let msg = if out.trim().is_empty() { format!("added {}", id.trim()) } else { out.trim().to_string() };
-                let weak2 = weak.clone();
-                push_toast(&weak, "success", "Cron", &msg);
-                std::thread::spawn(move || refresh_cron(weak2));
-            });
-        });
+        window.on_cron_add_clicked(
+            move |id, name, cron, prompt, tz, channel, recipient, timeout| {
+                let id = id.to_string();
+                let name = name.to_string();
+                let cron = cron.to_string();
+                let prompt = prompt.to_string();
+                let tz = tz.to_string();
+                let channel = channel.to_string();
+                let recipient = recipient.to_string();
+                let timeout = timeout.to_string();
+                let weak = weak_cron_add.clone();
+                std::thread::spawn(move || {
+                    let mut args: Vec<&str> = vec![
+                        "cron",
+                        "add",
+                        "--id",
+                        id.trim(),
+                        "--name",
+                        name.trim(),
+                        "--cron",
+                        cron.trim(),
+                        "--prompt",
+                        prompt.trim(),
+                    ];
+                    // Optional flags — only appended when non-empty.
+                    if !tz.trim().is_empty() {
+                        args.extend(["--tz", tz.trim()]);
+                    }
+                    if !channel.trim().is_empty() {
+                        args.extend(["--channel", channel.trim()]);
+                    }
+                    if !recipient.trim().is_empty() {
+                        args.extend(["--recipient", recipient.trim()]);
+                    }
+                    if !timeout.trim().is_empty() {
+                        args.extend(["--timeout", timeout.trim()]);
+                    }
+                    let out = run_neothd_probe(&args);
+                    let msg = if out.trim().is_empty() {
+                        format!("added {}", id.trim())
+                    } else {
+                        out.trim().to_string()
+                    };
+                    let weak2 = weak.clone();
+                    push_toast(&weak, "success", "Cron", &msg);
+                    std::thread::spawn(move || refresh_cron(weak2));
+                });
+            },
+        );
 
         // Run — `neoth cron run <id>` (daemon refuses while live; surface error as toast).
         let weak_cron_run = window.as_weak();
         window.on_cron_run_clicked(move |id| {
-            let id   = id.to_string();
+            let id = id.to_string();
             let weak = weak_cron_run.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["cron", "run", id.trim()]);
@@ -2016,13 +2440,17 @@ fn main() -> Result<()> {
         // Toggle — `neoth cron edit <id> --enabled <bool>`.
         let weak_cron_tog = window.as_weak();
         window.on_cron_toggle_clicked(move |id, new_enabled| {
-            let id   = id.to_string();
+            let id = id.to_string();
             let weak = weak_cron_tog.clone();
             std::thread::spawn(move || {
                 let enabled_str = if new_enabled { "true" } else { "false" };
                 let out = run_neothd_probe(&["cron", "edit", id.trim(), "--enabled", enabled_str]);
                 let msg = if out.trim().is_empty() {
-                    format!("{} {}", if new_enabled { "enabled" } else { "disabled" }, id.trim())
+                    format!(
+                        "{} {}",
+                        if new_enabled { "enabled" } else { "disabled" },
+                        id.trim()
+                    )
                 } else {
                     out.trim().to_string()
                 };
@@ -2035,11 +2463,15 @@ fn main() -> Result<()> {
         // Remove — `neoth cron remove <id>`.
         let weak_cron_rem = window.as_weak();
         window.on_cron_remove_clicked(move |id| {
-            let id   = id.to_string();
+            let id = id.to_string();
             let weak = weak_cron_rem.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["cron", "remove", id.trim()]);
-                let msg = if out.trim().is_empty() { format!("removed {}", id.trim()) } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    format!("removed {}", id.trim())
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "warn", "Cron", &msg);
                 std::thread::spawn(move || refresh_cron(weak2));
@@ -2110,7 +2542,11 @@ fn main() -> Result<()> {
             let weak = weak_babel_en.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["babel", "enable"]);
-                let msg = if out.trim().is_empty() { "enabled".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "enabled".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "success", "Babel", &msg);
                 std::thread::spawn(move || refresh_babel(weak2));
@@ -2122,7 +2558,11 @@ fn main() -> Result<()> {
             let weak = weak_babel_dis.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["babel", "disable"]);
-                let msg = if out.trim().is_empty() { "disabled".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "disabled".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "info", "Babel", &msg);
                 std::thread::spawn(move || refresh_babel(weak2));
@@ -2142,10 +2582,12 @@ fn main() -> Result<()> {
 
         let weak_cal_add = window.as_weak();
         window.on_cal_add_clicked(move || {
-            let Some(w0) = weak_cal_add.upgrade() else { return };
+            let Some(w0) = weak_cal_add.upgrade() else {
+                return;
+            };
             let summary = w0.get_cal_add_summary().to_string();
-            let start   = w0.get_cal_add_start().to_string();
-            let end     = w0.get_cal_add_end().to_string();
+            let start = w0.get_cal_add_start().to_string();
+            let end = w0.get_cal_add_end().to_string();
             if summary.trim().is_empty() || start.trim().is_empty() {
                 let _ = slint::invoke_from_event_loop({
                     let weak = weak_cal_add.clone();
@@ -2160,16 +2602,31 @@ fn main() -> Result<()> {
             let weak = weak_cal_add.clone();
             std::thread::spawn(move || {
                 let probe_args: Vec<String> = if end.trim().is_empty() {
-                    vec!["calendar".into(), "add".into(), summary.trim().to_string(),
-                         "--start".into(), start.trim().to_string()]
+                    vec![
+                        "calendar".into(),
+                        "add".into(),
+                        summary.trim().to_string(),
+                        "--start".into(),
+                        start.trim().to_string(),
+                    ]
                 } else {
-                    vec!["calendar".into(), "add".into(), summary.trim().to_string(),
-                         "--start".into(), start.trim().to_string(),
-                         "--end".into(), end.trim().to_string()]
+                    vec![
+                        "calendar".into(),
+                        "add".into(),
+                        summary.trim().to_string(),
+                        "--start".into(),
+                        start.trim().to_string(),
+                        "--end".into(),
+                        end.trim().to_string(),
+                    ]
                 };
                 let probe_refs: Vec<&str> = probe_args.iter().map(String::as_str).collect();
                 let out = run_neothd_probe(&probe_refs);
-                let result = if out.trim().is_empty() { "Event added.".to_string() } else { out.trim().to_string() };
+                let result = if out.trim().is_empty() {
+                    "Event added.".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
@@ -2205,7 +2662,11 @@ fn main() -> Result<()> {
             let weak = weak_si_en.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["self-improve", "enable"]);
-                let msg = if out.trim().is_empty() { "enabled".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "enabled".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "success", "Self-Improve", &msg);
                 std::thread::spawn(move || refresh_selfimprove(weak2));
@@ -2217,7 +2678,11 @@ fn main() -> Result<()> {
             let weak = weak_si_dis.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["self-improve", "disable"]);
-                let msg = if out.trim().is_empty() { "disabled".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "disabled".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "info", "Self-Improve", &msg);
                 std::thread::spawn(move || refresh_selfimprove(weak2));
@@ -2239,7 +2704,11 @@ fn main() -> Result<()> {
             let weak = weak_si_acc.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["self-improve", "accept", id.trim()]);
-                let msg = if out.trim().is_empty() { id.clone() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    id.clone()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "consent", "Accepted", &msg);
                 std::thread::spawn(move || refresh_selfimprove(weak2));
@@ -2252,7 +2721,11 @@ fn main() -> Result<()> {
             let weak = weak_si_rb.clone();
             std::thread::spawn(move || {
                 let out = run_neothd_probe(&["self-improve", "rollback", id.trim()]);
-                let msg = if out.trim().is_empty() { id.clone() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    id.clone()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "warn", "Rolled back", &msg);
                 std::thread::spawn(move || refresh_selfimprove(weak2));
@@ -2277,7 +2750,9 @@ fn main() -> Result<()> {
             // are `{kind}-{hash}` — always alphanumeric-first.
             !id.is_empty()
                 && !id.starts_with('-')
-                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         }
 
         let weak_sd_refresh = window.as_weak();
@@ -2341,9 +2816,8 @@ fn main() -> Result<()> {
                     return;
                 }
                 // RED LINE: reason is the hard-coded literal "declined" — never user text.
-                let out = run_neothd_probe(&[
-                    "self-dev", "decline", id.trim(), "--reason", "declined",
-                ]);
+                let out =
+                    run_neothd_probe(&["self-dev", "decline", id.trim(), "--reason", "declined"]);
                 let msg = if out.trim().is_empty() {
                     format!("declined: {}", id.trim())
                 } else {
@@ -2376,16 +2850,20 @@ fn main() -> Result<()> {
                 let sha = diff_sha256.trim();
                 if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
                     push_toast(
-                        &weak, "warn", "Self-Dev Apply",
+                        &weak,
+                        "warn",
+                        "Self-Dev Apply",
                         "invalid diff hash — expected 64-char hex SHA-256",
                     );
                     return;
                 }
                 let out = run_neothd_probe(&[
                     "self-edit",
-                    "--diff",         patch_path.trim(),
+                    "--diff",
+                    patch_path.trim(),
                     "--yes",
-                    "--expect-hash",  sha,
+                    "--expect-hash",
+                    sha,
                 ]);
                 let ok = out.contains("applied") || out.contains("passed");
                 let (level, title) = if ok {
@@ -2430,7 +2908,11 @@ fn main() -> Result<()> {
             std::thread::spawn(move || {
                 let args = ["obsidian", "sync", vault.trim()];
                 let out = run_neothd_probe(&args);
-                let msg = if out.trim().is_empty() { "Sync started.".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "Sync started.".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "success", "Obsidian", &msg);
                 std::thread::spawn(move || refresh_obsidian(weak2));
@@ -2447,7 +2929,11 @@ fn main() -> Result<()> {
             std::thread::spawn(move || {
                 let args = ["obsidian", "wiki-build", vault.trim()];
                 let out = run_neothd_probe(&args);
-                let msg = if out.trim().is_empty() { "Wiki build started.".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "Wiki build started.".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 push_toast(&weak, "success", "Obsidian", &msg);
                 std::thread::spawn(move || refresh_obsidian(weak2));
@@ -2500,10 +2986,18 @@ fn main() -> Result<()> {
             std::thread::spawn(move || {
                 let _ = slint::invoke_from_event_loop({
                     let weak = weak.clone();
-                    move || { if let Some(w) = weak.upgrade() { w.set_dr_dream_now_loading(true); } }
+                    move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_dr_dream_now_loading(true);
+                        }
+                    }
                 });
                 let out = run_neothd_probe(&["dream", "now"]);
-                let msg = if out.trim().is_empty() { "Dream recorded.".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "Dream recorded.".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let weak2 = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
@@ -2522,10 +3016,18 @@ fn main() -> Result<()> {
             std::thread::spawn(move || {
                 let _ = slint::invoke_from_event_loop({
                     let weak = weak.clone();
-                    move || { if let Some(w) = weak.upgrade() { w.set_dr_reflect_loading(true); } }
+                    move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_dr_reflect_loading(true);
+                        }
+                    }
                 });
                 let out = run_neothd_probe(&["reflect"]);
-                let msg = if out.trim().is_empty() { "Reflect complete.".to_string() } else { out.trim().to_string() };
+                let msg = if out.trim().is_empty() {
+                    "Reflect complete.".to_string()
+                } else {
+                    out.trim().to_string()
+                };
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
                         w.set_dr_reflect_loading(false);
@@ -2595,7 +3097,10 @@ fn main() -> Result<()> {
                 let flag = if enable { "--enable" } else { "--disable" };
                 let out = run_neothd_probe(&["buddy", "self-activation", flag]);
                 let msg = if out.trim().is_empty() {
-                    format!("Self-activation {}.", if enable { "enabled" } else { "disabled" })
+                    format!(
+                        "Self-activation {}.",
+                        if enable { "enabled" } else { "disabled" }
+                    )
                 } else {
                     out.trim().to_string()
                 };
@@ -2613,7 +3118,10 @@ fn main() -> Result<()> {
                 let flag = if enable { "--enable" } else { "--disable" };
                 let out = run_neothd_probe(&["buddy", "proactive", flag]);
                 let msg = if out.trim().is_empty() {
-                    format!("Proactive mode {}.", if enable { "enabled" } else { "disabled" })
+                    format!(
+                        "Proactive mode {}.",
+                        if enable { "enabled" } else { "disabled" }
+                    )
                 } else {
                     out.trim().to_string()
                 };
@@ -2668,9 +3176,14 @@ fn main() -> Result<()> {
             std::thread::spawn(move || {
                 let _ = slint::invoke_from_event_loop({
                     let weak = weak.clone();
-                    move || { if let Some(w) = weak.upgrade() { w.set_cp_loading(true); } }
+                    move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_cp_loading(true);
+                        }
+                    }
                 });
-                let out = run_neothd_probe(&["companion", "pair-phone", "--write-invite-for-serve"]);
+                let out =
+                    run_neothd_probe(&["companion", "pair-phone", "--write-invite-for-serve"]);
                 let pair_url = out
                     .lines()
                     .find(|l| l.starts_with("neoth://companion/pair"))
@@ -2722,11 +3235,10 @@ fn main() -> Result<()> {
 
         // Convergence denominator + budget cap from freedom.yaml (engine
         // defaults when missing: 3 rounds, no cap).
-        let (loop_max_rounds, loop_budget) = std::fs::read_to_string(
-            default_neoth_home().join("freedom.yaml"),
-        )
-        .map(|y| panel_logic::parse_loop_budget(&y))
-        .unwrap_or((3, 0));
+        let (loop_max_rounds, loop_budget) =
+            std::fs::read_to_string(default_neoth_home().join("freedom.yaml"))
+                .map(|y| panel_logic::parse_loop_budget(&y))
+                .unwrap_or((3, 0));
         window.set_loop_tool_call_budget(loop_budget as i32);
 
         // History cache shared by refresh + row-select; the running child
@@ -2798,8 +3310,7 @@ fn main() -> Result<()> {
         // spawn let a slow stale scan overwrite a fresh one).
         let weak_loop_refresh = window.as_weak();
         let cache_refresh = loop_cache.clone();
-        let loop_fetch_in_flight =
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let loop_fetch_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let refresh_history = move |select: Option<String>| {
             if loop_fetch_in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
                 return;
@@ -2856,7 +3367,11 @@ fn main() -> Result<()> {
             let prompt = prompt.to_string();
             // Wave-2 feed D: loop started.
             {
-                let snippet = if prompt.len() > 80 { &prompt[..80] } else { &prompt };
+                let snippet = if prompt.len() > 80 {
+                    &prompt[..80]
+                } else {
+                    &prompt
+                };
                 push_activity(&w0.as_weak(), "loop", "Loop started", snippet);
             }
             let weak = weak_loop_run.clone();
@@ -2864,8 +3379,7 @@ fn main() -> Result<()> {
             let refresh = refresh_after_run.clone();
             std::thread::spawn(move || {
                 let outcome: Result<(bool, String), String> = (|| {
-                    let bin =
-                        which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
+                    let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                     let mut child = spawn_neothd_plain(&bin)
                         .arg("loop")
                         .arg("run")
@@ -2908,7 +3422,11 @@ fn main() -> Result<()> {
                 let note = match outcome {
                     Ok((true, _)) => String::new(),
                     Ok((false, err)) => {
-                        let tail: String = err.lines().rev().take(3).collect::<Vec<_>>()
+                        let tail: String = err
+                            .lines()
+                            .rev()
+                            .take(3)
+                            .collect::<Vec<_>>()
                             .into_iter()
                             .rev()
                             .collect::<Vec<_>>()
@@ -2950,7 +3468,9 @@ fn main() -> Result<()> {
                 }
             }
             if let Some(w) = weak_loop_kill.upgrade() {
-                w.set_loop_status_note("kill signal sent — waiting for the subprocess to exit".into());
+                w.set_loop_status_note(
+                    "kill signal sent — waiting for the subprocess to exit".into(),
+                );
             }
         });
 
@@ -3050,73 +3570,79 @@ fn main() -> Result<()> {
         let f4 = f4.trim().to_string();
 
         // Build the flag args for this channel type; return Err(hint) on missing required fields.
-        let args_result: Result<Vec<String>, String> = (|| {
-            match ctype.as_str() {
-                "telegram" => {
-                    if f1.is_empty() { return Err("telegram needs: --token".into()); }
-                    Ok(vec!["--token".into(), f1])
+        let args_result: Result<Vec<String>, String> = (|| match ctype.as_str() {
+            "telegram" => {
+                if f1.is_empty() {
+                    return Err("telegram needs: --token".into());
                 }
-                "slack" => {
-                    if f1.is_empty() || f2.is_empty() {
-                        return Err("slack needs: --bot-token and --app-token".into());
-                    }
-                    Ok(vec!["--bot-token".into(), f1, "--app-token".into(), f2])
-                }
-                "whatsapp" => {
-                    if f1.is_empty() || f2.is_empty() {
-                        return Err("whatsapp needs: --token and --phone-id".into());
-                    }
-                    Ok(vec!["--token".into(), f1, "--phone-id".into(), f2])
-                }
-                "discord" => {
-                    if f1.is_empty() { return Err("discord needs: --token".into()); }
-                    Ok(vec!["--token".into(), f1])
-                }
-                "keet" => {
-                    if f1.is_empty() { return Err("keet needs: --seed".into()); }
-                    Ok(vec!["--seed".into(), f1])
-                }
-                "signal" => {
-                    if f1.is_empty() || f2.is_empty() {
-                        return Err("signal needs: --url and --phone".into());
-                    }
-                    Ok(vec!["--url".into(), f1, "--phone".into(), f2])
-                }
-                "line" => {
-                    if f1.is_empty() { return Err("line needs: --token".into()); }
-                    let mut a = vec!["--token".into(), f1];
-                    if !f2.is_empty() { a.extend(["--password".into(), f2]); }
-                    Ok(a)
-                }
-                "irc" => {
-                    if f1.is_empty() || f2.is_empty() {
-                        return Err("irc needs: --server and --nick".into());
-                    }
-                    let mut a = vec!["--server".into(), f1, "--nick".into(), f2];
-                    if !f3.is_empty() { a.extend(["--password".into(), f3]); }
-                    if !f4.is_empty() { a.extend(["--channels-csv".into(), f4]); }
-                    Ok(a)
-                }
-                "imessage" | "bluebubbles" => {
-                    if f1.is_empty() || f2.is_empty() {
-                        return Err(format!("{ctype} needs: --url and --password"));
-                    }
-                    Ok(vec!["--url".into(), f1, "--password".into(), f2])
-                }
-                "mattermost" => {
-                    if f1.is_empty() || f2.is_empty() {
-                        return Err("mattermost needs: --url and --token".into());
-                    }
-                    Ok(vec!["--url".into(), f1, "--token".into(), f2])
-                }
-                "gchat" => {
-                    if f1.is_empty() || f2.is_empty() {
-                        return Err("gchat needs: --url and --server".into());
-                    }
-                    Ok(vec!["--url".into(), f1, "--server".into(), f2])
-                }
-                other => Err(format!("unknown channel type: {other}")),
+                Ok(vec!["--token".into(), f1])
             }
+            "slack" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("slack needs: --bot-token and --app-token".into());
+                }
+                Ok(vec!["--bot-token".into(), f1, "--app-token".into(), f2])
+            }
+            "whatsapp" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("whatsapp needs: --token and --phone-id".into());
+                }
+                Ok(vec!["--token".into(), f1, "--phone-id".into(), f2])
+            }
+            "discord" => {
+                if f1.is_empty() {
+                    return Err("discord needs: --token".into());
+                }
+                Ok(vec!["--token".into(), f1])
+            }
+            "signal" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("signal needs: --url and --phone".into());
+                }
+                Ok(vec!["--url".into(), f1, "--phone".into(), f2])
+            }
+            "line" => {
+                if f1.is_empty() {
+                    return Err("line needs: --token".into());
+                }
+                let mut a = vec!["--token".into(), f1];
+                if !f2.is_empty() {
+                    a.extend(["--password".into(), f2]);
+                }
+                Ok(a)
+            }
+            "irc" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("irc needs: --server and --nick".into());
+                }
+                let mut a = vec!["--server".into(), f1, "--nick".into(), f2];
+                if !f3.is_empty() {
+                    a.extend(["--password".into(), f3]);
+                }
+                if !f4.is_empty() {
+                    a.extend(["--channels-csv".into(), f4]);
+                }
+                Ok(a)
+            }
+            "imessage" | "bluebubbles" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err(format!("{ctype} needs: --url and --password"));
+                }
+                Ok(vec!["--url".into(), f1, "--password".into(), f2])
+            }
+            "mattermost" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("mattermost needs: --url and --token".into());
+                }
+                Ok(vec!["--url".into(), f1, "--token".into(), f2])
+            }
+            "gchat" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("gchat needs: --url and --server".into());
+                }
+                Ok(vec!["--url".into(), f1, "--server".into(), f2])
+            }
+            other => Err(format!("unknown channel type: {other}")),
         })();
 
         match args_result {
@@ -3138,19 +3664,38 @@ fn main() -> Result<()> {
 
                     let (toast_kind, toast_title, toast_body, refresh) = match result {
                         Some(o) if o.status.success() => {
-                            // Parse {ok, channel, configured} from stdout.
-                            let raw = String::from_utf8_lossy(&o.stdout);
-                            let configured = raw.contains("\"configured\":true");
-                            let msg = if configured {
-                                format!("Channel {ctype_clone} connected and configured.")
-                            } else {
-                                format!("Channel {ctype_clone} credential stored (not yet configured).")
-                            };
-                            ("success", "Add channel", msg, true)
+                            // The CLI emits pretty JSON, so whitespace-sensitive
+                            // substring checks misclassified every successful add.
+                            let configured = parse_channel_configured(&o.stdout);
+                            match configured {
+                                Some(true) => (
+                                    "success",
+                                    "Add channel",
+                                    format!("Channel {ctype_clone} connected and configured."),
+                                    true,
+                                ),
+                                Some(false) => (
+                                    "warn",
+                                    "Add channel",
+                                    format!(
+                                        "Channel {ctype_clone} credentials were saved but the channel is incomplete."
+                                    ),
+                                    true,
+                                ),
+                                None => (
+                                    "error",
+                                    "Add channel response invalid",
+                                    format!(
+                                        "Channel {ctype_clone}: neothd returned success without a configured status."
+                                    ),
+                                    true,
+                                ),
+                            }
                         }
                         Some(o) => {
                             let stderr = String::from_utf8_lossy(&o.stderr);
-                            let detail = stderr.lines()
+                            let detail = stderr
+                                .lines()
                                 .map(str::trim)
                                 .find(|l| !l.is_empty())
                                 .unwrap_or("unknown error")
@@ -3638,8 +4183,8 @@ fn main() -> Result<()> {
             // GAP-09: intercept "full" → token-mint path.
             if level == "full" {
                 let result: Result<(), String> = (|| {
-                    let bin = which_neothd()
-                        .ok_or_else(|| "neothd binary not on PATH".to_string())?;
+                    let bin =
+                        which_neothd().ok_or_else(|| "neothd binary not on PATH".to_string())?;
                     let tok_out = spawn_neothd_plain(&bin)
                         .arg("autonomy")
                         .arg("mint-fullauto-token")
@@ -3648,15 +4193,12 @@ fn main() -> Result<()> {
                         .output()
                         .map_err(|e| format!("mint-fullauto-token spawn failed: {e}"))?;
                     if !tok_out.status.success() {
-                        let err =
-                            String::from_utf8_lossy(&tok_out.stderr).trim().to_string();
+                        let err = String::from_utf8_lossy(&tok_out.stderr).trim().to_string();
                         return Err(format!("mint-fullauto-token failed: {err}"));
                     }
                     let raw = String::from_utf8_lossy(&tok_out.stdout).trim().to_string();
                     // Output may be `{"token":"…"}` or a bare token string.
-                    let token = if let Ok(v) =
-                        serde_json::from_str::<serde_json::Value>(&raw)
-                    {
+                    let token = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
                         // JSON but token missing/not-a-string → empty, so the
                         // is_empty guard below rejects it (never pass the raw
                         // JSON blob as a token).
@@ -3668,9 +4210,7 @@ fn main() -> Result<()> {
                         raw
                     };
                     if token.is_empty() {
-                        return Err(
-                            "mint-fullauto-token returned an empty token".to_string()
-                        );
+                        return Err("mint-fullauto-token returned an empty token".to_string());
                     }
                     let apply_out = spawn_neothd_plain(&bin)
                         .arg("autonomy")
@@ -3681,8 +4221,9 @@ fn main() -> Result<()> {
                         .output()
                         .map_err(|e| format!("autonomy full-auto spawn failed: {e}"))?;
                     if !apply_out.status.success() {
-                        let err =
-                            String::from_utf8_lossy(&apply_out.stderr).trim().to_string();
+                        let err = String::from_utf8_lossy(&apply_out.stderr)
+                            .trim()
+                            .to_string();
                         return Err(format!("autonomy full-auto failed: {err}"));
                     }
                     Ok(())
@@ -3775,8 +4316,8 @@ fn main() -> Result<()> {
                 // GAP-09 / GR-RESID-D34: Full-auto requires the token-mint
                 // ceremony — same path as on_autonomy_set("full").
                 let result: Result<(), String> = (|| {
-                    let bin = which_neothd()
-                        .ok_or_else(|| "neothd binary not on PATH".to_string())?;
+                    let bin =
+                        which_neothd().ok_or_else(|| "neothd binary not on PATH".to_string())?;
                     let tok_out = spawn_neothd_plain(&bin)
                         .arg("autonomy")
                         .arg("mint-fullauto-token")
@@ -3809,7 +4350,9 @@ fn main() -> Result<()> {
                         .output()
                         .map_err(|e| format!("autonomy full-auto spawn failed: {e}"))?;
                     if !apply_out.status.success() {
-                        let err = String::from_utf8_lossy(&apply_out.stderr).trim().to_string();
+                        let err = String::from_utf8_lossy(&apply_out.stderr)
+                            .trim()
+                            .to_string();
                         return Err(format!("autonomy full-auto failed: {err}"));
                     }
                     Ok(())
@@ -3858,9 +4401,7 @@ fn main() -> Result<()> {
                         if ok {
                             push_toast(&w.as_weak(), "success", "Consent", "Mode set to Gated.");
                         } else {
-                            w.set_status_line(
-                                "autonomy gated failed — is neothd on PATH?".into(),
-                            );
+                            w.set_status_line("autonomy gated failed — is neothd on PATH?".into());
                         }
                     }
                 });
@@ -3900,9 +4441,7 @@ fn main() -> Result<()> {
                             &format!("Revoked consent for {provider2}."),
                         );
                     } else {
-                        w.set_status_line(
-                            format!("consent revoke {provider2} failed.").into(),
-                        );
+                        w.set_status_line(format!("consent revoke {provider2} failed.").into());
                     }
                 }
             });
@@ -4007,12 +4546,20 @@ fn main() -> Result<()> {
                             // has `weak` (this closure moves its own handle).
                             let weak_board = weak.clone();
                             let _ = slint::invoke_from_event_loop(move || {
-                                if let Ok(mut g) = mutex.lock() {
-                                    *g = snap_for_state;
-                                }
+                                let board_changed = mutex
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                    .replace_if_changed(snap_for_state);
                                 if let Some(w) = weak_board.upgrade() {
                                     apply_kanban_snapshot(&w, snap);
-                                    push_activity(&w.as_weak(), "kanban", "Board updated", &board_summary);
+                                    if board_changed {
+                                        push_activity(
+                                            &w.as_weak(),
+                                            "kanban",
+                                            "Board updated",
+                                            &board_summary,
+                                        );
+                                    }
                                 }
                             });
                         }
@@ -4021,7 +4568,7 @@ fn main() -> Result<()> {
                         // Runs every tick (not gated on want_board) so the feed stays
                         // live even when the operator is not on the Code Sessions tab.
                         {
-                        use slint::Model as _; // ModelRc row_count/row_data
+                            use slint::Model as _; // ModelRc row_count/row_data
                             let guard = client.lock().unwrap_or_else(|p| p.into_inner());
                             if let Some(ref c) = *guard {
                                 let new_entries = c.drain_channel_activity();
@@ -4051,9 +4598,9 @@ fn main() -> Result<()> {
                                             if rows.len() > MAX_DISPLAY {
                                                 rows.drain(0..rows.len() - MAX_DISPLAY);
                                             }
-                                            w.set_channel_activity(ModelRc::new(
-                                                VecModel::from(rows),
-                                            ));
+                                            w.set_channel_activity(ModelRc::new(VecModel::from(
+                                                rows,
+                                            )));
                                         }
                                     });
                                 }
@@ -4537,9 +5084,14 @@ fn main() -> Result<()> {
                 let tx = make_coalescing_writer(
                     neoth_dir.join("freedom.yaml"),
                     neoth_dir.join(".reload-requested"),
-                    $key, $label, window.as_weak(), None);
+                    $key,
+                    $label,
+                    window.as_weak(),
+                    None,
+                );
                 window.$cb(move |raw: slint::SharedString| {
-                    tx.send(serde_yaml::Value::from(raw.to_string().as_str())).ok();
+                    tx.send(serde_yaml::Value::from(raw.to_string().as_str()))
+                        .ok();
                 });
             }};
         }
@@ -4556,16 +5108,17 @@ fn main() -> Result<()> {
                         let fp = nd2.join("freedom.yaml");
                         let rd = nd2.join(".reload-requested");
                         let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(v))
-                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                        slint::invoke_from_event_loop(move || {
-                            match result {
-                                Ok(_) => push_toast(&weak2, "success", $label, state),
-                                Err(ref e) => {
-                                    let msg = e.to_string();
-                                    push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
-                                }
+                            .and_then(|_| {
+                                std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                            });
+                        slint::invoke_from_event_loop(move || match result {
+                            Ok(_) => push_toast(&weak2, "success", $label, state),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
                             }
-                        }).ok();
+                        })
+                        .ok();
                     });
                 });
             }};
@@ -4584,16 +5137,17 @@ fn main() -> Result<()> {
                         let fp = nd2.join("freedom.yaml");
                         let rd = nd2.join(".reload-requested");
                         let result = set_nested_in_freedom(&fp, $key, serde_yaml::Value::from(val))
-                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                        slint::invoke_from_event_loop(move || {
-                            match result {
-                                Ok(_) => push_toast(&weak2, "success", $label, val),
-                                Err(ref e) => {
-                                    let msg = e.to_string();
-                                    push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
-                                }
+                            .and_then(|_| {
+                                std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                            });
+                        slint::invoke_from_event_loop(move || match result {
+                            Ok(_) => push_toast(&weak2, "success", $label, val),
+                            Err(ref e) => {
+                                let msg = e.to_string();
+                                push_toast(&weak2, "warn", concat!($label, " write failed"), &msg);
                             }
-                        }).ok();
+                        })
+                        .ok();
                     });
                 });
             }};
@@ -4604,14 +5158,24 @@ fn main() -> Result<()> {
                 let tx = make_coalescing_writer(
                     neoth_dir.join("freedom.yaml"),
                     neoth_dir.join(".reload-requested"),
-                    $key, $label, window.as_weak(), None);
+                    $key,
+                    $label,
+                    window.as_weak(),
+                    None,
+                );
                 let weak_err = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
                     match s.trim().parse::<f64>() {
-                        Ok(v) => { tx.send(serde_yaml::Value::from(v)).ok(); }
-                        Err(_) => push_toast(&weak_err, "warn", concat!($label, " invalid"),
-                                             &format!("not a number: {}", s.trim())),
+                        Ok(v) => {
+                            tx.send(serde_yaml::Value::from(v)).ok();
+                        }
+                        Err(_) => push_toast(
+                            &weak_err,
+                            "warn",
+                            concat!($label, " invalid"),
+                            &format!("not a number: {}", s.trim()),
+                        ),
                     }
                 });
             }};
@@ -4622,33 +5186,65 @@ fn main() -> Result<()> {
                 let tx = make_coalescing_writer(
                     neoth_dir.join("freedom.yaml"),
                     neoth_dir.join(".reload-requested"),
-                    $key, $label, window.as_weak(), None);
+                    $key,
+                    $label,
+                    window.as_weak(),
+                    None,
+                );
                 let weak_err = window.as_weak();
                 window.$cb(move |raw: slint::SharedString| {
                     let s = raw.to_string();
                     match s.trim().parse::<i64>() {
-                        Ok(v) => { tx.send(serde_yaml::Value::from(v)).ok(); }
-                        Err(_) => push_toast(&weak_err, "warn", concat!($label, " invalid"),
-                                             &format!("not an integer: {}", s.trim())),
+                        Ok(v) => {
+                            tx.send(serde_yaml::Value::from(v)).ok();
+                        }
+                        Err(_) => push_toast(
+                            &weak_err,
+                            "warn",
+                            concat!($label, " invalid"),
+                            &format!("not an integer: {}", s.trim()),
+                        ),
                     }
                 });
             }};
         }
 
         // Welle A — Council
-        wire_nested_f64_str!(on_cfg_council_daily_usd_changed, "council.daily_usd_cap", "USD cap");
-        wire_nested_i64_str!(on_cfg_council_max_calls_changed, "council.max_calls_per_user_message", "Max calls");
-        wire_nested_i64_str!(on_cfg_council_max_depth_changed, "council.max_recursion_depth", "Max depth");
-        wire_nested_int_combo!(on_cfg_council_selection_mode_changed,
+        wire_nested_f64_str!(
+            on_cfg_council_daily_usd_changed,
+            "council.daily_usd_cap",
+            "USD cap"
+        );
+        wire_nested_i64_str!(
+            on_cfg_council_max_calls_changed,
+            "council.max_calls_per_user_message",
+            "Max calls"
+        );
+        wire_nested_i64_str!(
+            on_cfg_council_max_depth_changed,
+            "council.max_recursion_depth",
+            "Max depth"
+        );
+        wire_nested_int_combo!(
+            on_cfg_council_selection_mode_changed,
             "council.selection_mode",
-            &["legacy_majority", "consensus_or_best", "best_always"],  // FIX 5
-            "Selection mode");
+            &["legacy_majority", "consensus_or_best", "best_always"], // FIX 5
+            "Selection mode"
+        );
 
         // Welle A — Provider
-        wire_nested_str!(on_cfg_provider_model_changed,        "provider_model",       "Model");
-        wire_nested_str!(on_cfg_provider_endpoint_changed,     "provider_endpoint",    "Endpoint");
-        wire_nested_str!(on_cfg_provider_region_changed,       "provider_region",      "Region");
-        wire_nested_str!(on_cfg_provider_api_version_changed,  "provider_api_version", "API version");
+        wire_nested_str!(on_cfg_provider_model_changed, "provider_model", "Model");
+        wire_nested_str!(
+            on_cfg_provider_endpoint_changed,
+            "provider_endpoint",
+            "Endpoint"
+        );
+        wire_nested_str!(on_cfg_provider_region_changed, "provider_region", "Region");
+        wire_nested_str!(
+            on_cfg_provider_api_version_changed,
+            "provider_api_version",
+            "API version"
+        );
 
         // Welle A — Profile + Behavior
         // FIX 2 — persona_mode index 0 must write YAML null (→ None) not ""
@@ -4671,47 +5267,104 @@ fn main() -> Result<()> {
                 std::thread::spawn(move || {
                     let fp = nd2.join("freedom.yaml");
                     let rd = nd2.join(".reload-requested");
-                    let result = set_nested_in_freedom(&fp, "persona_mode", yaml_val)
-                        .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                    slint::invoke_from_event_loop(move || {
-                        match result {
-                            Ok(_) => push_toast(&weak2, "success", "Persona mode", val),
-                            Err(ref e) => {
-                                let msg = e.to_string();
-                                push_toast(&weak2, "warn", "Persona mode write failed", &msg);
-                            }
+                    let result =
+                        set_nested_in_freedom(&fp, "persona_mode", yaml_val).and_then(|_| {
+                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                        });
+                    slint::invoke_from_event_loop(move || match result {
+                        Ok(_) => push_toast(&weak2, "success", "Persona mode", val),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&weak2, "warn", "Persona mode write failed", &msg);
                         }
-                    }).ok();
+                    })
+                    .ok();
                 });
             });
         }
-        wire_nested_str!(on_cfg_user_tz_changed,                "user_tz",                  "Timezone");
-        wire_nested_bool!(on_cfg_elicitation_enabled_changed,   "elicitation.enabled",      "Elicitation");
-        wire_nested_int_combo!(on_cfg_elicitation_min_intensity_changed,
+        wire_nested_str!(on_cfg_user_tz_changed, "user_tz", "Timezone");
+        wire_nested_bool!(
+            on_cfg_elicitation_enabled_changed,
+            "elicitation.enabled",
+            "Elicitation"
+        );
+        wire_nested_int_combo!(
+            on_cfg_elicitation_min_intensity_changed,
             "elicitation.min_intensity",
             &["low", "medium", "high", "urgent"],
-            "Min intensity");
-        wire_nested_bool!(on_cfg_tone_modifier_enabled_changed, "tone_modifier.enabled",     "Tone modifier");
+            "Min intensity"
+        );
+        wire_nested_bool!(
+            on_cfg_tone_modifier_enabled_changed,
+            "tone_modifier.enabled",
+            "Tone modifier"
+        );
 
         // Welle B — Privacy
-        wire_nested_bool!(on_cfg_review_gate_enabled_changed,   "review_gate_enabled",       "Review gate");
-        wire_nested_bool!(on_cfg_cloud_stt_enabled_changed,     "media.cloud_stt_enabled",   "Cloud STT");
-        wire_nested_bool!(on_cfg_cloud_tts_enabled_changed,     "media.cloud_tts_enabled",   "Cloud TTS");
-        wire_nested_bool!(on_cfg_cloud_vision_enabled_changed,  "media.cloud_vision_enabled","Cloud vision");
-        wire_nested_bool!(on_cfg_vad_enabled_changed,           "media.vad_enabled",         "VAD");
-        wire_nested_bool!(on_cfg_dictation_enabled_changed,     "media.dictation_enabled",   "Dictation");
-        wire_nested_bool!(on_cfg_proactive_idle_only_changed,   "proactive.idle_only",       "Proactive idle-only");
+        wire_nested_bool!(
+            on_cfg_review_gate_enabled_changed,
+            "review_gate_enabled",
+            "Review gate"
+        );
+        wire_nested_bool!(
+            on_cfg_cloud_stt_enabled_changed,
+            "media.cloud_stt_enabled",
+            "Cloud STT"
+        );
+        wire_nested_bool!(
+            on_cfg_cloud_tts_enabled_changed,
+            "media.cloud_tts_enabled",
+            "Cloud TTS"
+        );
+        wire_nested_bool!(
+            on_cfg_cloud_vision_enabled_changed,
+            "media.cloud_vision_enabled",
+            "Cloud vision"
+        );
+        wire_nested_bool!(on_cfg_vad_enabled_changed, "media.vad_enabled", "VAD");
+        wire_nested_bool!(
+            on_cfg_dictation_enabled_changed,
+            "media.dictation_enabled",
+            "Dictation"
+        );
+        wire_nested_bool!(
+            on_cfg_proactive_idle_only_changed,
+            "proactive.idle_only",
+            "Proactive idle-only"
+        );
 
         // Welle C — Memory
-        wire_nested_bool!(on_cfg_memory_name_sessions_changed,    "memory.name_sessions",           "Name sessions");
-        wire_nested_bool!(on_cfg_memory_recall_shortcut_changed,  "memory.recall_shortcut",         "Recall shortcut");
-        wire_nested_int_combo!(on_cfg_memory_vector_backend_changed,
+        wire_nested_bool!(
+            on_cfg_memory_name_sessions_changed,
+            "memory.name_sessions",
+            "Name sessions"
+        );
+        wire_nested_bool!(
+            on_cfg_memory_recall_shortcut_changed,
+            "memory.recall_shortcut",
+            "Recall shortcut"
+        );
+        wire_nested_int_combo!(
+            on_cfg_memory_vector_backend_changed,
             "memory.vector_index.backend",
             &["brute_force", "hnsw"],
-            "Vector backend");
-        wire_nested_bool!(on_cfg_consolidation_enabled_changed,          "consolidation_sweep.enabled",          "Consolidation sweep");
-        wire_nested_i64_str!(on_cfg_consolidation_interval_secs_changed, "consolidation_sweep.interval_secs",    "Sweep interval");
-        wire_nested_f64_str!(on_cfg_consolidation_cosine_changed,        "consolidation_sweep.cosine_threshold", "Cosine threshold");
+            "Vector backend"
+        );
+        wire_nested_bool!(
+            on_cfg_consolidation_enabled_changed,
+            "consolidation_sweep.enabled",
+            "Consolidation sweep"
+        );
+        wire_nested_i64_str!(
+            on_cfg_consolidation_interval_secs_changed,
+            "consolidation_sweep.interval_secs",
+            "Sweep interval"
+        );
+        wire_nested_f64_str!(
+            on_cfg_consolidation_cosine_changed,
+            "consolidation_sweep.cosine_threshold",
+            "Cosine threshold"
+        );
     }
 
     // ── DES-09 Welle E — Obsidian write-back callbacks ─────────────────────
@@ -4724,18 +5377,30 @@ fn main() -> Result<()> {
         let tx_vault = make_coalescing_writer(
             neoth_dir.join("freedom.yaml"),
             neoth_dir.join(".reload-requested"),
-            "obsidian_vault", "Vault path", window.as_weak(), Some(obs_refresh));
+            "obsidian_vault",
+            "Vault path",
+            window.as_weak(),
+            Some(obs_refresh),
+        );
         window.on_obs_vault_path_changed(move |raw: slint::SharedString| {
-            tx_vault.send(serde_yaml::Value::from(raw.to_string().as_str())).ok();
+            tx_vault
+                .send(serde_yaml::Value::from(raw.to_string().as_str()))
+                .ok();
         });
 
         // subdir → coalescing writer (last-typed wins).
         let tx_subdir = make_coalescing_writer(
             neoth_dir.join("freedom.yaml"),
             neoth_dir.join(".reload-requested"),
-            "obsidian_subdir", "Vault subdir", window.as_weak(), None);
+            "obsidian_subdir",
+            "Vault subdir",
+            window.as_weak(),
+            None,
+        );
         window.on_obs_subdir_changed(move |raw: slint::SharedString| {
-            tx_subdir.send(serde_yaml::Value::from(raw.to_string().as_str())).ok();
+            tx_subdir
+                .send(serde_yaml::Value::from(raw.to_string().as_str()))
+                .ok();
         });
 
         // auto-sync secs (string) — validate on the UI thread, then coalescing
@@ -4743,7 +5408,11 @@ fn main() -> Result<()> {
         let tx_sync = make_coalescing_writer(
             neoth_dir.join("freedom.yaml"),
             neoth_dir.join(".reload-requested"),
-            "obsidian_auto_sync_secs", "Auto-sync interval", window.as_weak(), None);
+            "obsidian_auto_sync_secs",
+            "Auto-sync interval",
+            window.as_weak(),
+            None,
+        );
         let weak_sync_err = window.as_weak();
         window.on_obs_auto_sync_secs_str_changed(move |raw: slint::SharedString| {
             let s = raw.to_string();
@@ -4753,8 +5422,12 @@ fn main() -> Result<()> {
             } else if let Ok(v) = t.parse::<i64>() {
                 tx_sync.send(serde_yaml::Value::from(v)).ok();
             } else {
-                push_toast(&weak_sync_err, "warn", "Auto-sync invalid",
-                           &format!("not an integer: {t}"));
+                push_toast(
+                    &weak_sync_err,
+                    "warn",
+                    "Auto-sync invalid",
+                    &format!("not an integer: {t}"),
+                );
             }
         });
 
@@ -4769,17 +5442,20 @@ fn main() -> Result<()> {
             std::thread::spawn(move || {
                 let fp = nd2.join("freedom.yaml");
                 let rd = nd2.join(".reload-requested");
-                let result = set_nested_in_freedom(&fp, "obsidian_vault_reader_enabled", serde_yaml::Value::from(v))
-                    .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
-                slint::invoke_from_event_loop(move || {
-                    match result {
-                        Ok(_) => push_toast(&w2, "success", "Vault reader", state),
-                        Err(ref e) => {
-                            let msg = e.to_string();
-                            push_toast(&w2, "warn", "Vault reader write failed", &msg);
-                        }
+                let result = set_nested_in_freedom(
+                    &fp,
+                    "obsidian_vault_reader_enabled",
+                    serde_yaml::Value::from(v),
+                )
+                .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                slint::invoke_from_event_loop(move || match result {
+                    Ok(_) => push_toast(&w2, "success", "Vault reader", state),
+                    Err(ref e) => {
+                        let msg = e.to_string();
+                        push_toast(&w2, "warn", "Vault reader write failed", &msg);
                     }
-                }).ok();
+                })
+                .ok();
             });
         });
 
@@ -4802,13 +5478,20 @@ fn main() -> Result<()> {
                         let fp = nd2.join("freedom.yaml");
                         let rd = nd2.join(".reload-requested");
                         let path_str = p.to_string_lossy().to_string();
-                        let result = set_nested_in_freedom(&fp, "obsidian_vault",
-                                serde_yaml::Value::from(path_str.as_str()))
-                            .and_then(|_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)));
+                        let result = set_nested_in_freedom(
+                            &fp,
+                            "obsidian_vault",
+                            serde_yaml::Value::from(path_str.as_str()),
+                        )
+                        .and_then(|_| {
+                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                        });
                         match result {
                             Ok(_) => {
                                 push_toast(&w2, "success", "Vault path", "set — daemon reloading");
-                                if let Some(w) = w2.upgrade() { w.invoke_obs_refresh_clicked(); }
+                                if let Some(w) = w2.upgrade() {
+                                    w.invoke_obs_refresh_clicked();
+                                }
                             }
                             Err(ref e) => {
                                 let msg = e.to_string();
@@ -4816,7 +5499,8 @@ fn main() -> Result<()> {
                             }
                         }
                     }
-                }).ok();
+                })
+                .ok();
             });
         });
 
@@ -4825,8 +5509,11 @@ fn main() -> Result<()> {
         let tx_preload_tmpl = make_coalescing_writer(
             neoth_dir.join("freedom.yaml"),
             neoth_dir.join(".reload-requested"),
-            "obsidian_preload_template_dir", "Preload template dir",
-            window.as_weak(), None);
+            "obsidian_preload_template_dir",
+            "Preload template dir",
+            window.as_weak(),
+            None,
+        );
         window.on_obs_preload_template_dir_changed(move |raw: slint::SharedString| {
             let s = raw.to_string();
             let v = if s.trim().is_empty() {
@@ -4850,29 +5537,35 @@ fn main() -> Result<()> {
                 slint::invoke_from_event_loop(move || {
                     if let Some(p) = picked {
                         if let Some(w) = w2.upgrade() {
-                            let s: slint::SharedString =
-                                p.to_string_lossy().to_string().into();
+                            let s: slint::SharedString = p.to_string_lossy().to_string().into();
                             w.set_obs_preload_template_dir_edit(s);
                         }
                         let fp = nd2.join("freedom.yaml");
                         let rd = nd2.join(".reload-requested");
                         let path_str = p.to_string_lossy().to_string();
                         let result = set_nested_in_freedom(
-                                &fp, "obsidian_preload_template_dir",
-                                serde_yaml::Value::from(path_str.as_str()))
-                            .and_then(|_| std::fs::write(&rd, b"reload\n")
-                                .map_err(|e| anyhow::anyhow!(e)));
+                            &fp,
+                            "obsidian_preload_template_dir",
+                            serde_yaml::Value::from(path_str.as_str()),
+                        )
+                        .and_then(|_| {
+                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                        });
                         match result {
                             Ok(_) => push_toast(
-                                &w2, "success", "Preload template dir",
-                                "set — daemon reloading"),
+                                &w2,
+                                "success",
+                                "Preload template dir",
+                                "set — daemon reloading",
+                            ),
                             Err(ref e) => {
                                 let msg = e.to_string();
                                 push_toast(&w2, "warn", "Preload template dir write failed", &msg);
                             }
                         }
                     }
-                }).ok();
+                })
+                .ok();
             });
         });
 
@@ -4880,8 +5573,11 @@ fn main() -> Result<()> {
         let tx_preload_sub = make_coalescing_writer(
             neoth_dir.join("freedom.yaml"),
             neoth_dir.join(".reload-requested"),
-            "obsidian_preload_subdir", "Preload subdir",
-            window.as_weak(), None);
+            "obsidian_preload_subdir",
+            "Preload subdir",
+            window.as_weak(),
+            None,
+        );
         window.on_obs_preload_subdir_changed(move |raw: slint::SharedString| {
             let s = raw.to_string();
             let v = if s.trim().is_empty() {
@@ -4898,8 +5594,11 @@ fn main() -> Result<()> {
         let tx_kp_dirs = make_coalescing_writer(
             neoth_dir.join("freedom.yaml"),
             neoth_dir.join(".reload-requested"),
-            "knowledge_preload_dirs", "Knowledge preload dirs",
-            window.as_weak(), None);
+            "knowledge_preload_dirs",
+            "Knowledge preload dirs",
+            window.as_weak(),
+            None,
+        );
         window.on_obs_knowledge_preload_dirs_changed(move |raw: slint::SharedString| {
             let text = raw.to_string();
             let paths: Vec<serde_yaml::Value> = text
@@ -4920,7 +5619,7 @@ fn main() -> Result<()> {
     // ── ZF-05 wizard parity callbacks ────────────────────────────────────────
     //
     // These callbacks wire the new wizard parity screens (preset-picker,
-    // hmac-setup, obsidian-setup, n8n-setup, keet-tip, wasm-setup).
+    // hmac-setup, obsidian-setup, n8n-setup, private-mesh info, wasm-setup).
     // Fields are stored in Slint wz-* properties and flushed to freedom.yaml
     // by write_zf05_fields() inside on_finish_clicked.
     {
@@ -4968,6 +5667,22 @@ fn main() -> Result<()> {
             w.set_wz_n8n_enabled(false);
             w.set_wz_n8n_port("9744".into());
             w.set_wz_wasm_enabled(false);
+            w.set_wz_omi_enabled(false);
+            w.set_wz_omi_mode("developer_api".into());
+            w.set_wz_omi_endpoint("http://127.0.0.1:8002".into());
+            w.set_wz_omi_listen_addr("127.0.0.1:8003".into());
+            w.set_wz_omi_retention_days("30".into());
+            w.set_wz_omi_developer_key("".into());
+            w.set_wz_omi_native_token("".into());
+            w.set_wz_omi_retain_transcripts(false);
+            w.set_wz_omi_audio_enabled(false);
+            w.set_wz_omi_image_enabled(false);
+            w.set_wz_omi_video_enabled(false);
+            w.set_wz_omi_allow_cloud_api(false);
+            w.set_wz_omi_allow_cloud_summary(false);
+            w.set_wz_omi_create_actions(true);
+            w.set_wz_omi_seed_groundtruth(true);
+            w.set_wz_omi_summary_enabled(true);
             w.set_status_line(
                 "Wizard reset. Re-walking the flow will overwrite existing freedom.yaml at Finish."
                     .into(),
@@ -4978,7 +5693,9 @@ fn main() -> Result<()> {
     // GAP-04 — Memory search: `neoth recall <query>` → settings memory panel.
     let weak_memsearch = window.as_weak();
     window.on_settings_memory_search_clicked(move |query| {
-        let Some(w0) = weak_memsearch.upgrade() else { return; };
+        let Some(w0) = weak_memsearch.upgrade() else {
+            return;
+        };
         let q = query.to_string();
         if q.trim().is_empty() {
             return; // no-op for empty query
@@ -4987,13 +5704,7 @@ fn main() -> Result<()> {
         let weak = weak_memsearch.clone();
         std::thread::spawn(move || {
             let output = match which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("recall")
-                        .arg(&q)
-                        .output()
-                        .ok()
-                })
+                .and_then(|bin| spawn_neothd_plain(&bin).arg("recall").arg(&q).output().ok())
             {
                 Some(o) => panel_logic::format_recall_output(
                     &String::from_utf8_lossy(&o.stdout),
@@ -5014,7 +5725,9 @@ fn main() -> Result<()> {
     // GAP-07 — Backup now: `neoth backup` → status-line.
     let weak_backup = window.as_weak();
     window.on_settings_backup_now_clicked(move || {
-        let Some(w0) = weak_backup.upgrade() else { return; };
+        let Some(w0) = weak_backup.upgrade() else {
+            return;
+        };
         w0.set_status_line("Running neoth backup…".into());
         let weak = weak_backup.clone();
         std::thread::spawn(move || {
@@ -5025,7 +5738,11 @@ fn main() -> Result<()> {
                     let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
                     let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
                     if o.status.success() {
-                        if out.is_empty() { "Backup complete.".to_string() } else { out }
+                        if out.is_empty() {
+                            "Backup complete.".to_string()
+                        } else {
+                            out
+                        }
                     } else {
                         format!("Backup failed: {}", if err.is_empty() { out } else { err })
                     }
@@ -5045,19 +5762,19 @@ fn main() -> Result<()> {
     // restoring anything. Destructive `apply --confirm` is CLI-only by design.
     let weak_rollback = window.as_weak();
     window.on_settings_rollback_preview_clicked(move || {
-        let Some(w0) = weak_rollback.upgrade() else { return; };
+        let Some(w0) = weak_rollback.upgrade() else {
+            return;
+        };
         w0.set_status_line("Listing rollback snapshots…".into());
         let weak = weak_rollback.clone();
         std::thread::spawn(move || {
-            let result = match which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("rollback")
-                        .arg("list")
-                        .output()
-                        .ok()
-                })
-            {
+            let result = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("rollback")
+                    .arg("list")
+                    .output()
+                    .ok()
+            }) {
                 Some(o) => {
                     let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
                     let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
@@ -5092,8 +5809,7 @@ fn main() -> Result<()> {
             // parsed, refuse to write rather than stomp it with type defaults.
             // The operator must fix / inspect the YAML manually first.
             if already_initialized
-                && !reentry_config_ok_for_finish
-                    .load(std::sync::atomic::Ordering::Acquire)
+                && !reentry_config_ok_for_finish.load(std::sync::atomic::Ordering::Acquire)
             {
                 w.set_status_line(
                     "Cannot re-write config: the existing freedom.yaml could not be \
@@ -5122,6 +5838,22 @@ fn main() -> Result<()> {
                 wz_n8n_enabled: w.get_wz_n8n_enabled(),
                 wz_n8n_port: w.get_wz_n8n_port().to_string(),
                 wz_wasm_enabled: w.get_wz_wasm_enabled(),
+                omi_enabled: w.get_wz_omi_enabled(),
+                omi_mode: w.get_wz_omi_mode().to_string(),
+                omi_endpoint: w.get_wz_omi_endpoint().to_string(),
+                omi_listen_addr: w.get_wz_omi_listen_addr().to_string(),
+                omi_retention_days: w.get_wz_omi_retention_days().to_string(),
+                omi_developer_key: w.get_wz_omi_developer_key().to_string(),
+                omi_native_token: w.get_wz_omi_native_token().to_string(),
+                omi_retain_transcripts: w.get_wz_omi_retain_transcripts(),
+                omi_audio_enabled: w.get_wz_omi_audio_enabled(),
+                omi_image_enabled: w.get_wz_omi_image_enabled(),
+                omi_video_enabled: w.get_wz_omi_video_enabled(),
+                omi_allow_cloud_api: w.get_wz_omi_allow_cloud_api(),
+                omi_allow_cloud_summary: w.get_wz_omi_allow_cloud_summary(),
+                omi_create_actions: w.get_wz_omi_create_actions(),
+                omi_seed_groundtruth: w.get_wz_omi_seed_groundtruth(),
+                omi_summary_enabled: w.get_wz_omi_summary_enabled(),
             };
             match finish(&state) {
                 Ok(report) => {
@@ -5153,14 +5885,18 @@ fn main() -> Result<()> {
     // the event loop). with_winit_window returns Option — ignore None
     // (headless / non-winit backend) gracefully.
     {
-        use slint::winit_030::{WinitWindowAccessor, winit::window::WindowLevel};
         use slint::winit_030::winit::dpi::PhysicalPosition;
+        use slint::winit_030::{WinitWindowAccessor, winit::window::WindowLevel};
 
         let overlay_weak_for_minimize = overlay.as_weak();
         let window_weak_for_minimize = window.as_weak();
         window.on_minimize_to_companion(move || {
-            let Some(ov) = overlay_weak_for_minimize.upgrade() else { return };
-            let Some(win) = window_weak_for_minimize.upgrade() else { return };
+            let Some(ov) = overlay_weak_for_minimize.upgrade() else {
+                return;
+            };
+            let Some(win) = window_weak_for_minimize.upgrade() else {
+                return;
+            };
             win.hide().unwrap_or(());
             ov.show().unwrap_or(());
             // Set always-on-top and position bottom-right after show() so the
@@ -5193,8 +5929,12 @@ fn main() -> Result<()> {
         let overlay_weak_for_restore = overlay.as_weak();
         let window_weak_for_restore = window.as_weak();
         overlay.on_restore_clicked(move || {
-            let Some(ov) = overlay_weak_for_restore.upgrade() else { return };
-            let Some(win) = window_weak_for_restore.upgrade() else { return };
+            let Some(ov) = overlay_weak_for_restore.upgrade() else {
+                return;
+            };
+            let Some(win) = window_weak_for_restore.upgrade() else {
+                return;
+            };
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
         });
@@ -5203,8 +5943,12 @@ fn main() -> Result<()> {
         let overlay_weak_for_hide = overlay.as_weak();
         let window_weak_for_hide = window.as_weak();
         overlay.on_hide_clicked(move || {
-            let Some(ov) = overlay_weak_for_hide.upgrade() else { return };
-            let Some(win) = window_weak_for_hide.upgrade() else { return };
+            let Some(ov) = overlay_weak_for_hide.upgrade() else {
+                return;
+            };
+            let Some(win) = window_weak_for_hide.upgrade() else {
+                return;
+            };
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
         });
@@ -5216,8 +5960,12 @@ fn main() -> Result<()> {
         let overlay_weak_for_send = overlay.as_weak();
         overlay.on_send_clicked(move |text| {
             let body = text.trim().to_string();
-            if body.is_empty() { return; }
-            let Some(ov) = overlay_weak_for_send.upgrade() else { return };
+            if body.is_empty() {
+                return;
+            }
+            let Some(ov) = overlay_weak_for_send.upgrade() else {
+                return;
+            };
 
             // Buddy goes thinking while we wait for the reply.
             ov.set_buddy_mood("thinking".into());
@@ -5226,8 +5974,7 @@ fn main() -> Result<()> {
             // Append the operator line to recent-lines immediately.
             {
                 use slint::{Model, ModelRc, VecModel};
-                let mut lines: Vec<slint::SharedString> =
-                    ov.get_recent_lines().iter().collect();
+                let mut lines: Vec<slint::SharedString> = ov.get_recent_lines().iter().collect();
                 lines.push(format!("▶ {body}").into());
                 // Cap at 6 — oldest drop off.
                 if lines.len() > 6 {
@@ -5242,8 +5989,7 @@ fn main() -> Result<()> {
             std::thread::spawn(move || {
                 use std::io::Read as _;
                 let result: std::result::Result<String, String> = (|| {
-                    let bin = which_neothd()
-                        .ok_or_else(|| "neothd not on PATH".to_string())?;
+                    let bin = which_neothd().ok_or_else(|| "neothd not on PATH".to_string())?;
                     let mut cmd = spawn_neothd_plain(&bin);
                     cmd.arg("chat").arg("--stream").arg(&body_clone);
                     let mut child = cmd
@@ -5251,10 +5997,7 @@ fn main() -> Result<()> {
                         .stderr(std::process::Stdio::null())
                         .spawn()
                         .map_err(|e| format!("spawn failed: {e}"))?;
-                    let mut stdout = child
-                        .stdout
-                        .take()
-                        .ok_or_else(|| "no stdout".to_string())?;
+                    let mut stdout = child.stdout.take().ok_or_else(|| "no stdout".to_string())?;
                     let mut acc: Vec<u8> = Vec::new();
                     let mut buf = [0u8; 512];
                     loop {
@@ -5306,10 +6049,18 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Parse the authoritative completion bit from `neoth channel add --output json`.
+/// Missing, malformed, or non-boolean values are never guessed as success.
+fn parse_channel_configured(stdout: &[u8]) -> Option<bool> {
+    serde_json::from_slice::<serde_json::Value>(stdout)
+        .ok()?
+        .get("configured")?
+        .as_bool()
+}
+
 /// Plain-data snapshot the wizard hands off to disk. Keeps the Slint
 /// type surface separate from the on-disk schema so future schema
 /// bumps stay loosely coupled to the UI.
-#[derive(Default)]
 struct WizardSnapshot {
     operator_id: String,
     provider_kind: String,
@@ -5336,6 +6087,63 @@ struct WizardSnapshot {
     wz_n8n_enabled: bool,
     wz_n8n_port: String,
     wz_wasm_enabled: bool,
+    omi_enabled: bool,
+    omi_mode: String,
+    omi_endpoint: String,
+    omi_listen_addr: String,
+    omi_retention_days: String,
+    omi_developer_key: String,
+    omi_native_token: String,
+    omi_retain_transcripts: bool,
+    omi_audio_enabled: bool,
+    omi_image_enabled: bool,
+    omi_video_enabled: bool,
+    omi_allow_cloud_api: bool,
+    omi_allow_cloud_summary: bool,
+    omi_create_actions: bool,
+    omi_seed_groundtruth: bool,
+    omi_summary_enabled: bool,
+}
+
+impl Default for WizardSnapshot {
+    fn default() -> Self {
+        Self {
+            operator_id: String::new(),
+            provider_kind: String::new(),
+            autonomy: String::new(),
+            license_accepted: false,
+            enable_telegram: false,
+            provider_key: String::new(),
+            telegram_token: String::new(),
+            cluster_discovery_disabled: false,
+            wizard_preset_choice: String::new(),
+            wz_hmac_enabled: false,
+            wz_hmac_webhook_url: String::new(),
+            wz_hmac_webhook_secret: String::new(),
+            wz_obsidian_vault: String::new(),
+            wz_obsidian_subdir: "NEOTH-sessions".to_string(),
+            wz_obsidian_reader_enabled: false,
+            wz_n8n_enabled: false,
+            wz_n8n_port: "9744".to_string(),
+            wz_wasm_enabled: false,
+            omi_enabled: false,
+            omi_mode: "developer_api".to_string(),
+            omi_endpoint: "http://127.0.0.1:8002".to_string(),
+            omi_listen_addr: "127.0.0.1:8003".to_string(),
+            omi_retention_days: "30".to_string(),
+            omi_developer_key: String::new(),
+            omi_native_token: String::new(),
+            omi_retain_transcripts: false,
+            omi_audio_enabled: false,
+            omi_image_enabled: false,
+            omi_video_enabled: false,
+            omi_allow_cloud_api: false,
+            omi_allow_cloud_summary: false,
+            omi_create_actions: true,
+            omi_seed_groundtruth: true,
+            omi_summary_enabled: true,
+        }
+    }
 }
 
 /// What `finish()` returns. `credentials_path` is `None` when no secret
@@ -5358,10 +6166,9 @@ impl FinishReport {
     }
 }
 
-/// On-disk shape for `freedom.yaml`. Mirrors a subset of the daemon's
-/// `FreedomConfig`; fields we don't surface in the GUI yet (inference
-/// topology, obsidian, observability listener) round-trip via the
-/// daemon's `#[serde(default)]` annotations.
+/// Read-only projection of `freedom.yaml` used to populate wizard fields.
+/// Writes must merge into a `serde_yaml::Value`; serialising this projection
+/// would discard fields the wizard does not own.
 ///
 /// L-2 fix — also `Deserialize` so the re-entry path can read the
 /// existing config back into the wizard properties (M-1).
@@ -5382,6 +6189,48 @@ struct MinimalFreedomYaml {
     /// otherwise — the daemon's serde-default keeps mDNS ON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cluster: Option<ClusterYamlBlock>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    omi: Option<OmiWizardYaml>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+struct OmiWizardYaml {
+    enabled: bool,
+    mode: String,
+    endpoint: String,
+    listen_addr: String,
+    retention_days: u64,
+    retain_transcripts: bool,
+    audio_enabled: bool,
+    visual_enabled: bool,
+    video_enabled: bool,
+    allow_cloud_api: bool,
+    allow_cloud_summary: bool,
+    create_actions: bool,
+    seed_groundtruth: bool,
+    summary_enabled: bool,
+}
+
+impl Default for OmiWizardYaml {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: "developer_api".to_string(),
+            endpoint: "http://127.0.0.1:8002".to_string(),
+            listen_addr: "127.0.0.1:8003".to_string(),
+            retention_days: 30,
+            retain_transcripts: false,
+            audio_enabled: false,
+            visual_enabled: false,
+            video_enabled: false,
+            allow_cloud_api: false,
+            allow_cloud_summary: false,
+            create_actions: true,
+            seed_groundtruth: true,
+            summary_enabled: true,
+        }
+    }
 }
 
 /// Minimal mirror of the on-disk `cluster:` block.
@@ -5427,7 +6276,7 @@ struct ClusterMdnsYamlBlock {
 /// without the SecretString wrapper so the GUI doesn't have to pull in
 /// the whole daemon crate. The on-disk format matches verbatim — the
 /// daemon reads it back through the typed struct.
-#[derive(Serialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 struct CredentialsYaml {
     #[serde(skip_serializing_if = "Option::is_none")]
     provider_key: Option<String>,
@@ -5449,13 +6298,31 @@ fn finish(state: &WizardSnapshot) -> Result<FinishReport> {
         anyhow::bail!("operator id is empty — go back and enter one");
     }
     validate_autonomy(&state.autonomy)?;
+    validate_wizard_omi(state)?;
 
     let neoth_dir = default_neoth_home();
     std::fs::create_dir_all(&neoth_dir)
         .with_context(|| format!("create {}", neoth_dir.display()))?;
 
+    // Preserve the long-standing provider/Telegram wizard merge first. OMI
+    // secrets then go through the daemon's strict stdin credential API, which
+    // understands encrypted files and keychain storage. Public OMI config is
+    // written last, so a credential failure can never leave OMI enabled.
+    let mut credentials_path = write_credentials_yaml(state, &neoth_dir)?;
+    if state.omi_enabled
+        && (!state.omi_developer_key.is_empty() || !state.omi_native_token.is_empty())
+    {
+        persist_omi_credentials_via_cli(
+            &neoth_dir,
+            &state.omi_developer_key,
+            &state.omi_native_token,
+        )?;
+        let file_path = neoth_dir.join("credentials.yaml");
+        if credentials_path.is_none() && file_path.exists() {
+            credentials_path = Some(file_path);
+        }
+    }
     let freedom_path = write_freedom_yaml(state, &neoth_dir)?;
-    let credentials_path = write_credentials_yaml(state, &neoth_dir)?;
 
     Ok(FinishReport {
         freedom_path,
@@ -5468,38 +6335,141 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     if state.enable_telegram {
         channels.push("telegram".to_string());
     }
-    let cluster = state
-        .cluster_discovery_disabled
-        .then_some(ClusterYamlBlock {
-            mdns: Some(ClusterMdnsYamlBlock { enabled: false }),
-            ..Default::default()
-        });
-    let yaml = MinimalFreedomYaml {
-        operator_id: state.operator_id.clone(),
-        provider_kind: state.provider_kind.clone(),
-        autonomy: state.autonomy.clone(),
-        channels,
-        cluster,
+    let omi = OmiWizardYaml {
+        enabled: true,
+        mode: state.omi_mode.clone(),
+        endpoint: state.omi_endpoint.clone(),
+        listen_addr: state.omi_listen_addr.clone(),
+        retention_days: state.omi_retention_days.parse().unwrap_or(30),
+        retain_transcripts: state.omi_retain_transcripts,
+        audio_enabled: state.omi_audio_enabled,
+        visual_enabled: state.omi_image_enabled,
+        video_enabled: state.omi_video_enabled,
+        allow_cloud_api: state.omi_allow_cloud_api,
+        allow_cloud_summary: state.omi_allow_cloud_summary,
+        create_actions: state.omi_create_actions,
+        seed_groundtruth: state.omi_seed_groundtruth,
+        summary_enabled: state.omi_summary_enabled,
     };
-    let body = serde_yaml::to_string(&yaml).context("serialise freedom.yaml")?;
     let path = neoth_dir.join("freedom.yaml");
+
+    // The wizard owns only the fields it surfaces. Re-entry therefore uses a
+    // single locked read/merge/write transaction so advanced OMI limits,
+    // inference topology, council policy, and future config additions survive.
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let existed = path.exists();
+    let mut root = if existed {
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("read {} before wizard merge", path.display()))?;
+        serde_yaml::from_str::<serde_yaml::Value>(&body)
+            .with_context(|| format!("parse {} before wizard merge", path.display()))?
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+    let root_map = root
+        .as_mapping_mut()
+        .context("freedom.yaml is not a YAML mapping")?;
+    for (key, value) in [
+        (
+            "operator_id",
+            serde_yaml::Value::from(state.operator_id.clone()),
+        ),
+        (
+            "provider_kind",
+            serde_yaml::Value::from(state.provider_kind.clone()),
+        ),
+        ("autonomy", serde_yaml::Value::from(state.autonomy.clone())),
+        (
+            "channels",
+            serde_yaml::to_value(channels).context("serialise wizard channels")?,
+        ),
+    ] {
+        root_map.insert(serde_yaml::Value::from(key), value);
+    }
+
+    let cluster_key = serde_yaml::Value::from("cluster");
+    if existed || state.cluster_discovery_disabled {
+        let mut cluster = mapping_field_or_empty(root_map, &cluster_key, "cluster")?;
+        let mdns_key = serde_yaml::Value::from("mdns");
+        let mut mdns = mapping_field_or_empty(&cluster, &mdns_key, "cluster.mdns")?;
+        mdns.insert(
+            serde_yaml::Value::from("enabled"),
+            serde_yaml::Value::from(!state.cluster_discovery_disabled),
+        );
+        cluster.insert(mdns_key, serde_yaml::Value::Mapping(mdns));
+        root_map.insert(cluster_key, serde_yaml::Value::Mapping(cluster));
+    }
+
+    let omi_key = serde_yaml::Value::from("omi");
+    if state.omi_enabled {
+        let mut current = mapping_field_or_empty(root_map, &omi_key, "omi")?;
+        let surfaced = serde_yaml::to_value(omi).context("serialise wizard OMI fields")?;
+        let surfaced = surfaced
+            .as_mapping()
+            .context("wizard OMI fields did not serialise to a mapping")?;
+        for (key, value) in surfaced {
+            current.insert(key.clone(), value.clone());
+        }
+        root_map.insert(omi_key, serde_yaml::Value::Mapping(current));
+    } else if root_map.contains_key(&omi_key) {
+        let mut current = mapping_field_or_empty(root_map, &omi_key, "omi")?;
+        current.insert(
+            serde_yaml::Value::from("enabled"),
+            serde_yaml::Value::from(false),
+        );
+        root_map.insert(omi_key, serde_yaml::Value::Mapping(current));
+    }
+
+    let body = serde_yaml::to_string(&root).context("serialise merged freedom.yaml")?;
     write_mode_0600(&path, body.as_bytes())?;
     Ok(path)
+}
+
+fn mapping_field_or_empty(
+    parent: &serde_yaml::Mapping,
+    key: &serde_yaml::Value,
+    field: &str,
+) -> Result<serde_yaml::Mapping> {
+    match parent.get(key) {
+        Some(serde_yaml::Value::Mapping(value)) => Ok(value.clone()),
+        Some(_) => anyhow::bail!("freedom.yaml field {field} is not a YAML mapping"),
+        None => Ok(serde_yaml::Mapping::new()),
+    }
 }
 
 fn write_credentials_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<Option<PathBuf>> {
     let provider_key = (!state.provider_key.is_empty()).then(|| state.provider_key.clone());
     let telegram_token = (state.enable_telegram && !state.telegram_token.is_empty())
         .then(|| state.telegram_token.clone());
-    let creds = CredentialsYaml {
+    let additions = CredentialsYaml {
         provider_key,
         telegram_token,
     };
-    if creds.is_empty() {
+    if additions.is_empty() {
         return Ok(None);
     }
-    let body = serde_yaml::to_string(&creds).context("serialise credentials.yaml")?;
     let path = neoth_dir.join("credentials.yaml");
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut root = if path.exists() {
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("read {} before credential merge", path.display()))?;
+        serde_yaml::from_str::<serde_yaml::Value>(&body)
+            .with_context(|| format!("parse {} before credential merge", path.display()))?
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+    let map = root
+        .as_mapping_mut()
+        .context("credentials.yaml is not a YAML mapping")?;
+    for (key, value) in [
+        ("provider_key", additions.provider_key),
+        ("telegram_token", additions.telegram_token),
+    ] {
+        if let Some(value) = value {
+            map.insert(serde_yaml::Value::from(key), serde_yaml::Value::from(value));
+        }
+    }
+    let body = serde_yaml::to_string(&root).context("serialise merged credentials.yaml")?;
     write_mode_0600(&path, body.as_bytes())?;
     Ok(Some(path))
 }
@@ -5706,6 +6676,399 @@ fn validate_autonomy(level: &str) -> Result<()> {
     }
 }
 
+fn omi_mode_listens(mode: &str) -> bool {
+    matches!(mode, "native_ingest" | "both")
+}
+
+fn omi_endpoint_host(endpoint: &str) -> Option<&str> {
+    let (_, rest) = endpoint.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        return bracketed.split_once(']').map(|(host, _)| host);
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+            Some(host)
+        }
+        _ => Some(authority),
+    }
+}
+
+fn omi_host_is_local(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            let octets = ip.octets();
+            ip.is_loopback()
+                || ip.is_private()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_omi_fields(
+    enabled: bool,
+    mode: &str,
+    endpoint: &str,
+    listen_addr: &str,
+    retention_days: &str,
+    allow_cloud_api: bool,
+    allow_cloud_summary: bool,
+    summary_enabled: bool,
+    audio_enabled: bool,
+    image_enabled: bool,
+    video_enabled: bool,
+    developer_key_present: bool,
+    native_token_present: bool,
+    developer_key_draft: &str,
+    native_token_draft: &str,
+) -> Result<u64> {
+    if !matches!(
+        mode,
+        "developer_api" | "native_ingest" | "both" | "legacy_memories"
+    ) {
+        anyhow::bail!("unknown OMI mode `{mode}`");
+    }
+    let retention_days: u64 = retention_days
+        .parse()
+        .context("OMI retention days must be an integer")?;
+    if !(1..=3_650).contains(&retention_days) {
+        anyhow::bail!("OMI retention days must be between 1 and 3650");
+    }
+    if endpoint.trim() != endpoint || listen_addr.trim() != listen_addr {
+        anyhow::bail!("OMI endpoint/listener must not contain surrounding whitespace");
+    }
+    if mode != "native_ingest" {
+        let host = omi_endpoint_host(endpoint).context("OMI endpoint must be an http(s) URL")?;
+        let endpoint_is_https = endpoint.starts_with("https://");
+        let endpoint_is_http = endpoint.starts_with("http://");
+        if !endpoint_is_http && !endpoint_is_https {
+            anyhow::bail!("OMI endpoint must start with http:// or https://");
+        }
+        if endpoint.contains(['?', '#']) {
+            anyhow::bail!("OMI endpoint must not contain a query or fragment");
+        }
+        if mode == "legacy_memories" && !omi_host_is_local(host) {
+            anyhow::bail!("legacy OMI endpoint must be loopback/private");
+        }
+        if matches!(mode, "developer_api" | "both")
+            && !omi_host_is_local(host)
+            && (!allow_cloud_api || !endpoint_is_https)
+        {
+            anyhow::bail!("public OMI Developer API requires explicit cloud opt-in and HTTPS");
+        }
+    }
+    if allow_cloud_api && !matches!(mode, "developer_api" | "both") {
+        anyhow::bail!("OMI cloud API consent requires developer_api or both mode");
+    }
+    if allow_cloud_summary && (!summary_enabled || !omi_mode_listens(mode)) {
+        anyhow::bail!("cloud summary consent requires summaries and native_ingest/both mode");
+    }
+    let socket: std::net::SocketAddr = listen_addr
+        .parse()
+        .context("OMI native listener must be an IP:port socket")?;
+    if socket.port() == 0 {
+        anyhow::bail!("OMI native listener port must be non-zero");
+    }
+    let local = match socket.ip() {
+        std::net::IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_loopback()
+                || ip.is_private()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        std::net::IpAddr::V6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+    };
+    if !local {
+        anyhow::bail!("OMI native listener must bind loopback/private IP, never wildcard/public");
+    }
+    if video_enabled && !image_enabled {
+        anyhow::bail!("OMI video consent requires image/visual processing consent");
+    }
+    if !omi_mode_listens(mode) && (audio_enabled || image_enabled || video_enabled) {
+        anyhow::bail!("OMI media consents require native_ingest or both mode");
+    }
+    if !developer_key_draft.is_empty()
+        && (!developer_key_draft.starts_with("omi_dev_")
+            || developer_key_draft.len() == "omi_dev_".len()
+            || developer_key_draft.trim() != developer_key_draft)
+    {
+        anyhow::bail!("OMI Developer key must be a trimmed non-empty omi_dev_* value");
+    }
+    if !native_token_draft.is_empty()
+        && (native_token_draft.len() < 32 || native_token_draft.trim() != native_token_draft)
+    {
+        anyhow::bail!("OMI native token must be trimmed and contain at least 32 bytes");
+    }
+    if enabled
+        && matches!(mode, "developer_api" | "both")
+        && !developer_key_present
+        && developer_key_draft.is_empty()
+    {
+        anyhow::bail!("enabled Developer API mode requires an omi_dev_* key");
+    }
+    if enabled && omi_mode_listens(mode) && !native_token_present && native_token_draft.is_empty() {
+        anyhow::bail!("enabled native OMI mode requires a bearer token of at least 32 bytes");
+    }
+    Ok(retention_days)
+}
+
+fn credential_value_present(path: &Path, key: &str) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|body| serde_yaml::from_str::<serde_yaml::Value>(&body).ok())
+        .and_then(|value| value.get(key).and_then(|v| v.as_str()).map(str::to_owned))
+        .is_some_and(|value| !value.is_empty())
+}
+
+fn validate_wizard_omi(state: &WizardSnapshot) -> Result<()> {
+    let credentials_path = default_neoth_home().join("credentials.yaml");
+    let needs_existing_developer = state.omi_enabled
+        && matches!(state.omi_mode.as_str(), "developer_api" | "both")
+        && state.omi_developer_key.is_empty();
+    let needs_existing_native =
+        state.omi_enabled && omi_mode_listens(&state.omi_mode) && state.omi_native_token.is_empty();
+    let effective = (needs_existing_developer || needs_existing_native).then(fetch_omi_snapshot);
+    let developer_present = effective
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.developer_credential_present)
+        || credential_value_present(&credentials_path, "omi_developer_api_key");
+    let native_present = effective
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.native_credential_present)
+        || credential_value_present(&credentials_path, "omi_ingest_token");
+    validate_omi_fields(
+        state.omi_enabled,
+        &state.omi_mode,
+        &state.omi_endpoint,
+        &state.omi_listen_addr,
+        &state.omi_retention_days,
+        state.omi_allow_cloud_api,
+        state.omi_allow_cloud_summary,
+        state.omi_summary_enabled,
+        state.omi_audio_enabled,
+        state.omi_image_enabled,
+        state.omi_video_enabled,
+        developer_present,
+        native_present,
+        &state.omi_developer_key,
+        &state.omi_native_token,
+    )?;
+    Ok(())
+}
+
+#[derive(Clone)]
+struct OmiSettingsDraft {
+    enabled: bool,
+    mode: String,
+    endpoint: String,
+    listen_addr: String,
+    retention_days: String,
+    retain_transcripts: bool,
+    audio_enabled: bool,
+    image_enabled: bool,
+    video_enabled: bool,
+    allow_cloud_api: bool,
+    allow_cloud_summary: bool,
+    create_actions: bool,
+    seed_groundtruth: bool,
+    summary_enabled: bool,
+    developer_key: String,
+    native_token: String,
+}
+
+fn persist_omi_credentials_via_cli(
+    home: &Path,
+    developer_key: &str,
+    native_token: &str,
+) -> Result<()> {
+    use std::io::Write as _;
+
+    if developer_key.is_empty() && native_token.is_empty() {
+        return Ok(());
+    }
+    let bin = which_neothd().context("neothd binary not found for OMI credential update")?;
+    let mut fields = serde_json::Map::new();
+    if !developer_key.is_empty() {
+        fields.insert(
+            "developer_api_key".into(),
+            serde_json::Value::String(developer_key.to_string()),
+        );
+    }
+    if !native_token.is_empty() {
+        fields.insert(
+            "native_ingest_token".into(),
+            serde_json::Value::String(native_token.to_string()),
+        );
+    }
+    let mut body = serde_json::to_vec(&fields).context("encode OMI credential update")?;
+    let mut command = spawn_neothd_plain(&bin);
+    command
+        .arg("omi")
+        .arg("--home")
+        .arg(home)
+        .arg("set-credentials")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command
+        .spawn()
+        .context("start private OMI credential update")?;
+    let write_result = child
+        .stdin
+        .take()
+        .context("open OMI credential update stdin")?
+        .write_all(&body);
+    body.fill(0);
+    if let Err(error) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error).context("send OMI credentials over private child stdin");
+    }
+    let output = child
+        .wait_with_output()
+        .context("wait for OMI credential update")?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("{}", if stderr.is_empty() { stdout } else { stderr });
+    }
+    Ok(())
+}
+
+fn save_omi_settings(
+    home: &Path,
+    draft: &OmiSettingsDraft,
+    developer_key_present: bool,
+    native_token_present: bool,
+) -> Result<()> {
+    let retention_days = validate_omi_fields(
+        draft.enabled,
+        &draft.mode,
+        &draft.endpoint,
+        &draft.listen_addr,
+        &draft.retention_days,
+        draft.allow_cloud_api,
+        draft.allow_cloud_summary,
+        draft.summary_enabled,
+        draft.audio_enabled,
+        draft.image_enabled,
+        draft.video_enabled,
+        developer_key_present,
+        native_token_present,
+        &draft.developer_key,
+        &draft.native_token,
+    )?;
+    std::fs::create_dir_all(home).with_context(|| format!("create {}", home.display()))?;
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Secrets commit first through the daemon's strict, cross-process-locked
+    // credential API. The bounded JSON travels over child stdin, never argv;
+    // encrypted files and the configured keychain backend therefore retain
+    // their normal semantics. A later config-write failure can leave an unused
+    // secret, but never an enabled runtime missing its required credential.
+    persist_omi_credentials_via_cli(home, &draft.developer_key, &draft.native_token)?;
+
+    let freedom_path = home.join("freedom.yaml");
+    let mut root = if freedom_path.exists() {
+        let body = std::fs::read_to_string(&freedom_path)
+            .with_context(|| format!("read {}", freedom_path.display()))?;
+        serde_yaml::from_str::<serde_yaml::Value>(&body)
+            .with_context(|| format!("parse {}", freedom_path.display()))?
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+    let root_map = root
+        .as_mapping_mut()
+        .context("freedom.yaml is not a YAML mapping")?;
+    let omi_key = serde_yaml::Value::from("omi");
+    let mut omi = root_map
+        .get(&omi_key)
+        .and_then(serde_yaml::Value::as_mapping)
+        .cloned()
+        .unwrap_or_default();
+    for (key, value) in [
+        ("enabled", serde_yaml::Value::from(draft.enabled)),
+        ("mode", serde_yaml::Value::from(draft.mode.clone())),
+        ("endpoint", serde_yaml::Value::from(draft.endpoint.clone())),
+        (
+            "listen_addr",
+            serde_yaml::Value::from(draft.listen_addr.clone()),
+        ),
+        ("retention_days", serde_yaml::Value::from(retention_days)),
+        (
+            "retain_transcripts",
+            serde_yaml::Value::from(draft.retain_transcripts),
+        ),
+        (
+            "audio_enabled",
+            serde_yaml::Value::from(draft.audio_enabled),
+        ),
+        (
+            "visual_enabled",
+            serde_yaml::Value::from(draft.image_enabled),
+        ),
+        (
+            "video_enabled",
+            serde_yaml::Value::from(draft.video_enabled),
+        ),
+        (
+            "allow_cloud_api",
+            serde_yaml::Value::from(draft.allow_cloud_api),
+        ),
+        (
+            "allow_cloud_summary",
+            serde_yaml::Value::from(draft.allow_cloud_summary),
+        ),
+        (
+            "create_actions",
+            serde_yaml::Value::from(draft.create_actions),
+        ),
+        (
+            "seed_groundtruth",
+            serde_yaml::Value::from(draft.seed_groundtruth),
+        ),
+        (
+            "summary_enabled",
+            serde_yaml::Value::from(draft.summary_enabled),
+        ),
+    ] {
+        omi.insert(serde_yaml::Value::from(key), value);
+    }
+    root_map.insert(omi_key, serde_yaml::Value::Mapping(omi));
+    let body = serde_yaml::to_string(&root).context("serialise OMI settings")?;
+    write_mode_0600(&freedom_path, body.as_bytes())?;
+    std::fs::write(home.join(".reload-requested"), b"reload\n")
+        .context("write OMI reload sentinel")?;
+    Ok(())
+}
+
+fn run_omi_subcommand(home: &Path, args: &[String]) -> Result<String> {
+    let bin = which_neothd().context("neothd binary not found")?;
+    let mut command = spawn_neothd_plain(&bin);
+    command.arg("omi").arg("--home").arg(home);
+    command.args(args);
+    let output = command.output().context("run OMI operator command")?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        anyhow::bail!("{}", if stderr.is_empty() { stdout } else { stderr });
+    }
+    Ok(if stdout.is_empty() {
+        "OMI command completed.".to_string()
+    } else {
+        stdout
+    })
+}
+
 // ── ZF-05 parity writer ───────────────────────────────────────────────────
 //
 // Called from on_finish_clicked after write_freedom_yaml has created the base
@@ -5775,7 +7138,10 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
 
     // Obsidian vault — only when a path was entered.
     if !state.wz_obsidian_vault.is_empty() {
-        write("obsidian_vault", serde_yaml::Value::from(state.wz_obsidian_vault.as_str()));
+        write(
+            "obsidian_vault",
+            serde_yaml::Value::from(state.wz_obsidian_vault.as_str()),
+        );
         let subdir = if state.wz_obsidian_subdir.is_empty() {
             "NEOTH-sessions"
         } else {
@@ -5783,7 +7149,10 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
         };
         write("obsidian_subdir", serde_yaml::Value::from(subdir));
         if state.wz_obsidian_reader_enabled {
-            write("obsidian_vault_reader_enabled", serde_yaml::Value::from(true));
+            write(
+                "obsidian_vault_reader_enabled",
+                serde_yaml::Value::from(true),
+            );
         }
     }
 
@@ -5838,11 +7207,7 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
 /// # Panics
 ///
 /// None — all errors are returned via `Result`.
-fn set_nested_in_freedom(
-    path: &Path,
-    dotted_key: &str,
-    value: serde_yaml::Value,
-) -> Result<()> {
+fn set_nested_in_freedom(path: &Path, dotted_key: &str, value: serde_yaml::Value) -> Result<()> {
     let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let body = if path.exists() {
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
@@ -5977,7 +7342,9 @@ fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> 
     let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
     let leaf = match segments.as_slice() {
         [leaf] => root.get(serde_yaml::Value::from(*leaf)),
-        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
         [k1, k2, leaf] => root
             .get(k1)
             .and_then(|v| v.get(*k2))
@@ -5989,11 +7356,7 @@ fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> 
 
 /// DES-09 helper — read a nested string from freedom.yaml.
 /// Returns `default` on missing file / key / malformed YAML.
-fn read_nested_str_in_freedom(
-    path: &Path,
-    dotted_key: &str,
-    default: &str,
-) -> String {
+fn read_nested_str_in_freedom(path: &Path, dotted_key: &str, default: &str) -> String {
     let Ok(body) = std::fs::read_to_string(path) else {
         return default.to_string();
     };
@@ -6003,7 +7366,9 @@ fn read_nested_str_in_freedom(
     let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
     let leaf = match segments.as_slice() {
         [leaf] => root.get(serde_yaml::Value::from(*leaf)),
-        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
         [k1, k2, leaf] => root
             .get(k1)
             .and_then(|v| v.get(*k2))
@@ -6027,7 +7392,9 @@ fn read_nested_i64_in_freedom(path: &Path, dotted_key: &str, default: i64) -> i6
     let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
     let leaf = match segments.as_slice() {
         [leaf] => root.get(serde_yaml::Value::from(*leaf)),
-        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
         [k1, k2, leaf] => root
             .get(k1)
             .and_then(|v| v.get(*k2))
@@ -6050,7 +7417,9 @@ fn read_nested_f64_in_freedom(path: &Path, dotted_key: &str) -> Option<f64> {
     let segments: Vec<&str> = dotted_key.splitn(8, '.').collect();
     let leaf = match segments.as_slice() {
         [leaf] => root.get(serde_yaml::Value::from(*leaf)),
-        [k1, leaf] => root.get(k1).and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
+        [k1, leaf] => root
+            .get(k1)
+            .and_then(|v| v.get(serde_yaml::Value::from(*leaf))),
         [k1, k2, leaf] => root
             .get(k1)
             .and_then(|v| v.get(*k2))
@@ -6204,15 +7573,27 @@ mod des09_tests {
             }
             [k1, leaf] => {
                 let k1v = serde_yaml::Value::from(*k1);
-                let mut inner = map.get(&k1v).and_then(|v| v.as_mapping()).cloned().unwrap_or_default();
+                let mut inner = map
+                    .get(&k1v)
+                    .and_then(|v| v.as_mapping())
+                    .cloned()
+                    .unwrap_or_default();
                 inner.insert(serde_yaml::Value::from(*leaf), value);
                 map.insert(k1v, serde_yaml::Value::Mapping(inner));
             }
             [k1, k2, leaf] => {
                 let k1v = serde_yaml::Value::from(*k1);
-                let mut m1 = map.get(&k1v).and_then(|v| v.as_mapping()).cloned().unwrap_or_default();
+                let mut m1 = map
+                    .get(&k1v)
+                    .and_then(|v| v.as_mapping())
+                    .cloned()
+                    .unwrap_or_default();
                 let k2v = serde_yaml::Value::from(*k2);
-                let mut m2 = m1.get(&k2v).and_then(|v| v.as_mapping()).cloned().unwrap_or_default();
+                let mut m2 = m1
+                    .get(&k2v)
+                    .and_then(|v| v.as_mapping())
+                    .cloned()
+                    .unwrap_or_default();
                 m2.insert(serde_yaml::Value::from(*leaf), value);
                 m1.insert(k2v, serde_yaml::Value::Mapping(m2));
                 map.insert(k1v, serde_yaml::Value::Mapping(m1));
@@ -6228,28 +7609,52 @@ mod des09_tests {
     fn nested_create_two_level() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("freedom.yaml");
-        set_nested_test(&path, "council.daily_usd_cap", serde_yaml::Value::from(5.0f64)).unwrap();
+        set_nested_test(
+            &path,
+            "council.daily_usd_cap",
+            serde_yaml::Value::from(5.0f64),
+        )
+        .unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
         let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
-        let got = root.get("council").and_then(|v| v.get("daily_usd_cap"))
-            .and_then(|v| v.as_f64()).unwrap();
+        let got = root
+            .get("council")
+            .and_then(|v| v.get("daily_usd_cap"))
+            .and_then(|v| v.as_f64())
+            .unwrap();
         assert!((got - 5.0).abs() < 1e-9, "expected 5.0 got {got}");
     }
 
     #[test]
     fn nested_update_preserves_siblings() {
         let dir = TempDir::new().unwrap();
-        let path = write_yaml(&dir,
-            "council:\n  daily_usd_cap: 3.0\n  max_calls: 10\nother_key: kept\n");
-        set_nested_test(&path, "council.daily_usd_cap", serde_yaml::Value::from(9.0f64)).unwrap();
+        let path = write_yaml(
+            &dir,
+            "council:\n  daily_usd_cap: 3.0\n  max_calls: 10\nother_key: kept\n",
+        );
+        set_nested_test(
+            &path,
+            "council.daily_usd_cap",
+            serde_yaml::Value::from(9.0f64),
+        )
+        .unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
         let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
         // other_key preserved
         assert_eq!(root.get("other_key").and_then(|v| v.as_str()), Some("kept"));
         // sibling inside council preserved
-        assert_eq!(root.get("council").and_then(|v| v.get("max_calls")).and_then(|v| v.as_i64()), Some(10));
+        assert_eq!(
+            root.get("council")
+                .and_then(|v| v.get("max_calls"))
+                .and_then(|v| v.as_i64()),
+            Some(10)
+        );
         // updated value
-        let cap = root.get("council").and_then(|v| v.get("daily_usd_cap")).and_then(|v| v.as_f64()).unwrap();
+        let cap = root
+            .get("council")
+            .and_then(|v| v.get("daily_usd_cap"))
+            .and_then(|v| v.as_f64())
+            .unwrap();
         assert!((cap - 9.0).abs() < 1e-9);
     }
 
@@ -6260,20 +7665,35 @@ mod des09_tests {
         set_nested_test(&path, "user_tz", serde_yaml::Value::from("Europe/Berlin")).unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
         let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
-        assert_eq!(root.get("user_tz").and_then(|v| v.as_str()), Some("Europe/Berlin"));
+        assert_eq!(
+            root.get("user_tz").and_then(|v| v.as_str()),
+            Some("Europe/Berlin")
+        );
         // provider_kind survives
-        assert_eq!(root.get("provider_kind").and_then(|v| v.as_str()), Some("claude_cli"));
+        assert_eq!(
+            root.get("provider_kind").and_then(|v| v.as_str()),
+            Some("claude_cli")
+        );
     }
 
     #[test]
     fn three_level_nested() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("freedom.yaml");
-        set_nested_test(&path, "memory.vector_index.backend", serde_yaml::Value::from("hnsw")).unwrap();
+        set_nested_test(
+            &path,
+            "memory.vector_index.backend",
+            serde_yaml::Value::from("hnsw"),
+        )
+        .unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
         let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
-        let got = root.get("memory").and_then(|v| v.get("vector_index"))
-            .and_then(|v| v.get("backend")).and_then(|v| v.as_str()).unwrap();
+        let got = root
+            .get("memory")
+            .and_then(|v| v.get("vector_index"))
+            .and_then(|v| v.get("backend"))
+            .and_then(|v| v.as_str())
+            .unwrap();
         assert_eq!(got, "hnsw");
     }
 
@@ -6630,6 +8050,53 @@ fn apply_trust(window: &MainWindow, snap: panel_logic::TrustSnapshot) {
     window.set_trust_ledger(to_rows(snap.ledger));
 }
 
+fn fetch_omi_snapshot() -> panel_logic::OmiSnapshot {
+    let Some(bin) = which_neothd() else {
+        return panel_logic::OmiSnapshot::default();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("omi")
+        .arg("--home")
+        .arg(default_neoth_home())
+        .arg("status")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            panel_logic::parse_omi_status(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => panel_logic::OmiSnapshot::default(),
+    }
+}
+
+fn apply_omi_snapshot(window: &MainWindow, snapshot: panel_logic::OmiSnapshot) {
+    window.set_omi_enabled(snapshot.enabled);
+    window.set_omi_mode(snapshot.mode.into());
+    window.set_omi_endpoint(snapshot.endpoint.into());
+    window.set_omi_listen_addr(snapshot.listen_addr.into());
+    window.set_omi_retention_days(snapshot.retention_days.to_string().into());
+    window.set_omi_retain_transcripts(snapshot.retain_transcripts);
+    window.set_omi_audio_enabled(snapshot.audio_enabled);
+    window.set_omi_image_enabled(snapshot.visual_enabled);
+    window.set_omi_video_enabled(snapshot.video_enabled);
+    window.set_omi_allow_cloud_api(snapshot.allow_cloud_api);
+    window.set_omi_allow_cloud_summary(snapshot.allow_cloud_summary);
+    window.set_omi_create_actions(snapshot.create_actions);
+    window.set_omi_seed_groundtruth(snapshot.seed_groundtruth);
+    window.set_omi_summary_enabled(snapshot.summary_enabled);
+    window.set_omi_developer_key_present(snapshot.developer_credential_present);
+    window.set_omi_native_token_present(snapshot.native_credential_present);
+    window.set_omi_config_valid(snapshot.configuration_valid);
+    window.set_omi_config_error(snapshot.configuration_error.into());
+    window.set_omi_runtime_state(snapshot.runtime_state.into());
+    window.set_omi_runtime_detail(snapshot.runtime_detail.into());
+    window.set_omi_pending_audits(snapshot.pending_audits.min(i32::MAX as u64) as i32);
+    // Secret drafts are write-only and are cleared after every refresh/save.
+    window.set_omi_developer_key_draft("".into());
+    window.set_omi_native_token_draft("".into());
+}
+
 /// SL-03 — fetch the local resource snapshot via `neoth hardware --output json`.
 /// Empty snapshot on missing binary / failure. PARSE is the unit-tested
 /// `panel_logic::parse_hardware`; this is the thin subprocess shell.
@@ -6851,10 +8318,7 @@ fn render_skill_index(window: &MainWindow) {
     let filter = window.get_skills_filter().to_string();
     // Clone out of the lock immediately — holding it across the grouping
     // would stall any future off-thread cache writer.
-    let skills = SKILLS_CACHE
-        .lock()
-        .map(|c| c.clone())
-        .unwrap_or_default();
+    let skills = SKILLS_CACHE.lock().map(|c| c.clone()).unwrap_or_default();
     let rows: Vec<SkillRow> = panel_logic::group_skill_rows(&skills, &filter)
         .into_iter()
         .map(|s| SkillRow {
@@ -6897,6 +8361,7 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<panel_logic::PluginSummary>) 
             id: p.id.into(),
             name: p.name.into(),
             activation: p.activation.into(),
+            requested_permission: p.requested_permission.into(),
             // DES-12
             has_ui_surface: p.has_ui_surface,
             ui_title: p.ui_title.into(),
@@ -7664,9 +9129,30 @@ fn parse_channel_feed_push(line: &str) -> Option<Vec<ChannelActivity>> {
     Some(entries)
 }
 
+/// Parse a spontaneous board frame and keep it off the request/response
+/// channel. The reader thread stores only the newest snapshot because every
+/// push is a complete board replacement.
+fn parse_board_push(line: &str) -> Option<GuiBoardJson> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("push").and_then(|flag| flag.as_bool()) != Some(true) {
+        return None;
+    }
+    serde_json::from_value(value.get("board")?.clone()).ok()
+}
+
+fn take_pending_board(
+    pending: &std::sync::Mutex<Option<GuiBoardJson>>,
+) -> Option<KanbanBoardSnapshot> {
+    pending
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+        .map(board_json_to_snapshot)
+}
+
 #[cfg(test)]
 mod channel_feed_tests {
-    use super::parse_channel_feed_push;
+    use super::{parse_board_push, parse_channel_feed_push, take_pending_board};
 
     #[test]
     fn parses_valid_push_frame() {
@@ -7699,6 +9185,26 @@ mod channel_feed_tests {
         assert_eq!(result[0].bytes, 0);
         assert_eq!(result[0].direction, "in");
     }
+
+    #[test]
+    fn board_push_is_consumed_once_as_a_live_snapshot() {
+        let line = r#"{"push":true,"board":{"summary":"Session #7","cerebellum_bound":true,"tasks":[{"task_id":9,"title":"wire it","hemisphere":"left","status":"in_progress"}],"feed":[]}}"#;
+        let pending = std::sync::Mutex::new(parse_board_push(line));
+
+        let snapshot = take_pending_board(&pending).expect("board push must reach the consumer");
+        assert_eq!(snapshot.summary, "Session #7");
+        assert_eq!(snapshot.in_progress.len(), 1);
+        assert!(
+            take_pending_board(&pending).is_none(),
+            "a consumed complete snapshot must not replay on every timer tick"
+        );
+    }
+
+    #[test]
+    fn board_response_is_not_misclassified_as_a_push() {
+        let line = r#"{"id":3,"ok":true,"board":{"summary":"s","cerebellum_bound":true,"tasks":[],"feed":[]}}"#;
+        assert!(parse_board_push(line).is_none());
+    }
 }
 
 const CHANNEL_ACTIVITY_RING_CAP: usize = 100;
@@ -7707,13 +9213,17 @@ struct GuiStreamClient {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
     /// Lines the reader thread pulled off the child's stdout, in order.
-    /// Push lines (`{"push":true,"channel_feed":[...]}`) are intercepted
-    /// by the reader thread and routed to `activity_ring` instead — so
-    /// `request_board` / `request_activity` never see them.
+    /// Push lines are intercepted by the reader thread and routed to either
+    /// `activity_ring` or `pending_board`, so request methods see only
+    /// id-bearing responses.
     rx: std::sync::mpsc::Receiver<String>,
     /// Capped ring of the latest channel-activity push entries. Shared with
     /// the reader thread (Arc<Mutex>) and drained by the UI timer.
     activity_ring: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<ChannelActivity>>>,
+    /// Newest complete spontaneous board snapshot. The timer consumes this
+    /// before issuing an explicit board request, giving TRAIL-02 a live GUI
+    /// consumer while naturally coalescing bursts.
+    pending_board: std::sync::Arc<std::sync::Mutex<Option<GuiBoardJson>>>,
     next_id: u64,
 }
 
@@ -7743,15 +9253,17 @@ impl GuiStreamClient {
         // self-terminating and cheap, and we never want to JOIN it from a
         // drop path that might otherwise block on a stalled read.
         //
-        // DES-10: push lines (`{"push":true,"channel_feed":[...]}`) are
-        // intercepted here and appended to `ring_writer`. They are NOT
-        // forwarded to `tx`, so `request_board` / `request_activity` never
-        // see them and their stray-line skip logic is unaffected.
+        // Push lines are intercepted here: channel metadata goes to the ring,
+        // complete boards replace the pending snapshot. Neither is forwarded
+        // to `tx`, so request/response matching remains clean.
         let (tx, rx) = std::sync::mpsc::channel::<String>();
-        let activity_ring = std::sync::Arc::new(std::sync::Mutex::new(
-            std::collections::VecDeque::<ChannelActivity>::new(),
-        ));
+        let activity_ring =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::<
+                ChannelActivity,
+            >::new()));
         let ring_writer = activity_ring.clone();
+        let pending_board = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let board_writer = pending_board.clone();
         std::thread::spawn(move || {
             use std::io::BufRead;
             let mut reader = std::io::BufReader::new(stdout);
@@ -7772,6 +9284,12 @@ impl GuiStreamClient {
                                 }
                             }
                             // Do NOT forward push lines to tx.
+                        } else if let Some(board) = parse_board_push(&line) {
+                            if let Ok(mut pending) = board_writer.lock() {
+                                *pending = Some(board);
+                            }
+                            // Complete board pushes are consumed by the timer,
+                            // never confused with an id-bearing response.
                         } else if tx.send(std::mem::take(&mut line)).is_err() {
                             break; // receiver gone — client dropped
                         }
@@ -7785,6 +9303,7 @@ impl GuiStreamClient {
             stdin,
             rx,
             activity_ring,
+            pending_board,
             next_id: 1,
         })
     }
@@ -7882,6 +9401,10 @@ impl GuiStreamClient {
             .map(|mut ring| ring.drain(..).collect())
             .unwrap_or_default()
     }
+
+    fn take_pushed_board(&self) -> Option<KanbanBoardSnapshot> {
+        take_pending_board(&self.pending_board)
+    }
 }
 
 impl Drop for GuiStreamClient {
@@ -7948,6 +9471,9 @@ fn fetch_board_warm_or_cold(
         }
     }
     if let Some(c) = guard.as_mut() {
+        if let Some(snap) = c.take_pushed_board() {
+            return snap;
+        }
         if let Some(snap) = c.request_board() {
             return snap;
         }
@@ -8214,13 +9740,14 @@ pub fn strip_stream_sentinel(raw: &str) -> (String, bool) {
 /// GOLD-ADAPT-ODY-02/05 — token/timing stats the extended done-sentinel
 /// carries. All-zero when the daemon predates the extension (recall
 /// early-return still emits the minimal `{"neoth_stream":"done","count":1}`).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StreamStats {
     pub used_tokens: u64,
     pub limit_tokens: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub elapsed_ms: u64,
+    pub model: String,
 }
 
 /// Split the accumulated stream buffer into (reply-text, done, stats).
@@ -8242,6 +9769,11 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
                 input_tokens: g("input_tokens"),
                 output_tokens: g("output_tokens"),
                 elapsed_ms: g("elapsed_ms"),
+                model: v
+                    .get("model")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             }
         })
         .unwrap_or_default();
@@ -8496,7 +10028,8 @@ mod chat_subprocess_tests {
     fn parse_stream_sentinel_reads_extended_token_fields() {
         let raw = "Answer.\n\n{\"neoth_stream\":\"done\",\"count\":3,\
                    \"used_tokens\":12400,\"limit_tokens\":200000,\
-                   \"input_tokens\":12000,\"output_tokens\":400,\"elapsed_ms\":10000}\n";
+                   \"input_tokens\":12000,\"output_tokens\":400,\"elapsed_ms\":10000,\
+                   \"model\":\"claude-opus-4-7\"}\n";
         let (txt, done, stats) = parse_stream_sentinel(raw);
         assert_eq!(txt, "Answer.");
         assert!(done);
@@ -8508,6 +10041,7 @@ mod chat_subprocess_tests {
                 input_tokens: 12_000,
                 output_tokens: 400,
                 elapsed_ms: 10_000,
+                model: "claude-opus-4-7".to_string(),
             }
         );
     }
@@ -8910,22 +10444,24 @@ fn refresh_cron(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
     let json = run_neothd_probe(&["cron", "list", "--output", "json"]);
     let jobs = panel_logic::parse_cron_jobs(&json);
-    let ts   = panel_logic::now_hhmm();
+    let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
         let rows: Vec<CronJobRow> = jobs
             .into_iter()
-            .map(|(id, name, enabled, cron, tz, role, timeout, channel, recipient)| CronJobRow {
-                id:        id.into(),
-                name:      name.into(),
-                enabled,
-                cron:      cron.into(),
-                tz:        tz.into(),
-                role:      role.into(),
-                timeout:   timeout.into(),
-                channel:   channel.into(),
-                recipient: recipient.into(),
-            })
+            .map(
+                |(id, name, enabled, cron, tz, role, timeout, channel, recipient)| CronJobRow {
+                    id: id.into(),
+                    name: name.into(),
+                    enabled,
+                    cron: cron.into(),
+                    tz: tz.into(),
+                    role: role.into(),
+                    timeout: timeout.into(),
+                    channel: channel.into(),
+                    recipient: recipient.into(),
+                },
+            )
             .collect();
         w.set_cron_jobs(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
         w.set_cron_running(false);
@@ -8936,11 +10472,10 @@ fn refresh_cron(weak: slint::Weak<MainWindow>) {
 // ── Design Wave 4a — n8n panel probe ─────────────────────────────────────────
 fn refresh_n8n(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
-    let status_json    = run_neothd_probe(&["n8n", "status",    "--output", "json"]);
+    let status_json = run_neothd_probe(&["n8n", "status", "--output", "json"]);
     let workflows_json = run_neothd_probe(&["n8n", "workflows", "--output", "json"]);
 
-    let (installed, webhook_base, n8n_path) =
-        panel_logic::parse_n8n_status(&status_json);
+    let (installed, webhook_base, n8n_path) = panel_logic::parse_n8n_status(&status_json);
     let workflows = panel_logic::parse_n8n_workflows(&workflows_json);
 
     let ts = panel_logic::now_hhmm();
@@ -8966,24 +10501,27 @@ fn refresh_n8n(weak: slint::Weak<MainWindow>) {
 // ── Design Wave 4a — Babel panel probe ───────────────────────────────────────
 fn refresh_babel(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
-    let status_json  = run_neothd_probe(&["babel", "status",  "--output", "json"]);
+    let status_json = run_neothd_probe(&["babel", "status", "--output", "json"]);
     let windows_json = run_neothd_probe(&["babel", "windows", "--n", "12", "--output", "json"]);
 
-    let (enabled, threshold, epsilon, federate, total_windows, collapse_flagged, gran_rows) =
-        panel_logic::parse_babel_status(&status_json);
+    let status = panel_logic::parse_babel_status(&status_json);
     let window_rows = panel_logic::parse_babel_windows(&windows_json);
 
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
-        w.set_babel_enabled(enabled);
-        w.set_babel_threshold(threshold.as_str().into());
-        w.set_babel_epsilon(epsilon.as_str().into());
-        w.set_babel_federate(federate);
-        w.set_babel_total_windows(total_windows);
-        w.set_babel_collapse_flagged(collapse_flagged);
+        w.set_babel_enabled(status.enabled);
+        w.set_babel_threshold(status.threshold.as_str().into());
+        w.set_babel_epsilon(status.epsilon.as_str().into());
+        w.set_babel_federate(status.federate);
+        w.set_babel_total_windows(status.total_windows);
+        w.set_babel_collapse_flagged(status.collapse_flagged);
+        w.set_babel_memory_signals(status.memory_signals.as_str().into());
+        w.set_babel_skill_signals(status.skill_signals.as_str().into());
+        w.set_babel_kd_extractor(status.k_d.as_str().into());
         {
-            let rows: Vec<BabelGranRow> = gran_rows
+            let rows: Vec<BabelGranRow> = status
+                .gran_rows
                 .into_iter()
                 .map(|(window_secs, count, last_ts_end)| BabelGranRow {
                     window_secs,
@@ -8996,18 +10534,29 @@ fn refresh_babel(weak: slint::Weak<MainWindow>) {
         {
             let rows: Vec<BabelWindowRow> = window_rows
                 .into_iter()
-                .map(|(id, window_secs, ts_start, ts_end, b_log, b_mult, b_bottleneck, collapse_kind)| {
-                    BabelWindowRow {
-                        id: id.into(),
+                .map(
+                    |(
+                        id,
                         window_secs,
-                        ts_start: ts_start.into(),
-                        ts_end: ts_end.into(),
+                        ts_start,
+                        ts_end,
                         b_log,
                         b_mult,
                         b_bottleneck,
-                        collapse_kind: collapse_kind.into(),
-                    }
-                })
+                        collapse_kind,
+                    )| {
+                        BabelWindowRow {
+                            id: id.into(),
+                            window_secs,
+                            ts_start: ts_start.into(),
+                            ts_end: ts_end.into(),
+                            b_log,
+                            b_mult,
+                            b_bottleneck,
+                            collapse_kind: collapse_kind.into(),
+                        }
+                    },
+                )
                 .collect();
             w.set_babel_window_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
         }
@@ -9044,14 +10593,14 @@ fn refresh_calendar(weak: slint::Weak<MainWindow>) {
 // ── Design Wave 4a — Self-Improve panel probe ─────────────────────────────────
 fn refresh_selfimprove(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
-    let status_json  = run_neothd_probe(&["self-improve", "status", "--output", "json"]);
-    let review_json  = run_neothd_probe(&["self-improve", "review", "--output", "json"]);
-    let log_json     = run_neothd_probe(&["self-improve", "log",    "--output", "json"]);
+    let status_json = run_neothd_probe(&["self-improve", "status", "--output", "json"]);
+    let review_json = run_neothd_probe(&["self-improve", "review", "--output", "json"]);
+    let log_json = run_neothd_probe(&["self-improve", "log", "--output", "json"]);
 
     let (si_enabled, si_auto, si_skillopt, si_last, si_autonomy) =
         panel_logic::parse_selfimprove_status(&status_json);
     let proposals = panel_logic::parse_selfimprove_proposals(&review_json);
-    let log_rows  = panel_logic::parse_selfimprove_log(&log_json);
+    let log_rows = panel_logic::parse_selfimprove_log(&log_json);
 
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
@@ -9109,21 +10658,21 @@ fn refresh_selfdev(weak: slint::Weak<MainWindow>) {
                 let badge = match p.status.as_str() {
                     "accepted" => "accepted",
                     "declined" => "declined",
-                    _          => "pending",
+                    _ => "pending",
                 };
                 let conf = format!("{:.2}", p.confidence);
                 let is_source_edit = p.kind == "source_edit";
                 SelfReprogProposalRow {
-                    id:             p.id.as_str().into(),
-                    kind:           p.kind.as_str().into(),
-                    confidence:     conf.as_str().into(),
-                    target:         p.target.as_str().into(),
-                    reason:         p.reason.as_str().into(),
-                    status_badge:   badge.into(),
+                    id: p.id.as_str().into(),
+                    kind: p.kind.as_str().into(),
+                    confidence: conf.as_str().into(),
+                    target: p.target.as_str().into(),
+                    reason: p.reason.as_str().into(),
+                    status_badge: badge.into(),
                     // GUI-DES-SELFDEV-APPLY-01 — SourceEdit fields:
                     is_source_edit,
-                    patch_path:     p.patch_path.as_str().into(),
-                    diff_sha256:    p.diff_sha256.as_str().into(),
+                    patch_path: p.patch_path.as_str().into(),
+                    diff_sha256: p.diff_sha256.as_str().into(),
                 }
             })
             .collect();
@@ -9152,7 +10701,11 @@ fn refresh_dreaming(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
     let out = run_neothd_probe(&["dream", "list", "--output", "json"]);
     let (days, refreshed_at) = panel_logic::parse_dream_days(&out);
-    let ts = if refreshed_at.is_empty() { panel_logic::now_hhmm() } else { refreshed_at };
+    let ts = if refreshed_at.is_empty() {
+        panel_logic::now_hhmm()
+    } else {
+        refreshed_at
+    };
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
         let rows: Vec<DreamDayRow> = days
@@ -9197,7 +10750,9 @@ fn apply_wiki(weak: slint::Weak<MainWindow>, rows: Vec<panel_logic::WikiRowData>
                 gate: r.gate.into(),
             })
             .collect();
-        w.set_wiki_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(slint_rows))));
+        w.set_wiki_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            slint_rows,
+        ))));
         w.set_wiki_total(total);
         w.set_wiki_refreshed_at(ts.as_str().into());
     });
@@ -9216,9 +10771,9 @@ fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
             .into_iter()
             .map(|name| SelfActSkill { name: name.into() })
             .collect();
-        w.set_bc_self_activation_skills(
-            slint::ModelRc::new(std::rc::Rc::new(VecModel::from(skill_rows))),
-        );
+        w.set_bc_self_activation_skills(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            skill_rows,
+        ))));
         w.set_bc_autonomy(snap.autonomy.as_str().into());
         w.set_bc_refreshed_at(ts.as_str().into());
     });
@@ -9262,7 +10817,9 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
                 reachable: p.reachable,
             })
             .collect();
-        w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(peer_rows))));
+        w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            peer_rows,
+        ))));
         w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
         // DES-13 — backup-at-rest per-peer rows + totals.
         let foreign_rows: Vec<MeshForeignRow> = backup
@@ -9299,21 +10856,16 @@ fn refresh_chat_consent(weak: slint::Weak<MainWindow>) {
 
     let run = |args: &[&str]| -> String {
         which_neothd()
-            .and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .args(args)
-                    .output()
-                    .ok()
-            })
+            .and_then(|bin| spawn_neothd_plain(&bin).args(args).output().ok())
             .filter(|o| o.status.success())
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .unwrap_or_default()
     };
 
     let autonomy_json = run(&["autonomy", "show", "--output", "json"]);
-    let consent_json  = run(&["consent", "list", "--output", "json"]);
+    let consent_json = run(&["consent", "list", "--output", "json"]);
 
-    let mode   = panel_logic::parse_autonomy_mode(&autonomy_json);
+    let mode = panel_logic::parse_autonomy_mode(&autonomy_json);
     let grants = panel_logic::parse_chat_consent_grants(&consent_json);
 
     let _ = slint::invoke_from_event_loop(move || {
@@ -9367,21 +10919,20 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
     };
 
     // Fire all JSON probes.
-    let status_json  = run(&["status",     "--output",  "json"]);
-    let meter_json   = run(&["meter",      "--format",  "json"]);
-    let hemi_json    = run(&["hemispheres","show",      "--output", "json"]);
-    let agents_json  = run(&["agents",     "list",      "--output", "json"]);
-    let skills_json  = run(&["skills",     "list",      "--output", "json"]);
-    let plugin_json  = run(&["plugin",     "list",      "--output", "json"]);
-    let cal_json     = run(&["calendar",   "list",      "--output", "json"]);
-    let consent_json = run(&["consent",    "list",      "--output", "json"]);
+    let status_json = run(&["status", "--output", "json"]);
+    let meter_json = run(&["meter", "--format", "json"]);
+    let hemi_json = run(&["hemispheres", "show", "--output", "json"]);
+    let agents_json = run(&["agents", "list", "--output", "json"]);
+    let skills_json = run(&["skills", "list", "--output", "json"]);
+    let plugin_json = run(&["plugin", "list", "--output", "json"]);
+    let cal_json = run(&["calendar", "list", "--output", "json"]);
+    let consent_json = run(&["consent", "list", "--output", "json"]);
 
     // Parse — all pure fns in panel_logic.
     let (mode, autonomy, ch_health, wal_bytes, tier_counts, daemon_state) =
         panel_logic::parse_overview_status(&status_json);
-    let (tok_in, tok_out, responses, cost, tok_fraction) =
-        panel_logic::parse_meter(&meter_json);
-    let hemis       = panel_logic::parse_overview_hemispheres(&hemi_json);
+    let (tok_in, tok_out, responses, cost, tok_fraction) = panel_logic::parse_meter(&meter_json);
+    let hemis = panel_logic::parse_overview_hemispheres(&hemi_json);
     let (agents_count, agent_names) = panel_logic::parse_agents(&agents_json);
     let (skills_count, skill_names) = panel_logic::parse_overview_skills(&skills_json);
     let (plugins_count, plugin_names) = panel_logic::parse_overview_skills(&plugin_json);
@@ -9439,8 +10990,7 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
         w.set_ov_agents_count(agents_count.into());
         {
             use slint::VecModel;
-            let rows: Vec<slint::SharedString> =
-                agent_names.into_iter().map(Into::into).collect();
+            let rows: Vec<slint::SharedString> = agent_names.into_iter().map(Into::into).collect();
             w.set_ov_agent_names(std::rc::Rc::new(VecModel::from(rows)).into());
         }
 
@@ -9449,8 +10999,7 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
         w.set_ov_plugins_active(plugins_count.into());
         {
             use slint::VecModel;
-            let srows: Vec<slint::SharedString> =
-                skill_names.into_iter().map(Into::into).collect();
+            let srows: Vec<slint::SharedString> = skill_names.into_iter().map(Into::into).collect();
             w.set_ov_skill_names(std::rc::Rc::new(VecModel::from(srows)).into());
             let prows: Vec<slint::SharedString> =
                 plugin_names.into_iter().map(Into::into).collect();
@@ -9740,23 +11289,27 @@ pub fn shape_preset_summary(stdout: &[u8]) -> String {
 }
 
 fn which_neothd() -> Option<PathBuf> {
-    let exe = if cfg!(windows) {
-        "neothd.exe"
+    let executables = if cfg!(windows) {
+        ["neoth.exe", "neothd.exe"]
     } else {
-        "neothd"
+        ["neoth", "neothd"]
     };
     if let Some(path_env) = std::env::var_os("PATH") {
         for entry in std::env::split_paths(&path_env) {
-            let candidate = entry.join(exe);
-            if candidate.exists() {
-                return Some(candidate);
+            for exe in executables {
+                let candidate = entry.join(exe);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
             }
         }
     }
     let exe_path = std::env::current_exe().ok()?;
     let dir = exe_path.parent()?;
-    let sibling = dir.join(exe);
-    sibling.exists().then_some(sibling)
+    executables
+        .into_iter()
+        .map(|exe| dir.join(exe))
+        .find(|candidate| candidate.is_file())
 }
 
 /// GOLD-ADAPT-OH-01 — locate the `neoth-migrate` helper binary (PATH
@@ -9799,7 +11352,7 @@ pub fn format_migrate_summary(detect_json: &str) -> String {
         return String::new();
     }
     format!(
-        "{} prior-AI store(s) found: {}",
+        "{} prior-AI home(s) found: {}",
         names.len(),
         names.join(", ")
     )
@@ -9833,9 +11386,9 @@ fn default_neoth_home() -> PathBuf {
 // B23 — THEME-TWEAKS-RUNTIME: mirrored contract types.
 // File-private — do NOT re-export and do NOT add a `neothd` dep to the GUI crate.
 // Field names and types MUST match `neothd::tweaks::ThemeConfig` field-for-field;
-// parity is enforced by `gui_tweaks_contract_parses_all_18_theme_fields` below.
+// parity is enforced by `gui_tweaks_contract_parses_all_16_theme_fields` below.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct GuiThemeContract {
     pub accent_color: Option<String>,
     pub background_color: Option<String>,
@@ -9848,9 +11401,7 @@ struct GuiThemeContract {
     pub show_token_count: Option<bool>,
     pub show_model_badge: Option<bool>,
     pub chat_bubble_style: Option<String>,
-    pub icon_set: Option<String>,
     pub animation_speed: Option<String>,
-    pub scrollbar_style: Option<String>,
     pub input_height_lines: Option<u8>,
     pub panel_opacity: Option<f32>,
     pub header_hidden: Option<bool>,
@@ -9863,6 +11414,57 @@ struct GuiTweaksContract {
     pub color_theme: Option<String>,
     #[serde(default)]
     pub theme: GuiThemeContract,
+}
+
+fn parse_theme_color(raw: &str) -> Option<slint::Color> {
+    let hex = raw.strip_prefix('#')?;
+    let nibble = |b: u8| -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    };
+    let pair = |bytes: &[u8], at: usize| -> Option<u8> {
+        Some(nibble(*bytes.get(at)?)? * 16 + nibble(*bytes.get(at + 1)?)?)
+    };
+    let bytes = hex.as_bytes();
+    let (red, green, blue, alpha) = match bytes.len() {
+        3 => {
+            let r = nibble(bytes[0])?;
+            let g = nibble(bytes[1])?;
+            let b = nibble(bytes[2])?;
+            (r * 17, g * 17, b * 17, 255)
+        }
+        6 => (pair(bytes, 0)?, pair(bytes, 2)?, pair(bytes, 4)?, 255),
+        8 => (
+            pair(bytes, 0)?,
+            pair(bytes, 2)?,
+            pair(bytes, 4)?,
+            pair(bytes, 6)?,
+        ),
+        _ => return None,
+    };
+    Some(slint::Color::from_argb_u8(alpha, red, green, blue))
+}
+
+fn chat_bubble_style_mode(value: &str) -> Option<i32> {
+    match value {
+        "rounded" => Some(0),
+        "square" => Some(1),
+        "minimal" => Some(2),
+        _ => None,
+    }
+}
+
+fn animation_speed_mode(value: &str) -> Option<i32> {
+    match value {
+        "none" => Some(0),
+        "reduced" => Some(1),
+        "full" => Some(2),
+        _ => None,
+    }
 }
 
 /// B23 fix — resolve the boot `is_dark` flag, mirroring the daemon's
@@ -9989,6 +11591,32 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[test]
+    fn channel_add_configured_parser_accepts_pretty_json_true() {
+        assert_eq!(
+            parse_channel_configured(b"{\n  \"configured\": true\n}"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn channel_add_configured_parser_preserves_explicit_false() {
+        assert_eq!(
+            parse_channel_configured(b"{\n  \"configured\": false\n}"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn channel_add_configured_parser_rejects_missing_or_malformed_status() {
+        assert_eq!(parse_channel_configured(b"{}"), None);
+        assert_eq!(
+            parse_channel_configured(b"{\"configured\": \"true\"}"),
+            None
+        );
+        assert_eq!(parse_channel_configured(b"not-json"), None);
+    }
+
     fn empty_snapshot() -> WizardSnapshot {
         WizardSnapshot {
             operator_id: "sam".into(),
@@ -9997,6 +11625,145 @@ mod tests {
             license_accepted: true,
             ..WizardSnapshot::default()
         }
+    }
+
+    #[test]
+    fn omi_validation_requires_explicit_cloud_and_mode_credentials() {
+        assert!(
+            validate_omi_fields(
+                true,
+                "developer_api",
+                "https://api.omi.me",
+                "127.0.0.1:8003",
+                "30",
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                true,
+                false,
+                "",
+                "",
+            )
+            .is_err()
+        );
+        assert!(
+            validate_omi_fields(
+                true,
+                "both",
+                "https://api.omi.me",
+                "127.0.0.1:8003",
+                "30",
+                true,
+                false,
+                true,
+                false,
+                false,
+                false,
+                true,
+                false,
+                "",
+                "short",
+            )
+            .is_err()
+        );
+        assert_eq!(
+            validate_omi_fields(
+                true,
+                "both",
+                "https://api.omi.me",
+                "127.0.0.1:8003",
+                "14",
+                true,
+                false,
+                true,
+                true,
+                true,
+                true,
+                false,
+                false,
+                "omi_dev_example",
+                "0123456789abcdef0123456789abcdef",
+            )
+            .unwrap(),
+            14
+        );
+    }
+
+    #[test]
+    fn omi_settings_save_preserves_unrelated_config_and_existing_credentials() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "operator_id: alice\ninference:\n  mode: triplet\nomi:\n  poll_interval_secs: 45\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            concat!(
+                "provider_key: keep-me\n",
+                "telegram_token: keep-too\n",
+                "omi_developer_api_key: omi_dev_existing\n",
+                "omi_ingest_token: 0123456789abcdef0123456789abcdef\n",
+            ),
+        )
+        .unwrap();
+        let draft = OmiSettingsDraft {
+            enabled: true,
+            mode: "both".into(),
+            endpoint: "https://api.omi.me".into(),
+            listen_addr: "127.0.0.1:8003".into(),
+            retention_days: "14".into(),
+            retain_transcripts: true,
+            audio_enabled: true,
+            image_enabled: true,
+            video_enabled: false,
+            allow_cloud_api: true,
+            allow_cloud_summary: false,
+            create_actions: true,
+            seed_groundtruth: false,
+            summary_enabled: true,
+            developer_key: String::new(),
+            native_token: String::new(),
+        };
+        save_omi_settings(dir.path(), &draft, true, true).unwrap();
+
+        let freedom = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
+        assert!(freedom.contains("mode: triplet"));
+        assert!(freedom.contains("poll_interval_secs: 45"));
+        assert!(freedom.contains("retain_transcripts: true"));
+        assert!(freedom.contains("audio_enabled: true"));
+        assert!(freedom.contains("visual_enabled: true"));
+        assert!(freedom.contains("video_enabled: false"));
+        assert!(freedom.contains("seed_groundtruth: false"));
+        assert!(!freedom.contains("omi_dev_existing"));
+        assert!(!freedom.contains("0123456789abcdef"));
+
+        let credentials = std::fs::read_to_string(dir.path().join("credentials.yaml")).unwrap();
+        assert!(credentials.contains("provider_key: keep-me"));
+        assert!(credentials.contains("telegram_token: keep-too"));
+        assert!(credentials.contains("omi_developer_api_key: omi_dev_existing"));
+        assert!(credentials.contains("omi_ingest_token: 0123456789abcdef0123456789abcdef"));
+        assert!(dir.path().join(".reload-requested").exists());
+    }
+
+    #[test]
+    fn wizard_base_credentials_merge_does_not_erase_existing_fields() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "provider_key: existing-provider\ndiscord_token: existing-discord\n",
+        )
+        .unwrap();
+        let mut state = empty_snapshot();
+        state.provider_key = "new-provider".into();
+        write_credentials_yaml(&state, dir.path()).unwrap();
+        let credentials = std::fs::read_to_string(dir.path().join("credentials.yaml")).unwrap();
+        assert!(credentials.contains("provider_key: new-provider"));
+        assert!(credentials.contains("discord_token: existing-discord"));
+        assert!(!credentials.contains("omi_developer_api_key"));
     }
 
     #[test]
@@ -10183,6 +11950,96 @@ mod tests {
         let body = std::fs::read_to_string(&freedom).unwrap();
         assert!(body.contains("- cli"));
         assert!(body.contains("- telegram"));
+    }
+
+    #[test]
+    fn wizard_merge_preserves_unowned_config_and_advanced_omi_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            concat!(
+                "operator_id: old\n",
+                "provider_kind: openai_api\n",
+                "autonomy: full\n",
+                "channels: [cli]\n",
+                "inference:\n  mode: triplet\n",
+                "cluster:\n  name: constellation\n  listen_port: 4242\n",
+                "  mdns:\n    enabled: false\n",
+                "omi:\n  enabled: true\n  mode: both\n",
+                "  poll_interval_secs: 45\n  max_connections: 7\n",
+                "  allowed_uids: [omi-device]\n",
+            ),
+        )
+        .unwrap();
+        let mut state = empty_snapshot();
+        state.omi_enabled = true;
+        state.omi_mode = "native_ingest".into();
+        state.omi_audio_enabled = true;
+        state.cluster_discovery_disabled = false;
+
+        write_freedom_yaml(&state, dir.path()).expect("lossless wizard merge");
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        assert_eq!(root["operator_id"].as_str(), Some("sam"));
+        assert_eq!(root["inference"]["mode"].as_str(), Some("triplet"));
+        assert_eq!(root["cluster"]["name"].as_str(), Some("constellation"));
+        assert_eq!(root["cluster"]["listen_port"].as_u64(), Some(4242));
+        assert_eq!(root["cluster"]["mdns"]["enabled"].as_bool(), Some(true));
+        assert_eq!(root["omi"]["enabled"].as_bool(), Some(true));
+        assert_eq!(root["omi"]["mode"].as_str(), Some("native_ingest"));
+        assert_eq!(root["omi"]["audio_enabled"].as_bool(), Some(true));
+        assert_eq!(root["omi"]["poll_interval_secs"].as_u64(), Some(45));
+        assert_eq!(root["omi"]["max_connections"].as_u64(), Some(7));
+        assert_eq!(root["omi"]["allowed_uids"][0].as_str(), Some("omi-device"));
+    }
+
+    #[test]
+    fn wizard_disable_omi_preserves_advanced_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            concat!(
+                "operator_id: old\nprovider_kind: claude_cli\nautonomy: standard\n",
+                "omi:\n  enabled: true\n  max_audio_bytes_per_stream: 123456\n",
+            ),
+        )
+        .unwrap();
+
+        write_freedom_yaml(&empty_snapshot(), dir.path()).expect("disable OMI losslessly");
+        let body = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        assert_eq!(root["omi"]["enabled"].as_bool(), Some(false));
+        assert_eq!(
+            root["omi"]["max_audio_bytes_per_stream"].as_u64(),
+            Some(123456)
+        );
+    }
+
+    #[test]
+    fn read_freedom_yaml_defaults_sparse_omi_projection() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: n\nprovider_kind: claude_cli\nautonomy: standard\nomi:\n  enabled: true\n",
+        )
+        .unwrap();
+
+        let cfg = read_freedom_yaml(&path).expect("sparse OMI block");
+        let omi = cfg.omi.expect("OMI projection");
+        assert!(omi.enabled);
+        assert_eq!(omi.mode, "developer_api");
+        assert_eq!(omi.endpoint, "http://127.0.0.1:8002");
+        assert_eq!(omi.listen_addr, "127.0.0.1:8003");
+        assert_eq!(omi.retention_days, 30);
+        assert!(omi.create_actions);
+        assert!(omi.seed_groundtruth);
+        assert!(omi.summary_enabled);
+        assert!(!omi.audio_enabled);
+        assert!(!omi.visual_enabled);
+        assert!(!omi.video_enabled);
     }
 
     /// Regression test for the M-1 parse failure:
@@ -10563,7 +12420,10 @@ mod tests {
 /// B23 — THEME-TWEAKS-RUNTIME: GUI-side contract type tests.
 #[cfg(test)]
 mod b23_gui_tweaks_tests {
-    use super::{read_gui_tweaks, resolve_neoth_home, GuiTweaksContract};
+    use super::{
+        GuiTweaksContract, animation_speed_mode, chat_bubble_style_mode, parse_theme_color,
+        read_gui_tweaks, resolve_neoth_home,
+    };
     use tempfile::TempDir;
 
     // ── resolve_neoth_home ────────────────────────────────────────────────
@@ -10635,11 +12495,11 @@ sidebar_width_px = 300
         assert!(read_gui_tweaks(dir.path()).is_none());
     }
 
-    /// Parity guard: GuiThemeContract must parse all 18 ThemeConfig fields.
+    /// Parity guard: GuiThemeContract must parse all 16 retained ThemeConfig fields.
     /// If a field is added to ThemeConfig in neothd, this test will break
     /// because the field won't round-trip — keeping the two types in sync.
     #[test]
-    fn gui_tweaks_contract_parses_all_18_theme_fields() {
+    fn gui_tweaks_contract_parses_all_16_theme_fields() {
         let toml_str = r##"
 color_theme = "dark"
 [theme]
@@ -10654,9 +12514,7 @@ compact_mode = true
 show_token_count = true
 show_model_badge = false
 chat_bubble_style = "rounded"
-icon_set = "feather"
 animation_speed = "reduced"
-scrollbar_style = "thin"
 input_height_lines = 4
 panel_opacity = 0.9
 header_hidden = false
@@ -10677,9 +12535,7 @@ sidebar_collapsed = true
         assert_eq!(c.theme.show_token_count, Some(true));
         assert_eq!(c.theme.show_model_badge, Some(false));
         assert_eq!(c.theme.chat_bubble_style.as_deref(), Some("rounded"));
-        assert_eq!(c.theme.icon_set.as_deref(), Some("feather"));
         assert_eq!(c.theme.animation_speed.as_deref(), Some("reduced"));
-        assert_eq!(c.theme.scrollbar_style.as_deref(), Some("thin"));
         assert_eq!(c.theme.header_hidden, Some(false));
         assert_eq!(c.theme.sidebar_collapsed, Some(true));
     }
@@ -10690,6 +12546,35 @@ sidebar_collapsed = true
         assert!(c.theme.font_family.is_none());
         assert!(c.theme.compact_mode.is_none());
         assert!(c.theme.sidebar_width_px.is_none());
+    }
+
+    #[test]
+    fn gui_tweaks_removed_no_sink_fields_fail_loud() {
+        for field in ["icon_set", "scrollbar_style"] {
+            let body = format!("[theme]\n{field} = \"legacy\"\n");
+            assert!(
+                toml::from_str::<GuiTweaksContract>(&body).is_err(),
+                "removed field {field} must not parse and disappear"
+            );
+        }
+    }
+
+    #[test]
+    fn gui_theme_runtime_value_parsers_cover_contract_variants() {
+        for color in ["#123", "#112233", "#11223380"] {
+            assert!(parse_theme_color(color).is_some(), "valid color: {color}");
+        }
+        for color in ["123", "#12", "#gg0000", "#1122334455"] {
+            assert!(parse_theme_color(color).is_none(), "invalid color: {color}");
+        }
+        assert_eq!(chat_bubble_style_mode("rounded"), Some(0));
+        assert_eq!(chat_bubble_style_mode("square"), Some(1));
+        assert_eq!(chat_bubble_style_mode("minimal"), Some(2));
+        assert_eq!(chat_bubble_style_mode("cloud"), None);
+        assert_eq!(animation_speed_mode("none"), Some(0));
+        assert_eq!(animation_speed_mode("reduced"), Some(1));
+        assert_eq!(animation_speed_mode("full"), Some(2));
+        assert_eq!(animation_speed_mode("turbo"), None);
     }
 
     #[test]
@@ -10820,7 +12705,7 @@ sidebar_collapsed = true
 /// GOLD-ADAPT-ODY-12/14 — deep-link chip parsing + nav routing contract.
 #[cfg(test)]
 mod deep_link_tests {
-    use super::{parse_stream_links, NAV_PANELS};
+    use super::{NAV_PANELS, parse_stream_links};
 
     #[test]
     fn parses_links_array_from_extended_sentinel() {
@@ -10831,7 +12716,11 @@ mod deep_link_tests {
         assert_eq!(links.len(), 2);
         assert_eq!(
             links[0],
-            ("task 42".to_string(), "kanban".to_string(), "42".to_string())
+            (
+                "task 42".to_string(),
+                "kanban".to_string(),
+                "42".to_string()
+            )
         );
         assert_eq!(links[1].1, "nav");
         assert_eq!(links[1].2, "coding");
@@ -10856,10 +12745,25 @@ mod deep_link_tests {
         // Drift guard: main.slint's nav-active values. A chip id outside
         // this list is ignored by the click handler.
         assert_eq!(NAV_PANELS.len(), 26);
-        for p in ["chat", "overview", "coding", "memory", "config", "loops",
-                  "n8n", "babel", "calendar", "evolve",
-                  "obsidian", "dreaming", "wiki", "buddyconfig", "companion", "mesh",
-                  "selfdev"] {
+        for p in [
+            "chat",
+            "overview",
+            "coding",
+            "memory",
+            "config",
+            "loops",
+            "n8n",
+            "babel",
+            "calendar",
+            "evolve",
+            "obsidian",
+            "dreaming",
+            "wiki",
+            "buddyconfig",
+            "companion",
+            "mesh",
+            "selfdev",
+        ] {
             assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
         }
     }
@@ -10872,10 +12776,11 @@ mod migrate_card_tests {
 
     #[test]
     fn shapes_detected_sources_into_one_line() {
-        let json = "{\"sources\":[{\"name\":\"hermes-memory\"},{\"name\":\"openclaw-layers\"}],\"scans\":[]}";
+        let json =
+            "{\"sources\":[{\"name\":\"hermes-home\"},{\"name\":\"openclaw-home\"}],\"scans\":[]}";
         assert_eq!(
             format_migrate_summary(json),
-            "2 prior-AI store(s) found: hermes-memory, openclaw-layers"
+            "2 prior-AI home(s) found: hermes-home, openclaw-home"
         );
     }
 
@@ -10893,11 +12798,11 @@ mod migrate_card_tests {
 /// (pure-logic branches) — no Slint or subprocess dependency needed here.
 #[cfg(test)]
 mod gui_bug_regression_tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tempfile::TempDir;
 
-    use super::{finish, read_freedom_yaml, WizardSnapshot};
+    use super::{WizardSnapshot, finish, read_freedom_yaml};
 
     fn base_snapshot() -> WizardSnapshot {
         WizardSnapshot {
@@ -10941,7 +12846,10 @@ mod gui_bug_regression_tests {
         if read_freedom_yaml(&path).is_ok() {
             flag.store(true, Ordering::Release);
         }
-        assert!(flag.load(Ordering::Acquire), "flag must be true for valid yaml");
+        assert!(
+            flag.load(Ordering::Acquire),
+            "flag must be true for valid yaml"
+        );
     }
 
     /// Corrupted freedom.yaml → `reentry_config_ok` flag stays false.
@@ -10954,7 +12862,10 @@ mod gui_bug_regression_tests {
         if read_freedom_yaml(&path).is_ok() {
             flag.store(true, Ordering::Release);
         }
-        assert!(!flag.load(Ordering::Acquire), "flag must stay false for corrupt yaml");
+        assert!(
+            !flag.load(Ordering::Acquire),
+            "flag must stay false for corrupt yaml"
+        );
     }
 
     /// Guard: already_initialized=true + flag=false → block.

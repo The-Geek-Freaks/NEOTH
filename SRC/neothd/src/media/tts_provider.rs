@@ -1,11 +1,10 @@
-//! MM-03 — TTS provider trait + OS-native impl.
+//! MM-03 — canonical local TTS providers.
 //!
-//! Closes the "primitive only" gap on MM-03 by wiring the first
-//! real provider implementation behind the [`super::tts_dispatch`]
-//! dispatcher. Other providers (piper-rs / Coqui / AzureTTS /
-//! ElevenLabs) follow the same `TtsProvider` trait + plug into
-//! `TtsDispatcher::synth_with(provider, request)` once their
-//! deps land.
+//! Piper uses the operator-installed native `piper` executable and
+//! operator-provided ONNX/config files under `~/.neoth/models/piper`; NEOTH
+//! never performs an unaudited model download. Spoken text is sent through
+//! stdin and never appears in process argv. OS-native and Edge adapters share
+//! the same provider trait and audited dispatch boundary.
 //!
 //! ## What ships today
 //!
@@ -20,14 +19,11 @@
 //!   so the OS-selection + arg-formatting logic is testable
 //!   without spawning subprocesses on the CI host.
 //!
-//! ## What stays deferred (clearly labelled)
-//!
-//! - Piper-rs / Coqui / AzureTTS / ElevenLabs impls — each needs
-//!   its own crate or REST client; they land as separate modules
-//!   implementing the same trait.
-
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use tokio::io::AsyncWriteExt;
 
 use super::tts_dispatch::{TtsFormat, TtsProvider as TtsProviderKind, TtsRequest, TtsResponse};
 
@@ -44,6 +40,288 @@ pub trait TtsProvider: Send + Sync {
     /// the dispatcher chains a fallback provider per
     /// `TtsDispatcherConfig::fallback`.
     async fn synth(&self, request: &TtsRequest) -> Result<TtsResponse, String>;
+}
+
+static PIPER_TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
+
+/// Resolved, containment-checked Piper voice assets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PiperAssets {
+    pub model: PathBuf,
+    pub config: PathBuf,
+}
+
+/// Local Piper CLI provider. Asset paths are resolved at synthesis time so a
+/// locale-derived voice id can select `<voice>.onnx` without duplicating
+/// selection logic in the CLI.
+pub struct PiperProvider {
+    models_root: PathBuf,
+    model_override: Option<PathBuf>,
+    config_override: Option<PathBuf>,
+    command: PathBuf,
+    command_prefix: Vec<OsString>,
+    workdir: PathBuf,
+}
+
+impl PiperProvider {
+    pub fn new(
+        models_root: PathBuf,
+        model_override: Option<PathBuf>,
+        config_override: Option<PathBuf>,
+    ) -> Result<Self, String> {
+        let command = find_on_path("piper").ok_or_else(|| {
+            "piper executable not found on PATH — install Piper, then run `neoth tts status`"
+                .to_string()
+        })?;
+        Ok(Self {
+            models_root,
+            model_override,
+            config_override,
+            command,
+            command_prefix: Vec::new(),
+            workdir: std::env::temp_dir(),
+        })
+    }
+
+    #[cfg(test)]
+    fn with_test_command(
+        models_root: PathBuf,
+        model_override: Option<PathBuf>,
+        config_override: Option<PathBuf>,
+        command: PathBuf,
+        command_prefix: Vec<OsString>,
+        workdir: PathBuf,
+    ) -> Self {
+        Self {
+            models_root,
+            model_override,
+            config_override,
+            command,
+            command_prefix,
+            workdir,
+        }
+    }
+
+    fn assets(&self, voice_id: &str) -> Result<PiperAssets, String> {
+        resolve_piper_assets(
+            &self.models_root,
+            self.model_override.as_deref(),
+            self.config_override.as_deref(),
+            voice_id,
+        )
+    }
+}
+
+/// Resolve Piper assets while enforcing that both final canonical paths remain
+/// under `models_root`. This rejects `..`, absolute escapes, and symlinks that
+/// point outside the operator-owned model directory.
+pub fn resolve_piper_assets(
+    models_root: &Path,
+    model_override: Option<&Path>,
+    config_override: Option<&Path>,
+    voice_id: &str,
+) -> Result<PiperAssets, String> {
+    let model_hint = match model_override {
+        Some(path) => path.to_path_buf(),
+        None => {
+            validate_piper_voice_id(voice_id)?;
+            PathBuf::from(format!("{voice_id}.onnx"))
+        }
+    };
+    let config_hint = match config_override {
+        Some(path) => path.to_path_buf(),
+        None => {
+            let file_name = model_hint
+                .file_name()
+                .ok_or_else(|| "piper model path has no file name".to_string())?;
+            let mut name = file_name.to_os_string();
+            name.push(".json");
+            model_hint.with_file_name(name)
+        }
+    };
+    let model = contained_existing_asset(models_root, &model_hint, "model")?;
+    let config = contained_existing_asset(models_root, &config_hint, "config")?;
+    if model.extension().and_then(|v| v.to_str()) != Some("onnx") {
+        return Err(format!(
+            "piper model must be an .onnx file under {}",
+            models_root.display()
+        ));
+    }
+    if config.extension().and_then(|v| v.to_str()) != Some("json") {
+        return Err(format!(
+            "piper config must be a .json file under {}",
+            models_root.display()
+        ));
+    }
+    Ok(PiperAssets { model, config })
+}
+
+fn validate_piper_voice_id(voice_id: &str) -> Result<(), String> {
+    if voice_id.is_empty()
+        || voice_id == "."
+        || voice_id == ".."
+        || !voice_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
+        return Err(
+            "piper voice must be a non-empty file-safe id (letters, digits, '.', '_' or '-')"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn contained_existing_asset(root: &Path, hint: &Path, label: &str) -> Result<PathBuf, String> {
+    if !hint.is_absolute()
+        && hint.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!("piper {label} path may not escape with '..'"));
+    }
+    let candidate = if hint.is_absolute() {
+        hint.to_path_buf()
+    } else {
+        root.join(hint)
+    };
+    let canonical_root = std::fs::canonicalize(root).map_err(|e| {
+        format!(
+            "piper model directory {} is unavailable: {e}; place operator-provided voice files there",
+            root.display()
+        )
+    })?;
+    let canonical = std::fs::canonicalize(&candidate).map_err(|e| {
+        format!(
+            "piper {label} {} is unavailable: {e}; inspect with `neoth models list` or `neoth tts status`",
+            candidate.display()
+        )
+    })?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(format!(
+            "piper {label} {} escapes model root {}",
+            canonical.display(),
+            canonical_root.display()
+        ));
+    }
+    if !canonical.is_file() {
+        return Err(format!(
+            "piper {label} {} is not a file",
+            canonical.display()
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Operator-facing local Piper readiness without downloading or executing a
+/// model. `voice_id` is only used for conventional filename discovery.
+pub fn piper_status(
+    models_root: &Path,
+    model_override: Option<&Path>,
+    config_override: Option<&Path>,
+    voice_id: &str,
+) -> Result<PiperAssets, String> {
+    if find_on_path("piper").is_none() {
+        return Err("piper executable not found on PATH".to_string());
+    }
+    resolve_piper_assets(models_root, model_override, config_override, voice_id)
+}
+
+/// Piper command arguments contain only model/config/output paths. Spoken text
+/// is deliberately absent and is written to the child's stdin instead.
+pub fn build_piper_args(assets: &PiperAssets, output: &Path) -> Vec<OsString> {
+    vec![
+        OsString::from("--model"),
+        assets.model.as_os_str().to_os_string(),
+        OsString::from("--config"),
+        assets.config.as_os_str().to_os_string(),
+        OsString::from("--output_file"),
+        output.as_os_str().to_os_string(),
+    ]
+}
+
+#[async_trait::async_trait]
+impl TtsProvider for PiperProvider {
+    fn kind(&self) -> TtsProviderKind {
+        TtsProviderKind::Piper
+    }
+
+    async fn synth(&self, request: &TtsRequest) -> Result<TtsResponse, String> {
+        if request.text.trim().is_empty() {
+            return Err("empty text — nothing to synthesise".to_string());
+        }
+        if request.format != TtsFormat::Wav {
+            return Err(
+                "piper produces WAV; select a .wav output (no implicit codec conversion)"
+                    .to_string(),
+            );
+        }
+        let assets = self.assets(&request.voice_id)?;
+        std::fs::create_dir_all(&self.workdir)
+            .map_err(|e| format!("create Piper workdir {}: {e}", self.workdir.display()))?;
+        let nonce = PIPER_TEMP_NONCE.fetch_add(1, Ordering::Relaxed);
+        let output = self.workdir.join(format!(
+            "neoth-piper-{}-{}-{nonce}.wav",
+            std::process::id(),
+            crate::time::now_unix_ns()
+        ));
+
+        let mut command = tokio::process::Command::new(&self.command);
+        command
+            .args(&self.command_prefix)
+            .args(build_piper_args(&assets, &output));
+        let mut child = command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn piper ({}): {e}", self.command.display()))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "piper stdin was not piped".to_string())?;
+        stdin
+            .write_all(request.text.as_bytes())
+            .await
+            .map_err(|e| format!("write text to piper stdin: {e}"))?;
+        stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| format!("terminate piper stdin text: {e}"))?;
+        drop(stdin);
+        let process = child
+            .wait_with_output()
+            .await
+            .map_err(|e| format!("wait for piper: {e}"))?;
+        if !process.status.success() {
+            let _ = tokio::fs::remove_file(&output).await;
+            return Err(format!(
+                "piper exited with {:?}: {}",
+                process.status,
+                String::from_utf8_lossy(&process.stderr).trim()
+            ));
+        }
+        let audio_bytes = tokio::fs::read(&output)
+            .await
+            .map_err(|e| format!("read Piper output {}: {e}", output.display()))?;
+        let _ = tokio::fs::remove_file(&output).await;
+        if audio_bytes.len() < 12 || &audio_bytes[..4] != b"RIFF" || &audio_bytes[8..12] != b"WAVE"
+        {
+            return Err("piper produced empty or invalid WAV output".to_string());
+        }
+        let approx_duration_ms =
+            ((audio_bytes.len().saturating_sub(44)) as u64 * 1000 / (22_050 * 2)) as u32;
+        Ok(TtsResponse {
+            audio_bytes,
+            format: TtsFormat::Wav,
+            duration_ms: approx_duration_ms,
+        })
+    }
 }
 
 /// OS-native TTS — `say` / `espeak-ng` / Windows SAPI.
@@ -188,7 +466,9 @@ pub fn build_native_args(
 
 /// JV-VOICE-01 — `edge-tts` subprocess provider. Invokes the `edge-tts` Python
 /// CLI (installed via `pip install edge-tts`) and reads MP3 audio from its
-/// stdout. Local, free, no API key. Quality: Microsoft neural voices.
+/// stdout. The process is local but the service is not: input text is sent to
+/// Microsoft's online Edge speech endpoint. No API key is required, but the
+/// provider factory must still enforce the cloud-egress consent rail.
 ///
 /// The subprocess is invoked as:
 ///   `edge-tts --text <text> --voice <voice> --rate <rate>% --write-media -`
@@ -196,10 +476,13 @@ pub fn build_native_args(
 /// stdout = raw MP3 bytes. stderr is captured for error diagnostics.
 /// On Windows, `PYTHONIOENCODING=utf-8` is injected so non-ASCII text
 /// (e.g. German umlauts) survives the subprocess pipe.
-pub struct EdgeTtsProvider;
+/// Crate-private on purpose: Edge TTS is cloud egress even though its adapter
+/// is a local subprocess. External callers must use the canonical dispatcher,
+/// which applies consent, autonomy, and required WAL lifecycle gates.
+pub(crate) struct EdgeTtsProvider;
 
 impl EdgeTtsProvider {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         EdgeTtsProvider
     }
 }
@@ -417,6 +700,156 @@ mod tests {
             locale: String::new(),
             format: TtsFormat::Wav,
             sample_rate_hz: 22_050,
+        }
+    }
+
+    fn piper_assets(root: &Path, voice: &str) {
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::write(root.join(format!("{voice}.onnx")), b"operator model").unwrap();
+        std::fs::write(root.join(format!("{voice}.onnx.json")), b"{}").unwrap();
+    }
+
+    #[derive(Clone, Copy)]
+    enum MockPiperMode {
+        Success,
+        Failure,
+        Empty,
+    }
+
+    #[cfg(unix)]
+    fn mock_piper_command(dir: &Path, mode: MockPiperMode) -> (PathBuf, Vec<OsString>) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = dir.join("mock-piper.sh");
+        let action = match mode {
+            MockPiperMode::Success => "printf 'RIFF0000WAVEdata' > \"$out\"",
+            MockPiperMode::Failure => "echo mock-piper-failed >&2; exit 7",
+            MockPiperMode::Empty => ": > \"$out\"",
+        };
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nall_args=\"$*\"\nout=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output_file\" ]; then shift; out=\"$1\"; fi\n  shift\ndone\nprintf '%s' \"$all_args\" > \"$out.args\"\ncat > \"$out.stdin\"\n{action}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        (PathBuf::from("/bin/sh"), vec![script.into_os_string()])
+    }
+
+    #[cfg(windows)]
+    fn mock_piper_command(dir: &Path, mode: MockPiperMode) -> (PathBuf, Vec<OsString>) {
+        let script = dir.join("mock-piper.ps1");
+        let action = match mode {
+            MockPiperMode::Success => {
+                "[IO.File]::WriteAllBytes($out, [byte[]](82,73,70,70,48,48,48,48,87,65,86,69,100,97,116,97))"
+            }
+            MockPiperMode::Failure => "[Console]::Error.Write('mock-piper-failed'); exit 7",
+            MockPiperMode::Empty => "[IO.File]::WriteAllBytes($out, [byte[]]@())",
+        };
+        std::fs::write(
+            &script,
+            format!(
+                "$out = $null\nfor ($i = 0; $i -lt $args.Count; $i++) {{ if ($args[$i] -eq '--output_file') {{ $out = $args[$i + 1] }} }}\n[IO.File]::WriteAllText(\"$out.args\", ($args -join \"`n\"))\n[IO.File]::WriteAllText(\"$out.stdin\", [Console]::In.ReadToEnd())\n{action}\n"
+            ),
+        )
+        .unwrap();
+        (
+            PathBuf::from("powershell"),
+            vec![
+                OsString::from("-NoProfile"),
+                OsString::from("-NonInteractive"),
+                OsString::from("-File"),
+                script.into_os_string(),
+            ],
+        )
+    }
+
+    fn test_piper_provider(dir: &Path, mode: MockPiperMode, voice: &str) -> PiperProvider {
+        let root = dir.join("models/piper");
+        let workdir = dir.join("work");
+        piper_assets(&root, voice);
+        std::fs::create_dir_all(&workdir).unwrap();
+        let (command, prefix) = mock_piper_command(dir, mode);
+        PiperProvider::with_test_command(root, None, None, command, prefix, workdir)
+    }
+
+    #[test]
+    fn piper_args_never_contain_spoken_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("models/piper");
+        piper_assets(&root, "voice");
+        let assets = resolve_piper_assets(&root, None, None, "voice").unwrap();
+        let args = build_piper_args(&assets, &dir.path().join("out.wav"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.to_string_lossy() == "secret spoken text")
+        );
+        assert!(args.iter().any(|arg| arg.to_string_lossy() == "--model"));
+        assert!(
+            args.iter()
+                .any(|arg| arg.to_string_lossy() == "--output_file")
+        );
+    }
+
+    #[test]
+    fn piper_assets_reject_parent_and_absolute_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("models/piper");
+        piper_assets(&root, "voice");
+        let outside = dir.path().join("outside.onnx");
+        std::fs::write(&outside, b"outside").unwrap();
+        assert!(
+            resolve_piper_assets(&root, Some(Path::new("../outside.onnx")), None, "voice").is_err()
+        );
+        assert!(resolve_piper_assets(&root, Some(&outside), None, "voice").is_err());
+    }
+
+    #[tokio::test]
+    async fn piper_mock_executable_reads_stdin_and_returns_wav() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = test_piper_provider(dir.path(), MockPiperMode::Success, "voice");
+        let response = provider
+            .synth(&req("secret spoken text", "voice"))
+            .await
+            .unwrap();
+        assert_eq!(response.format, TtsFormat::Wav);
+        assert_eq!(&response.audio_bytes[..4], b"RIFF");
+        let work = dir.path().join("work");
+        let stdin_path = std::fs::read_dir(&work)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .find(|path| path.extension().and_then(|v| v.to_str()) == Some("stdin"))
+            .unwrap();
+        let args_path = std::fs::read_dir(&work)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .find(|path| path.extension().and_then(|v| v.to_str()) == Some("args"))
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(stdin_path).unwrap().trim(),
+            "secret spoken text"
+        );
+        assert!(
+            !std::fs::read_to_string(args_path)
+                .unwrap()
+                .contains("secret spoken text")
+        );
+    }
+
+    #[tokio::test]
+    async fn piper_mock_failure_and_empty_output_fail_loud() {
+        for (mode, expected) in [
+            (MockPiperMode::Failure, "mock-piper-failed"),
+            (MockPiperMode::Empty, "invalid WAV"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let provider = test_piper_provider(dir.path(), mode, "voice");
+            let error = provider.synth(&req("hello", "voice")).await.unwrap_err();
+            assert!(error.contains(expected), "unexpected error: {error}");
         }
     }
 
@@ -638,8 +1071,9 @@ mod tests {
     }
 
     #[test]
-    fn edge_tts_provider_kind_is_local() {
-        assert!(TtsProviderKind::EdgeTts.is_local());
+    fn edge_tts_provider_kind_is_cloud_egress() {
+        assert!(!TtsProviderKind::EdgeTts.is_local());
+        assert!(include_str!("tts_provider.rs").contains("pub(crate) struct EdgeTtsProvider"));
     }
 
     #[tokio::test]

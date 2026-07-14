@@ -39,12 +39,11 @@ pub enum ProviderKind {
     /// per token vs Qwen but explicit reasoning prose in the -Thinking
     /// variants.
     LocalOuro,
-    /// AWS Bedrock Runtime (C-3 Session 13). Stub variant: Phase 1
-    /// ships the surface + consent gate; Phase 2 ships the SigV4 adapter.
+    /// AWS Bedrock Runtime via the native SigV4 Converse adapter. Credentials
+    /// resolve from AWS environment variables or `~/.aws/credentials`.
     AwsBedrock,
-    /// Azure OpenAI Service (C-4 Session 13). Stub variant: Phase 1
-    /// ships the surface + consent gate; Phase 2 ships the api-version
-    /// + deployment-as-model adapter.
+    /// Azure OpenAI Service via its native api-key, deployment-name and
+    /// api-version contract.
     ///
     /// COR-13: the variant is spelled `AzureOpenAi` (two Pascal words
     /// `Open` + `Ai`), so the default `rename_all = "snake_case"` would
@@ -57,9 +56,10 @@ pub enum ProviderKind {
     #[value(name = "azure_openai", alias = "azure_open_ai")]
     AzureOpenAi,
     /// GOLD-ADAPT-ODY-15 — GitHub Copilot via OAuth PAT + short-lived session
-    /// token. Zero per-token cost for GitHub Copilot subscribers (flat
-    /// subscription). Uses the OpenAI-compatible `api.githubcopilot.com`
-    /// endpoint authenticated via `api.github.com/copilot_internal/v2/token`.
+    /// token. Billing depends on plan/model/allowance/overage, so the provider
+    /// stays cost-unbounded without live billing context. Uses the
+    /// OpenAI-compatible `api.githubcopilot.com` endpoint authenticated via
+    /// `api.github.com/copilot_internal/v2/token`.
     ///
     /// COR-Copilot: `rename_all = "snake_case"` would emit `git_hub_copilot`
     /// — not the canonical `copilot_api` slug. Pin both the serde wire form
@@ -81,7 +81,8 @@ pub enum ProviderKind {
     #[serde(rename = "recursive_mas")]
     #[value(name = "recursive_mas")]
     RecursiveMas,
-    /// No provider yet; configure later via `neoth provider add`.
+    /// No provider yet; configure later via `neoth init` or
+    /// `neoth hemispheres set`.
     Skip,
 }
 
@@ -260,13 +261,35 @@ pub struct InitArgs {
     #[arg(long, value_name = "KEY", env = "NEOTH_PROVIDER_KEY")]
     pub provider_key: Option<String>,
 
-    /// Custom API endpoint (for openai_compat).
+    /// Custom API endpoint (OpenAI-compatible or Azure OpenAI resource URL).
     #[arg(long, value_name = "URL")]
     pub provider_endpoint: Option<String>,
 
     /// Override default model.
     #[arg(long, value_name = "MODEL")]
     pub provider_model: Option<String>,
+
+    /// AWS region for `aws_bedrock` (for example `eu-central-1`). Falls back
+    /// to AWS_REGION/AWS_DEFAULT_REGION, then `us-east-1`.
+    #[arg(long, value_name = "REGION")]
+    pub provider_region: Option<String>,
+
+    /// Azure OpenAI API version (for example `2024-10-21`).
+    #[arg(long, value_name = "VERSION")]
+    pub provider_api_version: Option<String>,
+
+    /// Enable release checks in the daemon (check-only; no auto-apply).
+    #[arg(long, conflicts_with_all = ["auto_update_apply", "no_auto_update"])]
+    pub auto_update: bool,
+
+    /// Enable release checks and automatically stage verified updates.
+    /// Binary replacement remains an explicit `neoth update --self --apply`.
+    #[arg(long, conflicts_with = "no_auto_update")]
+    pub auto_update_apply: bool,
+
+    /// Explicitly disable release checks during unattended reconfiguration.
+    #[arg(long, conflicts_with_all = ["auto_update", "auto_update_apply"])]
+    pub no_auto_update: bool,
 
     /// Telegram bot token. Prefer env NEOTH_TELEGRAM_TOKEN.
     #[arg(long, value_name = "TOKEN", env = "NEOTH_TELEGRAM_TOKEN")]
@@ -275,6 +298,70 @@ pub struct InitArgs {
     /// Restrict Telegram bot to a single user ID.
     #[arg(long, value_name = "USER_ID")]
     pub telegram_user_id: Option<u64>,
+
+    /// Enable OMI conversation/native ingest. OMI stays disabled unless this
+    /// flag is present (or an existing `--force` configuration already has it
+    /// enabled). Credentials are accepted only through the no-echo wizard
+    /// prompts or `NEOTH_OMI_DEVELOPER_API_KEY` / `NEOTH_OMI_INGEST_TOKEN`.
+    #[arg(long, conflicts_with = "no_omi")]
+    pub omi: bool,
+
+    /// Explicitly disable OMI during a non-interactive reconfiguration.
+    #[arg(long = "no-omi", conflicts_with = "omi")]
+    pub no_omi: bool,
+
+    /// OMI ingest mode: developer_api, native_ingest, both, or
+    /// legacy_memories.
+    #[arg(long = "omi-mode", value_name = "MODE")]
+    pub omi_mode: Option<String>,
+
+    /// OMI Developer API/backend base URL.
+    #[arg(long = "omi-endpoint", value_name = "URL")]
+    pub omi_endpoint: Option<String>,
+
+    /// Authenticated native OMI listener socket.
+    #[arg(long = "omi-listen-addr", value_name = "IP:PORT")]
+    pub omi_listen_addr: Option<String>,
+
+    /// Permit Developer API polling to use a public HTTPS endpoint.
+    #[arg(long = "omi-allow-cloud-api", value_name = "BOOL")]
+    pub omi_allow_cloud_api: Option<bool>,
+
+    /// OMI-derived record retention window.
+    #[arg(long = "omi-retention-days", value_name = "DAYS")]
+    pub omi_retention_days: Option<u64>,
+
+    /// Retain verbatim OMI transcript text locally.
+    #[arg(long = "omi-retain-transcripts", value_name = "BOOL")]
+    pub omi_retain_transcripts: Option<bool>,
+
+    /// Accept OMI audio in native ingest mode.
+    #[arg(long = "omi-audio", value_name = "BOOL")]
+    pub omi_audio: Option<bool>,
+
+    /// Accept OMI still images in native ingest mode.
+    #[arg(long = "omi-images", value_name = "BOOL")]
+    pub omi_images: Option<bool>,
+
+    /// Accept OMI video/call frames in native ingest mode. Requires images.
+    #[arg(long = "omi-video", value_name = "BOOL")]
+    pub omi_video: Option<bool>,
+
+    /// Promote OMI action items into the local task system.
+    #[arg(long = "omi-create-actions", value_name = "BOOL")]
+    pub omi_create_actions: Option<bool>,
+
+    /// Seed corroborated OMI statements into local ground truth.
+    #[arg(long = "omi-seed-groundtruth", value_name = "BOOL")]
+    pub omi_seed_groundtruth: Option<bool>,
+
+    /// Produce bounded local OMI conversation summaries.
+    #[arg(long = "omi-summary", value_name = "BOOL")]
+    pub omi_summary: Option<bool>,
+
+    /// Permit native OMI summaries to use the configured cloud model.
+    #[arg(long = "omi-allow-cloud-summary", value_name = "BOOL")]
+    pub omi_allow_cloud_summary: Option<bool>,
 
     /// Autonomy level non-interactive override (Phase 28b R-23).
     /// `strict | standard | elevated | full | custom`. Defaults to
@@ -436,6 +523,9 @@ pub enum WizardStep {
     /// telemetry OFF, 24 local-device tools) to `mcp_servers.yaml`.
     /// Non-interactive: skips (device prerequisites require operator setup).
     MobileMcpOffer = 74,
+    /// OMI-MULTIMODAL-01 — explicit OMI mode, privacy-consent, endpoint,
+    /// retention, and credential onboarding.
+    Omi = 75,
 }
 
 impl WizardStep {
@@ -464,6 +554,7 @@ impl WizardStep {
         Self::Supervisor,
         Self::TududiOffer,
         Self::MobileMcpOffer,
+        Self::Omi,
     ];
 }
 
@@ -514,19 +605,46 @@ pub struct WizardState {
     pub provider_key: Option<crate::secret::SecretString>,
     pub provider_endpoint: Option<String>,
     pub provider_model: Option<String>,
+    /// AWS Bedrock region for single-provider dispatch.
+    pub provider_region: Option<String>,
+    /// Azure OpenAI API version for single-provider dispatch.
+    pub provider_api_version: Option<String>,
     pub telegram_token: Option<crate::secret::SecretString>,
     pub telegram_user_id: Option<u64>,
+    /// Preserve the configured secret-store backend during `init --force`.
+    #[serde(default)]
+    pub secrets_backend: crate::config::SecretsBackend,
+    /// OMI public configuration. The complete config is checkpointed so a
+    /// resumed wizard does not lose privacy choices or advanced YAML values.
+    #[serde(default)]
+    pub omi: crate::config::OmiConfig,
+    /// AUDIT-RPC-01 — fresh CLI onboarding enables the loopback listener so
+    /// one-shot permission events can reach the daemon-owned WAL. Force
+    /// reconfiguration hydrates and preserves the operator's existing value.
+    #[serde(default)]
+    pub audit_rpc: crate::config::AuditRpcConfig,
+    /// OMI credentials are deliberately in-memory only. They are collected by
+    /// no-echo prompts or environment variables and never reach checkpoints or
+    /// freedom.yaml.
+    #[serde(skip)]
+    pub omi_developer_api_key: Option<crate::secret::SecretString>,
+    #[serde(skip)]
+    pub omi_ingest_token: Option<crate::secret::SecretString>,
     /// Autonomy level chosen at onboarding — Phase 28b R-23. Defaults to
     /// `Standard` so an aborted wizard still writes a sane freedom.yaml.
     #[serde(default)]
     pub autonomy: crate::permissions::AutonomyLevel,
+    /// Per-action policy retained across wizard resume and `init --force`.
+    /// The wizard does not silently rewrite operator-authored overrides.
+    #[serde(default)]
+    pub custom_autonomy: crate::permissions::CustomAutonomyConfig,
     /// Per-hemisphere LLM topology + accelerator + embedding provider.
     /// Defaults to `single` mode that mirrors the legacy `provider_kind`
     /// path, so an aborted wizard still writes a sane freedom.yaml.
     #[serde(default)]
     pub inference: crate::config::inference::InferenceTopology,
-    /// V03-09 Phase 2a (2026-05-21): operator-facing self-update
-    /// policy. `enabled: false` (default) keeps the daemon silent.
+    /// Operator-facing self-update policy. `enabled: false` (default) keeps the
+    /// daemon silent; `auto_apply` permits verified stage-and-notify only.
     /// step7b_auto_update toggles this based on the operator's
     /// answer. Lives in freedom.yaml under `auto_update:` so the
     /// reload + read paths see the same shape as the rest of the
@@ -540,22 +658,19 @@ pub struct WizardState {
     #[serde(default)]
     pub supervisor: crate::config::SupervisorConfig,
     /// D-102 wizard step 7c (Session 21, 2026-05-23): per-plugin
-    /// activation state populated by `step7c_wasm_plugin_activation`.
-    /// Empty by default; the step writes
-    /// `activations[<id>] = Active|Disabled` based on the operator's
-    /// MultiSelect picks. Maps 1:1 to FreedomConfig.plugins so the
+    /// activation records populated by `step7c_wasm_plugin_activation`.
+    /// Empty by default; Active picks bind the approved permission and
+    /// exact manifest/WASM digests, while unpicked entries become Disabled.
+    /// Maps 1:1 to FreedomConfig.plugins so the
     /// YAML round-trip lands the same shape at daemon boot.
     #[serde(default)]
     pub plugins: crate::config::PluginsConfig,
-    /// K-3.5 (Session 21, 2026-05-23) — Keet pairing seed phrase.
-    /// Stripped from freedom.yaml by `write_config` + persisted to
-    /// credentials.yaml::keet_seed_phrase. Wrapped in `SecretString`
-    /// for mlock+zeroize parity with provider keys.
+    /// Legacy checkpoint field from the removed guessed Keet transport.
+    /// Never written to either configuration file.
     #[serde(skip)]
     pub keet_seed_phrase: Option<crate::secret::SecretString>,
-    /// K-3.5 (Session 21, 2026-05-23) — bearer token generated by
-    /// the wizard for the Pears HTTP bridge. Stripped from
-    /// freedom.yaml + persisted to credentials.yaml::pears_bearer_token.
+    /// Legacy checkpoint field from the removed guessed Pear HTTP bridge.
+    /// Never written to either configuration file.
     #[serde(skip)]
     pub pears_bearer_token: Option<crate::secret::SecretString>,
     /// NOOB-UX-6 (Workstream B, Session 22) — operator opted into

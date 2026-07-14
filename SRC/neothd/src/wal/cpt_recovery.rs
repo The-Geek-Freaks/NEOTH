@@ -131,17 +131,7 @@ pub fn auth_failed_payload(
         "ts_unix": ts_unix,
         "quarantine_path": quarantine_path.display().to_string(),
     });
-    serde_json::to_vec(&value).unwrap_or_else(|_| {
-        // Fallback — must never starve the audit chain even if serde
-        // fails (e.g. a path contains malformed UTF-16 surrogates).
-        format!(
-            "{{\"cpt_path\":\"{}\",\"reason\":\"{}\",\"ts_unix\":{}}}",
-            cpt_path.display(),
-            reason.replace('"', ""),
-            ts_unix
-        )
-        .into_bytes()
-    })
+    serde_json::to_vec(&value).expect("COMPACTION_AUTH_FAILED payload is a serde_json::Value")
 }
 
 /// Sanity-check the WAL event code claim is wired through this module

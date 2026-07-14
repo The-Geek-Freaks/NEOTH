@@ -1,10 +1,11 @@
 //! GOLD-FEAT-10 — Matrix channel adapter (RECEIVE + SEND) over `matrix-sdk`
-//! with end-to-end encryption. Behind the `matrix-channel` cargo feature.
+//! with an explicit encrypted-room policy. Behind the `matrix-channel` cargo
+//! feature.
 //!
 //! [`MatrixChannel::run`] builds (or restores) an E2EE-capable client, drains
 //! the backlog once so a first-ever start does not reply to history, then
 //! registers two event handlers and drives the live `/sync` loop:
-//!   * an **auto-join** handler so the bot joins rooms it is invited to, and
+//!   * an **invite gate** that joins only allowlisted rooms/inviters, and
 //!   * a **message** handler that maps each inbound `m.room.message` (text)
 //!     to an [`InboundMessage`], runs the pipeline `handler`, and posts any
 //!     reply back into the same room.
@@ -23,10 +24,13 @@
 //!
 //! ## Operator prerequisite
 //!
-//! A homeserver URL + a bot user id + (for the one-time login) a password,
-//! all in `credentials.yaml`. After the first login the device session
-//! persists to `<store>/neoth-matrix-session.json` and the password is no
-//! longer read. See [`super::matrix_client`] for the session lifecycle.
+//! A homeserver URL + bot user id + access token or one-time password, all in
+//! `credentials.yaml`. After authentication the device session persists to
+//! `<store>/neoth-matrix-session.json`. By default only encrypted rooms are
+//! accepted/sent to (`matrix_require_encryption: false` is the explicit
+//! plaintext opt-out), and invitations are rejected unless the inviter or
+//! room is explicitly allowlisted. See [`super::matrix_client`] for the
+//! session lifecycle.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -59,12 +63,80 @@ pub struct MatrixChannel {
     homeserver: String,
     user_id: String,
     password: Option<SecretString>,
+    access_token: Option<SecretString>,
     store_path: PathBuf,
     client: tokio::sync::OnceCell<Client>,
-    /// D2 — operator sender allowlist (`@user:server`). `None` ⇒ open.
-    allowed_user_id: Option<String>,
+    policy: MatrixAccessPolicy,
+    /// `true` by default: a room must advertise `m.room.encryption` before any
+    /// inbound text reaches the pipeline or any outbound text is sent.
+    require_encryption: bool,
     /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
+}
+
+/// Matrix room/sender policy. Existing joined rooms remain backwards
+/// compatible when both lists are unset (messages are accepted), but an
+/// invitation always needs at least one explicit rule before NEOTH joins it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MatrixAccessPolicy {
+    allowed_user_id: Option<String>,
+    allowed_room_ids: Vec<String>,
+}
+
+impl MatrixAccessPolicy {
+    fn new(allowed_user_id: Option<String>, allowed_room_ids_csv: Option<String>) -> Self {
+        let allowed_user_id = allowed_user_id
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty());
+        let mut allowed_room_ids = allowed_room_ids_csv
+            .as_deref()
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        allowed_room_ids.sort();
+        allowed_room_ids.dedup();
+        Self {
+            allowed_user_id,
+            allowed_room_ids,
+        }
+    }
+
+    fn has_invite_rule(&self) -> bool {
+        self.allowed_user_id.is_some() || !self.allowed_room_ids.is_empty()
+    }
+
+    fn room_allowed(&self, room_id: &str) -> bool {
+        self.allowed_room_ids.is_empty()
+            || self
+                .allowed_room_ids
+                .iter()
+                .any(|allowed| allowed == room_id)
+    }
+
+    fn sender_allowed(&self, sender: &str) -> bool {
+        self.allowed_user_id
+            .as_deref()
+            .is_none_or(|allowed| allowed == sender)
+    }
+
+    /// Invitations are fail-closed: no rule means no join. When both room and
+    /// sender rules exist they are conjunctive, so neither can bypass the other.
+    fn permits_invite(&self, room_id: &str, inviter: &str) -> bool {
+        self.has_invite_rule() && self.room_allowed(room_id) && self.sender_allowed(inviter)
+    }
+
+    /// Existing joined rooms preserve the historical open behavior when no
+    /// policy exists. Configured dimensions are restrictive and conjunctive.
+    fn permits_message(&self, room_id: &str, sender: &str) -> bool {
+        self.room_allowed(room_id) && self.sender_allowed(sender)
+    }
+}
+
+fn encryption_policy_allows(require_encryption: bool, room_is_encrypted: bool) -> bool {
+    !require_encryption || room_is_encrypted
 }
 
 impl MatrixChannel {
@@ -75,35 +147,57 @@ impl MatrixChannel {
         homeserver: impl Into<String>,
         user_id: impl Into<String>,
         password: Option<SecretString>,
+        access_token: Option<SecretString>,
         store_path: Option<PathBuf>,
     ) -> Self {
         Self {
             homeserver: homeserver.into().trim_end_matches('/').to_string(),
             user_id: user_id.into(),
             password,
+            access_token,
             store_path: store_path.unwrap_or_else(matrix_client::default_store_path),
             client: tokio::sync::OnceCell::new(),
-            allowed_user_id: None,
+            policy: MatrixAccessPolicy::default(),
+            require_encryption: true,
             gate_writer: None,
         }
     }
 
-    /// D2 — bind the operator sender allowlist + the gate's audit writer. An
-    /// unset allowlist (`None`) leaves the channel open (any sender).
-    pub fn with_allowlist(
+    /// Bind room/sender policy, E2EE enforcement, and the audit writer.
+    pub fn with_policy(
         mut self,
         allowed_user_id: Option<String>,
+        allowed_room_ids_csv: Option<String>,
+        require_encryption: bool,
         gate_writer: crate::wal::writer::WalWriterHandle,
     ) -> Self {
-        self.allowed_user_id = allowed_user_id;
+        self.policy = MatrixAccessPolicy::new(allowed_user_id, allowed_room_ids_csv);
+        self.require_encryption = require_encryption;
         self.gate_writer = Some(gate_writer);
         self
+    }
+
+    fn validate_policy(&self) -> Result<()> {
+        if let Some(user_id) = self.policy.allowed_user_id.as_deref() {
+            matrix_sdk::ruma::UserId::parse(user_id)
+                .with_context(|| format!("invalid matrix_allowed_user_id `{user_id}`"))?;
+        }
+        for room_id in &self.policy.allowed_room_ids {
+            RoomId::parse(room_id)
+                .with_context(|| format!("invalid matrix_allowed_room_ids entry `{room_id}`"))?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_room_encryption(&self, room: &Room, operation: &str) -> Result<()> {
+        ensure_room_encryption(room, self.require_encryption, operation).await
     }
 
     /// Lazily build + authenticate the shared client. On error the cell stays
     /// uninitialized, so a later call retries (rides out a transient
     /// homeserver outage at startup).
     async fn client(&self) -> Result<&Client> {
+        self.validate_policy()?;
         self.client
             .get_or_try_init(|| async {
                 let client =
@@ -113,12 +207,40 @@ impl MatrixChannel {
                     &self.store_path,
                     &self.user_id,
                     self.password.as_ref().map(|p| p.expose()),
+                    self.access_token.as_ref().map(|t| t.expose()),
                 )
                 .await?;
                 Ok::<_, anyhow::Error>(client)
             })
             .await
     }
+}
+
+async fn ensure_room_encryption(
+    room: &Room,
+    require_encryption: bool,
+    operation: &str,
+) -> Result<()> {
+    if !require_encryption {
+        return Ok(());
+    }
+    let encrypted = room
+        .latest_encryption_state()
+        .await
+        .with_context(|| {
+            format!(
+                "matrix {operation}: cannot verify encryption state for room {}",
+                room.room_id()
+            )
+        })?
+        .is_encrypted();
+    if !encryption_policy_allows(true, encrypted) {
+        anyhow::bail!(
+            "matrix {operation}: room {} is plaintext while matrix_require_encryption=true",
+            room.room_id()
+        );
+    }
+    Ok(())
 }
 
 /// Map the channel-native primitives of an inbound text message to an
@@ -159,7 +281,7 @@ impl Channel for MatrixChannel {
     }
 
     /// Build/restore the client, drain the backlog once, register the
-    /// auto-join + message handlers, then run the live sync loop until the
+    /// invite-gate + message handlers, then run the live sync loop until the
     /// daemon aborts the spawned task at shutdown. A fatal client/auth error
     /// returns `Err` (the spawn loop logs it and does not restart-spin a
     /// broken config); the live `sync` loop itself retries transient network
@@ -169,13 +291,22 @@ impl Channel for MatrixChannel {
         info!(
             user = %self.user_id,
             homeserver = %self.homeserver,
+            encryption_policy = if self.require_encryption { "required" } else { "plaintext-allowed" },
+            invite_policy = if self.policy.has_invite_rule() { "allowlisted" } else { "deny-all" },
             "matrix adapter starting"
         );
 
-        // Auto-join rooms we are invited to. Registered BEFORE the initial
-        // sync so an invite pending at startup is honoured on the first poll.
+        // Join only explicitly permitted invitations. Registered BEFORE the
+        // initial sync so pending allowed invites are handled on first poll;
+        // an absent policy is deny-all, never auto-join-open.
+        let invite_policy = self.policy.clone();
+        let invite_gate_writer = self.gate_writer.clone();
+        let require_invite_encryption = self.require_encryption;
         client.add_event_handler(
-            |ev: StrippedRoomMemberEvent, room: Room, client: Client| async move {
+            move |ev: StrippedRoomMemberEvent, room: Room, client: Client| {
+                let invite_policy = invite_policy.clone();
+                let invite_gate_writer = invite_gate_writer.clone();
+                async move {
                 // Only act on an invite addressed to US.
                 let Some(me) = client.user_id() else {
                     return;
@@ -185,27 +316,71 @@ impl Channel for MatrixChannel {
                 {
                     return;
                 }
-                info!(room = %room.room_id(), "matrix: auto-joining invited room");
+                let inviter = ev.sender.as_str();
+                if !invite_policy.permits_invite(room.room_id().as_str(), inviter) {
+                    warn!(
+                        room = %room.room_id(),
+                        inviter,
+                        "matrix: invitation denied by room/sender allow policy"
+                    );
+                    super::emit_gate_rejected_reason(
+                        invite_gate_writer.as_ref(),
+                        inviter,
+                        "matrix",
+                        "invite_not_allowed",
+                    )
+                    .await;
+                    if let Err(e) = room.leave().await {
+                        warn!(room = %room.room_id(), error = %e, "matrix: failed to reject denied invitation");
+                    }
+                    return;
+                }
+                info!(room = %room.room_id(), inviter, "matrix: joining allowlisted invitation");
                 // Retry with backoff — the inviting server can lag behind the
                 // invite event.
                 let mut delay_secs = 2u64;
-                while let Err(e) = room.join().await {
-                    warn!(room = %room.room_id(), error = %e, "matrix: join failed; retrying");
-                    if delay_secs > 60 {
-                        error!(room = %room.room_id(), "matrix: giving up auto-join after retries");
-                        break;
+                loop {
+                    match room.join().await {
+                        Ok(()) => break,
+                        Err(e) => {
+                            warn!(room = %room.room_id(), error = %e, "matrix: join failed; retrying");
+                            if delay_secs > 60 {
+                                error!(room = %room.room_id(), "matrix: giving up allowlisted join after retries");
+                                return;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                            delay_secs *= 2;
+                        }
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
-                    delay_secs *= 2;
                 }
+                if let Err(e) = ensure_room_encryption(
+                    &room,
+                    require_invite_encryption,
+                    "post-invite join",
+                )
+                .await
+                {
+                    error!(room = %room.room_id(), error = %e, "matrix: leaving room that violates encryption policy");
+                    super::emit_gate_rejected_reason(
+                        invite_gate_writer.as_ref(),
+                        inviter,
+                        "matrix",
+                        "unencrypted_room",
+                    )
+                    .await;
+                    if let Err(leave_error) = room.leave().await {
+                        warn!(room = %room.room_id(), error = %leave_error, "matrix: failed to leave policy-violating room");
+                    }
+                }
+            }
             },
         );
 
         // Drain the backlog WITHOUT the message handler so a first-ever start
         // (empty store) does not reply to historical messages. With a
         // persisted store the sync token resumes, so this is cheap on later
-        // starts. The auto-join handler IS active here, so startup invites
-        // are still joined during this initial sync.
+        // starts. The invite gate IS active here, so startup invites are
+        // either allowlisted-and-joined or rejected during this initial sync.
         client
             .sync_once(matrix_client::sync_settings())
             .await
@@ -219,12 +394,13 @@ impl Channel for MatrixChannel {
         // D2 — capture the operator allowlist + audit writer into the per-event
         // closure (matrix-sdk clones the closure per event, so these must be
         // owned/Clone like `handler`).
-        let allowed_user_id = self.allowed_user_id.clone();
+        let message_policy = self.policy.clone();
+        let require_message_encryption = self.require_encryption;
         let gate_writer = self.gate_writer.clone();
         client.add_event_handler(
             move |ev: OriginalSyncRoomMessageEvent, room: Room, client: Client| {
                 let handler = handler.clone();
-                let allowed_user_id = allowed_user_id.clone();
+                let message_policy = message_policy.clone();
                 let gate_writer = gate_writer.clone();
                 async move {
                     // Only joined rooms (skip invited/left/knocked).
@@ -237,16 +413,40 @@ impl Channel for MatrixChannel {
                             return;
                         }
                     }
-                    // D2 — drop + audit a sender not on the operator allowlist
-                    // before the pipeline sees the message (open when None).
-                    if crate::channels::sender_blocked_by_allowlist(
-                        allowed_user_id.as_deref(),
-                        ev.sender.as_str(),
-                        gate_writer.as_ref(),
-                        "matrix",
+                    // Room and sender restrictions are conjunctive. Audit the
+                    // native sender before inspecting message text.
+                    if !message_policy
+                        .permits_message(room.room_id().as_str(), ev.sender.as_str())
+                    {
+                        warn!(
+                            room = %room.room_id(),
+                            sender = %ev.sender,
+                            "matrix: inbound denied by room/sender allow policy"
+                        );
+                        super::emit_gate_rejected_reason(
+                            gate_writer.as_ref(),
+                            ev.sender.as_str(),
+                            "matrix",
+                            "room_or_sender_not_allowed",
+                        )
+                        .await;
+                        return;
+                    }
+                    if let Err(e) = ensure_room_encryption(
+                        &room,
+                        require_message_encryption,
+                        "inbound",
                     )
                     .await
                     {
+                        warn!(room = %room.room_id(), error = %e, "matrix: inbound dropped by encryption policy");
+                        super::emit_gate_rejected_reason(
+                            gate_writer.as_ref(),
+                            ev.sender.as_str(),
+                            "matrix",
+                            "unencrypted_room",
+                        )
+                        .await;
                         return;
                     }
                     // Text only for now (media/threads/edits are follow-ups).
@@ -263,6 +463,27 @@ impl Channel for MatrixChannel {
                     );
                     match handler(inbound).await {
                         Ok(Some(out)) => {
+                            // Re-check immediately before the actual write. The
+                            // inbound gate above protects the pipeline; this
+                            // second boundary makes the outbound guarantee
+                            // explicit even if room state changed meanwhile.
+                            if let Err(e) = ensure_room_encryption(
+                                &room,
+                                require_message_encryption,
+                                "reply outbound",
+                            )
+                            .await
+                            {
+                                warn!(room = %room.room_id(), error = %e, "matrix: reply dropped by encryption policy");
+                                super::emit_gate_rejected_reason(
+                                    gate_writer.as_ref(),
+                                    ev.sender.as_str(),
+                                    "matrix",
+                                    "unencrypted_room",
+                                )
+                                .await;
+                                return;
+                            }
                             if let Err(e) = room
                                 .send(RoomMessageEventContent::text_plain(out.text))
                                 .await
@@ -297,16 +518,25 @@ impl Channel for MatrixChannel {
         chat_id: &str,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
+        let room_id = RoomId::parse(chat_id).map_err(|e| {
+            ChannelError::Transport(format!("invalid matrix room id {chat_id}: {e}"))
+        })?;
+        if !self.policy.room_allowed(chat_id) {
+            return Err(ChannelError::Transport(format!(
+                "matrix room {chat_id} is not on matrix_allowed_room_ids"
+            )));
+        }
+        // Reject an out-of-policy destination before login/network work.
         let client = self
             .client()
             .await
             .map_err(|e| ChannelError::Auth(e.to_string()))?;
-        let room_id = RoomId::parse(chat_id).map_err(|e| {
-            ChannelError::Transport(format!("invalid matrix room id {chat_id}: {e}"))
-        })?;
         let room = client.get_room(&room_id).ok_or_else(|| {
             ChannelError::Transport(format!("not joined to matrix room {chat_id}"))
         })?;
+        self.ensure_room_encryption(&room, "outbound")
+            .await
+            .map_err(|e| ChannelError::Transport(e.to_string()))?;
         let resp = room
             .send(RoomMessageEventContent::text_plain(text))
             .await
@@ -333,13 +563,13 @@ mod tests {
 
     #[test]
     fn adapter_reports_matrix_name() {
-        let a = MatrixChannel::new("https://matrix.org", "@bot:matrix.org", None, None);
+        let a = MatrixChannel::new("https://matrix.org", "@bot:matrix.org", None, None, None);
         assert_eq!(a.name(), "matrix");
     }
 
     #[test]
     fn new_trims_trailing_slash_from_homeserver() {
-        let a = MatrixChannel::new("https://matrix.org/", "@bot:matrix.org", None, None);
+        let a = MatrixChannel::new("https://matrix.org/", "@bot:matrix.org", None, None, None);
         assert_eq!(
             a.homeserver, "https://matrix.org",
             "trailing slash stripped"
@@ -348,7 +578,7 @@ mod tests {
 
     #[test]
     fn new_defaults_store_path_when_none() {
-        let a = MatrixChannel::new("https://m.org", "@b:m.org", None, None);
+        let a = MatrixChannel::new("https://m.org", "@b:m.org", None, None, None);
         assert_eq!(
             a.store_path.file_name().and_then(|s| s.to_str()),
             Some("matrix_store")
@@ -358,8 +588,85 @@ mod tests {
     #[test]
     fn new_honours_explicit_store_path() {
         let custom = PathBuf::from("/tmp/neoth-matrix-test-store");
-        let a = MatrixChannel::new("https://m.org", "@b:m.org", None, Some(custom.clone()));
+        let a = MatrixChannel::new(
+            "https://m.org",
+            "@b:m.org",
+            None,
+            None,
+            Some(custom.clone()),
+        );
         assert_eq!(a.store_path, custom);
+    }
+
+    #[test]
+    fn configured_access_token_is_retained_for_runtime_auth() {
+        let a = MatrixChannel::new(
+            "https://m.org",
+            "@b:m.org",
+            Some(SecretString::from("password-fallback")),
+            Some(SecretString::from("syt_runtime_token")),
+            None,
+        );
+        assert_eq!(
+            a.access_token.as_ref().map(|token| token.expose()),
+            Some("syt_runtime_token")
+        );
+        assert_eq!(
+            a.password.as_ref().map(|password| password.expose()),
+            Some("password-fallback")
+        );
+    }
+
+    #[test]
+    fn invite_policy_denies_open_and_allows_only_configured_dimensions() {
+        let deny_all = MatrixAccessPolicy::default();
+        assert!(!deny_all.permits_invite("!safe:example.org", "@alice:example.org"));
+
+        let sender_only = MatrixAccessPolicy::new(Some("@alice:example.org".into()), None);
+        assert!(sender_only.permits_invite("!any:example.org", "@alice:example.org"));
+        assert!(!sender_only.permits_invite("!any:example.org", "@mallory:example.org"));
+
+        let room_only = MatrixAccessPolicy::new(
+            None,
+            Some("!safe:example.org,!ops:example.org,!safe:example.org".into()),
+        );
+        assert!(room_only.permits_invite("!safe:example.org", "@any:example.org"));
+        assert!(!room_only.permits_invite("!other:example.org", "@any:example.org"));
+        assert_eq!(room_only.allowed_room_ids.len(), 2, "CSV is deduplicated");
+
+        let both = MatrixAccessPolicy::new(
+            Some("@alice:example.org".into()),
+            Some("!safe:example.org".into()),
+        );
+        assert!(both.permits_invite("!safe:example.org", "@alice:example.org"));
+        assert!(!both.permits_invite("!safe:example.org", "@mallory:example.org"));
+        assert!(!both.permits_invite("!other:example.org", "@alice:example.org"));
+    }
+
+    #[test]
+    fn message_policy_preserves_open_joined_rooms_but_honours_configured_rules() {
+        assert!(
+            MatrixAccessPolicy::default()
+                .permits_message("!existing:example.org", "@alice:example.org")
+        );
+        let policy = MatrixAccessPolicy::new(
+            Some("@alice:example.org".into()),
+            Some("!safe:example.org".into()),
+        );
+        assert!(policy.permits_message("!safe:example.org", "@alice:example.org"));
+        assert!(!policy.permits_message("!safe:example.org", "@mallory:example.org"));
+        assert!(!policy.permits_message("!other:example.org", "@alice:example.org"));
+    }
+
+    #[test]
+    fn encryption_policy_is_fail_closed_unless_explicitly_disabled() {
+        assert!(encryption_policy_allows(true, true));
+        assert!(!encryption_policy_allows(true, false));
+        assert!(encryption_policy_allows(false, true));
+        assert!(
+            encryption_policy_allows(false, false),
+            "plaintext requires the explicit matrix_require_encryption=false opt-out"
+        );
     }
 
     #[test]

@@ -6,12 +6,15 @@
 #                         (separate so the API is stable across daemon versions)
 #
 # Rationale: see OPEN_DECISIONS.md D-004 + Rust Architect review.
-# The plugin SDK lives as a separate published crate because `PermissionToken<T>`
-# sealing only works with a real crate boundary. Workspace member is the dev-time
-# convenience; for release the SDK will be published independently to crates.io
-# and `neothd` will depend on it via the normal `neoth-plugin-sdk = "0.1"`
-# entry. Until then, the `[patch.crates-io]` block below keeps local dev
-# pointed at the workspace member.
+# The plugin SDK lives as a separate published crate so plugin authors get a
+# small, versioned typed API without depending on the daemon. Permission tokens
+# are compile-time guidance; Wasmtime + the hostcall allowlist remain the runtime
+# security boundary. Workspace membership is the dev-time convenience. The
+# public `neoth` manifest carries both `path` and an exact
+# `version`; Cargo uses the path in this workspace and strips it from the
+# packaged manifest. Therefore crates.io publication is ordered: publish the
+# SDK, wait until Cargo resolves that exact version, then package/publish
+# `neoth`. `.github/workflows/publish-crates.yml` enforces that sequence.
 
 [workspace]
 resolver = "2"

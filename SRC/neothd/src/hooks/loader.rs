@@ -14,9 +14,30 @@ use super::schema::HookDef;
 /// Returns an empty list when `dir` does not exist (operator hasn't
 /// created any hooks yet).
 pub async fn load_all(dir: &Path) -> Result<Vec<HookDef>> {
+    load_all_with_policy(dir, false).await
+}
+
+/// Strict loader for safety-sensitive call sites. Unlike [`load_all`], one
+/// unreadable or malformed hook aborts the whole load instead of silently
+/// removing an operator-defined policy from the active set.
+pub async fn load_all_strict(dir: &Path) -> Result<Vec<HookDef>> {
+    load_all_with_policy(dir, true).await
+}
+
+async fn load_all_with_policy(dir: &Path, strict: bool) -> Result<Vec<HookDef>> {
     let mut out = Vec::new();
-    if !dir.is_dir() {
-        return Ok(out);
+    match tokio::fs::metadata(dir).await {
+        Ok(metadata) if !metadata.is_dir() => {
+            if strict {
+                anyhow::bail!("hooks path {} is not a directory", dir.display());
+            }
+            return Ok(out);
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect hooks dir {}", dir.display()));
+        }
     }
     let mut rd = tokio::fs::read_dir(dir)
         .await
@@ -27,9 +48,23 @@ pub async fn load_all(dir: &Path) -> Result<Vec<HookDef>> {
             continue;
         }
         match parse_file(&path).await {
-            Ok(h) if h.is_enabled() => out.push(h),
-            Ok(_) => {} // disabled — drop silently
-            Err(e) => warn!(path = %path.display(), error = %e, "skipping bad hook file"),
+            Ok(h) => {
+                if h.is_enabled() {
+                    if strict {
+                        validate_strict(&h).with_context(|| {
+                            format!("strict hook validation failed at {}", path.display())
+                        })?;
+                    }
+                    out.push(h);
+                }
+            }
+            Err(error) if strict => {
+                return Err(error)
+                    .with_context(|| format!("strict hook load failed at {}", path.display()));
+            }
+            Err(error) => {
+                warn!(path = %path.display(), error = %error, "skipping bad hook file")
+            }
         }
     }
     // AR-03 (Session 24) — sort by (priority asc, name asc). Lower
@@ -44,6 +79,21 @@ pub async fn load_all(dir: &Path) -> Result<Vec<HookDef>> {
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(out)
+}
+
+/// Validate every fallible runtime matcher for strict policy consumers. This
+/// keeps an invalid regex from degrading to the dispatcher's legacy
+/// warn-and-continue path after the operator hook set was accepted.
+fn validate_strict(hook: &HookDef) -> Result<()> {
+    if let Some(matcher) = &hook.matcher {
+        regex::Regex::new(&matcher.pattern).with_context(|| {
+            format!(
+                "hook `{}` has invalid matcher regex `{}`",
+                hook.name, matcher.pattern
+            )
+        })?;
+    }
+    Ok(())
 }
 
 async fn parse_file(path: &Path) -> Result<HookDef> {
@@ -135,6 +185,41 @@ kind = "allow"
         let hooks = load_all(dir.path()).await.unwrap();
         assert_eq!(hooks.len(), 1);
         assert_eq!(hooks[0].name, "ok");
+    }
+
+    #[tokio::test]
+    async fn strict_loader_rejects_bad_toml() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(dir.path().join("broken.toml"), "not = [valid")
+            .await
+            .unwrap();
+        let error = load_all_strict(dir.path()).await.unwrap_err();
+        assert!(error.to_string().contains("strict hook load failed"));
+    }
+
+    #[tokio::test]
+    async fn strict_loader_rejects_unreadable_toml_entry() {
+        let dir = tempdir().unwrap();
+        tokio::fs::create_dir(dir.path().join("unreadable.toml"))
+            .await
+            .unwrap();
+        let error = load_all_strict(dir.path()).await.unwrap_err();
+        assert!(error.to_string().contains("strict hook load failed"));
+    }
+
+    #[tokio::test]
+    async fn strict_loader_rejects_invalid_runtime_regex() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("broken-regex.toml"),
+            "name = \"broken-regex\"\nstage = \"pre_provider_call\"\n\
+             [matcher]\npattern = \"[\"\n\
+             [action]\nkind = \"allow\"\n",
+        )
+        .await
+        .unwrap();
+        let error = load_all_strict(dir.path()).await.unwrap_err();
+        assert!(error.to_string().contains("strict hook validation failed"));
     }
 
     #[tokio::test]

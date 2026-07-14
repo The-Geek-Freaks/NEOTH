@@ -48,7 +48,7 @@ For backwards compatibility, existing `*_APPLIED` / `*_SYNTHESIZED` / `*_WRITE` 
 - A daemon crash between INTENT and RESULT is detectable: an unpaired INTENT in the WAL is forensic proof that an operation was initiated and not confirmed complete.
 - Enables `neoth wal show --type os_file_write_intent` to show every write attempt, including those that crashed mid-flight.
 - Consistent pattern across effect classes removes per-class audit-coverage ambiguity.
-- Operators running `neoth wal verify` can detect crashes that corrupted the self-update binary replacement sequence.
+- Operators running `neoth verify` can detect crashes that corrupted the self-update binary replacement sequence.
 - Aligns with the existing partial INTENT/RESULT pattern already present for local inference (`0x2A LOCAL_INFERENCE_START` / `0x2B LOCAL_INFERENCE_END`, events.rs:224–231) and HF model downloads (`0xD7 MODEL_DOWNLOAD_START` / `0xD8 MODEL_DOWNLOAD_COMPLETE`, events.rs:1397–1404).
 
 **Negative:**

@@ -14,7 +14,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
-use crate::tweaks::{resolve_effective_gui_theme, Tweaks, THEME_SUPPORT_MATRIX};
+use crate::tweaks::{THEME_SUPPORT_MATRIX, Tweaks, resolve_effective_gui_theme};
 
 #[derive(Args, Debug, Clone)]
 pub struct TweaksArgs {
@@ -59,7 +59,10 @@ fn render_show(t: &Tweaks, path: &std::path::Path, output: &OutputFormat) -> Res
         OutputFormat::Json | OutputFormat::Jsonl => {
             // Helper: emit {"value": …, "support": …, "source": …} for each theme key.
             let theme_key = |value: serde_json::Value, key: &str, source: &str| {
-                let support = support_map.get(key).copied().unwrap_or("reserved/no-sink");
+                let support = support_map
+                    .get(key)
+                    .copied()
+                    .unwrap_or("missing/contract-entry");
                 serde_json::json!({ "value": value, "support": support, "source": source })
             };
 
@@ -131,8 +134,6 @@ fn render_show(t: &Tweaks, path: &std::path::Path, output: &OutputFormat) -> Res
                         "panel_opacity",
                         if t.theme.panel_opacity.is_some() { "tweaks" } else { "built_in" },
                     ),
-                    // Reserved palette fields — value shown so operator can diagnose silently
-                    // ignored keys. Support string makes it clear there is no active sink.
                     "accent_color": theme_key(
                         t.theme.accent_color.as_ref().map_or(serde_json::Value::Null, |s| serde_json::Value::String(s.clone())),
                         "accent_color", if t.theme.accent_color.is_some() { "tweaks" } else { "built_in" },
@@ -145,17 +146,25 @@ fn render_show(t: &Tweaks, path: &std::path::Path, output: &OutputFormat) -> Res
                         t.theme.foreground_color.as_ref().map_or(serde_json::Value::Null, |s| serde_json::Value::String(s.clone())),
                         "foreground_color", if t.theme.foreground_color.is_some() { "tweaks" } else { "built_in" },
                     ),
-                    "icon_set": theme_key(
-                        t.theme.icon_set.as_ref().map_or(serde_json::Value::Null, |s| serde_json::Value::String(s.clone())),
-                        "icon_set", if t.theme.icon_set.is_some() { "tweaks" } else { "built_in" },
+                    "border_radius_px": theme_key(
+                        t.theme.border_radius_px.map_or(serde_json::Value::Null, |v| serde_json::json!(v)),
+                        "border_radius_px", if t.theme.border_radius_px.is_some() { "tweaks" } else { "built_in" },
+                    ),
+                    "show_token_count": theme_key(
+                        serde_json::json!(eff.show_token_count),
+                        "show_token_count", if t.theme.show_token_count.is_some() { "tweaks" } else { "built_in" },
+                    ),
+                    "show_model_badge": theme_key(
+                        serde_json::json!(eff.show_model_badge),
+                        "show_model_badge", if t.theme.show_model_badge.is_some() { "tweaks" } else { "built_in" },
+                    ),
+                    "chat_bubble_style": theme_key(
+                        serde_json::json!(eff.chat_bubble_style),
+                        "chat_bubble_style", if t.theme.chat_bubble_style.is_some() { "tweaks" } else { "built_in" },
                     ),
                     "animation_speed": theme_key(
-                        t.theme.animation_speed.as_ref().map_or(serde_json::Value::Null, |s| serde_json::Value::String(s.clone())),
+                        serde_json::json!(eff.animation_speed),
                         "animation_speed", if t.theme.animation_speed.is_some() { "tweaks" } else { "built_in" },
-                    ),
-                    "scrollbar_style": theme_key(
-                        t.theme.scrollbar_style.as_ref().map_or(serde_json::Value::Null, |s| serde_json::Value::String(s.clone())),
-                        "scrollbar_style", if t.theme.scrollbar_style.is_some() { "tweaks" } else { "built_in" },
                     ),
                     "header_hidden": theme_key(
                         t.theme.header_hidden.map_or(serde_json::Value::Null, |v| serde_json::json!(v)),
@@ -175,123 +184,159 @@ fn render_show(t: &Tweaks, path: &std::path::Path, output: &OutputFormat) -> Res
             println!("# Tweaks ({})", path.display());
             println!(
                 "  file exists:       {}",
-                if path.exists() { "yes" } else { "no (defaults shown)" }
+                if path.exists() {
+                    "yes"
+                } else {
+                    "no (defaults shown)"
+                }
             );
             println!("  model_default:     {}", or_default(&t.model_default));
             println!("  persona_override:  {}", or_default(&t.persona_override));
 
             println!();
             println!("## Theme");
-            // Emit every field with [ACTIVE] or [RESERVED] prefix.
+            // Every retained field has a production sink. A non-active entry
+            // is a support-matrix contract bug and is rendered as such.
             for (key, status) in THEME_SUPPORT_MATRIX {
-                let prefix = if status.starts_with("active/") { "[ACTIVE]  " } else { "[RESERVED]" };
+                let prefix = if status.starts_with("active/") {
+                    "[ACTIVE]  "
+                } else {
+                    "[BROKEN]  "
+                };
                 let sink = if status.starts_with("active/") {
                     format!(" → {}", status.trim_start_matches("active/"))
                 } else {
-                    format!(" ({})", status.trim_start_matches("reserved/"))
+                    format!(" ({status})")
                 };
                 match *key {
                     "color_theme" => println!(
                         "  {} color_theme: {} (dark={}){}",
-                        prefix, or_default(&t.color_theme), eff.dark, sink
+                        prefix,
+                        or_default(&t.color_theme),
+                        eff.dark,
+                        sink
                     ),
                     "statusline" => println!(
                         "  {} statusline: {}{}",
                         prefix,
                         or_default(&t.statusline),
-                        if t.statusline.is_some() { "  [RESERVED: no TUI sink]" } else { "" }
+                        sink
                     ),
                     "compact_mode" => println!(
                         "  {} compact_mode: {} (density_mode={}){}",
                         prefix,
-                        t.theme.compact_mode.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .compact_mode
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         eff.density_mode,
                         sink
                     ),
                     "font_family" => println!(
                         "  {} font_family: {}{}",
-                        prefix, or_default(&t.theme.font_family), sink
+                        prefix,
+                        or_default(&t.theme.font_family),
+                        sink
                     ),
                     "font_size_pt" => println!(
                         "  {} font_size_pt: {}{}",
                         prefix,
-                        t.theme.font_size_pt.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .font_size_pt
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     "sidebar_width_px" => println!(
                         "  {} sidebar_width_px: {}{}",
                         prefix,
-                        t.theme.sidebar_width_px.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .sidebar_width_px
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     "input_height_lines" => println!(
                         "  {} input_height_lines: {}{}",
                         prefix,
-                        t.theme.input_height_lines.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .input_height_lines
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     "panel_opacity" => println!(
                         "  {} panel_opacity: {}{}",
                         prefix,
-                        t.theme.panel_opacity.map_or("(default)".to_string(), |v| format!("{:.2}", v)),
+                        t.theme
+                            .panel_opacity
+                            .map_or("(default)".to_string(), |v| format!("{:.2}", v)),
                         sink
                     ),
                     "accent_color" => println!(
                         "  {} accent_color: {}{}",
-                        prefix, or_default(&t.theme.accent_color), sink
+                        prefix,
+                        or_default(&t.theme.accent_color),
+                        sink
                     ),
                     "background_color" => println!(
                         "  {} background_color: {}{}",
-                        prefix, or_default(&t.theme.background_color), sink
+                        prefix,
+                        or_default(&t.theme.background_color),
+                        sink
                     ),
                     "foreground_color" => println!(
                         "  {} foreground_color: {}{}",
-                        prefix, or_default(&t.theme.foreground_color), sink
+                        prefix,
+                        or_default(&t.theme.foreground_color),
+                        sink
                     ),
                     "border_radius_px" => println!(
                         "  {} border_radius_px: {}{}",
                         prefix,
-                        t.theme.border_radius_px.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .border_radius_px
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     "show_token_count" => println!(
                         "  {} show_token_count: {}{}",
                         prefix,
-                        t.theme.show_token_count.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .show_token_count
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     "show_model_badge" => println!(
                         "  {} show_model_badge: {}{}",
                         prefix,
-                        t.theme.show_model_badge.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .show_model_badge
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     "chat_bubble_style" => println!(
                         "  {} chat_bubble_style: {}{}",
-                        prefix, or_default(&t.theme.chat_bubble_style), sink
-                    ),
-                    "icon_set" => println!(
-                        "  {} icon_set: {}{}",
-                        prefix, or_default(&t.theme.icon_set), sink
+                        prefix,
+                        or_default(&t.theme.chat_bubble_style),
+                        sink
                     ),
                     "animation_speed" => println!(
                         "  {} animation_speed: {}{}",
-                        prefix, or_default(&t.theme.animation_speed), sink
-                    ),
-                    "scrollbar_style" => println!(
-                        "  {} scrollbar_style: {}{}",
-                        prefix, or_default(&t.theme.scrollbar_style), sink
+                        prefix,
+                        or_default(&t.theme.animation_speed),
+                        sink
                     ),
                     "header_hidden" => println!(
                         "  {} header_hidden: {}{}",
                         prefix,
-                        t.theme.header_hidden.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .header_hidden
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     "sidebar_collapsed" => println!(
                         "  {} sidebar_collapsed: {}{}",
                         prefix,
-                        t.theme.sidebar_collapsed.map_or("(default)".to_string(), |v| v.to_string()),
+                        t.theme
+                            .sidebar_collapsed
+                            .map_or("(default)".to_string(), |v| v.to_string()),
                         sink
                     ),
                     _ => {}
@@ -300,7 +345,7 @@ fn render_show(t: &Tweaks, path: &std::path::Path, output: &OutputFormat) -> Res
 
             if !eff.unsupported_keys.is_empty() {
                 println!();
-                println!("## Set-but-unsupported keys");
+                println!("## Rejected theme keys");
                 for k in &eff.unsupported_keys {
                     println!("  - {k}");
                 }
@@ -401,25 +446,28 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tweaks.toml");
         // Build JSON and verify color_theme has active/Theme.dark support.
-        let t = Tweaks { color_theme: Some("dark".into()), ..Default::default() };
+        let t = Tweaks {
+            color_theme: Some("dark".into()),
+            ..Default::default()
+        };
         // render_show must not error; full JSON inspection would require capturing stdout.
         render_show(&t, &path, &OutputFormat::Json).unwrap();
     }
 
     #[test]
-    fn render_show_table_includes_active_reserved_prefixes() {
+    fn render_show_table_includes_active_sinks() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tweaks.toml");
         render_show(&fixture(), &path, &OutputFormat::Table).unwrap();
     }
 
     #[test]
-    fn render_show_table_reserved_fields_do_not_error_when_set() {
+    fn render_show_table_active_fields_do_not_error_when_set() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tweaks.toml");
         let mut t = fixture();
         t.theme.accent_color = Some("#ff0000".into());
-        t.theme.icon_set = Some("feather".into());
+        t.theme.animation_speed = Some("reduced".into());
         render_show(&t, &path, &OutputFormat::Table).unwrap();
     }
 
@@ -436,8 +484,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tweaks.toml");
         let mut t = Tweaks::default();
-        t.theme.accent_color = Some("#aa0000".into());
-        // Must not error; the unsupported_keys and diagnostics arrays are emitted.
+        t.theme.accent_color = Some("invalid".into());
+        // Invalid active values are emitted in the rejection/diagnostic arrays.
         render_show(&t, &path, &OutputFormat::Json).unwrap();
     }
 

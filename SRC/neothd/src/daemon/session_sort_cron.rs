@@ -59,7 +59,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
-use crate::memory::hindsight::{list_cards, save_card, HindsightCard};
+use crate::memory::hindsight::{HindsightCard, list_cards, save_card};
 use crate::providers::{Provider, Request};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,10 +133,7 @@ pub async fn group_titles(
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let title = c
-                .display_name
-                .as_deref()
-                .unwrap_or(&c.one_line_summary);
+            let title = c.display_name.as_deref().unwrap_or(&c.one_line_summary);
             // Include top non-folder topics as context
             let topics: Vec<&str> = c
                 .top_topics
@@ -440,7 +437,11 @@ pub fn folders_view(cards: &[HindsightCard]) -> String {
 
     for (idx, (folder, folder_cards)) in by_folder.iter().enumerate() {
         let is_last_folder = idx + 1 == folder_count;
-        let branch = if is_last_folder { "└──" } else { "├──" };
+        let branch = if is_last_folder {
+            "└──"
+        } else {
+            "├──"
+        };
         let child_prefix = if is_last_folder { "    " } else { "│   " };
 
         out.push_str(&format!(
@@ -451,13 +452,18 @@ pub fn folders_view(cards: &[HindsightCard]) -> String {
 
         for (ci, card) in folder_cards.iter().enumerate() {
             let is_last_card = ci + 1 == folder_cards.len();
-            let card_branch = if is_last_card { "└──" } else { "├──" };
-            let title = card.display_name.as_deref().unwrap_or(&card.one_line_summary);
+            let card_branch = if is_last_card {
+                "└──"
+            } else {
+                "├──"
+            };
+            let title = card
+                .display_name
+                .as_deref()
+                .unwrap_or(&card.one_line_summary);
             // Format date from ended_at_unix
             let date = format_unix_date(card.ended_at_unix);
-            out.push_str(&format!(
-                "{child_prefix}{card_branch} [{date}] {title}\n"
-            ));
+            out.push_str(&format!("{child_prefix}{card_branch} [{date}] {title}\n"));
         }
     }
 
@@ -497,30 +503,43 @@ fn format_unix_date(unix_secs: i64) -> String {
 /// let session_sort_handle = crate::daemon::session_sort_cron::spawn_session_sort_cron(
 ///     config,
 ///     reload_controller,
+///     neoth_home,
+///     writer,
 /// ).await;
 /// ```
 pub async fn spawn_session_sort_cron(
     config: &crate::config::FreedomConfig,
     reload_controller: &Arc<crate::config::reload::ReloadController>,
+    home: &std::path::Path,
+    writer: &crate::wal::writer::WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
     if !config.session_sort_cron.enabled {
         return None;
     }
 
-    let provider: Arc<dyn crate::providers::Provider> =
-        match crate::providers::from_config(config).await {
-            Ok(p) => Arc::from(p),
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "session_sort_cron: provider build failed — cron disabled for this session"
-                );
-                return None;
-            }
-        };
+    let provider = match crate::providers::from_config(config).await {
+        Ok(p) => Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                p,
+                crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
+                    Arc::clone(reload_controller),
+                    Some(writer.clone()),
+                ),
+                config.provider_model.clone(),
+                "session_sort_cron",
+            ),
+        ),
+        Err(e) => {
+            warn!(
+                error = %e,
+                "session_sort_cron: provider build failed — cron disabled for this session"
+            );
+            return None;
+        }
+    };
 
     let ctrl = Arc::clone(reload_controller);
-    let home = crate::config::FreedomConfig::default_neoth_home();
+    let home = home.to_path_buf();
     let boot_cfg = config.session_sort_cron;
 
     info!(
@@ -587,7 +606,9 @@ mod tests {
 
     impl MockProvider {
         fn new(response: impl Into<String>) -> Self {
-            Self { response: response.into() }
+            Self {
+                response: response.into(),
+            }
         }
     }
 
@@ -596,6 +617,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
                 text: self.response.clone(),
+                identity: Default::default(),
                 model: "mock".to_string(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,
@@ -604,7 +626,9 @@ mod tests {
                 cache_read_tokens: None,
             })
         }
-        fn name(&self) -> &'static str { "mock" }
+        fn name(&self) -> &'static str {
+            "mock"
+        }
     }
 
     // ── Card builder helper ────────────────────────────────────────────────
@@ -640,7 +664,12 @@ mod tests {
 
     #[test]
     fn not_throwaway_when_has_real_topics() {
-        let card = make_card("s2", 1, vec!["rust", "lifetime"], "1 turns over 2 min on rust");
+        let card = make_card(
+            "s2",
+            1,
+            vec!["rust", "lifetime"],
+            "1 turns over 2 min on rust",
+        );
         assert!(!is_throwaway(&card));
     }
 
@@ -665,11 +694,14 @@ mod tests {
         // meaning a prior sort pass retained this card. Must never be throwaway.
         let card = make_card(
             "s5",
-            1, // ≤2 operator turns — would pass signal ①
+            1,                                      // ≤2 operator turns — would pass signal ①
             vec!["folder:misc"], // only a folder tag, no organic topics — would pass signal ②
             "1 turns over 0 min on no clear topic", // degenerate — would pass signal ③
         );
-        assert!(!is_throwaway(&card), "folder-tagged card must never be throwaway");
+        assert!(
+            !is_throwaway(&card),
+            "folder-tagged card must never be throwaway"
+        );
     }
 
     #[test]
@@ -680,7 +712,9 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let provider = MockProvider::new("[]");
-        let report = rt.block_on(run_session_sort_pass(dir.path(), &provider, true)).unwrap();
+        let report = rt
+            .block_on(run_session_sort_pass(dir.path(), &provider, true))
+            .unwrap();
 
         assert_eq!(report.cards_pruned, 1);
         assert!(report.dry_run);
@@ -708,15 +742,28 @@ mod tests {
 
     #[tokio::test]
     async fn group_titles_garbage_json_returns_empty() {
-        let cards = vec![make_card("x", 3, vec!["rust"], "3 turns over 1 min on rust")];
+        let cards = vec![make_card(
+            "x",
+            3,
+            vec!["rust"],
+            "3 turns over 1 min on rust",
+        )];
         let provider = MockProvider::new("this is not json at all {{{");
         let folders = group_titles(&cards, &provider).await.unwrap();
-        assert!(folders.is_empty(), "invalid JSON must produce empty folder list");
+        assert!(
+            folders.is_empty(),
+            "invalid JSON must produce empty folder list"
+        );
     }
 
     #[tokio::test]
     async fn group_titles_markdown_fenced_json_is_parsed() {
-        let cards = vec![make_card("y", 3, vec!["memory"], "3 turns over 2 min on memory")];
+        let cards = vec![make_card(
+            "y",
+            3,
+            vec!["memory"],
+            "3 turns over 2 min on memory",
+        )];
         let json = "```json\n[{\"folder\":\"memory-work\",\"session_ids\":[\"y\"]}]\n```";
         let provider = MockProvider::new(json);
         let folders = group_titles(&cards, &provider).await.unwrap();
@@ -787,7 +834,11 @@ mod tests {
     fn apply_folder_tag_replaces_prior_tag() {
         let mut card = make_card("t2", 3, vec!["folder:old-name", "rust"], "...");
         apply_folder_tag(&mut card, "new-name");
-        let folder_tags: Vec<_> = card.top_topics.iter().filter(|t| t.starts_with("folder:")).collect();
+        let folder_tags: Vec<_> = card
+            .top_topics
+            .iter()
+            .filter(|t| t.starts_with("folder:"))
+            .collect();
         assert_eq!(folder_tags.len(), 1, "only one folder tag allowed");
         assert_eq!(folder_tags[0], "folder:new-name");
     }

@@ -5,6 +5,8 @@ edition = "2021"
 description = "Minimal NEOTH example plugin — logs 'echo: neoth_run called' via neoth.log and returns 0."
 publish = false
 
+[workspace]
+
 # Plugin crates MUST target wasm32-unknown-unknown.
 # Build with: cargo build --target wasm32-unknown-unknown --release
 # The host (neothd) compiles the produced .wasm via wasmtime/cranelift.
@@ -12,5 +14,5 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-# No std — wasm plugins are no_std + no allocator by default.
-# If a plugin needs allocation, add a panic-handler + allocator shim.
+[dependencies]
+neoth-plugin-sdk = { path = "../../../neoth-plugin-sdk", version = "=0.1.0-alpha.0" }

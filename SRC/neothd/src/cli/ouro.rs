@@ -208,23 +208,23 @@ fn run_list(output: &OutputFormat) -> Result<()> {
 
 fn run_status(output: &OutputFormat) -> Result<()> {
     use crate::cli::init::ProviderKind;
-    let cfg = FreedomConfig::load_from_default_path().ok();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
     let active = cfg
-        .as_ref()
-        .and_then(|c| c.provider_kind)
+        .provider_kind
         .map(|k| matches!(k, ProviderKind::LocalOuro))
         .unwrap_or(false);
     let configured_model = cfg
-        .as_ref()
-        .and_then(|c| c.provider_model.clone())
+        .provider_model
+        .clone()
         .unwrap_or_else(|| crate::providers::ouro::adapter::DEFAULT_OURO_REPO.to_string());
     let accelerator_override = cfg
-        .as_ref()
-        .and_then(|c| c.inference.accelerator_override.clone())
+        .inference
+        .accelerator_override
+        .clone()
         .unwrap_or_else(|| "(none; auto-detect)".to_string());
     let max_new_tokens = cfg
-        .as_ref()
-        .and_then(|c| c.inference.max_new_tokens)
+        .inference
+        .max_new_tokens
         .unwrap_or(crate::providers::ouro::adapter::DEFAULT_MAX_NEW_TOKENS);
 
     match output {

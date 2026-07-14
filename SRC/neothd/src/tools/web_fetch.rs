@@ -26,6 +26,9 @@ use tokio::net::lookup_host;
 
 use crate::providers::http_client;
 use crate::providers::{Completion, Provider, Request};
+use crate::tools::external_http::{
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+};
 use crate::tools::web_doc_cache;
 
 /// Cloud metadata hostnames that resolve to link-local 169.254.x.x in
@@ -78,13 +81,26 @@ pub struct RawFetchResult {
 /// `MAX_EXTRACTED_BYTES` ceiling); other content types return their
 /// raw bytes count + empty text + a status flag.
 pub async fn fetch(url: &str) -> Result<FetchResult> {
-    fetch_inner(url).await.map(|(_, meta)| meta)
+    let http = interactive_http()?;
+    fetch_authorized(url, &http).await
+}
+
+pub async fn fetch_authorized(url: &str, http: &ExternalHttpAuthorizer) -> Result<FetchResult> {
+    fetch_inner(url, http).await.map(|(_, meta)| meta)
 }
 
 /// GOLD-ADOPT-04 — like [`fetch`] but also surfaces the raw HTML body for the
 /// CSS-extract layer.
 pub async fn fetch_raw(url: &str) -> Result<RawFetchResult> {
-    let (raw, meta) = fetch_inner(url).await?;
+    let http = interactive_http()?;
+    fetch_raw_authorized(url, &http).await
+}
+
+pub async fn fetch_raw_authorized(
+    url: &str,
+    http: &ExternalHttpAuthorizer,
+) -> Result<RawFetchResult> {
+    let (raw, meta) = fetch_inner(url, http).await?;
     let raw_html =
         if meta.content_type.starts_with("text/html") || meta.content_type.contains("xhtml") {
             raw
@@ -147,8 +163,23 @@ pub async fn fetch_with_goal(
     goal: &str,
     provider: &dyn Provider,
 ) -> Result<GoalExtraction> {
-    let fetched = fetch(url).await?;
+    let http = interactive_http()?;
+    fetch_with_goal_authorized(url, goal, provider, &http).await
+}
+
+pub async fn fetch_with_goal_authorized(
+    url: &str,
+    goal: &str,
+    provider: &dyn Provider,
+    http: &ExternalHttpAuthorizer,
+) -> Result<GoalExtraction> {
+    let fetched = fetch_authorized(url, http).await?;
     extract_goal_from_text(&fetched.text, url, goal, provider).await
+}
+
+fn interactive_http() -> Result<ExternalHttpAuthorizer> {
+    let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    ExternalHttpAuthorizer::interactive(config.autonomy_policy())
 }
 
 /// Inner extraction helper — separated so the test suite can call it directly
@@ -208,136 +239,142 @@ pub(crate) async fn extract_goal_from_text(
 /// Shared fetch core — returns the raw body string AND the extracted
 /// [`FetchResult`]. Both [`fetch`] and [`fetch_raw`] go through here so the
 /// SSRF guard + no-redirect client + byte ceiling live in ONE place.
-async fn fetch_inner(url: &str) -> Result<(String, FetchResult)> {
-    // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
-    // pre-resolution to block private/loopback/link-local/cloud-metadata
-    // targets BEFORE the HTTP client opens a socket.
-    let parsed = validate_url(url).await?;
-    // Use the no-redirect variant so an attacker cannot 302 us into a
-    // private network after `validate_url` cleared the initial host.
-    // Operators who need redirects see the 3xx status + Location header
-    // and call `fetch` again (each call re-validates).
-    let client =
-        http_client::build_client_no_redirect().context("build web_fetch reqwest client")?;
+async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String, FetchResult)> {
+    let request = ExternalHttpRequest::get(url, ExternalHttpSurface::Fetch);
+    let permitted_request = request.clone();
+    http.execute(request, move |permit| async move {
+        permit.require(&permitted_request)?;
+        // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
+        // pre-resolution to block private/loopback/link-local/cloud-metadata
+        // targets BEFORE the HTTP client opens a socket.
+        let parsed = validate_url(url).await?;
+        // Use the no-redirect variant so an attacker cannot 302 us into a
+        // private network after `validate_url` cleared the initial host.
+        // Operators who need redirects see the 3xx status + Location header
+        // and call `fetch` again (each call re-validates).
+        let client =
+            http_client::build_client_no_redirect().context("build web_fetch reqwest client")?;
 
-    // GOLD-ADAPT-SKILL-03 — conditional-GET doc cache: if we hold a prior copy,
-    // revalidate it with the origin (If-None-Match / If-Modified-Since). The
-    // SSRF guard above + the no-redirect client still gate this request; the
-    // cache only adds validator headers and a 304-serve branch, and is inert
-    // until `web_doc_cache::init` has opted the process in.
-    let cache_dir = web_doc_cache::dir();
-    let cached = cache_dir
-        .as_deref()
-        .and_then(|d| web_doc_cache::lookup(d, url));
+        // GOLD-ADAPT-SKILL-03 — conditional-GET doc cache: if we hold a prior copy,
+        // revalidate it with the origin (If-None-Match / If-Modified-Since). The
+        // SSRF guard above + the no-redirect client still gate this request; the
+        // cache only adds validator headers and a 304-serve branch, and is inert
+        // until `web_doc_cache::init` has opted the process in.
+        let cache_dir = web_doc_cache::dir();
+        let cached = cache_dir
+            .as_deref()
+            .and_then(|d| web_doc_cache::lookup(d, url));
 
-    let mut req = client
-        .get(parsed.as_str())
-        .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)");
-    if let Some(c) = &cached {
-        if let Some(etag) = &c.etag {
-            req = req.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
+        let mut req = client
+            .get(parsed.as_str())
+            .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)");
+        if let Some(c) = &cached {
+            if let Some(etag) = &c.etag {
+                req = req.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
+            }
+            if let Some(lm) = &c.last_modified {
+                req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm.as_str());
+            }
         }
-        if let Some(lm) = &c.last_modified {
-            req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm.as_str());
+        let resp = req.send().await.with_context(|| format!("GET {url}"))?;
+        let status = resp.status().as_u16();
+
+        // 304 Not Modified — the origin confirms our cached copy is current. Serve
+        // it (re-deriving the stripped text so the result is byte-identical to a
+        // fresh fetch of the same body).
+        if status == 304 {
+            if let Some(c) = cached {
+                let (text, truncated) = derive_text(&c.raw, &c.content_type);
+                let bytes = c.raw.len();
+                return Ok((
+                    c.raw,
+                    FetchResult {
+                        url: url.to_string(),
+                        status: c.status,
+                        content_type: c.content_type,
+                        bytes,
+                        text,
+                        truncated,
+                    },
+                ));
+            }
+            // 304 without a cached body (protocol violation, or the entry was
+            // evicted mid-flight) — nothing to serve. Fail loudly, never silently.
+            anyhow::bail!("web_fetch: {url} returned 304 with no cached body to serve");
         }
-    }
-    let resp = req.send().await.with_context(|| format!("GET {url}"))?;
-    let status = resp.status().as_u16();
 
-    // 304 Not Modified — the origin confirms our cached copy is current. Serve
-    // it (re-deriving the stripped text so the result is byte-identical to a
-    // fresh fetch of the same body).
-    if status == 304 {
-        if let Some(c) = cached {
-            let (text, truncated) = derive_text(&c.raw, &c.content_type);
-            let bytes = c.raw.len();
-            return Ok((
-                c.raw,
-                FetchResult {
-                    url: url.to_string(),
-                    status: c.status,
-                    content_type: c.content_type,
-                    bytes,
-                    text,
-                    truncated,
-                },
-            ));
-        }
-        // 304 without a cached body (protocol violation, or the entry was
-        // evicted mid-flight) — nothing to serve. Fail loudly, never silently.
-        anyhow::bail!("web_fetch: {url} returned 304 with no cached body to serve");
-    }
-
-    let content_type = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
-    // Capture cache validators BEFORE the body consumes `resp`.
-    let etag = resp
-        .headers()
-        .get(reqwest::header::ETAG)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
-    let last_modified = resp
-        .headers()
-        .get(reqwest::header::LAST_MODIFIED)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
-    let body = resp
-        .bytes()
-        .await
-        .with_context(|| format!("read body of {url}"))?;
-    let bytes = body.len();
-    if bytes > MAX_RESPONSE_BYTES {
-        anyhow::bail!(
-            "web_fetch: response {bytes} bytes exceeds ceiling {}",
-            MAX_RESPONSE_BYTES
-        );
-    }
-    let raw = String::from_utf8_lossy(&body).into_owned();
-    let (text, truncated) = derive_text(&raw, &content_type);
-
-    // Cache only a successful, revalidatable, bounded body. A response with no
-    // ETag/Last-Modified cannot be conditionally revalidated, so caching it
-    // would risk serving stale content — skip it.
-    if let Some(dir) = &cache_dir {
-        // doc-cache review LOW-1: only a full 200 OK is cacheable — a 206
-        // Partial Content (or other 2xx) would cache an incomplete body.
-        // LOW-2: never cache a response whose URL carries a credential param.
-        if status == 200
-            && (etag.is_some() || last_modified.is_some())
-            && raw.len() <= web_doc_cache::MAX_CACHEABLE_BYTES
-            && !web_doc_cache::url_has_credential_params(url)
-        {
-            let stored_unix = crate::time::now_unix_i64();
-            web_doc_cache::store(
-                dir,
-                &web_doc_cache::CachedDoc {
-                    url: url.to_string(),
-                    etag,
-                    last_modified,
-                    content_type: content_type.clone(),
-                    status,
-                    raw: raw.clone(),
-                    stored_unix,
-                },
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        // Capture cache validators BEFORE the body consumes `resp`.
+        let etag = resp
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let last_modified = resp
+            .headers()
+            .get(reqwest::header::LAST_MODIFIED)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let body = resp
+            .bytes()
+            .await
+            .with_context(|| format!("read body of {url}"))?;
+        let bytes = body.len();
+        if bytes > MAX_RESPONSE_BYTES {
+            anyhow::bail!(
+                "web_fetch: response {bytes} bytes exceeds ceiling {}",
+                MAX_RESPONSE_BYTES
             );
         }
-    }
+        let raw = String::from_utf8_lossy(&body).into_owned();
+        let (text, truncated) = derive_text(&raw, &content_type);
 
-    Ok((
-        raw,
-        FetchResult {
-            url: url.to_string(),
-            status,
-            content_type,
-            bytes,
-            text,
-            truncated,
-        },
-    ))
+        // Cache only a successful, revalidatable, bounded body. A response with no
+        // ETag/Last-Modified cannot be conditionally revalidated, so caching it
+        // would risk serving stale content — skip it.
+        if let Some(dir) = &cache_dir {
+            // doc-cache review LOW-1: only a full 200 OK is cacheable — a 206
+            // Partial Content (or other 2xx) would cache an incomplete body.
+            // LOW-2: never cache a response whose URL carries a credential param.
+            if status == 200
+                && (etag.is_some() || last_modified.is_some())
+                && raw.len() <= web_doc_cache::MAX_CACHEABLE_BYTES
+                && !web_doc_cache::url_has_credential_params(url)
+            {
+                let stored_unix = crate::time::now_unix_i64();
+                web_doc_cache::store(
+                    dir,
+                    &web_doc_cache::CachedDoc {
+                        url: url.to_string(),
+                        etag,
+                        last_modified,
+                        content_type: content_type.clone(),
+                        status,
+                        raw: raw.clone(),
+                        stored_unix,
+                    },
+                );
+            }
+        }
+
+        Ok((
+            raw,
+            FetchResult {
+                url: url.to_string(),
+                status,
+                content_type,
+                bytes,
+                text,
+                truncated,
+            },
+        ))
+    })
+    .await
 }
 
 /// Strip + truncate a raw body into displayed text by content type. Shared by
@@ -366,7 +403,7 @@ fn derive_text(raw: &str, content_type: &str) -> (String, bool) {
 /// without re-parsing. Note: this is best-effort defence at *call time* —
 /// the underlying reqwest client may re-resolve at connect time
 /// (classic TOCTOU). Mitigated by `redirect(Policy::none())` in
-/// `http_client::build_client` so an attacker cannot 302 us into a
+/// `http_client::build_client_no_redirect` so an attacker cannot 302 us into a
 /// private network after the check.
 pub(crate) async fn validate_url(url_str: &str) -> Result<url::Url> {
     let parsed =
@@ -1202,6 +1239,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
                 text: self.0.clone(),
+                identity: Default::default(),
                 model: "mock".to_string(),
                 latency: StdDuration::from_millis(0),
                 input_tokens: None,
@@ -1249,9 +1287,10 @@ mod tests {
         let provider = FixedJsonProvider(json.to_string());
         let goal = "How does Rust achieve memory safety?";
 
-        let result = extract_goal_from_text(&page_text, "https://example.com/rust", goal, &provider)
-            .await
-            .expect("extraction should succeed");
+        let result =
+            extract_goal_from_text(&page_text, "https://example.com/rust", goal, &provider)
+                .await
+                .expect("extraction should succeed");
 
         assert!(
             result.rational.contains("memory safety"),
@@ -1295,7 +1334,10 @@ mod tests {
         .await
         .expect("extraction should succeed even with empty evidence");
 
-        assert!(result.evidence.is_empty(), "evidence should be empty for an off-topic page");
+        assert!(
+            result.evidence.is_empty(),
+            "evidence should be empty for an off-topic page"
+        );
         assert!(result.rational.contains("cooking") || result.rational.contains("unrelated"));
         assert!(result.summary.is_empty());
     }
@@ -1375,14 +1417,9 @@ mod tests {
     #[tokio::test]
     async fn goal_extraction_returns_err_on_malformed_json() {
         let provider = FixedJsonProvider("not valid json {{{".to_string());
-        let err = extract_goal_from_text(
-            "page",
-            "https://example.com/bad-json",
-            "goal",
-            &provider,
-        )
-        .await
-        .unwrap_err();
+        let err = extract_goal_from_text("page", "https://example.com/bad-json", "goal", &provider)
+            .await
+            .unwrap_err();
 
         let msg = err.to_string();
         assert!(
@@ -1404,10 +1441,8 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/page"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_raw(
-                    "<p>Rust ownership rules.</p>",
-                    "text/html; charset=utf-8",
-                ),
+                ResponseTemplate::new(200)
+                    .set_body_raw("<p>Rust ownership rules.</p>", "text/html; charset=utf-8"),
             )
             .mount(&mock)
             .await;

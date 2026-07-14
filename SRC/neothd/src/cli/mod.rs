@@ -3,20 +3,21 @@
 //! Normative reference: PLAN/SPEC_onboarding.md
 //! Clap 4.5+ derive macros.
 //!
-//! Phase 1 (Day 3-4): `init` subcommand stubbed with 7-step wizard structure.
-//! Phase 2+: `chat`, `profile`, `quota`, `provider`, `channel` subcommands.
+//! The 1.0 surface is generated and drift-tested by `cli::docgen`; commands
+//! exposed here must have a production implementation rather than reserved
+//! placeholder variants.
 
 use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod adr;
 pub mod agents;
 pub mod arxiv;
-pub mod babel;
 pub mod arxiv_ingest_task;
+pub mod babel;
 pub mod backup;
-pub mod buddy;
 /// HERMES-02 — `/background` + `/btw` parallel ephemeral sessions.
 pub mod bg_session;
+pub mod buddy;
 pub mod catalog;
 pub mod channel;
 pub mod chat;
@@ -30,25 +31,17 @@ pub mod rss_feed_task;
 pub mod autonomy;
 /// EM-02b — `neoth calendar` CalDAV calendar (VEVENT) list/add surface.
 pub mod calendar;
+pub mod capabilities;
 pub mod checkpoint;
 #[cfg(feature = "cluster")]
 pub mod cluster;
 /// GOLD-FEAT-06 — `neoth cluster swarm [--watch] [--output json|table]`
-/// WAL-scan dashboard. Standalone module (cluster.rs is parallel-session-owned).
-/// Wire into ClusterAction::Swarm once cluster.rs is unfrozen — see module doc.
+/// WAL-backed dashboard wired through `ClusterAction::Swarm`.
 #[cfg(feature = "cluster")]
 pub mod cluster_swarm;
 pub mod code;
 pub mod code_intel;
 pub mod code_map;
-pub mod deep_links;
-pub mod deps;
-pub mod dictate;
-pub mod distill;
-pub mod trace_replay;
-pub mod demo;
-pub mod device_profile;
-pub mod onboarding_status;
 pub mod companion;
 pub mod completions;
 pub mod computer_use;
@@ -59,6 +52,12 @@ pub mod council;
 pub mod credential;
 pub mod cron;
 pub mod ctx;
+pub mod deep_links;
+pub mod demo;
+pub mod deps;
+pub mod device_profile;
+pub mod dictate;
+pub mod distill;
 pub mod docgen;
 pub mod doctor;
 pub mod dream;
@@ -68,9 +67,9 @@ pub mod edit;
 pub mod editor;
 pub(crate) mod elicitation;
 pub mod email;
+pub mod eval;
 pub mod events;
 pub mod export;
-pub mod capabilities;
 pub mod fact_check;
 pub mod feedback;
 pub mod fetch;
@@ -102,7 +101,6 @@ pub mod lease;
 pub mod loop_cmd;
 pub mod mcp;
 pub mod memory;
-pub mod eval;
 pub mod memory_eval;
 pub mod meter;
 pub mod migrate;
@@ -116,6 +114,9 @@ pub mod obsidian_sync_task;
 pub mod obsidian_sync_util;
 pub mod obsidian_wiki_rebuild_task;
 pub mod okf;
+pub mod omi;
+pub(crate) mod onboarding_readiness;
+pub mod onboarding_status;
 pub mod os;
 pub mod ouro;
 pub mod paperless;
@@ -134,13 +135,13 @@ pub mod recon;
 pub mod recover;
 pub mod reflect;
 pub mod refusal;
-/// MAR-02 — `neoth release {keygen, sign, pubkey}` DAU-friendly release signing.
+/// MAR-02 — `neoth release {keygen, sign, verify, pubkey}` release signing.
 pub mod release;
-/// ZF-04 — `neoth rmas consent [--acknowledge]` RecursiveMAS consent gate.
-pub mod rmas;
 pub mod reload;
 pub mod review;
 pub mod risk_confirm;
+/// ZF-04 — `neoth rmas consent [--acknowledge]` RecursiveMAS consent gate.
+pub mod rmas;
 pub mod rollback;
 pub mod schema;
 pub mod search;
@@ -169,6 +170,7 @@ pub mod telemetry;
 pub mod terminal;
 pub mod todo;
 pub mod tour;
+pub mod trace_replay;
 pub mod transfer;
 pub mod trust;
 pub mod tts;
@@ -357,8 +359,9 @@ pub enum Commands {
     /// Shortcut for `neoth autonomy full-auto` (GOLD-FEAT-01): flip NEOTH into
     /// FULL-AUTO mode in one word — autonomy `full` + the entire skill library
     /// routed proactively. The irreducible security floor still holds
-    /// (self-replace / patch-apply / dangerous targets stay gated; revoked &
-    /// unsigned plugins stay blocked). Switch back with `neoth autonomy gated`.
+    /// (self-replace / patch-apply / dangerous targets stay gated; every plugin
+    /// still needs an exact approval-bound enable). Switch back with
+    /// `neoth autonomy gated`.
     Sudomode,
 
     /// GOLD-ADOPT-16 — declarative parametrized recipe templates. `recipe run
@@ -562,12 +565,9 @@ pub enum Commands {
     /// `--allow-no-auth` is explicitly passed.
     Webhook(webhook::WebhookArgs),
 
-    /// U-01..U-04 updater status + check entry. Subcommands:
-    /// `status`, `check`. Renders the most recent
-    /// `UpdaterTaskResultPayload`s (the WAL 0x45 frames) as a
-    /// readable table. The actual update pipeline (U-01 binary
-    /// self-update, U-02 skills+plugins, U-03 CLI versions) wires
-    /// in follow-up commits — today's surface is the status view.
+    /// U-01..U-04 updater status + compatibility check entry. `status` renders
+    /// recent `UpdaterTaskResultPayload` WAL frames; `check` delegates to the
+    /// live `neoth update --check` component probe.
     Updater(updater::UpdaterArgs),
 
     /// W-05b — package-manager fallback chain runner. `--dry-run`
@@ -636,8 +636,9 @@ pub enum Commands {
 
     /// GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time
     /// phone-pairing invite (rendezvous topic + PSK) and show it as a QR code
-    /// with a URL fallback. Display-only; the P2P pairing transport is a
-    /// follow-up.
+    /// with a URL fallback. With the default `cluster` feature it drives the
+    /// single-use Hyperswarm/Noise-XX P2P handshake; `--write-invite-for-serve`
+    /// hands the invite to a configured running daemon for durable token use.
     Companion(companion::CompanionArgs),
 
     /// Daemon-state snapshot — WAL bytes, tier counts, channels, autonomy.
@@ -689,7 +690,7 @@ pub enum Commands {
     /// `status` prints the current freedom.yaml::hysteria config + binary
     /// location. `render-config` writes the YAML the subprocess would
     /// receive. `test` TCP-probes the local SOCKS5 port. Daemon
-    /// spawns the subprocess automatically on `neothd serve`.
+    /// spawns the subprocess automatically on `neoth serve`.
     Hysteria(hysteria::HysteriaArgs),
 
     /// Mirror the session archive into the operator's cloud-client
@@ -761,7 +762,7 @@ pub enum Commands {
 
     /// Slack pre-flight (A-7). `test` validates xoxb + xapp tokens by
     /// calling `auth.test` + `apps.connections.open` and reports the
-    /// WSS URL Phase-2 socket-mode loop will dial.
+    /// WSS URL consumed by the live Socket Mode loop.
     Slack(slack::SlackArgs),
 
     /// Todoist task management (TD-01). `list` / `add <content>` /
@@ -796,15 +797,18 @@ pub enum Commands {
     /// alternative to an ungated process spawn.
     Os(os::OsArgs),
 
-    /// Text-to-speech synthesis (A-45). `speak` writes audio bytes to
-    /// a file via ElevenLabs (cloud) or piper-rs (Phase 2 local).
+    /// Canonical audited text-to-speech. Defaults offline; cloud providers
+    /// require explicit media consent and provider credentials where needed.
     Tts(tts::TtsArgs),
 
-    /// Transcribe an audio file via the local STT pipeline (GOLD-ADOPT-25:
-    /// faster-whisper → candle Whisper, optional VAD pre-filter). Requires
+    /// Transcribe an audio file via the configured STT dispatcher
+    /// (GOLD-ADOPT-25; local by default, optional VAD pre-filter). Requires
     /// `media.dictation_enabled: true` in freedom.yaml. Microphone capture
     /// is a follow-up; this is the file-based dictation surface.
     Dictate(dictate::DictateArgs),
+
+    /// OMI conversation runtime status, sanitizer recovery, retention, and purge controls.
+    Omi(omi::OmiArgs),
 
     /// Run operator health checks (freedom/credentials/db/wal/hmac/quota/...).
     /// Exit code non-zero on any FAIL. CI-friendly: `neoth doctor --quiet`.
@@ -909,11 +913,11 @@ pub enum Commands {
     /// one named snippet so it can be inspected or copied.
     Tweaks(tweaks::TweaksArgs),
 
-    /// Inspect the autonomy-gate decision matrix (Phase 28b R-23).
-    /// `show [--level X]` prints the active level + per-action decisions
-    /// across all 5 levels (strict / standard / elevated / full / custom).
-    /// `check <action>` runs a single permission evaluation against the
-    /// configured level for any of the 8 `Action` variants.
+    /// Inspect and edit the active autonomy policy. `show [--level X]` prints
+    /// the active level, Custom overrides, and every stable action across all
+    /// five levels. `check <action>` evaluates one action against the active
+    /// immutable policy. `set` and `clear` atomically persist typed Custom
+    /// overrides in freedom.yaml.
     Permissions(permissions::PermissionsArgs),
 
     /// Test the Schicht-0 mirror-refusal detector against arbitrary
@@ -1082,10 +1086,10 @@ pub enum Commands {
     /// LLM provider catalogue (C-1 Session 13). `list` enumerates all
     /// supported `InferenceProvider` variants + their implementation
     /// status + the OpenAI-compatible endpoint examples that the
-    /// `openai_compat` adapter covers. `show <id>` prints details for
-    /// one provider. `add` / `test` / `remove` are reserved for a
-    /// future session — operators configure providers via `neoth init`
-    /// or `neoth hemispheres set` today.
+    /// `openai_compat` adapter covers. `show <id>` prints details for one
+    /// provider and `test <id>` checks its effective hemisphere wiring.
+    /// Provider mutations use the fully implemented `neoth init` and
+    /// `neoth hemispheres set` surfaces.
     #[command(visible_alias = "providers")]
     Provider {
         #[command(subcommand)]
@@ -1119,8 +1123,6 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum ProviderAction {
-    /// Add a new LLM provider (reserved — use `neoth init`)
-    Add,
     /// List every supported LLM provider with status + compat-endpoint examples.
     List,
     /// Show details for one provider by id (e.g. `claude_cli`, `openai_compat`).
@@ -1133,11 +1135,9 @@ pub enum ProviderAction {
     /// Show where a provider is wired into the hemispheres (live round-trip:
     /// `neoth hemispheres test --role <r> --live`).
     Test { provider: String },
-    /// Remove a provider (reserved — use `neoth init`)
-    Remove { provider: String },
 }
 
-// GAP-19: the Add variant carries 11 optional credential flags (clap args),
+// GAP-19: the Add variant carries optional credential/policy flags (clap args),
 // making it larger than the sibling id-only variants. A CLI subcommand enum is
 // constructed once per invocation — the size skew is irrelevant here.
 #[allow(clippy::large_enum_variant)]
@@ -1149,7 +1149,9 @@ pub enum ChannelAction {
     ///   telegram:              --token
     ///   slack:                 --bot-token --app-token
     ///   whatsapp:              --token --phone-id
-    ///   keet:                  --seed
+    ///   whatsapp_baileys:      --url --token --allowed-sender
+    ///                           [--allowed-rooms-csv]
+    ///   keet:                  unavailable (legacy --seed is rejected)
     ///   discord:               --token
     ///   signal:                --url --phone
     ///   line:                  --token  [--password]
@@ -1157,13 +1159,16 @@ pub enum ChannelAction {
     ///   imessage/bluebubbles:  --url --password
     ///   mattermost:            --url --token
     ///   gchat/google_chat:     --url --server
+    ///   matrix:                --url --nick [--password | --token]
+    ///                          [--allowed-sender] [--allowed-rooms-csv]
+    ///                          [--allow-plaintext]
     Add {
-        /// Channel name (e.g. telegram, slack, whatsapp, keet, discord,
-        /// signal, line, irc, imessage, bluebubbles, mattermost, gchat).
+        /// Channel name (e.g. telegram, slack, whatsapp, whatsapp_baileys, discord,
+        /// signal, line, irc, imessage, bluebubbles, mattermost, gchat,
+        /// matrix, twitch, nostr).
         channel: String,
-        /// Bot token / access token (telegram, whatsapp, discord, line,
-        /// mattermost). For whatsapp this is the access token; for line the
-        /// channel access token.
+        /// Bot/access token (telegram, Meta WhatsApp, Baileys bridge, Discord,
+        /// LINE, Mattermost). Baileys uses its dedicated sidecar bearer token.
         #[arg(long)]
         token: Option<String>,
         /// Slack bot token (xoxb-…).
@@ -1175,11 +1180,11 @@ pub enum ChannelAction {
         /// WhatsApp phone-number id (numeric, from Meta console).
         #[arg(long)]
         phone_id: Option<String>,
-        /// Keet 24-word pairing phrase.
+        /// Deprecated legacy Keet field. Kept for CLI compatibility; always rejected.
         #[arg(long)]
         seed: Option<String>,
-        /// Base URL: signal-cli daemon / BlueBubbles server / Mattermost /
-        /// path to GCP service-account JSON key (gchat).
+        /// Base URL: Baileys bridge / signal-cli daemon / BlueBubbles server /
+        /// Mattermost / path to GCP service-account JSON key (gchat).
         #[arg(long)]
         url: Option<String>,
         /// Signal phone number (E.164, e.g. +4917…).
@@ -1189,7 +1194,7 @@ pub enum ChannelAction {
         /// Pub/Sub subscription (gchat, projects/<p>/subscriptions/<s>).
         #[arg(long)]
         server: Option<String>,
-        /// IRC bot nick.
+        /// IRC bot nick / Matrix bot user id (`@user:server`).
         #[arg(long)]
         nick: Option<String>,
         /// Password / secret: IRC NickServ password, BlueBubbles server
@@ -1199,6 +1204,17 @@ pub enum ChannelAction {
         /// IRC channels to join, comma-separated (e.g. #neoth,#dev).
         #[arg(long)]
         channels_csv: Option<String>,
+        /// Matrix inviter/inbound sender allowlist (`@user:server`) or Baileys
+        /// sender allowlist (comma-separated E.164/exact WhatsApp JIDs).
+        #[arg(long)]
+        allowed_sender: Option<String>,
+        /// Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV.
+        #[arg(long)]
+        allowed_rooms_csv: Option<String>,
+        /// Matrix only: explicitly permit plaintext rooms. Encrypted rooms are
+        /// required when this flag is absent.
+        #[arg(long)]
+        allow_plaintext: bool,
     },
     /// List configured channels
     List,
@@ -1328,7 +1344,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             computer_use::run_computer_use(args, global_output).await?;
         }
         Commands::SelfImprove(args) => {
-            self_improve::run_self_improve(args, global_output)?;
+            self_improve::run_self_improve(args, global_output).await?;
         }
         Commands::SelfActivate(args) => {
             self_activate::run_self_activate(args, global_output)?;
@@ -1427,7 +1443,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             installer::run_installer(args).await?;
         }
         Commands::Updater(args) => {
-            updater::run_updater(args)?;
+            updater::run_updater(args, global_output).await?;
         }
         Commands::Reload(mut args) => {
             args.output = global_output;
@@ -1533,6 +1549,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Dictate(mut args) => {
             args.output = global_output;
             dictate::run_dictate(args).await?;
+        }
+        Commands::Omi(mut args) => {
+            args.output = global_output;
+            omi::run_omi(args).await?;
         }
         Commands::Doctor(mut args) => {
             args.output = global_output;
@@ -1727,16 +1747,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderAction::Show { provider } => providers::run_show(&provider, &global_output)?,
             ProviderAction::Known => providers::run_known(&global_output)?,
             ProviderAction::Test { provider } => providers::run_test(&provider, &global_output)?,
-            ProviderAction::Add | ProviderAction::Remove { .. } => {
-                anyhow::bail!(
-                    "`neoth provider {{add,remove}}` not in this release. Use \
-                     `neoth init` (full wizard), `neoth hemispheres set`, or \
-                     edit ~/.neoth/freedom.yaml. `neoth status` shows the \
-                     active provider; `neoth provider list` enumerates every \
-                     supported backend; `neoth provider test <id>` shows where \
-                     a provider is wired."
-                );
-            }
         },
         Commands::Usage(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();
@@ -1775,6 +1785,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 nick,
                 password,
                 channels_csv,
+                allowed_sender,
+                allowed_rooms_csv,
+                allow_plaintext,
             } => {
                 let flags = channel::ChannelAddFlags {
                     token,
@@ -1788,6 +1801,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     nick,
                     password,
                     channels_csv,
+                    allowed_sender,
+                    allowed_rooms_csv,
+                    allow_plaintext,
                 };
                 channel::run_add(&ch, &flags, &global_output).await?;
             }

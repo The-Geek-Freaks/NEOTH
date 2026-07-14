@@ -39,7 +39,9 @@ use sha2::{Digest, Sha256};
 
 use crate::config::policy::TokensConfig;
 use crate::context::compress::content_detector::{ContentType, detect_content_type};
-use crate::providers::{ChunkStream, Completion, Provider, Request};
+use crate::providers::{
+    ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+};
 use crate::wal::events::EVENT_TYPE_HISTORY_COMPACTION_FIRED;
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
@@ -91,8 +93,8 @@ fn estimate_tokens_pxp(text: &str) -> u32 {
 // caught by `std::panic::catch_unwind`; on panic the block is kept verbatim
 // (fail-safe).
 
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 static RE_UUID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").unwrap()
@@ -116,9 +118,8 @@ static RE_FILE_PATH_UNIX: LazyLock<Regex> = LazyLock::new(|| {
     // silently disabling the feature.
     Regex::new(r#"(?:^|[\s"'(<=,:>|])(?:/[a-zA-Z0-9_.\-]+){2,}"#).unwrap()
 });
-static RE_FILE_PATH_WIN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^[A-Za-z]:\\(?:[^\\\r\n]+\\)+").unwrap()
-});
+static RE_FILE_PATH_WIN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^[A-Za-z]:\\(?:[^\\\r\n]+\\)+").unwrap());
 static RE_NUMERIC_ID: LazyLock<Regex> = LazyLock::new(|| {
     // A 6+-digit integer standing alone on a line (or after a colon/space).
     Regex::new(r"(?m)^\s*\d{6,}\s*$").unwrap()
@@ -173,12 +174,7 @@ fn should_compact_block(content: &str) -> bool {
 
 /// Recognised turn-boundary patterns, ordered longest-first so the search
 /// does not accidentally match a prefix of a longer marker.
-static TURN_MARKERS: &[&str] = &[
-    "\n\nAssistant:",
-    "\n\nHuman:",
-    "\n\n---\n\n",
-    "\n\n",
-];
+static TURN_MARKERS: &[&str] = &["\n\nAssistant:", "\n\nHuman:", "\n\n---\n\n", "\n\n"];
 
 /// GOLD-PXP-02: find the split index for the stable/live zones.
 ///
@@ -294,6 +290,8 @@ pub struct CompactingProvider {
     /// Cheap model used for summarisation. `None` skips the summary step and
     /// simply truncates the old zone (still emits the WAL frame).
     utility: Option<Box<dyn Provider>>,
+    /// Exact model pinned for the utility request in production.
+    utility_model: Option<String>,
     /// `max_per_request` from `TokensConfig` — used to derive the threshold.
     max_tokens: u32,
     /// Fire when `estimate_tokens_pxp(prompt + system) > max_tokens * threshold_fraction`.
@@ -317,9 +315,30 @@ impl CompactingProvider {
         keep_recent_chars: usize,
         wal: Option<WalWriterHandle>,
     ) -> Self {
+        Self::new_with_utility_model(
+            inner,
+            utility,
+            None,
+            max_tokens,
+            threshold_fraction,
+            keep_recent_chars,
+            wal,
+        )
+    }
+
+    fn new_with_utility_model(
+        inner: Box<dyn Provider>,
+        utility: Option<Box<dyn Provider>>,
+        utility_model: Option<String>,
+        max_tokens: u32,
+        threshold_fraction: f32,
+        keep_recent_chars: usize,
+        wal: Option<WalWriterHandle>,
+    ) -> Self {
         Self {
             inner,
             utility,
+            utility_model,
             max_tokens,
             threshold_fraction,
             keep_recent_chars,
@@ -333,12 +352,14 @@ impl CompactingProvider {
     pub fn from_config(
         inner: Box<dyn Provider>,
         utility: Option<Box<dyn Provider>>,
+        utility_model: Option<String>,
         cfg: &TokensConfig,
         wal: Option<WalWriterHandle>,
     ) -> Box<dyn Provider> {
-        Box::new(Self::new(
+        Box::new(Self::new_with_utility_model(
             inner,
             utility,
+            utility_model,
             cfg.max_per_request,
             cfg.history_compaction_threshold,
             cfg.history_keep_recent_chars,
@@ -355,14 +376,21 @@ impl CompactingProvider {
 
     /// Returns the compacted request, or the original if compaction did not
     /// fire. Also emits the WAL audit frame when compaction fires.
-    async fn maybe_compact(&self, mut req: Request) -> Request {
+    async fn maybe_compact(
+        &self,
+        mut req: Request,
+        authorization: Option<(
+            &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            &'static str,
+        )>,
+        raw_permit: Option<&ProviderDispatchPermit>,
+    ) -> Result<Request> {
         let system_text = req.system.as_deref().unwrap_or("");
         // GOLD-PXP-04: use calibrated chars-per-token estimate instead of flat char/4.
-        let estimated_tokens =
-            estimate_tokens_pxp(&req.prompt) + estimate_tokens_pxp(system_text);
+        let estimated_tokens = estimate_tokens_pxp(&req.prompt) + estimate_tokens_pxp(system_text);
 
         if estimated_tokens <= self.threshold_tokens() {
-            return req;
+            return Ok(req);
         }
 
         let original_chars = req.prompt.len();
@@ -391,17 +419,34 @@ impl CompactingProvider {
                     "Summarise the following conversation history concisely, \
                      preserving key facts, decisions, and context:\n\n{old_zone}"
                 ),
-                system: Some(
-                    crate::context::compactor::SELF_SUMMARY_SYSTEM_PROMPT.to_owned(),
-                ),
-                model: None,
-                temperature: Some(0.3),
+                system: Some(crate::context::compactor::SELF_SUMMARY_SYSTEM_PROMPT.to_owned()),
+                model: self
+                    .utility_model
+                    .clone()
+                    .or_else(|| util.default_model().map(str::to_owned)),
+                // The utility may be Claude CLI, which intentionally exposes
+                // no sampling knobs. Provider defaults are the only portable
+                // compaction contract; never attach a control a leaf may drop.
+                temperature: None,
                 top_p: None,
                 sampling_seed: None,
                 stop_sequences: vec![],
                 thinking_budget: None,
             };
-            match util.complete(summary_req).await {
+            let summary_result = match authorization {
+                Some((authorizer, _)) => {
+                    util.complete_authorized(summary_req, authorizer, "history_compaction.summary")
+                        .await
+                }
+                None => {
+                    util.complete_raw(
+                        summary_req,
+                        raw_permit.expect("raw compaction dispatch requires a permit"),
+                    )
+                    .await
+                }
+            };
+            match summary_result {
                 // A non-empty summary is the happy path.
                 Ok(c) if !c.text.trim().is_empty() => c.text,
                 // An empty-but-Ok summary must NOT be used: it would make
@@ -412,6 +457,14 @@ impl CompactingProvider {
                 Ok(_) => {
                     warn!("compactor: utility returned an empty summary; using truncation");
                     format!("[truncated {} chars of earlier context]", old_zone.len())
+                }
+                Err(e)
+                    if e.downcast_ref::<
+                        crate::providers::cost_authorization::ProviderAuthorizationError,
+                    >()
+                    .is_some() =>
+                {
+                    return Err(e);
                 }
                 Err(e) => {
                     warn!(error = %e, "compactor: utility summarisation failed; using truncation");
@@ -465,11 +518,7 @@ impl CompactingProvider {
 
         // Best-effort WAL emit — only when a real compaction occurred.
         if let (true, Some(wal)) = (compacted, &self.wal) {
-            let model_name = self
-                .utility
-                .as_ref()
-                .map(|u| u.name())
-                .unwrap_or("none");
+            let model_name = self.utility.as_ref().map(|u| u.name()).unwrap_or("none");
 
             let payload_json = json!(CompactionPayload {
                 original_chars,
@@ -499,7 +548,7 @@ impl CompactingProvider {
         }
 
         req.prompt = new_prompt;
-        req
+        Ok(req)
     }
 }
 
@@ -509,14 +558,70 @@ impl Provider for CompactingProvider {
         self.inner.name()
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
-        let req = self.maybe_compact(req).await;
-        self.inner.complete(req).await
+    fn request_controls(&self) -> ProviderRequestControls {
+        self.inner.request_controls()
     }
 
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
-        let req = self.maybe_compact(req).await;
-        self.inner.stream(req).await
+    fn validate_request_controls(&self, req: &Request) -> Result<()> {
+        self.inner.validate_request_controls(req)
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        self.inner.default_model()
+    }
+
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        self.inner.output_token_ceiling(req)
+    }
+
+    fn streams_on_wire(&self) -> bool {
+        self.inner.streams_on_wire()
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
+        let req = self.maybe_compact(req, None, Some(permit)).await?;
+        self.inner.complete_raw(req, permit).await
+    }
+
+    async fn stream_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
+        let req = self.maybe_compact(req, None, Some(permit)).await?;
+        self.inner.stream_raw(req, permit).await
+    }
+
+    async fn complete_authorized(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        let req = self
+            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .await?;
+        self.inner
+            .complete_authorized(req, authorizer, call_scope)
+            .await
+    }
+
+    async fn stream_authorized(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<ChunkStream> {
+        let req = self
+            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .await?;
+        self.inner
+            .stream_authorized(req, authorizer, call_scope)
+            .await
     }
 }
 
@@ -528,6 +633,7 @@ impl Provider for CompactingProvider {
 pub fn arc_from_config(
     inner: Arc<dyn Provider>,
     utility: Option<Box<dyn Provider>>,
+    utility_model: Option<String>,
     cfg: &TokensConfig,
     wal: Option<WalWriterHandle>,
 ) -> Arc<dyn Provider> {
@@ -538,17 +644,59 @@ pub fn arc_from_config(
         fn name(&self) -> &'static str {
             self.0.name()
         }
-        async fn complete(&self, req: Request) -> Result<Completion> {
-            self.0.complete(req).await
+        fn request_controls(&self) -> ProviderRequestControls {
+            self.0.request_controls()
         }
-        async fn stream(&self, req: Request) -> Result<ChunkStream> {
-            self.0.stream(req).await
+        fn validate_request_controls(&self, req: &Request) -> Result<()> {
+            self.0.validate_request_controls(req)
+        }
+        fn default_model(&self) -> Option<&str> {
+            self.0.default_model()
+        }
+        fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+            self.0.output_token_ceiling(req)
+        }
+        fn streams_on_wire(&self) -> bool {
+            self.0.streams_on_wire()
+        }
+        async fn complete_raw(
+            &self,
+            req: Request,
+            permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.0.complete_raw(req, permit).await
+        }
+        async fn stream_raw(
+            &self,
+            req: Request,
+            permit: &ProviderDispatchPermit,
+        ) -> Result<ChunkStream> {
+            self.0.stream_raw(req, permit).await
+        }
+        async fn complete_authorized(
+            &self,
+            req: Request,
+            authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            call_scope: &'static str,
+        ) -> Result<Completion> {
+            self.0
+                .complete_authorized(req, authorizer, call_scope)
+                .await
+        }
+        async fn stream_authorized(
+            &self,
+            req: Request,
+            authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            call_scope: &'static str,
+        ) -> Result<ChunkStream> {
+            self.0.stream_authorized(req, authorizer, call_scope).await
         }
     }
 
     Arc::from(CompactingProvider::from_config(
         Box::new(ArcAdapter(inner)),
         utility,
+        utility_model,
         cfg,
         wal,
     ))
@@ -590,6 +738,7 @@ mod tests {
             self.calls.lock().unwrap().push(req.prompt.clone());
             Ok(Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "stub".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: None,
@@ -598,7 +747,11 @@ mod tests {
                 cache_read_tokens: None,
             })
         }
-        async fn stream(&self, _req: Request) -> Result<ChunkStream> {
+        async fn stream_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<ChunkStream> {
             unimplemented!()
         }
     }
@@ -607,20 +760,165 @@ mod tests {
         "x".repeat(chars)
     }
 
+    struct RequestRecordingProvider {
+        name: &'static str,
+        default_model: &'static str,
+        output_token_ceiling: u32,
+        reply: &'static str,
+        calls: Arc<Mutex<Vec<Request>>>,
+    }
+
+    #[async_trait]
+    impl Provider for RequestRecordingProvider {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some(self.default_model)
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(self.output_token_ceiling)
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.calls.lock().unwrap().push(req.clone());
+            Ok(Completion {
+                text: self.reply.to_string(),
+                model: req.model.unwrap(),
+                latency: Duration::ZERO,
+                ..Completion::default()
+            })
+        }
+    }
+
+    fn cost_payloads(seg: &std::path::Path) -> Vec<serde_json::Value> {
+        let bytes = std::fs::read(seg).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut payloads = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN {
+                payloads.push(serde_json::from_slice(frame.payload).unwrap());
+            }
+            let total = frame.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        payloads
+    }
+
+    #[tokio::test]
+    async fn authorized_compaction_gates_exact_summary_then_mutated_main_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("compactor-cost.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let main_calls = Arc::new(Mutex::new(Vec::new()));
+        let summary_calls = Arc::new(Mutex::new(Vec::new()));
+        let compactor = CompactingProvider::new_with_utility_model(
+            Box::new(RequestRecordingProvider {
+                name: "main_cloud",
+                default_model: "main-model",
+                output_token_ceiling: 4096,
+                reply: "main reply",
+                calls: main_calls.clone(),
+            }),
+            Some(Box::new(RequestRecordingProvider {
+                name: "summary_cloud",
+                default_model: "summary-default",
+                output_token_ceiling: 2048,
+                reply: "bounded summary",
+                calls: summary_calls.clone(),
+            })),
+            Some("summary-model".into()),
+            100,
+            0.8,
+            50,
+            Some(writer.clone()),
+        );
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(compactor),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+            ),
+            None,
+            "compactor.main",
+        );
+        let original_prompt = long_prompt(500);
+        let original_system = "outer system".to_string();
+
+        provider
+            .complete(Request {
+                prompt: original_prompt.clone(),
+                system: Some(original_system.clone()),
+                ..Request::default()
+            })
+            .await
+            .unwrap();
+
+        let summary_req = summary_calls.lock().unwrap()[0].clone();
+        let main_req = main_calls.lock().unwrap()[0].clone();
+        assert_eq!(summary_req.model.as_deref(), Some("summary-model"));
+        assert_eq!(
+            summary_req.system.as_deref(),
+            Some(crate::context::compactor::SELF_SUMMARY_SYSTEM_PROMPT)
+        );
+        assert!(summary_req.prompt.contains(&original_prompt[..400]));
+        assert_eq!(main_req.model.as_deref(), Some("main-model"));
+        assert_eq!(main_req.system.as_deref(), Some(original_system.as_str()));
+        assert!(
+            main_req
+                .prompt
+                .starts_with("[CONTEXT SUMMARY: bounded summary]")
+        );
+        assert!(
+            main_req
+                .prompt
+                .ends_with(&original_prompt[original_prompt.len() - 50..])
+        );
+
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        let payloads = cost_payloads(&seg);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["provider"], "summary_cloud");
+        assert_eq!(payloads[0]["model"], "summary-model");
+        assert_eq!(payloads[0]["output_tokens_est"], 2048);
+        assert_eq!(payloads[0]["streaming"], false);
+        assert_eq!(
+            payloads[0]["system_hash_xxh3"].as_u64().unwrap(),
+            xxhash_rust::xxh3::xxh3_64(summary_req.system.as_deref().unwrap().as_bytes())
+        );
+        assert_eq!(
+            payloads[0]["prompt_hash_xxh3"].as_u64().unwrap(),
+            xxhash_rust::xxh3::xxh3_64(summary_req.prompt.as_bytes())
+        );
+        assert_eq!(payloads[1]["provider"], "main_cloud");
+        assert_eq!(payloads[1]["model"], "main-model");
+        assert_eq!(payloads[1]["output_tokens_est"], 4096);
+        assert_eq!(
+            payloads[1]["system_hash_xxh3"].as_u64().unwrap(),
+            xxhash_rust::xxh3::xxh3_64(main_req.system.as_deref().unwrap().as_bytes())
+        );
+        assert_eq!(
+            payloads[1]["prompt_hash_xxh3"].as_u64().unwrap(),
+            xxhash_rust::xxh3::xxh3_64(main_req.prompt.as_bytes())
+        );
+    }
+
     #[tokio::test]
     async fn no_fire_when_under_threshold() {
         // 80 chars → 20 tokens → well under 80-token threshold
         let prompt = long_prompt(80);
         let (inner, ic) = StubProvider::new("inner_reply");
         let (util, _uc) = StubProvider::new("SUMMARY");
-        let cp = CompactingProvider::new(
-            Box::new(inner),
-            Some(Box::new(util)),
-            100,
-            0.8,
-            50,
-            None,
-        );
+        let cp = CompactingProvider::new(Box::new(inner), Some(Box::new(util)), 100, 0.8, 50, None);
         let req = Request {
             prompt: prompt.clone(),
             system: None,
@@ -645,14 +943,7 @@ mod tests {
         let prompt = long_prompt(500);
         let (inner, ic) = StubProvider::new("inner_reply");
         let (util, _uc) = StubProvider::new("SUMMARY_TEXT");
-        let cp = CompactingProvider::new(
-            Box::new(inner),
-            Some(Box::new(util)),
-            100,
-            0.8,
-            50,
-            None,
-        );
+        let cp = CompactingProvider::new(Box::new(inner), Some(Box::new(util)), 100, 0.8, 50, None);
         let req = Request {
             prompt: prompt.clone(),
             system: None,
@@ -689,14 +980,7 @@ mod tests {
         let prompt = long_prompt(500);
         let (inner, ic) = StubProvider::new("inner_reply");
         let (util, _uc) = StubProvider::new(""); // empty-but-Ok summary
-        let cp = CompactingProvider::new(
-            Box::new(inner),
-            Some(Box::new(util)),
-            100,
-            0.8,
-            50,
-            None,
-        );
+        let cp = CompactingProvider::new(Box::new(inner), Some(Box::new(util)), 100, 0.8, 50, None);
         let req = Request {
             prompt: prompt.clone(),
             system: None,
@@ -745,6 +1029,7 @@ mod tests {
             *self.0.lock().unwrap() = req.system.clone();
             Ok(Completion {
                 text: "SUMMARY".into(),
+                identity: Default::default(),
                 model: "capture".into(),
                 latency: Duration::from_millis(0),
                 input_tokens: None,
@@ -753,7 +1038,11 @@ mod tests {
                 cache_read_tokens: None,
             })
         }
-        async fn stream(&self, _: Request) -> Result<ChunkStream> {
+        async fn stream_raw(
+            &self,
+            _: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<ChunkStream> {
             unimplemented!()
         }
     }
@@ -785,7 +1074,10 @@ mod tests {
         };
         cp.complete(req).await.unwrap();
         let sys = captured_system.lock().unwrap().clone();
-        assert!(sys.is_some(), "utility must receive a system prompt (ODY-06)");
+        assert!(
+            sys.is_some(),
+            "utility must receive a system prompt (ODY-06)"
+        );
         let sys = sys.unwrap();
         assert!(
             sys.contains("DENSE"),
@@ -822,7 +1114,11 @@ mod tests {
         {
             let calls = ic_under.lock().unwrap();
             assert_eq!(calls.len(), 1);
-            assert_eq!(calls[0], "x".repeat(80), "should not compact under threshold");
+            assert_eq!(
+                calls[0],
+                "x".repeat(80),
+                "should not compact under threshold"
+            );
         }
 
         // Over threshold: 500 chars ≈ 125 tokens — SHOULD compact
@@ -950,7 +1246,10 @@ mod tests {
     #[test]
     fn pxp01_uuid_not_compactable() {
         let s = "here is a resource: 550e8400-e29b-41d4-a716-446655440000 end";
-        assert!(!should_compact_block(s), "UUID block must not be compactable");
+        assert!(
+            !should_compact_block(s),
+            "UUID block must not be compactable"
+        );
     }
 
     /// should_compact_block must return false for a block with a long hex run.
@@ -973,7 +1272,10 @@ mod tests {
             "tx 0xdeadbeefdeadbeef confirmed",
             "const MAGIC: u32 = 0xCAFEBABE;",
         ] {
-            assert!(!should_compact_block(s), "0x-hex must not be compactable: {s}");
+            assert!(
+                !should_compact_block(s),
+                "0x-hex must not be compactable: {s}"
+            );
         }
     }
 
@@ -985,7 +1287,10 @@ mod tests {
             "the whole thing is a total deadbeef situation honestly",
             "that cafebabe of a plan will never facefeed correctly",
         ] {
-            assert!(should_compact_block(s), "all-alpha hex word must stay compactable: {s}");
+            assert!(
+                should_compact_block(s),
+                "all-alpha hex word must stay compactable: {s}"
+            );
         }
     }
 
@@ -1017,8 +1322,14 @@ mod tests {
     /// must still be caught.
     #[test]
     fn pxp01_redirect_path_not_compactable() {
-        for s in ["run 2>/var/log/neoth/err.log now", "tee |/usr/bin/logger here"] {
-            assert!(!should_compact_block(s), "redirect/pipe path must not be compactable: {s}");
+        for s in [
+            "run 2>/var/log/neoth/err.log now",
+            "tee |/usr/bin/logger here",
+        ] {
+            assert!(
+                !should_compact_block(s),
+                "redirect/pipe path must not be compactable: {s}"
+            );
         }
     }
 
@@ -1096,11 +1407,14 @@ mod tests {
         struct PromptCapture(Arc<Mutex<Vec<String>>>);
         #[async_trait]
         impl Provider for PromptCapture {
-            fn name(&self) -> &'static str { "capture" }
+            fn name(&self) -> &'static str {
+                "capture"
+            }
             async fn complete(&self, req: Request) -> Result<Completion> {
                 self.0.lock().unwrap().push(req.prompt.clone());
                 Ok(Completion {
                     text: "ok".into(),
+                    identity: Default::default(),
                     model: "capture".into(),
                     latency: Duration::from_millis(0),
                     input_tokens: None,
@@ -1109,7 +1423,13 @@ mod tests {
                     cache_read_tokens: None,
                 })
             }
-            async fn stream(&self, _: Request) -> Result<ChunkStream> { unimplemented!() }
+            async fn stream_raw(
+                &self,
+                _: Request,
+                _permit: &ProviderDispatchPermit,
+            ) -> Result<ChunkStream> {
+                unimplemented!()
+            }
         }
 
         let captures = Arc::new(Mutex::new(Vec::new()));
@@ -1128,16 +1448,26 @@ mod tests {
         // Fire 1
         let req1 = Request {
             prompt: big_prompt("first turn"),
-            system: None, model: None, temperature: None, top_p: None,
-            sampling_seed: None, stop_sequences: vec![], thinking_budget: None,
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            stop_sequences: vec![],
+            thinking_budget: None,
         };
         cp.complete(req1).await.unwrap();
 
         // Fire 2 — identical stable prefix, different tail.
         let req2 = Request {
             prompt: big_prompt("second turn"),
-            system: None, model: None, temperature: None, top_p: None,
-            sampling_seed: None, stop_sequences: vec![], thinking_budget: None,
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            stop_sequences: vec![],
+            thinking_budget: None,
         };
         cp.complete(req2).await.unwrap();
 
@@ -1243,14 +1573,18 @@ mod tests {
             json_tokens > prose_tokens,
             "dense JSON ({} chars → {} tokens) should estimate more tokens \
              than same-length prose ({} chars → {} tokens)",
-            json_block.len(), json_tokens, prose_block.len(), prose_tokens
+            json_block.len(),
+            json_tokens,
+            prose_block.len(),
+            prose_tokens
         );
 
         // Verify the threshold behaviour: JSON block should cross 80 tokens.
         assert!(
             json_tokens > 80,
             "JSON block ({} chars → {} tokens) must exceed threshold of 80",
-            json_block.len(), json_tokens
+            json_block.len(),
+            json_tokens
         );
         // Prose block should NOT cross 80 tokens with 200 chars.
         assert!(

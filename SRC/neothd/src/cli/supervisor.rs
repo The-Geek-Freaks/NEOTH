@@ -3,7 +3,8 @@
 //! Installs / removes the OS-native process supervisor (systemd user
 //! unit / launchd LaunchAgent / Windows Task Scheduler) that keeps
 //! `neoth serve` running + auto-restarts it, so unattended self-update
-//! can activate a new binary. All user-scoped — no root/admin.
+//! can activate an operator-applied new binary. All user-scoped — no
+//! root/admin.
 //!
 //! `loop` is the built-in restart wrapper the Windows Task Scheduler
 //! `onlogon` task targets (Task Scheduler has no restart-on-crash for
@@ -40,8 +41,8 @@ pub enum SupervisorAction {
     /// freedom.yaml flag.
     Status,
     /// Built-in restart wrapper (the Windows Task Scheduler target):
-    /// spawn `neoth serve`, relaunch unless it exits with the
-    /// deliberate-stop code. Blocks forever.
+    /// spawn `neoth serve` and relaunch it after every exit. Stop the
+    /// wrapper through Task Scheduler or `supervisor uninstall`.
     Loop,
 }
 
@@ -69,9 +70,9 @@ pub fn run_supervisor(args: SupervisorArgs) -> Result<()> {
         SupervisorAction::Status => {
             let kind = supervisor::recommended_kind();
             let installed = supervisor::is_installed(&config_home, &home);
-            let cfg_enabled = FreedomConfig::load_from_default_path()
-                .map(|c| c.supervisor.enabled)
-                .unwrap_or(false);
+            let cfg_enabled = FreedomConfig::load_from_default_path_or_default()?
+                .supervisor
+                .enabled;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!(

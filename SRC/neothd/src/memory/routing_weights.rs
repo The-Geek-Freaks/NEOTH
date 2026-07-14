@@ -115,8 +115,8 @@ impl Default for RoutingWeights {
 }
 
 impl RoutingWeights {
-    pub fn default_path(home: &Path) -> PathBuf {
-        home.join(".neoth").join(ROUTING_WEIGHTS_FILE)
+    pub fn default_path(neoth_home: &Path) -> PathBuf {
+        neoth_home.join(ROUTING_WEIGHTS_FILE)
     }
 
     /// In-memory instance (no on-disk backing). Used by unit tests
@@ -131,45 +131,36 @@ impl RoutingWeights {
         self
     }
 
-    /// Load from disk. Missing → empty. Malformed → empty + warn.
-    /// Wrong schema version → empty + warn. Never panics.
-    pub fn load_from(path: &Path) -> Self {
+    /// Load from disk. A missing file is a fresh empty state. Existing but
+    /// unreadable, malformed, or version-incompatible state fails closed so
+    /// routing history cannot silently disappear and change winner selection.
+    pub fn load_from(path: &Path) -> Result<Self> {
         let mut weights: Self = match std::fs::read(path) {
             Ok(bytes) => match serde_json::from_slice::<Self>(&bytes) {
                 Ok(parsed) if parsed.version == ROUTING_WEIGHTS_SCHEMA_VERSION => parsed,
                 Ok(parsed) => {
-                    tracing::warn!(
-                        path = %path.display(),
-                        loaded_version = parsed.version,
-                        expected = ROUTING_WEIGHTS_SCHEMA_VERSION,
-                        "routing_weights.json schema mismatch — starting empty"
+                    anyhow::bail!(
+                        "routing weights schema mismatch in {}: loaded {}, expected {}",
+                        path.display(),
+                        parsed.version,
+                        ROUTING_WEIGHTS_SCHEMA_VERSION
                     );
-                    Self::default()
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "routing_weights.json malformed — starting empty"
-                    );
-                    Self::default()
+                    return Err(e)
+                        .with_context(|| format!("parse routing weights {}", path.display()));
                 }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(e) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "routing_weights.json unreadable — starting empty"
-                );
-                Self::default()
+                return Err(e).with_context(|| format!("read routing weights {}", path.display()));
             }
         };
         weights.path = Some(path.to_path_buf());
         if weights.version == 0 {
             weights.version = ROUTING_WEIGHTS_SCHEMA_VERSION;
         }
-        weights
+        Ok(weights)
     }
 
     /// Atomic temp+rename write. Mode-0600 on unix. No-op when the
@@ -178,22 +169,13 @@ impl RoutingWeights {
         let Some(path) = self.path.as_ref() else {
             return Ok(());
         };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create routing_weights parent {}", parent.display()))?;
-        }
         let body = serde_json::to_vec_pretty(self).context("serialise routing_weights.json")?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, &body).with_context(|| format!("write {}", tmp.display()))?;
-        std::fs::rename(&tmp, path)
-            .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(path)?.permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(path, perms)?;
-        }
+        crate::util::atomic_write::atomic_write_private(path, &body).with_context(|| {
+            format!(
+                "atomically write private routing weights {}",
+                path.display()
+            )
+        })?;
         Ok(())
     }
 
@@ -419,43 +401,42 @@ mod tests {
         w.record_acceptance(topic("python"), HemisphereRole::Right, T0);
         w.save().unwrap();
 
-        let reloaded = RoutingWeights::load_from(&path);
+        let reloaded = RoutingWeights::load_from(&path).unwrap();
         assert_eq!(reloaded.rows.len(), 2);
         assert_eq!(reloaded.version, ROUTING_WEIGHTS_SCHEMA_VERSION);
     }
 
     #[test]
-    fn malformed_file_loads_empty() {
+    fn malformed_file_fails_closed() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("routing_weights.json");
         std::fs::write(&path, b"{ not valid").unwrap();
-        let w = RoutingWeights::load_from(&path);
-        assert!(w.rows.is_empty());
-        assert_eq!(w.version, ROUTING_WEIGHTS_SCHEMA_VERSION);
+        let error = RoutingWeights::load_from(&path).unwrap_err();
+        assert!(error.to_string().contains("parse routing weights"));
     }
 
     #[test]
-    fn wrong_schema_version_loads_empty() {
+    fn wrong_schema_version_fails_closed() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("routing_weights.json");
         std::fs::write(&path, br#"{"version":999,"rows":[]}"#).unwrap();
-        let w = RoutingWeights::load_from(&path);
-        assert!(w.rows.is_empty());
+        let error = RoutingWeights::load_from(&path).unwrap_err();
+        assert!(error.to_string().contains("schema mismatch"));
     }
 
     #[test]
     fn missing_file_loads_empty() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("never_existed.json");
-        let w = RoutingWeights::load_from(&path);
+        let w = RoutingWeights::load_from(&path).unwrap();
         assert!(w.rows.is_empty());
         assert_eq!(w.version, ROUTING_WEIGHTS_SCHEMA_VERSION);
     }
 
     #[test]
     fn default_path_under_neoth_subdir() {
-        let home = Path::new("/tmp/fake_home");
-        let p = RoutingWeights::default_path(home);
-        assert!(p.ends_with(".neoth/routing_weights.json"));
+        let neoth_home = Path::new("/tmp/fake_home/.neoth");
+        let p = RoutingWeights::default_path(neoth_home);
+        assert_eq!(p, neoth_home.join("routing_weights.json"));
     }
 }

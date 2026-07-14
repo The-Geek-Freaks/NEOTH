@@ -56,7 +56,17 @@ use rusqlite::Connection;
 ///      Operator-attested promotion to idx_groundtruth is the only bridge
 ///      (written by `neoth obsidian promote`, audited in
 ///      `~/.neoth/promotion-audit.jsonl`).
-pub const SCHEMA_VERSION: i64 = 26;
+/// v26: GOLD-ADAPT-GRAPH-03 — add `idx_memory_communities` for persisted
+///      Louvain assignments used by the recall community boost.
+/// v27: OMI-MULTIMODAL-01 — add the durable OMI reconciliation ledger:
+///      conversations, timestamp/speaker-aligned transcript segments, media
+///      metadata, one-time action mappings, and poll/live-stream state. Raw
+///      transcript text is nullable and is only populated when the operator's
+///      explicit retention control is enabled; media bytes never land here.
+/// v28: persist scope-qualified, canonical bulk-text identities so repeated
+///      imports remain idempotent across processes and restarts. The complete
+///      normalised statement is the equality guard; xxh3 is lookup-only.
+pub const SCHEMA_VERSION: i64 = 28;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -714,6 +724,23 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_groundtruth_revoked  ON idx_groundtruth (revoked_at);
         CREATE INDEX IF NOT EXISTS idx_groundtruth_state    ON idx_groundtruth (fact_state);
 
+        -- v28: durable bulk-text import identity. `fingerprint` accelerates
+        -- lookup but is deliberately not unique: only the full canonical
+        -- statement plus scope proves equality. The row outlives revocation;
+        -- ON DELETE SET NULL preserves a hard-delete tombstone as well.
+        CREATE TABLE IF NOT EXISTS ground_truth_fingerprints (
+            scope                  TEXT NOT NULL,
+            fingerprint            BLOB NOT NULL
+                                       CHECK (typeof(fingerprint) = 'blob' AND length(fingerprint) = 8),
+            normalised_statement   TEXT NOT NULL,
+            groundtruth_id         INTEGER,
+            first_seen_at          INTEGER NOT NULL,
+            PRIMARY KEY (scope, normalised_statement),
+            FOREIGN KEY (groundtruth_id) REFERENCES idx_groundtruth(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ground_truth_fingerprints_hash
+            ON ground_truth_fingerprints (scope, fingerprint);
+
         -- GOLD-ADAPT-MEM-02 — contradiction ledger: pairs of ground-truth facts
         -- that disagree (same scope, same subject, opposite polarity or diverging
         -- value). Canonical fact_a_id < fact_b_id (CHECK) + a UNIQUE pair index so
@@ -1067,6 +1094,103 @@ fn apply_schema(conn: &Connection) -> Result<()> {
     )
     .context("create idx_restricted")?;
 
+    // OMI-MULTIMODAL-01 — durable, idempotent conversation reconciliation.
+    // External ids stay separate from NEOTH ground-truth/kanban ids so REST
+    // retries and live-stream reconciliation cannot mature or enqueue twice.
+    // Transcript text is nullable (default retention is metadata+hash only);
+    // raw media bytes never enter views.db.
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_omi_conversations (
+            source_id              TEXT PRIMARY KEY,
+            revision               TEXT NOT NULL,
+            projection_hash        TEXT NOT NULL,
+            status                 TEXT NOT NULL,
+            source                 TEXT,
+            language               TEXT,
+            started_at_ms          INTEGER,
+            finished_at_ms         INTEGER,
+            call_id                TEXT,
+            title                  TEXT,
+            summary                TEXT,
+            metadata_json          TEXT,
+            transcript_hash        TEXT NOT NULL,
+            segment_count          INTEGER NOT NULL DEFAULT 0,
+            photo_count            INTEGER NOT NULL DEFAULT 0,
+            audio_count            INTEGER NOT NULL DEFAULT 0,
+            video_count            INTEGER NOT NULL DEFAULT 0,
+            summary_groundtruth_id INTEGER,
+            kanban_session_id      INTEGER,
+            retain_transcript      INTEGER NOT NULL DEFAULT 0 CHECK (retain_transcript IN (0, 1)),
+            audio_consent          INTEGER NOT NULL DEFAULT 0 CHECK (audio_consent IN (0, 1)),
+            image_consent          INTEGER NOT NULL DEFAULT 0 CHECK (image_consent IN (0, 1)),
+            video_consent          INTEGER NOT NULL DEFAULT 0 CHECK (video_consent IN (0, 1)),
+            first_seen_ts          INTEGER NOT NULL,
+            ingested_at_ts         INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_omi_conversations_ingested
+            ON idx_omi_conversations (ingested_at_ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_omi_conversations_call
+            ON idx_omi_conversations (call_id) WHERE call_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS idx_omi_segments (
+            conversation_id TEXT NOT NULL,
+            segment_id      TEXT NOT NULL,
+            ordinal         INTEGER NOT NULL,
+            start_ms        INTEGER NOT NULL,
+            end_ms          INTEGER NOT NULL,
+            speaker         TEXT,
+            speaker_id      INTEGER,
+            is_user         INTEGER CHECK (is_user IN (0, 1)),
+            person_id       TEXT,
+            stt_provider    TEXT,
+            text_hash       TEXT NOT NULL,
+            text            TEXT,
+            PRIMARY KEY (conversation_id, segment_id),
+            FOREIGN KEY (conversation_id) REFERENCES idx_omi_conversations(source_id)
+                ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_omi_segments_ordinal
+            ON idx_omi_segments (conversation_id, ordinal);
+        CREATE INDEX IF NOT EXISTS idx_omi_segments_timeline
+            ON idx_omi_segments (conversation_id, start_ms, end_ms);
+
+        CREATE TABLE IF NOT EXISTS idx_omi_media (
+            conversation_id   TEXT NOT NULL,
+            media_id          TEXT NOT NULL,
+            kind              TEXT NOT NULL CHECK (kind IN ('audio', 'image', 'video')),
+            created_at_ms     INTEGER,
+            duration_ms       INTEGER,
+            content_hash      TEXT,
+            processing_status TEXT NOT NULL,
+            metadata_json     TEXT,
+            processed_at_ts   INTEGER,
+            PRIMARY KEY (conversation_id, media_id, kind),
+            FOREIGN KEY (conversation_id) REFERENCES idx_omi_conversations(source_id)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_omi_media_status
+            ON idx_omi_media (processing_status, kind);
+
+        CREATE TABLE IF NOT EXISTS idx_omi_actions (
+            conversation_id TEXT NOT NULL,
+            action_hash     TEXT NOT NULL,
+            task_id         INTEGER NOT NULL,
+            created_at_ts   INTEGER NOT NULL,
+            PRIMARY KEY (conversation_id, action_hash),
+            FOREIGN KEY (conversation_id) REFERENCES idx_omi_conversations(source_id)
+                ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS idx_omi_state (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_ts INTEGER NOT NULL
+        );
+        "#,
+    )
+    .context("create OMI reconciliation ledger")?;
+
     // Stamp schema version (idempotent).
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -1106,7 +1230,10 @@ pub struct ViewsExecutor {
 impl ViewsExecutor {
     /// Open 1 write connection + `reader_count` read connections (minimum 1)
     /// to `path`. All connections receive the full pragma set via [`open`].
-    pub fn open(path: &std::path::Path, reader_count: usize) -> anyhow::Result<std::sync::Arc<Self>> {
+    pub fn open(
+        path: &std::path::Path,
+        reader_count: usize,
+    ) -> anyhow::Result<std::sync::Arc<Self>> {
         let writer = open(path)?;
         let count = reader_count.max(1);
         let readers: anyhow::Result<Vec<rusqlite::Connection>> =
@@ -1158,10 +1285,12 @@ impl ViewsExecutor {
     }
 }
 
-// SAFETY: `rusqlite::Connection` is `Send`; each is behind a `Mutex`, so
-// `ViewsExecutor` is both `Send` and `Sync`.
-unsafe impl Send for ViewsExecutor {}
-unsafe impl Sync for ViewsExecutor {}
+// Pin the intended auto-traits without overriding Rust's structural checks.
+// Adding a future !Send/!Sync field now fails compilation at this boundary.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ViewsExecutor>();
+};
 
 #[cfg(test)]
 mod tests {
@@ -1185,7 +1314,17 @@ mod tests {
         assert_eq!(v, SCHEMA_VERSION);
 
         // Verify each table is queryable.
-        for table in &["idx_episode", "idx_provider", "wal_cursor", "meta"] {
+        for table in &[
+            "idx_episode",
+            "idx_provider",
+            "wal_cursor",
+            "meta",
+            "idx_omi_conversations",
+            "idx_omi_segments",
+            "idx_omi_media",
+            "idx_omi_actions",
+            "idx_omi_state",
+        ] {
             let _: i64 = conn
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
                 .unwrap_or_else(|e| panic!("count from {table}: {e}"));
@@ -1418,27 +1557,21 @@ mod tests {
         let exec3 = exec.clone();
         let (a, b, c) = tokio::join!(
             exec.with_reader(|conn| {
-                conn.query_row(
-                    "SELECT value FROM meta WHERE key='multi_key'",
-                    [],
-                    |r| r.get::<_, String>(0),
-                )
+                conn.query_row("SELECT value FROM meta WHERE key='multi_key'", [], |r| {
+                    r.get::<_, String>(0)
+                })
                 .unwrap()
             }),
             exec2.with_reader(|conn| {
-                conn.query_row(
-                    "SELECT value FROM meta WHERE key='multi_key'",
-                    [],
-                    |r| r.get::<_, String>(0),
-                )
+                conn.query_row("SELECT value FROM meta WHERE key='multi_key'", [], |r| {
+                    r.get::<_, String>(0)
+                })
                 .unwrap()
             }),
             exec3.with_reader(|conn| {
-                conn.query_row(
-                    "SELECT value FROM meta WHERE key='multi_key'",
-                    [],
-                    |r| r.get::<_, String>(0),
-                )
+                conn.query_row("SELECT value FROM meta WHERE key='multi_key'", [], |r| {
+                    r.get::<_, String>(0)
+                })
                 .unwrap()
             }),
         );

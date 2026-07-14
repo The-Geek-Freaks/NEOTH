@@ -1,66 +1,32 @@
-//! Slash-action dispatcher — Session 15 Pick #31.
+//! Slash-action dispatcher.
 //!
-//! Pure-function entry point that consumes a [`SlashAction`] + the
-//! action args, executes the corresponding state-change OR diagnostic,
-//! and returns operator-readable text. The chat dispatcher (chat.rs +
-//! serve.rs) consults this BEFORE the LLM round-trip — action-based
-//! commands never reach a provider, no token cost, no latency.
-//!
-//! Per memory rule `neoth-slash-commands-and-settings-parity`, every
-//! action mirrored in this dispatcher MUST also surface in the GUI
-//! settings panel. The dispatcher writes to `freedom.yaml` via the
-//! existing `config::reload::ReloadController` so both surfaces hit
-//! one source of truth.
-//!
-//! ## Today's scope (Pick #31)
-//!
-//! Foundation: 13 action handlers, each returning a structured
-//! [`ActionOutcome`] that the caller renders. Six handlers fully
-//! actionable today (config-list, consent-list, autonomy-show,
-//! provider-show, skill-list, plugin-list — all read-only).
-//! Seven write-path handlers (wizard restart, config-set, provider-
-//! switch, channel connect/disconnect, memory mutations, reload-
-//! request) emit a clearly-labelled `Pending` outcome with the
-//! follow-up CLI command the operator can run today + the GUI tab
-//! that ships the same surface. This gives operators the discovery
-//! surface immediately while the per-handler wiring lands in
-//! follow-up picks.
+//! Built-in actions are resolved before any provider call. Read paths return
+//! their real data; mutation paths call the same typed helpers as the CLI and
+//! persist through locked, atomic stores. Channel-originated mutations are
+//! rejected before parsing secrets or touching disk.
+
+use std::path::Path;
+
+use anyhow::{Context, Result};
 
 use super::schema::{CommandSource, SlashAction};
+use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 
-/// What the dispatcher decided after seeing an action invocation.
-/// Carries human-readable output the caller writes to stdout / sends
-/// back to the channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionOutcome {
-    /// Fully handled — `text` is the operator-facing result. Caller
-    /// prints + skips the LLM call.
     Handled { text: String },
-    /// Handler shipped but the write-path isn't fully wired yet.
-    /// `text` carries the follow-up the operator can take today +
-    /// the GUI tab that mirrors the action. Caller prints + skips
-    /// the LLM call.
-    Pending { text: String },
-    /// Invalid args for this action (wrong arity, unknown channel
-    /// name, ...). `text` carries the usage hint.
+    Failed { text: String },
     InvalidArgs { text: String },
-    /// `/quit` only — caller drains state + exits the process.
     Exit,
-    /// ADV-09: a destructive action (config / consent / autonomy / channel
-    /// mutation) was invoked from a CHANNEL. Rejected — it requires local
-    /// CLI authentication. `text` is the operator-facing refusal the
-    /// channel adapter sends back.
     ChannelPrivilegeBlocked { text: String },
 }
 
 impl ActionOutcome {
-    /// Operator-facing rendering. Chat dispatcher calls this + writes
-    /// the string to stdout / the channel.
     pub fn text(&self) -> &str {
         match self {
             Self::Handled { text }
-            | Self::Pending { text }
+            | Self::Failed { text }
             | Self::InvalidArgs { text }
             | Self::ChannelPrivilegeBlocked { text } => text,
             Self::Exit => "Exiting NEOTH chat session.",
@@ -71,349 +37,844 @@ impl ActionOutcome {
         matches!(self, Self::Exit)
     }
 
-    /// ADV-09: true when the action was refused by the channel privilege
-    /// ceiling. Channel adapters surface the text + do NOT fall through
-    /// to the LLM.
     pub fn is_channel_blocked(&self) -> bool {
         matches!(self, Self::ChannelPrivilegeBlocked { .. })
     }
+
+    pub fn is_failure(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
 }
 
-/// Dispatch one action. `args` is the trailing slice after the
-/// command name (e.g. `/config foo bar` → `args = "foo bar"`).
-/// `config` is the live `FreedomConfig` snapshot for read paths.
-pub fn dispatch_action(
+/// Dispatch one action. Async is required because onboarding, credential
+/// verification, audited consent/autonomy changes, and memory erasure all have
+/// real async boundaries.
+pub async fn dispatch_action(
     action: SlashAction,
     args: &str,
     config: &FreedomConfig,
     source: CommandSource,
 ) -> ActionOutcome {
-    // ADV-09 channel privilege ceiling: a destructive action arriving
-    // from a channel is rejected outright — config / consent / autonomy /
-    // channel mutation requires local CLI authentication so a Telegram
-    // message can't reconfigure or escalate the daemon. CLI is trusted.
-    if source.is_channel() && action.is_destructive_with_args(args) {
+    dispatch_action_at(
+        action,
+        args,
+        config,
+        source,
+        &FreedomConfig::default_neoth_home(),
+    )
+    .await
+}
+
+async fn dispatch_action_at(
+    action: SlashAction,
+    args: &str,
+    config: &FreedomConfig,
+    source: CommandSource,
+    home: &Path,
+) -> ActionOutcome {
+    let trimmed = args.trim();
+    if source.is_channel() && action.is_destructive_with_args(trimmed) {
         return ActionOutcome::ChannelPrivilegeBlocked {
             text: format!(
-                "⛔ `/{}` is a destructive operator command and cannot be run from a channel. \
-                 Run it locally: `neoth` in a terminal on the host (CLI + local auth required).",
+                "`/{}` changes operator state and cannot run from a channel. Run it in the local NEOTH CLI.",
                 action.as_str()
             ),
         };
     }
-    let trimmed = args.trim();
+
     match action {
-        SlashAction::RestartWizard => handle_wizard(),
-        SlashAction::ConfigGet | SlashAction::ConfigSet => handle_config(trimmed, config),
-        SlashAction::ProviderSwitch => handle_provider_switch(trimmed, config),
-        SlashAction::ConnectChannel => handle_connect(trimmed),
-        SlashAction::DisconnectChannel => handle_disconnect(trimmed),
-        SlashAction::SkillRegistry => handle_skill(trimmed),
-        SlashAction::PluginRegistry => handle_plugin(trimmed),
-        SlashAction::MemoryView => handle_memory(trimmed),
-        SlashAction::ConsentManage => handle_consent(trimmed),
-        SlashAction::ReloadConfig => handle_reload(),
-        SlashAction::AutonomyLevel => handle_autonomy(trimmed, config),
+        SlashAction::RestartWizard => handle_wizard(home).await,
+        SlashAction::ConfigGet | SlashAction::ConfigSet => handle_config(trimmed, config, home),
+        SlashAction::ProviderSwitch => handle_provider_switch(trimmed, home).await,
+        SlashAction::ConnectChannel => handle_connect(trimmed, home).await,
+        SlashAction::DisconnectChannel => handle_disconnect(trimmed, home),
+        SlashAction::SkillRegistry => handle_skill(trimmed, home).await,
+        SlashAction::PluginRegistry => handle_plugin(trimmed, home),
+        SlashAction::MemoryView => handle_memory(trimmed, home).await,
+        SlashAction::ConsentManage => handle_consent(trimmed, home).await,
+        SlashAction::ReloadConfig => handle_reload(home),
+        SlashAction::AutonomyLevel => handle_autonomy(trimmed, config, home).await,
         SlashAction::Quit => ActionOutcome::Exit,
-        // HERMES-02: the real spawn happens in chat.rs / serve_pipeline.rs
-        // BEFORE dispatch_action is reached (they short-circuit by command
-        // name). This arm fires only for any future caller that routes
-        // BackgroundRun through the generic action path — it returns a
-        // Pending that explains the usage rather than silently doing nothing.
         SlashAction::BackgroundRun { btw } => handle_background_run(trimmed, btw),
     }
 }
 
-// ── Handlers ─────────────────────────────────────────────────────────
-
-fn handle_wizard() -> ActionOutcome {
-    ActionOutcome::Pending {
-        text: "/wizard — restart onboarding.\n\
-               Run in your shell: `neoth init --force` (overwrites existing freedom.yaml).\n\
-               GUI mirror: Settings → 'Re-run wizard' button."
-            .into(),
+fn failed(action: &str, error: impl std::fmt::Display) -> ActionOutcome {
+    ActionOutcome::Failed {
+        text: crate::security::redact::redact_text(&format!("{action} failed: {error}")),
     }
 }
 
-fn handle_config(args: &str, config: &FreedomConfig) -> ActionOutcome {
-    if args.is_empty() {
-        // List path — read-only, fully handled today.
-        let mut lines = vec![String::from("Current freedom.yaml values:")];
-        lines.push(format!(
-            "  operator_id        = {:?}",
-            config.operator_id.as_deref().unwrap_or("<unset>")
-        ));
-        lines.push(format!(
-            "  language_primary   = {:?}",
-            config.language_primary.as_deref().unwrap_or("<unset>")
-        ));
-        lines.push(format!(
-            "  provider_kind      = {:?}",
-            config
-                .provider_kind
-                .as_ref()
-                .map(|k| format!("{k:?}"))
-                .unwrap_or_else(|| "<unset>".to_string())
-        ));
-        lines.push(format!(
-            "  autonomy           = {:?}",
-            config.autonomy.as_str()
-        ));
-        lines.push(format!(
-            "  review_gate        = {}",
-            config.review_gate_enabled
-        ));
-        lines.push(String::new());
-        lines.push("Edit by name: `/config <key> <value>`".into());
-        lines.push("GUI mirror: Settings → Config tab.".into());
-        return ActionOutcome::Handled {
-            text: lines.join("\n"),
-        };
-    }
-    // Edit path — pending until atomic-write wiring lands.
-    let parts: Vec<&str> = args.splitn(2, char::is_whitespace).collect();
-    if parts.len() < 2 {
-        return ActionOutcome::InvalidArgs {
-            text: format!(
-                "/config — usage: `/config` (list) or `/config <key> <value>` (edit). Got: {args:?}"
-            ),
-        };
-    }
-    let (key, val) = (parts[0], parts[1].trim());
-    ActionOutcome::Pending {
-        text: format!(
-            "/config {key} {val} — atomic-write coming in the follow-up Pick.\n\
-             Today: edit ~/.neoth/freedom.yaml by hand then run `/reload`.\n\
-             GUI mirror: Settings → Config tab → {key} field."
-        ),
-    }
-}
-
-fn handle_provider_switch(args: &str, _config: &FreedomConfig) -> ActionOutcome {
-    if args.is_empty() {
-        return ActionOutcome::InvalidArgs {
-            text: "/provider — usage: `/provider [left|right|cerebellum] <kind> [--model M] [--key K]`.\n\
-                   Valid kinds: claude_cli, openai_api, openai_compat, gemini_api, local_qwen, \
-                   aws_bedrock, azure_openai."
-                .into(),
-        };
-    }
-    ActionOutcome::Pending {
-        text: format!(
-            "/provider {args} — hemisphere provider switch.\n\
-             Today: edit ~/.neoth/freedom.yaml::inference.{{left,right,cerebellum}} then `/reload`.\n\
-             GUI mirror: Settings → Hemispheres tab → per-role dropdowns.\n\
-             Wiring lands in the V10-* follow-up sprint."
-        ),
-    }
-}
-
-fn handle_connect(args: &str) -> ActionOutcome {
-    let channel = args.trim();
-    if channel.is_empty() {
-        return ActionOutcome::InvalidArgs {
-            text: "/connect — usage: `/connect <channel>`. Channels: telegram, whatsapp, slack, discord, keet.".into(),
-        };
-    }
-    let known = ["telegram", "whatsapp", "slack", "discord", "keet"];
-    if !known.contains(&channel) {
-        return ActionOutcome::InvalidArgs {
-            text: format!(
-                "/connect {channel} — unknown channel. Available: {}",
-                known.join(", ")
-            ),
-        };
-    }
-    ActionOutcome::Pending {
-        text: format!(
-            "/connect {channel} — credential flow.\n\
-             Today: run `neoth init --reconfigure` to walk the wizard for {channel}.\n\
-             GUI mirror: Settings → Channels tab → '+ Connect {channel}'.\n\
-             Live interactive credential prompt lands in the V10-* follow-up."
-        ),
-    }
-}
-
-fn handle_disconnect(args: &str) -> ActionOutcome {
-    let channel = args.trim();
-    if channel.is_empty() {
-        return ActionOutcome::InvalidArgs {
-            text: "/disconnect — usage: `/disconnect <channel>`.".into(),
-        };
-    }
-    ActionOutcome::Pending {
-        text: format!(
-            "/disconnect {channel} — revoke credentials.\n\
-             Today: remove the {channel} entry from ~/.neoth/credentials.yaml + `/reload`.\n\
-             GUI mirror: Settings → Channels tab → 'Disconnect' button per row."
-        ),
-    }
-}
-
-fn handle_skill(args: &str) -> ActionOutcome {
-    let sub = args.split_whitespace().next().unwrap_or("");
-    match sub {
-        "" | "list" => ActionOutcome::Handled {
-            text: "Skill registry: run `neoth skill list` for the full table.\n\
-                   GUI mirror: Settings → Skills tab."
-                .into(),
-        },
-        "enable" | "disable" | "info" => ActionOutcome::Pending {
-            text: format!(
-                "/skill {args} — in-chat skill toggle.\n\
-                 Today: `neoth skill {args}` from a shell.\n\
-                 GUI mirror: Settings → Skills tab → per-row enable/disable."
-            ),
-        },
-        other => ActionOutcome::InvalidArgs {
-            text: format!(
-                "/skill — unknown sub `{other}`. Use: list | enable <name> | disable <name> | info <name>."
-            ),
-        },
-    }
-}
-
-fn handle_plugin(args: &str) -> ActionOutcome {
-    let sub = args.split_whitespace().next().unwrap_or("");
-    match sub {
-        "" | "list" => ActionOutcome::Handled {
-            text: "WASM plugin registry: run `neoth plugins list`.\n\
-                   GUI mirror: Settings → Plugins tab.\n\
-                   Build with `--features wasm-plugin-host` to enable the runtime."
-                .into(),
-        },
-        "enable" | "disable" | "info" => ActionOutcome::Pending {
-            text: format!(
-                "/plugin {args} — V10-04 follow-up.\n\
-                 Engine + manifest + discovery already shipped (Picks #24-#26).\n\
-                 Dispatch wiring + per-plugin toggle land in the next V10-04 sprint."
-            ),
-        },
-        other => ActionOutcome::InvalidArgs {
-            text: format!(
-                "/plugin — unknown sub `{other}`. Use: list | enable <id> | disable <id> | info <id>."
-            ),
-        },
-    }
-}
-
-fn handle_memory(args: &str) -> ActionOutcome {
-    let sub = args.split_whitespace().next().unwrap_or("");
-    match sub {
-        "" | "view" => ActionOutcome::Handled {
-            text: "Memory tiers: run `neoth memory --tier hot|warm|cold|groundtruth`.\n\
-                   GUI mirror: Settings → Memory tab → tier counters + recent entries."
-                .into(),
-        },
-        "tier" | "forget" => ActionOutcome::Pending {
-            text: format!(
-                "/memory {args} — in-chat memory mutation.\n\
-                 Today: `neoth memory {args}` from a shell.\n\
-                 GUI mirror: Settings → Memory tab → tier-specific actions."
-            ),
-        },
-        other => ActionOutcome::InvalidArgs {
-            text: format!(
-                "/memory — unknown sub `{other}`. Use: view [topic] | tier <name> | forget <topic>."
-            ),
-        },
-    }
-}
-
-fn handle_consent(args: &str) -> ActionOutcome {
-    let sub = args.split_whitespace().next().unwrap_or("");
-    match sub {
-        "" | "list" => ActionOutcome::Handled {
-            text: "V03-08 outbound-LLM consent: run `neoth consent list`.\n\
-                   GUI mirror: Settings → Privacy tab → consent matrix."
-                .into(),
-        },
-        "grant" | "revoke" => ActionOutcome::Pending {
-            text: format!(
-                "/consent {args} — in-chat consent flip.\n\
-                 Today: `neoth consent {args}` from a shell.\n\
-                 GUI mirror: Settings → Privacy tab → per-provider toggles."
-            ),
-        },
-        other => ActionOutcome::InvalidArgs {
-            text: format!(
-                "/consent — unknown sub `{other}`. Use: list | grant <provider> | revoke <provider>."
-            ),
-        },
-    }
-}
-
-fn handle_reload() -> ActionOutcome {
-    // Sentinel-file approach already lives in `config::reload`. The
-    // dispatcher writes it; the daemon's polling loop picks it up
-    // within 2s. Handler is fully wired today.
-    let home = FreedomConfig::default_neoth_home();
+fn request_reload_at(home: &Path) -> Result<()> {
     let sentinel = home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
-    match std::fs::write(&sentinel, b"reload\n") {
-        Ok(_) => ActionOutcome::Handled {
-            text: "/reload — sentinel file dropped at ~/.neoth/.reload-requested.\n\
-                   Daemon picks it up within 2s and atomically swaps the live FreedomConfig.\n\
-                   GUI mirror: Settings → Save button (auto-fires on field change)."
-                .into(),
+    crate::util::atomic_write::atomic_write(&sentinel, b"reload\n")
+        .with_context(|| format!("write reload sentinel at {}", sentinel.display()))
+}
+
+fn handled_after_reload(home: &Path, text: String) -> ActionOutcome {
+    match request_reload_at(home) {
+        Ok(()) => ActionOutcome::Handled {
+            text: format!("{text}\nLive-config reload requested."),
         },
-        Err(e) => ActionOutcome::Handled {
+        Err(error) => failed("state persisted, but live-config reload request", error),
+    }
+}
+
+async fn handle_wizard(home: &Path) -> ActionOutcome {
+    let args = crate::cli::init::InitArgs {
+        cli: true,
+        force: true,
+        ..Default::default()
+    };
+    match crate::cli::init::run_init(args).await {
+        Ok(()) => handled_after_reload(home, "Onboarding wizard completed.".into()),
+        Err(error) => failed("/wizard", error),
+    }
+}
+
+fn handle_config(args: &str, config: &FreedomConfig, home: &Path) -> ActionOutcome {
+    if args.is_empty() {
+        return match redacted_config_value(config) {
+            Ok(value) => match serde_yaml::to_string(&value) {
+                Ok(yaml) => ActionOutcome::Handled {
+                    text: format!("Current freedom.yaml values:\n{}", yaml.trim()),
+                },
+                Err(error) => failed("/config", error),
+            },
+            Err(error) => failed("/config", error),
+        };
+    }
+
+    let mut split = args.splitn(2, char::is_whitespace);
+    let key = split.next().unwrap_or("").trim();
+    let Some(raw_value) = split
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return match redacted_config_value(config).and_then(|value| {
+            let field = yaml_value_at(&value, key)?;
+            serde_yaml::to_string(field).context("render config field")
+        }) {
+            Ok(value) => ActionOutcome::Handled {
+                text: format!("{key}: {}", value.trim()),
+            },
+            Err(error) => ActionOutcome::InvalidArgs {
+                text: format!("/config: {error}"),
+            },
+        };
+    };
+
+    if secret_config_path(key) {
+        return ActionOutcome::InvalidArgs {
             text: format!(
-                "/reload — failed to drop sentinel: {e}.\n\
-                 Check that ~/.neoth/ exists + is writable."
+                "`{key}` is a secret field. Use `neoth credential` or the channel/provider credential flow; secrets are never accepted by `/config`."
+            ),
+        };
+    }
+    let replacement: serde_yaml::Value = match serde_yaml::from_str(raw_value) {
+        Ok(value) => value,
+        Err(error) => {
+            return ActionOutcome::InvalidArgs {
+                text: format!("/config {key}: invalid YAML value: {error}"),
+            };
+        }
+    };
+    let path = home.join("freedom.yaml");
+    let result = FreedomConfig::update_at(&path, |current| {
+        let mut value = serde_yaml::to_value(&*current).context("encode current config")?;
+        set_yaml_value_at(&mut value, key, replacement)?;
+        *current = serde_yaml::from_value(value)
+            .with_context(|| format!("value for `{key}` does not match the config schema"))?;
+        Ok(())
+    });
+    match result {
+        Ok(()) => handled_after_reload(home, format!("Config field `{key}` updated atomically.")),
+        Err(error) => failed("/config", error),
+    }
+}
+
+fn redacted_config_value(config: &FreedomConfig) -> Result<serde_yaml::Value> {
+    let mut value = serde_yaml::to_value(config).context("encode config for display")?;
+    redact_yaml_secrets(&mut value);
+    Ok(value)
+}
+
+fn redact_yaml_secrets(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::Mapping(mapping) => {
+            for (key, child) in mapping.iter_mut() {
+                let secret = key.as_str().map(secret_field_name).unwrap_or(false);
+                if secret {
+                    *child = serde_yaml::Value::String("[REDACTED]".into());
+                } else {
+                    redact_yaml_secrets(child);
+                }
+            }
+        }
+        serde_yaml::Value::Sequence(items) => {
+            for item in items {
+                redact_yaml_secrets(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn secret_field_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "key" | "secret" | "password" | "provider_key" | "telegram_token" | "api_key"
+    ) || name.ends_with("_token")
+        || name.ends_with("_secret")
+        || name.ends_with("_password")
+        || name.ends_with("_api_key")
+}
+
+fn secret_config_path(path: &str) -> bool {
+    path.split('.').any(secret_field_name)
+}
+
+fn yaml_value_at<'a>(value: &'a serde_yaml::Value, path: &str) -> Result<&'a serde_yaml::Value> {
+    let mut current = value;
+    for part in path.split('.').filter(|part| !part.is_empty()) {
+        current = match current {
+            serde_yaml::Value::Mapping(mapping) => {
+                let key = serde_yaml::Value::String(part.to_string());
+                mapping
+                    .get(&key)
+                    .ok_or_else(|| anyhow::anyhow!("unknown config field `{path}`"))?
+            }
+            serde_yaml::Value::Sequence(items) => {
+                let index = part
+                    .parse::<usize>()
+                    .with_context(|| format!("`{part}` is not a list index in `{path}`"))?;
+                items.get(index).ok_or_else(|| {
+                    anyhow::anyhow!("list index {index} is out of range in `{path}`")
+                })?
+            }
+            _ => anyhow::bail!("`{part}` traverses a scalar in `{path}`"),
+        };
+    }
+    Ok(current)
+}
+
+fn set_yaml_value_at(
+    value: &mut serde_yaml::Value,
+    path: &str,
+    replacement: serde_yaml::Value,
+) -> Result<()> {
+    let parts: Vec<&str> = path.split('.').filter(|part| !part.is_empty()).collect();
+    if parts.is_empty() {
+        anyhow::bail!("config field must not be empty");
+    }
+    set_yaml_parts(value, &parts, replacement, path)
+}
+
+fn set_yaml_parts(
+    current: &mut serde_yaml::Value,
+    parts: &[&str],
+    replacement: serde_yaml::Value,
+    full_path: &str,
+) -> Result<()> {
+    let part = parts[0];
+    let target = match current {
+        serde_yaml::Value::Mapping(mapping) => {
+            let key = serde_yaml::Value::String(part.to_string());
+            mapping
+                .get_mut(&key)
+                .ok_or_else(|| anyhow::anyhow!("unknown config field `{full_path}`"))?
+        }
+        serde_yaml::Value::Sequence(items) => {
+            let index = part
+                .parse::<usize>()
+                .with_context(|| format!("`{part}` is not a list index in `{full_path}`"))?;
+            items.get_mut(index).ok_or_else(|| {
+                anyhow::anyhow!("list index {index} is out of range in `{full_path}`")
+            })?
+        }
+        _ => anyhow::bail!("`{part}` traverses a scalar in `{full_path}`"),
+    };
+    if parts.len() == 1 {
+        *target = replacement;
+        Ok(())
+    } else {
+        set_yaml_parts(target, &parts[1..], replacement, full_path)
+    }
+}
+
+struct ProviderRequest {
+    role: String,
+    provider: String,
+    model: Option<String>,
+    key: Option<String>,
+    endpoint: Option<String>,
+}
+
+fn parse_provider_request(args: &str) -> Result<ProviderRequest> {
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    if tokens.is_empty() {
+        anyhow::bail!(
+            "usage: /provider [left|right|cerebellum] <kind> [--model M] [--key K] [--endpoint URL]"
+        );
+    }
+    let role_token = matches!(
+        tokens[0].to_ascii_lowercase().as_str(),
+        "left" | "l" | "right" | "r" | "cerebellum" | "c" | "cb"
+    );
+    let (role, provider_index) = if role_token {
+        (tokens[0].to_string(), 1)
+    } else {
+        ("left".to_string(), 0)
+    };
+    let provider = tokens
+        .get(provider_index)
+        .filter(|token| !token.starts_with("--"))
+        .ok_or_else(|| anyhow::anyhow!("provider kind is required"))?
+        .to_string();
+    let mut model = None;
+    let mut key = None;
+    let mut endpoint = None;
+    let mut index = provider_index + 1;
+    while index < tokens.len() {
+        let slot = match tokens[index] {
+            "--model" => &mut model,
+            "--key" => &mut key,
+            "--endpoint" => &mut endpoint,
+            other => anyhow::bail!("unknown provider option `{other}`"),
+        };
+        let value = tokens
+            .get(index + 1)
+            .filter(|value| !value.starts_with("--"))
+            .ok_or_else(|| anyhow::anyhow!("{} requires a value", tokens[index]))?;
+        if slot.is_some() {
+            anyhow::bail!("{} may only be supplied once", tokens[index]);
+        }
+        *slot = Some((*value).to_string());
+        index += 2;
+    }
+    Ok(ProviderRequest {
+        role,
+        provider,
+        model,
+        key,
+        endpoint,
+    })
+}
+
+async fn handle_provider_switch(args: &str, home: &Path) -> ActionOutcome {
+    let request = match parse_provider_request(args) {
+        Ok(request) => request,
+        Err(error) => {
+            return ActionOutcome::InvalidArgs {
+                text: format!("/provider: {error}"),
+            };
+        }
+    };
+    match crate::cli::hemispheres::rebind_at(
+        home,
+        &request.role,
+        &request.provider,
+        request.model,
+        request.key,
+        request.endpoint,
+    )
+    .await
+    {
+        Ok(result) => handled_after_reload(
+            home,
+            format!(
+                "Hemisphere `{}` rebound from `{}` to `{}`. Audit: {}",
+                result.role.as_str(),
+                result
+                    .prior
+                    .provider
+                    .map(|provider| provider.as_str())
+                    .unwrap_or("default"),
+                result.provider.as_str(),
+                result.audit_segment.display()
+            ),
+        ),
+        Err(error) => failed("/provider", error),
+    }
+}
+
+fn channel_arg<'a>(args: &'a str, command: &str) -> std::result::Result<&'a str, ActionOutcome> {
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.len() != 1 {
+        return Err(ActionOutcome::InvalidArgs {
+            text: format!("/{command} — usage: `/{command} <channel>`"),
+        });
+    }
+    Ok(parts[0])
+}
+
+async fn handle_connect(args: &str, home: &Path) -> ActionOutcome {
+    let channel = match channel_arg(args, "connect") {
+        Ok(channel) => channel.to_ascii_lowercase(),
+        Err(outcome) => return outcome,
+    };
+    if channel == "keet" {
+        return ActionOutcome::InvalidArgs {
+            text: "/connect keet — unavailable: Keet exposes no supported public chat API; no credentials were collected.".into(),
+        };
+    }
+    if !matches!(
+        channel.as_str(),
+        "telegram" | "whatsapp" | "slack" | "discord"
+    ) {
+        return ActionOutcome::InvalidArgs {
+            text: format!(
+                "/connect {channel} — unknown channel. Available: telegram, whatsapp, slack, discord"
+            ),
+        };
+    }
+    if let Err(error) = crate::cli::channel::run_add_at(
+        home,
+        &channel,
+        &crate::cli::channel::ChannelAddFlags::default(),
+        &OutputFormat::Table,
+    )
+    .await
+    {
+        return failed("/connect", error);
+    }
+    let verification = match crate::cli::channel::test_channel_at(home, &channel).await {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = crate::cli::channel::run_remove_at(home, &channel, &OutputFormat::Table);
+            return failed(
+                "/connect credential verification (credentials rolled back)",
+                error,
+            );
+        }
+    };
+    if verification.status != "ok" {
+        return match crate::cli::channel::run_remove_at(home, &channel, &OutputFormat::Table) {
+            Ok(()) => ActionOutcome::Failed {
+                text: format!(
+                    "/connect {channel} verification failed: {}. Stored credentials were rolled back.",
+                    verification.detail
+                ),
+            },
+            Err(rollback_error) => failed(
+                "/connect verification failed and credential rollback",
+                format!("{}; {rollback_error}", verification.detail),
+            ),
+        };
+    }
+    handled_after_reload(
+        home,
+        format!(
+            "Channel `{channel}` credentials saved and verified: {}",
+            verification.detail
+        ),
+    )
+}
+
+fn handle_disconnect(args: &str, home: &Path) -> ActionOutcome {
+    let channel = match channel_arg(args, "disconnect") {
+        Ok(channel) => channel.to_ascii_lowercase(),
+        Err(outcome) => return outcome,
+    };
+    if !matches!(
+        channel.as_str(),
+        "telegram" | "whatsapp" | "slack" | "discord" | "keet"
+    ) {
+        return ActionOutcome::InvalidArgs {
+            text: format!(
+                "/disconnect {channel} — unknown channel. Available: telegram, whatsapp, slack, discord, keet"
+            ),
+        };
+    }
+    match crate::cli::channel::run_remove_at(home, &channel, &OutputFormat::Table) {
+        Ok(()) => handled_after_reload(home, format!("Channel `{channel}` disconnected.")),
+        Err(error) => failed("/disconnect", error),
+    }
+}
+
+async fn handle_skill(args: &str, home: &Path) -> ActionOutcome {
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let sub = tokens.first().copied().unwrap_or("list");
+    let skills = match crate::skills::load_all(&home.join("skills")).await {
+        Ok(skills) => skills,
+        Err(error) => return failed("/skill", error),
+    };
+    match sub {
+        "list" if tokens.len() <= 1 => {
+            let mut lines = vec![format!("Skills ({}):", skills.len())];
+            for skill in &skills {
+                lines.push(format!(
+                    "  {}  [{}]  {}",
+                    skill.id(),
+                    if skill.is_enabled() {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                    skill.description()
+                ));
+            }
+            ActionOutcome::Handled {
+                text: lines.join("\n"),
+            }
+        }
+        "info" | "enable" | "disable" if tokens.len() == 2 => {
+            let id = tokens[1];
+            let Some(skill) = skills
+                .iter()
+                .find(|skill| skill.id().eq_ignore_ascii_case(id))
+            else {
+                return ActionOutcome::InvalidArgs {
+                    text: format!("/skill: no installed skill with id `{id}`"),
+                };
+            };
+            if sub == "info" {
+                return ActionOutcome::Handled {
+                    text: format!(
+                        "Skill `{}`\nstate: {}\nversion: {}\ndescription: {}\ntriggers: {}\ntools: {}\nmodel: {}",
+                        skill.id(),
+                        if skill.is_enabled() {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        },
+                        skill.manifest.version,
+                        skill.description(),
+                        skill.trigger_keywords().join(", "),
+                        if skill.manifest.tool_allowlist.is_empty() {
+                            "unrestricted".into()
+                        } else {
+                            skill.manifest.tool_allowlist.join(", ")
+                        },
+                        skill.manifest.model.as_deref().unwrap_or("default"),
+                    ),
+                };
+            }
+            let enabled = sub == "enable";
+            match crate::cli::skills::set_skill_enabled_at(home, id, enabled).await {
+                Ok(id) => handled_after_reload(
+                    home,
+                    format!(
+                        "Skill `{id}` {}.",
+                        if enabled { "enabled" } else { "disabled" }
+                    ),
+                ),
+                Err(error) => failed("/skill", error),
+            }
+        }
+        _ => ActionOutcome::InvalidArgs {
+            text: "/skill — use: list | info <id> | enable <id> | disable <id>".into(),
+        },
+    }
+}
+
+fn plugin_activation_label(
+    config: &FreedomConfig,
+    plugin: &crate::wasm_plugin::discovery::DiscoveredPlugin,
+) -> String {
+    use crate::wasm_plugin::discovery::PluginActivation;
+    let record = config
+        .plugins
+        .wasm
+        .activations
+        .get(&plugin.manifest.id)
+        .cloned()
+        .unwrap_or_default();
+    if record.state == PluginActivation::Active {
+        if let Err(error) = record.validate_for(plugin) {
+            return format!("reconsent_required ({error})");
+        }
+    }
+    record.state.as_str().to_string()
+}
+
+fn handle_plugin(args: &str, home: &Path) -> ActionOutcome {
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let sub = tokens.first().copied().unwrap_or("list");
+    let config = match FreedomConfig::load_from_path(&home.join("freedom.yaml")) {
+        Ok(config) => config,
+        Err(error) => return failed("/plugin", error),
+    };
+    let report = crate::wasm_plugin::discovery::discover(&home.join("plugins"));
+    match sub {
+        "list" if tokens.len() <= 1 => {
+            let mut lines = vec![format!(
+                "Plugins: {} loaded, {} rejected",
+                report.loaded.len(),
+                report.rejected.len()
+            )];
+            for plugin in &report.loaded {
+                lines.push(format!(
+                    "  {}  [{}]  permission={}  {}",
+                    plugin.manifest.id,
+                    plugin_activation_label(&config, plugin),
+                    plugin.manifest.requested_permissions.as_str(),
+                    plugin.manifest.name,
+                ));
+            }
+            for error in &report.rejected {
+                lines.push(format!("  rejected: {error}"));
+            }
+            ActionOutcome::Handled {
+                text: lines.join("\n"),
+            }
+        }
+        "info" | "enable" | "disable" if tokens.len() == 2 => {
+            let id = tokens[1];
+            let Some(plugin) = report.loaded.iter().find(|plugin| plugin.manifest.id == id) else {
+                return ActionOutcome::InvalidArgs {
+                    text: format!("/plugin: no discovered plugin with id `{id}`"),
+                };
+            };
+            if sub == "info" {
+                return ActionOutcome::Handled {
+                    text: format!(
+                        "Plugin `{}`\nname: {}\nversion: {}\nstate: {}\ndescription: {}\nrequested_permission: {}\nhook_stages: {:?}\nmanifest_sha256: {}\nwasm_sha256: {}",
+                        id,
+                        plugin.manifest.name,
+                        plugin.manifest.version,
+                        plugin_activation_label(&config, plugin),
+                        plugin.manifest.description.as_deref().unwrap_or("(none)"),
+                        plugin.manifest.requested_permissions.as_str(),
+                        plugin.manifest.hook_stages,
+                        plugin.manifest_hash,
+                        plugin.content_hash,
+                    ),
+                };
+            }
+            let enabled = sub == "enable";
+            match crate::cli::plugin::set_activation_for_action(home, id, enabled) {
+                Ok(text) => handled_after_reload(home, text),
+                Err(error) => failed("/plugin", error),
+            }
+        }
+        _ => ActionOutcome::InvalidArgs {
+            text: "/plugin — use: list | info <id> | enable <id> | disable <id>".into(),
+        },
+    }
+}
+
+fn query_memory(home: &Path, tier: Option<&str>, topic: Option<&str>) -> Result<String> {
+    let connection = crate::memory::store::open(&home.join("views.db"))?;
+    let pattern = topic.map(|topic| format!("%{}%", crate::memory::escape_like(topic)));
+    let mut statement = connection.prepare(
+        "SELECT tier, event_id, text, importance FROM (\
+           SELECT 'hot' AS tier, event_id, text, importance, ts_ns AS ts FROM idx_episode \
+           UNION ALL \
+           SELECT 'warm', COALESCE(event_id, id), text, importance, consolidated_ts FROM idx_consolidated \
+           UNION ALL \
+           SELECT 'cold', event_id, text, importance, promoted_ts FROM idx_longterm \
+           UNION ALL \
+           SELECT 'groundtruth', id, statement, 1.0, asserted_at FROM idx_groundtruth WHERE revoked_at IS NULL\
+         ) WHERE (?1 IS NULL OR tier = ?1) \
+           AND (?2 IS NULL OR text COLLATE NOCASE LIKE ?2 ESCAPE '\\') \
+         ORDER BY importance DESC, ts DESC LIMIT 20",
+    )?;
+    let rows = statement
+        .query_map(rusqlite::params![tier, pattern], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if rows.is_empty() {
+        return Ok(match (tier, topic) {
+            (Some(tier), Some(topic)) => format!("No `{tier}` memory matched `{topic}`."),
+            (Some(tier), None) => format!("No `{tier}` memory entries."),
+            (None, Some(topic)) => format!("No memory matched `{topic}`."),
+            (None, None) => "No memory entries.".into(),
+        });
+    }
+    let mut lines = vec![format!("Memory matches ({}):", rows.len())];
+    for (tier, id, text, importance) in rows {
+        let preview: String = text.chars().take(120).collect();
+        lines.push(format!("  [{tier}:{id}] imp={importance:.3}  {preview}"));
+    }
+    Ok(lines.join("\n"))
+}
+
+async fn handle_memory(args: &str, home: &Path) -> ActionOutcome {
+    let mut parts = args.split_whitespace();
+    let sub = parts.next().unwrap_or("view");
+    match sub {
+        "view" => {
+            let topic = args
+                .strip_prefix("view")
+                .map(str::trim)
+                .filter(|topic| !topic.is_empty());
+            match query_memory(home, None, topic) {
+                Ok(text) => ActionOutcome::Handled { text },
+                Err(error) => failed("/memory view", error),
+            }
+        }
+        "tier" => {
+            let tier = parts.next();
+            if parts.next().is_some()
+                || !matches!(tier, Some("hot" | "warm" | "cold" | "groundtruth"))
+            {
+                return ActionOutcome::InvalidArgs {
+                    text: "/memory tier — expected hot | warm | cold | groundtruth".into(),
+                };
+            }
+            match query_memory(home, tier, None) {
+                Ok(text) => ActionOutcome::Handled { text },
+                Err(error) => failed("/memory tier", error),
+            }
+        }
+        "forget" => {
+            let rest = args.strip_prefix("forget").unwrap_or("").trim();
+            let mut confirmed = false;
+            let mut topic_parts = Vec::new();
+            for part in rest.split_whitespace() {
+                if part == "--confirm" {
+                    confirmed = true;
+                } else if part.starts_with("--") {
+                    return ActionOutcome::InvalidArgs {
+                        text: format!("/memory forget — unknown option `{part}`"),
+                    };
+                } else {
+                    topic_parts.push(part);
+                }
+            }
+            let topic = topic_parts.join(" ");
+            if topic.is_empty() {
+                return ActionOutcome::InvalidArgs {
+                    text: "/memory forget — usage: `/memory forget <topic> [--confirm]`".into(),
+                };
+            }
+            let args = crate::cli::memory::MemoryArgs {
+                forget: Some(topic.clone()),
+                confirm: confirmed,
+                db: Some(home.join("views.db")),
+                limit: 20,
+                output: OutputFormat::Table,
+                ..Default::default()
+            };
+            match crate::cli::memory::run_memory(args).await {
+                Ok(()) if confirmed => ActionOutcome::Handled {
+                    text: format!("Memory erasure completed for topic `{topic}`."),
+                },
+                Ok(()) => ActionOutcome::Handled {
+                    text: format!(
+                        "Forget preview completed for `{topic}`; no data changed. Add `--confirm` to this slash command to execute the audited erasure."
+                    ),
+                },
+                Err(error) => failed("/memory forget", error),
+            }
+        }
+        other => ActionOutcome::InvalidArgs {
+            text: format!(
+                "/memory — unknown subcommand `{other}`. Use view [topic] | tier <name> | forget <topic> [--confirm]."
             ),
         },
     }
 }
 
-/// HERMES-02 fallback handler. The real spawn is done BEFORE
-/// `dispatch_action` is called (in `chat.rs` and `serve_pipeline.rs`
-/// by direct name match). This arm is a safety net for any caller
-/// that routes `BackgroundRun` through the generic action path — it
-/// surfaces a user-visible message so the operator is not silently
-/// dropped into a no-op.
+async fn handle_consent(args: &str, home: &Path) -> ActionOutcome {
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let sub = tokens.first().copied().unwrap_or("list");
+    match sub {
+        "list" if tokens.len() <= 1 => match crate::consent::list_grants(home) {
+            Ok(grants) if grants.is_empty() => ActionOutcome::Handled {
+                text: "No cloud-provider consent grants recorded.".into(),
+            },
+            Ok(grants) => ActionOutcome::Handled {
+                text: grants
+                    .into_iter()
+                    .map(|(provider, timestamp)| {
+                        format!("{}  granted_at={timestamp}", crate::consent::slug(provider))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            },
+            Err(error) => failed("/consent list", error),
+        },
+        "grant" | "revoke" if tokens.len() == 2 => {
+            let Some(provider) = crate::consent::kind_from_slug(tokens[1]) else {
+                return ActionOutcome::InvalidArgs {
+                    text: format!("/consent: unknown provider `{}`", tokens[1]),
+                };
+            };
+            let grant = sub == "grant";
+            match crate::cli::consent::change_consent_at(home, provider, grant).await {
+                Ok(was_granted) => ActionOutcome::Handled {
+                    text: if grant {
+                        format!("Consent granted for `{}`.", crate::consent::slug(provider))
+                    } else if was_granted {
+                        format!("Consent revoked for `{}`.", crate::consent::slug(provider))
+                    } else {
+                        format!(
+                            "No consent grant existed for `{}`; state unchanged.",
+                            crate::consent::slug(provider)
+                        )
+                    },
+                },
+                Err(error) => failed("/consent", error),
+            }
+        }
+        _ => ActionOutcome::InvalidArgs {
+            text: "/consent — use: list | grant <provider> | revoke <provider>".into(),
+        },
+    }
+}
+
+fn handle_reload(home: &Path) -> ActionOutcome {
+    match request_reload_at(home) {
+        Ok(()) => ActionOutcome::Handled {
+            text: "Live-config reload requested; the daemon will validate and swap the new config atomically.".into(),
+        },
+        Err(error) => failed("/reload", error),
+    }
+}
+
 fn handle_background_run(prompt: &str, btw: bool) -> ActionOutcome {
-    let cmd = if btw { "btw" } else { "background" };
+    let command = if btw { "btw" } else { "background" };
     if prompt.is_empty() {
         return ActionOutcome::InvalidArgs {
-            text: format!("/{cmd} — usage: `/{cmd} <prompt>`"),
+            text: format!("/{command} — usage: `/{command} <prompt>`"),
         };
     }
-    // The spawn already ran in the call site before we got here.
-    // This path fires if the command somehow re-enters the generic
-    // dispatch path — acknowledge it rather than silently dropping.
+    // Current chat/serve callers spawn before generic action dispatch.
     ActionOutcome::Handled {
-        text: format!(
-            "[neoth] /{cmd}: background session queued — result at next idle"
-        ),
+        text: format!("[neoth] /{command}: background session queued — result at next idle"),
     }
 }
 
-fn handle_autonomy(args: &str, config: &FreedomConfig) -> ActionOutcome {
+async fn handle_autonomy(args: &str, config: &FreedomConfig, home: &Path) -> ActionOutcome {
     if args.is_empty() {
         return ActionOutcome::Handled {
-            text: format!(
-                "Current autonomy: {}\n\
-                 Switch via `/autonomy <strict|standard|elevated|full|custom>`.\n\
-                 GUI mirror: Settings → Autonomy slider.",
-                config.autonomy.as_str()
-            ),
+            text: format!("Current autonomy: {}", config.autonomy.as_str()),
         };
     }
-    let valid = ["strict", "standard", "elevated", "full", "custom"];
-    if !valid.contains(&args) {
+    if args.split_whitespace().count() != 1 {
         return ActionOutcome::InvalidArgs {
-            text: format!(
-                "/autonomy {args} — invalid level. Valid: {}.",
-                valid.join(", ")
-            ),
+            text: "/autonomy — expected strict | standard | elevated | full | custom".into(),
         };
     }
-    ActionOutcome::Pending {
-        text: format!(
-            "/autonomy {args} — atomic write coming in the follow-up Pick.\n\
-             Today: edit ~/.neoth/freedom.yaml::autonomy then `/reload`.\n\
-             GUI mirror: Settings → Autonomy slider."
+    match crate::cli::autonomy::set_level_at(home, &home.join("freedom.yaml"), args).await {
+        Ok((previous, applied)) => handled_after_reload(
+            home,
+            if previous == applied {
+                format!("Autonomy unchanged: {}.", applied.as_str())
+            } else {
+                format!(
+                    "Autonomy changed: {} -> {}.",
+                    previous.as_str(),
+                    applied.as_str()
+                )
+            },
         ),
+        Err(error) if error.to_string().contains("invalid autonomy level") => {
+            ActionOutcome::InvalidArgs {
+                text: error.to_string(),
+            }
+        }
+        Err(error) => failed("/autonomy", error),
     }
 }
 
@@ -421,381 +882,361 @@ fn handle_autonomy(args: &str, config: &FreedomConfig) -> ActionOutcome {
 mod tests {
     use super::*;
 
-    fn cfg() -> FreedomConfig {
-        FreedomConfig::default()
+    fn write_config(home: &Path, config: &FreedomConfig) {
+        std::fs::create_dir_all(home).unwrap();
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(config).unwrap(),
+        )
+        .unwrap();
     }
 
-    #[test]
-    fn quit_returns_exit_outcome() {
-        let out = dispatch_action(SlashAction::Quit, "", &cfg(), CommandSource::Cli);
+    #[tokio::test]
+    async fn quit_returns_exit_outcome() {
+        let out = dispatch_action_at(
+            SlashAction::Quit,
+            "",
+            &FreedomConfig::default(),
+            CommandSource::Cli,
+            Path::new("."),
+        )
+        .await;
         assert!(out.should_exit());
     }
 
     #[test]
-    fn config_with_no_args_lists_current_values() {
-        let out = dispatch_action(SlashAction::ConfigGet, "", &cfg(), CommandSource::Cli);
-        match out {
-            ActionOutcome::Handled { text } => {
-                assert!(text.contains("operator_id"));
-                assert!(text.contains("autonomy"));
-                assert!(text.contains("GUI mirror"));
-            }
-            other => panic!("expected Handled, got {other:?}"),
-        }
+    fn config_list_redacts_merged_secrets() {
+        let mut config = FreedomConfig::default();
+        config.provider_key = Some(crate::secret::SecretString::from("sk-must-not-leak"));
+        let out = handle_config("", &config, Path::new("."));
+        assert!(matches!(out, ActionOutcome::Handled { .. }));
+        assert!(!out.text().contains("sk-must-not-leak"));
+        assert!(out.text().contains("[REDACTED]"));
     }
 
     #[test]
-    fn config_with_one_arg_returns_invalid_args() {
-        let out = dispatch_action(
+    fn config_single_field_is_a_real_read() {
+        let mut config = FreedomConfig::default();
+        config.operator_id = Some("alex".into());
+        let out = handle_config("operator_id", &config, Path::new("."));
+        assert_eq!(out.text(), "operator_id: alex");
+    }
+
+    #[test]
+    fn config_set_persists_and_requests_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        write_config(dir.path(), &config);
+
+        let out = handle_config("operator_id alex", &config, dir.path());
+
+        assert!(matches!(out, ActionOutcome::Handled { .. }), "{out:?}");
+        let loaded = FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
+        assert_eq!(loaded.operator_id.as_deref(), Some("alex"));
+        assert!(
+            dir.path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
+    }
+
+    #[test]
+    fn config_set_rejects_secret_paths_without_touching_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        write_config(dir.path(), &config);
+        let path = dir.path().join("freedom.yaml");
+        let before = std::fs::read(&path).unwrap();
+
+        let out = handle_config("provider_key sk-nope", &config, dir.path());
+
+        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn config_set_preserves_malformed_state_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let malformed = b"operator_id: [broken\n";
+        std::fs::write(&path, malformed).unwrap();
+
+        let out = handle_config("operator_id alex", &FreedomConfig::default(), dir.path());
+
+        assert!(matches!(out, ActionOutcome::Failed { .. }));
+        assert_eq!(std::fs::read(path).unwrap(), malformed);
+    }
+
+    #[test]
+    fn config_nested_list_index_mutation_is_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = FreedomConfig::default();
+        config
+            .webhook_manager
+            .endpoints
+            .push(crate::config::automation::WebhookEndpointConfig {
+                url: "https://old.example/hook".into(),
+                ..Default::default()
+            });
+        write_config(dir.path(), &config);
+
+        let out = handle_config(
+            "webhook_manager.endpoints.0.url https://new.example/hook",
+            &config,
+            dir.path(),
+        );
+
+        assert!(matches!(out, ActionOutcome::Handled { .. }), "{out:?}");
+        let loaded = FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
+        assert_eq!(
+            loaded.webhook_manager.endpoints[0].url,
+            "https://new.example/hook"
+        );
+    }
+
+    #[test]
+    fn provider_parser_defaults_left_and_never_requires_key() {
+        let request = parse_provider_request("local_qwen --model qwen3").unwrap();
+        assert_eq!(request.role, "left");
+        assert_eq!(request.provider, "local_qwen");
+        assert_eq!(request.model.as_deref(), Some("qwen3"));
+        assert!(request.key.is_none());
+    }
+
+    #[test]
+    fn provider_parser_accepts_role_key_and_endpoint() {
+        let request = parse_provider_request(
+            "right openai_compat --model local/model --endpoint http://127.0.0.1:1234 --key secret",
+        )
+        .unwrap();
+        assert_eq!(request.role, "right");
+        assert_eq!(request.provider, "openai_compat");
+        assert_eq!(request.endpoint.as_deref(), Some("http://127.0.0.1:1234"));
+        assert_eq!(request.key.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn provider_parser_rejects_missing_option_value() {
+        assert!(parse_provider_request("left openai_api --key").is_err());
+    }
+
+    #[tokio::test]
+    async fn provider_switch_writes_role_config_and_secret_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        write_config(dir.path(), &config);
+
+        let out = handle_provider_switch(
+            "right openai_api --model gpt-test --key sk-role-secret",
+            dir.path(),
+        )
+        .await;
+
+        assert!(matches!(out, ActionOutcome::Handled { .. }), "{out:?}");
+        let loaded = FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
+        assert_eq!(
+            loaded.inference.right.provider,
+            Some(crate::config::inference::InferenceProvider::OpenAi)
+        );
+        assert_eq!(loaded.inference.right.model.as_deref(), Some("gpt-test"));
+        let credentials = crate::config::credentials::Credentials::load_or_default(
+            &dir.path().join("credentials.yaml"),
+        )
+        .unwrap();
+        assert_eq!(
+            credentials
+                .inference_right_key
+                .as_ref()
+                .map(|secret| secret.expose()),
+            Some("sk-role-secret")
+        );
+        assert!(
+            !std::fs::read_to_string(dir.path().join("freedom.yaml"))
+                .unwrap()
+                .contains("sk-role-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn keet_connect_is_explicitly_unavailable() {
+        let out = handle_connect("keet", Path::new(".")).await;
+        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
+        assert!(out.text().contains("no supported public chat API"));
+    }
+
+    #[test]
+    fn disconnect_rejects_unknown_channel_without_mutation() {
+        let out = handle_disconnect("carrier-pigeon", Path::new("."));
+        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
+    }
+
+    #[tokio::test]
+    async fn skill_enable_is_persisted_through_locked_helper() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        write_config(dir.path(), &config);
+
+        let out = handle_skill("enable raskal", dir.path()).await;
+
+        assert!(matches!(out, ActionOutcome::Handled { .. }), "{out:?}");
+        let loaded = FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
+        assert!(loaded.skills.enabled.contains(&"raskal".to_string()));
+        assert!(!loaded.skills.disabled.contains(&"raskal".to_string()));
+    }
+
+    #[test]
+    fn plugin_enable_persists_exact_approval_binding() {
+        use crate::wasm_plugin::discovery::PluginActivation;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        write_config(dir.path(), &config);
+        let plugin_dir = dir.path().join("plugins").join("demo_plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "id = \"demo_plugin\"\nname = \"Demo\"\nversion = \"1.0.0\"\nrequested_permissions = \"read_only\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.wasm"),
+            [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+        )
+        .unwrap();
+
+        let out = handle_plugin("enable demo_plugin", dir.path());
+
+        assert!(matches!(out, ActionOutcome::Handled { .. }), "{out:?}");
+        let loaded = FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
+        let record = loaded.plugins.wasm.activations.get("demo_plugin").unwrap();
+        assert_eq!(record.state, PluginActivation::Active);
+        let discovered = crate::wasm_plugin::discovery::discover(&dir.path().join("plugins"));
+        record.validate_for(&discovered.loaded[0]).unwrap();
+    }
+
+    #[test]
+    fn memory_view_returns_real_matching_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        connection
+            .execute(
+                "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![7_i64, 1_i64, 99_i64, "Alexander likes Rust", "hash", 0.8],
+            )
+            .unwrap();
+
+        let text = query_memory(dir.path(), None, Some("rust")).unwrap();
+
+        assert!(text.contains("hot:7"));
+        assert!(text.contains("Alexander likes Rust"));
+    }
+
+    #[test]
+    fn memory_groundtruth_tier_is_wired() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        connection
+            .execute(
+                "INSERT INTO idx_groundtruth \
+                 (statement, source, scope, asserted_at) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params!["NEOTH is local-first", "test", "operator", 42_i64],
+            )
+            .unwrap();
+
+        let text = query_memory(dir.path(), Some("groundtruth"), None).unwrap();
+
+        assert!(text.contains("groundtruth:"));
+        assert!(text.contains("NEOTH is local-first"));
+    }
+
+    #[tokio::test]
+    async fn consent_mutation_fails_closed_on_malformed_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let malformed = b"audit_rpc: [broken\n";
+        std::fs::write(&path, malformed).unwrap();
+
+        let out = handle_consent("grant openai_api", dir.path()).await;
+
+        assert!(matches!(out, ActionOutcome::Failed { .. }));
+        assert_eq!(std::fs::read(path).unwrap(), malformed);
+        assert!(
+            !crate::consent::marker_path(dir.path(), crate::cli::init::ProviderKind::OpenaiApi)
+                .exists()
+        );
+    }
+
+    #[test]
+    fn destructive_ceiling_is_subcommand_aware() {
+        assert!(SlashAction::RestartWizard.is_destructive_with_args(""));
+        assert!(SlashAction::ConfigGet.is_destructive_with_args("operator_id alex"));
+        assert!(!SlashAction::ConfigGet.is_destructive_with_args("operator_id"));
+        assert!(SlashAction::SkillRegistry.is_destructive_with_args("enable foo"));
+        assert!(!SlashAction::SkillRegistry.is_destructive_with_args("info foo"));
+        assert!(SlashAction::PluginRegistry.is_destructive_with_args("disable foo"));
+        assert!(!SlashAction::PluginRegistry.is_destructive_with_args("list"));
+        assert!(SlashAction::MemoryView.is_destructive_with_args("forget x --confirm"));
+        assert!(!SlashAction::MemoryView.is_destructive_with_args("tier hot"));
+        assert!(SlashAction::ConsentManage.is_destructive_with_args("grant openai_api"));
+        assert!(!SlashAction::ConsentManage.is_destructive_with_args("list"));
+        assert!(SlashAction::AutonomyLevel.is_destructive_with_args("full"));
+        assert!(!SlashAction::AutonomyLevel.is_destructive_with_args(""));
+    }
+
+    #[tokio::test]
+    async fn channel_config_write_is_blocked_before_disk_access() {
+        let out = dispatch_action_at(
+            SlashAction::ConfigGet,
+            "operator_id attacker",
+            &FreedomConfig::default(),
+            CommandSource::Channel,
+            Path::new("does-not-exist"),
+        )
+        .await;
+        assert!(out.is_channel_blocked());
+    }
+
+    #[tokio::test]
+    async fn channel_read_only_config_get_remains_allowed() {
+        let mut config = FreedomConfig::default();
+        config.operator_id = Some("alex".into());
+        let out = dispatch_action_at(
             SlashAction::ConfigGet,
             "operator_id",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
-    }
-
-    #[test]
-    fn config_with_two_args_returns_pending_with_gui_mirror() {
-        let out = dispatch_action(
-            SlashAction::ConfigGet,
-            "operator_id alex",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        match out {
-            ActionOutcome::Pending { text } => {
-                assert!(text.contains("operator_id"));
-                assert!(text.contains("alex"));
-                assert!(text.contains("GUI mirror"));
-            }
-            other => panic!("expected Pending, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn connect_rejects_unknown_channel() {
-        let out = dispatch_action(
-            SlashAction::ConnectChannel,
-            "fax_machine",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        match out {
-            ActionOutcome::InvalidArgs { text } => {
-                assert!(text.contains("unknown channel"));
-                assert!(text.contains("telegram")); // surfaces the available list
-            }
-            other => panic!("expected InvalidArgs, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn connect_accepts_known_channel() {
-        for ch in ["telegram", "whatsapp", "slack", "discord", "keet"] {
-            let out = dispatch_action(SlashAction::ConnectChannel, ch, &cfg(), CommandSource::Cli);
-            assert!(
-                matches!(out, ActionOutcome::Pending { .. }),
-                "{ch} must be accepted as a known channel name"
-            );
-        }
-    }
-
-    #[test]
-    fn skill_list_returns_handled() {
-        let out = dispatch_action(
-            SlashAction::SkillRegistry,
-            "list",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::Handled { .. }));
-    }
-
-    #[test]
-    fn skill_unknown_sub_returns_invalid_args() {
-        let out = dispatch_action(
-            SlashAction::SkillRegistry,
-            "explode",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
-    }
-
-    #[test]
-    fn autonomy_with_no_args_shows_current() {
-        let out = dispatch_action(SlashAction::AutonomyLevel, "", &cfg(), CommandSource::Cli);
-        match out {
-            ActionOutcome::Handled { text } => {
-                assert!(text.contains("Current autonomy"));
-                assert!(text.contains("GUI mirror"));
-            }
-            other => panic!("expected Handled, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn autonomy_with_invalid_level_returns_invalid_args() {
-        let out = dispatch_action(
-            SlashAction::AutonomyLevel,
-            "yolo",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
-    }
-
-    #[test]
-    fn autonomy_with_valid_level_returns_pending() {
-        for level in ["strict", "standard", "elevated", "full", "custom"] {
-            let out = dispatch_action(
-                SlashAction::AutonomyLevel,
-                level,
-                &cfg(),
-                CommandSource::Cli,
-            );
-            assert!(
-                matches!(out, ActionOutcome::Pending { .. }),
-                "{level} must be accepted"
-            );
-        }
-    }
-
-    #[test]
-    fn consent_list_returns_handled() {
-        let out = dispatch_action(
-            SlashAction::ConsentManage,
-            "list",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::Handled { .. }));
-    }
-
-    #[test]
-    fn memory_view_returns_handled() {
-        let out = dispatch_action(SlashAction::MemoryView, "view", &cfg(), CommandSource::Cli);
-        assert!(matches!(out, ActionOutcome::Handled { .. }));
-    }
-
-    #[test]
-    fn plugin_list_returns_handled() {
-        let out = dispatch_action(
-            SlashAction::PluginRegistry,
-            "list",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::Handled { .. }));
-    }
-
-    #[test]
-    fn outcome_text_accessor_returns_non_empty_for_every_variant() {
-        // Every variant must produce operator-readable output. A
-        // silent action is the worst UX — operator types `/foo` and
-        // sees nothing.
-        assert!(
-            !ActionOutcome::Handled { text: "x".into() }
-                .text()
-                .is_empty()
-        );
-        assert!(
-            !ActionOutcome::Pending { text: "y".into() }
-                .text()
-                .is_empty()
-        );
-        assert!(
-            !ActionOutcome::InvalidArgs { text: "z".into() }
-                .text()
-                .is_empty()
-        );
-        assert!(!ActionOutcome::Exit.text().is_empty());
-        assert!(
-            !ActionOutcome::ChannelPrivilegeBlocked { text: "b".into() }
-                .text()
-                .is_empty()
-        );
-    }
-
-    // ── ADV-09 channel privilege ceiling ──────────────────────────────
-
-    #[test]
-    fn adv09_channel_blocks_destructive_action() {
-        let out = dispatch_action(
-            SlashAction::ConfigSet,
-            "operator_id alex",
-            &cfg(),
+            &config,
             CommandSource::Channel,
-        );
-        assert!(
-            out.is_channel_blocked(),
-            "destructive op from channel must block"
-        );
-        assert!(out.text().contains("channel"));
-        assert!(out.text().contains("CLI"));
+            Path::new("does-not-exist"),
+        )
+        .await;
+        assert!(matches!(out, ActionOutcome::Handled { .. }));
+        assert!(out.text().contains("alex"));
     }
 
     #[test]
-    fn adv09_channel_blocks_autonomy_and_consent() {
-        // The two most security-critical: raising autonomy / granting
-        // consent via a channel message is privilege escalation.
-        for a in [SlashAction::AutonomyLevel, SlashAction::ConsentManage] {
-            let out = dispatch_action(a, "full", &cfg(), CommandSource::Channel);
-            assert!(
-                out.is_channel_blocked(),
-                "{} must block from channel",
-                a.as_str()
-            );
+    fn every_outcome_has_operator_visible_text() {
+        for outcome in [
+            ActionOutcome::Handled { text: "ok".into() },
+            ActionOutcome::Failed {
+                text: "failed".into(),
+            },
+            ActionOutcome::InvalidArgs { text: "bad".into() },
+            ActionOutcome::ChannelPrivilegeBlocked {
+                text: "blocked".into(),
+            },
+            ActionOutcome::Exit,
+        ] {
+            assert!(!outcome.text().is_empty());
         }
     }
 
     #[test]
-    fn adv09_channel_allows_readonly_action() {
-        // ConfigGet is read-only — a channel may still inspect config.
-        let out = dispatch_action(SlashAction::ConfigGet, "", &cfg(), CommandSource::Channel);
-        assert!(!out.is_channel_blocked(), "read-only op must NOT block");
-        assert!(matches!(out, ActionOutcome::Handled { .. }));
-    }
-
-    #[test]
-    fn adv09_cli_permits_destructive_action() {
-        // CLI is trusted — the ceiling only applies to channels.
-        let out = dispatch_action(SlashAction::ConfigSet, "", &cfg(), CommandSource::Cli);
-        assert!(
-            !out.is_channel_blocked(),
-            "CLI must never be ceiling-blocked"
-        );
-    }
-
-    #[test]
-    fn adv09_is_destructive_matrix() {
-        assert!(SlashAction::ConfigSet.is_destructive());
-        assert!(SlashAction::AutonomyLevel.is_destructive());
-        assert!(SlashAction::ConsentManage.is_destructive());
-        assert!(SlashAction::ConnectChannel.is_destructive());
-        assert!(!SlashAction::ConfigGet.is_destructive());
-        assert!(!SlashAction::Quit.is_destructive());
-        // HERMES-02: background sessions are NOT destructive — they are
-        // read-only from the privilege ceiling perspective.
-        assert!(!SlashAction::BackgroundRun { btw: false }.is_destructive());
-        assert!(!SlashAction::BackgroundRun { btw: true }.is_destructive());
-    }
-
-    #[test]
-    fn adv09_sub_command_aware_gate_blocks_registry_mutations() {
-        // The mixed-mode registries are NOT flatly destructive, but their
-        // MUTATING sub-commands must require CLI auth. Read sub-commands stay
-        // channel-allowed. Closes the latent bypass before the handlers wire
-        // live writes.
-        assert!(SlashAction::SkillRegistry.is_destructive_with_args("enable foo"));
-        assert!(SlashAction::SkillRegistry.is_destructive_with_args("disable foo"));
-        assert!(!SlashAction::SkillRegistry.is_destructive_with_args("list"));
-        assert!(!SlashAction::SkillRegistry.is_destructive_with_args("info foo"));
-        assert!(SlashAction::PluginRegistry.is_destructive_with_args("disable bar"));
-        assert!(!SlashAction::PluginRegistry.is_destructive_with_args("info bar"));
-        assert!(SlashAction::MemoryView.is_destructive_with_args("forget x"));
-        assert!(SlashAction::MemoryView.is_destructive_with_args("tier hot"));
-        assert!(!SlashAction::MemoryView.is_destructive_with_args("view"));
-        // Flat mutators stay destructive regardless of args.
-        assert!(SlashAction::AutonomyLevel.is_destructive_with_args(""));
-        // Read-only stays read-only.
-        assert!(!SlashAction::ConfigGet.is_destructive_with_args("anything"));
-    }
-
-    // ── HERMES-02 background_run dispatch ────────────────────────────
-
-    #[test]
-    fn background_run_empty_prompt_returns_invalid_args() {
-        let out = dispatch_action(
-            SlashAction::BackgroundRun { btw: false },
-            "",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(
-            matches!(out, ActionOutcome::InvalidArgs { .. }),
-            "empty prompt must return InvalidArgs"
-        );
-        assert!(out.text().contains("/background"));
-    }
-
-    #[test]
-    fn btw_empty_prompt_returns_invalid_args() {
-        let out = dispatch_action(
-            SlashAction::BackgroundRun { btw: true },
-            "",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
-        assert!(out.text().contains("/btw"));
-    }
-
-    #[test]
-    fn background_run_with_prompt_returns_handled() {
-        let out = dispatch_action(
-            SlashAction::BackgroundRun { btw: false },
-            "what is 2+2",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(
-            matches!(out, ActionOutcome::Handled { .. }),
-            "non-empty prompt must return Handled"
-        );
-        assert!(out.text().contains("background"));
-    }
-
-    #[test]
-    fn btw_with_prompt_returns_handled() {
-        let out = dispatch_action(
-            SlashAction::BackgroundRun { btw: true },
-            "summarise the news",
-            &cfg(),
-            CommandSource::Cli,
-        );
-        assert!(matches!(out, ActionOutcome::Handled { .. }));
-        assert!(out.text().contains("btw"));
-    }
-
-    #[test]
-    fn background_run_not_blocked_from_channel() {
-        // BackgroundRun is NOT destructive → channel may invoke it.
-        let out = dispatch_action(
-            SlashAction::BackgroundRun { btw: false },
-            "research topic",
-            &cfg(),
-            CommandSource::Channel,
-        );
-        assert!(
-            !out.is_channel_blocked(),
-            "background_run must not be blocked from channel"
-        );
-    }
-
-    #[test]
-    fn adv09_channel_blocks_skill_enable_but_allows_skill_list() {
-        // End-to-end through dispatch_action with CommandSource::Channel.
-        let blocked = dispatch_action(
-            SlashAction::SkillRegistry,
-            "enable mybot",
-            &cfg(),
-            CommandSource::Channel,
-        );
-        assert!(
-            blocked.is_channel_blocked(),
-            "skill enable from channel must block"
-        );
-        let allowed = dispatch_action(
-            SlashAction::SkillRegistry,
-            "list",
-            &cfg(),
-            CommandSource::Channel,
-        );
-        assert!(
-            !allowed.is_channel_blocked(),
-            "skill list from channel is read-only, must not block"
-        );
+    fn background_requires_prompt_and_acknowledges_queue() {
+        let empty = handle_background_run("", false);
+        assert!(matches!(empty, ActionOutcome::InvalidArgs { .. }));
+        let queued = handle_background_run("review this", true);
+        assert!(matches!(queued, ActionOutcome::Handled { .. }));
+        assert!(queued.text().contains("background session queued"));
     }
 }

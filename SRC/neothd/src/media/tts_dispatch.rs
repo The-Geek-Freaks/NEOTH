@@ -1,11 +1,9 @@
 //! MM-03 — TTS dispatcher primitive.
 //!
-//! Operator-facing surface for picking a TTS provider + assembling
-//! synthesis requests. The actual model invocation lands behind a
-//! provider-trait that ships in a follow-up: piper-rs binding,
-//! Coqui Python subprocess, AzureTTS REST, ElevenLabs REST, OS-
-//! native (macOS `say`, Linux `espeak-ng`, Windows SAPI).
-//! This slice ships:
+//! Operator-facing surface for picking a TTS provider, validating a request,
+//! and carrying the complete non-secret `freedom.yaml::media.tts` contract.
+//! Every accepted provider has a production implementation behind
+//! [`super::tts_cloud::make_tts_provider`]; there are no reserved enum values.
 //!
 //!   - [`TtsProvider`] enum + audit tags.
 //!   - [`TtsRequest`] / [`TtsResponse`] / [`TtsFormat`] data shapes.
@@ -56,11 +54,8 @@ impl TtsFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TtsProvider {
-    /// Local piper-rs — zero network, runs on CPU, decent quality.
+    /// Local Piper CLI + operator-provided ONNX voice — zero network.
     Piper,
-    /// Local Coqui XTTS via Python subprocess — higher quality but
-    /// 4 GB+ model + slower than piper.
-    Coqui,
     /// Azure TTS REST — Microsoft's cloud, high-quality voices.
     AzureTts,
     /// ElevenLabs REST — best multilingual quality, paid + cloud.
@@ -69,11 +64,10 @@ pub enum TtsProvider {
     /// Lowest quality but zero install footprint — sensible default
     /// before the operator opts into a real model.
     SystemNative,
-    /// JV-VOICE-01 — `edge-tts` Python CLI subprocess. Windows-native free
-    /// TTS using Microsoft's neural voices over a local subprocess call;
-    /// no API key required. Requires `pip install edge-tts` on the operator
-    /// machine. Higher quality than SAPI (`SystemNative`), lower latency
-    /// than full cloud REST (no auth round-trip). Output: MP3 via stdout.
+    /// JV-VOICE-01 — `edge-tts` Python CLI subprocess. The process runs
+    /// locally, but synthesis is performed by Microsoft's online Edge speech
+    /// service: text leaves the machine even though no API key is required.
+    /// Requires `pip install edge-tts`. Output: MP3 via stdout.
     EdgeTts,
     /// GOLD-ADAPT-SYS-02 — ViitorVoice HTTP sidecar (viitor-voice-nar gateway).
     /// Zero-shot voice CLONING: POSTs a reference-audio sample + the text to a
@@ -88,7 +82,6 @@ impl TtsProvider {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Piper => "piper",
-            Self::Coqui => "coqui",
             Self::AzureTts => "azure_tts",
             Self::ElevenLabs => "eleven_labs",
             Self::SystemNative => "system_native",
@@ -97,12 +90,11 @@ impl TtsProvider {
         }
     }
 
-    /// True when the provider runs locally (no network).
+    /// True only when synthesis is guaranteed to stay on this machine.
+    /// A local subprocess is not sufficient: `edge-tts` calls Microsoft's
+    /// online speech service and therefore remains cloud egress.
     pub fn is_local(self) -> bool {
-        matches!(
-            self,
-            Self::Piper | Self::Coqui | Self::SystemNative | Self::EdgeTts
-        )
+        matches!(self, Self::Piper | Self::SystemNative)
     }
 
     /// True when the provider requires a paid account or API key.
@@ -113,20 +105,35 @@ impl TtsProvider {
     /// Operator-facing one-liner shown in the wizard picker.
     pub fn description(self) -> &'static str {
         match self {
-            Self::Piper => {
-                "Local Piper TTS — zero network, runs on CPU, decent quality (recommended)"
-            }
-            Self::Coqui => "Local Coqui XTTS — higher quality, 4 GB+ model, slower",
+            Self::Piper => "Local Piper CLI + operator-provided ONNX voice — zero network",
             Self::AzureTts => "Azure TTS — cloud, high quality, requires API key",
             Self::ElevenLabs => "ElevenLabs — cloud, best multilingual, paid",
             Self::SystemNative => "OS-native (say/espeak-ng/SAPI) — zero install, lowest quality",
             Self::EdgeTts => {
-                "edge-tts — local subprocess, Microsoft neural voices, free, needs pip install"
+                "edge-tts — Microsoft online speech via a local CLI; cloud consent required, no API key"
             }
             Self::ViitorVoice => {
                 "ViitorVoice — self-hosted voice-cloning sidecar (needs media.cloud_tts_enabled + endpoint)"
             }
         }
+    }
+
+    /// Parse CLI aliases without accepting names that lack a production
+    /// implementation. Serde remains pinned to snake_case.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "piper" => Some(Self::Piper),
+            "azure" | "azure_tts" => Some(Self::AzureTts),
+            "elevenlabs" | "eleven_labs" => Some(Self::ElevenLabs),
+            "system" | "system_native" => Some(Self::SystemNative),
+            "edge" | "edge_tts" => Some(Self::EdgeTts),
+            "viitor" | "viitor_voice" => Some(Self::ViitorVoice),
+            _ => None,
+        }
+    }
+
+    pub const fn known_names() -> &'static str {
+        "piper, system_native, edge_tts, eleven_labs, azure_tts, viitor_voice"
     }
 }
 
@@ -148,15 +155,13 @@ pub struct TtsRequest {
 }
 
 impl TtsRequest {
-    /// Constructor with sensible defaults — locale-driven voice,
-    /// Wav at 22.05 kHz.
+    /// Provider-neutral constructor. The canonical dispatcher fills the voice
+    /// only after it knows the actual primary/fallback provider.
     pub fn for_locale(text: impl Into<String>, locale: impl Into<String>) -> Self {
         let locale = locale.into();
         Self {
             text: text.into(),
-            voice_id: pick_voice_for_locale(&locale, TtsProvider::Piper)
-                .unwrap_or("")
-                .to_string(),
+            voice_id: String::new(),
             locale,
             format: TtsFormat::Wav,
             sample_rate_hz: 22_050,
@@ -191,6 +196,26 @@ pub struct TtsDispatcherConfig {
     /// Default output format when the request leaves it unset.
     #[serde(default = "default_format")]
     pub default_format: TtsFormat,
+    /// Locale used when the caller does not override it.
+    #[serde(default = "default_locale")]
+    pub locale: String,
+    /// Provider-specific voice id. Empty selects the locale default.
+    #[serde(default)]
+    pub voice: String,
+    /// Piper model path, relative to `~/.neoth/models/piper/` or an absolute
+    /// path contained by that directory. No download is attempted.
+    #[serde(default)]
+    pub piper_model: Option<std::path::PathBuf>,
+    /// Piper JSON config path under the same containment root. When omitted,
+    /// `<model>.json` is used (for example `voice.onnx.json`).
+    #[serde(default)]
+    pub piper_config: Option<std::path::PathBuf>,
+    /// Azure Speech region (for example `westeurope`). Not a secret.
+    #[serde(default)]
+    pub azure_region: Option<String>,
+    /// Operator-selected Viitor sidecar URL. Not a credential.
+    #[serde(default)]
+    pub viitor_endpoint: Option<String>,
 }
 
 fn default_max_chars() -> usize {
@@ -199,14 +224,25 @@ fn default_max_chars() -> usize {
 fn default_format() -> TtsFormat {
     TtsFormat::Wav
 }
+fn default_locale() -> String {
+    "en-US".to_string()
+}
 
 impl Default for TtsDispatcherConfig {
     fn default() -> Self {
         Self {
-            primary: TtsProvider::Piper,
-            fallback: Some(TtsProvider::SystemNative),
+            // A clean install speaks through an offline OS facility. Piper is
+            // selected explicitly once its operator-provided model is present.
+            primary: TtsProvider::SystemNative,
+            fallback: None,
             max_chars_per_request: default_max_chars(),
             default_format: default_format(),
+            locale: default_locale(),
+            voice: String::new(),
+            piper_model: None,
+            piper_config: None,
+            azure_region: None,
+            viitor_endpoint: None,
         }
     }
 }
@@ -228,17 +264,17 @@ pub enum DispatchDecision {
 /// provider to use. Reject when text exceeds `max_chars_per_request`
 /// — chunking is the caller's job.
 pub fn dispatch(config: &TtsDispatcherConfig, request: &TtsRequest) -> DispatchDecision {
-    if request.text.is_empty() {
+    if request.text.trim().is_empty() {
         return DispatchDecision::Reject {
             reason: "empty text — nothing to synthesise".to_string(),
         };
     }
-    if request.text.len() > config.max_chars_per_request {
+    let char_count = request.text.chars().count();
+    if char_count > config.max_chars_per_request {
         return DispatchDecision::Reject {
             reason: format!(
                 "text length {} exceeds max_chars_per_request {} — chunk by sentence and call again",
-                request.text.len(),
-                config.max_chars_per_request,
+                char_count, config.max_chars_per_request,
             ),
         };
     }
@@ -341,21 +377,21 @@ mod tests {
     #[test]
     fn provider_as_str_pinned() {
         assert_eq!(TtsProvider::Piper.as_str(), "piper");
-        assert_eq!(TtsProvider::Coqui.as_str(), "coqui");
         assert_eq!(TtsProvider::AzureTts.as_str(), "azure_tts");
         assert_eq!(TtsProvider::ElevenLabs.as_str(), "eleven_labs");
         assert_eq!(TtsProvider::SystemNative.as_str(), "system_native");
         assert_eq!(TtsProvider::EdgeTts.as_str(), "edge_tts");
+        assert_eq!(TtsProvider::ViitorVoice.as_str(), "viitor_voice");
     }
 
     #[test]
     fn provider_is_local_correct() {
         assert!(TtsProvider::Piper.is_local());
-        assert!(TtsProvider::Coqui.is_local());
         assert!(TtsProvider::SystemNative.is_local());
-        assert!(TtsProvider::EdgeTts.is_local());
+        assert!(!TtsProvider::EdgeTts.is_local());
         assert!(!TtsProvider::AzureTts.is_local());
         assert!(!TtsProvider::ElevenLabs.is_local());
+        assert!(!TtsProvider::ViitorVoice.is_local());
     }
 
     #[test]
@@ -363,20 +399,20 @@ mod tests {
         assert!(TtsProvider::AzureTts.requires_credentials());
         assert!(TtsProvider::ElevenLabs.requires_credentials());
         assert!(!TtsProvider::Piper.requires_credentials());
-        assert!(!TtsProvider::Coqui.requires_credentials());
         assert!(!TtsProvider::SystemNative.requires_credentials());
         assert!(!TtsProvider::EdgeTts.requires_credentials());
+        assert!(!TtsProvider::ViitorVoice.requires_credentials());
     }
 
     #[test]
     fn provider_description_strings_present() {
         for p in [
             TtsProvider::Piper,
-            TtsProvider::Coqui,
             TtsProvider::AzureTts,
             TtsProvider::ElevenLabs,
             TtsProvider::SystemNative,
             TtsProvider::EdgeTts,
+            TtsProvider::ViitorVoice,
         ] {
             assert!(!p.description().is_empty(), "{:?}", p);
         }
@@ -385,20 +421,21 @@ mod tests {
     // ── config defaults ───────────────────────────────────────────
 
     #[test]
-    fn default_config_primary_piper_fallback_native() {
+    fn default_config_is_offline_system_native() {
         let c = TtsDispatcherConfig::default();
-        assert_eq!(c.primary, TtsProvider::Piper);
-        assert_eq!(c.fallback, Some(TtsProvider::SystemNative));
+        assert_eq!(c.primary, TtsProvider::SystemNative);
+        assert_eq!(c.fallback, None);
         assert_eq!(c.max_chars_per_request, 8_000);
         assert_eq!(c.default_format, TtsFormat::Wav);
+        assert_eq!(c.locale, "en-US");
     }
 
     // ── for_locale ────────────────────────────────────────────────
 
     #[test]
-    fn for_locale_picks_piper_german_voice() {
+    fn for_locale_is_provider_neutral() {
         let r = TtsRequest::for_locale("Hallo", "de-DE");
-        assert_eq!(r.voice_id, "de_DE-thorsten-low");
+        assert_eq!(r.voice_id, "");
         assert_eq!(r.format, TtsFormat::Wav);
         assert_eq!(r.sample_rate_hz, 22_050);
     }
@@ -415,7 +452,10 @@ mod tests {
     fn dispatch_uses_primary_for_normal_request() {
         let c = TtsDispatcherConfig::default();
         let r = TtsRequest::for_locale("hello", "en-us");
-        assert_eq!(dispatch(&c, &r), DispatchDecision::Use(TtsProvider::Piper));
+        assert_eq!(
+            dispatch(&c, &r),
+            DispatchDecision::Use(TtsProvider::SystemNative)
+        );
     }
 
     #[test]
@@ -450,7 +490,10 @@ mod tests {
 
     #[test]
     fn dispatch_fallback_returns_configured_fallback() {
-        let c = TtsDispatcherConfig::default();
+        let c = TtsDispatcherConfig {
+            fallback: Some(TtsProvider::SystemNative),
+            ..TtsDispatcherConfig::default()
+        };
         assert_eq!(
             dispatch_fallback(&c, "network 5xx"),
             DispatchDecision::Use(TtsProvider::SystemNative),
@@ -597,8 +640,8 @@ mod tests {
     }
 
     #[test]
-    fn edge_tts_provider_is_local_not_cloud() {
-        assert!(TtsProvider::EdgeTts.is_local());
+    fn edge_tts_provider_is_cloud_egress_without_credentials() {
+        assert!(!TtsProvider::EdgeTts.is_local());
         assert!(!TtsProvider::EdgeTts.requires_credentials());
     }
 
@@ -622,5 +665,21 @@ mod tests {
         let json = serde_json::to_string(&c).unwrap();
         let back: TtsDispatcherConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back, c);
+    }
+
+    #[test]
+    fn removed_coqui_value_fails_deserialization() {
+        let err = serde_json::from_str::<TtsProvider>("\"coqui\"").unwrap_err();
+        assert!(err.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn parse_accepts_only_implemented_provider_aliases() {
+        assert_eq!(
+            TtsProvider::parse("elevenlabs"),
+            Some(TtsProvider::ElevenLabs)
+        );
+        assert_eq!(TtsProvider::parse("edge_tts"), Some(TtsProvider::EdgeTts));
+        assert_eq!(TtsProvider::parse("coqui"), None);
     }
 }

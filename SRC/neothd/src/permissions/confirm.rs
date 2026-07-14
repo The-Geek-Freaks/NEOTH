@@ -23,7 +23,7 @@ use super::Decision;
 pub enum ConfirmMode {
     /// Operator is sitting at a TTY (`neoth` invoked interactively).
     InteractiveTty,
-    /// Operator is reachable via a channel (Telegram/Keet/...). The caller
+    /// Operator is reachable via a supported channel. The caller
     /// supplies the reply hook via [`confirm_channel`].
     Channel,
     /// Cron / hook / sub-agent path with no human handle. Fail-closed
@@ -83,7 +83,7 @@ pub fn confirm_interactive(reason: &str) -> ConfirmOutcome {
 /// `Some(approved)` when the operator replies, or `None` on timeout.
 ///
 /// We accept the future as a closure rather than wiring a specific channel
-/// here so the same code drives Telegram / Keet / future channels without
+/// here so the same code drives Telegram / future channels without
 /// duplicating the timeout/race logic.
 pub async fn confirm_channel<F>(reason: &str, ask: F, timeout: Duration) -> ConfirmOutcome
 where
@@ -114,7 +114,7 @@ pub fn confirm_daemon_only(best_effort: bool) -> ConfirmOutcome {
 /// This is the top-level helper the dispatch layer will call:
 ///
 /// ```ignore
-/// let decision = permissions::evaluate(&action, level);
+/// let decision = permissions::evaluate(&action, &policy_snapshot);
 /// let final_decision = confirm::resolve(decision, mode, &ask).await;
 /// ```
 pub async fn resolve<F>(decision: Decision, mode: ConfirmMode, ask: F) -> Decision

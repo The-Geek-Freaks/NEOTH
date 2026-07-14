@@ -117,7 +117,15 @@ mod bench_impl {
         }
         let lookup = t3.elapsed();
 
-        (sum, Timings { insert, churn, reinsert, lookup })
+        (
+            sum,
+            Timings {
+                insert,
+                churn,
+                reinsert,
+                lookup,
+            },
+        )
     }
 
     pub(super) fn run_elastic(keys: &[String], n: usize) -> (u64, Timings) {
@@ -162,7 +170,15 @@ mod bench_impl {
         }
         let lookup = t3.elapsed();
 
-        (sum, Timings { insert, churn, reinsert, lookup })
+        (
+            sum,
+            Timings {
+                insert,
+                churn,
+                reinsert,
+                lookup,
+            },
+        )
     }
 
     pub(super) fn run_funnel(keys: &[String], n: usize) -> (u64, Timings) {
@@ -207,7 +223,15 @@ mod bench_impl {
         }
         let lookup = t3.elapsed();
 
-        (sum, Timings { insert, churn, reinsert, lookup })
+        (
+            sum,
+            Timings {
+                insert,
+                churn,
+                reinsert,
+                lookup,
+            },
+        )
     }
 
     fn print_row(label: &str, t: &Timings) {

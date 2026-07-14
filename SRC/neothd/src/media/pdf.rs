@@ -5,8 +5,8 @@
 //!   - No OCR (image-only PDFs return empty text).
 //!   - No layout preservation — pages become whitespace-separated text.
 //!
-//! The pdfium-render upgrade lands when an operator hits one of those
-//! ceilings; the trait surface stays unchanged.
+//! Form editing is not exposed: the previous feature-gated scaffold was a
+//! zero-consumer stub that failed even when compiled and has been removed.
 
 use std::path::Path;
 
@@ -81,35 +81,12 @@ fn compute_stats(text: &str) -> Stats {
     }
 }
 
-// ── M-1 scaffolding: per-page + metadata + form-field readiness ──
+// ── Per-page text extraction ─────────────────────────────────────
 //
 // The base `PdfExtractor` returns one whitespace-joined text blob;
 // for indexer use-cases that want page-anchored recall ("find the
 // router decision on page 3 of the proposal"), callers need
-// per-page text. The metadata block surfaces title/author/page-
-// count for the operator's `neoth recall --pdf-meta` display.
-//
-// Form-field reading + write/sign still requires `pdfium-render`
-// (C++ FFI dep). M-1b lands those behind a `pdfium` cargo feature
-// so non-form operators don't pay the dep weight. The types here
-// stay forward-compatible — `PdfMetadata.has_form_fields` is
-// pre-declared + defaults to `false` (cannot detect from
-// `pdf-extract` alone).
-
-/// Lightweight metadata extracted from a PDF. Free fields default
-/// to `None`; `pdf-extract` doesn't expose author/title parsing,
-/// so v1 populates page_count only — the other fields stay
-/// placeholders until M-1b (`pdfium-render` path) lands.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PdfMetadata {
-    pub title: Option<String>,
-    pub author: Option<String>,
-    pub page_count: Option<usize>,
-    /// True when the PDF contains AcroForm fields. v1 reports
-    /// `false` (we can't detect from text-only extraction);
-    /// M-1b flips this based on real pdfium inspection.
-    pub has_form_fields: bool,
-}
+// per-page text.
 
 /// One page's extracted text + its 1-indexed page number.
 /// `text` may be empty for image-only pages.
@@ -152,20 +129,6 @@ pub async fn extract_pages(asset: &Asset) -> Result<Vec<PdfPage>, ExtractionErro
             reason: format!("join error: {e}"),
         })??;
     Ok(split_into_pages(&extraction.text))
-}
-
-/// Build a `PdfMetadata` from an asset. v1 populates `page_count`
-/// only (derived from the per-page split — counts form-feed
-/// separators). M-1b will surface title/author/has_form_fields
-/// via `pdfium-render`.
-pub async fn extract_metadata(asset: &Asset) -> Result<PdfMetadata, ExtractionError> {
-    let pages = extract_pages(asset).await?;
-    Ok(PdfMetadata {
-        title: None,
-        author: None,
-        page_count: Some(pages.len()),
-        has_form_fields: false,
-    })
 }
 
 #[cfg(test)]
@@ -264,18 +227,6 @@ mod tests {
             "empty middle page must stay an empty entry, not be dropped"
         );
         assert_eq!(pages[2].page_no, 3);
-    }
-
-    #[test]
-    fn pdf_metadata_default_is_empty_placeholders() {
-        let m = PdfMetadata::default();
-        assert!(m.title.is_none());
-        assert!(m.author.is_none());
-        assert!(m.page_count.is_none());
-        assert!(
-            !m.has_form_fields,
-            "v1 has_form_fields defaults to false (M-1b adds detection)"
-        );
     }
 
     #[test]

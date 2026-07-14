@@ -91,7 +91,11 @@ impl SummarizePromptLayers {
                 .filter_map(|s| {
                     s.and_then(|t| {
                         let t = t.trim();
-                        if t.is_empty() { None } else { Some(t.to_owned()) }
+                        if t.is_empty() {
+                            None
+                        } else {
+                            Some(t.to_owned())
+                        }
                     })
                 })
                 .collect::<Vec<_>>()
@@ -121,10 +125,7 @@ impl SummarizePromptLayers {
     ///
     /// Each side is composed **independently** (respecting `append_mode`
     /// within its own set of slots) and then `{{var}}` substituted.
-    pub fn compose_with_roles(
-        &self,
-        vars: &HashMap<&str, &str>,
-    ) -> (String, String) {
+    pub fn compose_with_roles(&self, vars: &HashMap<&str, &str>) -> (String, String) {
         // Context (system) side: admin + folder.
         let context_layers = SummarizePromptLayers {
             admin: self.admin.clone(),
@@ -276,7 +277,10 @@ mod tests {
             ..Default::default()
         };
         let result = layers.compose();
-        assert_eq!(result, "instructions", "whitespace-only slot must be skipped");
+        assert_eq!(
+            result, "instructions",
+            "whitespace-only slot must be skipped"
+        );
     }
 
     #[test]
@@ -415,9 +419,17 @@ mod tests {
         // system = admin + folder merged
         assert!(system.contains("admin base") && system.contains("folder ctx"));
         // user = user + tag + append merged
-        assert!(user.contains("user inst") && user.contains("tag inst") && user.contains("append base"));
+        assert!(
+            user.contains("user inst") && user.contains("tag inst") && user.contains("append base")
+        );
         // No cross-contamination
-        assert!(!system.contains("user inst"), "user text must not bleed into system");
-        assert!(!user.contains("admin base"), "admin text must not bleed into user");
+        assert!(
+            !system.contains("user inst"),
+            "user text must not bleed into system"
+        );
+        assert!(
+            !user.contains("admin base"),
+            "admin text must not bleed into user"
+        );
     }
 }

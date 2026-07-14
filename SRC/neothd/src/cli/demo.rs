@@ -22,11 +22,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
-use crate::cli::code_intel::{run_code_intel, CodeIntelArgs};
+use crate::cli::code_intel::{CodeIntelArgs, run_code_intel};
 use crate::cli::device_profile::{detect_device_profile, recommend_tier};
-use crate::cli::doctor::{run_all_checks, CheckStatus};
-use crate::cli::memory_eval::{run_memory_eval_cmd, MemoryEvalArgs};
-use crate::cli::onboarding_status::{run_onboarding_status, OnboardingStatusArgs};
+use crate::cli::doctor::{CheckStatus, run_all_checks};
+use crate::cli::memory_eval::{MemoryEvalArgs, run_memory_eval_cmd};
+use crate::cli::onboarding_status::{OnboardingStatusArgs, run_onboarding_status};
 use crate::config::FreedomConfig;
 use crate::tools::github;
 
@@ -59,11 +59,19 @@ struct StepResult {
 
 impl StepResult {
     fn pass(name: &'static str, note: impl Into<String>) -> Self {
-        Self { name, ok: true, note: note.into() }
+        Self {
+            name,
+            ok: true,
+            note: note.into(),
+        }
     }
 
     fn fail(name: &'static str, note: impl Into<String>) -> Self {
-        Self { name, ok: false, note: note.into() }
+        Self {
+            name,
+            ok: false,
+            note: note.into(),
+        }
     }
 }
 
@@ -83,14 +91,10 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
     println!("## Step 1 — onboarding-status\n");
     {
         // neoth: run_onboarding_status prints its own output to stdout.
-        let result =
-            run_onboarding_status(OnboardingStatusArgs { json: false }).await;
+        let result = run_onboarding_status(OnboardingStatusArgs { json: false }).await;
         match result {
             Ok(()) => steps.push(StepResult::pass("onboarding-status", "OK")),
-            Err(e) => steps.push(StepResult::fail(
-                "onboarding-status",
-                format!("ERR: {e}"),
-            )),
+            Err(e) => steps.push(StepResult::fail("onboarding-status", format!("ERR: {e}"))),
         }
     }
 
@@ -101,12 +105,12 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
         // This is exactly what OnboardingSnapshot::from_config does.
         let profile = detect_device_profile();
         let tier = recommend_tier(profile.total_ram_gb, profile.gpu_present);
-        println!(
-            "  RAM:       {:.1} GB",
-            profile.total_ram_gb
-        );
+        println!("  RAM:       {:.1} GB", profile.total_ram_gb);
         println!("  CPU cores: {}", profile.cpu_cores);
-        println!("  GPU:       {}", if profile.gpu_present { "yes" } else { "no" });
+        println!(
+            "  GPU:       {}",
+            if profile.gpu_present { "yes" } else { "no" }
+        );
         println!("  AI tier:   {} — {}", tier.as_str(), tier.rationale());
         steps.push(StepResult::pass(
             "device-profile",
@@ -128,10 +132,7 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
             Ok(()) => steps.push(StepResult::pass("memory-eval", "harness passed")),
             Err(e) => {
                 memory_eval_failed = true;
-                steps.push(StepResult::fail(
-                    "memory-eval",
-                    format!("ERR: {e}"),
-                ));
+                steps.push(StepResult::fail("memory-eval", format!("ERR: {e}")));
             }
         }
     }
@@ -149,10 +150,7 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
         .await;
         match result {
             Ok(()) => steps.push(StepResult::pass("code-intel", "OK")),
-            Err(e) => steps.push(StepResult::fail(
-                "code-intel",
-                format!("ERR: {e}"),
-            )),
+            Err(e) => steps.push(StepResult::fail("code-intel", format!("ERR: {e}"))),
         }
     }
 
@@ -175,9 +173,7 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
             .iter()
             .filter(|o| o.status == CheckStatus::Fail)
             .count();
-        println!(
-            "  doctor: {total} checks — {pass} PASS / {warn} WARN / {fail} FAIL"
-        );
+        println!("  doctor: {total} checks — {pass} PASS / {warn} WARN / {fail} FAIL");
         let note = format!("{pass}/{total} PASS ({warn} WARN, {fail} FAIL)");
         if fail == 0 {
             steps.push(StepResult::pass("doctor", note));
@@ -230,9 +226,11 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
             // carry backslashes/newlines/control chars and produced invalid JSON.
             print!(
                 "{{\"step\":{}, \"ok\":{}, \"note\":{}}}",
-                serde_json::to_string(s.name).unwrap_or_else(|_| "\"\"".into()),
+                serde_json::to_string(s.name)
+                    .expect("demo step names are always JSON-serializable"),
                 s.ok,
-                serde_json::to_string(&s.note).unwrap_or_else(|_| "\"\"".into())
+                serde_json::to_string(&s.note)
+                    .expect("demo step notes are always JSON-serializable")
             );
         }
         println!("]");
@@ -252,9 +250,7 @@ pub async fn run_demo(args: DemoArgs) -> Result<()> {
     println!("\n**NEOTH DEMO: {ok_count}/{total} steps OK**");
 
     if memory_eval_failed {
-        anyhow::bail!(
-            "demo: memory-eval failed (must-pass) — {ok_count}/{total} steps OK"
-        );
+        anyhow::bail!("demo: memory-eval failed (must-pass) — {ok_count}/{total} steps OK");
     }
 
     Ok(())
@@ -289,6 +285,10 @@ mod tests {
     async fn test_run_demo_json_returns_ok() {
         let args = DemoArgs { json: true };
         let result = run_demo(args).await;
-        assert!(result.is_ok(), "demo json path failed: {:?}", result.unwrap_err());
+        assert!(
+            result.is_ok(),
+            "demo json path failed: {:?}",
+            result.unwrap_err()
+        );
     }
 }

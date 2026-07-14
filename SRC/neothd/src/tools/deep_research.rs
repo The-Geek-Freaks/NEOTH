@@ -99,16 +99,14 @@ pub async fn run_deep_research(
     search_provider: SearchProvider,
     budget: &crate::config::DeepResearchConfig,
     writer: &WalWriterHandle,
+    http: &crate::tools::external_http::ExternalHttpAuthorizer,
 ) -> Result<ResearchReport> {
     let budget = Budget::from_config(budget);
 
     // ── WAL: DEEP_RESEARCH_STARTED ─────────────────────────────────────────
     // xxh3 matches the pattern used by all other WAL payload hashes in chat.rs;
     // formatted as 16-char hex so log grepping works the same way.
-    let topic_hash = format!(
-        "{:016x}",
-        xxhash_rust::xxh3::xxh3_64(topic.as_bytes())
-    );
+    let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(topic.as_bytes()));
     emit_wal_started(writer, &topic_hash).await;
 
     info!(topic_hash = %topic_hash, max_rounds = budget.max_rounds, "deep_research: starting");
@@ -125,19 +123,23 @@ pub async fn run_deep_research(
     let mut citations: Vec<CitedSource> = Vec::new();
     let mut rounds_done: u8 = 0;
 
-    for (round_idx, query) in queries
-        .iter()
-        .enumerate()
-        .take(budget.max_rounds as usize)
-    {
+    for (round_idx, query) in queries.iter().enumerate().take(budget.max_rounds as usize) {
         rounds_done += 1;
         println!(
             "\n[deep-research] round {}/{} — searching: {}",
             rounds_done, budget.max_rounds, query
         );
 
-        let round_evidence =
-            research_round(query, topic, provider, search_key, search_provider, &budget).await;
+        let round_evidence = research_round(
+            query,
+            topic,
+            provider,
+            search_key,
+            search_provider,
+            &budget,
+            http,
+        )
+        .await;
 
         match round_evidence {
             Ok((evidence_blocks, new_citations)) => {
@@ -151,10 +153,15 @@ pub async fn run_deep_research(
 
         // ── Step 2c: Continue-check — should we stop early? ───────────────
         if rounds_done < budget.max_rounds {
-            let satisfied =
-                check_satisfied(topic, &all_evidence, rounds_done, budget.max_rounds, provider)
-                    .await
-                    .unwrap_or(false);
+            let satisfied = check_satisfied(
+                topic,
+                &all_evidence,
+                rounds_done,
+                budget.max_rounds,
+                provider,
+            )
+            .await
+            .unwrap_or(false);
             if satisfied {
                 info!(
                     rounds = rounds_done,
@@ -165,7 +172,10 @@ pub async fn run_deep_research(
         }
     }
 
-    println!("\n[deep-research] synthesising {} evidence blocks…", all_evidence.len());
+    println!(
+        "\n[deep-research] synthesising {} evidence blocks…",
+        all_evidence.len()
+    );
 
     // ── Step 3: Synthesis ─────────────────────────────────────────────────
     let article = synthesize(topic, &all_evidence, &citations, provider)
@@ -176,14 +186,7 @@ pub async fn run_deep_research(
     let citation_count = citations.len();
 
     // ── WAL: DEEP_RESEARCH_COMPLETED ──────────────────────────────────────
-    emit_wal_completed(
-        writer,
-        &topic_hash,
-        rounds_done,
-        word_count,
-        citation_count,
-    )
-    .await;
+    emit_wal_completed(writer, &topic_hash, rounds_done, word_count, citation_count).await;
 
     info!(
         topic_hash = %topic_hash,
@@ -245,12 +248,14 @@ async fn research_round(
     search_key: &SecretString,
     search_provider: SearchProvider,
     budget: &Budget,
+    http: &crate::tools::external_http::ExternalHttpAuthorizer,
 ) -> Result<(Vec<String>, Vec<CitedSource>)> {
-    let hits = web_search::search_cached(
+    let hits = web_search::search_cached_authorized(
         search_provider,
         search_key,
         query,
         budget.results_per_query,
+        http,
     )
     .await
     .context("deep_research: web_search failed")?;
@@ -264,7 +269,7 @@ async fn research_round(
     let mut new_citations: Vec<CitedSource> = Vec::new();
 
     for hit in hits.iter().take(budget.pages_per_round) {
-        match web_fetch::fetch_with_goal(&hit.url, topic, provider).await {
+        match web_fetch::fetch_with_goal_authorized(&hit.url, topic, provider, http).await {
             Ok(extraction) => {
                 if extraction.summary.is_empty() && extraction.evidence.is_empty() {
                     debug!(url = %hit.url, "deep_research: page not relevant; skipping");
@@ -504,8 +509,8 @@ mod tests {
     use super::*;
     use crate::providers::{Completion, Provider, Request};
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     /// Deterministic provider that cycles through a list of canned responses.
@@ -532,6 +537,7 @@ mod tests {
             let idx = self.cursor.fetch_add(1, Ordering::SeqCst) % self.responses.len();
             Ok(Completion {
                 text: self.responses[idx].clone(),
+                identity: Default::default(),
                 model: "test".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: None,
@@ -579,16 +585,16 @@ mod tests {
         let provider = CycleProvider::new(vec![
             r#"["quantum entanglement basics","entanglement experiments","entanglement applications"]"#,
         ]);
-        let queries = plan_queries("quantum entanglement", &provider).await.unwrap();
+        let queries = plan_queries("quantum entanglement", &provider)
+            .await
+            .unwrap();
         assert_eq!(queries.len(), 3);
         assert!(queries[0].contains("quantum"));
     }
 
     #[tokio::test]
     async fn plan_queries_handles_fenced_json() {
-        let provider = CycleProvider::new(vec![
-            "```json\n[\"a\",\"b\"]\n```",
-        ]);
+        let provider = CycleProvider::new(vec!["```json\n[\"a\",\"b\"]\n```"]);
         let queries = plan_queries("topic", &provider).await.unwrap();
         assert_eq!(queries, vec!["a", "b"]);
     }
@@ -619,9 +625,14 @@ mod tests {
             title: "Test".into(),
             url: "https://example.com".into(),
         }];
-        let article = synthesize("topic", &["evidence block".to_string()], &citations, &provider)
-            .await
-            .unwrap();
+        let article = synthesize(
+            "topic",
+            &["evidence block".to_string()],
+            &citations,
+            &provider,
+        )
+        .await
+        .unwrap();
         assert_eq!(article, expected);
     }
 }

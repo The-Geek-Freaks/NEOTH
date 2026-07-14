@@ -1,15 +1,17 @@
-//! `neoth wal` — read-only WAL segment inspector. Phase 33c follow-up.
+//! `neoth wal` — WAL inspection, proof export/verification, and proof-key
+//! lifecycle commands. Phase 33c follow-up.
 //!
-//! Two subcommands:
+//! Core inspection subcommands:
 //!   `stats <segment>` — count frames per event-type, total bytes, header
 //!                       validity. Pairs with `neoth events` (registry) for
 //!                       "what's actually in this segment".
 //!   `show <segment>`  — pretty-print every frame: offset, code, payload-len,
 //!                       importance, ts_ns, hash. `--limit N` for quick peeks.
 //!
-//! Pure read-only over `wal/*.wal` files. No DB access. No daemon
-//! required — operator can run this against a backup tarball's segments
-//! before restoring.
+//! Inspection and proof verification are read-only over `wal/*.wal` files and
+//! require no daemon, so operators can run them against a backup tarball before
+//! restoring. Proof-key signing/rotation intentionally mutates protected key
+//! material and emits required audit frames.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -22,7 +24,8 @@ use crate::config::FreedomConfig;
 use crate::wal::compaction::{self, MarkerPayload};
 use crate::wal::compress::decompress_frames;
 use crate::wal::events::{
-    EVENT_TYPE_COMPACTION_MARKER, event_code_from_filter, event_name_from_code,
+    EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_EXTENDED, ExtendedSubtype, event_code_from_filter,
+    event_name_from_code, extended_subtype_name,
 };
 use crate::wal::frame::decode_frame;
 use crate::wal::proof_bundle::{
@@ -110,10 +113,11 @@ pub enum WalAction {
         #[arg(long, value_name = "BASE64")]
         pubkey: Option<String>,
     },
-    /// PROOF-KEY-01 — inspect the operator's proof signing key (the ed25519
-    /// key `wal export --sign` uses, `~/.neoth/wal/signing.key`). READ-ONLY —
-    /// never generates the key (use `wal export --sign` to create it on first
-    /// use). `rotate` is a follow-on.
+    /// PROOF-KEY-01 — inspect, sign, verify, or fail-closed rotate the
+    /// operator's proof signing key (the ed25519 key `wal export --sign` uses,
+    /// `~/.neoth/wal/signing.key`). Show/export/verify are read-only; sign may
+    /// create the first key, while rotate requires an existing key and a
+    /// durable dual-signed WAL transition.
     ProofKey {
         #[command(subcommand)]
         action: ProofKeyAction,
@@ -150,6 +154,15 @@ pub enum ProofKeyAction {
         /// The signer's base64 public key. Defaults to this operator's proof key.
         #[arg(long, value_name = "BASE64")]
         pubkey: Option<String>,
+    },
+    /// Replace the operator proof key with a fresh OS-CSPRNG key. The retiring
+    /// key is archived securely and a canonical old→new transition signed by
+    /// BOTH keys is durably appended before the active key changes.
+    Rotate {
+        /// Validate and show the cryptographic transition without writing an
+        /// archive, WAL frame, journal, or replacement key.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 }
 
@@ -192,7 +205,7 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
         WalAction::VerifyProof { proof, pubkey } => {
             run_verify_proof(&proof, pubkey.as_deref(), args.output)
         }
-        WalAction::ProofKey { action } => run_proof_key(action, args.output),
+        WalAction::ProofKey { action } => run_proof_key(action, args.output).await,
     }
 }
 
@@ -243,38 +256,162 @@ fn proof_verify(
     crate::wal::signing::verify_b64(&pk, signature, message.as_bytes())
 }
 
-fn run_proof_key(action: ProofKeyAction, output: OutputFormat) -> Result<()> {
+async fn append_proof_key_rotation_audit(
+    home: &Path,
+    daemon_live: bool,
+    payload: &[u8],
+) -> Result<()> {
+    let subtype = ExtendedSubtype::ProofKeyRotated as u8;
+    if daemon_live {
+        crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
+            home,
+            EVENT_TYPE_EXTENDED,
+            subtype,
+            payload,
+        )
+        .await
+        .map_err(anyhow::Error::new)
+        .context("running daemon refused the required proof-key rotation audit")?;
+        return Ok(());
+    }
+
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "proof-key-rotate");
+    let (writer, join) = crate::wal::writer::spawn(segment)
+        .context("spawn one-shot proof-key rotation WAL writer")?;
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, payload)
+        .event_subtype(subtype)
+        .build();
+    let append = writer
+        .append(header, payload.to_vec())
+        .await
+        .context("append required proof-key rotation audit");
+    drop(writer);
+    join.await
+        .context("join one-shot proof-key rotation WAL writer")?;
+    append.map(|_| ())
+}
+
+async fn rotate_proof_key_at(
+    home: &Path,
+    key_path: &Path,
+    dry_run: bool,
+) -> Result<crate::wal::signing::ProofKeyRotationPreview> {
+    if dry_run {
+        return crate::wal::signing::preview_signing_key_rotation(key_path);
+    }
+    if let Some(recovered) = crate::wal::signing::recover_signing_key_rotation(key_path)? {
+        return Ok(recovered);
+    }
+
+    let daemon_live = match crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(error) => {
+            anyhow::bail!(
+                "cannot determine whether the daemon owns the WAL ({error}) — refusing proof-key rotation"
+            )
+        }
+    };
+    if daemon_live && !crate::daemon::audit_rpc::is_reachable(home) {
+        anyhow::bail!(
+            "a running daemon owns the WAL but its audit-RPC is unreachable — refusing proof-key \
+             rotation before any key material changes; enable audit_rpc and restart the daemon, \
+             or stop the daemon and retry"
+        );
+    }
+
+    let prepared = crate::wal::signing::prepare_signing_key_rotation(key_path)?;
+    let payload = serde_json::to_vec(prepared.payload())
+        .context("serialize proof-key rotation audit payload")?;
+    if let Err(audit_error) = append_proof_key_rotation_audit(home, daemon_live, &payload).await {
+        // A daemon may fsync the frame and then lose the response. Inspect the
+        // WAL before deciding: durable transition => commit; absent transition
+        // => delete stage/archive/journal and keep the old active key.
+        if prepared.audit_is_durable()? {
+            return prepared.commit();
+        }
+        prepared.abort()?;
+        return Err(audit_error);
+    }
+    prepared.commit()
+}
+
+fn render_proof_key_rotation(
+    result: &crate::wal::signing::ProofKeyRotationPreview,
+    dry_run: bool,
+    output: OutputFormat,
+) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "dry_run": dry_run,
+                "transition_id": result.payload.transition_id,
+                "old_public_key": result.payload.old_public_key,
+                "new_public_key": result.payload.new_public_key,
+                "archive": result.archive_path.display().to_string(),
+                "audit_event": "proof_key_rotated",
+                "audit_durable": !dry_run,
+            })
+        ),
+        OutputFormat::Table => {
+            println!(
+                "{}proof key rotation {}",
+                if dry_run { "DRY RUN — " } else { "" },
+                result.payload.transition_id
+            );
+            println!("  old_public_key: {}", result.payload.old_public_key);
+            println!("  new_public_key: {}", result.payload.new_public_key);
+            println!("  archive:        {}", result.archive_path.display());
+            println!(
+                "  audit:          {}",
+                if dry_run {
+                    "not written (dry run)"
+                } else {
+                    "proof_key_rotated (durable, dual-signed)"
+                }
+            );
+        }
+    }
+}
+
+async fn run_proof_key(action: ProofKeyAction, output: OutputFormat) -> Result<()> {
     let path = crate::wal::signing::default_signing_key_path();
-    let pubkey = proof_key_pubkey(&path)?;
     match action {
-        ProofKeyAction::Show => match (&pubkey, output) {
-            (_, OutputFormat::Json | OutputFormat::Jsonl) => println!(
-                "{}",
-                serde_json::json!({
-                    "path": path.display().to_string(),
-                    "exists": pubkey.is_some(),
-                    "algorithm": crate::wal::signing::SIG_ALGORITHM,
-                    "public_key": pubkey,
-                })
-            ),
-            (Some(pk), OutputFormat::Table) => {
-                println!("proof signing key ({})", crate::wal::signing::SIG_ALGORITHM);
-                println!("  path:       {}", path.display());
-                println!("  public_key: {pk}");
-                println!(
-                    "  share the public key with auditors; they verify with \
+        ProofKeyAction::Show => {
+            let pubkey = proof_key_pubkey(&path)?;
+            match (&pubkey, output) {
+                (_, OutputFormat::Json | OutputFormat::Jsonl) => println!(
+                    "{}",
+                    serde_json::json!({
+                        "path": path.display().to_string(),
+                        "exists": pubkey.is_some(),
+                        "algorithm": crate::wal::signing::SIG_ALGORITHM,
+                        "public_key": pubkey,
+                    })
+                ),
+                (Some(pk), OutputFormat::Table) => {
+                    println!("proof signing key ({})", crate::wal::signing::SIG_ALGORITHM);
+                    println!("  path:       {}", path.display());
+                    println!("  public_key: {pk}");
+                    println!(
+                        "  share the public key with auditors; they verify with \
                      `neoth wal verify-proof --proof <file> --pubkey <key>`"
-                );
-            }
-            (None, OutputFormat::Table) => {
-                println!(
-                    "no proof signing key yet at {} — run `neoth wal export --sign` once to \
+                    );
+                }
+                (None, OutputFormat::Table) => {
+                    println!(
+                        "no proof signing key yet at {} — run `neoth wal export --sign` once to \
                      create it (auto-generated, no prompt).",
-                    path.display(),
-                );
+                        path.display(),
+                    );
+                }
             }
-        },
-        ProofKeyAction::ExportPub => match pubkey {
+        }
+        ProofKeyAction::ExportPub => match proof_key_pubkey(&path)? {
             Some(pk) => println!("{pk}"),
             None => {
                 eprintln!(
@@ -327,6 +464,15 @@ fn run_proof_key(action: ProofKeyAction, output: OutputFormat) -> Result<()> {
                 return Err(crate::QuietExit(1).into());
             }
         },
+        ProofKeyAction::Rotate { dry_run } => {
+            let home = path
+                .parent()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(FreedomConfig::default_neoth_home);
+            let result = rotate_proof_key_at(&home, &path, dry_run).await?;
+            render_proof_key_rotation(&result, dry_run, output);
+        }
     }
     Ok(())
 }
@@ -486,6 +632,39 @@ struct ShownFrame {
     payload_hash: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalEventFilter {
+    Type(u8),
+    Extended(u8),
+}
+
+impl WalEventFilter {
+    fn parse(token: &str) -> Option<Self> {
+        ExtendedSubtype::from_name(token)
+            .map(|subtype| Self::Extended(subtype as u8))
+            .or_else(|| event_code_from_filter(token).map(Self::Type))
+    }
+
+    fn matches(self, frame: &ShownFrame) -> bool {
+        match self {
+            Self::Type(event_type) => frame.event_type == event_type,
+            Self::Extended(event_subtype) => {
+                frame.event_type == EVENT_TYPE_EXTENDED && frame.event_subtype == event_subtype
+            }
+        }
+    }
+}
+
+fn shown_event_name(frame: &ShownFrame) -> std::borrow::Cow<'static, str> {
+    if frame.event_type == EVENT_TYPE_EXTENDED {
+        extended_subtype_name(frame.event_subtype)
+    } else {
+        event_name_from_code(frame.event_type)
+            .map(std::borrow::Cow::Borrowed)
+            .unwrap_or_else(|| std::borrow::Cow::Owned(format!("event_0x{:02X}", frame.event_type)))
+    }
+}
+
 fn show(
     segment: Option<&Path>,
     type_filter: Option<&str>,
@@ -496,11 +675,12 @@ fn show(
 ) -> Result<()> {
     // Resolve the --type filter to a concrete code (fail loudly on an
     // unknown token rather than silently filtering to nothing).
-    let want: Option<u8> = match type_filter {
-        Some(t) => Some(event_code_from_filter(t).ok_or_else(|| {
+    let want: Option<WalEventFilter> = match type_filter {
+        Some(t) => Some(WalEventFilter::parse(t).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown --type `{t}` — use an event name (e.g. plugin_cap_denied), \
-                 a hex code (0xC7), or a decimal. `neoth events` lists the registry."
+                 an extended subtype (e.g. omi_lifecycle_audit), a hex code \
+                 (0xC7), or a decimal. `neoth events` lists top-level events."
             )
         })?),
         None => None,
@@ -538,7 +718,7 @@ fn show(
                 .map(|f| {
                     serde_json::json!({
                         "event_type": format!("0x{:02X}", f.event_type),
-                        "event_name": event_name_from_code(f.event_type),
+                        "event_name": shown_event_name(f),
                         "event_subtype": f.event_subtype,
                         "payload_len": f.payload_len,
                         "importance": f.importance,
@@ -561,7 +741,7 @@ fn show(
         }
         OutputFormat::Table => {
             for f in &view {
-                let name = event_name_from_code(f.event_type).unwrap_or("?");
+                let name = shown_event_name(f);
                 println!(
                     "  0x{code:02X} {name:<26}  id={id:<8}  ts_ns={ts}  payload={plen}  imp={imp:.2}  hash={h:016x}",
                     code = f.event_type,
@@ -607,7 +787,7 @@ fn sorted_segments(wal_dir: &Path) -> Vec<PathBuf> {
 /// when `None`). Mirrors the ledger/council/refusal walkers.
 fn read_segment_frames(
     path: &Path,
-    want: Option<u8>,
+    want: Option<WalEventFilter>,
     out: &mut Vec<ShownFrame>,
     walked: &mut usize,
 ) -> Result<()> {
@@ -635,16 +815,17 @@ fn read_segment_frames(
             Err(_) => break, // torn tail — stop this segment cleanly
         };
         *walked += 1;
-        if want.is_none_or(|w| dec.header.event_type == w) {
-            out.push(ShownFrame {
-                event_type: dec.header.event_type,
-                event_subtype: dec.header.event_subtype,
-                payload_len: dec.header.payload_len,
-                importance: dec.header.importance.raw(),
-                ts_ns: dec.header.hlc.physical_ns(),
-                event_id: dec.header.event_id.0,
-                payload_hash: dec.header.payload_hash,
-            });
+        let frame = ShownFrame {
+            event_type: dec.header.event_type,
+            event_subtype: dec.header.event_subtype,
+            payload_len: dec.header.payload_len,
+            importance: dec.header.importance.raw(),
+            ts_ns: dec.header.hlc.physical_ns(),
+            event_id: dec.header.event_id.0,
+            payload_hash: dec.header.payload_hash,
+        };
+        if want.is_none_or(|filter| filter.matches(&frame)) {
+            out.push(frame);
         }
         let total = dec.header.total_len as usize;
         if total == 0 {
@@ -1033,6 +1214,54 @@ mod tests {
             proof_verify(&empty.path().join("none.key"), "x", &sig, None).is_err(),
             "no key + no --pubkey must error, not silently pass"
         );
+    }
+
+    #[tokio::test]
+    async fn proof_key_rotate_dry_run_then_commits_a_showable_audit() {
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        let key_path = wal_dir.join("signing.key");
+        let old = crate::wal::signing::load_or_init_signing_key(&key_path).unwrap();
+        let old_public = crate::wal::signing::pubkey_b64(&old);
+
+        let preview = rotate_proof_key_at(home.path(), &key_path, true)
+            .await
+            .unwrap();
+        assert_eq!(preview.payload.old_public_key, old_public);
+        assert!(!preview.archive_path.exists());
+        assert!(
+            sorted_segments(&wal_dir).is_empty(),
+            "dry-run writes no WAL"
+        );
+        assert_eq!(proof_key_pubkey(&key_path).unwrap().unwrap(), old_public);
+
+        let committed = rotate_proof_key_at(home.path(), &key_path, false)
+            .await
+            .unwrap();
+        assert_ne!(committed.payload.new_public_key, old_public);
+        assert_eq!(
+            proof_key_pubkey(&key_path).unwrap().unwrap(),
+            committed.payload.new_public_key
+        );
+        assert!(committed.archive_path.exists());
+        assert!(committed.payload.validate().is_ok());
+
+        let segments = sorted_segments(&wal_dir);
+        let transitions = crate::wal::signing::collect_valid_proof_key_rotations(&segments);
+        assert_eq!(transitions, vec![committed.payload.clone()]);
+
+        let proof_filter = WalEventFilter::parse("proof_key_rotated").unwrap();
+        assert_eq!(
+            proof_filter,
+            WalEventFilter::Extended(ExtendedSubtype::ProofKeyRotated as u8)
+        );
+        let mut shown = Vec::new();
+        let mut walked = 0;
+        for segment in &segments {
+            read_segment_frames(segment, Some(proof_filter), &mut shown, &mut walked).unwrap();
+        }
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown_event_name(&shown[0]), "proof_key_rotated");
     }
 
     fn write_segment(dir: &std::path::Path, seq: u64, frames: usize) -> PathBuf {
@@ -1433,10 +1662,52 @@ mod tests {
         // Filter to BOOT → exactly the 1 boot frame.
         let mut boots = Vec::new();
         let mut w2 = 0;
-        read_segment_frames(&seg, Some(EVENT_TYPE_BOOT), &mut boots, &mut w2).unwrap();
+        read_segment_frames(
+            &seg,
+            Some(WalEventFilter::Type(EVENT_TYPE_BOOT)),
+            &mut boots,
+            &mut w2,
+        )
+        .unwrap();
         assert_eq!(boots.len(), 1);
         assert_eq!(boots[0].event_type, EVENT_TYPE_BOOT);
         assert_eq!(w2, 4, "walked count counts every frame, not just matches");
+    }
+
+    #[test]
+    fn read_segment_frames_filters_and_labels_omi_extended_subtype() {
+        use crate::wal::events::{EVENT_TYPE_OMI_ACTION_PROMOTED, ExtendedSubtype};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("000001.wal");
+        let mut bytes = SegmentHeader::new(0, 1, 0, 0, [0u8; 16])
+            .to_le_bytes()
+            .to_vec();
+        let payload = b"{}".to_vec();
+        let extended = HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+            .event_subtype(ExtendedSubtype::OmiLifecycleAudit as u8)
+            .build();
+        bytes.extend_from_slice(&encode_frame(&extended, &payload));
+        let historical = HeaderBuilder::new(EVENT_TYPE_OMI_ACTION_PROMOTED, &payload).build();
+        bytes.extend_from_slice(&encode_frame(&historical, &payload));
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut frames = Vec::new();
+        let mut walked = 0;
+        read_segment_frames(
+            &path,
+            Some(WalEventFilter::parse("omi_lifecycle_audit").unwrap()),
+            &mut frames,
+            &mut walked,
+        )
+        .unwrap();
+        assert_eq!(walked, 2);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(shown_event_name(&frames[0]), "omi_lifecycle_audit");
+        assert_eq!(
+            event_name_from_code(EVENT_TYPE_OMI_ACTION_PROMOTED),
+            Some("omi_action_promoted")
+        );
     }
 
     #[tokio::test]

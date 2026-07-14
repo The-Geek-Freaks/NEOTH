@@ -99,11 +99,14 @@ Audio samples (16 kHz mono f32)
 
 ## Safety Notes
 
-Both engines use `VarBuilder::from_mmaped_safetensors` which requires the mapped file not be
-concurrently truncated or replaced. The SAFETY comments in both files document: the file lives
-in `~/.neoth/models/` (mode 0600 / DACL-locked); `neoth models pull` is a no-op against an
-existing cache; multi-process read (daemon + `neoth ingest`) is permitted; a stable HMAC check
-is a Phase 2 hardening item.
+Both engines use `VarBuilder::from_mmaped_safetensors`, which requires the mapped file not be
+concurrently truncated or replaced. Before an engine opens the mapping, NEOTH validates every
+required artifact against the reviewed repository revision, exact byte length, and pinned
+SHA-256 manifest. Downloads are installed through a verified part file and atomic rename; the
+runtime cache is mode 0600 / DACL-restricted, and NEOTH serialises sanctioned writers with the
+model-cache lock. Multi-process read (daemon + `neoth ingest`) is permitted. A third party that
+can ignore that lock and mutate an operator-owned file after validation is outside the NEOTH
+process trust boundary.
 
 ## Related Areas
 

@@ -30,7 +30,9 @@ use crate::wal::compress::decompress_frames;
 use crate::wal::events::{EVENT_TYPE_PLUGIN_CAP_USED, EVENT_TYPE_PLUGIN_HOSTCALL};
 use crate::wal::frame::decode_frame;
 use crate::wal::segment_header::parse_segment_header;
-use crate::wasm_plugin::discovery::{PluginActivation, discover};
+use crate::wasm_plugin::discovery::{
+    PluginActivation, PluginActivationRecord, PluginApproval, discover,
+};
 use crate::wasm_plugin::manifest::RequestedPermission;
 
 #[derive(Args, Debug, Clone)]
@@ -49,11 +51,10 @@ pub enum PluginAction {
     /// Plugins NOT yet listed in freedom.yaml::plugins.wasm.activations
     /// show as `pending` (the default for any newly discovered id).
     List,
-    /// Show only the discovered-but-not-yet-decided plugins. Operator
-    /// review queue.
+    /// Show Pending plugins plus Active entries that require re-consent.
     Pending,
-    /// Flip a plugin to `active`. Idempotent — already-active plugins
-    /// return success without rewriting freedom.yaml.
+    /// Review and activate a plugin, binding permission + manifest/WASM
+    /// digests. Idempotent while that complete approval is unchanged.
     Enable {
         /// Plugin manifest id (matches the directory name under
         /// `~/.neoth/plugins/<id>/`).
@@ -103,10 +104,11 @@ pub enum PluginAction {
     },
     /// Install a plugin from a local directory into `~/.neoth/plugins/<id>/`.
     /// The id is derived from the manifest `id` field inside `<path>/plugin.toml`.
-    /// Only `plugin.toml` and `plugin.wasm` are copied — arbitrary extra files
-    /// are never installed (mirrors the discovery contract). After copy the same
-    /// integrity gate as `neoth plugin verify` is applied; if it fails the
-    /// partial install is rolled back and the error is reported.
+    /// Only `plugin.toml`, `plugin.wasm`, and the optional
+    /// `plugin.wasm.minisig` companion are copied — arbitrary extra files are
+    /// never installed (mirrors the discovery contract). Before activation the
+    /// same integrity policy as `neoth plugin verify` and daemon startup is
+    /// applied; a failed staged install leaves an existing version untouched.
     Install {
         /// Directory containing `plugin.toml` + `plugin.wasm` to install.
         path: std::path::PathBuf,
@@ -298,6 +300,7 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest = crate::wasm_plugin::manifest::parse_manifest(&manifest_bytes)
         .map_err(|e| anyhow::anyhow!("manifest invalid: {e}"))?;
+    let manifest_hash = crate::wasm_plugin::discovery::canonical_manifest_sha256(&manifest);
     let wasm_bytes =
         std::fs::read(&wasm_path).with_context(|| format!("read {}", wasm_path.display()))?;
     let content_hash = crate::wasm_plugin::discovery::sha256_hex(&wasm_bytes);
@@ -312,16 +315,16 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
     let plugin = crate::wasm_plugin::discovery::DiscoveredPlugin {
         dir: path.to_path_buf(),
         manifest,
+        manifest_hash,
         wasm_bytes,
         content_hash,
         signature,
     };
 
     // Apply the SAME freedom.yaml policy the daemon uses at load time. A
-    // MISSING freedom.yaml yields Ok(default) (open policy — correct on a
-    // fresh install); a CORRUPT one is an Err → BAIL rather than silently
-    // verify against an empty (all-gates-off) policy, which would print
-    // PASS for plugins the daemon would actually refuse.
+    // missing OR corrupt config is an error: silently substituting the open
+    // default would falsely PASS plugins the daemon may refuse once the real
+    // operator policy is restored.
     let cfg = FreedomConfig::load_from_default_path().context(
         "could not load freedom.yaml — fix it before verifying (a verify against an \
          empty policy would falsely PASS revoked/tampered/unsigned plugins)",
@@ -523,7 +526,11 @@ fn walk_hostcall_frames(frames: &[u8], plugin_id: &str, out: &mut Vec<EventEntry
                     let payload_bytes =
                         v.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
                     let ts_unix = dec.header.hlc.physical_ns() / 1_000_000_000;
-                    out.push(EventEntry { kind, payload_bytes, ts_unix });
+                    out.push(EventEntry {
+                        kind,
+                        payload_bytes,
+                        ts_unix,
+                    });
                 }
             }
         }
@@ -674,7 +681,6 @@ fn run_events_subcommand(plugin_id: &str, last: usize, output: OutputFormat) -> 
         } else {
             walk_hostcall_frames(body, plugin_id, &mut events);
         }
-
     }
 
     // Newest-first, capped at `last`.
@@ -707,10 +713,7 @@ fn emit_events_output(
                 println!("{:<40}  {:>14}  TS_UNIX", "KIND", "PAYLOAD_BYTES");
                 for e in arr {
                     let kind = e.get("kind").and_then(|k| k.as_str()).unwrap_or("-");
-                    let pb = e
-                        .get("payload_bytes")
-                        .and_then(|x| x.as_u64())
-                        .unwrap_or(0);
+                    let pb = e.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
                     let ts = e.get("ts_unix").and_then(|x| x.as_u64()).unwrap_or(0);
                     println!("{:<40}  {:>14}  {}", kind, pb, ts);
                 }
@@ -726,7 +729,8 @@ fn run_test_invoke(
     wasm_bytes: &[u8],
 ) -> Option<TestInvocationSummary> {
     use crate::wasm_plugin::dispatch::{
-        CompileOutcome, InvocationStage, invocation_outcome_from_compile_failure, invoke_plugin,
+        CompileOutcome, InvocationStage, PluginExecutionLimits,
+        invocation_outcome_from_compile_failure, invoke_plugin,
     };
     use crate::wasm_plugin::engine::NeothEngine;
     use crate::wasm_plugin::hostcalls;
@@ -745,6 +749,7 @@ fn run_test_invoke(
         Ok(module) => CompileOutcome::Compiled {
             plugin_id: manifest.id.clone(),
             module: std::sync::Arc::new(module),
+            execution_limits: PluginExecutionLimits::from_manifest(manifest),
         },
         Err(e) => CompileOutcome::Failed {
             plugin_id: manifest.id.clone(),
@@ -786,6 +791,7 @@ fn run_test_invoke(
         &linker,
         manifest.id.clone(),
         granted,
+        PluginExecutionLimits::from_manifest(manifest),
         None,
         None,
     );
@@ -804,6 +810,7 @@ fn invocation_stage_name(s: crate::wasm_plugin::dispatch::InvocationStage) -> &'
         InvocationStage::Compile => "compile",
         InvocationStage::Instantiate => "instantiate",
         InvocationStage::ExportLookup => "export_lookup",
+        InvocationStage::AbiVersion => "abi_version",
         InvocationStage::Run => "run",
         InvocationStage::SkippedDueToCompileFailure => "skipped_due_to_compile_failure",
     }
@@ -834,8 +841,8 @@ async fn run_test_invoke_with_wal(
     wasm_bytes: &[u8],
 ) -> Option<TestInvocationWithWal> {
     use crate::wasm_plugin::dispatch::{
-        CompileOutcome, InvocationStage, invocation_outcome_from_compile_failure,
-        invoke_plugin_with_state,
+        CompileOutcome, InvocationStage, PluginExecutionLimits,
+        invocation_outcome_from_compile_failure, invoke_plugin_with_state,
     };
     use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState};
     use crate::wasm_plugin::hostcalls;
@@ -860,6 +867,7 @@ async fn run_test_invoke_with_wal(
         Ok(module) => CompileOutcome::Compiled {
             plugin_id: manifest.id.clone(),
             module: std::sync::Arc::new(module),
+            execution_limits: PluginExecutionLimits::from_manifest(manifest),
         },
         Err(e) => CompileOutcome::Failed {
             plugin_id: manifest.id.clone(),
@@ -901,8 +909,11 @@ async fn run_test_invoke_with_wal(
         Err(e) => return fail("compile", format!("wal writer spawn: {e}")),
     };
 
-    // Caller-built state: manifest grant + the throwaway writer.
+    // Caller-built state: manifest grant + limits + the throwaway writer.
+    let execution_limits = PluginExecutionLimits::from_manifest(manifest);
     let state = PluginStoreState::new(manifest.id.clone())
+        .with_fuel(execution_limits.fuel_budget)
+        .with_memory_limit(execution_limits.memory_limit_bytes)
         .with_granted(granted)
         .with_wal_writer(writer);
     let outcome = invoke_plugin_with_state(&engine, module, &linker, state);
@@ -1061,13 +1072,61 @@ fn render_test_report(
 ///    the same guard `load_one` applies inside `discover()`.
 /// 2. Source directory itself must not be a symlink (mirrors the `discover()`
 ///    root guard at the plugins_root level).
-/// 3. Only `plugin.toml` and `plugin.wasm` are copied — no arbitrary files.
-/// 4. After copy, [`crate::wasm_plugin::discovery::verify_integrity`] is
-///    applied through an open (all-permissive) policy identical to the
-///    daemon's fresh-install default, so a revoked / tampered plugin is
-///    refused at install time rather than at daemon boot.
-/// 5. On integrity failure the target directory is removed (rollback).
+/// 3. Only `plugin.toml`, `plugin.wasm`, and an optional
+///    `plugin.wasm.minisig` are copied — no arbitrary files.
+/// 4. Copy and verification happen in a sibling staging directory. The exact
+///    runtime [`crate::wasm_plugin::discovery::IntegrityPolicy`] is applied to
+///    the staged bytes before they become visible at the canonical path.
+/// 5. `--force` moves the old install to a backup and restores it if the final
+///    rename fails. Copy or verification failures never touch the old install.
 fn run_install(path: &std::path::Path, force: bool, output: OutputFormat) -> Result<()> {
+    let cfg = FreedomConfig::load_from_default_path().context(
+        "could not load freedom.yaml — fix it before installing (install must use the same \
+         plugin integrity policy as daemon startup)",
+    )?;
+    let plugins_root = FreedomConfig::default_neoth_home().join("plugins");
+    let installed = install_into_plugins_root(path, force, &plugins_root, &cfg.plugins.wasm)?;
+
+    // ── Emit result ───────────────────────────────────────────────────────
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let obj = serde_json::json!({
+                "ok": true,
+                "id": installed.id,
+                "path": installed.target.display().to_string(),
+            });
+            println!("{}", serde_json::to_string(&obj)?);
+        }
+        OutputFormat::Table => {
+            println!(
+                "installed plugin `{}` → {}",
+                installed.id,
+                installed.target.display()
+            );
+            println!(
+                "Run `neoth plugin enable {}` to activate it on the next `neoth serve` boot.",
+                installed.id
+            );
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct InstalledPlugin {
+    id: String,
+    target: std::path::PathBuf,
+}
+
+/// Testable install core. `plugins_root` and `wasm_policy` are injected so the
+/// filesystem transaction and the runtime-policy parity can be regression
+/// tested without mutating the operator's real `~/.neoth` tree.
+fn install_into_plugins_root(
+    path: &std::path::Path,
+    force: bool,
+    plugins_root: &std::path::Path,
+    wasm_policy: &crate::config::WasmPluginsConfig,
+) -> Result<InstalledPlugin> {
     // ── Source validation ─────────────────────────────────────────────────
     if !path.exists() {
         anyhow::bail!(
@@ -1093,6 +1152,7 @@ fn run_install(path: &std::path::Path, force: bool, output: OutputFormat) -> Res
 
     let toml_src = path.join("plugin.toml");
     let wasm_src = path.join("plugin.wasm");
+    let minisig_src = path.join("plugin.wasm.minisig");
 
     if !toml_src.exists() {
         anyhow::bail!("missing `plugin.toml` at {}", toml_src.display());
@@ -1104,7 +1164,11 @@ fn run_install(path: &std::path::Path, force: bool, output: OutputFormat) -> Res
     // Symlink guard on files — mirrors load_one's symlink_metadata loop.
     // A-56 / GOLD-SEC-20: a symlinked source file would make the hash/signature
     // cover the symlink target, not the declared plugin.
-    for (p, _name) in [(&toml_src, "plugin.toml"), (&wasm_src, "plugin.wasm")] {
+    for (p, _name) in [
+        (&toml_src, "plugin.toml"),
+        (&wasm_src, "plugin.wasm"),
+        (&minisig_src, "plugin.wasm.minisig"),
+    ] {
         if std::fs::symlink_metadata(p)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false)
@@ -1118,108 +1182,252 @@ fn run_install(path: &std::path::Path, force: bool, output: OutputFormat) -> Res
     }
 
     // ── Parse manifest to derive the install id ───────────────────────────
-    let toml_bytes = std::fs::read(&toml_src)
-        .with_context(|| format!("read {}", toml_src.display()))?;
+    let toml_bytes =
+        std::fs::read(&toml_src).with_context(|| format!("read {}", toml_src.display()))?;
     let manifest = crate::wasm_plugin::manifest::parse_manifest(&toml_bytes)
         .map_err(|e| anyhow::anyhow!("manifest invalid: {e}"))?;
-    let id = &manifest.id;
+    let id = manifest.id;
 
     // ── Target directory ──────────────────────────────────────────────────
-    let home = FreedomConfig::default_neoth_home();
-    let plugins_root = home.join("plugins");
-    let target = plugins_root.join(id);
+    std::fs::create_dir_all(plugins_root)
+        .with_context(|| format!("create plugins directory `{}`", plugins_root.display()))?;
+    let _install_lock = crate::util::locked_file::lock_file_blocking(
+        &plugins_root.join(format!(".{id}.install.lock")),
+        "plugin install",
+    )?;
+    let target = plugins_root.join(&id);
 
-    if target.exists() {
-        if !force {
-            anyhow::bail!(
-                "plugin `{id}` already installed at `{}` (use --force to overwrite)",
-                target.display()
-            );
-        }
-        // --force: remove old install before copying so the post-copy integrity
-        // gate sees only the new files.
-        std::fs::remove_dir_all(&target).with_context(|| {
-            format!("remove existing install at `{}` before --force overwrite", target.display())
-        })?;
-    }
-
-    std::fs::create_dir_all(&target)
-        .with_context(|| format!("create plugin directory `{}`", target.display()))?;
-
-    // ── Copy exactly plugin.toml + plugin.wasm ────────────────────────────
-    let toml_dst = target.join("plugin.toml");
-    let wasm_dst = target.join("plugin.wasm");
-
-    // Helper: roll back the target dir on copy error.
-    let copy_with_rollback = |src: &std::path::Path, dst: &std::path::Path| -> Result<()> {
-        std::fs::copy(src, dst)
-            .with_context(|| {
-                format!("copy `{}` → `{}`", src.display(), dst.display())
-            })
-            .inspect_err(|_e| {
-                let _ = std::fs::remove_dir_all(&target);
-            })?;
-        Ok(())
-    };
-
-    copy_with_rollback(&toml_src, &toml_dst)?;
-    copy_with_rollback(&wasm_src, &wasm_dst)?;
-
-    // ── Post-copy integrity check (SC-03) ─────────────────────────────────
-    // Re-read from the INSTALLED location (not the source) so the check
-    // covers the bytes that are actually on disk under plugins_root.
-    let wasm_bytes = std::fs::read(&wasm_dst)
-        .with_context(|| format!("read installed `{}`", wasm_dst.display()))?;
-    let content_hash = crate::wasm_plugin::discovery::sha256_hex(&wasm_bytes);
-    // The minisig is intentionally NOT copied (install contract: toml+wasm only).
-    // verify_integrity with an open policy (no pins, no revocations) still runs
-    // the revocation list check — which is empty on a fresh install, but a
-    // subsequent call after freedom.yaml is edited would catch a revoked id.
-    let installed_plugin = crate::wasm_plugin::discovery::DiscoveredPlugin {
-        dir: target.clone(),
-        manifest: manifest.clone(),
-        wasm_bytes,
-        content_hash: content_hash.clone(),
-        signature: None,
-    };
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
-    let w = &cfg.plugins.wasm;
-    let policy = crate::wasm_plugin::discovery::IntegrityPolicy {
-        pinned: &w.pinned_hashes,
-        require_all_pinned: w.require_all_pinned,
-        author_pubkey: w.author_pubkey.as_deref(),
-        // SC-03 note: require_signature is NOT enforced at install time when the
-        // minisig is absent (install contract copies only toml+wasm). The operator
-        // should run `neoth plugin verify <path>` on the source tree (which DOES
-        // check signatures) before installing into a require_signature=true setup.
-        // Installs into an open policy are the common case.
-        require_signature: false,
-        revoked: &w.revoked_ids,
-    };
-    if let Err(e) = crate::wasm_plugin::discovery::verify_integrity(&installed_plugin, &policy) {
-        // Roll back: remove the partially-installed directory.
-        let _ = std::fs::remove_dir_all(&target);
+    if target.exists() && !force {
         anyhow::bail!(
-            "plugin `{id}` failed the integrity gate after copy — install rolled back: {e}"
+            "plugin `{id}` already installed at `{}` (use --force to overwrite)",
+            target.display()
         );
     }
 
-    // ── Emit result ───────────────────────────────────────────────────────
-    match output {
-        OutputFormat::Json | OutputFormat::Jsonl => {
-            let obj = serde_json::json!({
-                "ok": true,
-                "id": id,
-                "path": target.display().to_string(),
-            });
-            println!("{}", serde_json::to_string(&obj)?);
+    // Copy to a sibling directory so the final rename stays on the same
+    // filesystem. The guard removes an abandoned stage on every early return.
+    let staging_path = create_install_staging_dir(plugins_root, &id)?;
+    let mut staging = RemovePathOnDrop::new(staging_path);
+
+    // ── Copy exactly plugin.toml + plugin.wasm + optional minisig ─────────
+    let toml_dst = staging.path().join("plugin.toml");
+    let wasm_dst = staging.path().join("plugin.wasm");
+    let minisig_dst = staging.path().join("plugin.wasm.minisig");
+
+    let copy_one = |src: &std::path::Path, dst: &std::path::Path| -> Result<()> {
+        std::fs::copy(src, dst)
+            .with_context(|| format!("copy `{}` → `{}`", src.display(), dst.display()))?;
+        Ok(())
+    };
+
+    copy_one(&toml_src, &toml_dst)?;
+    copy_one(&wasm_src, &wasm_dst)?;
+    if minisig_src.exists() {
+        copy_one(&minisig_src, &minisig_dst)?;
+    }
+
+    // ── Staged integrity check (SC-03) ────────────────────────────────────
+    // Re-read every installed artifact from staging. The source can change
+    // while copying; only the exact bytes about to be activated may pass.
+    let installed_toml = std::fs::read(&toml_dst)
+        .with_context(|| format!("read staged `{}`", toml_dst.display()))?;
+    let installed_manifest = crate::wasm_plugin::manifest::parse_manifest(&installed_toml)
+        .map_err(|e| anyhow::anyhow!("staged manifest invalid: {e}"))?;
+    if installed_manifest.id != id {
+        anyhow::bail!(
+            "plugin manifest changed while staging: expected id `{id}`, copied id `{}`",
+            installed_manifest.id
+        );
+    }
+    let wasm_bytes = std::fs::read(&wasm_dst)
+        .with_context(|| format!("read staged `{}`", wasm_dst.display()))?;
+    let manifest_hash =
+        crate::wasm_plugin::discovery::canonical_manifest_sha256(&installed_manifest);
+    let content_hash = crate::wasm_plugin::discovery::sha256_hex(&wasm_bytes);
+    let signature =
+        crate::wasm_plugin::discovery::read_capped_minisig(&minisig_dst).map_err(|()| {
+            anyhow::anyhow!(
+                "plugin.wasm.minisig exceeds {} bytes — refusing to install",
+                crate::wasm_plugin::discovery::MAX_MINISIG_BYTES
+            )
+        })?;
+    let staged_plugin = crate::wasm_plugin::discovery::DiscoveredPlugin {
+        dir: staging.path().to_path_buf(),
+        manifest: installed_manifest,
+        manifest_hash,
+        wasm_bytes,
+        content_hash,
+        signature,
+    };
+    let policy = crate::wasm_plugin::discovery::IntegrityPolicy {
+        pinned: &wasm_policy.pinned_hashes,
+        require_all_pinned: wasm_policy.require_all_pinned,
+        author_pubkey: wasm_policy.author_pubkey.as_deref(),
+        require_signature: wasm_policy.require_signature,
+        revoked: &wasm_policy.revoked_ids,
+    };
+    crate::wasm_plugin::discovery::verify_integrity(&staged_plugin, &policy)
+        .map_err(|e| anyhow::anyhow!("plugin `{id}` failed the runtime integrity gate: {e}"))?;
+
+    activate_staged_install(&target, &mut staging, force)?;
+    Ok(InstalledPlugin { id, target })
+}
+
+static PLUGIN_INSTALL_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_install_sibling(
+    plugins_root: &std::path::Path,
+    id: &str,
+    role: &str,
+) -> std::path::PathBuf {
+    let nonce = PLUGIN_INSTALL_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    plugins_root.join(format!(".{id}.{role}.{}.{}", std::process::id(), nonce))
+}
+
+fn create_install_staging_dir(
+    plugins_root: &std::path::Path,
+    id: &str,
+) -> Result<std::path::PathBuf> {
+    for _ in 0..128 {
+        let candidate = next_install_sibling(plugins_root, id, "install-staging");
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("create install staging `{}`", candidate.display()));
+            }
         }
-        OutputFormat::Table => {
-            println!("installed plugin `{id}` → {}", target.display());
-            println!(
-                "Run `neoth plugin enable {id}` to activate it on the next `neoth serve` boot."
-            );
+    }
+    anyhow::bail!("could not reserve a unique staging directory for plugin `{id}`")
+}
+
+fn unused_install_sibling(
+    plugins_root: &std::path::Path,
+    id: &str,
+    role: &str,
+) -> Result<std::path::PathBuf> {
+    for _ in 0..128 {
+        let candidate = next_install_sibling(plugins_root, id, role);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("inspect install work path `{}`", candidate.display())
+                });
+            }
         }
+    }
+    anyhow::bail!("could not reserve a unique {role} path for plugin `{id}`")
+}
+
+fn remove_install_path(path: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {
+            std::fs::remove_dir_all(path)
+        }
+        Ok(_) => std::fs::remove_file(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+struct RemovePathOnDrop {
+    path: std::path::PathBuf,
+    armed: bool,
+}
+
+impl RemovePathOnDrop {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RemovePathOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = remove_install_path(&self.path);
+        }
+    }
+}
+
+fn activate_staged_install(
+    target: &std::path::Path,
+    staging: &mut RemovePathOnDrop,
+    force: bool,
+) -> Result<()> {
+    if !target.exists() {
+        std::fs::rename(staging.path(), target).with_context(|| {
+            format!(
+                "activate staged plugin `{}` → `{}`",
+                staging.path().display(),
+                target.display()
+            )
+        })?;
+        staging.disarm();
+        return Ok(());
+    }
+    if !force {
+        anyhow::bail!(
+            "plugin target `{}` appeared during install (use --force to replace it)",
+            target.display()
+        );
+    }
+
+    let plugins_root = target
+        .parent()
+        .context("plugin target has no parent directory")?;
+    let id = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("plugin target id is not valid UTF-8")?;
+    let backup = unused_install_sibling(plugins_root, id, "install-backup")?;
+
+    std::fs::rename(target, &backup).with_context(|| {
+        format!(
+            "move existing plugin `{}` to rollback backup `{}`",
+            target.display(),
+            backup.display()
+        )
+    })?;
+
+    if let Err(activate_error) = std::fs::rename(staging.path(), target) {
+        match std::fs::rename(&backup, target) {
+            Ok(()) => {
+                return Err(activate_error).with_context(|| {
+                    format!(
+                        "activate staged plugin at `{}`; previous install was restored",
+                        target.display()
+                    )
+                });
+            }
+            Err(rollback_error) => {
+                anyhow::bail!(
+                    "activate staged plugin at `{}` failed: {activate_error}; rollback also \
+                     failed: {rollback_error}. Previous install is preserved at `{}`",
+                    target.display(),
+                    backup.display()
+                );
+            }
+        }
+    }
+
+    staging.disarm();
+    if let Err(e) = remove_install_path(&backup) {
+        tracing::warn!(
+            path = %backup.display(),
+            error = %e,
+            "plugin replacement succeeded but stale rollback backup could not be removed"
+        );
     }
     Ok(())
 }
@@ -1304,44 +1512,81 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
 
     use crate::wasm_plugin::manifest::PluginUiSurface;
 
-    // (id, state, name, content_hash, ui_surface) — SC-03 surfaces the sha256
-    // so the operator can pin it in freedom.yaml::plugins.wasm.pinned_hashes.
-    // DES-12 surfaces ui_surface so the GUI knows which plugins declare a tab.
-    let mut rows: Vec<(String, PluginActivation, String, String, Option<PluginUiSurface>)> =
-        report
-            .loaded
-            .iter()
-            .map(|p| {
-                let state = activations.get(&p.manifest.id).copied().unwrap_or_default();
-                (
-                    p.manifest.id.clone(),
-                    state,
-                    p.manifest.name.clone(),
-                    p.content_hash.clone(),
-                    p.manifest.ui_surface.clone(),
-                )
-            })
-            .collect();
-    if only_pending {
-        rows.retain(|(_, s, _, _, _)| *s == PluginActivation::Pending);
+    struct ListRow {
+        id: String,
+        state: PluginActivation,
+        display_state: &'static str,
+        name: String,
+        content_hash: String,
+        manifest_hash: String,
+        requested_permission: RequestedPermission,
+        ui_surface: Option<PluginUiSurface>,
+        approval_error: Option<String>,
+        approved_permission: Option<RequestedPermission>,
     }
-    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // SC-03 surfaces the wasm hash for operator pins. The approval fields make
+    // a legacy or mutated Active entry visible instead of falsely reporting it
+    // as runnable; startup applies the same fail-closed validation.
+    let mut rows: Vec<ListRow> = report
+        .loaded
+        .iter()
+        .map(|p| {
+            let record = activations.get(&p.manifest.id).cloned().unwrap_or_default();
+            let approval_error = if record.state == PluginActivation::Active {
+                record.validate_for(p).err().map(|e| e.to_string())
+            } else {
+                None
+            };
+            ListRow {
+                id: p.manifest.id.clone(),
+                state: record.state,
+                display_state: if approval_error.is_some() {
+                    "reconsent_required"
+                } else {
+                    record.state.as_str()
+                },
+                name: p.manifest.name.clone(),
+                content_hash: p.content_hash.clone(),
+                manifest_hash: p.manifest_hash.clone(),
+                requested_permission: p.manifest.requested_permissions,
+                ui_surface: p.manifest.ui_surface.clone(),
+                approval_error,
+                approved_permission: record
+                    .approval
+                    .as_ref()
+                    .map(|approval| approval.approved_permission),
+            }
+        })
+        .collect();
+    if only_pending {
+        rows.retain(|row| row.state == PluginActivation::Pending || row.approval_error.is_some());
+    }
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let payload: Vec<serde_json::Value> = rows
                 .iter()
-                .map(|(id, state, name, hash, ui_surface)| {
+                .map(|row| {
                     // DES-12: include ui_surface when present so the GUI can
                     // show the plugin tab without a separate query. Omit the
                     // key entirely when None — additive, GUI parsers tolerant.
                     let mut obj = json!({
-                        "id": id,
-                        "name": name,
-                        "activation": state.as_str(),
-                        "sha256": hash,
+                        "id": &row.id,
+                        "name": &row.name,
+                        "activation": row.display_state,
+                        "sha256": &row.content_hash,
+                        "manifest_sha256": &row.manifest_hash,
+                        "requested_permission": row.requested_permission.as_str(),
                     });
-                    if let Some(surf) = ui_surface {
+                    if let Some(permission) = row.approved_permission {
+                        obj["approved_permission"] = json!(permission.as_str());
+                    }
+                    if let Some(error) = &row.approval_error {
+                        obj["approval_error"] = json!(error);
+                    }
+                    if let Some(surf) = &row.ui_surface {
                         let surf_val = match surf {
                             PluginUiSurface::WalFeed { title } => {
                                 json!({ "kind": "wal_feed", "title": title })
@@ -1359,7 +1604,7 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
         OutputFormat::Table => {
             if rows.is_empty() {
                 if only_pending {
-                    println!("No plugins awaiting activation.");
+                    println!("No plugins awaiting activation or re-consent.");
                 } else {
                     println!("No plugins discovered under ~/.neoth/plugins/");
                     println!();
@@ -1370,24 +1615,31 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
                 return Ok(());
             }
             println!(
-                "{:<20}  {:<9}  {:<18}  SHA256 (plugin.wasm)",
-                "ID", "STATE", "NAME"
+                "{:<20}  {:<20}  {:<12}  {:<18}  SHA256 (plugin.wasm)",
+                "ID", "STATE", "PERMISSION", "NAME"
             );
             println!(
-                "{:<20}  {:<9}  {:<18}  -------------------",
-                "--", "-----", "----"
+                "{:<20}  {:<20}  {:<12}  {:<18}  -------------------",
+                "--", "-----", "----------", "----"
             );
-            for (id, state, name, hash, _ui_surface) in &rows {
+            for row in &rows {
                 // First 16 hex chars are enough to eyeball; full value
                 // is in `--output json` for copy-paste into the pin map.
-                let short = hash.get(..16).unwrap_or(hash.as_str());
+                let short = row
+                    .content_hash
+                    .get(..16)
+                    .unwrap_or(row.content_hash.as_str());
                 println!(
-                    "{:<20}  {:<9}  {:<18}  {}…",
-                    id,
-                    state.as_str(),
-                    name,
+                    "{:<20}  {:<20}  {:<12}  {:<18}  {}…",
+                    row.id,
+                    row.display_state,
+                    row.requested_permission.as_str(),
+                    row.name,
                     short
                 );
+                if let Some(error) = &row.approval_error {
+                    println!("  approval refused: {error}");
+                }
             }
             println!();
             println!(
@@ -1412,13 +1664,43 @@ fn set_activation(
     new_state: PluginActivation,
     output: OutputFormat,
 ) -> Result<()> {
+    let change = apply_activation_at(home, id, new_state)?;
+    if !change.changed {
+        emit_unchanged(id, new_state, output);
+        return Ok(());
+    }
+    emit_changed(
+        id,
+        change.previous,
+        new_state,
+        change.granted,
+        change.approval.as_ref(),
+        output,
+    );
+    Ok(())
+}
+
+struct ActivationChange {
+    previous: PluginActivation,
+    granted: RequestedPermission,
+    approval: Option<PluginApproval>,
+    manifest_hash: String,
+    wasm_hash: String,
+    changed: bool,
+}
+
+fn apply_activation_at(
+    home: &std::path::Path,
+    id: &str,
+    new_state: PluginActivation,
+) -> Result<ActivationChange> {
     // Validate the id actually corresponds to a discovered plugin —
     // typo'd ids should fail loudly rather than silently writing a
     // stranded activation entry to freedom.yaml.
     let plugins_root = home.join("plugins");
     let report = discover(&plugins_root);
-    let id_known = report.loaded.iter().any(|p| p.manifest.id == id);
-    if !id_known {
+    let plugin = report.loaded.iter().find(|p| p.manifest.id == id);
+    let Some(plugin) = plugin else {
         let discovered: Vec<&str> = report
             .loaded
             .iter()
@@ -1430,47 +1712,101 @@ fn set_activation(
             plugins_root.display(),
             discovered
         );
-    }
+    };
 
     // SC-04: enabling a plugin IS the operator's grant of the capability
     // level the plugin's manifest declares. Surface that level so the
     // operator gives INFORMED consent — they see exactly what they are
     // authorising, and the runtime hostcall gate then enforces it.
-    let granted = report
-        .loaded
-        .iter()
-        .find(|p| p.manifest.id == id)
-        .map(|p| p.manifest.requested_permissions)
-        .unwrap_or_default();
+    let granted = plugin.manifest.requested_permissions;
 
-    let mut cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml to update plugin activation")?;
-    let prev = cfg
-        .plugins
-        .wasm
-        .activations
-        .get(id)
-        .copied()
-        .unwrap_or_default();
-    if prev == new_state {
-        emit_unchanged(id, new_state, output);
-        return Ok(());
+    let mut change = None;
+    FreedomConfig::update_at(&home.join("freedom.yaml"), |cfg| {
+        if new_state == PluginActivation::Active {
+            let wasm = &cfg.plugins.wasm;
+            let policy = crate::wasm_plugin::discovery::IntegrityPolicy {
+                pinned: &wasm.pinned_hashes,
+                require_all_pinned: wasm.require_all_pinned,
+                author_pubkey: wasm.author_pubkey.as_deref(),
+                require_signature: wasm.require_signature,
+                revoked: &wasm.revoked_ids,
+            };
+            crate::wasm_plugin::discovery::verify_integrity(plugin, &policy).with_context(|| {
+                format!(
+                    "plugin `{id}` failed the configured integrity policy; activation not changed"
+                )
+            })?;
+        }
+        let previous = cfg
+            .plugins
+            .wasm
+            .activations
+            .get(id)
+            .cloned()
+            .unwrap_or_default();
+        let new_record = if new_state == PluginActivation::Active {
+            PluginActivationRecord::active_for(plugin)
+        } else {
+            PluginActivationRecord::from_state(new_state)
+        };
+        let changed = previous != new_record;
+        if changed {
+            cfg.plugins
+                .wasm
+                .activations
+                .insert(id.to_string(), new_record.clone());
+        }
+        change = Some(ActivationChange {
+            previous: previous.state,
+            granted,
+            approval: new_record.approval,
+            manifest_hash: plugin.manifest_hash.clone(),
+            wasm_hash: plugin.content_hash.clone(),
+            changed,
+        });
+        Ok(())
+    })
+    .context("update freedom.yaml after plugin activation change")?;
+    Ok(change.expect("locked mutation always records an activation result"))
+}
+
+/// Slash/GUI-facing activation path. Uses the same exact approval binding and
+/// integrity checks as `neoth plugin enable`, but returns text instead of
+/// writing to stdout.
+pub(crate) fn set_activation_for_action(
+    home: &std::path::Path,
+    id: &str,
+    enabled: bool,
+) -> Result<String> {
+    let state = if enabled {
+        PluginActivation::Active
+    } else {
+        PluginActivation::Disabled
+    };
+    let change = apply_activation_at(home, id, state)?;
+    let verb = if enabled { "enabled" } else { "disabled" };
+    if !change.changed {
+        return Ok(format!(
+            "Plugin `{id}` already {verb}; approval and integrity binding revalidated."
+        ));
     }
-    cfg.plugins
-        .wasm
-        .activations
-        .insert(id.to_string(), new_state);
-    cfg.save_public_to_default_path()
-        .context("save freedom.yaml after plugin activation change")?;
-
-    emit_changed(id, prev, new_state, granted, output);
-    Ok(())
+    if enabled {
+        Ok(format!(
+            "Plugin `{id}` enabled with exact approval `{}`.\nPermission: {}\nmanifest_sha256: {}\nwasm_sha256: {}",
+            change.granted.as_str(),
+            capability_disclosure(change.granted),
+            change.manifest_hash,
+            change.wasm_hash,
+        ))
+    } else {
+        Ok(format!("Plugin `{id}` disabled."))
+    }
 }
 
 /// Plain-language description of what a granted capability level lets a
 /// plugin do — shown to the operator at enable time so the consent is
 /// informed. The runtime gate (SC-04) enforces exactly this ceiling.
-fn capability_disclosure(level: RequestedPermission) -> &'static str {
+pub(crate) fn capability_disclosure(level: RequestedPermission) -> &'static str {
     match level {
         RequestedPermission::None => {
             "diagnostics only (log, fuel) — cannot read your memory or write to your WAL"
@@ -1489,6 +1825,7 @@ fn emit_changed(
     prev: PluginActivation,
     new: PluginActivation,
     granted: RequestedPermission,
+    approval: Option<&PluginApproval>,
     output: OutputFormat,
 ) {
     let activating = matches!(new, PluginActivation::Active);
@@ -1504,6 +1841,10 @@ fn emit_changed(
                 // Make the granted capability machine-readable too, so a
                 // GUI / script enabling a plugin records what it approved.
                 payload["granted_capability"] = json!(granted.as_str());
+                if let Some(approval) = approval {
+                    payload["manifest_sha256"] = json!(&approval.manifest_sha256);
+                    payload["wasm_sha256"] = json!(&approval.wasm_sha256);
+                }
             }
             println!("{}", serde_json::to_string_pretty(&payload).unwrap());
         }
@@ -1524,6 +1865,10 @@ fn emit_changed(
                     "Hostcalls above this level are refused at runtime and audited \
                      (`neoth wal show --type plugin_cap_denied`)."
                 );
+                if let Some(approval) = approval {
+                    println!("Manifest SHA-256: {}", approval.manifest_sha256);
+                    println!("WASM SHA-256: {}", approval.wasm_sha256);
+                }
             }
         }
     }
@@ -1546,11 +1891,11 @@ fn emit_unchanged(id: &str, state: PluginActivation, output: OutputFormat) {
     }
 }
 
-fn load_activations() -> Result<BTreeMap<String, PluginActivation>> {
-    match FreedomConfig::load_from_default_path() {
-        Ok(cfg) => Ok(cfg.plugins.wasm.activations.clone()),
-        Err(_) => Ok(BTreeMap::new()),
-    }
+fn load_activations() -> Result<BTreeMap<String, PluginActivationRecord>> {
+    let cfg = FreedomConfig::load_from_default_path().context(
+        "load freedom.yaml for plugin activation state (run `neoth init` if it is missing)",
+    )?;
+    Ok(cfg.plugins.wasm.activations.clone())
 }
 
 #[cfg(test)]
@@ -2006,44 +2351,55 @@ version = \"0.1.0\"\n\
 
     const MINIMAL_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
+    fn assert_no_install_staging(root: &std::path::Path, id: &str) {
+        let prefix = format!(".{id}.install-staging.");
+        let leftovers: Vec<_> = std::fs::read_dir(root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .map(|entry| entry.path())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "staged install must be cleaned up: {leftovers:?}"
+        );
+    }
+
+    fn assert_no_install_backup(root: &std::path::Path, id: &str) {
+        let prefix = format!(".{id}.install-backup.");
+        let leftovers: Vec<_> = std::fs::read_dir(root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .map(|entry| entry.path())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "rollback backup must be restored or cleaned up: {leftovers:?}"
+        );
+    }
+
     #[test]
     fn install_copies_toml_and_wasm_into_plugins_root() {
         let src_root = TempDir::new().unwrap();
         let dst_root = TempDir::new().unwrap();
         let src = write_plugin_source(src_root.path(), "my_plugin", MINIMAL_WASM);
+        let installed = install_into_plugins_root(
+            &src,
+            false,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap();
 
-        // Point plugins_root at a tempdir by installing directly via run_install.
-        // run_install uses FreedomConfig::default_neoth_home() internally, so we
-        // test the copy + guard logic via the helper that accepts an explicit dest.
-        let target = dst_root.path().join("my_plugin");
-        std::fs::create_dir_all(&target).unwrap();
-        // Manual equivalent of the copy step (the fn is not pub) — verify both
-        // files land with the right content by calling run_install end-to-end
-        // with a real source dir. We can't override NEOTH_HOME easily, so we
-        // exercise the sub-steps directly.
-
-        // Instead: exercise the file-level validation helpers that run_install uses.
-        // Confirm both source files exist (the precondition the impl checks).
-        assert!(src.join("plugin.toml").exists());
-        assert!(src.join("plugin.wasm").exists());
-
-        // Confirm manifest parses correctly with the id we wrote.
-        let toml_bytes = std::fs::read(src.join("plugin.toml")).unwrap();
-        let manifest = crate::wasm_plugin::manifest::parse_manifest(&toml_bytes).unwrap();
-        assert_eq!(manifest.id, "my_plugin");
-
-        // Confirm the wasm bytes round-trip through a copy correctly.
-        let copy_dst = dst_root.path().join("plugin.wasm");
-        std::fs::copy(src.join("plugin.wasm"), &copy_dst).unwrap();
-        assert_eq!(std::fs::read(&copy_dst).unwrap(), MINIMAL_WASM);
-
-        // Confirm sha256_hex on the copied bytes is stable (integrity gate
-        // re-reads from installed location).
-        let h1 = crate::wasm_plugin::discovery::sha256_hex(MINIMAL_WASM);
-        let h2 = crate::wasm_plugin::discovery::sha256_hex(
-            &std::fs::read(&copy_dst).unwrap(),
+        assert_eq!(installed.id, "my_plugin");
+        assert_eq!(installed.target, dst_root.path().join("my_plugin"));
+        assert_eq!(
+            std::fs::read(installed.target.join("plugin.wasm")).unwrap(),
+            MINIMAL_WASM
         );
-        assert_eq!(h1, h2, "sha256 of copied wasm matches original");
+        assert!(installed.target.join("plugin.toml").is_file());
+        assert_no_install_staging(dst_root.path(), "my_plugin");
     }
 
     #[test]
@@ -2054,7 +2410,14 @@ version = \"0.1.0\"\n\
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
 
-        let err = run_install(&dir, false, OutputFormat::Json).unwrap_err();
+        let dst_root = TempDir::new().unwrap();
+        let err = install_into_plugins_root(
+            &dir,
+            false,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("missing `plugin.toml`"),
@@ -2074,7 +2437,14 @@ version = \"0.1.0\"\n\
         )
         .unwrap();
 
-        let err = run_install(&dir, false, OutputFormat::Json).unwrap_err();
+        let dst_root = TempDir::new().unwrap();
+        let err = install_into_plugins_root(
+            &dir,
+            false,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("missing `plugin.wasm`"),
@@ -2095,7 +2465,14 @@ version = \"0.1.0\"\n\
         .unwrap();
         std::fs::write(dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
 
-        let err = run_install(&dir, false, OutputFormat::Json).unwrap_err();
+        let dst_root = TempDir::new().unwrap();
+        let err = install_into_plugins_root(
+            &dir,
+            false,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("manifest invalid"),
@@ -2113,7 +2490,14 @@ version = \"0.1.0\"\n\
         // "not a directory" branch, which is reached before the symlink check.
         let file_path = src_root.path().join("not_a_dir.txt");
         std::fs::write(&file_path, b"x").unwrap();
-        let err = run_install(&file_path, false, OutputFormat::Table).unwrap_err();
+        let dst_root = TempDir::new().unwrap();
+        let err = install_into_plugins_root(
+            &file_path,
+            false,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap_err();
         assert!(
             format!("{err:#}").contains("not a directory"),
             "a file path should fail the is_dir() guard"
@@ -2122,58 +2506,163 @@ version = \"0.1.0\"\n\
 
     #[test]
     fn install_bails_when_already_installed_without_force() {
-        // We can test this by calling run_install twice with a source that
-        // would end up at the same NEOTH_HOME destination. Since we can't
-        // override NEOTH_HOME easily, we instead verify the guard logic
-        // by checking that target.exists() triggers the bail when !force.
-        // We do this by constructing the error condition manually:
         let src_root = TempDir::new().unwrap();
         let dst_root = TempDir::new().unwrap();
         let src = write_plugin_source(src_root.path(), "dup_plugin", MINIMAL_WASM);
-
-        // Simulate "target already exists" by pre-creating the target dir
-        // and verifying the `target.exists() && !force` guard fires.
         let target = dst_root.path().join("dup_plugin");
         std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("sentinel"), b"old").unwrap();
 
-        // The guard: if target exists and !force → bail.
-        assert!(target.exists());
-        assert!(src.join("plugin.toml").exists());
-        // Guard fires synchronously in run_install; exercise it directly.
-        let guard_result: anyhow::Result<()> = {
-            // force = false in this scenario, so the guard reduces to exists().
-            if target.exists() {
-                Err(anyhow::anyhow!(
-                    "plugin `dup_plugin` already installed (use --force)"
-                ))
-            } else {
-                Ok(())
-            }
-        };
-        let msg = format!("{:#}", guard_result.unwrap_err());
+        let err = install_into_plugins_root(
+            &src,
+            false,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
         assert!(msg.contains("already installed"));
+        assert_eq!(std::fs::read(target.join("sentinel")).unwrap(), b"old");
+        assert_no_install_staging(dst_root.path(), "dup_plugin");
     }
 
     #[test]
     fn install_force_replaces_existing() {
-        // Verify --force removes the old dir before copy by checking the
-        // remove_dir_all path in the guard: after force the target should
-        // be gone and the new content should land cleanly.
+        let src_root = TempDir::new().unwrap();
         let dst_root = TempDir::new().unwrap();
+        let source = write_plugin_source(src_root.path(), "forced", MINIMAL_WASM);
         let target = dst_root.path().join("forced");
         std::fs::create_dir_all(&target).unwrap();
-        // Sentinel file inside the old install.
         std::fs::write(target.join("stale.dat"), b"old").unwrap();
 
-        // Simulate the force-remove step.
-        std::fs::remove_dir_all(&target).unwrap();
-        assert!(!target.exists(), "old install must be gone after --force remove");
+        install_into_plugins_root(
+            &source,
+            true,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap();
+        assert!(
+            !target.join("stale.dat").exists(),
+            "sentinel must not survive --force"
+        );
+        assert!(
+            target.join("plugin.toml").exists(),
+            "new content must be present"
+        );
+        assert_eq!(
+            std::fs::read(target.join("plugin.wasm")).unwrap(),
+            MINIMAL_WASM
+        );
+        assert_no_install_staging(dst_root.path(), "forced");
+    }
 
-        // Recreate as if the copy ran.
+    #[test]
+    fn install_copies_optional_minisig_for_runtime_verification() {
+        let src_root = TempDir::new().unwrap();
+        let dst_root = TempDir::new().unwrap();
+        let source = write_plugin_source(src_root.path(), "signed_plugin", MINIMAL_WASM);
+        let signature = b"untrusted comment: fixture\nnot-a-real-signature\n";
+        std::fs::write(source.join("plugin.wasm.minisig"), signature).unwrap();
+
+        install_into_plugins_root(
+            &source,
+            false,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap();
+
+        let installed_signature =
+            std::fs::read(dst_root.path().join("signed_plugin/plugin.wasm.minisig")).unwrap();
+        assert_eq!(installed_signature, signature);
+        let report = crate::wasm_plugin::discovery::discover(dst_root.path());
+        assert_eq!(report.loaded.len(), 1);
+        assert_eq!(
+            report.loaded[0].signature.as_deref(),
+            std::str::from_utf8(signature).ok(),
+            "daemon discovery must observe the installed signature companion"
+        );
+    }
+
+    #[test]
+    fn install_required_signature_failure_preserves_existing_version() {
+        let src_root = TempDir::new().unwrap();
+        let dst_root = TempDir::new().unwrap();
+        let source = write_plugin_source(src_root.path(), "secure_plugin", MINIMAL_WASM);
+        let target = dst_root.path().join("secure_plugin");
         std::fs::create_dir_all(&target).unwrap();
-        std::fs::write(target.join("plugin.toml"), b"new").unwrap();
-        assert!(!target.join("stale.dat").exists(), "sentinel must not survive --force");
-        assert!(target.join("plugin.toml").exists(), "new content must be present");
+        std::fs::write(target.join("sentinel"), b"known-good").unwrap();
+
+        let policy = crate::config::WasmPluginsConfig {
+            author_pubkey: Some(
+                "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3".to_string(),
+            ),
+            require_signature: true,
+            ..Default::default()
+        };
+        let err = install_into_plugins_root(&source, true, dst_root.path(), &policy).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("runtime integrity gate") && message.contains("signature"),
+            "unexpected policy failure: {message}"
+        );
+        assert_eq!(
+            std::fs::read(target.join("sentinel")).unwrap(),
+            b"known-good",
+            "verification failure must leave the previous install intact"
+        );
+        assert_no_install_staging(dst_root.path(), "secure_plugin");
+    }
+
+    #[test]
+    fn install_force_copy_failure_preserves_existing_version() {
+        let src_root = TempDir::new().unwrap();
+        let dst_root = TempDir::new().unwrap();
+        let source = src_root.path().join("copy_fail");
+        std::fs::create_dir_all(source.join("plugin.wasm")).unwrap();
+        std::fs::write(
+            source.join("plugin.toml"),
+            "id = \"copy_fail\"\nname = \"Copy Fail\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let target = dst_root.path().join("copy_fail");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("sentinel"), b"known-good").unwrap();
+
+        let err = install_into_plugins_root(
+            &source,
+            true,
+            dst_root.path(),
+            &crate::config::WasmPluginsConfig::default(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("copy"));
+        assert_eq!(
+            std::fs::read(target.join("sentinel")).unwrap(),
+            b"known-good",
+            "copy failure must leave the previous install intact"
+        );
+        assert_no_install_staging(dst_root.path(), "copy_fail");
+    }
+
+    #[test]
+    fn install_force_activation_failure_restores_existing_version() {
+        let dst_root = TempDir::new().unwrap();
+        let target = dst_root.path().join("rollback_plugin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("sentinel"), b"known-good").unwrap();
+
+        // A missing stage simulates a final rename failure after the old
+        // target was moved aside. The activation helper must restore backup.
+        let mut missing_stage = RemovePathOnDrop::new(dst_root.path().join("missing-stage"));
+        let err = activate_staged_install(&target, &mut missing_stage, true).unwrap_err();
+        assert!(format!("{err:#}").contains("previous install was restored"));
+        assert_eq!(
+            std::fs::read(target.join("sentinel")).unwrap(),
+            b"known-good"
+        );
+        assert_no_install_backup(dst_root.path(), "rollback_plugin");
     }
 
     #[test]
@@ -2236,7 +2725,10 @@ version = \"0.1.0\"\n\
         assert_eq!(obj["ok"], serde_json::Value::Bool(true));
         assert_eq!(obj["id"], "gone_plugin");
         // `path` must NOT be present in the success shape.
-        assert!(obj.get("path").is_none(), "remove success must not carry a `path` key");
+        assert!(
+            obj.get("path").is_none(),
+            "remove success must not carry a `path` key"
+        );
     }
 
     #[test]
@@ -2338,14 +2830,15 @@ version = \"0.1.0\"\n\
             .iter()
             .filter(|u| u.plugin == "feed_plugin" && u.capability == "emit_event")
             .collect();
-        assert_eq!(feed.len(), 2, "two 0xC4 frames for feed_plugin must be found");
+        assert_eq!(
+            feed.len(),
+            2,
+            "two 0xC4 frames for feed_plugin must be found"
+        );
         let other_uses: Vec<_> = uses.iter().filter(|u| u.plugin == "other_plugin").collect();
         assert_eq!(other_uses.len(), 1, "other_plugin frame must also be found");
         // Filtering to feed_plugin only yields 2 rows.
-        assert_eq!(
-            uses.iter().filter(|u| u.plugin == "feed_plugin").count(),
-            2
-        );
+        assert_eq!(uses.iter().filter(|u| u.plugin == "feed_plugin").count(), 2);
     }
 
     #[test]
@@ -2362,8 +2855,8 @@ version = \"0.1.0\"\n\
             "has space",
             "Upper",
         ] {
-            let err = run_remove(evil, OutputFormat::Table)
-                .expect_err("traversal id must be rejected");
+            let err =
+                run_remove(evil, OutputFormat::Table).expect_err("traversal id must be rejected");
             assert!(
                 err.to_string().contains("invalid plugin id"),
                 "unexpected error for {evil:?}: {err}"

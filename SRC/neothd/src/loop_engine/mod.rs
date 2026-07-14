@@ -13,4 +13,4 @@ pub mod autonomy;
 pub mod engine;
 
 pub use autonomy::LoopAutonomyLevel;
-pub use engine::{run_loop, LoopConfig, LoopRunRecord, LoopRound, LoopState, StopReason};
+pub use engine::{LoopConfig, LoopRound, LoopRunRecord, LoopState, StopReason, run_loop};

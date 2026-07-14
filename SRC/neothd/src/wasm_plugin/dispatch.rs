@@ -7,24 +7,57 @@
 //!    Operator-facing `neoth plugins list` calls this so the listing
 //!    surfaces compile errors before any plugin is actually invoked.
 //!
-//! 2. [`InvocationOutcome`] + [`build_invocation_outcome`] capture
-//!    the result of one invocation in a serialisable shape. The
-//!    full `Instance::call_typed_func("neoth_run", ...)` wire-up
-//!    lands once the example plugin lives at
-//!    `examples/wasm-plugin-hello/plugin.wasm`; before then the
-//!    outcome shape stays callable so hook-engine integration can
-//!    pre-allocate its result-handling path.
+//! 2. [`InvocationOutcome`] captures one live invocation: instantiate, validate
+//!    the SDK ABI version export, then call `neoth_run`. The same path backs the
+//!    hook engine and `neoth plugin test`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use neoth_plugin_sdk::guest::{ABI_VERSION, ABI_VERSION_EXPORT, RUN_EXPORT};
 use wasmtime::Module;
 
 use crate::security::redact::redact_text;
 use crate::wal::writer::WalWriterHandle;
-use crate::wasm_plugin::discovery::{DiscoveredPlugin, DiscoveryReport};
-use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState, RecallDbHandle};
+use crate::wasm_plugin::discovery::{DiscoveredPlugin, DiscoveryReport, PluginApproval};
+use crate::wasm_plugin::engine::{
+    DEFAULT_FUEL_BUDGET, DEFAULT_MEMORY_LIMIT_BYTES, NeothEngine, PluginStoreState, RecallDbHandle,
+};
 use crate::wasm_plugin::hostcalls::HostcallPermission;
+use crate::wasm_plugin::manifest::PluginManifest;
+
+/// Validated resource limits bound to one compiled plugin.
+///
+/// These values come from the same manifest whose canonical digest is stored in
+/// [`PluginApproval`]. Keeping them beside the compiled module prevents the
+/// production invoker from silently falling back to global defaults after an
+/// operator approved per-plugin limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PluginExecutionLimits {
+    pub fuel_budget: u64,
+    pub memory_limit_bytes: usize,
+}
+
+impl PluginExecutionLimits {
+    #[must_use]
+    pub fn from_manifest(manifest: &PluginManifest) -> Self {
+        Self {
+            fuel_budget: manifest.fuel_budget_override.unwrap_or(DEFAULT_FUEL_BUDGET),
+            memory_limit_bytes: manifest
+                .memory_limit_bytes
+                .unwrap_or(DEFAULT_MEMORY_LIMIT_BYTES),
+        }
+    }
+}
+
+impl Default for PluginExecutionLimits {
+    fn default() -> Self {
+        Self {
+            fuel_budget: DEFAULT_FUEL_BUDGET,
+            memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
+        }
+    }
+}
 
 /// Outcome of compiling one discovered plugin.
 #[derive(Debug, Clone)]
@@ -33,6 +66,7 @@ pub enum CompileOutcome {
     Compiled {
         plugin_id: String,
         module: Arc<Module>,
+        execution_limits: PluginExecutionLimits,
     },
     /// Compilation failed — operator-facing error message included
     /// so `neoth plugins list` can render the cause without re-running.
@@ -72,6 +106,7 @@ fn compile_one(engine: &NeothEngine, plugin: &DiscoveredPlugin) -> CompileOutcom
         Ok(module) => CompileOutcome::Compiled {
             plugin_id: plugin.manifest.id.clone(),
             module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::from_manifest(&plugin.manifest),
         },
         Err(e) => CompileOutcome::Failed {
             plugin_id: plugin.manifest.id.clone(),
@@ -102,6 +137,8 @@ pub enum InvocationStage {
     Instantiate,
     /// Looking up the `neoth_run` export.
     ExportLookup,
+    /// Looking up or validating the versioned guest ABI export.
+    AbiVersion,
     /// Calling the export — `neoth_run` returned a trap or normal
     /// completion. The completing path arrives here without an error
     /// set; trap paths set both `error` + this stage.
@@ -142,11 +179,9 @@ pub fn invocation_outcome_from_compile_failure(o: &CompileOutcome) -> Option<Inv
 ///     manifest's memory_limit + fuel budget honoured, and the operator-
 ///     granted permission level (`granted`) wired in via `with_granted`
 ///     so the hostcall capability gate (SC-04) enforces it at run time.
-///   - The exported function must be `fn neoth_run() -> i32` for
-///     now. Future ABIs (struct returns, hostcall callbacks) extend
-///     this with new typed_func sigs.
-///   - Non-zero return is recorded but not treated as an error — the
-///     plugin's own convention defines what the integer means.
+///   - The module must export `fn neoth_abi_version() -> i32` returning the
+///     SDK's exact [`ABI_VERSION`] before `fn neoth_run() -> i32` is called.
+///   - `neoth_run` return `0` means success; non-zero is a failed invocation.
 ///   - A missing `neoth_run` export surfaces as
 ///     `InvocationOutcome::ExportLookup` with a clear error string
 ///     so the operator knows the plugin doesn't follow the ABI.
@@ -160,6 +195,7 @@ pub fn invoke_plugin(
     linker: &wasmtime::Linker<crate::wasm_plugin::engine::PluginStoreState>,
     plugin_id: impl Into<String>,
     granted: HostcallPermission,
+    execution_limits: PluginExecutionLimits,
     wal_writer: Option<WalWriterHandle>,
     recall_db: Option<RecallDbHandle>,
 ) -> InvocationOutcome {
@@ -170,8 +206,10 @@ pub fn invoke_plugin(
     // refusal still holds, but the denial would be invisible in the WAL
     // — and the "No ambient plugin power" guarantee is only worth
     // anything if it is PROVABLE, so the production path must carry it.
-    let mut state =
-        crate::wasm_plugin::engine::PluginStoreState::new(&plugin_id).with_granted(granted);
+    let mut state = crate::wasm_plugin::engine::PluginStoreState::new(&plugin_id)
+        .with_fuel(execution_limits.fuel_budget)
+        .with_memory_limit(execution_limits.memory_limit_bytes)
+        .with_granted(granted);
     if let Some(w) = wal_writer {
         state = state.with_wal_writer(w);
     }
@@ -220,24 +258,61 @@ pub fn invoke_plugin_with_state(
         }
     };
 
-    let func = match instance.get_typed_func::<(), i32>(&mut store, "neoth_run") {
+    let func = match instance.get_typed_func::<(), i32>(&mut store, RUN_EXPORT) {
         Ok(f) => f,
         Err(e) => {
             return InvocationOutcome {
                 plugin_id,
                 stage: InvocationStage::ExportLookup,
                 error: Some(redact_text(&format!(
-                    "missing `fn neoth_run() -> i32` export: {e}"
+                    "missing `fn {RUN_EXPORT}() -> i32` export: {e}"
                 ))),
             };
         }
     };
 
+    let abi_version = match instance.get_typed_func::<(), i32>(&mut store, ABI_VERSION_EXPORT) {
+        Ok(f) => f,
+        Err(e) => {
+            return InvocationOutcome {
+                plugin_id,
+                stage: InvocationStage::AbiVersion,
+                error: Some(redact_text(&format!(
+                    "missing `fn {ABI_VERSION_EXPORT}() -> i32` export required by guest ABI v{ABI_VERSION}: {e}"
+                ))),
+            };
+        }
+    };
+    let reported_version = match abi_version.call(&mut store, ()) {
+        Ok(version) => version,
+        Err(e) => {
+            return InvocationOutcome {
+                plugin_id,
+                stage: InvocationStage::AbiVersion,
+                error: Some(redact_text(&format!("`{ABI_VERSION_EXPORT}` trapped: {e}"))),
+            };
+        }
+    };
+    if reported_version != ABI_VERSION {
+        return InvocationOutcome {
+            plugin_id,
+            stage: InvocationStage::AbiVersion,
+            error: Some(format!(
+                "guest ABI version mismatch: plugin={reported_version}, host={ABI_VERSION}; rebuild the plugin against neoth-plugin-sdk"
+            )),
+        };
+    }
+
     match func.call(&mut store, ()) {
-        Ok(_rc) => InvocationOutcome {
+        Ok(0) => InvocationOutcome {
             plugin_id,
             stage: InvocationStage::Run,
             error: None,
+        },
+        Ok(rc) => InvocationOutcome {
+            plugin_id,
+            stage: InvocationStage::Run,
+            error: Some(format!("{RUN_EXPORT} returned non-zero status {rc}")),
         },
         Err(e) => {
             // GOLD-ADAPT-G-02 — a fuel-exhausted plugin is a resource-abuse
@@ -281,20 +356,18 @@ pub fn invoke_plugin_with_state(
 /// struct, then hands an `Arc<CompiledPluginInvoker>` to the hook
 /// engine.
 ///
-/// `modules` is a snapshot — re-discovery (operator dropped a new
-/// `~/.neoth/plugins/<id>/`) requires a fresh CompiledPluginInvoker.
-/// The hook dispatcher only borrows the trait, so re-binding is
-/// safe at runtime when the bootstrap detects a change.
+/// The approved plugin set is a bootstrap snapshot. Re-discovery (for example,
+/// after an operator installs or re-enables a plugin) requires a daemon
+/// restart because the process-global hook invoker is registered once. Live
+/// reload can only remove authority: every call re-checks revocation and the
+/// exact approval record captured here.
 pub struct CompiledPluginInvoker {
     engine: Arc<NeothEngine>,
-    modules: HashMap<String, Arc<Module>>,
     linker: Arc<wasmtime::Linker<PluginStoreState>>,
-    /// SC-04: per-plugin granted permission level, keyed by the SAME
-    /// `plugin_id` (= `manifest.id`) as `modules`. A plugin absent from
-    /// this map (or whose id mismatches) falls back to
-    /// `HostcallPermission::None` at invoke time — fail-closed, so a
-    /// keying bug denies capability rather than granting it silently.
-    grants: HashMap<String, HostcallPermission>,
+    /// Module, exact approval, and manifest-derived limits are inserted as one
+    /// value. An executable module therefore cannot drift away from the
+    /// authority and resource ceilings that admitted it.
+    plugins: HashMap<String, ApprovedCompiledPlugin>,
     /// SC-04: the daemon's WAL writer handle (a clone of the single
     /// segment writer — NOT a second writer, which would race). Threaded
     /// into every plugin store so the hostcall gate's `0xC7` deny audit
@@ -305,42 +378,63 @@ pub struct CompiledPluginInvoker {
     /// real hit counts in production (not just 0). Best-effort: `None`
     /// degrades recall_top to "no signal".
     recall_db: Option<RecallDbHandle>,
-    /// Live config handle for the per-invoke revocation check. The
-    /// boot-time `IntegrityPolicy` filter only gates plugins compiled at
-    /// bootstrap; without this handle a plugin added to
-    /// `plugins.wasm.revoked_ids` via `neoth reload` keeps running until
-    /// daemon restart. `None` (tests / dry-run) skips the live check —
-    /// those paths have no reload surface.
+    /// Live config handle for the per-invoke revocation and exact-approval
+    /// check. Without it, a disable, revocation, or approval mutation made by
+    /// `neoth reload` would not reach the process-global invoker until restart.
+    /// `None` is limited to tests and dry-run paths with no reload surface.
     reload_controller: Option<Arc<crate::config::reload::ReloadController>>,
 }
 
+struct ApprovedCompiledPlugin {
+    module: Arc<Module>,
+    approval: PluginApproval,
+    execution_limits: PluginExecutionLimits,
+}
+
 impl CompiledPluginInvoker {
-    /// Build an invoker from a compile-pass result + a pre-built
-    /// linker. Only `Compiled` outcomes are registered; `Failed`
-    /// entries are silently dropped (the operator already saw them
-    /// in `plugins list`). Empty input is legal: the invoker will
-    /// just fail every invoke with "unknown plugin id".
+    /// Build an invoker from a compile-pass result, linker, and the exact
+    /// approvals that admitted those modules. Runtime grants are derived here
+    /// from `PluginApproval::approved_permission`; callers cannot supply a
+    /// different grant map. Only `Compiled` outcomes are registered; `Failed`
+    /// entries are dropped after the operator-facing compile report. Empty
+    /// input is legal and fails every invoke as an unknown plugin id.
     pub fn from_compile_outcomes(
         engine: Arc<NeothEngine>,
         outcomes: &[CompileOutcome],
         linker: Arc<wasmtime::Linker<PluginStoreState>>,
-        grants: HashMap<String, HostcallPermission>,
-    ) -> Self {
-        let mut modules: HashMap<String, Arc<Module>> = HashMap::new();
+        approval_bindings: HashMap<String, PluginApproval>,
+    ) -> anyhow::Result<Self> {
+        let mut plugins = HashMap::new();
         for o in outcomes {
-            if let CompileOutcome::Compiled { plugin_id, module } = o {
-                modules.insert(plugin_id.clone(), module.clone());
+            if let CompileOutcome::Compiled {
+                plugin_id,
+                module,
+                execution_limits,
+            } = o
+            {
+                let approval = approval_bindings.get(plugin_id).cloned().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "compiled plugin {plugin_id:?} has no exact operator approval binding"
+                    )
+                })?;
+                plugins.insert(
+                    plugin_id.clone(),
+                    ApprovedCompiledPlugin {
+                        module: module.clone(),
+                        approval,
+                        execution_limits: *execution_limits,
+                    },
+                );
             }
         }
-        Self {
+        Ok(Self {
             engine,
-            modules,
             linker,
-            grants,
+            plugins,
             wal_writer: None,
             recall_db: None,
             reload_controller: None,
-        }
+        })
     }
 
     /// SC-04: attach the daemon's runtime handles (a CLONE of the single
@@ -359,10 +453,10 @@ impl CompiledPluginInvoker {
         self
     }
 
-    /// Attach the daemon's live-config handle so `invoke` re-checks
-    /// `plugins.wasm.revoked_ids` on EVERY call. Closes the reload gap
-    /// where a revocation added after boot never reached the compiled
-    /// invoker (the `GLOBAL_INVOKER` OnceLock is never rebuilt).
+    /// Attach the daemon's live-config handle so every invoke re-checks both
+    /// `plugins.wasm.revoked_ids` and the complete approval record. Revocation,
+    /// disable, legacy activation, digest drift, and permission changes all
+    /// take effect fail-closed without rebuilding the global invoker.
     #[must_use]
     pub fn with_reload_controller(
         mut self,
@@ -372,45 +466,32 @@ impl CompiledPluginInvoker {
         self
     }
 
-    /// SC-04 helper: build the per-plugin grants map from a discovery
-    /// report. The granted level for each loaded plugin is exactly its
-    /// manifest `requested_permissions` (which the operator approved by
-    /// enabling the plugin). Keyed by `manifest.id` so the lookup in
-    /// `invoke` matches the `modules` map built from the same id.
-    pub fn grants_from_report(report: &DiscoveryReport) -> HashMap<String, HostcallPermission> {
-        report
-            .loaded
-            .iter()
-            .map(|p| {
-                (
-                    p.manifest.id.clone(),
-                    HostcallPermission::from(p.manifest.requested_permissions),
-                )
-            })
-            .collect()
-    }
-
     /// True when no plugins are registered. Useful for the daemon's
     /// bootstrap to decide whether to wire the invoker into the
     /// hook engine at all — wiring an empty invoker is fine but the
     /// log line `no PluginInvoker wired` is more honest.
     pub fn is_empty(&self) -> bool {
-        self.modules.is_empty()
+        self.plugins.is_empty()
     }
 
     /// Number of registered plugins. Surfaces in the
     /// `neoth doctor --explain plugins` output.
     pub fn len(&self) -> usize {
-        self.modules.len()
+        self.plugins.len()
     }
 }
 
 impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
     fn invoke(&self, plugin_id: &str) -> anyhow::Result<()> {
-        // Live revocation gate: the boot-time IntegrityPolicy filter only
-        // covers plugins known at bootstrap. `ReloadController::latest()`
-        // is a lock-free ArcSwap load, so this stays O(revoked_ids.len())
-        // per invoke with no contention. Fail-closed on a hit.
+        let plugin = self.plugins.get(plugin_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "CompiledPluginInvoker: unknown plugin id {plugin_id:?} — known: [{}]",
+                self.plugins.keys().cloned().collect::<Vec<_>>().join(", ")
+            )
+        })?;
+
+        // Live authority gate. `ReloadController::latest()` is a lock-free
+        // ArcSwap load; revoked_ids is expected to remain a short operator list.
         if let Some(ctrl) = &self.reload_controller {
             let cfg = ctrl.latest();
             if cfg
@@ -425,29 +506,31 @@ impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
                      live config) — refusing invoke"
                 );
             }
+            let current = cfg.plugins.wasm.activations.get(plugin_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "plugin {plugin_id:?} activation approval is missing in live config — \
+                         refusing invoke"
+                )
+            })?;
+            if current.state != crate::wasm_plugin::discovery::PluginActivation::Active
+                || current.approval.as_ref() != Some(&plugin.approval)
+            {
+                anyhow::bail!(
+                    "plugin {plugin_id:?} activation approval changed after bootstrap — \
+                     refusing invoke; explicitly re-enable and restart the daemon"
+                );
+            }
         }
-        let module = self.modules.get(plugin_id).ok_or_else(|| {
-            anyhow::anyhow!(
-                "CompiledPluginInvoker: unknown plugin id {plugin_id:?} — \
-                 known: [{}]",
-                self.modules.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        })?;
-        // SC-04: fail-closed lookup — an id missing from `grants`
-        // (keying bug, or a plugin compiled but never granted) gets
-        // `None`, denying every privileged hostcall rather than
-        // silently granting ambient power.
-        let granted = self
-            .grants
-            .get(plugin_id)
-            .copied()
-            .unwrap_or(HostcallPermission::None);
+        // Authority and resource limits come from the same immutable binding
+        // as the executable module; there is no separately supplied grant map.
+        let granted = HostcallPermission::from(plugin.approval.approved_permission);
         let outcome = invoke_plugin(
             &self.engine,
-            module,
+            &plugin.module,
             &self.linker,
             plugin_id,
             granted,
+            plugin.execution_limits,
             self.wal_writer.clone(),
             self.recall_db.clone(),
         );
@@ -464,7 +547,7 @@ impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wasm_plugin::manifest::PluginManifest;
+    use crate::wasm_plugin::manifest::{PluginManifest, RequestedPermission};
     use std::path::PathBuf;
 
     fn minimal_wasm() -> Vec<u8> {
@@ -472,8 +555,27 @@ mod tests {
         vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]
     }
 
+    fn approvals_for(
+        ids: &[&str],
+        permission: RequestedPermission,
+    ) -> HashMap<String, PluginApproval> {
+        ids.iter()
+            .map(|id| {
+                (
+                    (*id).to_string(),
+                    PluginApproval {
+                        approved_permission: permission,
+                        manifest_sha256: format!("manifest-{id}"),
+                        wasm_sha256: format!("wasm-{id}"),
+                    },
+                )
+            })
+            .collect()
+    }
+
     /// A complete WASM module that:
-    ///   - imports all four Phase-1 neoth hostcalls
+    ///   - imports all four ABI v1 NEOTH hostcalls
+    ///   - exports `fn neoth_abi_version() -> i32` (returns ABI v1)
     ///   - exports `fn neoth_run() -> i32` (returns 0)
     ///   - exports a `memory` page (required by neoth.log / neoth.emit_event)
     ///
@@ -490,15 +592,22 @@ mod tests {
     ///   (import "neoth" "fuel_left"   (func (type 1)))
     ///   (import "neoth" "emit_event"  (func (type 2)))
     ///   (import "neoth" "recall_top"  (func (type 3)))
-    ///   (func (type 4) (i32.const 0))  ;; func index 4 = neoth_run
+    ///   (func (type 4) (i32.const 1))  ;; func index 4 = neoth_abi_version
+    ///   (func (type 4) (i32.const 0))  ;; func index 5 = neoth_run
     ///   (memory 1)
-    ///   (export "neoth_run" (func 4))
+    ///   (export "neoth_abi_version" (func 4))
+    ///   (export "neoth_run" (func 5))
     ///   (export "memory"    (mem  0))
     /// )
     /// ```
     ///
     /// Used by tests that need a plugin which actually reaches the Run stage.
     fn echo_wasm() -> Vec<u8> {
+        echo_wasm_with_version(ABI_VERSION)
+    }
+
+    fn echo_wasm_with_version(abi_version: i32) -> Vec<u8> {
+        assert!((0..=63).contains(&abi_version));
         // Helper: encode a LEB128 unsigned integer.
         fn uleb(n: u32) -> Vec<u8> {
             let mut out = Vec::new();
@@ -549,10 +658,26 @@ mod tests {
         // 4 imports, all function (kind=0x00).
         let mut import_body: Vec<u8> = uleb(4); // count
         for (module, name, type_idx) in &[
-            ("neoth", "log", 0u32),
-            ("neoth", "fuel_left", 1),
-            ("neoth", "emit_event", 2),
-            ("neoth", "recall_top", 3),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_LOG,
+                0u32,
+            ),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_FUEL_LEFT,
+                1,
+            ),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_EMIT_EVENT,
+                2,
+            ),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_RECALL_TOP,
+                3,
+            ),
         ] {
             import_body.extend(wasm_str(module));
             import_body.extend(wasm_str(name));
@@ -562,9 +687,10 @@ mod tests {
         let import_section = [vec![0x02], with_len(import_body)].concat();
 
         // ── Function section ────────────────────────────────────────────────
-        // 1 locally-defined function using type index 4.
-        let mut func_body: Vec<u8> = uleb(1); // count
-        func_body.extend(uleb(4)); // type index 4: () -> (i32)
+        // ABI-version export + run export, both using type index 4.
+        let mut func_body: Vec<u8> = uleb(2); // count
+        func_body.extend(uleb(4));
+        func_body.extend(uleb(4));
         let func_section = [vec![0x03], with_len(func_body)].concat();
 
         // ── Memory section ──────────────────────────────────────────────────
@@ -577,12 +703,14 @@ mod tests {
         let mem_section = [vec![0x05], with_len(mem_body)].concat();
 
         // ── Export section ──────────────────────────────────────────────────
-        // 2 exports: "neoth_run" (func 4) + "memory" (mem 0).
-        let mut export_body: Vec<u8> = uleb(2); // count
-        // export "neoth_run" → function index 4
-        export_body.extend(wasm_str("neoth_run"));
+        // 3 exports: ABI version (func 4), run (func 5), memory (mem 0).
+        let mut export_body: Vec<u8> = uleb(3); // count
+        export_body.extend(wasm_str(ABI_VERSION_EXPORT));
         export_body.push(0x00); // export kind: function
         export_body.extend(uleb(4)); // func index 4 (4 imports + 0th local = index 4)
+        export_body.extend(wasm_str(RUN_EXPORT));
+        export_body.push(0x00);
+        export_body.extend(uleb(5));
         // export "memory" → memory index 0
         export_body.extend(wasm_str("memory"));
         export_body.push(0x02); // export kind: memory
@@ -590,14 +718,20 @@ mod tests {
         let export_section = [vec![0x07], with_len(export_body)].concat();
 
         // ── Code section ────────────────────────────────────────────────────
-        // 1 function body: no locals, `i32.const 0; end`.
-        let fn_body: Vec<u8> = vec![
+        let abi_body: Vec<u8> = vec![
+            0x00, // local declaration count: 0
+            0x41,
+            abi_version as u8,
+            0x0b,
+        ];
+        let run_body: Vec<u8> = vec![
             0x00, // local declaration count: 0
             0x41, 0x00, // i32.const 0
             0x0b, // end
         ];
-        let mut code_body: Vec<u8> = uleb(1); // count of function bodies
-        code_body.extend(with_len(fn_body)); // each body is length-prefixed
+        let mut code_body: Vec<u8> = uleb(2); // count of function bodies
+        code_body.extend(with_len(abi_body));
+        code_body.extend(with_len(run_body));
         let code_section = [vec![0x0a], with_len(code_body)].concat();
 
         // ── Assemble ─────────────────────────────────────────────────────────
@@ -635,7 +769,8 @@ mod tests {
     /// CALLS a hostcall at runtime (the existing `echo_wasm` only
     /// imports them and returns 0, so it never reaches the gate). The
     /// import index space is: log=0, fuel_left=1, emit_event=2,
-    /// recall_top=3; the local `neoth_run` is index 4. `body_instrs` is
+    /// recall_top=3; `neoth_abi_version` is index 4 and `neoth_run` is index 5.
+    /// `body_instrs` is
     /// the code-section function body (locals-count byte + instructions
     /// + `0x0b end`). The rest of the module is byte-identical to
     /// `echo_wasm` so only the runtime behaviour differs.
@@ -675,10 +810,26 @@ mod tests {
 
         let mut import_body: Vec<u8> = uleb(4);
         for (module, name, type_idx) in &[
-            ("neoth", "log", 0u32),
-            ("neoth", "fuel_left", 1),
-            ("neoth", "emit_event", 2),
-            ("neoth", "recall_top", 3),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_LOG,
+                0u32,
+            ),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_FUEL_LEFT,
+                1,
+            ),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_EMIT_EVENT,
+                2,
+            ),
+            (
+                neoth_plugin_sdk::guest::IMPORT_MODULE,
+                neoth_plugin_sdk::guest::HOSTCALL_RECALL_TOP,
+                3,
+            ),
         ] {
             import_body.extend(wasm_str(module));
             import_body.extend(wasm_str(name));
@@ -687,23 +838,29 @@ mod tests {
         }
         let import_section = [vec![0x02], with_len(import_body)].concat();
 
-        let mut func_body: Vec<u8> = uleb(1);
-        func_body.extend(uleb(4)); // neoth_run uses type 4: ()->(i32)
+        let mut func_body: Vec<u8> = uleb(2);
+        func_body.extend(uleb(4)); // neoth_abi_version: ()->i32
+        func_body.extend(uleb(4)); // neoth_run: ()->i32
         let func_section = [vec![0x03], with_len(func_body)].concat();
 
         let mem_body: Vec<u8> = vec![0x01, 0x00, 0x01];
         let mem_section = [vec![0x05], with_len(mem_body)].concat();
 
-        let mut export_body: Vec<u8> = uleb(2);
-        export_body.extend(wasm_str("neoth_run"));
+        let mut export_body: Vec<u8> = uleb(3);
+        export_body.extend(wasm_str(ABI_VERSION_EXPORT));
         export_body.push(0x00);
         export_body.extend(uleb(4));
+        export_body.extend(wasm_str(RUN_EXPORT));
+        export_body.push(0x00);
+        export_body.extend(uleb(5));
         export_body.extend(wasm_str("memory"));
         export_body.push(0x02);
         export_body.extend(uleb(0));
         let export_section = [vec![0x07], with_len(export_body)].concat();
 
-        let mut code_body: Vec<u8> = uleb(1);
+        let abi_body = vec![0x00, 0x41, ABI_VERSION as u8, 0x0b];
+        let mut code_body: Vec<u8> = uleb(2);
+        code_body.extend(with_len(abi_body));
         code_body.extend(with_len(body_instrs));
         let code_section = [vec![0x0a], with_len(code_body)].concat();
 
@@ -885,13 +1042,19 @@ mod tests {
         let outcomes = vec![CompileOutcome::Compiled {
             plugin_id: "snoop".into(),
             module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
         }];
-        // grants empty → "snoop" resolves to None → emit_event (Write)
-        // is denied at the gate. Writer attached via with_runtime_handles
+        // Exact approval grants None → emit_event (Write) is denied at the gate.
+        // Writer attached via with_runtime_handles
         // so the 0xC7 audit frame lands.
-        let inv =
-            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new())
-                .with_runtime_handles(Some(writer), None);
+        let inv = CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            approvals_for(&["snoop"], RequestedPermission::None),
+        )
+        .expect("approved invoker")
+        .with_runtime_handles(Some(writer), None);
 
         // Invoke via the PRODUCTION trait path (not a direct store build).
         // The denial is in-band (return code 7, not a trap), so invoke
@@ -952,19 +1115,29 @@ mod tests {
         );
     }
 
-    /// GOLD-ADAPT-G-02 — minimal spin plugin: `neoth_run` loops forever, so
+    /// GOLD-ADAPT-G-02 — versioned guest whose `neoth_run` loops forever, so
     /// the wasmtime fuel budget must trap it (`Trap::OutOfFuel`).
-    /// `(module (func (export "neoth_run") (result i32) (loop (br 0)) unreachable))`
     fn spin_wasm() -> Vec<u8> {
+        calling_wasm(vec![
+            0x00, // no locals
+            0x03, 0x40, // loop(void)
+            0x0c, 0x00, // br 0
+            0x0b, // end loop
+            0x00, // unreachable result path
+            0x0b, // end function
+        ])
+    }
+
+    /// Pre-SDK legacy shape: exports `neoth_run` but no ABI version function.
+    fn legacy_run_only_wasm() -> Vec<u8> {
         vec![
             0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
             0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f, // type section: () -> i32
             0x03, 0x02, 0x01, 0x00, // function section: func 0 uses type 0
-            0x07, 0x0d, 0x01, 0x09, b'n', b'e', b'o', b't', b'h', b'_', b'r', b'u', b'n',
-            0x00, 0x00, // export "neoth_run" = func 0
-            0x0a, 0x0a, 0x01, 0x08, 0x00, // code section: 1 body, 8 bytes, 0 locals
-            0x03, 0x40, 0x0c, 0x00, 0x0b, // loop(void) { br 0 } end
-            0x00, 0x0b, // unreachable; end func
+            0x07, 0x0d, 0x01, 0x09, b'n', b'e', b'o', b't', b'h', b'_', b'r', b'u', b'n', 0x00,
+            0x00, // export "neoth_run" = func 0
+            0x0a, 0x06, 0x01, 0x04, 0x00, // code section: 1 body, 4 bytes, 0 locals
+            0x41, 0x00, 0x0b, // i32.const 0; end
         ]
     }
 
@@ -994,7 +1167,10 @@ mod tests {
 
         join.await.expect("writer join");
         let frames = count_event_frames(&seg, EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED);
-        assert_eq!(frames, 1, "exactly one 0xC5 frame for the fuel-exhausted run");
+        assert_eq!(
+            frames, 1,
+            "exactly one 0xC5 frame for the fuel-exhausted run"
+        );
     }
 
     /// UX-07b regression: the refactored `invoke_plugin` wrapper still runs a
@@ -1012,6 +1188,7 @@ mod tests {
             &linker,
             "echo",
             HostcallPermission::None,
+            PluginExecutionLimits::default(),
             None,
             None,
         );
@@ -1037,9 +1214,12 @@ mod tests {
 
     fn discovered(id: &str, bytes: Vec<u8>) -> DiscoveredPlugin {
         let content_hash = super::super::discovery::sha256_hex(&bytes);
+        let manifest = sample_manifest(id);
+        let manifest_hash = super::super::discovery::canonical_manifest_sha256(&manifest);
         DiscoveredPlugin {
             dir: PathBuf::from(format!("/tmp/{id}")),
-            manifest: sample_manifest(id),
+            manifest,
+            manifest_hash,
             wasm_bytes: bytes,
             content_hash,
             signature: None,
@@ -1056,6 +1236,7 @@ mod tests {
                     .compile_from_bytes(&minimal_wasm())
                     .unwrap(),
             ),
+            execution_limits: PluginExecutionLimits::default(),
         };
         assert_eq!(ok.plugin_id(), "good");
         assert!(ok.is_ok());
@@ -1079,6 +1260,28 @@ mod tests {
         assert_eq!(outcomes.len(), 1);
         assert!(outcomes[0].is_ok());
         assert_eq!(outcomes[0].plugin_id(), "alpha");
+    }
+
+    #[test]
+    fn compile_all_binds_manifest_execution_limits() {
+        let engine = NeothEngine::new().expect("engine");
+        let mut plugin = discovered("bounded", minimal_wasm());
+        plugin.manifest.fuel_budget_override = Some(42_000);
+        plugin.manifest.memory_limit_bytes = Some(8 * 1024 * 1024);
+        let report = DiscoveryReport {
+            loaded: vec![plugin],
+            rejected: vec![],
+        };
+
+        let outcomes = compile_all_discovered(&engine, &report);
+        let CompileOutcome::Compiled {
+            execution_limits, ..
+        } = &outcomes[0]
+        else {
+            panic!("validated plugin must compile");
+        };
+        assert_eq!(execution_limits.fuel_budget, 42_000);
+        assert_eq!(execution_limits.memory_limit_bytes, 8 * 1024 * 1024);
     }
 
     #[test]
@@ -1148,6 +1351,7 @@ mod tests {
                     .compile_from_bytes(&minimal_wasm())
                     .unwrap(),
             ),
+            execution_limits: PluginExecutionLimits::default(),
         };
         assert!(invocation_outcome_from_compile_failure(&ok).is_none());
     }
@@ -1170,6 +1374,7 @@ mod tests {
             &linker,
             "test-no-export",
             HostcallPermission::None,
+            PluginExecutionLimits::default(),
             None,
             None,
         );
@@ -1184,11 +1389,186 @@ mod tests {
     }
 
     #[test]
+    fn versioned_guest_abi_roundtrip_reaches_run() {
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine
+            .compile_from_bytes(&echo_wasm())
+            .expect("versioned guest must compile");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+            .expect("hostcalls linker must build");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "abi-v1",
+            HostcallPermission::None,
+            PluginExecutionLimits::default(),
+            None,
+            None,
+        );
+        assert_eq!(outcome.stage, InvocationStage::Run);
+        assert!(
+            outcome.error.is_none(),
+            "roundtrip failed: {:?}",
+            outcome.error
+        );
+    }
+
+    #[test]
+    fn invoke_plugin_rejects_missing_guest_abi_version() {
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine
+            .compile_from_bytes(&legacy_run_only_wasm())
+            .expect("legacy guest must still compile");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+            .expect("hostcalls linker must build");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "legacy-abi",
+            HostcallPermission::None,
+            PluginExecutionLimits::default(),
+            None,
+            None,
+        );
+        assert_eq!(outcome.stage, InvocationStage::AbiVersion);
+        let error = outcome
+            .error
+            .expect("missing ABI export must refuse invoke");
+        assert!(
+            error.contains(ABI_VERSION_EXPORT),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn invoke_plugin_rejects_guest_abi_version_mismatch() {
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine
+            .compile_from_bytes(&echo_wasm_with_version(ABI_VERSION + 1))
+            .expect("mismatched guest must still compile");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+            .expect("hostcalls linker must build");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "future-abi",
+            HostcallPermission::None,
+            PluginExecutionLimits::default(),
+            None,
+            None,
+        );
+        assert_eq!(outcome.stage, InvocationStage::AbiVersion);
+        let error = outcome.error.expect("mismatch must explain refusal");
+        assert!(
+            error.contains("version mismatch"),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("plugin=2"), "unexpected error: {error}");
+        assert!(error.contains("host=1"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn invoke_plugin_treats_nonzero_guest_status_as_failure() {
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine
+            .compile_from_bytes(&calling_wasm(vec![0x00, 0x41, 0x01, 0x0b]))
+            .expect("status guest must compile");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+            .expect("hostcalls linker must build");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "failed-entry",
+            HostcallPermission::None,
+            PluginExecutionLimits::default(),
+            None,
+            None,
+        );
+        assert_eq!(outcome.stage, InvocationStage::Run);
+        assert_eq!(
+            outcome.error.as_deref(),
+            Some("neoth_run returned non-zero status 1")
+        );
+    }
+
+    #[test]
+    fn invoke_plugin_applies_manifest_fuel_budget() {
+        let engine = NeothEngine::new().expect("engine");
+        // neoth_run returns the remaining fuel as i32. A correctly wired
+        // 100-unit budget must never look like the one-million-unit default.
+        let module = engine
+            .compile_from_bytes(&calling_wasm(vec![0x00, 0x10, 0x01, 0xa7, 0x0b]))
+            .expect("fuel probe guest must compile");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+            .expect("hostcalls linker must build");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "fuel-probe",
+            HostcallPermission::None,
+            PluginExecutionLimits {
+                fuel_budget: 100,
+                memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
+            },
+            None,
+            None,
+        );
+        assert_eq!(outcome.stage, InvocationStage::Run);
+        let error = outcome.error.expect("remaining fuel is a non-zero status");
+        let remaining: i32 = error
+            .rsplit_once(' ')
+            .expect("status suffix")
+            .1
+            .parse()
+            .expect("numeric status");
+        assert!(
+            (1..=100).contains(&remaining),
+            "custom fuel was not applied: {error}"
+        );
+    }
+
+    #[test]
+    fn invoke_plugin_applies_manifest_memory_limit() {
+        let engine = NeothEngine::new().expect("engine");
+        // The module starts with one 64-KiB page and returns memory.grow(1).
+        // A one-page cap makes the grow fail with Wasm's -1 sentinel.
+        let module = engine
+            .compile_from_bytes(&calling_wasm(vec![0x00, 0x41, 0x01, 0x40, 0x00, 0x0b]))
+            .expect("memory probe guest must compile");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+            .expect("hostcalls linker must build");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "memory-probe",
+            HostcallPermission::None,
+            PluginExecutionLimits {
+                fuel_budget: DEFAULT_FUEL_BUDGET,
+                memory_limit_bytes: 64 * 1024,
+            },
+            None,
+            None,
+        );
+        assert_eq!(outcome.stage, InvocationStage::Run);
+        assert_eq!(
+            outcome.error.as_deref(),
+            Some("neoth_run returned non-zero status -1")
+        );
+    }
+
+    #[test]
     fn compiled_invoker_is_empty_when_no_compiled_outcomes() {
         let engine = Arc::new(NeothEngine::new().expect("engine"));
         let linker =
             Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
-        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &[], linker, HashMap::new());
+        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &[], linker, HashMap::new())
+            .expect("empty invoker");
         assert!(inv.is_empty());
         assert_eq!(inv.len(), 0);
     }
@@ -1207,16 +1587,47 @@ mod tests {
             CompileOutcome::Compiled {
                 plugin_id: "alpha".into(),
                 module: Arc::new(module),
+                execution_limits: PluginExecutionLimits::default(),
             },
             CompileOutcome::Failed {
                 plugin_id: "broken".into(),
                 error: "non-wasm bytes".into(),
             },
         ];
-        let inv =
-            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
+        let inv = CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            approvals_for(&["alpha"], RequestedPermission::None),
+        )
+        .expect("approved invoker");
         assert!(!inv.is_empty());
         assert_eq!(inv.len(), 1);
+    }
+
+    #[test]
+    fn compiled_invoker_refuses_compiled_module_without_approval_binding() {
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
+        let module = engine
+            .compile_from_bytes(&echo_wasm())
+            .expect("guest must compile");
+        let outcomes = vec![CompileOutcome::Compiled {
+            plugin_id: "unapproved".into(),
+            module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
+        }];
+        let error = match CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            HashMap::new(),
+        ) {
+            Ok(_) => panic!("unapproved code entered the invoker"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("no exact operator approval"));
     }
 
     #[test]
@@ -1235,9 +1646,15 @@ mod tests {
         let outcomes = vec![CompileOutcome::Compiled {
             plugin_id: "alpha".into(),
             module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
         }];
-        let inv =
-            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
+        let inv = CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            approvals_for(&["alpha"], RequestedPermission::None),
+        )
+        .expect("approved invoker");
         let err = inv.invoke("ghost").unwrap_err().to_string();
         assert!(err.contains("ghost"), "error must name unknown id: {err}");
         assert!(
@@ -1262,9 +1679,15 @@ mod tests {
         let outcomes = vec![CompileOutcome::Compiled {
             plugin_id: "alpha".into(),
             module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
         }];
-        let inv =
-            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
+        let inv = CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            approvals_for(&["alpha"], RequestedPermission::None),
+        )
+        .expect("approved invoker");
         let err = inv.invoke("alpha").unwrap_err().to_string();
         assert!(
             err.contains("neoth_run"),
@@ -1283,7 +1706,19 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let yaml_path = dir.path().join("freedom.yaml");
-        let initial = crate::config::FreedomConfig::default();
+        let approval = crate::wasm_plugin::discovery::PluginApproval {
+            approved_permission: crate::wasm_plugin::manifest::RequestedPermission::None,
+            manifest_sha256: "manifest-at-bootstrap".to_string(),
+            wasm_sha256: "wasm-at-bootstrap".to_string(),
+        };
+        let mut initial = crate::config::FreedomConfig::default();
+        initial.plugins.wasm.activations.insert(
+            "alpha".to_string(),
+            crate::wasm_plugin::discovery::PluginActivationRecord {
+                state: crate::wasm_plugin::discovery::PluginActivation::Active,
+                approval: Some(approval.clone()),
+            },
+        );
         let ctrl = Arc::new(ReloadController::new(initial.clone(), yaml_path.clone()));
 
         let engine = Arc::new(NeothEngine::new().expect("engine"));
@@ -1295,9 +1730,13 @@ mod tests {
         let outcomes = vec![CompileOutcome::Compiled {
             plugin_id: "alpha".into(),
             module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
         }];
+        let mut approvals = HashMap::new();
+        approvals.insert("alpha".to_string(), approval);
         let inv =
-            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new())
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, approvals)
+                .expect("approved invoker")
                 .with_reload_controller(ctrl.clone());
 
         // Pre-swap: the gate passes (revoked_ids empty) and the invoke
@@ -1323,6 +1762,76 @@ mod tests {
         assert!(
             err.contains("revoked"),
             "post-swap invoke must hit the live revocation gate: {err}"
+        );
+    }
+
+    #[test]
+    fn compiled_invoker_refuses_changed_approval_after_config_swap() {
+        use crate::config::reload::{ReloadController, ReloadResult};
+        use crate::hooks::dispatcher::PluginInvoker;
+
+        let dir = tempfile::tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let approval = crate::wasm_plugin::discovery::PluginApproval {
+            approved_permission: crate::wasm_plugin::manifest::RequestedPermission::None,
+            manifest_sha256: "manifest-at-bootstrap".to_string(),
+            wasm_sha256: "wasm-at-bootstrap".to_string(),
+        };
+        let mut initial = crate::config::FreedomConfig::default();
+        initial.plugins.wasm.activations.insert(
+            "alpha".to_string(),
+            crate::wasm_plugin::discovery::PluginActivationRecord {
+                state: crate::wasm_plugin::discovery::PluginActivation::Active,
+                approval: Some(approval.clone()),
+            },
+        );
+        let ctrl = Arc::new(ReloadController::new(initial.clone(), yaml_path.clone()));
+
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
+        let module = engine
+            .compile_from_bytes(&minimal_wasm())
+            .expect("minimal must compile");
+        let outcomes = vec![CompileOutcome::Compiled {
+            plugin_id: "alpha".into(),
+            module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
+        }];
+        let mut approvals = HashMap::new();
+        approvals.insert("alpha".to_string(), approval);
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, approvals)
+                .expect("approved invoker")
+                .with_reload_controller(ctrl.clone());
+
+        let err = inv.invoke("alpha").unwrap_err().to_string();
+        assert!(
+            err.contains("neoth_run"),
+            "unchanged approval must reach the module: {err}"
+        );
+
+        let mut escalated = initial;
+        escalated
+            .plugins
+            .wasm
+            .activations
+            .get_mut("alpha")
+            .unwrap()
+            .approval
+            .as_mut()
+            .unwrap()
+            .approved_permission = crate::wasm_plugin::manifest::RequestedPermission::Write;
+        std::fs::write(&yaml_path, serde_yaml::to_string(&escalated).unwrap()).unwrap();
+        assert!(matches!(
+            ctrl.try_reload().expect("reload must succeed"),
+            ReloadResult::Reloaded { .. }
+        ));
+
+        let err = inv.invoke("alpha").unwrap_err().to_string();
+        assert!(
+            err.contains("approval changed"),
+            "post-swap invoke must reject the changed approval: {err}"
         );
     }
 
@@ -1359,7 +1868,7 @@ mod tests {
     #[test]
     fn echo_plugin_round_trip_reaches_run_stage() {
         // Full path: compile → linker → instantiate → call neoth_run.
-        // The echo plugin imports all 4 Phase-1 hostcalls and exports
+        // The echo plugin imports all four ABI v1 hostcalls and exports
         // neoth_run. The outcome must be InvocationStage::Run without
         // any error (return code 0 is not an error by the ABI contract).
         let engine = NeothEngine::new().expect("engine");
@@ -1374,6 +1883,7 @@ mod tests {
             &linker,
             "echo",
             HostcallPermission::None,
+            PluginExecutionLimits::default(),
             None,
             None,
         );
@@ -1411,6 +1921,7 @@ mod tests {
             &linker,
             "recall-summariser",
             HostcallPermission::None,
+            PluginExecutionLimits::default(),
             None,
             None,
         );
@@ -1445,9 +1956,15 @@ mod tests {
         let outcomes = vec![CompileOutcome::Compiled {
             plugin_id: "echo".into(),
             module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
         }];
-        let inv =
-            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
+        let inv = CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            approvals_for(&["echo"], RequestedPermission::None),
+        )
+        .expect("approved invoker");
         let result = inv.invoke("echo");
         assert!(
             result.is_ok(),
@@ -1469,9 +1986,15 @@ mod tests {
         let outcomes = vec![CompileOutcome::Compiled {
             plugin_id: "recall-summariser".into(),
             module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
         }];
-        let inv =
-            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
+        let inv = CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            approvals_for(&["recall-summariser"], RequestedPermission::None),
+        )
+        .expect("approved invoker");
         let result = inv.invoke("recall-summariser");
         assert!(
             result.is_ok(),

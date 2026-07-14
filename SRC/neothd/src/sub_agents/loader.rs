@@ -19,29 +19,40 @@ pub async fn load_all(dir: &Path) -> Result<Vec<SubAgent>> {
         by_name.insert(a.name.clone(), a);
     }
 
-    if dir.is_dir() {
-        let mut rd = tokio::fs::read_dir(dir)
-            .await
-            .with_context(|| format!("read agents dir {}", dir.display()))?;
-        while let Some(entry) = rd.next_entry().await? {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
-                continue;
-            }
-            match parse_file(&path).await {
-                Ok(a) => {
-                    by_name.insert(a.name.clone(), a);
-                }
-                Err(e) => warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "skipping bad sub-agent file"
-                ),
-            }
-        }
+    for agent in load_operator_definitions(dir).await? {
+        by_name.insert(agent.name.clone(), agent);
     }
 
     let mut out: Vec<SubAgent> = by_name.into_values().filter(|a| a.enabled).collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Load only operator TOML definitions, retaining disabled entries. The
+/// operator-facing CLI uses this to report provenance accurately; `load_all`
+/// then applies the override + enabled filter for dispatch.
+pub async fn load_operator_definitions(dir: &Path) -> Result<Vec<SubAgent>> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut rd = tokio::fs::read_dir(dir)
+        .await
+        .with_context(|| format!("read agents dir {}", dir.display()))?;
+    while let Some(entry) = rd.next_entry().await? {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+            continue;
+        }
+        match parse_file(&path).await {
+            Ok(agent) => out.push(agent),
+            Err(error) => warn!(
+                path = %path.display(),
+                error = %error,
+                "skipping bad sub-agent file"
+            ),
+        }
+    }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }

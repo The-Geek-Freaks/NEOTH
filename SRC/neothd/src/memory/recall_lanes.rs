@@ -58,6 +58,12 @@ pub const SEMANTIC_WEIGHT: f64 = 1.0;
 /// importance/recency without a direct text-match signal.
 pub const EPISODIC_WEIGHT: f64 = 0.75;
 
+/// GRAPH-03 — additive score applied to members of the selected Louvain
+/// community. This is intentionally larger than a single RRF contribution:
+/// community membership is the Stage-3 signal that may promote a related
+/// memory which did not text-match the query itself.
+pub const COMMUNITY_SCORE_BOOST: f64 = 0.10;
+
 /// Which lanes a query's [`RecallTier`] budget permits. The Semantic lane always
 /// runs (an explicit `neoth recall <query>` should never come back empty); the
 /// Episodic lane is shed only for the Skip tier.
@@ -96,6 +102,15 @@ pub struct LaneResult {
     pub hits: Vec<EpisodeHit>,
 }
 
+/// One fused recall row together with the score that produced its rank.
+/// Kept crate-private so Stage-3 can add its documented community score
+/// without exposing an unstable scoring representation as public API.
+pub(crate) struct ScoredHit {
+    pub(crate) hit: EpisodeHit,
+    pub(crate) score: f64,
+    original_rank: usize,
+}
+
 /// Reciprocal-rank-fuse the lanes into a single ranked, deduped list.
 ///
 /// Dedup key is `text_hash`: identical content surfacing from more than one lane
@@ -108,6 +123,16 @@ pub struct LaneResult {
 /// Ties in fused score keep first-seen order (a stable sort over a first-seen
 /// build order), and the result is truncated to `limit`. Pure: no DB, no async.
 pub fn fuse_lanes(lanes: &[LaneResult], limit: usize) -> Vec<EpisodeHit> {
+    fuse_lanes_scored(lanes, limit)
+        .into_iter()
+        .map(|scored| scored.hit)
+        .collect()
+}
+
+/// Scored twin of [`fuse_lanes`], used by GRAPH-03's Stage-3 community pass.
+/// The public wrapper deliberately continues to return the historical
+/// `Vec<EpisodeHit>` API.
+pub(crate) fn fuse_lanes_scored(lanes: &[LaneResult], limit: usize) -> Vec<ScoredHit> {
     // Preserve first-seen order so the final stable sort breaks score ties by
     // lane priority + within-lane rank rather than HashMap iteration order.
     let mut order: Vec<String> = Vec::new();
@@ -130,40 +155,135 @@ pub fn fuse_lanes(lanes: &[LaneResult], limit: usize) -> Vec<EpisodeHit> {
     // Stable sort: equal fused scores stay in first-seen (lane-priority) order.
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(limit);
-    scored.into_iter().map(|(hit, _)| hit).collect()
+    scored
+        .into_iter()
+        .enumerate()
+        .map(|(original_rank, (hit, score))| ScoredHit {
+            hit,
+            score,
+            original_rank,
+        })
+        .collect()
+}
+
+/// Convert an already-ranked recall result into the same scored representation
+/// used by Stage-3. This is the production seam for routed Chat/Channel recall,
+/// whose upstream rank is importance/recency rather than RRF. The monotonically
+/// decreasing baseline preserves that order until the explicit community boost
+/// is applied.
+pub(crate) fn score_ranked_hits(hits: Vec<EpisodeHit>) -> Vec<ScoredHit> {
+    hits.into_iter()
+        .enumerate()
+        .map(|(original_rank, hit)| ScoredHit {
+            hit,
+            score: 1.0 / (RRF_K + original_rank as f64 + 1.0),
+            original_rank,
+        })
+        .collect()
 }
 
 /// GOLD-ADAPT-GRAPH-03 — community-based re-ranking pass (Stage-3).
 ///
-/// Given a map of `event_id → community_id` loaded by the caller from
-/// `idx_memory_communities`, floats hits that share the plurality community to
-/// the front via a stable sort. Hits with no community entry keep their RRF
-/// position. Returns the input unchanged when no community has ≥ 2
-/// representatives among the hits (prevents noise from singletons).
+/// Compatibility wrapper for callers which do not retain RRF scores. Given a
+/// map of `event_id → community_id`, adds [`COMMUNITY_SCORE_BOOST`] to hits
+/// in the plurality community. Returns the input unchanged when no community
+/// has ≥ 2 representatives (prevents noise from singletons).
 ///
 /// Pure: no DB, no async. The caller loads the community map before calling.
 pub fn boost_by_community(
-    mut hits: Vec<EpisodeHit>,
+    hits: Vec<EpisodeHit>,
     community_map: &HashMap<i64, i64>,
 ) -> Vec<EpisodeHit> {
+    let limit = hits.len();
+    let scored = score_ranked_hits(hits);
+    expand_and_boost_by_community(scored, Vec::new(), community_map, limit)
+}
+
+/// Pick the plurality community represented by at least two fused hits.
+/// Equal-size communities deterministically prefer the smallest id.
+pub(crate) fn plurality_community_id(
+    hits: &[ScoredHit],
+    community_map: &HashMap<i64, i64>,
+) -> Option<i64> {
     let mut counts: HashMap<i64, usize> = HashMap::new();
-    for h in &hits {
-        if let Some(&cid) = community_map.get(&h.event_id) {
+    for scored in hits {
+        if let Some(&cid) = community_map.get(&scored.hit.event_id) {
             *counts.entry(cid).or_insert(0) += 1;
         }
     }
-    // Only boost when the plurality community has ≥ 2 members among the hits.
-    let Some(plurality_cid) = counts
+    counts
         .iter()
         .filter(|(_, n)| **n >= 2)
         .min_by_key(|(cid, n)| (std::cmp::Reverse(**n), **cid))
         .map(|(cid, _)| *cid)
-    else {
-        return hits;
+}
+
+/// GRAPH-03 Stage-3: expand the selected community with DB-loaded members and
+/// add [`COMMUNITY_SCORE_BOOST`] to every member's score. Expansion candidates
+/// start at score zero, so they enter only through the explicit community
+/// signal. Event-id/text-hash dedup and total ordering make the result stable
+/// across processes and SQLite row orders.
+pub(crate) fn expand_and_boost_by_community(
+    mut hits: Vec<ScoredHit>,
+    mut community_candidates: Vec<EpisodeHit>,
+    community_map: &HashMap<i64, i64>,
+    limit: usize,
+) -> Vec<EpisodeHit> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let Some(plurality_cid) = plurality_community_id(&hits, community_map) else {
+        return hits
+            .into_iter()
+            .take(limit)
+            .map(|scored| scored.hit)
+            .collect();
     };
-    // Stable sort: plurality-community hits first; RRF order within each group.
-    hits.sort_by_key(|h| u8::from(community_map.get(&h.event_id) != Some(&plurality_cid)));
-    hits
+
+    let mut seen_ids: std::collections::HashSet<i64> =
+        hits.iter().map(|scored| scored.hit.event_id).collect();
+    let mut seen_hashes: std::collections::HashSet<String> = hits
+        .iter()
+        .map(|scored| scored.hit.text_hash.clone())
+        .collect();
+
+    for scored in &mut hits {
+        if community_map.get(&scored.hit.event_id) == Some(&plurality_cid) {
+            scored.score += COMMUNITY_SCORE_BOOST;
+        }
+    }
+
+    community_candidates.sort_by(|a, b| {
+        a.event_id
+            .cmp(&b.event_id)
+            .then(a.text_hash.cmp(&b.text_hash))
+            .then(a.tier.cmp(&b.tier))
+    });
+    for candidate in community_candidates {
+        if community_map.get(&candidate.event_id) != Some(&plurality_cid)
+            || !seen_ids.insert(candidate.event_id)
+            || !seen_hashes.insert(candidate.text_hash.clone())
+        {
+            continue;
+        }
+        let original_rank = hits.len();
+        hits.push(ScoredHit {
+            hit: candidate,
+            score: COMMUNITY_SCORE_BOOST,
+            original_rank,
+        });
+    }
+
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.original_rank.cmp(&b.original_rank))
+            .then(a.hit.event_id.cmp(&b.hit.event_id))
+            .then(a.hit.text_hash.cmp(&b.hit.text_hash))
+    });
+    hits.truncate(limit);
+    hits.into_iter().map(|scored| scored.hit).collect()
 }
 
 #[cfg(test)]
@@ -382,6 +502,78 @@ mod tests {
                 "community-20-b",
             ],
             "equal-size pluralities must deterministically prefer the smallest community id"
+        );
+    }
+
+    #[test]
+    fn community_stage_expands_missing_members_and_applies_point_one_boost() {
+        let lane = LaneResult {
+            weight: SEMANTIC_WEIGHT,
+            hits: vec![
+                hit_with_id("community-a", 1),
+                hit_with_id("unrelated", 2),
+                hit_with_id("community-b", 3),
+            ],
+        };
+        let community_map = HashMap::from([(1, 10), (3, 10), (4, 10), (5, 20)]);
+        let candidates = vec![
+            hit_with_id("missing-community-member", 4),
+            hit_with_id("other-community-member", 5),
+        ];
+
+        let result = expand_and_boost_by_community(
+            fuse_lanes_scored(&[lane], 10),
+            candidates,
+            &community_map,
+            10,
+        );
+        let order: Vec<&str> = result.iter().map(|h| h.text_hash.as_str()).collect();
+
+        assert_eq!(
+            order,
+            vec![
+                "community-a",
+                "community-b",
+                "missing-community-member",
+                "unrelated",
+            ],
+            "same-community members receive +0.1, missing members expand recall, and other communities stay out"
+        );
+    }
+
+    #[test]
+    fn community_expansion_deduplicates_and_obeys_limit() {
+        let lane = LaneResult {
+            weight: SEMANTIC_WEIGHT,
+            hits: vec![
+                hit_with_id("community-a", 1),
+                hit_with_id("unrelated", 2),
+                hit_with_id("community-b", 3),
+            ],
+        };
+        let community_map = HashMap::from([(1, 10), (3, 10), (4, 10), (5, 10), (99, 10)]);
+        let candidates = vec![
+            hit_with_id("community-a", 99),
+            hit_with_id("missing-z", 5),
+            hit_with_id("missing-a", 4),
+        ];
+
+        let result = expand_and_boost_by_community(
+            fuse_lanes_scored(&[lane], 10),
+            candidates,
+            &community_map,
+            4,
+        );
+        let ids: Vec<i64> = result.iter().map(|h| h.event_id).collect();
+
+        assert_eq!(ids, vec![1, 3, 4, 5]);
+        assert_eq!(
+            result
+                .iter()
+                .filter(|h| h.text_hash == "community-a")
+                .count(),
+            1,
+            "duplicate content must not be reintroduced by community expansion"
         );
     }
 }

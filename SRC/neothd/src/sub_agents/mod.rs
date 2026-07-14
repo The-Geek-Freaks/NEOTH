@@ -22,24 +22,21 @@
 //! A sub-agent activates when:
 //!   - the operator writes `/agent <name> <message>` (slash dispatch)
 //!   - a skill manifest references it via `delegate_to: <name>`
-//!   - the daemon programmatically calls `sub_agents::dispatch_to(name, ...)`
+//!   - `neoth agents run --agent <name> ...` executes up to eight independent
+//!     provider-only tasks through the bounded parallel dispatcher + typed QA.
 //!
-//! For v0.1 only the first path is wired; skill delegation lands when
-//! the Skills Stage-2 router consumes the
-//! [`crate::providers::embed::EmbedProvider`] surface (shipped
-//! Day-14b Phase 1b — Session 21, 2026-05-23) for cosine re-rank.
-//! Phase 2 of the embed-wire plan threads pre-computed message +
-//! skill embeddings into `skills::router::cosine_rerank`, after
-//! which `delegate_to:` can resolve to a sub-agent via the matched
-//! skill instead of bare keyword fallback.
+//! Skill `delegate_to:` is also consumed by the chat preflight. The fan-out CLI
+//! deliberately exposes no host tools; `/agent` remains the tool-capable chat
+//! path and enforces each agent allow/deny list in the MCP dispatch loop.
 
 pub mod builtins;
 pub mod loader;
 pub mod parallel;
 pub mod review;
+pub mod runtime;
 pub mod schema;
 
-pub use loader::load_all;
+pub use loader::{load_all, load_operator_definitions};
 pub use schema::{AgentOmitFlags, SubAgent};
 
 /// Resolved dispatch — the caller swaps these in for the per-turn system

@@ -1,8 +1,8 @@
 //! `neoth serve` — daemon entry. Reads freedom.yaml, opens WAL, awaits shutdown.
 //!
 //! D-1..D-4 acceptance:
-//!   - reads ~/.neoth/freedom.yaml (D-2)
-//!   - spawns the WAL writer task on ~/.neoth/wal/000001.wal (D-3)
+//!   - reads the selected freedom.yaml (`~/.neoth` by default) (D-2)
+//!   - owns WAL/state below that config file's parent directory (D-3)
 //!   - emits a BOOT event (event_type 0x10) on startup
 //!   - blocks until SIGTERM / Ctrl+C, then drains and exits 0 (D-4)
 //!
@@ -49,6 +49,18 @@ const START_STAGGER_PERMITS: usize = 4;
 /// unnecessarily.  500 ms covers the common cases without notable boot delay.
 const CRON_FIRST_TICK_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// A reload must rebuild the email-ingest ticker when its cadence changes.
+/// Enabling a previously dormant supervisor also resets it so the first poll
+/// happens immediately instead of waiting for the old/default interval.
+fn email_ingest_schedule_change(
+    was_enabled: bool,
+    current_interval: std::time::Duration,
+    live: &crate::config::EmailIngestCronConfig,
+) -> Option<std::time::Duration> {
+    let live_interval = live.interval_duration();
+    (live_interval != current_interval || (!was_enabled && live.enabled)).then_some(live_interval)
+}
+
 // GOLD-ARCH-01: the channel-side inbound pipeline now lives in `serve_pipeline`.
 
 #[derive(Args, Debug, Clone)]
@@ -74,19 +86,69 @@ pub struct ServeArgs {
 }
 
 pub async fn run_serve(args: ServeArgs) -> Result<()> {
+    // Derive the instance home before every startup guard. A custom --config
+    // owns its PID, clock floor, isolation boundary, WAL, DB, and sidecars;
+    // process-global defaults must never leak into that instance.
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(FreedomConfig::default_path);
+    let neoth_home = config_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
     // ── 0/0a/0b. Pre-config startup guards (GOLD-ARCH-01: relocated to
     // serve_tasks). Home-dir isolation (BS-9) + clock-rollback guard (BS-5) +
     // single-instance PID lock (BS-12). `--one-shot` skips isolation + PID.
     // The PidGuard is bound HERE (named `_pid_guard`, not bare `_`) for the
     // daemon lifetime — its Drop releases the lock at run_serve fn-end.
-    let _pid_guard =
-        crate::cli::serve_tasks::run_preflight_guards(args.one_shot, args.allow_clock_rollback)?;
+    let _pid_guard = crate::cli::serve_tasks::run_preflight_guards(
+        &neoth_home,
+        args.one_shot,
+        args.allow_clock_rollback,
+    )?;
 
     // ── 1. Load config ──────────────────────────────────────────────────────
-    let config = match &args.config {
-        Some(p) => FreedomConfig::load_from_path(p)?,
-        None => FreedomConfig::load_from_default_path()?,
-    };
+    let config = FreedomConfig::load_from_path(&config_path)?;
+    let credentials_path = neoth_home.join("credentials.yaml");
+    // Load the complete secret contract before any runtime service is primed.
+    // This keeps custom --config homes and the OS-keychain backend aligned with
+    // the exact credentials later passed to channel and OMI workers.
+    let creds = crate::config::credentials::Credentials::load_effective(
+        &credentials_path,
+        config.secrets_backend,
+    )
+    .with_context(|| {
+        format!(
+            "credentials at {} cannot be loaded; repair the file/keychain before starting",
+            credentials_path.display()
+        )
+    })?;
+    #[cfg(feature = "cluster")]
+    if config.cluster.enabled
+        && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_none()
+    {
+        anyhow::bail!(
+            "cluster.enabled is true, but the identity is incomplete; set both cluster.name in {} and cluster_passphrase in {}",
+            config_path.display(),
+            credentials_path.display()
+        );
+    }
+    // Hooks are operator policy. Validate and retain one known-good snapshot
+    // before any provider, channel, cron, listener, or plugin task is started.
+    // A malformed/unreadable configured hook must not degrade startup into an
+    // empty policy set. A missing `hooks/` directory remains valid.
+    let hook_dir = neoth_home.join("hooks");
+    let startup_hooks = crate::hooks::load_all_strict(&hook_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "operator hooks at {} are invalid; daemon startup refused",
+                hook_dir.display()
+            )
+        })?;
     info!(
         operator = config.operator_id.as_deref().unwrap_or("(unset)"),
         provider = ?config.provider_kind,
@@ -99,16 +161,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // The secondary credential probe inside check_onboarding_complete handles old
     // freedom.yaml files that pre-date the `onboarding_complete` flag.
     if !args.one_shot {
-        crate::cli::serve_tasks::check_onboarding_complete(&config)?;
+        crate::cli::serve_tasks::check_onboarding_complete(&config, &creds)?;
     }
-
-    // GOLD-ARCH-01: post-config runtime-service priming relocated to serve_tasks
-    // (OMI SC-14 hard rule + V03-08/A-2 consent gate + SkillRegistry watcher +
-    // GOLD-WIRE-10 domain-event bus). The SkillRegistry watcher handle is bound
-    // HERE (named `_skill_watcher`, not bare `_`) for the daemon lifetime.
-    // NOTE: the wasm plugin invoker is bootstrapped LATER (step 3c, after the WAL
-    // writer exists) so a denied hostcall can emit its 0xC7 audit frame.
-    let _skill_watcher = crate::cli::serve_tasks::prime_runtime_services(&config).await?;
 
     // ── 2/2b/3/3b/BS-4. WAL setup (GOLD-ARCH-01: relocated to
     // serve_tasks::prepare_wal — dir prep + ADV-01 .cpt recovery scan + writer
@@ -119,7 +173,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         segment_path,
         writer,
         mut writer_join,
-    } = crate::cli::serve_tasks::prepare_wal(args.wal_segment.clone())?;
+    } = crate::cli::serve_tasks::prepare_wal(&neoth_home, args.wal_segment.clone())?;
 
     // ── 3b'. Hot-reload controller (construction only) ─────────────────────
     // Built HERE (before the plugin bootstrap) so the compiled plugin
@@ -128,10 +182,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // sentinel one-shot + the polling task stay in step 5b below.
     let reload_controller = std::sync::Arc::new(crate::config::reload::ReloadController::new(
         config.clone(),
-        match &args.config {
-            Some(p) => p.clone(),
-            None => FreedomConfig::default_path(),
-        },
+        config_path.clone(),
     ));
 
     // ── 3c. Plugin invoker bootstrap (SC-04) ───────────────────────────────
@@ -145,7 +196,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     {
         if config.plugins.wasm.enabled {
             crate::cli::serve_tasks::bootstrap_plugin_invoker(
-                &FreedomConfig::default_neoth_home(),
+                &neoth_home,
                 writer.clone(),
                 reload_controller.clone(),
             );
@@ -155,6 +206,70 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             );
         }
     }
+
+    // Resolve OnSessionStart after the optional plugin invoker exists, but
+    // before any runtime service is primed. A Block is a real startup veto,
+    // not a warning emitted after channels and cron have already started. The
+    // decision is durably audited before it takes effect.
+    let startup_hook_outcome = crate::hooks::run_stage(
+        crate::hooks::HookStage::OnSessionStart,
+        "session-start",
+        &startup_hooks,
+    )
+    .context("evaluate on_session_start hooks before daemon side effects")?;
+    match startup_hook_outcome {
+        crate::hooks::StageOutcome::Continue { hits, .. } => {
+            for name in hits {
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "name": &name,
+                    "stage": "on_session_start",
+                    "ts_unix": crate::time::now_unix_secs(),
+                }))
+                .context("serialize OnSessionStart HOOK_FIRED")?;
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                    &payload,
+                )
+                .build();
+                writer
+                    .append(header, payload)
+                    .await
+                    .with_context(|| format!("append OnSessionStart HOOK_FIRED for `{name}`"))?;
+                info!(hook = %name, "on_session_start hook fired");
+            }
+        }
+        crate::hooks::StageOutcome::Block { name, reason } => {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "name": &name,
+                "stage": "on_session_start",
+                "reason": &reason,
+                "ts_unix": crate::time::now_unix_secs(),
+            }))
+            .context("serialize OnSessionStart HOOK_BLOCKED")?;
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                &payload,
+            )
+            .build();
+            writer
+                .append(header, payload)
+                .await
+                .with_context(|| format!("append OnSessionStart HOOK_BLOCKED for `{name}`"))?;
+            drop(writer);
+            if let Err(join_error) = writer_join.await {
+                warn!(
+                    error = %join_error,
+                    "WAL writer join failed while honoring OnSessionStart Block"
+                );
+            }
+            anyhow::bail!("on_session_start hook `{name}` blocked daemon startup: {reason}");
+        }
+    }
+
+    // Runtime-service priming follows the validated startup-hook boundary.
+    // The SkillRegistry watcher handle remains bound for the daemon lifetime.
+    let _skill_watcher =
+        crate::cli::serve_tasks::prime_runtime_services(&config, &creds, &neoth_home).await?;
 
     // E-2 Phase 4 (Session 14 Pick #23) — log a depth-cost warning at
     // boot when the operator's freedom.yaml has
@@ -185,26 +300,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // disk (one small write) — captures the "last alive moment" so the
     // next start can detect a rollback even if we crash mid-run.
     let now_ns = crate::time::now_unix_ns();
-    // Pick #35 (Session 14, silent-failure audit-fix #4): clock-floor
-    // is the anti-rollback mechanism that protects WAL replay ordering
-    // on the next daemon start. Prior `let _ = ...` swallowed write
-    // failures silently — operator would never know the floor wasn't
-    // persisted, and a subsequent power loss could let replayed events
-    // from before the current epoch slip through undetected. Surface
-    // the failure at warn level so it shows up in journald / event
-    // log, while still letting the daemon proceed (the in-memory
-    // clock is correct for the current run).
-    if let Err(e) = crate::daemon::clock_floor::persist_floor(
-        &crate::daemon::clock_floor::default_floor_path(),
-        now_ns,
-    ) {
-        warn!(
-            error = %e,
-            now_ns,
-            "persist clock_floor failed at startup — next start cannot detect a \
-             pre-this-run rollback; check disk permissions on ~/.neoth/clock.floor",
-        );
-    }
+    // The floor is security-bearing persistent state: a daemon that cannot
+    // update it must not continue writing an audit chain whose next startup
+    // cannot detect rollback. The selected config's parent is authoritative.
+    let clock_floor_path = neoth_home.join("clock.floor");
+    crate::daemon::clock_floor::persist_floor(&clock_floor_path, now_ns).with_context(|| {
+        format!(
+            "persist instance clock floor at {}",
+            clock_floor_path.display()
+        )
+    })?;
 
     // GOLD-ADAPT-OH-03 audit frame — best-effort, non-blocking. Emitted after
     // the BOOT frame so the WAL writer is live; the gate itself fires before WAL
@@ -249,9 +354,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // tailing, so the indexer + recall queries see a consistent
     // SQLite ⇔ WAL pair.
     //
-    // Best-effort: failure to open views.db or to drain leaves the
-    // surviving rows for the next startup. The daemon proceeds either
-    // way — a stuck drain must not block boot.
+    // Fail closed: views.db and its durable outbox are authoritative state.
+    // Continuing without either would expose a live channel fleet backed by
+    // incomplete memory/profile state.
     //
     // Pick #38 (Session 14, Agent #4 design-consensus, Perf #11 fix):
     // hold the post-drain connection alive in an `Arc<tokio::sync::
@@ -261,41 +366,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // (Pick #34 fix M) — ~10ms blocking overhead × every Telegram /
     // WhatsApp / Slack message at the channel's hot path.
     //
-    // None = open or drain failed at startup; per-message handler
-    // falls back to per-message open so the channel path still works
-    // even when the shared connection couldn't be established.
+    let views_path = neoth_home.join("views.db");
     let shared_views_conn: Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>> = {
-        let views_path = store::default_path();
-        match store::open(&views_path) {
-            Ok(mut conn) => {
-                match crate::profile::apply::drain_outbox_all(&mut conn, &writer).await {
-                    Ok(0) => {}
-                    Ok(n) => {
-                        info!(
-                            replayed = n,
-                            "profile.outbox: startup drain replayed stranded rows"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "profile.outbox: startup drain failed; rows will replay on next start",
-                        );
-                    }
-                }
-                // Drain succeeded (or partial) — promote to shared
-                // mutex for the per-message handler's reuse.
-                Some(Arc::new(tokio::sync::Mutex::new(conn)))
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    path = %views_path.display(),
-                    "profile.outbox: cannot open views.db for startup drain (non-fatal); per-message handler will fall back to per-call open",
-                );
-                None
-            }
+        let mut conn = store::open(&views_path)
+            .with_context(|| format!("open instance views database at {}", views_path.display()))?;
+        let replayed = crate::profile::apply::drain_outbox_all(&mut conn, &writer)
+            .await
+            .context("replay durable profile outbox before starting runtime services")?;
+        if replayed > 0 {
+            info!(
+                replayed,
+                "profile.outbox: startup drain replayed stranded rows"
+            );
         }
+        Some(Arc::new(tokio::sync::Mutex::new(conn)))
     };
 
     // ── GOLD-ADAPT-TRAIL-04: multi-reader SQLite executor ─────────────────
@@ -305,29 +389,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // serialising behind the single write mutex. Under SQLite WAL mode,
     // N readers run concurrently with no lock contention against the writer.
     //
-    // The executor is `None` when views.db cannot be opened (same non-fatal
-    // fallback as `shared_views_conn`). The outbox drain above already
-    // opened and drained via `shared_views_conn`; the executor adds
-    // additional reader connections on top of the existing write path.
+    // Opening the executor is part of the same fail-closed state boundary as
+    // the shared connection above; all readers must target this instance DB.
     let views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>> = {
-        let views_path = store::default_path();
-        match crate::memory::store::ViewsExecutor::open(&views_path, 4) {
-            Ok(exec) => {
-                info!(
-                    readers = 4,
-                    "TRAIL-04: ViewsExecutor ready (writer:1 + readers:4)"
-                );
-                Some(exec)
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    path = %views_path.display(),
-                    "TRAIL-04: ViewsExecutor open failed (non-fatal); channel handlers will use legacy single-conn path",
-                );
-                None
-            }
-        }
+        let exec = crate::memory::store::ViewsExecutor::open(&views_path, 4)
+            .with_context(|| format!("open instance views executor at {}", views_path.display()))?;
+        info!(
+            readers = 4,
+            "TRAIL-04: ViewsExecutor ready (writer:1 + readers:4)"
+        );
+        Some(exec)
     };
 
     // ── 5a. Spawn memory indexer (tail-the-WAL into SQLite views) ─────────
@@ -340,7 +411,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     //
     // Pick #37 (Session 14, Agent #4 design-consensus): operator
     // edits freedom.yaml + runs `neoth reload` → CLI writes a
-    // sentinel file at `~/.neoth/.reload-requested` → this daemon-
+    // sentinel file at `<instance-home>/.reload-requested` → this daemon-
     // side task polls for the sentinel every 2s. On present:
     // re-read freedom.yaml, validate against immutable fields, swap
     // the ArcSwap atomically (or reject), emit a CONFIG_RELOADED /
@@ -355,14 +426,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ran `neoth reload` against a stopped daemon), process it now
     // before the indexer + handler-spawn use the controller.
     {
-        let sentinel =
-            FreedomConfig::default_neoth_home().join(crate::config::reload::RELOAD_SENTINEL_NAME);
+        let sentinel = neoth_home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
         if sentinel.exists() {
             handle_reload_sentinel(&reload_controller, &sentinel, &writer).await;
         }
     }
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let reload_task = crate::cli::serve_tasks::spawn_reload_poller(&reload_controller, &writer);
+    let reload_task =
+        crate::cli::serve_tasks::spawn_reload_poller(&reload_controller, &writer, &neoth_home);
 
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     // GR-164: hand the indexer the WAL writer so a tamper-suspect segment emits
@@ -373,68 +444,65 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ADAPT-TRAIL-02: create the views.db change-bus before spawning the
     // indexer so in-process consumers can subscribe before the first change fires.
     let (views_change_tx, views_change_rx) = crate::memory::change_bus::channel();
-    let indexer_task = crate::cli::serve_tasks::spawn_indexer(
+    let indexer_task = Some(crate::cli::serve_tasks::spawn_indexer(
+        &neoth_home,
         &segment_path,
         Some(writer.clone()),
         indexer_embed_provider,
         Some(views_change_tx), // TRAIL-02: fires on every indexer pass with n>0
-    );
+    )?);
 
     // ── 5a-kanban. Stale-kanban reapers — HO-02 + GOLD-TASK-04. Best-effort
     // startup sweep of sessions stranded in Planning (crash mid-decompose) and
     // task rows stranded in InProgress (crash mid-execute).
-    crate::cli::serve_tasks::run_stale_kanban_reapers_on_startup();
+    crate::cli::serve_tasks::run_stale_kanban_reapers_on_startup(&neoth_home)?;
 
     // ── 5a-journal. GOLD-ADAPT-HERMES-05 startup journal recovery scan.
-    // Walks ~/.neoth/journals/ for orphaned .jsonl files left by a crash
+    // Walks the selected instance home's journals/ for orphaned .jsonl files left by a crash
     // mid-turn; emits one 0x07 STALE_INTERRUPTED WAL frame per orphan.
     // Also warns on LiveShrunk / LiveMissing .bak verdicts. Read-only;
-    // never deletes journals. Best-effort — errors are logged, not fatal.
-    crate::cli::serve_tasks::run_journal_recovery_on_startup(&writer).await;
+    // never deletes journals. Scan or audit failures abort startup so evidence
+    // cannot be silently omitted from the live WAL chain.
+    crate::cli::serve_tasks::run_journal_recovery_on_startup(&neoth_home, &writer).await?;
 
     // ── 5a-creds. Startup credential-pattern audit (HO-06) ─────────────────
     //
-    // Walks `~/.neoth/policy.yaml::startup_audit_scan_paths` for
+    // Walks `<instance-home>/policy.yaml::startup_audit_scan_paths` for
     // `ghp_` / `sk-` / `AKIA` / Bearer shapes + (when
     // `forbid_inline_tokens_in_remotes`) `git remote -v` for inline
     // `user:token@host` URLs. Warn-only — never fails boot. Empty
     // scan-paths + flag-off → silent no-op.
     //
-    // Best-effort: policy.yaml load failure or scanner errors log
-    // warn + continue. This is hygiene + recommendation, not load-
-    // bearing on liveness.
-    match crate::policy::PolicyConfig::load() {
-        Ok(policy) => {
-            if !policy.startup_audit_scan_paths.is_empty() || policy.forbid_inline_tokens_in_remotes
-            {
-                match crate::daemon::startup_credential_audit::run_credential_scan(
-                    &policy.startup_audit_scan_paths,
-                    policy.forbid_inline_tokens_in_remotes,
-                ) {
-                    Ok(findings) if findings.is_empty() => {
-                        info!("startup credential audit: clean (0 findings)");
-                    }
-                    Ok(findings) => {
-                        warn!(
-                            count = findings.len(),
-                            "startup credential audit: {} finding(s); rotate or move to keychain",
-                            findings.len()
-                        );
-                        for f in &findings {
-                            warn!(
-                                finding = %crate::daemon::startup_credential_audit::format_finding(f),
-                                "credential pattern detected"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "startup credential audit failed; non-fatal");
-                    }
+    // Policy parsing is fail-closed: a malformed operator policy must never be
+    // replaced by defaults. Scanner execution remains advisory once the exact
+    // policy has loaded successfully.
+    let policy_path = neoth_home.join("policy.yaml");
+    let policy = crate::policy::PolicyConfig::load_or_default(&policy_path)
+        .with_context(|| format!("load instance policy at {}", policy_path.display()))?;
+    if !policy.startup_audit_scan_paths.is_empty() || policy.forbid_inline_tokens_in_remotes {
+        match crate::daemon::startup_credential_audit::run_credential_scan(
+            &policy.startup_audit_scan_paths,
+            policy.forbid_inline_tokens_in_remotes,
+        ) {
+            Ok(findings) if findings.is_empty() => {
+                info!("startup credential audit: clean (0 findings)");
+            }
+            Ok(findings) => {
+                warn!(
+                    count = findings.len(),
+                    "startup credential audit: {} finding(s); rotate or move to keychain",
+                    findings.len()
+                );
+                for f in &findings {
+                    warn!(
+                        finding = %crate::daemon::startup_credential_audit::format_finding(f),
+                        "credential pattern detected"
+                    );
                 }
             }
-        }
-        Err(e) => {
-            warn!(error = %e, "policy.yaml load failed; skipping startup credential audit");
+            Err(e) => {
+                warn!(error = %e, "startup credential audit failed; non-fatal");
+            }
         }
     }
 
@@ -543,16 +611,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let ssh_tunnel_handles: Vec<crate::transport::ssh_tunnel::SshTunnel> = {
         let mut handles = Vec::new();
         if !config.ssh_tunnels.is_empty() {
-            let tofu_path = FreedomConfig::default_neoth_home().join("ssh_known_hosts.db");
+            let tofu_path = neoth_home.join("ssh_known_hosts.db");
             match crate::transport::ssh_tofu::TofuStore::open(&tofu_path) {
                 Ok(store) => {
                     let tofu = Arc::new(tokio::sync::Mutex::new(store));
                     for tcfg in &config.ssh_tunnels {
-                        match crate::transport::ssh_tunnel::spawn_tunnel(
-                            tcfg.clone(),
-                            tofu.clone(),
-                        )
-                        .await
+                        match crate::transport::ssh_tunnel::spawn_tunnel(tcfg.clone(), tofu.clone())
+                            .await
                         {
                             Ok(t) => {
                                 info!(
@@ -606,7 +671,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // be auditable). The writer (spawned ~line 272) serializes concurrent
     // channel turns, so per-hop frames stay correct under concurrency.
     let shared_provider: Option<Arc<dyn Provider>> =
-        match providers::fallback_chain_from_config(&config, Some(writer.clone())).await {
+        match providers::fallback_chain_from_config(&config, &neoth_home, Some(writer.clone()))
+            .await
+        {
             Ok(p) => {
                 // GOLD-ADAPT-HARNESS-03: wrap with history-compaction middleware when enabled.
                 // Daemon path threads the WAL writer so every compaction event is auditable.
@@ -615,6 +682,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     providers::compactor::arc_from_config(
                         Arc::from(p),
                         utility,
+                        providers::utility_model_for_config(&config),
                         &config.tokens,
                         Some(writer.clone()),
                     )
@@ -655,83 +723,57 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // could otherwise hang shutdown on a slow turn).
     let dispatch_join: std::sync::Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
-    // R4-P1: load credentials once. Used by the Slack/WhatsApp adapters in
-    // spawn_channel_adapters below AND by cluster-transport activation later, so
-    // it stays in run_serve and is passed by reference (not consumed).
-    // B17 FAIL-CLOSED: a credentials.yaml that exists but cannot be loaded
-    // (corrupt YAML, I/O error, wrong keychain key) is a hard error at startup.
-    // Only NotFound is Ok (fresh install). The daemon must NOT start channel
-    // adapters with fabricated-empty credentials — that silently erases all
-    // channel config from the operator's perspective.
-    let creds = crate::config::credentials::Credentials::load_or_default(
-        &crate::config::credentials::default_path(),
-    )
-    .with_context(|| {
-        format!(
-            "credentials.yaml at {} exists but cannot be loaded — \
-             repair the file or restore the keychain key before starting the daemon \
-             (run `neoth security restore-master-key` if the file is encrypted)",
-            crate::config::credentials::default_path().display()
-        )
-    })?;
     // GOLD-ADAPT-GOOSE-03: construct the approval bus + drain task BEFORE
     // spawning channel adapters. The drain task reads ConfirmRequests and
     // forwards them as elicitation messages on the operator's primary channel
     // (Telegram, if configured). The bus Arc is threaded into every channel
     // handler so gates can switch to Channel confirm strategy.
-    let (confirm_bus, mut confirm_rx) =
-        crate::permissions::confirm_bus::ConfirmBus::new();
+    let (confirm_bus, mut confirm_rx) = crate::permissions::confirm_bus::ConfirmBus::new();
     // Late-read the Telegram token per request (ULTRA_REVIEW): a boot
     // snapshot froze a rotated token into this task for the daemon's
     // lifetime. `telegram_user_id` is reload-immutable but read from the
     // same snapshot for consistency.
     let drain_reload_controller = std::sync::Arc::clone(&reload_controller);
-    let confirm_drain_task: Option<tokio::task::JoinHandle<()>> =
-        Some(tokio::spawn(async move {
-            while let Some(req) = confirm_rx.recv().await {
-                let drain_config = drain_reload_controller.latest();
-                let drain_telegram_token = drain_config.telegram_token.clone();
-                let drain_telegram_user_id = drain_config.telegram_user_id;
-                // Format a human-readable elicitation message with the UUID
-                // the operator must echo back as "yes <uuid>" or "no <uuid>".
-                let msg = format!(
-                    "\u{26a0}\u{fe0f} NEOTH needs your approval\n\
+    let confirm_drain_task: Option<tokio::task::JoinHandle<()>> = Some(tokio::spawn(async move {
+        while let Some(req) = confirm_rx.recv().await {
+            let drain_config = drain_reload_controller.latest();
+            let drain_telegram_token = drain_config.telegram_token.clone();
+            let drain_telegram_user_id = drain_config.telegram_user_id;
+            // Format a human-readable elicitation message with the UUID
+            // the operator must echo back as "yes <uuid>" or "no <uuid>".
+            let msg = format!(
+                "\u{26a0}\u{fe0f} NEOTH needs your approval\n\
                      Action: {}\n\
                      Reply: `yes {}` to allow or `no {}` to deny",
-                    req.description, req.uuid, req.uuid
+                req.description, req.uuid, req.uuid
+            );
+            // Best-effort: send via Telegram if credentials are present.
+            if let (Some(token), Some(user_id)) = (&drain_telegram_token, drain_telegram_user_id) {
+                let url = format!("https://api.telegram.org/bot{}/sendMessage", token.expose());
+                // Fire-and-forget — a failed delivery lets the gate time
+                // out (fail-closed); no retry needed here.
+                let _ = reqwest::Client::new()
+                    .post(&url)
+                    .json(&serde_json::json!({
+                        "chat_id": user_id,
+                        "text": msg,
+                        "parse_mode": "Markdown"
+                    }))
+                    .send()
+                    .await;
+            } else {
+                // No Telegram configured — log so the operator can see
+                // the pending approval in daemon logs.
+                tracing::warn!(
+                    uuid = %req.uuid,
+                    description = %req.description,
+                    "GOOSE-03: approval requested but no Telegram configured; \
+                     reply via `neoth channel confirm {}`",
+                    req.uuid
                 );
-                // Best-effort: send via Telegram if credentials are present.
-                if let (Some(token), Some(user_id)) =
-                    (&drain_telegram_token, drain_telegram_user_id)
-                {
-                    let url = format!(
-                        "https://api.telegram.org/bot{}/sendMessage",
-                        token.expose()
-                    );
-                    // Fire-and-forget — a failed delivery lets the gate time
-                    // out (fail-closed); no retry needed here.
-                    let _ = reqwest::Client::new()
-                        .post(&url)
-                        .json(&serde_json::json!({
-                            "chat_id": user_id,
-                            "text": msg,
-                            "parse_mode": "Markdown"
-                        }))
-                        .send()
-                        .await;
-                } else {
-                    // No Telegram configured — log so the operator can see
-                    // the pending approval in daemon logs.
-                    tracing::warn!(
-                        uuid = %req.uuid,
-                        description = %req.description,
-                        "GOOSE-03: approval requested but no Telegram configured; \
-                         reply via `neoth channel confirm {}`",
-                        req.uuid
-                    );
-                }
             }
-        }));
+        }
+    }));
 
     // GOLD-ARCH-01: the channel-adapter bootstrap (Telegram polling + Slack
     // socket-mode + WhatsApp Meta webhook listener) is relocated to serve_tasks.
@@ -743,6 +785,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &provider_meter,
         &rate_limiter,
         &segment_path,
+        &neoth_home,
         &shared_views_conn,
         &reload_controller,
         &dispatch_join,
@@ -773,6 +816,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let provider_meter = provider_meter.clone();
         let rate_limiter = std::sync::Arc::clone(&rate_limiter);
         let segment_path = segment_path.clone();
+        let channel_neoth_home = neoth_home.clone();
         let shared_views_conn = shared_views_conn.clone();
         let reload_controller = std::sync::Arc::clone(&reload_controller);
         let dispatch_join = std::sync::Arc::clone(&dispatch_join);
@@ -791,8 +835,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 //    reload cycle — tearing down a live fleet and then failing to
                 //    load creds would leave the operator with zero channel coverage
                 //    until the next `neoth reload`.
-                let fresh_creds = match crate::config::credentials::Credentials::load_or_default(
-                    &crate::config::credentials::default_path(),
+                let fresh_config = reload_controller.latest();
+                let fresh_credentials_path = channel_neoth_home.join("credentials.yaml");
+                let fresh_creds = match crate::config::credentials::Credentials::load_effective(
+                    &fresh_credentials_path,
+                    fresh_config.secrets_backend,
                 ) {
                     Ok(c) => c,
                     Err(e) => {
@@ -805,7 +852,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         continue;
                     }
                 };
-                let fresh_config = reload_controller.latest();
                 // 2. Abort + drain the old fleet (frees long-polls,
                 //    webhook binds, WS connections).  Credentials are now in
                 //    hand, so a fleet teardown will always be followed by a
@@ -828,6 +874,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     &provider_meter,
                     &rate_limiter,
                     &segment_path,
+                    &channel_neoth_home,
                     &shared_views_conn,
                     &reload_controller,
                     &dispatch_join,
@@ -857,7 +904,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // folder. The operator's cloud vendor desktop client picks the
     // delta up + uploads.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let cloud_task = crate::cli::serve_tasks::spawn_cloud_archive(&config);
+    let cloud_task = crate::cli::serve_tasks::spawn_cloud_archive(&config, &neoth_home);
 
     // ── L6-PRELOAD-AUTORUN-01 — one-shot Obsidian vault preload ────────────
     //
@@ -866,7 +913,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // files are skipped via hash state kept in ~/.neoth/obsidian_preload_state_*.json.
     // Errors are logged (warn) but never crash the daemon.  WAL-free.
     // GOLD-ARCH-01: body in serve_tasks (same handle pattern as cloud_task).
-    let obsidian_preload_task = crate::cli::serve_tasks::spawn_obsidian_preload(&config);
+    let obsidian_preload_task =
+        crate::cli::serve_tasks::spawn_obsidian_preload(&config, &neoth_home, writer.clone());
 
     // ── 5b-pent. R-02 Phase 4c — dreaming nightly task ─────────────────────
     //
@@ -877,8 +925,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // to deterministic `compose_dream` per L-07 safe-default when
     // not. Errors log + retry next tick; never crashes the daemon.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let dreaming_task =
-        crate::cli::serve_tasks::spawn_dreaming(&config, &shared_provider, &writer).await;
+    let dreaming_task = crate::cli::serve_tasks::spawn_dreaming(
+        &config,
+        &neoth_home,
+        &shared_provider,
+        &writer,
+        &reload_controller,
+    )
+    .await;
 
     // ── 5b-arxiv. EL-02 arXiv topic-feed ingest task ───────────────────────
     //
@@ -889,7 +943,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // A topic fetch failure logs + skips; a pass failure logs + retries
     // next tick — never crashes the daemon.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let arxiv_ingest_task = crate::cli::serve_tasks::spawn_arxiv_ingest(&config, &shared_provider);
+    let arxiv_ingest_task = crate::cli::serve_tasks::spawn_arxiv_ingest(
+        &config,
+        &neoth_home,
+        &shared_provider,
+        &reload_controller,
+        &writer,
+    );
 
     // ── 5b-quart. ArXiv skill-scan cron — GOLD-ADAPT-MEM-16 ────────────────
     //
@@ -899,8 +959,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Facts surface into recall/council automatically via surface_for_recall.
     // Off by default; requires both `arxiv_skill_scan.enabled: true` AND a
     // wired provider. WAL-free.
-    let arxiv_skill_scan_task =
-        crate::cli::serve_tasks::spawn_arxiv_skill_scan(&config, &shared_provider);
+    let arxiv_skill_scan_task = crate::cli::serve_tasks::spawn_arxiv_skill_scan(
+        &config,
+        &neoth_home,
+        &shared_provider,
+        &reload_controller,
+        &writer,
+    );
 
     // ── 5b-ter. RSS / Atom / JSON-Feed poller — GOLD-ADOPT-26 ──────────────
     //
@@ -916,7 +981,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 "rss feed poller enabled"
             );
             Some(crate::cli::rss_feed_task::spawn(
-                crate::config::FreedomConfig::default_neoth_home(),
+                neoth_home.clone(),
                 config.feeds.entries.clone(),
                 config
                     .feeds
@@ -940,7 +1005,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // (the pre-KF-10 behaviour, unchanged).
     let pre_decay_vault = config.obsidian_vault.clone().map(PathBuf::from);
     let decay_task = Some(crate::memory::decay_task::spawn(
-        store::default_path(),
+        neoth_home.clone(),
+        neoth_home.join("views.db"),
         crate::memory::decay_task::DEFAULT_INTERVAL,
         pre_decay_vault.clone(),
         // KF-10: the daemon owns the WAL writer, so each pass that touches rows
@@ -960,7 +1026,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ── 5b-quart. Sources-table GC scheduler (BS-3 wired). 24h cadence
     // sweeps transient `sources` rows + their chunks once a day.
     let gc_task = Some(crate::memory::gc_task::spawn(
-        None,
+        Some(neoth_home.join("views.db")),
         crate::memory::gc_task::DEFAULT_INTERVAL,
     ));
     info!(
@@ -969,13 +1035,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     );
 
     // ── 5b-sext. GOLD-PROG-08 — usage-meter export. Writes the live token
-    // budget to ~/.neoth/usage_meter.json every 10s so the GUI (a separate
+    // budget to <instance-home>/usage_meter.json every 10s so the GUI (a separate
     // process) can render it. Best-effort + WAL-free + stateless (a stale
     // snapshot is harmless), so it is a DETACHED daemon-lifetime task — no
     // BackgroundHandles / graceful-shutdown wiring. The handle is held (not
     // `let _ =`, which clippy flags as a dropped future) and detaches at
     // run_serve exit → the runtime stops it at daemon shutdown.
-    let _usage_export = crate::cli::serve_tasks::spawn_usage_export();
+    let _usage_export = crate::cli::serve_tasks::spawn_usage_export(&neoth_home);
 
     // ── 5b-quint. Tmux sweeper (B-10 wired). 5-min cadence walks every
     // session whose name starts with `neoth-cc-`, kills entries idle
@@ -997,7 +1063,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // 256 KiB body cap. Default OFF — operator opts in + runs
     // `neoth n8n token` first to generate the bearer.
     let n8n_api_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    let n8n_api_task = crate::cli::serve_tasks::spawn_n8n_api(&config, &writer, &n8n_api_shutdown);
+    let n8n_api_task = crate::cli::serve_tasks::spawn_n8n_api(
+        &config,
+        &neoth_home,
+        &writer,
+        &reload_controller,
+        &n8n_api_shutdown,
+    );
 
     // ── 5c-quad. Spawn Kanban SSE endpoint — GOLD-ADAPT-HERMES-08 ────────────
     //
@@ -1007,8 +1079,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // clients via `text/event-stream`. Bearer-token auth (same token
     // file as n8n_api). Default OFF — operator opts in.
     let kanban_sse_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    let (kanban_sse_task, kanban_sse_tx) =
-        crate::cli::serve_tasks::spawn_kanban_sse(&config, &writer, &kanban_sse_shutdown);
+    let (kanban_sse_task, kanban_sse_tx) = crate::cli::serve_tasks::spawn_kanban_sse(
+        &config,
+        &neoth_home,
+        &writer,
+        &kanban_sse_shutdown,
+    );
 
     // GOLD-ADAPT-TRAIL-02: relay task — wakes on views_change_rx (watch
     // coalesces bursts → 1 wakeup per indexer pass), reads the latest FeedEntry
@@ -1048,7 +1124,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // `oai_serve.enabled: true` in freedom.yaml.
     let oai_serve_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
     let oai_serve_task =
-        crate::cli::serve_tasks::spawn_oai_serve(&config, &oai_serve_shutdown);
+        crate::cli::serve_tasks::spawn_oai_serve(&config, &neoth_home, &oai_serve_shutdown);
 
     // ── 5c-bis. Spawn /healthz + /metrics listener — Phase 33c BS-1 ────────
     //
@@ -1056,7 +1132,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // `observability_listen: "127.0.0.1:43117"` (or similar) in freedom.yaml.
     // Localhost-only by design — public exposure is the operator's choice
     // via a reverse proxy if they want one.
-    let healthz_task = crate::cli::serve_tasks::spawn_healthz(&config, &provider_meter);
+    let healthz_task =
+        crate::cli::serve_tasks::spawn_healthz(&config, &neoth_home, &provider_meter);
 
     // ── 5c-ter. Spawn the audit-RPC listener — AUDIT-RPC-01 ────────────────
     //
@@ -1066,47 +1143,57 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // daemon is up still lands its `0xA5..=0xAD` audit frames. Bearer-token +
     // loopback-only + a compile-time event-type allowlist (anti-poisoning).
     let (audit_rpc_task, _audit_rpc_guard) =
-        crate::cli::serve_tasks::spawn_audit_rpc(&config, &writer).await;
+        crate::cli::serve_tasks::spawn_audit_rpc(&config, &neoth_home, &writer).await;
 
     // ── 5d. Cron scheduler — Phase 33a AU-B5 ───────────────────────────────
     //
-    // Loads `~/.neoth/jobs.yaml` if present and spawns the tick loop.
+    // Loads `<instance-home>/jobs.yaml` if present and spawns the tick loop.
     // Missing jobs file is not an error — operators without recurring jobs
     // simply see no scheduler task. Bad YAML *is* an error: configuration
     // problems must fail loudly at startup, not silently never fire.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let cron_task =
-        crate::cli::serve_tasks::spawn_cron_scheduler(&config, &shared_provider, &writer).await?;
+    let cron_task = crate::cli::serve_tasks::spawn_cron_scheduler(
+        &config,
+        &neoth_home,
+        &shared_provider,
+        &writer,
+        &reload_controller,
+    )
+    .await?;
 
     // ── 5d.c. Updater cron loops — U-04 + probes (Session 25) ────────────
     //
-    // Two parallel updater lanes: NeothSelf (GitHub Releases probe via
-    // `self_update::check_for_update`) + CliVersion (npm registry probe
-    // for claude/codex/gemini via `updater::check_all`). Each lane runs
-    // on its own UpdaterCronConfig with the same 6h default interval.
+    // Three parallel updater lanes: NeothSelf (GitHub Releases), CliVersion
+    // (npm/vendor probes for managed CLIs), and SkillPlugin. Each lane has its
+    // own task; neoth-self takes its cadence from `auto_update`, while the
+    // other two use the generic updater interval.
     // 0x44 UPDATER_TASK_FIRED + 0x45 UPDATER_TASK_RESULT WAL frames
     // fire per tick — operators audit via `neoth updater status`.
-    // U-04 follow-up (Session 26): operator-tunable updater interval
-    // via freedom.yaml::updater.{enabled,interval_secs}. All three
-    // lanes share the same knob today; per-lane override is a future
-    // schema bump. Build the shared cron config once + clone into
-    // each spawn site so the lanes stay independent join-handles.
+    // `updater.enabled` remains the global probe master switch. The self-update
+    // lane additionally uses auto_update.{enabled,check_interval_secs,repo,channel}; this keeps its
+    // release policy identical to manual check/apply and unattended staging.
     let updater_cron_cfg = crate::daemon::updater_cron::UpdaterCronConfig {
         enabled: config.updater.enabled,
         interval_secs: config.updater.interval_secs,
     };
 
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let updater_self_task =
-        crate::cli::serve_tasks::spawn_updater_self_cron(updater_cron_cfg.clone(), writer.clone());
+    let updater_self_task = crate::cli::serve_tasks::spawn_updater_self_cron(
+        updater_cron_cfg.clone(),
+        config.auto_update.clone(),
+        writer.clone(),
+    );
 
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let updater_cli_task =
         crate::cli::serve_tasks::spawn_updater_cli_cron(updater_cron_cfg.clone(), writer.clone());
 
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let updater_skill_task =
-        crate::cli::serve_tasks::spawn_updater_skill_cron(updater_cron_cfg.clone(), writer.clone());
+    let updater_skill_task = crate::cli::serve_tasks::spawn_updater_skill_cron(
+        updater_cron_cfg.clone(),
+        &neoth_home,
+        writer.clone(),
+    );
 
     // ── 5d.c. CLI auto-apply loop — MV-01b (Session 28c) ─────────────────
     //
@@ -1127,23 +1214,25 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // minisig) + stages newer releases to ~/.neoth/staged/ + notifies.
     // The operator applies via `neoth update --self --apply`.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let self_stage_task = crate::cli::serve_tasks::spawn_self_stage(&config, writer.clone());
+    let self_stage_task =
+        crate::cli::serve_tasks::spawn_self_stage(&config, &neoth_home, writer.clone());
 
     // ── 5d.b  ZF-06 Cron Fleet supervisor ────────────────────────────────
     //
-    // All 25 fleet-managed crons (DoctorCron, ResourceWatch, MonitorCron,
+    // All config-gated fleet crons (DoctorCron, ResourceWatch, MonitorCron,
     // Babel, WatchdogCron, DriftAlert, RecallLatency, ProfileAdapt,
     // EcologyCron, PatternCron, BgMonitor, ContradictionResolve,
     // GuidanceCron, SkillCurator, SynthesisCron, ConsolidationSweep,
     // SelfWiki, SelfImprovementCollector, TokenAnomaly, SessionHealth,
     // WebhookManager, ObsidianSync, ObsidianVaultReader,
-    // ObsidianWikiRebuild, SelfMap) are seeded here and hot-reloaded by
+    // ObsidianWikiRebuild, SelfMap, and cluster ResourceSnapshot) are seeded here and hot-reloaded by
     // the supervisor on every `neoth reload`.  Four crons remain as direct
     // fields (CheckinCron, SessionSort, EmailIngest, Regression) because
     // they need async construction or extra deps (shared_provider).
     let spawn_deps = crate::cli::serve_tasks::SpawnDeps {
         reload_controller: reload_controller.clone(),
         writer: writer.clone(),
+        home: neoth_home.clone(),
         wal_dir: wal_dir.clone(),
         views_executor: views_executor.clone(),
         sse_tx: kanban_sse_tx.clone(),
@@ -1151,7 +1240,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let cron_fleet: crate::cli::serve_tasks::CronFleet =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let cron_supervisor_task: tokio::task::JoinHandle<()> = {
-        use crate::cli::serve_tasks::{desired_cron_keys, diff_cron_fleet, spawn_cron_for_key};
+        use crate::cli::serve_tasks::{
+            desired_cron_keys, plan_cron_fleet_reload, spawn_cron_for_key,
+        };
         let mut gen_rx = reload_controller.subscribe_generation();
         let fleet = std::sync::Arc::clone(&cron_fleet);
         let deps = spawn_deps.clone();
@@ -1161,19 +1252,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             // Local fingerprint map: tracks a config-spec hash per running key
             // so a changed interval/path triggers a restart even when the
             // CronKey itself stays in the desired set.
-            let mut fp_map: std::collections::HashMap<
-                crate::cli::serve_tasks::CronKey,
-                u64,
-            > = std::collections::HashMap::new();
+            let mut fp_map: std::collections::HashMap<crate::cli::serve_tasks::CronKey, u64> =
+                std::collections::HashMap::new();
 
             // ZF-07 Boot-Stagger: create the first-tick semaphore once for the
             // boot seed phase.  Each cron acquires one permit before spawning;
             // the permit is released after CRON_FIRST_TICK_WINDOW via a tiny
             // detached timer task.  The semaphore is not used after seeding —
             // steady-state hot-reload restarts bypass it entirely.
-            let boot_stagger_sem = std::sync::Arc::new(
-                tokio::sync::Semaphore::new(START_STAGGER_PERMITS),
-            );
+            let boot_stagger_sem =
+                std::sync::Arc::new(tokio::sync::Semaphore::new(START_STAGGER_PERMITS));
 
             // Seed: spawn all desired crons for the boot config.
             {
@@ -1250,7 +1338,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // detection — keys still present in both running and desired but
                 // whose effective spec (interval, path, flags) changed since they
                 // were last spawned need a restart, not just an enable/disable.
-                let fp_changed: Vec<crate::cli::serve_tasks::CronKey> = {
+                let fp_changed: std::collections::HashSet<crate::cli::serve_tasks::CronKey> = {
                     let guard = fleet.lock().expect("cron_fleet mutex poisoned");
                     guard
                         .keys()
@@ -1263,29 +1351,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         .collect()
                 };
 
-                let (mut to_stop, mut to_start) = {
+                let (to_stop, to_start) = {
                     let guard = fleet.lock().expect("cron_fleet mutex poisoned");
-                    let running: std::collections::HashSet<_> =
-                        guard.keys().copied().collect();
-                    diff_cron_fleet(&running, &desired)
+                    let running: std::collections::HashSet<_> = guard.keys().copied().collect();
+                    plan_cron_fleet_reload(&running, &desired, &fp_changed)
                 };
-                // Merge fingerprint-changed keys: stop the stale task and
-                // restart it with the updated spec.
-                for k in fp_changed {
-                    if !to_stop.contains(&k) {
-                        to_stop.push(k);
-                    }
-                    if !to_start.contains(&k) {
-                        to_start.push(k);
-                    }
-                }
 
                 // Abort tasks that are no longer desired (or whose spec changed).
                 for key in &to_stop {
-                    let handle = fleet
-                        .lock()
-                        .expect("cron_fleet mutex poisoned")
-                        .remove(key);
+                    let handle = fleet.lock().expect("cron_fleet mutex poisoned").remove(key);
                     if let Some(h) = handle {
                         h.abort();
                         let _ = h.await;
@@ -1333,7 +1407,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // want proactive reflections can drain the proactive_queue.json
     // before the consumer-side reads it.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let reflection_cron_handle = crate::cli::serve_tasks::spawn_reflection_cron();
+    let reflection_cron_handle = crate::cli::serve_tasks::spawn_reflection_cron(&neoth_home);
 
     // ── 5d-tris. Proactive drain cron — G-01 consumer half (Round-3 v0.4) ──
     //
@@ -1341,11 +1415,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ProactiveQueue + appends each to `~/.neoth/proactive_delivered.jsonl`
     // for operator inspection. Ticks every 5min; per-tick cap of 3
     // smooths bursty producers. Future channel adapters (Telegram /
-    // Slack / Keet) consume the same sidecar for at-least-once
+    // Slack) consume the same sidecar for at-least-once
     // delivery semantics — the daemon-side drain stays channel-
     // agnostic.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let proactive_dispatcher_handle = crate::cli::serve_tasks::spawn_proactive_dispatcher(&writer);
+    let proactive_dispatcher_handle =
+        crate::cli::serve_tasks::spawn_proactive_dispatcher(&neoth_home, &writer);
 
     // ── 5d-quartus. G-02 surfacing cron — "Knows things about you you
     //               don't know" producer (Round-3 v0.4) ──
@@ -1360,11 +1435,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Quiet no-op on fresh installs (no views.db yet) so first-week
     // wizard logs stay clean.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let g02_surfacing_cron_handle = crate::cli::serve_tasks::spawn_g02_surfacing_cron();
+    let g02_surfacing_cron_handle = crate::cli::serve_tasks::spawn_g02_surfacing_cron(&neoth_home);
 
     // ── 5d-sextus. Regression-anchor cron — ADV-14 (deferred: async + provider dep)
-    let regression_cron_handle =
-        crate::cli::serve_tasks::spawn_regression_cron(&config, &shared_provider, &writer).await;
+    let regression_cron_handle = crate::cli::serve_tasks::spawn_regression_cron(
+        &config,
+        &neoth_home,
+        &shared_provider,
+        &writer,
+        &reload_controller,
+    )
+    .await;
 
     // GOLD-ADAPT-ODY-24 — Companion LAN pairing server. Default OFF — opt-in
     // via `companion.enabled: true`. Mints chat-scoped bearer tokens for phones
@@ -1376,13 +1457,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // and then talks to the daemon over loopback HTTP with the SAME token.
     // (Previously the two paths each built their own CompanionState, so a
     // P2P-minted token was unknown to the HTTP auth check and vice-versa.)
-    let companion_state = std::sync::Arc::new(
-        crate::daemon::companion::CompanionState::new(writer.clone(), config.companion.port),
-    );
+    let companion_state = std::sync::Arc::new(crate::daemon::companion::CompanionState::new(
+        writer.clone(),
+        config.companion.port,
+    ));
     let companion_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
     let companion_task = crate::cli::serve_tasks::spawn_companion_server(
         &config,
-        &crate::config::FreedomConfig::default_neoth_home(),
+        &neoth_home,
         std::sync::Arc::clone(&companion_state),
         std::sync::Arc::clone(&companion_shutdown),
     );
@@ -1398,6 +1480,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let companion_p2p_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
     let companion_p2p_task = crate::cli::serve_tasks::spawn_companion_p2p_listener_task(
         &config,
+        &neoth_home,
         std::sync::Arc::clone(&companion_state),
         writer.clone(),
         std::sync::Arc::clone(&companion_p2p_shutdown),
@@ -1418,14 +1501,21 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // + an atomic snapshot rename) so it is order-independent at shutdown. Off
     // entirely when the backend is brute-force.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let snapshot_refresh_handle = crate::cli::serve_tasks::spawn_snapshot_refresh(&config);
+    let snapshot_refresh_handle =
+        crate::cli::serve_tasks::spawn_snapshot_refresh(&config, &neoth_home);
 
-    // ── OM-01 local OMI transcript ingest ─────────────────────────────────────
-    // Polls the operator's self-hosted OMI backend (SC-14 already confirmed the
-    // endpoint is local above), promotes high-confidence items to ground-truth
-    // (`0x9C`) + extracts action items to kanban. Default OFF → no task.
-    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let omi_handle = crate::cli::serve_tasks::spawn_omi_ingest(&config, writer.clone());
+    // ── OMI-MULTIMODAL-01 full runtime supervisor ──────────────────────────
+    // Owns official Developer API sync, authenticated native audio/caption/
+    // frame ingestion, retention, credential rotation, and config reload.
+    // The supervisor itself stays alive while disabled so reload can enable it.
+    let omi_handle = crate::cli::serve_tasks::spawn_omi_ingest(
+        &reload_controller,
+        credentials_path.clone(),
+        neoth_home.clone(),
+        writer.clone(),
+        shared_provider.clone(),
+        provider_meter.clone(),
+    );
 
     // ProfileAdapt, EcologyCron, PatternCron, BgMonitor, ContradictionResolve,
     // GuidanceCron are now fleet-managed (ZF-06).
@@ -1434,7 +1524,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Checks onboarding gaps and enqueues a ProactiveItem when incomplete.
     // Detached — no handle; errors are logged best-effort.
     {
-        let home_for_init = crate::config::FreedomConfig::default_neoth_home();
+        let home_for_init = neoth_home.clone();
         // run_post_init_check borrows home as &Path — passing &PathBuf coerces fine.
         // The PathBuf is moved into the spawned async block which owns it.
         tokio::spawn(async move {
@@ -1443,42 +1533,86 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     }
 
     // ── GOLD-FEAT-11 LLM check-in cron (default OFF) ─────────────────────
-    let checkin_cron_handle =
-        crate::cli::serve_tasks::spawn_checkin_cron(&config, &reload_controller).await;
+    let checkin_cron_handle = crate::cli::serve_tasks::spawn_checkin_cron(
+        &config,
+        &reload_controller,
+        &neoth_home,
+        &writer,
+    )
+    .await;
 
     // ── GOLD-ADAPT-ODY-26 session auto-sort cron (default OFF) ───────────
-    let session_sort_cron_handle =
-        crate::daemon::session_sort_cron::spawn_session_sort_cron(&config, &reload_controller)
-            .await;
+    let session_sort_cron_handle = crate::daemon::session_sort_cron::spawn_session_sort_cron(
+        &config,
+        &reload_controller,
+        &neoth_home,
+        &writer,
+    )
+    .await;
 
     // ── GOLD-ADAPT-JV-PAPERLESS-01 email-ingest cron (default OFF) ───────
-    let email_ingest_cron_handle = if config.email_ingest_cron.enabled {
+    // Keep a dormant supervisor alive while disabled so `neoth reload` can
+    // enable it without a daemon restart. Generation notifications reset the
+    // ticker immediately on both interval changes and disabled→enabled edges.
+    let email_ingest_cron_handle = {
         let ctrl = reload_controller.clone();
-        let home = FreedomConfig::default_neoth_home();
-        info!("email ingest cron spawned (GOLD-ADAPT-JV-PAPERLESS-01)");
+        let home = neoth_home.clone();
+        info!("email ingest cron supervisor spawned (GOLD-ADAPT-JV-PAPERLESS-01)");
         Some(tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(ctrl.latest().email_ingest_cron.interval_duration());
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                interval.tick().await;
-                let current = ctrl.latest();
-                if !current.email_ingest_cron.enabled {
-                    continue;
-                }
-                if let Err(e) = crate::daemon::email_ingest_cron::run_email_ingest_tick(
-                    &home,
-                    &current.email_ingest_cron,
-                    &current,
+            let mut generation = ctrl.subscribe_generation();
+            let (mut current_enabled, mut current_interval) = {
+                let initial = ctrl.latest();
+                (
+                    initial.email_ingest_cron.enabled,
+                    initial.email_ingest_cron.interval_duration(),
                 )
-                .await
-                {
-                    warn!(error = %e, "email_ingest_cron tick error");
+            };
+            let mut ticker = tokio::time::interval(current_interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        let current = ctrl.latest();
+                        if !current.email_ingest_cron.enabled {
+                            continue;
+                        }
+                        if let Err(e) = crate::daemon::email_ingest_cron::run_email_ingest_tick(
+                            &home,
+                            &current.email_ingest_cron,
+                            &current,
+                        )
+                        .await
+                        {
+                            warn!(error = %e, "email_ingest_cron tick error");
+                        }
+                    }
+                    changed = generation.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        let current = ctrl.latest();
+                        if let Some(live_interval) = email_ingest_schedule_change(
+                            current_enabled,
+                            current_interval,
+                            &current.email_ingest_cron,
+                        ) {
+                            current_interval = live_interval;
+                            ticker = tokio::time::interval_at(
+                                tokio::time::Instant::now(),
+                                current_interval,
+                            );
+                            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                            info!(
+                                enabled = current.email_ingest_cron.enabled,
+                                interval_secs = current_interval.as_secs(),
+                                "email ingest cron schedule updated via config reload"
+                            );
+                        }
+                        current_enabled = current.email_ingest_cron.enabled;
+                    }
                 }
             }
         }))
-    } else {
-        None
     };
 
     // SkillCurator, SynthesisCron, ConsolidationSweep, SelfWiki,
@@ -1554,7 +1688,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // configured (LocalQwen-only deployments), the task ticks but
     // does nothing — no outbound traffic.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let catalog_task = crate::cli::serve_tasks::spawn_catalog_refresh(&config);
+    let catalog_task = crate::cli::serve_tasks::spawn_catalog_refresh(&config, &neoth_home);
 
     // ── Cluster audit-sidecar ingester ─────────────────────────────────────
     // CLI commands (`neoth cluster confirm` / `revoke`) drop JSON
@@ -1565,11 +1699,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // with the `cluster` feature.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     #[cfg(feature = "cluster")]
-    let cluster_audit_task = crate::cli::serve_tasks::spawn_cluster_audit_ingester(&writer);
+    let cluster_audit_task =
+        crate::cli::serve_tasks::spawn_cluster_audit_ingester(&neoth_home, &writer);
     #[cfg(feature = "cluster")]
     info!("cluster audit sidecar ingester spawned (5s tick)");
     #[cfg(feature = "cluster")]
-    let cluster_foreign_indexer_task = crate::cli::serve_tasks::spawn_foreign_indexer();
+    let cluster_foreign_indexer_task = crate::cli::serve_tasks::spawn_foreign_indexer(&neoth_home);
 
     // ── SL-00(1b) Cluster transport activation (Hyperswarm DHT) ────────────
     // The live-network flip. Brought up ONLY when BOTH gates are open:
@@ -1591,16 +1726,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // receiver wired through `gossip_handler` — the SAME `accept_inbound`
     // security stack (frame-acceptance / replay-dedup / DoNotGossip band) the
     // peeroxide loop uses, so the flip preserves every cluster guarantee. The
-    // inbound + node-identity path is live over iroh; outbound broadcast + iroh
-    // peer-discovery is the next step. When iroh is active the peeroxide swarm
-    // is bypassed. The handle lives for the daemon lifetime (Router shuts down
-    // on drop at `run_serve` exit).
+    // inbound, authenticated peer discovery, snapshot production, WAL
+    // anti-entropy, and outbound broadcast all run over iroh. When iroh is
+    // active the peeroxide swarm is bypassed. The handle lives for the daemon
+    // lifetime (Router shuts down on drop at `run_serve` exit).
     #[cfg(feature = "cluster-iroh")]
     let iroh_transport_handle: Option<
         std::sync::Arc<crate::cluster::iroh_transport::IrohTransport>,
-    > = if crate::cluster::policy::load_transport_from_freedom(
-        &crate::config::FreedomConfig::default_path(),
-    ) == crate::cluster::policy::ClusterTransport::Iroh
+    > = if config.cluster.transport == crate::config::ClusterTransport::Iroh
         && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_some()
     {
         // GR-RESID-IROH (D3/F19/F56): thread the cluster_key (peer-auth proof),
@@ -1608,7 +1741,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         // both the inbound handler and the outbound broadcast.
         let activation = crate::cluster::identity::cluster_transport_activation(&config, &creds)
             .expect("cluster_transport_activation is Some — checked in the guard above");
-        let cluster_key = Some(std::sync::Arc::new(activation.key));
+        let cluster_key = std::sync::Arc::new(activation.key);
         let cluster_wal = Some(std::sync::Arc::new(writer.clone()));
         let gs = std::sync::Arc::new(std::sync::Mutex::new(
             crate::cluster::wal_sync::GossipState::new(),
@@ -1619,9 +1752,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         // the task runs until its sender — held by the gossip-handler closure
         // below — is dropped at transport teardown.
         let (foreign_persist_tx, _foreign_persist_join) =
-            crate::cluster::wal_sync::spawn_foreign_persist_writer(
-                crate::config::FreedomConfig::default_neoth_home().join("views.db"),
-            );
+            crate::cluster::wal_sync::spawn_foreign_persist_writer(neoth_home.join("views.db"));
         match crate::cluster::iroh_transport::IrohTransport::bind(
             crate::cluster::iroh_transport::gossip_handler(
                 std::sync::Arc::clone(&gs),
@@ -1637,9 +1768,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 let t = std::sync::Arc::new(t);
                 // Seed outbound peers from cluster.peers (inbound peers are
                 // learned automatically on connect).
-                let seeded = crate::cluster::policy::load_iroh_peers_from_freedom(
-                    &crate::config::FreedomConfig::default_path(),
-                );
+                let seeded = &config.cluster.peers;
                 let mut n_seeded = 0;
                 for p in &seeded {
                     if t.add_peer_id(p) {
@@ -1667,10 +1796,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 );
                 Some(t)
             }
-            Err(e) => {
-                warn!(error = %e, "cluster: iroh transport failed to start; using peeroxide");
-                None
-            }
+            Err(e) => return Err(e).context("start configured iroh cluster transport"),
         }
     } else {
         None
@@ -1698,25 +1824,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // (Q2 — never announce on untrusted wifi). Non-fatal on
                 // every failure path.
                 {
-                    let freedom_path = FreedomConfig::default_path();
-                    let (mdns_enabled, announce_policy) =
-                        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
                     let ssid = crate::cluster::policy::current_ssid();
                     match crate::cluster::policy::gate_discover(
-                        mdns_enabled,
-                        &announce_policy,
+                        config.cluster.mdns.enabled,
+                        &config.cluster.policy,
                         ssid.as_deref(),
                     ) {
                         crate::cluster::policy::DiscoverGate::Proceed => {
                             match crate::cluster::mdns::primary_local_ip() {
                                 Some(ip) => {
-                                    let listen_port =
-                                        crate::cluster::policy::load_listen_port_from_freedom(
-                                            &freedom_path,
-                                        );
-                                    let node_label = crate::cluster::mdns::node_label(
-                                        &FreedomConfig::default_neoth_home(),
-                                    );
+                                    let listen_port = config.cluster.listen_port;
+                                    let node_label = crate::cluster::mdns::node_label(&neoth_home);
                                     let mdns_id = crate::cluster::mdns::build_announce_identity(
                                         &identity.key,
                                         &node_label,
@@ -1765,23 +1883,36 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // SL-01: spawn the single task executor (holds the provider +
                 // a clone of peer_streams) and thread its bounded dispatch
                 // sender into the transport's accept gate.
+                let cluster_provider = shared_provider.clone().map(|provider| {
+                    std::sync::Arc::new(
+                        crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                            provider,
+                            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
+                                std::sync::Arc::clone(&reload_controller),
+                                Some(writer.clone()),
+                            ),
+                            None,
+                            "cluster.delegated_task",
+                        ),
+                    )
+                });
                 let dispatch_tx = crate::cluster::executor::spawn_cluster_executor(
-                    shared_provider.clone(),
+                    cluster_provider,
                     std::sync::Arc::clone(&peer_streams),
                 );
-                // SL-01b: the gossip send-tick reads the active WAL segment tail
-                // + broadcasts replicable frames to paired peers.
+                // SL-01b: the gossip send-tick cycles the complete live/sealed
+                // WAL history + broadcasts replicable frames to paired peers.
                 let gossip_streams = std::sync::Arc::clone(&peer_streams);
                 let gossip_segment = segment_path.clone();
                 let gossip_writer = std::sync::Arc::new(writer.clone());
                 match crate::cluster::hyperswarm::spawn_discovery_with_wal(
                     &identity.name,
-                    Some(cluster_key),
+                    cluster_key,
                     registry,
                     cluster_wal,
                     peer_streams,
-                    config.autonomy,
-                    crate::config::FreedomConfig::default_neoth_home(),
+                    std::sync::Arc::clone(&reload_controller),
+                    neoth_home.clone(),
                     Some(dispatch_tx),
                 )
                 .await
@@ -1795,42 +1926,24 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             gossip_streams,
                             gossip_segment,
                             gossip_writer,
+                            crate::cluster::PeerPubkey::new(handle.own_peer_id().to_string()),
                         ));
                         Some(handle)
                     }
                     Err(e) => {
-                        warn!(
-                            error = %e,
-                            "cluster transport failed to start; continuing without clustering"
-                        );
-                        None
+                        return Err(e).context("start configured peeroxide cluster transport");
                     }
                 }
             }
             // iroh is the active carrier → skip the peeroxide swarm.
             Some(_) => None,
             None => {
-                // Default path: gate closed (enabled=false OR identity
-                // incomplete). Emit a one-line diagnostic only when the
-                // operator flipped the switch but left identity incomplete,
-                // so a misconfig is visible without noise on every boot.
-                if config.cluster.enabled {
-                    warn!(
-                        "cluster.enabled=true but no identity resolved (need both cluster.name and cluster_passphrase); transport stays OFF"
-                    );
-                }
+                // Default path: gate closed because cluster.enabled=false.
+                // An enabled but incomplete identity is rejected before any
+                // runtime service starts.
                 None
             }
         };
-
-    // ── GOLD-FEAT-06 resource-snapshot cron ──────────────────────────────────
-    // TODO(FEAT-06): read SwarmConfig from FreedomConfig.swarm once config/mod.rs
-    // is unfrozen (currently using default: enabled=true, interval_secs=30).
-    #[cfg(feature = "cluster")]
-    let _ = crate::daemon::resource_snapshot_cron::spawn_resource_snapshot_cron(
-        crate::cluster::swarm::SwarmConfig::default(),
-        writer.clone(),
-    );
 
     // ── W-05d installer_ran sidecar ingester (Session 26) ─────────────────
     // `neoth installer apply --yes` drops `~/.neoth/installer_ran_<ts>.json`
@@ -1841,7 +1954,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // tick to retry; the WAL writer dedupes by event_id.
     // GOLD-ARCH-01: body relocated to serve_tasks (same handle, same site).
     let installer_audit_task =
-        crate::cli::serve_tasks::spawn_installer_audit_ingester(writer.clone());
+        crate::cli::serve_tasks::spawn_installer_audit_ingester(&neoth_home, writer.clone());
 
     // ── C-05d credentials_import sidecar ingester (Session 26) ────────────
     // `neoth init` wizard step 6g drops
@@ -1853,7 +1966,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // secret material.
     // GOLD-ARCH-01: body relocated to serve_tasks (same handle, same site).
     let credentials_import_task =
-        crate::cli::serve_tasks::spawn_credentials_import_ingester(writer.clone());
+        crate::cli::serve_tasks::spawn_credentials_import_ingester(&neoth_home, writer.clone());
 
     // ── W-04 follow-up: detect_complete sidecar ingester (Session 26) ─────
     // The wizard's step1b drops `~/.neoth/detect_complete_<ts>.json`
@@ -1862,7 +1975,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // credentials ingesters above.
     // GOLD-ARCH-01: body relocated to serve_tasks (same handle, same site).
     let detect_complete_task =
-        crate::cli::serve_tasks::spawn_detect_complete_ingester(writer.clone());
+        crate::cli::serve_tasks::spawn_detect_complete_ingester(&neoth_home, writer.clone());
 
     // ── Self-dev outbox drain (P-04 follow-on, Session 21) ────────────────
     // CLI commands `neoth self-dev accept/decline/propose` run
@@ -1875,7 +1988,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // warns 'no WAL frame'" — the WAL frames now DO land,
     // asynchronously through the daemon.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let self_dev_outbox_task = crate::cli::serve_tasks::spawn_self_dev_outbox(&writer);
+    let self_dev_outbox_task = crate::cli::serve_tasks::spawn_self_dev_outbox(&neoth_home, &writer);
 
     // ── QM-10 Phase 3 breaker state restore ────────────────────────────────
     // Replay the failure counters from the prior daemon run so a
@@ -1885,9 +1998,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // retry every provider once. Stale rows (older than 7 days)
     // are skipped.
     {
-        let home = crate::config::FreedomConfig::default_neoth_home();
         match crate::providers::circuit_breaker::persist::restore_from_disk(
-            &home,
+            &neoth_home,
             &crate::providers::circuit_breaker::GLOBAL,
             7 * 86_400,
         ) {
@@ -1897,79 +2009,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 "QM-10 Phase 3: restored circuit-breaker failure counters from prior run"
             ),
             Err(e) => warn!(error = %e, "breaker state restore failed (non-fatal)"),
-        }
-    }
-
-    // ── OnSessionStart hooks (QM-15 follow-on) ─────────────────────────────
-    // Fire operator-defined hooks at the `on_session_start` stage AFTER
-    // all subsystems (WAL writer, indexer, channels, cron, models catalog
-    // refresh) have spawned. Mirrors the OnShutdown firing on the other
-    // side of the wait loop. Each fired hook writes a HOOK_FIRED WAL
-    // frame so the audit log shows that configured boot actions ran.
-    //
-    // GR-06 (Session 27): `Block` outcome semantics pinned. A
-    // `StageOutcome::Block` at this stage is LOGGED via warn! and
-    // ignored — the daemon stays booted. This is intentional: at
-    // the `on_session_start` stage the daemon has already opened
-    // every channel + spawned cron tasks + bound its HTTP listener;
-    // tearing those down because a single operator-defined hook
-    // returned Block would surface as a half-booted daemon that
-    // never gets to its idle wait loop. Hooks that need to abort
-    // boot belong at an earlier stage (no such stage exists today —
-    // operator escalation deferred until v0.4 or a real ask). The
-    // warn! message names the hook + the reason so the operator
-    // sees the intent without it being load-bearing on the
-    // daemon's liveness.
-    {
-        let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
-        let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
-            warn!(
-                error = %e,
-                dir = %hook_dir.display(),
-                "hook load failed at session-start — proceeding with empty hook set"
-            );
-            Default::default()
-        });
-        match crate::hooks::run_stage(
-            crate::hooks::HookStage::OnSessionStart,
-            "session-start",
-            &hooks,
-        ) {
-            Ok(crate::hooks::StageOutcome::Continue { hits, .. }) => {
-                for name in &hits {
-                    let payload = match serde_json::to_vec(&serde_json::json!({
-                        "name": name,
-                        "stage": "on_session_start",
-                        "ts_unix": crate::time::now_unix_secs(),
-                    })) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!(error = %e, "serialize OnSessionStart hook frame failed");
-                            continue;
-                        }
-                    };
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_HOOK_FIRED,
-                        &payload,
-                    )
-                    .build();
-                    if let Err(e) = writer.append(header, payload).await {
-                        warn!(error = %e, "WAL append OnSessionStart HOOK_FIRED failed");
-                    } else {
-                        info!(hook = name, "on_session_start hook fired");
-                    }
-                }
-            }
-            Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
-                // Documented Block semantics: daemon continues. See the
-                // module-doc above the hook block for the rationale.
-                warn!(
-                    hook = %name,
-                    reason = %reason,
-                    "on_session_start hook returned Block; ignored — daemon continues (subsystems already spawned)"
-                );
-            }
-            Err(e) => warn!(error = %e, "OnSessionStart hook dispatch failed"),
         }
     }
 
@@ -2009,13 +2048,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let restart_notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let restart_watcher = {
         let notify = std::sync::Arc::clone(&restart_notify);
+        let restart_home = neoth_home.clone();
         tokio::spawn(async move {
-            let home = crate::config::FreedomConfig::default_neoth_home();
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
             ticker.tick().await; // burn immediate
             loop {
                 ticker.tick().await;
-                if crate::daemon::supervisor::take_restart_request(&home) {
+                if crate::daemon::supervisor::take_restart_request(&restart_home) {
                     notify.notify_one();
                     break;
                 }
@@ -2058,9 +2097,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // fire so a restart-grace path sees the same state. Best-effort —
     // a stuck disk doesn't block the shutdown sequence.
     {
-        let home = crate::config::FreedomConfig::default_neoth_home();
         match crate::providers::circuit_breaker::persist::snapshot_to_disk(
-            &home,
+            &neoth_home,
             &crate::providers::circuit_breaker::GLOBAL,
         ) {
             Ok(0) => {}
@@ -2080,18 +2118,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // — we're already shutting down, so a Block just gets logged + skipped
     // rather than aborting the drain.
     {
-        let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
-        // Pick #34 (Session 14, silent-failure audit-fix): hook load
-        // failures now surface at warn level. Prior `unwrap_or_default()`
-        // silently disabled every hook on a single bad TOML file.
-        let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
-            warn!(
-                error = %e,
-                dir = %hook_dir.display(),
-                "hook load failed — proceeding with empty hook set"
-            );
-            Default::default()
-        });
+        // Re-read valid operator edits. If the live set became malformed,
+        // retain the startup-validated policy instead of silently erasing all
+        // shutdown hooks at the lifecycle boundary.
+        let hooks = match crate::hooks::load_all_strict(&hook_dir).await {
+            Ok(hooks) => hooks,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    dir = %hook_dir.display(),
+                    "shutdown hook reload rejected; using startup-validated hook snapshot"
+                );
+                startup_hooks.clone()
+            }
+        };
         match crate::hooks::run_stage(crate::hooks::HookStage::OnShutdown, "shutdown", &hooks) {
             Ok(crate::hooks::StageOutcome::Continue { hits, .. }) => {
                 for name in &hits {
@@ -2199,7 +2239,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         ssh_tunnel_handles,
         confirm_drain_task,
     };
-    crate::cli::serve_tasks::shutdown_background_tasks(bg, writer, writer_join).await;
+    crate::cli::serve_tasks::shutdown_background_tasks(&neoth_home, bg, writer, writer_join).await;
     Ok(())
 }
 
@@ -2279,27 +2319,29 @@ pub(crate) fn cron_spec_fingerprint(
     }
 
     match key {
-        BgMonitor            => jh!(cfg.bg_monitor),
-        DoctorCron           => jh!(cfg.doctor),
-        Babel                => jh!(cfg.babel),
-        WatchdogCron         => jh!(cfg.watchdog),
-        DriftAlert           => jh!(cfg.drift_alert),
-        RecallLatency        => jh!(cfg.recall_latency),
-        ResourceWatch        => jh!(cfg.resource_watch),
-        MonitorCron          => jh!(cfg.monitor),
-        TokenAnomaly         => jh!(cfg.token_anomaly),
-        SessionHealth        => jh!(cfg.session_health),
-        WebhookManager       => jh!(cfg.webhook_manager),
-        SkillCurator         => jh!(cfg.skill_curator),
-        SynthesisCron        => jh!(cfg.synthesis_cron),
-        ConsolidationSweep   => jh!(cfg.consolidation_sweep),
-        SelfWiki             => jh!(cfg.self_wiki),
+        BgMonitor => jh!(cfg.bg_monitor),
+        DoctorCron => jh!(cfg.doctor),
+        Babel => jh!(cfg.babel),
+        WatchdogCron => jh!(cfg.watchdog),
+        DriftAlert => jh!(cfg.drift_alert),
+        RecallLatency => jh!(cfg.recall_latency),
+        ResourceWatch => jh!(cfg.resource_watch),
+        MonitorCron => jh!(cfg.monitor),
+        TokenAnomaly => jh!(cfg.token_anomaly),
+        SessionHealth => jh!(cfg.session_health),
+        WebhookManager => jh!(cfg.webhook_manager),
+        SkillCurator => jh!(cfg.skill_curator),
+        SynthesisCron => jh!(cfg.synthesis_cron),
+        ConsolidationSweep => jh!(cfg.consolidation_sweep),
+        SelfWiki => jh!(cfg.self_wiki),
         SelfImprovementCollector => jh!(cfg.self_improvement_collector),
-        EcologyCron          => jh!(cfg.ecology),
-        PatternCron          => jh!(cfg.pattern_cron),
+        EcologyCron => jh!(cfg.ecology),
+        PatternCron => jh!(cfg.pattern_cron),
         ContradictionResolve => jh!(cfg.contradiction_resolve),
-        GuidanceCron         => jh!(cfg.guidance_cron),
-        ProfileAdapt         => jh!(cfg.profile_adapt),
+        GuidanceCron => jh!(cfg.guidance_cron),
+        ProfileAdapt => jh!(cfg.profile_adapt),
+        #[cfg(feature = "cluster")]
+        ResourceSnapshot => cfg.swarm.interval_secs.hash(&mut h),
         // Obsidian crons: relevant config is scattered across individual
         // primitive fields rather than a single sub-struct — hash each directly.
         ObsidianSync => {
@@ -2441,11 +2483,43 @@ pub(crate) async fn handle_reload_sentinel(
     }
 }
 
+// ── Reload schedule unit tests ─────────────────────────────────────────────────
+#[cfg(test)]
+mod email_ingest_schedule_tests {
+    use super::email_ingest_schedule_change;
+    use crate::config::EmailIngestCronConfig;
+    use std::time::Duration;
+
+    #[test]
+    fn reload_resets_ticker_for_cadence_changes_and_enable_edges() {
+        let mut live = EmailIngestCronConfig::default();
+        live.interval_secs = 60;
+        assert_eq!(
+            email_ingest_schedule_change(false, Duration::from_secs(300), &live),
+            Some(Duration::from_secs(60)),
+            "a shorter disabled cadence must be remembered before enable"
+        );
+
+        live.interval_secs = 300;
+        live.enabled = true;
+        assert_eq!(
+            email_ingest_schedule_change(false, Duration::from_secs(300), &live),
+            Some(Duration::from_secs(300)),
+            "enabling must schedule an immediate first poll"
+        );
+        assert_eq!(
+            email_ingest_schedule_change(true, Duration::from_secs(300), &live),
+            None,
+            "an unchanged live schedule must not churn the ticker"
+        );
+    }
+}
+
 // ── ZF-07 boot-stagger unit tests ─────────────────────────────────────────────
 #[cfg(test)]
 mod boot_stagger_tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{CRON_FIRST_TICK_WINDOW, START_STAGGER_PERMITS};
 
@@ -2475,12 +2549,7 @@ mod boot_stagger_tests {
                 // Track peak via CAS loop (avoids a separate mutex).
                 let mut p = peak.load(Ordering::Acquire);
                 while p < cur {
-                    match peak.compare_exchange_weak(
-                        p,
-                        cur,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ) {
+                    match peak.compare_exchange_weak(p, cur, Ordering::AcqRel, Ordering::Acquire) {
                         Ok(_) => break,
                         Err(actual) => p = actual,
                     }

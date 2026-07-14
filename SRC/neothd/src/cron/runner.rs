@@ -3,59 +3,103 @@
 //!
 //! Each invocation writes WAL events 0x40 (FIRED) → 0x41 (SUCCESS) / 0x42 (FAILED).
 //!
-//! V1 simplifying assumptions:
-//! - All jobs share the operator's primary provider (from `freedom.yaml`).
-//!   Per-job model overrides arrive when the plugin SDK lands.
-//! - Channel delivery uses the same `channels::Channel::send_proactive` path
-//!   the heartbeat loop (Phase 11c) will share.
-//! - Timeout enforced via `tokio::time::timeout`. On timeout the job goes to
-//!   FAILED. No retry today.
+//! Current execution contract:
+//! - Jobs use the scheduler's authorized provider. Per-job provider/model
+//!   selection is tracked as an explicit Gold contract gap in the roadmap.
+//! - Channel delivery is first persisted to the proactive queue and is later
+//!   sent through the normal channel dispatcher.
+//! - The provider deadline covers the initial call and, for briefing-class
+//!   jobs only, one quality-gate regeneration. Provider failures and timeouts
+//!   are terminal; rejected briefings are never queued for delivery.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde_json::json;
-use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
 use crate::cron::briefing_prompt::render_briefing_system_prompt;
-use crate::cron::schema::{classify_role, CronRole, Job};
+use crate::cron::schema::{CronRole, Job, classify_role};
+use crate::hooks::schema::HookDef;
+use crate::hooks::{HookStage, StageOutcome};
+use crate::proactive::{ProactiveItem, ProactiveQueue};
 use crate::profile::briefing_gate::should_emit_for_briefing;
 use crate::profile::briefing_policy::{BriefingPolicy, EmitVerdict};
 use crate::profile::estimators::ObservedTurn;
 use crate::profile::snapshot::aggregate_and_persist;
+use crate::providers::cost_authorization::AuthorizedProvider;
 use crate::providers::{Provider, Request};
-use crate::proactive::{ProactiveItem, ProactiveQueue};
 use crate::wal::events::{
     EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT, EVENT_TYPE_JOB_FAILED, EVENT_TYPE_JOB_FIRED,
     EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_JOB_SUCCESS, EVENT_TYPE_RAW_TEXT,
 };
 use crate::wal::{EventFlags, writer::WalWriterHandle};
 
+type HookDispatcher = fn(HookStage, &str, &[HookDef]) -> Result<StageOutcome>;
+
 pub struct RunOutcome {
     pub success: bool,
     pub duration: Duration,
     pub output_bytes: usize,
+    /// True when a configured delivery was durably present in the proactive
+    /// queue. This is not a claim that the asynchronous channel send completed.
+    pub delivery_queued: bool,
     pub error: Option<String>,
 }
 
 pub async fn run_job(
     job: &Job,
-    provider: &dyn Provider,
+    provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
+) -> Result<RunOutcome> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    run_job_at(&home, job, provider, writer).await
+}
+
+/// Execute a job against one explicit daemon/CLI instance home.
+///
+/// The scheduler must use this entrypoint so hook policy and proactive
+/// delivery state cannot leak to the process-global default home.
+pub async fn run_job_at(
+    home: &Path,
+    job: &Job,
+    provider: &AuthorizedProvider,
+    writer: &WalWriterHandle,
+) -> Result<RunOutcome> {
+    let proactive_queue_path = home.join("proactive_queue.json");
+    let hook_dir = home.join("hooks");
+    run_job_with_paths(
+        job,
+        provider,
+        writer,
+        &proactive_queue_path,
+        &hook_dir,
+        crate::hooks::run_stage,
+    )
+    .await
+}
+
+async fn run_job_with_paths(
+    job: &Job,
+    provider: &AuthorizedProvider,
+    writer: &WalWriterHandle,
+    proactive_queue_path: &Path,
+    hook_dir: &Path,
+    hook_dispatch: HookDispatcher,
 ) -> Result<RunOutcome> {
     let started = Instant::now();
 
     // ── WAL: FIRED ─────────────────────────────────────────────────────────
+    let fired_at_unix_ms = now_unix_ms();
     let fired_payload = serde_json::to_vec(&json!({
         "job_id": job.id,
         "name": job.name,
         "schedule_expr": job.schedule.cron,
         "tz": job.schedule.tz.clone().unwrap_or_else(|| "UTC".to_string()),
-        "fired_at_unix_ms": now_unix_ms(),
+        "fired_at_unix_ms": fired_at_unix_ms,
     }))?;
-    write_event(writer, EVENT_TYPE_JOB_FIRED, &fired_payload)
+    let fired_event_id = write_event(writer, EVENT_TYPE_JOB_FIRED, &fired_payload)
         .await
         .context("write JOB_FIRED")?;
 
@@ -67,63 +111,112 @@ pub async fn run_job(
     // provider sees (useful for redacting secrets before they leave the
     // daemon); a Block skips the provider call entirely with a
     // JOB_FAILED frame recording the hook name as the cause.
-    let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
-    let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_default();
-    let effective_prompt =
-        match crate::hooks::run_stage(crate::hooks::HookStage::JobFired, &job.prompt, &hooks) {
-            Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
-                for name in &hits {
-                    if let Ok(payload) = serde_json::to_vec(&json!({
-                        "name": name,
-                        "stage": "job_fired",
-                        "job_id": job.id,
-                        "ts_unix_ms": now_unix_ms(),
-                    })) {
-                        let _ = write_event(
-                            writer,
-                            crate::wal::events::EVENT_TYPE_HOOK_FIRED,
-                            &payload,
-                        )
-                        .await;
-                    }
-                }
-                body
-            }
-            Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
-                warn!(job_id = %job.id, hook = %name, reason = %reason,
-                "job_fired hook blocked the run");
-                if let Ok(payload) = serde_json::to_vec(&json!({
+    let hooks = match crate::hooks::load_all_strict(hook_dir).await {
+        Ok(hooks) => hooks,
+        Err(error) => {
+            warn!(job_id = %job.id, error = %error, "job_fired hook load failed; blocking run");
+            return finish_job_fired_failure(
+                job,
+                writer,
+                &started,
+                fired_event_id,
+                "hook_load_failed",
+                format!("failed to load JobFired hooks: {error:#}"),
+            )
+            .await;
+        }
+    };
+    let effective_prompt = match hook_dispatch(HookStage::JobFired, &job.prompt, &hooks) {
+        Ok(StageOutcome::Continue { body, hits }) => {
+            for name in &hits {
+                let payload = serde_json::to_vec(&json!({
                     "name": name,
                     "stage": "job_fired",
                     "job_id": job.id,
-                    "reason": reason,
                     "ts_unix_ms": now_unix_ms(),
-                })) {
-                    let _ = write_event(
+                }))
+                .expect("JobFired hook audit payload contains only JSON-safe fields");
+                if let Err(error) =
+                    write_event(writer, crate::wal::events::EVENT_TYPE_HOOK_FIRED, &payload).await
+                {
+                    warn!(job_id = %job.id, hook = %name, error = %error,
+                            "HOOK_FIRED audit failed; blocking provider call");
+                    return finish_job_fired_failure(
+                        job,
                         writer,
-                        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                        &payload,
+                        &started,
+                        fired_event_id,
+                        "hook_audit_failed",
+                        format!("HOOK_FIRED audit failed for `{name}`: {error:#}"),
                     )
                     .await;
                 }
-                return Ok(RunOutcome {
-                    success: false,
-                    duration: started.elapsed(),
-                    output_bytes: 0,
-                    error: Some(format!("blocked by hook `{name}`: {reason}")),
-                });
             }
-            Err(e) => {
-                warn!(job_id = %job.id, error = %e, "job_fired hook dispatch failed");
-                job.prompt.clone()
+            body
+        }
+        Ok(StageOutcome::Block { name, reason }) => {
+            warn!(job_id = %job.id, hook = %name, reason = %reason,
+                    "job_fired hook blocked the run");
+            let payload = serde_json::to_vec(&json!({
+                "name": &name,
+                "stage": "job_fired",
+                "job_id": job.id,
+                "reason": &reason,
+                "ts_unix_ms": now_unix_ms(),
+            }))
+            .expect("JobFired block audit payload contains only JSON-safe fields");
+            if let Err(error) = write_event(
+                writer,
+                crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                &payload,
+            )
+            .await
+            {
+                warn!(job_id = %job.id, hook = %name, error = %error,
+                        "HOOK_BLOCKED audit failed; run remains blocked");
+                return finish_job_fired_failure(
+                    job,
+                    writer,
+                    &started,
+                    fired_event_id,
+                    "hook_block_audit_failed",
+                    format!(
+                        "hook `{name}` blocked the run, but HOOK_BLOCKED audit failed: {error:#}"
+                    ),
+                )
+                .await;
             }
-        };
+            return finish_job_fired_failure(
+                job,
+                writer,
+                &started,
+                fired_event_id,
+                "hook_blocked",
+                format!("blocked by hook `{name}`: {reason}"),
+            )
+            .await;
+        }
+        Err(error) => {
+            warn!(job_id = %job.id, error = %error,
+                    "job_fired hook dispatch failed; blocking provider call");
+            return finish_job_fired_failure(
+                job,
+                writer,
+                &started,
+                fired_event_id,
+                "hook_dispatch_failed",
+                format!("JobFired hook dispatch failed: {error:#}"),
+            )
+            .await;
+        }
+    };
 
     // ── OH-06: inject system prompt for Briefing-classified jobs ──────────
     // `classify_role` uses keyword/name heuristic — no I/O.
     // Seed = UTC day number so the greeting is stable across the two 30 s
     // ticks that may both visit the same cron minute, but rotates daily.
-    let system_prompt: Option<String> = if classify_role(job) == CronRole::Briefing {
+    let is_briefing = classify_role(job) == CronRole::Briefing;
+    let system_prompt: Option<String> = if is_briefing {
         let tz = job.schedule.timezone();
         let now_local = crate::time::utc_now().with_timezone(&tz);
         let local_dt = now_local.format("%A, %Y-%m-%d %H:%M").to_string();
@@ -139,22 +232,21 @@ pub async fn run_job(
 
     // ── Provider call (bounded by timeout_seconds) ─────────────────────────
     let req = Request {
-        prompt: effective_prompt,
+        prompt: effective_prompt.clone(),
         system: system_prompt,
         model: None,
         ..Default::default()
     };
     let timeout_dur = Duration::from_secs(job.timeout_seconds.max(1) as u64);
-    let result = timeout(timeout_dur, provider.complete(req)).await;
+    let provider_deadline = tokio::time::Instant::now() + timeout_dur;
+    let result = tokio::time::timeout_at(provider_deadline, provider.complete(req.clone())).await;
 
-    let elapsed = started.elapsed();
-
-    let (ok, output_text, err_text) = match result {
+    let (mut ok, mut output_text, mut err_text) = match result {
         Ok(Ok(completion)) => {
             debug!(
                 job_id = %job.id,
                 bytes = completion.text.len(),
-                latency_ms = elapsed.as_millis(),
+                latency_ms = started.elapsed().as_millis(),
                 "job provider call ok"
             );
             (true, completion.text, None)
@@ -173,25 +265,114 @@ pub async fn run_job(
         }
     };
 
-    // GOLD-ADAPT-JV-PRO-07 / JV-PRO-06 — surface output quality + failure cause.
-    if ok {
-        // Score the briefing's quality; a thin / filler-heavy proactive output is
-        // worse than none — make it visible so the operator can tune/regenerate.
-        // OH-06: raise floor to 80 words — the OH spec targets 200-400 words;
-        // 40 was a pre-OH generic floor. 80 is the minimum sane "morning coffee
-        // read" check (a proper 200-word brief with headings still passes at 80
-        // via title/citation bonuses; pure-filler outputs are caught by filler_ratio).
-        let q = crate::cron::quality_gate::score_briefing(&output_text, 80);
-        if q.should_regenerate() {
+    // GOLD-ADAPT-JV-PRO-07 — quality gates must run before delivery. Only
+    // Briefing-class jobs use the 80-word/title/citation rubric; arbitrary cron
+    // tasks may legitimately return a short token such as "OK". A failed first
+    // briefing gets exactly one regeneration through the same AuthorizedProvider
+    // (therefore the same final-model cost/consent boundary) and the original
+    // whole-job timeout deadline. A second low score is a terminal failure and
+    // no delivery item is ever queued.
+    if ok && is_briefing {
+        let first_score = crate::cron::quality_gate::score_briefing(&output_text, 80);
+        if first_score.should_regenerate() {
             warn!(
                 job_id = %job.id,
-                score = q.score,
-                words = q.word_count,
-                filler_ratio = q.filler_ratio,
-                "JV-PRO-07: low-quality briefing output — consider regenerating"
+                score = first_score.score,
+                words = first_score.word_count,
+                filler_ratio = first_score.filler_ratio,
+                "JV-PRO-07: low-quality briefing output — regenerating once before delivery"
             );
+            let retry_req = Request {
+                prompt: format!(
+                    "{effective_prompt}\n\nThe previous draft failed the briefing quality gate. Regenerate it once with a clear heading, at least 80 substantive words, concrete facts or citations where available, and no filler. Return only the improved briefing."
+                ),
+                ..req
+            };
+            match tokio::time::timeout_at(provider_deadline, provider.complete(retry_req)).await {
+                Ok(Ok(completion)) => {
+                    let retry_score =
+                        crate::cron::quality_gate::score_briefing(&completion.text, 80);
+                    if retry_score.should_regenerate() {
+                        ok = false;
+                        output_text = completion.text;
+                        err_text = Some(format!(
+                            "briefing quality gate failed after one regeneration (score {:.2}, words {}, filler_ratio {:.2})",
+                            retry_score.score, retry_score.word_count, retry_score.filler_ratio,
+                        ));
+                        warn!(
+                            job_id = %job.id,
+                            score = retry_score.score,
+                            words = retry_score.word_count,
+                            filler_ratio = retry_score.filler_ratio,
+                            "JV-PRO-07: regenerated briefing still below quality gate; delivery withheld"
+                        );
+                    } else {
+                        output_text = completion.text;
+                        info!(
+                            job_id = %job.id,
+                            score = retry_score.score,
+                            words = retry_score.word_count,
+                            "JV-PRO-07: regenerated briefing passed quality gate"
+                        );
+                    }
+                }
+                Ok(Err(error)) => {
+                    ok = false;
+                    err_text = Some(format!(
+                        "briefing regeneration provider call failed after low-quality first draft: {error}"
+                    ));
+                }
+                Err(_) => {
+                    ok = false;
+                    err_text = Some(format!(
+                        "briefing regeneration timed out within the {}s job deadline",
+                        job.timeout_seconds.max(1)
+                    ));
+                }
+            }
         }
-    } else {
+    }
+
+    let elapsed = started.elapsed();
+    let mut delivery_queued = false;
+    if ok {
+        if let Some(delivery) = &job.delivery {
+            let channel = delivery.channel.trim().to_ascii_lowercase();
+            let dedup_key = format!("cron-delivery:{}:{fired_event_id}", job.id);
+            match enqueue_cron_delivery(
+                proactive_queue_path,
+                &job.id,
+                &channel,
+                &output_text,
+                &dedup_key,
+                now_unix_secs(),
+            ) {
+                Ok(inserted) => {
+                    delivery_queued = true;
+                    info!(
+                        job_id = %job.id,
+                        channel = %channel,
+                        dedup_key = %dedup_key,
+                        inserted,
+                        "cron delivery durably queued for proactive dispatch"
+                    );
+                }
+                Err(error) => {
+                    let message = format!(
+                        "provider completed, but delivery queue persistence failed for channel \
+                         `{channel}`: {error:#}"
+                    );
+                    warn!(job_id = %job.id, channel = %channel, error = %error,
+                        "cron delivery enqueue failed; marking run failed closed");
+                    ok = false;
+                    err_text = Some(message);
+                }
+            }
+        }
+    }
+
+    // GOLD-ADAPT-JV-PRO-06 — surface failure cause.
+    if !ok {
         // Classify the failure + emit a retrospective with a recommendation,
         // instead of a bare error string the operator has to interpret.
         let exit_kind = if err_text.as_deref().is_some_and(|e| e.contains("timeout")) {
@@ -220,15 +401,19 @@ pub async fn run_job(
         const SELF_HEAL_RISK_THRESHOLD: f64 = 0.3;
         if retro.risk_score >= SELF_HEAL_RISK_THRESHOLD {
             // (a) WAL audit frame 0x8A CRON_JOB_SELF_HEAL_ALERT
-            if let Ok(alert_payload) = serde_json::to_vec(&json!({
+            let alert_payload = serde_json::to_vec(&json!({
                 "job_id": job.id,
                 "cause": retro.cause.as_str(),
                 "risk_score": retro.risk_score,
                 "recommendation": retro.recommendation,
                 "ts_unix_ms": now_unix_ms(),
-            })) {
-                let _ = write_event(writer, EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT, &alert_payload)
-                    .await;
+            }))
+            .expect("cron self-heal audit payload contains only JSON-safe fields");
+            if let Err(error) =
+                write_event(writer, EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT, &alert_payload).await
+            {
+                warn!(job_id = %job.id, error = %error,
+                    "cron self-heal WAL audit failed after completed job failure");
             }
 
             // (b) Enqueue a ProactiveItem for the drain loop to surface.
@@ -242,12 +427,9 @@ pub async fn run_job(
                 retro.risk_score,
                 retro.recommendation,
             );
-            let home = crate::config::FreedomConfig::default_neoth_home();
-            let queue_path = home.join("proactive_queue.json");
-            // Locked load→mutate→save; tolerates a corrupt file (same as
-            // the old `unwrap_or_default()`) by silently ignoring the error
-            // (this whole block is best-effort, same as `let _ =` on save).
-            let _ = ProactiveQueue::modify(&queue_path, |queue| {
+            // The primary job failure is already fixed at this point, so alert
+            // delivery is best-effort; persistence errors remain operator-visible.
+            if let Err(error) = ProactiveQueue::modify(proactive_queue_path, |queue| {
                 let inserted = queue.enqueue(ProactiveItem {
                     priority: 80,
                     dedup_key,
@@ -261,17 +443,23 @@ pub async fn run_job(
                 // Persist only when enqueue accepted the item (same as old
                 // `if inserted { let _ = queue.save_to(...) }` logic).
                 (inserted, inserted)
-            });
+            }) {
+                warn!(job_id = %job.id, error = %error,
+                    "cron self-heal alert persistence failed after completed job failure");
+            }
         }
     }
 
     // ── WAL: SUCCESS / FAILED ──────────────────────────────────────────────
     let outcome_payload = serde_json::to_vec(&json!({
+        "fired_event_id": fired_event_id,
         "job_id": job.id,
         "name": job.name,
         "duration_ms": elapsed.as_millis() as u64,
         "output_bytes": output_text.len(),
         "error": err_text,
+        "delivery_channel": job.delivery.as_ref().map(|delivery| delivery.channel.as_str()),
+        "delivery_queued": delivery_queued,
         "delivered": false,
     }))?;
     let event_type = if ok {
@@ -293,39 +481,123 @@ pub async fn run_job(
     } else {
         err_text.clone().unwrap_or_default()
     };
-    match crate::hooks::run_stage(crate::hooks::HookStage::JobDone, &outcome_body, &hooks) {
-        Ok(crate::hooks::StageOutcome::Continue { hits, .. }) => {
+    match hook_dispatch(HookStage::JobDone, &outcome_body, &hooks) {
+        Ok(StageOutcome::Continue { hits, .. }) => {
             for name in &hits {
-                if let Ok(payload) = serde_json::to_vec(&json!({
+                let payload = serde_json::to_vec(&json!({
                     "name": name,
                     "stage": "job_done",
                     "job_id": job.id,
                     "ok": ok,
                     "ts_unix_ms": now_unix_ms(),
-                })) {
-                    let _ =
-                        write_event(writer, crate::wal::events::EVENT_TYPE_HOOK_FIRED, &payload)
-                            .await;
+                }))
+                .expect("JobDone hook audit payload contains only JSON-safe fields");
+                if let Err(error) =
+                    write_event(writer, crate::wal::events::EVENT_TYPE_HOOK_FIRED, &payload).await
+                {
+                    warn!(job_id = %job.id, hook = %name, error = %error,
+                        "HOOK_FIRED audit failed after completed job");
                 }
             }
         }
-        Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+        Ok(StageOutcome::Block { name, reason }) => {
             // Can't unwind a completed job — log + emit audit only.
             warn!(job_id = %job.id, hook = %name, reason = %reason,
                 "job_done hook returned Block; ignored (job already completed)");
+            let payload = serde_json::to_vec(&json!({
+                "name": &name,
+                "stage": "job_done",
+                "job_id": job.id,
+                "reason": &reason,
+                "ts_unix_ms": now_unix_ms(),
+            }))
+            .expect("JobDone block audit payload contains only JSON-safe fields");
+            if let Err(error) = write_event(
+                writer,
+                crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                &payload,
+            )
+            .await
+            {
+                warn!(job_id = %job.id, hook = %name, error = %error,
+                    "HOOK_BLOCKED audit failed after completed job");
+            }
         }
-        Err(e) => warn!(job_id = %job.id, error = %e, "job_done hook dispatch failed"),
+        Err(error) => {
+            warn!(job_id = %job.id, error = %error, "job_done hook dispatch failed after completed job")
+        }
     }
-
-    // Channel delivery is deferred to a future iteration that wires the
-    // proactive-send trait method on Channel. For now we land the output in
-    // the WAL only; recall finds it via idx_episode.
 
     Ok(RunOutcome {
         success: ok,
         duration: elapsed,
         output_bytes: output_text.len(),
+        delivery_queued,
         error: err_text,
+    })
+}
+
+/// Durably enqueue one completed cron result. The dedup key identifies the
+/// concrete JOB_FIRED WAL event, so retrying the same event is idempotent while
+/// a later scheduled run still produces a distinct notification.
+fn enqueue_cron_delivery(
+    queue_path: &Path,
+    job_id: &str,
+    channel: &str,
+    output_text: &str,
+    dedup_key: &str,
+    now_unix: i64,
+) -> Result<bool> {
+    let item = ProactiveItem {
+        priority: 70,
+        dedup_key: dedup_key.to_string(),
+        channel: channel.to_string(),
+        source: format!("cron:{job_id}"),
+        body: output_text.to_string(),
+        scheduled_for_unix: 0,
+        is_failure: false,
+        expires_unix: now_unix.saturating_add(86_400),
+    };
+    ProactiveQueue::modify(queue_path, |queue| {
+        let inserted = queue.enqueue(item);
+        // `false` is an idempotent retry: this exact JOB_FIRED event is
+        // already durable under the same dedup key.
+        (inserted, inserted)
+    })
+}
+
+async fn finish_job_fired_failure(
+    job: &Job,
+    writer: &WalWriterHandle,
+    started: &Instant,
+    fired_event_id: u64,
+    failure_kind: &str,
+    error: String,
+) -> Result<RunOutcome> {
+    let duration = started.elapsed();
+    let payload = serde_json::to_vec(&json!({
+        "fired_event_id": fired_event_id,
+        "job_id": job.id,
+        "name": job.name,
+        "duration_ms": duration.as_millis() as u64,
+        "output_bytes": 0,
+        "error": &error,
+        "failure_stage": "job_fired_hook",
+        "failure_kind": failure_kind,
+        "delivery_channel": job.delivery.as_ref().map(|delivery| delivery.channel.as_str()),
+        "delivery_queued": false,
+        "delivered": false,
+    }))
+    .expect("terminal JobFired failure payload contains only JSON-safe fields");
+    write_event(writer, EVENT_TYPE_JOB_FAILED, &payload)
+        .await
+        .with_context(|| format!("write terminal JOB_FAILED after {failure_kind}"))?;
+    Ok(RunOutcome {
+        success: false,
+        duration,
+        output_bytes: 0,
+        delivery_queued: false,
+        error: Some(error),
     })
 }
 
@@ -363,7 +635,7 @@ async fn write_event(writer: &WalWriterHandle, event_type: u8, payload: &[u8]) -
 /// `chrono::Utc::now().with_timezone(&local_tz)`.
 pub async fn run_briefing_gated(
     job: &Job,
-    provider: &dyn Provider,
+    provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
     home: &Path,
     now_unix: i64,
@@ -392,10 +664,11 @@ pub async fn run_briefing_gated(
             success: false,
             duration: Duration::ZERO,
             output_bytes: 0,
+            delivery_queued: false,
             error: Some(format!("briefing-gate skip: {reason}")),
         });
     }
-    run_job(job, provider, writer).await
+    run_job_at(home, job, provider, writer).await
 }
 
 /// P-01.b cron consumer (Workstream C, Session 22) — daily snapshot
@@ -462,20 +735,33 @@ pub async fn aggregate_profile_snapshot(home: &Path, wal_dir: &Path) -> Result<u
 #[cfg(test)]
 mod workstream_c_tests {
     use super::*;
-    use crate::cron::schema::{Job, Schedule};
+    use crate::cron::schema::{Delivery, Job, Schedule};
     use crate::profile::estimators::BehaviouralProfile;
     use crate::profile::snapshot::load_snapshot;
     use crate::providers::{Completion, Provider, Request};
-    use crate::wal::events::{EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_RAW_TEXT};
+    use crate::wal::events::{
+        EVENT_TYPE_HOOK_BLOCKED, EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_RAW_TEXT,
+    };
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     use crate::wal::spawn as wal_spawn;
     use anyhow::Result;
     use async_trait::async_trait;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
+
+    fn authorized(provider: impl Provider + 'static) -> AuthorizedProvider {
+        AuthorizedProvider::from_box(
+            Box::new(provider),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            Some("test-model".to_string()),
+            "cron.runner.test",
+        )
+    }
 
     fn briefing_job() -> Job {
         Job {
@@ -493,6 +779,22 @@ mod workstream_c_tests {
         }
     }
 
+    fn delivery_job(channel: &str) -> Job {
+        Job {
+            id: "delivery-job".into(),
+            name: "delivery job".into(),
+            enabled: true,
+            schedule: Schedule {
+                cron: "0 * * * *".into(),
+                tz: None,
+            },
+            prompt: "produce a delivery".into(),
+            timeout_seconds: 30,
+            delivery: Some(Delivery::new(channel)),
+            depends_on: vec![],
+        }
+    }
+
     struct CountingProvider {
         calls: Arc<AtomicUsize>,
     }
@@ -506,6 +808,7 @@ mod workstream_c_tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
                 text: "ok".into(),
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
@@ -514,6 +817,389 @@ mod workstream_c_tests {
                 cache_read_tokens: None,
             })
         }
+    }
+
+    struct SequenceProvider {
+        calls: Arc<AtomicUsize>,
+        prompts: Arc<Mutex<Vec<String>>>,
+        outputs: Mutex<std::collections::VecDeque<String>>,
+    }
+
+    #[async_trait]
+    impl Provider for SequenceProvider {
+        fn name(&self) -> &'static str {
+            "sequence-mock"
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.prompts.lock().unwrap().push(req.prompt);
+            let text = self
+                .outputs
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("test provider output exhausted");
+            Ok(Completion {
+                text,
+                identity: Default::default(),
+                model: "mock".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
+    fn passing_briefing() -> String {
+        let facts = (0..90)
+            .map(|index| format!("fact-{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("# Morning Brief\n\n{facts}")
+    }
+
+    fn wal_json_events(path: &Path) -> Vec<(u8, serde_json::Value)> {
+        let bytes = std::fs::read(path).expect("read WAL segment");
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut events = Vec::new();
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode WAL frame");
+            let payload = serde_json::from_slice(frame.payload).expect("JSON cron payload");
+            events.push((frame.header.event_type, payload));
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        events
+    }
+
+    fn failing_hook_dispatch(
+        _stage: HookStage,
+        _body: &str,
+        _hooks: &[HookDef],
+    ) -> Result<StageOutcome> {
+        anyhow::bail!("synthetic hook dispatcher failure")
+    }
+
+    #[test]
+    fn cron_delivery_enqueue_is_durable_and_idempotent() {
+        let dir = tempdir().unwrap();
+        let queue_path = dir.path().join("proactive_queue.json");
+        let dedup_key = "cron-delivery:delivery-job:42";
+
+        let inserted = enqueue_cron_delivery(
+            &queue_path,
+            "delivery-job",
+            "telegram",
+            "finished body",
+            dedup_key,
+            1_700_000_000,
+        )
+        .expect("first enqueue must persist");
+        assert!(inserted);
+
+        let retry_inserted = enqueue_cron_delivery(
+            &queue_path,
+            "delivery-job",
+            "telegram",
+            "finished body",
+            dedup_key,
+            1_700_000_001,
+        )
+        .expect("same fired event must remain a successful durable retry");
+        assert!(!retry_inserted, "retry must reuse the durable queue entry");
+
+        let queue = ProactiveQueue::load_from(&queue_path).expect("persisted queue");
+        assert_eq!(queue.len(), 1);
+        let item = &queue.peek()[0];
+        assert_eq!(item.dedup_key, dedup_key);
+        assert_eq!(item.channel, "telegram");
+        assert_eq!(item.source, "cron:delivery-job");
+        assert_eq!(item.body, "finished body");
+        assert_eq!(item.expires_unix, 1_700_086_400);
+    }
+
+    #[tokio::test]
+    async fn low_quality_briefing_regenerates_once_before_delivery() {
+        let dir = tempdir().unwrap();
+        let queue_path = dir.path().join("proactive_queue.json");
+        let seg = dir.path().join("quality-retry.wal");
+        let (writer, join) = wal_spawn(seg).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let expected = passing_briefing();
+        let provider = authorized(SequenceProvider {
+            calls: calls.clone(),
+            prompts: prompts.clone(),
+            outputs: Mutex::new(std::collections::VecDeque::from([
+                "too short".to_string(),
+                expected.clone(),
+            ])),
+        });
+        let mut job = briefing_job();
+        job.delivery = Some(Delivery::new("telegram"));
+
+        let outcome = run_job_with_paths(
+            &job,
+            &provider,
+            &writer,
+            &queue_path,
+            &dir.path().join("hooks"),
+            crate::hooks::run_stage,
+        )
+        .await
+        .expect("quality retry must complete");
+        drop(writer);
+        let _ = join.await;
+
+        assert!(outcome.success);
+        assert!(outcome.delivery_queued);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let prompts = prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[1].contains("previous draft failed the briefing quality gate"));
+        let queue = ProactiveQueue::load_from(&queue_path).unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.peek()[0].body, expected);
+    }
+
+    #[tokio::test]
+    async fn second_low_quality_briefing_fails_without_delivery() {
+        let dir = tempdir().unwrap();
+        let queue_path = dir.path().join("proactive_queue.json");
+        let seg = dir.path().join("quality-failure.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(SequenceProvider {
+            calls: calls.clone(),
+            prompts: Arc::new(Mutex::new(Vec::new())),
+            outputs: Mutex::new(std::collections::VecDeque::from([
+                "too short".to_string(),
+                "still too short".to_string(),
+            ])),
+        });
+        let mut job = briefing_job();
+        job.delivery = Some(Delivery::new("telegram"));
+
+        let outcome = run_job_with_paths(
+            &job,
+            &provider,
+            &writer,
+            &queue_path,
+            &dir.path().join("hooks"),
+            crate::hooks::run_stage,
+        )
+        .await
+        .expect("quality failure must be represented in RunOutcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert!(!outcome.success);
+        assert!(!outcome.delivery_queued);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(
+            outcome
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("quality gate failed after one regeneration"))
+        );
+        let queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
+        assert!(
+            queue
+                .peek()
+                .iter()
+                .all(|item| item.source != "cron:morning_brief"),
+            "the rejected briefing itself must never enter the delivery queue"
+        );
+        let events = wal_json_events(&seg);
+        assert!(events.iter().any(|(kind, payload)| {
+            *kind == EVENT_TYPE_JOB_FAILED
+                && payload["error"]
+                    .as_str()
+                    .is_some_and(|error| error.contains("quality gate"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn cron_delivery_persistence_failure_marks_run_failed_closed() {
+        let dir = tempdir().unwrap();
+        let blocker = dir.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block queue parent creation").unwrap();
+        let queue_path = blocker.join("proactive_queue.json");
+        let seg = dir.path().join("delivery-failure.wal");
+        let (writer, join) = wal_spawn(seg).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: calls.clone(),
+        });
+
+        let outcome = run_job_with_paths(
+            &delivery_job("telegram"),
+            &provider,
+            &writer,
+            &queue_path,
+            &dir.path().join("hooks"),
+            crate::hooks::run_stage,
+        )
+        .await
+        .expect("delivery persistence is represented in RunOutcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!outcome.success);
+        assert!(!outcome.delivery_queued);
+        assert!(
+            outcome
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("delivery queue persistence failed")),
+            "unexpected outcome: {:?}",
+            outcome.error
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_job_fired_hook_blocks_provider_and_writes_terminal_failure() {
+        let dir = tempdir().unwrap();
+        let hook_dir = dir.path().join("hooks");
+        std::fs::create_dir(&hook_dir).unwrap();
+        std::fs::write(hook_dir.join("broken.toml"), "not = [valid").unwrap();
+        let seg = dir.path().join("malformed-hook.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: calls.clone(),
+        });
+
+        let outcome = run_job_with_paths(
+            &briefing_job(),
+            &provider,
+            &writer,
+            &dir.path().join("queue.json"),
+            &hook_dir,
+            crate::hooks::run_stage,
+        )
+        .await
+        .expect("hook load failure is a terminal RunOutcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!outcome.success);
+        let events = wal_json_events(&seg);
+        assert_eq!(
+            events.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            vec![EVENT_TYPE_JOB_FIRED, EVENT_TYPE_JOB_FAILED]
+        );
+        assert_eq!(events[1].1["failure_kind"], "hook_load_failed");
+    }
+
+    #[tokio::test]
+    async fn unreadable_job_fired_hook_blocks_provider_and_writes_terminal_failure() {
+        let dir = tempdir().unwrap();
+        let hook_dir = dir.path().join("hooks");
+        std::fs::create_dir(&hook_dir).unwrap();
+        std::fs::create_dir(hook_dir.join("unreadable.toml")).unwrap();
+        let seg = dir.path().join("unreadable-hook.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: calls.clone(),
+        });
+
+        let outcome = run_job_with_paths(
+            &briefing_job(),
+            &provider,
+            &writer,
+            &dir.path().join("queue.json"),
+            &hook_dir,
+            crate::hooks::run_stage,
+        )
+        .await
+        .expect("unreadable hook is a terminal RunOutcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!outcome.success);
+        let events = wal_json_events(&seg);
+        assert_eq!(
+            events.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            vec![EVENT_TYPE_JOB_FIRED, EVENT_TYPE_JOB_FAILED]
+        );
+        assert_eq!(events[1].1["failure_kind"], "hook_load_failed");
+    }
+
+    #[tokio::test]
+    async fn job_fired_dispatch_error_blocks_provider_and_writes_terminal_failure() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("dispatch-error.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: calls.clone(),
+        });
+
+        let outcome = run_job_with_paths(
+            &briefing_job(),
+            &provider,
+            &writer,
+            &dir.path().join("queue.json"),
+            &dir.path().join("hooks"),
+            failing_hook_dispatch,
+        )
+        .await
+        .expect("hook dispatch failure is a terminal RunOutcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!outcome.success);
+        let events = wal_json_events(&seg);
+        assert_eq!(
+            events.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            vec![EVENT_TYPE_JOB_FIRED, EVENT_TYPE_JOB_FAILED]
+        );
+        assert_eq!(events[1].1["failure_kind"], "hook_dispatch_failed");
+    }
+
+    #[tokio::test]
+    async fn run_job_at_loads_hooks_only_from_the_custom_instance_home() {
+        let dir = tempdir().unwrap();
+        let hook_dir = dir.path().join("hooks");
+        std::fs::create_dir(&hook_dir).unwrap();
+        std::fs::write(
+            hook_dir.join("block.toml"),
+            "name = \"cron-kill\"\nstage = \"job_fired\"\n[action]\nkind = \"block\"\nreason = \"operator policy\"\n",
+        )
+        .unwrap();
+        let seg = dir.path().join("hook-block.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: calls.clone(),
+        });
+
+        let outcome = run_job_at(dir.path(), &briefing_job(), &provider, &writer)
+            .await
+            .expect("hook block is a terminal RunOutcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!outcome.success);
+        let events = wal_json_events(&seg);
+        assert_eq!(
+            events.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            vec![
+                EVENT_TYPE_JOB_FIRED,
+                EVENT_TYPE_HOOK_BLOCKED,
+                EVENT_TYPE_JOB_FAILED,
+            ]
+        );
+        assert_eq!(events[2].1["failure_kind"], "hook_blocked");
     }
 
     // ─── run_briefing_gated ───────────────────────────────────────────
@@ -528,9 +1214,9 @@ mod workstream_c_tests {
         // No snapshot on disk → gate's first check (load_snapshot) returns
         // None → Skip { "no behavioural snapshot on disk …" }.
         let calls = Arc::new(AtomicUsize::new(0));
-        let provider = CountingProvider {
+        let provider = authorized(CountingProvider {
             calls: calls.clone(),
-        };
+        });
         let job = briefing_job();
         let policy = BriefingPolicy::default();
 
@@ -605,9 +1291,9 @@ mod workstream_c_tests {
             active_threshold: 0,
         };
         let calls = Arc::new(AtomicUsize::new(0));
-        let provider = CountingProvider {
+        let provider = authorized(CountingProvider {
             calls: calls.clone(),
-        };
+        });
         let job = briefing_job();
 
         let outcome = run_briefing_gated(
@@ -716,7 +1402,7 @@ mod workstream_c_tests {
     }
 
     #[tokio::test]
-    async fn cron_job_failure_enqueues_self_heal_alert_and_writes_wal_frame() {
+    async fn cron_job_failure_uses_custom_home_for_self_heal_queue_and_wal_frame() {
         use crate::proactive::ProactiveQueue;
         use crate::wal::events::EVENT_TYPE_CRON_JOB_SELF_HEAL_ALERT;
         use crate::wal::frame::decode_frame;
@@ -729,9 +1415,9 @@ mod workstream_c_tests {
 
         // A rate-limit error produces ProviderError cause with risk_score ≥ 0.3
         // (base weight 0.5 * amplifier > 0.3 for consecutive_failures=1).
-        let provider = FailingProvider {
+        let provider = authorized(FailingProvider {
             error_msg: "http status 429 rate limit".to_string(),
-        };
+        });
         let job = Job {
             id: "test-job".into(),
             name: "test job".into(),
@@ -746,26 +1432,18 @@ mod workstream_c_tests {
             depends_on: vec![],
         };
 
-        // Set NEOTH_HOME for the duration of the test and immediately drop the
-        // lock so it is NOT held across await points (clippy::await_holding_lock).
-        // SAFETY: env-var mutation serialized by the lock; lock dropped before
-        // any await so no MutexGuard is live across an async suspension point.
-        {
-            let _env = crate::test_env::lock();
-            unsafe {
-                std::env::set_var("NEOTH_HOME", home.path());
-            }
-        } // lock released here — before the first .await
-
-        let outcome = run_job(&job, &provider, &writer)
+        let outcome = run_job_at(home.path(), &job, &provider, &writer)
             .await
-            .expect("run_job must not error (failures are Ok(RunOutcome { success:false }))");
+            .expect("run_job_at must return provider failures as a terminal RunOutcome");
 
         drop(writer);
         let _ = join.await;
 
         // (1) Outcome must be a failure.
-        assert!(!outcome.success, "provider error must produce success:false");
+        assert!(
+            !outcome.success,
+            "provider error must produce success:false"
+        );
 
         // (2) WAL segment must contain a 0x8A CRON_JOB_SELF_HEAL_ALERT frame.
         let bytes = std::fs::read(&seg).unwrap();
@@ -783,7 +1461,10 @@ mod workstream_c_tests {
             }
             cursor = &cursor[frame.header.total_len as usize..];
         }
-        assert!(saw_alert, "expected 0x8A CRON_JOB_SELF_HEAL_ALERT frame in WAL");
+        assert!(
+            saw_alert,
+            "expected 0x8A CRON_JOB_SELF_HEAL_ALERT frame in WAL"
+        );
 
         let payload = alert_payload.unwrap();
         assert_eq!(
@@ -812,7 +1493,10 @@ mod workstream_c_tests {
         assert_eq!(items.len(), 1, "exactly one self-heal alert must be queued");
         let item = &items[0];
         assert_eq!(item.source, "hermes_07", "source must be hermes_07");
-        assert!(item.is_failure, "is_failure must be true for a failure alert");
+        assert!(
+            item.is_failure,
+            "is_failure must be true for a failure alert"
+        );
         assert!(
             item.dedup_key.starts_with("self-heal:test-job:"),
             "dedup_key must start with self-heal:test-job: got {}",
@@ -824,7 +1508,7 @@ mod workstream_c_tests {
         let wal_dir2 = tempdir().unwrap();
         let seg2 = wal_dir2.path().join("hermes07b.wal");
         let (writer2, join2) = wal_spawn(seg2).unwrap();
-        let _ = run_job(&job, &provider, &writer2).await;
+        let _ = run_job_at(home.path(), &job, &provider, &writer2).await;
         drop(writer2);
         let _ = join2.await;
         let queue2 = ProactiveQueue::load_from(&queue_path).unwrap();
@@ -833,14 +1517,6 @@ mod workstream_c_tests {
             1,
             "same-day dedup must prevent a second alert for the same job"
         );
-
-        // Cleanup: remove env var under the lock (symmetric with set above).
-        {
-            let _env = crate::test_env::lock();
-            unsafe {
-                std::env::remove_var("NEOTH_HOME");
-            }
-        }
     }
 
     // ─── OH-06: Briefing system-prompt injection ──────────────────────────
@@ -872,6 +1548,7 @@ mod workstream_c_tests {
                 .to_string();
             Ok(Completion {
                 text: long_text,
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(10),
@@ -900,15 +1577,17 @@ mod workstream_c_tests {
         };
 
         let captured_system: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let provider = SystemCapturingProvider {
+        let provider = authorized(SystemCapturingProvider {
             captured_system: captured_system.clone(),
-        };
+        });
 
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("oh06.wal");
         let (writer, join) = crate::wal::spawn(seg).unwrap();
 
-        run_job(&job, &provider, &writer).await.expect("run_job must succeed");
+        run_job_at(dir.path(), &job, &provider, &writer)
+            .await
+            .expect("run_job must succeed");
 
         drop(writer);
         let _ = join.await;
@@ -959,15 +1638,17 @@ mod workstream_c_tests {
         };
 
         let captured_system: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let provider = SystemCapturingProvider {
+        let provider = authorized(SystemCapturingProvider {
             captured_system: captured_system.clone(),
-        };
+        });
 
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("oh06_nonbriefing.wal");
         let (writer, join) = crate::wal::spawn(seg).unwrap();
 
-        run_job(&job, &provider, &writer).await.expect("run_job must succeed");
+        run_job_at(dir.path(), &job, &provider, &writer)
+            .await
+            .expect("run_job must succeed");
 
         drop(writer);
         let _ = join.await;

@@ -91,8 +91,7 @@ pub fn detect_leaked_tool_call(reply: &str) -> bool {
 
 /// The corrective nudge injected as the next user turn when a leaked call is
 /// detected. Kept short so it doesn't dominate the prompt.
-pub const LEAKED_CALL_NUDGE: &str =
-    "Your last response contained a tool call described as text or XML \
+pub const LEAKED_CALL_NUDGE: &str = "Your last response contained a tool call described as text or XML \
      instead of a proper ```mcp-tool-call fence. \
      Please emit the tool call using the exact fence format shown in the \
      system prompt — do not describe it or wrap it in XML tags.";
@@ -277,10 +276,13 @@ impl SourceLang {
         };
         // Python markers — `def ` / `class ` with a colon-terminated header
         // and no `{` on the same line is the key distinguisher.
-        let python_score = sample.lines().filter(|l| {
-            let t = l.trim_start();
-            (t.starts_with("def ") || t.starts_with("class ")) && t.ends_with(':')
-        }).count();
+        let python_score = sample
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                (t.starts_with("def ") || t.starts_with("class ")) && t.ends_with(':')
+            })
+            .count();
         let brace_score = sample.chars().filter(|&c| c == '{' || c == '}').count();
         if python_score >= 2 && brace_score == 0 {
             SourceLang::Python
@@ -379,9 +381,7 @@ fn skeletonize_brace(lines: &[&str]) -> Option<String> {
 
         // A scope-opening signature: at module level (depth==0) and the line
         // opens at least one brace (net > 0 or ends_with `{`).
-        let is_top_opener = !inside_body
-            && depth == 0
-            && (trimmed.ends_with('{') || net > 0);
+        let is_top_opener = !inside_body && depth == 0 && (trimmed.ends_with('{') || net > 0);
 
         // The `}` that closes the outermost top-level block.
         let is_top_closer = inside_body && depth == 1 && trimmed == "}";
@@ -483,7 +483,8 @@ fn skeletonize_python(lines: &[&str]) -> Option<String> {
         let indent = line.len() - trimmed.len();
 
         // Keep def/class headers at any top-level indentation (0 or 4).
-        if (trimmed.starts_with("def ") || trimmed.starts_with("class ")
+        if (trimmed.starts_with("def ")
+            || trimmed.starts_with("class ")
             || trimmed.starts_with("async def "))
             && indent <= 4
         {
@@ -509,7 +510,10 @@ fn skeletonize_python(lines: &[&str]) -> Option<String> {
                 }
             }
             if elided > 0 {
-                out.push(format!("{}    # … {elided} lines elided", " ".repeat(indent)));
+                out.push(format!(
+                    "{}    # … {elided} lines elided",
+                    " ".repeat(indent)
+                ));
             }
         } else {
             // Module-level lines (imports, constants, decorators) — keep.
@@ -547,7 +551,8 @@ mod tests {
 
     #[test]
     fn leaked_detector_true_on_tool_call_xml() {
-        let reply = "Here's the call:\n<tool_call>\n{\"tool\": \"read\", \"arguments\": {}}\n</tool_call>";
+        let reply =
+            "Here's the call:\n<tool_call>\n{\"tool\": \"read\", \"arguments\": {}}\n</tool_call>";
         assert!(
             detect_leaked_tool_call(reply),
             "should detect <tool_call XML"
@@ -557,13 +562,17 @@ mod tests {
     #[test]
     fn leaked_detector_true_on_mcp_tool_call_xml() {
         let reply = "I would use <mcp-tool-call> but let me describe it...";
-        assert!(detect_leaked_tool_call(reply), "should detect <mcp-tool-call");
+        assert!(
+            detect_leaked_tool_call(reply),
+            "should detect <mcp-tool-call"
+        );
     }
 
     #[test]
     fn leaked_detector_true_on_bare_json_name_arguments() {
         // Model dumps the wire shape as prose without a fence.
-        let reply = "The call would be: {\"name\": \"read_file\", \"arguments\": {\"path\": \"/tmp/x\"}}";
+        let reply =
+            "The call would be: {\"name\": \"read_file\", \"arguments\": {\"path\": \"/tmp/x\"}}";
         assert!(
             detect_leaked_tool_call(reply),
             "should detect bare JSON with name+arguments"
@@ -620,7 +629,10 @@ mod tests {
         let nudge = input_token_guard(180_000, 170_000);
         assert!(nudge.is_some(), "should return nudge when over threshold");
         let text = nudge.unwrap();
-        assert!(text.contains("180000"), "nudge should mention the token count");
+        assert!(
+            text.contains("180000"),
+            "nudge should mention the token count"
+        );
     }
 
     #[test]
@@ -708,7 +720,9 @@ mod tests {
         src.push_str("use std::collections::HashMap;\n\n");
         for i in 1u32..=3 {
             // Doc comment — must be kept with the signature.
-            src.push_str(&format!("/// Function number {i} — does something interesting.\n"));
+            src.push_str(&format!(
+                "/// Function number {i} — does something interesting.\n"
+            ));
             src.push_str(&format!("pub fn function_{i}(x: u32, y: u32) -> u32 {{\n"));
             // 15-line body.
             for j in 0..15u32 {
@@ -742,7 +756,10 @@ mod tests {
             "elision markers must appear in output"
         );
         // The use statement (module-level) must be present.
-        assert!(out.contains("use std::collections::HashMap"), "use item kept");
+        assert!(
+            out.contains("use std::collections::HashMap"),
+            "use item kept"
+        );
     }
 
     #[test]

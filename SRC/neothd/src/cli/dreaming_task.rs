@@ -25,7 +25,7 @@ use crate::daemon::dreaming::{
     DREAMING_CLUSTER_THRESHOLD, EventRef, append_dream, compose_dream,
     compose_dreams_with_embeddings,
 };
-use crate::providers::Provider;
+use crate::providers::cost_authorization::AuthorizedProvider;
 use crate::providers::embed::EmbedProvider;
 use crate::wal::writer::WalWriterHandle;
 
@@ -61,7 +61,7 @@ pub const DEFAULT_MAX_EVENTS: usize = 500;
 pub fn spawn(
     home: PathBuf,
     embed_provider: Option<std::sync::Arc<dyn EmbedProvider>>,
-    chat_provider: Option<std::sync::Arc<dyn Provider>>,
+    chat_provider: Option<std::sync::Arc<AuthorizedProvider>>,
     interval: Option<Duration>,
     window: Option<Duration>,
     max_events: Option<usize>,
@@ -89,7 +89,7 @@ pub fn spawn(
 async fn run(
     home: PathBuf,
     embed_provider: Option<std::sync::Arc<dyn EmbedProvider>>,
-    chat_provider: Option<std::sync::Arc<dyn Provider>>,
+    chat_provider: Option<std::sync::Arc<AuthorizedProvider>>,
     interval: Duration,
     window: Duration,
     max_events: usize,
@@ -135,8 +135,16 @@ async fn run(
                     // operator's vault opt-in. Dreams land only as bounded
                     // markdown under `<vault>/<subdir>/Dreams/` — they never
                     // re-enter recall/groundtruth, so no preload poisoning.
-                    // Best-effort: a sync miss never fails the pass.
-                    sync_day_to_obsidian(&home, &report).await;
+                    // The dream batch is already durable, so a vault failure
+                    // cannot roll it back; surface it explicitly and retry on
+                    // the next tick instead of silently treating policy/config
+                    // corruption as "no vault configured".
+                    if let Err(error) = sync_day_to_obsidian(&home, &report).await {
+                        warn!(
+                            error = %error,
+                            "dream→Obsidian sync failed (dreams still persisted locally)"
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -224,16 +232,13 @@ fn resolve_obsidian_target(
 /// operator's Obsidian vault. No-op when no `obsidian_vault` is configured.
 /// The day is taken from the pass report's JSONL filename stem so the exact
 /// composed day is synced (never a midnight-rollover mismatch). Runs the
-/// blocking file write off the async runtime; every failure logs and is
-/// swallowed (the dreams are already persisted to `~/.neoth/dreams`).
-async fn sync_day_to_obsidian(home: &Path, report: &PassReport) {
-    let cfg = match crate::config::FreedomConfig::load_from_default_path() {
-        Ok(c) => c,
-        Err(_) => return, // no config → no vault → nothing to sync
-    };
+/// blocking file write off the async runtime. A genuinely missing config uses
+/// compiled defaults; an existing unreadable or malformed config is surfaced.
+async fn sync_day_to_obsidian(home: &Path, report: &PassReport) -> Result<()> {
+    let cfg = crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
     let Some((vault, subdir)) = resolve_obsidian_target(cfg.obsidian_vault, cfg.obsidian_subdir)
     else {
-        return; // vault not configured → operator has not opted into a vault
+        return Ok(()); // vault not configured → operator has not opted into a vault
     };
     let Some(day) = report
         .path
@@ -241,10 +246,10 @@ async fn sync_day_to_obsidian(home: &Path, report: &PassReport) {
         .and_then(|s| s.to_str())
         .map(str::to_string)
     else {
-        return;
+        return Ok(());
     };
     let home = home.to_path_buf();
-    let join = tokio::task::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || {
         crate::daemon::dreaming::sync_dreams_to_obsidian(
             &home,
             std::path::Path::new(&vault),
@@ -252,18 +257,16 @@ async fn sync_day_to_obsidian(home: &Path, report: &PassReport) {
             &day,
         )
     })
-    .await;
-    match join {
-        Ok(Ok(outcome)) if outcome.written => info!(
+    .await??;
+    if outcome.written {
+        info!(
             day = %outcome.day,
             dreams = outcome.dream_count,
             path = %outcome.target_path.display(),
             "dreaming task synced day to Obsidian vault",
-        ),
-        Ok(Ok(_)) => {} // empty day → no file written, nothing to report
-        Ok(Err(e)) => warn!(error = %e, "dream→Obsidian sync failed (dreams still persisted locally)"),
-        Err(e) => warn!(error = %e, "dream→Obsidian sync task join failed"),
+        );
     }
+    Ok(())
 }
 
 /// Nightly auto self-improve pass (Slice C). Gated by the EFFECTIVE
@@ -282,9 +285,17 @@ async fn self_improve_auto_pass(home: &Path) {
 
 fn self_improve_auto_pass_blocking(home: &Path) {
     use crate::self_improve as si;
-    let autonomy = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.autonomy)
-        .unwrap_or_default();
+    let autonomy =
+        match crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml")) {
+            Ok(config) => config.autonomy,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "self-improve auto-pass: freedom.yaml invalid, skipping tick fail-closed"
+                );
+                return;
+            }
+        };
     // B19: fail-closed — corrupt config stops this tick rather than defaulting
     // to auto-on and re-enabling a deliberately-disabled master switch.
     let cfg = match si::SelfImproveConfig::load_strict(home) {
@@ -312,14 +323,14 @@ fn self_improve_auto_pass_blocking(home: &Path) {
     let before = std::fs::read_to_string(&skill_path).unwrap_or_default();
     // F13 — bounded run: a hung/runaway SkillOpt python process must not block
     // the dreaming tick (best-effort "any miss logs + skips" contract).
-    let (after, quality, parsed_spec) =
-        match si::run_skillopt_capped(persona, si::SKILLOPT_TIMEOUT) {
-            Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
-            Err(e) => {
-                warn!(error = %e, "self-improve auto-pass: SkillOpt run failed/timed out");
-                return;
-            }
-        };
+    let (after, quality, parsed_spec) = match si::run_skillopt_capped(persona, si::SKILLOPT_TIMEOUT)
+    {
+        Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
+        Err(e) => {
+            warn!(error = %e, "self-improve auto-pass: SkillOpt run failed/timed out");
+            return;
+        }
+    };
     if after.trim().is_empty() || after == before {
         return; // engine proposed nothing new → don't stage a no-op
     }
@@ -453,7 +464,7 @@ pub enum DreamingPath {
 pub async fn run_one_pass(
     home: &Path,
     embed_provider: Option<&dyn EmbedProvider>,
-    chat_provider: Option<&dyn Provider>,
+    chat_provider: Option<&AuthorizedProvider>,
     window: Duration,
     max_events: usize,
     writer: Option<&WalWriterHandle>,
@@ -471,9 +482,10 @@ pub async fn run_one_pass(
         });
     }
 
-    let merge_cross_themes = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.dreaming.merge_cross_themes)
-        .unwrap_or(false);
+    let dreaming_config =
+        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?
+            .dreaming;
+    let merge_cross_themes = dreaming_config.merge_cross_themes;
     let (dreams, path_taken) = if let Some(provider) = embed_provider {
         match compose_dreams_with_embeddings(
             &day,
@@ -515,9 +527,7 @@ pub async fn run_one_pass(
     // review (OB-03 queue). NEOTH never writes the skill; the operator
     // adopts it via `neoth proactive accept`. A forge/queue miss never
     // fails the pass — the dreams are already persisted above.
-    let forge_enabled = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.dreaming.forge_skills)
-        .unwrap_or(false);
+    let forge_enabled = dreaming_config.forge_skills;
     if forge_enabled {
         forge_and_stage_dreams(home, &dreams);
     }
@@ -649,6 +659,7 @@ fn today_utc_date() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::Provider;
     use tempfile::tempdir;
 
     fn seed_views_db(home: &Path, rows: &[(i64, i64, &str)]) {
@@ -892,8 +903,7 @@ mod tests {
         }
         // Clean single-component names are still accepted.
         assert!(
-            resolve_obsidian_target(Some("/vault".into()), Some("NEOTH-sessions".into()))
-                .is_some()
+            resolve_obsidian_target(Some("/vault".into()), Some("NEOTH-sessions".into())).is_some()
         );
         assert!(
             resolve_obsidian_target(Some("/vault".into()), Some("Dreams-Custom".into())).is_some()
@@ -978,6 +988,7 @@ mod tests {
         ) -> Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
                 text: "weekend trip planning".into(),
+                identity: Default::default(),
                 model: "fixed_label_chat".into(),
                 latency: Duration::from_micros(1),
                 input_tokens: None,
@@ -1090,10 +1101,18 @@ mod tests {
             ],
         );
         let embed = AlwaysWeatherEmbed;
+        let chat = AuthorizedProvider::from_box(
+            Box::new(FixedLabelChat),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            Some("fixed_label_chat".to_string()),
+            "dreaming.task.test",
+        );
         let report = run_one_pass(
             dir.path(),
             Some(&embed),
-            Some(&FixedLabelChat),
+            Some(&chat),
             DEFAULT_WINDOW,
             DEFAULT_MAX_EVENTS,
             None,

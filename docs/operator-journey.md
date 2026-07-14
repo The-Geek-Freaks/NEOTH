@@ -4,11 +4,12 @@
 > Every command below is a real `neoth` subcommand. For the exhaustive flag list see
 > [cli-reference.md](./cli-reference.md); for first install see [getting-started.md](./getting-started.md).
 
-NEOTH is a **self-contained sovereign-AI daemon**: one binary that runs on your hardware,
-keeps an append-only audit log (the WAL) of everything it does, and routes your messages
-through the LLM provider *you* choose — including a free local model. There is no cloud
-account, no telemetry, and no per-token bill unless you deliberately pick a metered API
-provider.
+NEOTH is a **self-contained sovereign-AI daemon**: the `neoth` core binary runs on your
+hardware, keeps an append-only audit log (the WAL) for its governed core paths, and routes your
+messages through the LLM provider *you* choose — including a free local model. Release
+archives also include separate GUI, migration, relay, and compatibility executables; the
+daemon does not depend on them to run. There is no cloud account, no telemetry, and no
+per-token bill unless you deliberately pick a metered API provider.
 
 This guide is the map. You do not need to read it all at once — jump to the stage you are in.
 
@@ -27,20 +28,22 @@ The wizard (`neoth init`) walks you through, in plain language, every choice tha
 
 - **Provider.** `claude_cli` (uses your Claude subscription via the `claude` CLI — **no
   per-token billing**) is the recommended default. `local_qwen` runs a ~3 GB model entirely
-  on your hardware (no key, no network, no bill). The metered API options (`anthropic_api`,
+  on your hardware after its weights are installed (no key or per-token bill; the initial
+  Hugging Face download is controlled by `updater.allow_huggingface_downloads`). The metered API options (`anthropic_api`,
   `openai_api`, `gemini_api`, `cohere_api`) are clearly flagged **⚠ BILLED per-token** — pick
   one only if you specifically have an API key and no subscription.
 - **Autonomy.** `Standard` is the safe default: NEOTH confirms before any paid call or
   destructive action. You can raise it later.
-- **Channels** (optional). Telegram / Slack / Keet — skip them for now; add them in stage 5.
+- **Channels** (optional). Telegram / Slack / WhatsApp — skip them for now; add them in stage 5.
 
 After the wizard, `neoth chat` is interactive. The first session prints a one-line
 **"I remember N things from last time"** signal so you know the memory layer is live, and a
 short first-tour banner.
 
 > **💶 Two cost paths — know which one you're on.** NEOTH runs at one of two price points.
-> **(A) Fully local:** `local_qwen` on your own hardware is **~0 EUR/month** — electricity
-> only, no key, no network, no per-token bill, council or not. **(B) Subscription / metered:**
+> **(A) Fully local after model installation:** `local_qwen` on your own hardware is **~0 EUR/month** — electricity
+> only, no key, no runtime provider network call, no per-token bill, council or not. Its
+> initial weight download is a separate, gated network step. **(B) Subscription / metered:**
 > `claude_cli` rides your existing Claude subscription (a **flat monthly floor**, no per-token
 > charge); the `*_api` providers (`anthropic_api`, `openai_api`, `gemini_api`, `cohere_api`)
 > bill **per token**. NEOTH never silently moves you from (A) to (B) — a metered call is
@@ -68,8 +71,10 @@ short first-tour banner.
   *before* each turn and confirms at `Standard`/`Strict` autonomy. `neoth cost` and
   `neoth usage` report what you have actually spent.
 
-Everything NEOTH does is in the audit log from minute one: `neoth wal show` (and its
-`--type` filter) is the source of truth.
+Governed core activity is visible in the audit log from minute one: `neoth wal
+show` (and its `--type` filter) is the source of truth for recorded frames.
+`neoth verify` proves frame integrity; the [threat model](security/threat-model.md)
+documents paths whose audit is best-effort or log-only.
 
 ---
 
@@ -120,7 +125,9 @@ Everything NEOTH does is in the audit log from minute one: `neoth wal show` (and
 - **Full-auto / gated mode.** `neoth sudomode` (alias: `neoth autonomy full-auto`) flips
   NEOTH into hands-free operation: autonomy `full` + the entire skill library routes
   proactively. Revert with `neoth autonomy gated`. The security floor (self-replace,
-  patch-apply, unsigned plugins) stays engaged regardless.
+  patch-apply, dangerous targets) stays engaged regardless, and plugins never
+  auto-activate: each exact permission/manifest/WASM tuple still needs an explicit
+  `neoth plugin enable` approval.
 - **Tools.** `neoth fetch` (SSRF-guarded URL fetch), `neoth search`, `neoth arxiv`,
   `neoth todo` (Todoist), `neoth paperless` (document OCR → Obsidian ground-truth),
   `neoth models` (auto-discovers new model versions so you never hand-patch a model id).
@@ -139,8 +146,8 @@ Everything NEOTH does is in the audit log from minute one: `neoth wal show` (and
 
 **Goal:** reach NEOTH from your phone, and share memory across your machines.
 
-- **Channels.** `neoth connect` lists the messaging on-ramps (Telegram / Slack / WhatsApp /
-  Keet) and walks you through wiring each. Inbound messages flow through the same
+- **Channels.** `neoth connect` lists the supported messaging on-ramps (Telegram / Slack /
+  WhatsApp) and walks you through wiring each. Inbound messages flow through the same
   prompt-injection sanitizer and consent gate as the CLI; a destructive command from a
   channel (raising autonomy, granting consent) is refused — those stay CLI + local-auth only.
 - **Cluster.** `neoth cluster discover` finds your other NEOTH nodes over mDNS / Tailscale
@@ -174,21 +181,25 @@ more the more devices you run.
 - **Backups + the HMAC key.** On Windows the WAL HMAC key is DPAPI-bound to your user +
   machine. `neoth security backup-hmac-key` writes a plaintext backup you store in a password
   manager; `neoth security rewrap-hmac-key --source <backup>` restores it on a new machine.
-  The full playbook is `PLAN/RUNBOOK_dpapi_hmac_recovery.md`. `neoth backup` covers the rest.
+  The full playbook is `PLAN/RUNBOOK_dpapi_hmac_recovery.md`. `neoth backup` covers the
+  non-secret state and excludes `credentials.yaml` by default. Only
+  `neoth backup --include-credentials` opts plaintext credentials into the archive; use it
+  exclusively with encrypted storage.
 - **Worst case.** `neoth verify` checks the audit chain's integrity; a corrupt config makes
   `neoth` bail loudly with the exact fix rather than running on a permissive default.
 
-Nothing recovery-related is silent: every gate that blocks you, and every undo, lands in the
-WAL where `neoth wal show` can find it.
+Recovery commands fail loudly, and typed recovery/undo events can be inspected
+in the WAL where their path defines one. See the threat model for the exact
+coverage contract rather than inferring coverage from chain integrity alone.
 
 ---
 
 ## 7. Mastery — "I trust it, and I can prove what it did"
 
-**Goal:** NEOTH is a teammate whose every action you can audit and steer.
+**Goal:** NEOTH is a teammate whose governed actions you can audit and steer.
 
-- **Prove what happened.** The WAL is a tamper-evident, HMAC-chained log of every decision —
-  every provider call, channel message, consent grant, plugin hostcall, memory write. Filter
+- **Prove what was recorded.** The WAL is a tamper-evident, HMAC-chained log with
+  typed provider, channel, consent, plugin, and memory event families. Filter
   it by type, replay a council debate's structure with `neoth council replay <prompt_hash>`,
   and export windows for your own records.
 - **Steer the brain.** `neoth council` tunes the multi-hemisphere debate (when it convenes,
@@ -206,9 +217,9 @@ WAL where `neoth wal show` can find it.
   to the CLI/wizard), and the model-version-agnostic provider layer mean NEOTH keeps working as
   models and your needs evolve — without you hand-patching anything.
 
-By this stage the relationship is the point: NEOTH anticipates what you want, you can audit
-every move it makes, and you own the whole thing — binary, memory, and audit trail — end to
-end.
+By this stage the relationship is the point: NEOTH anticipates what you want,
+you can audit its governed core paths and their documented exceptions, and you
+own the whole thing — binary, memory, and audit trail — end to end.
 
 ---
 

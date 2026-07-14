@@ -3,7 +3,7 @@
 //! Subcommands:
 //!   `run <file|deeplink> --param k=v …` — render + execute through `neoth chat`.
 //!   `list`                              — list recipes in `~/.neoth/recipes/`.
-//!   `validate <file>`                   — parse + structurally check, no run.
+//!   `validate <file>`                   — parse + validate, no run.
 //!   `share <file>`                      — print a `neoth://recipe/…` deeplink.
 
 use std::collections::BTreeMap;
@@ -35,13 +35,14 @@ pub enum RecipeAction {
         /// Parameter value, `key=value`. Repeatable.
         #[arg(long = "param", value_name = "KEY=VALUE")]
         params: Vec<String>,
-        /// Render + print the resolved prompt WITHOUT calling the provider.
+        /// Render + print the prompt, system/model, and sampling overrides
+        /// WITHOUT calling the provider.
         #[arg(long)]
         dry_run: bool,
     },
     /// List recipes in `~/.neoth/recipes/` (name + description).
     List,
-    /// Parse + structurally validate a recipe file (no run).
+    /// Parse + validate structure and portable sampling ranges (no run).
     Validate {
         /// Recipe file path.
         file: PathBuf,
@@ -211,17 +212,29 @@ async fn run_one(
                     "prompt": rendered.prompt,
                     "system": rendered.system,
                     "model": rendered.settings.model,
+                    "temperature": rendered.settings.temperature,
+                    "top_p": rendered.settings.top_p,
+                    "sampling_seed": rendered.settings.sampling_seed,
                 })
             ),
             OutputFormat::Table => {
-                println!("recipe:  {}", spec.name);
+                println!("recipe:        {}", spec.name);
                 if let Some(m) = &rendered.settings.model {
-                    println!("model:   {m}");
+                    println!("model:         {m}");
+                }
+                if let Some(temperature) = rendered.settings.temperature {
+                    println!("temperature:   {temperature}");
+                }
+                if let Some(top_p) = rendered.settings.top_p {
+                    println!("top_p:         {top_p}");
+                }
+                if let Some(seed) = rendered.settings.sampling_seed {
+                    println!("sampling_seed: {seed}");
                 }
                 if let Some(s) = &rendered.system {
-                    println!("system:  {s}");
+                    println!("system:        {s}");
                 }
-                println!("prompt:  {}", rendered.prompt);
+                println!("prompt:        {}", rendered.prompt);
             }
         }
         return Ok(());
@@ -255,8 +268,8 @@ async fn run_one(
         wal_segment: None,
         stream: matches!(output, OutputFormat::Jsonl),
         temperature: rendered.settings.temperature,
-        top_p: None,
-        sampling_seed: None,
+        top_p: rendered.settings.top_p,
+        sampling_seed: rendered.settings.sampling_seed,
         resume_from: None,
         // Recipes are operator-authored automation — never incognito.
         incognito: false,

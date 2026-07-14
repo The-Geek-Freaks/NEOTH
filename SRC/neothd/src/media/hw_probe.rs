@@ -63,11 +63,7 @@ impl CpuCaps {
 
 impl fmt::Display for CpuCaps {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "fma3={} avx2={} avx={}",
-            self.fma3, self.avx2, self.avx
-        )
+        write!(f, "fma3={} avx2={} avx={}", self.fma3, self.avx2, self.avx)
     }
 }
 
@@ -364,10 +360,7 @@ mod tests {
             err.contains("FMA3"),
             "error message must mention FMA3: {err}"
         );
-        assert!(
-            err.contains("CPU"),
-            "error message must mention CPU: {err}"
-        );
+        assert!(err.contains("CPU"), "error message must mention CPU: {err}");
     }
 
     #[test]
@@ -376,7 +369,10 @@ mod tests {
         // actionable (backend + CPU requirement + suggestion).
         let err = require_fma3(false).unwrap_err();
         assert!(err.contains("backend"), "got: {err}");
-        assert!(err.contains("Haswell") || err.contains("Piledriver"), "got: {err}");
+        assert!(
+            err.contains("Haswell") || err.contains("Piledriver"),
+            "got: {err}"
+        );
     }
 
     #[test]

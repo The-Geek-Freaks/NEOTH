@@ -8,7 +8,7 @@
 //!     touching the wire. Defense against a compromised or rogue MCP
 //!     server returning a surprise tool in `tools/list`.
 //!  2. **Permission gate** — `permissions::evaluate(McpToolInvocation,
-//!     autonomy)` is consulted. `Allow` proceeds, `Deny` aborts, and
+//!     &policy_snapshot)` is consulted. `Allow` proceeds, `Deny` aborts, and
 //!     `Confirm` aborts here too (the caller — a chat dispatcher or CLI
 //!     — must surface the operator dialog and re-enter with a fresh
 //!     decision).
@@ -36,7 +36,7 @@ use crate::mcp::sanitizer::{
 };
 use crate::permissions::gate::{ConfirmStrategy, Gate};
 use crate::permissions::lease::LeaseStore;
-use crate::permissions::{Action, AutonomyLevel, Decision, evaluate};
+use crate::permissions::{Action, Decision, PolicyArgument, evaluate};
 use crate::wal::HeaderBuilder;
 use crate::wal::events::{
     EVENT_TYPE_MCP_TOOL_CALLED, EVENT_TYPE_MCP_TOOL_REJECTED,
@@ -223,12 +223,12 @@ fn load_lease_store_for_mcp(home: &std::path::Path) -> Option<LeaseStore> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn invoke_with_audit(
+pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
     client: &mut McpClient,
     cfg: &McpServerConfig,
     tool: &str,
     arguments: Value,
-    autonomy: AutonomyLevel,
+    policy: P,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     smart_approve: Option<&mut crate::mcp::smart_approve::ReadOnlyCache>,
@@ -240,6 +240,8 @@ pub async fn invoke_with_audit(
     // `None` = no lease upgrade possible (interactive CLI path).
     subject: Option<&str>,
 ) -> Result<ToolCallResult, GateError> {
+    let policy_snapshot = policy.policy_snapshot();
+    let autonomy = policy_snapshot.level();
     // Layer 1 — allowlist. Reviewer-1 P1-A secure-by-default (2026-05-20):
     //   Some(list) → tool must appear in list.
     //   None + trust_all_tools=true → trust the server's full catalogue.
@@ -319,7 +321,7 @@ pub async fn invoke_with_audit(
         server_id: cfg.id.clone(),
         tool: tool.to_string(),
     };
-    match evaluate(&action, autonomy) {
+    match evaluate(&action, policy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             if let Some(w) = writer {
@@ -374,7 +376,7 @@ pub async fn invoke_with_audit(
                 if let Some(sub) = subject {
                     let home = crate::config::FreedomConfig::default_neoth_home();
                     if let Some(store) = load_lease_store_for_mcp(&home) {
-                        let gate = Gate::for_level(autonomy)
+                        let gate = Gate::for_policy(policy_snapshot.clone())
                             .with_confirm(ConfirmStrategy::FailClosed)
                             .with_lease_snapshot(&store, sub, now_unix);
                         match gate.check(&action, writer).await {
@@ -385,22 +387,17 @@ pub async fn invoke_with_audit(
                                 );
                                 // Lease lifted the Confirm — fall through to dispatch.
                             }
-                            Err(crate::permissions::gate::GateError::Denied(_)) => {
-                                // Lease absent or expired → FailClosed denied.
-                                return Err(GateError::ConfirmRequired {
-                                    server: cfg.id.clone(),
-                                    tool: tool.to_string(),
-                                    reason,
-                                });
-                            }
-                            Err(crate::permissions::gate::GateError::Aborted(_)) => {
-                                return Err(GateError::ConfirmRequired {
-                                    server: cfg.id.clone(),
-                                    tool: tool.to_string(),
-                                    reason,
-                                });
-                            }
-                            Err(crate::permissions::gate::GateError::Unavailable(_)) => {
+                            Err(
+                                crate::permissions::gate::GateError::Denied(_)
+                                | crate::permissions::gate::GateError::Aborted(_)
+                                | crate::permissions::gate::GateError::Unavailable(_),
+                            ) => {
+                                // The lease gate emits its own permission audit frame, but
+                                // the MCP decision must also remain visible as a rejected
+                                // tool call. This keeps subject-backed Confirm denials at
+                                // parity with the no-subject and unreadable-store paths.
+                                emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix)
+                                    .await?;
                                 return Err(GateError::ConfirmRequired {
                                     server: cfg.id.clone(),
                                     tool: tool.to_string(),
@@ -410,11 +407,7 @@ pub async fn invoke_with_audit(
                         }
                     } else {
                         // Lease store unreadable — fail closed.
-                        if let Some(w) = writer {
-                            emit_reject(w, &cfg.id, tool, &format!("confirm: {reason}"), now_unix)
-                                .await
-                                .map_err(GateError::Wal)?;
-                        }
+                        emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
                         return Err(GateError::ConfirmRequired {
                             server: cfg.id.clone(),
                             tool: tool.to_string(),
@@ -422,11 +415,7 @@ pub async fn invoke_with_audit(
                         });
                     }
                 } else {
-                    if let Some(w) = writer {
-                        emit_reject(w, &cfg.id, tool, &format!("confirm: {reason}"), now_unix)
-                            .await
-                            .map_err(GateError::Wal)?;
-                    }
+                    emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
                     return Err(GateError::ConfirmRequired {
                         server: cfg.id.clone(),
                         tool: tool.to_string(),
@@ -718,6 +707,27 @@ async fn emit_reject(
     Ok(())
 }
 
+async fn emit_confirm_reject(
+    writer: Option<&WalWriterHandle>,
+    server: &str,
+    tool: &str,
+    reason: &str,
+    now_unix: i64,
+) -> Result<(), GateError> {
+    if let Some(writer) = writer {
+        emit_reject(
+            writer,
+            server,
+            tool,
+            &format!("confirm: {reason}"),
+            now_unix,
+        )
+        .await
+        .map_err(GateError::Wal)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,9 +814,11 @@ mod tests {
     #[tokio::test]
     async fn agent_denylist_none_passes() {
         // No sub-agent active this turn → gate is a no-op.
-        assert!(enforce_agent_denylist(None, "srv", "anything", None, 0)
-            .await
-            .is_ok());
+        assert!(
+            enforce_agent_denylist(None, "srv", "anything", None, 0)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -835,9 +847,11 @@ mod tests {
     #[tokio::test]
     async fn agent_denylist_unlisted_tool_passes() {
         let list = vec!["X".to_string()];
-        assert!(enforce_agent_denylist(Some(&list), "srv", "Y", None, 0)
-            .await
-            .is_ok());
+        assert!(
+            enforce_agent_denylist(Some(&list), "srv", "Y", None, 0)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -1145,5 +1159,43 @@ mod tests {
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["reason"], "tool not in allow_tools allowlist");
+    }
+
+    #[tokio::test]
+    async fn confirm_rejection_emits_mcp_tool_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+
+        emit_confirm_reject(
+            Some(&writer),
+            "filesystem",
+            "write_file",
+            "lease absent or expired",
+            1_700,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let mut reject_payload = None;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_MCP_TOOL_REJECTED {
+                reject_payload = Some(
+                    serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        .expect("rejection payload is JSON"),
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        let payload = reject_payload.expect("MCP_TOOL_REJECTED frame must be emitted");
+        assert_eq!(payload["server_id"], "filesystem");
+        assert_eq!(payload["tool"], "write_file");
+        assert_eq!(payload["reason"], "confirm: lease absent or expired");
+        assert_eq!(payload["ts_unix"], 1_700);
     }
 }

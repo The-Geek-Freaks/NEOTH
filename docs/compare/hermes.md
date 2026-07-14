@@ -38,7 +38,7 @@ PR-style diffs). Treat every competitor claim as a point-in-time snapshot:
 | Runtime self-diagnosis | Babel-Index: collapse prediction on NEOTH's own event stream, pre-registered failure labels, self-calibrating early warning ([details](../babel-index.md)) | None documented |
 | Automation | Built-in cron plus n8n localhost API | Cron scheduling and platform delivery |
 | Messaging | Focused release channels plus private mesh path | Messaging gateway across platforms |
-| Private mesh | Tailscale, Hysteria, Keet-style private surfaces, cluster consent | Gateway/platform path |
+| Private mesh | Tailscale, Hysteria, NEOTH peeroxide/Hyperswarm protocol, cluster consent | Gateway/platform path |
 | Best user | Wants one loyal assistant for daily life, code, memory, and local control | Wants a powerful agent workbench and CLI-first growth loop |
 
 ## Migration angle
@@ -47,4 +47,3 @@ Hermes users already like agent growth and skills. NEOTH should say:
 
 > Keep the learning loop. Add a real personal buddy, stronger local privacy
 > defaults, visual coding planning, and memory you can audit.
-

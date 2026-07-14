@@ -618,7 +618,7 @@ mod tests {
             diff_sha256: "ff".into(),
             target_paths: vec![],
         };
-        let s = kind.as_str();   // borrows, does NOT move
+        let s = kind.as_str(); // borrows, does NOT move
         assert_eq!(s, "source_edit");
         // kind still accessible:
         assert!(matches!(kind, ProposalKind::SourceEdit { .. }));

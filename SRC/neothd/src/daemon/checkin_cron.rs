@@ -77,7 +77,7 @@ impl CheckinTemplate {
 pub async fn run_checkin_tick(
     home: &Path,
     cfg: &CheckinCronConfig,
-    provider: &Arc<dyn Provider>,
+    provider: &Arc<crate::providers::cost_authorization::AuthorizedProvider>,
 ) -> anyhow::Result<()> {
     use crate::proactive::ProactiveQueue;
 
@@ -162,7 +162,10 @@ pub async fn run_checkin_tick(
     })
     .map_err(|e| anyhow::anyhow!("queue load: {e}"))?;
     if already_queued {
-        debug!(?dedup_key, "checkin_cron: already enqueued for today — skipping");
+        debug!(
+            ?dedup_key,
+            "checkin_cron: already enqueued for today — skipping"
+        );
         return Ok(());
     }
 

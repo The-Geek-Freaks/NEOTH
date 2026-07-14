@@ -120,25 +120,20 @@ pub struct QuotaTracker {
 
 impl QuotaTracker {
     /// Construct a tracker that loads from `path` on disk, or starts empty
-    /// if the file is missing. Corrupt JSON falls back to an empty tracker
-    /// with a tracing warning. Daily quota state is non-critical, so a
-    /// malformed file must never brick the daemon.
-    pub fn load_from(path: &Path) -> Self {
+    /// only when the file is absent. Existing but unreadable or malformed
+    /// state is an error: silently clearing provider backoff would allow a
+    /// restart or disk fault to bypass an active quota safety boundary.
+    pub fn load_from(path: &Path) -> Result<Self> {
         let mut tracker: QuotaTracker = match std::fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
-                tracing::warn!(path = %path.display(), error = %e,
-                    "quota.json corrupt — starting empty tracker");
-                QuotaTracker::default()
-            }),
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .with_context(|| format!("parse quota state {}", path.display()))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => QuotaTracker::default(),
             Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e,
-                    "quota.json unreadable — starting empty tracker");
-                QuotaTracker::default()
+                return Err(e).with_context(|| format!("read quota state {}", path.display()));
             }
         };
         tracker.path = Some(path.to_path_buf());
-        tracker
+        Ok(tracker)
     }
 
     /// In-memory tracker for unit tests. Never touches disk.
@@ -158,15 +153,9 @@ impl QuotaTracker {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create quota.json parent {}", parent.display()))?;
-        }
         let body = serde_json::to_vec_pretty(self).context("serialize quota.json")?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, &body).with_context(|| format!("write {}", tmp.display()))?;
-        std::fs::rename(&tmp, path)
-            .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+        crate::util::atomic_write::atomic_write_private(path, &body)
+            .with_context(|| format!("atomically write private quota state {}", path.display()))?;
         Ok(())
     }
 
@@ -382,24 +371,24 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("quota.json");
         {
-            let mut t = QuotaTracker::load_from(&path);
+            let mut t = QuotaTracker::load_from(&path).unwrap();
             t.record_429("openai_api", Some(Duration::from_secs(600)), T0);
             t.record_success("openai_api", T0);
             t.save().unwrap();
         }
-        let reloaded = QuotaTracker::load_from(&path);
+        let reloaded = QuotaTracker::load_from(&path).unwrap();
         let state = reloaded.get("openai_api").unwrap();
         assert_eq!(state.requests_today, 1);
         assert_eq!(state.backoff_until_unix, Some(T0 + 600));
     }
 
     #[test]
-    fn corrupt_file_falls_back_to_empty_tracker() {
+    fn corrupt_file_fails_closed() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("quota.json");
         std::fs::write(&path, b"{ not valid json").unwrap();
-        let t = QuotaTracker::load_from(&path);
-        assert!(t.snapshot().is_empty());
+        let error = QuotaTracker::load_from(&path).unwrap_err();
+        assert!(error.to_string().contains("parse quota state"));
     }
 
     #[test]

@@ -129,17 +129,13 @@ fn load_index(home: &Path) -> Result<Vec<CheckpointEntry>> {
     serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
 }
 
-/// Atomically write the index (`.json.tmp` + rename) so a crash mid-write never
-/// leaves a half-written index.
+/// Atomically and durably write the private checkpoint index so a crash
+/// mid-write never leaves a half-written index.
 fn save_index(home: &Path, entries: &[CheckpointEntry]) -> Result<()> {
     let path = index_path(home);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_vec_pretty(entries).context("serialise checkpoint index")?;
-    std::fs::write(&tmp, &body).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).with_context(|| format!("rename into {}", path.display()))?;
+    crate::util::atomic_write::atomic_write_private(&path, &body)
+        .with_context(|| format!("atomically write {}", path.display()))?;
     Ok(())
 }
 
@@ -147,12 +143,18 @@ fn save_index(home: &Path, entries: &[CheckpointEntry]) -> Result<()> {
 /// (0xF2) frame across all WAL segments, or `None` if none exist. Tolerant of
 /// torn tails. The offset is the frame's start position — exactly what
 /// `rollback apply --to` expects.
-fn find_latest_snapshot(wal_dir: &Path) -> Option<(PathBuf, u64)> {
+fn find_latest_snapshot(wal_dir: &Path) -> Result<Option<(PathBuf, u64)>> {
     use crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
 
-    let mut segments: Vec<PathBuf> = std::fs::read_dir(wal_dir)
-        .ok()?
-        .flatten()
+    if !wal_dir.exists() {
+        return Ok(None);
+    }
+    let entries = std::fs::read_dir(wal_dir)
+        .with_context(|| format!("read WAL directory {}", wal_dir.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("enumerate WAL directory {}", wal_dir.display()))?;
+    let mut segments: Vec<PathBuf> = entries
+        .into_iter()
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
         .collect();
@@ -160,20 +162,20 @@ fn find_latest_snapshot(wal_dir: &Path) -> Option<(PathBuf, u64)> {
 
     let mut latest = None;
     for seg in &segments {
-        let Ok(bytes) = std::fs::read(seg) else {
-            continue;
-        };
+        let bytes = std::fs::read(seg)
+            .with_context(|| format!("read checkpoint WAL segment {}", seg.display()))?;
         // GOLD-ARCH-03: for_each_frame so a PRE_MUTATION_SNAPSHOT inside a
         // v2/zstd-compressed segment is found, not silently skipped. `cursor` is
         // the frame's logical offset.
-        let _ = crate::wal::scan::for_each_frame(&bytes, |cursor, dec| {
+        crate::wal::scan::for_each_frame(&bytes, |cursor, dec| {
             if dec.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
                 latest = Some((seg.clone(), cursor as u64));
             }
             Ok(())
-        });
+        })
+        .with_context(|| format!("scan checkpoint WAL segment {}", seg.display()))?;
     }
-    latest
+    Ok(latest)
 }
 
 pub async fn run_checkpoint(args: CheckpointArgs) -> Result<()> {
@@ -184,10 +186,7 @@ pub async fn run_checkpoint(args: CheckpointArgs) -> Result<()> {
             description,
             force,
         } => run_save(&home, &label, description, force, args.output),
-        CheckpointAction::List => {
-            run_list(&home, args.output);
-            Ok(())
-        }
+        CheckpointAction::List => run_list(&home, args.output),
         CheckpointAction::Restore { label } => run_restore(&home, &label, args.output).await,
     }
 }
@@ -208,7 +207,7 @@ fn run_save(
     }
 
     let wal_dir = FreedomConfig::default_wal_dir();
-    let (segment, offset) = find_latest_snapshot(&wal_dir).context(
+    let (segment, offset) = find_latest_snapshot(&wal_dir)?.context(
         "no PRE_MUTATION_SNAPSHOT (0xF2) frame found — run a mutation first \
          (e.g. `neoth config set ...`) to create one, then checkpoint it",
     )?;
@@ -236,19 +235,16 @@ fn run_save(
     Ok(())
 }
 
-fn run_list(home: &Path, output: OutputFormat) {
-    let index = load_index(home).unwrap_or_default();
+fn run_list(home: &Path, output: OutputFormat) -> Result<()> {
+    let index = load_index(home)?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&index).unwrap_or_default()
-            );
+            println!("{}", serde_json::to_string_pretty(&index)?);
         }
         OutputFormat::Table => {
             if index.is_empty() {
                 println!("(no checkpoints — `neoth checkpoint save <label>` after a mutation)");
-                return;
+                return Ok(());
             }
             for e in &index {
                 let desc = e
@@ -260,6 +256,7 @@ fn run_list(home: &Path, output: OutputFormat) {
             }
         }
     }
+    Ok(())
 }
 
 async fn run_restore(home: &Path, label: &str, output: OutputFormat) -> Result<()> {
@@ -372,15 +369,33 @@ mod tests {
     fn save_index_is_atomic_no_tmp_leak() {
         let dir = tempfile::tempdir().unwrap();
         save_index(dir.path(), &[entry("a")]).unwrap();
-        let tmp = dir.path().join("checkpoints").join("index.json.tmp");
-        assert!(!tmp.exists(), "tmp file must be renamed away");
+        assert!(
+            !std::fs::read_dir(dir.path().join("checkpoints"))
+                .unwrap()
+                .any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp"))
+        );
         assert!(index_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn list_rejects_corrupt_index_instead_of_reporting_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = index_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{not json").unwrap();
+        let error = run_list(dir.path(), OutputFormat::Table).unwrap_err();
+        assert!(error.to_string().contains("parse"), "got: {error:#}");
+        assert_eq!(std::fs::read(path).unwrap(), b"{not json");
     }
 
     #[test]
     fn find_latest_snapshot_none_for_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(find_latest_snapshot(dir.path()).is_none());
+        assert!(find_latest_snapshot(dir.path()).unwrap().is_none());
     }
 
     #[tokio::test]
@@ -402,7 +417,9 @@ mod tests {
         drop(writer);
         join.await.ok();
 
-        let (found_seg, off) = find_latest_snapshot(dir.path()).expect("a 0xF2 frame exists");
+        let (found_seg, off) = find_latest_snapshot(dir.path())
+            .unwrap()
+            .expect("a 0xF2 frame exists");
         assert_eq!(found_seg, seg);
         // The offset must point at a real 0xF2 frame (the LAST one).
         let bytes = std::fs::read(&seg).unwrap();

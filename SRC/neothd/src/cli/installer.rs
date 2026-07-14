@@ -130,22 +130,19 @@ async fn run_apply(pkg: &str, yes: bool, verbose: bool) -> Result<()> {
 /// up on next boot, emits the `0x12 INSTALLER_RAN` WAL frame,
 /// then deletes the sidecar — at-least-once semantics.
 ///
-/// Atomic via `.tmp` + rename, Windows-safe (target removed
-/// before the rename when it exists).
+/// Crash-safe via the canonical fsynced private atomic writer. A UUID suffix
+/// prevents two installs in the same second from overwriting audit evidence.
 pub fn write_installer_audit_sidecar(
     neoth_dir: &std::path::Path,
     ts_unix: u64,
     payload: &crate::wal::payloads_w08::InstallerRanPayload,
 ) -> std::io::Result<std::path::PathBuf> {
-    std::fs::create_dir_all(neoth_dir)?;
-    let final_path = neoth_dir.join(format!("installer_ran_{ts_unix}.json"));
-    let tmp_path = final_path.with_extension("json.tmp");
+    let final_path = neoth_dir.join(format!(
+        "installer_ran_{ts_unix:020}_{}.json",
+        uuid::Uuid::now_v7().simple()
+    ));
     let body = serde_json::to_vec_pretty(payload).map_err(std::io::Error::other)?;
-    std::fs::write(&tmp_path, &body)?;
-    if final_path.exists() {
-        let _ = std::fs::remove_file(&final_path);
-    }
-    std::fs::rename(&tmp_path, &final_path)?;
+    crate::util::atomic_write::atomic_write_private(&final_path, &body)?;
     Ok(final_path)
 }
 
@@ -218,13 +215,17 @@ mod tests {
         assert!(body.contains("Docker.Docker"));
         assert!(body.contains("\"pkg_mgr\""));
         assert!(body.contains("\"wizard_step\""));
-        // No .tmp companion.
-        let tmp = home.path().join("installer_ran_1700000000.json.tmp");
-        assert!(!tmp.exists());
+        assert!(!std::fs::read_dir(home.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
     }
 
     #[test]
-    fn audit_sidecar_overwrites_existing() {
+    fn audit_sidecar_preserves_two_same_second_events() {
         use crate::wal::payloads_w08::InstallerRanPayload;
         let home = tempfile::tempdir().unwrap();
         let payload = InstallerRanPayload {
@@ -238,6 +239,8 @@ mod tests {
         };
         let first = write_installer_audit_sidecar(home.path(), 42, &payload).unwrap();
         let second = write_installer_audit_sidecar(home.path(), 42, &payload).unwrap();
-        assert_eq!(first, second);
+        assert_ne!(first, second);
+        assert!(first.exists());
+        assert!(second.exists());
     }
 }

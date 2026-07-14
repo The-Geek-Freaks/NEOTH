@@ -90,9 +90,9 @@ pub fn load_snapshot(home: &Path) -> Option<BehaviouralProfile> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// Aggregate samples + persist the resulting snapshot. Single-shot
-/// pipeline the future P-01.b WAL-scan cron task will call after
-/// converting RAW_TEXT events into `Vec<ObservedTurn>`.
+/// Aggregate samples + persist the resulting snapshot. The live profile
+/// aggregation cron calls this after converting eligible WAL events into
+/// `Vec<ObservedTurn>`; CLI/read-side consumers then load the same snapshot.
 pub fn aggregate_and_persist(home: &Path, samples: &[ObservedTurn]) -> Result<BehaviouralProfile> {
     let profile = estimate_all(samples);
     persist_snapshot(home, &profile)?;

@@ -1,7 +1,6 @@
-//! Cluster mode scaffold — R-7 (Borg-style multi-node coordination).
+//! R-7 cluster mode — authenticated multi-node coordination.
 //!
-//! Per `memory/neoth-arch-v2.md` Phase 19 / R-7, NEOTH will eventually run
-//! across multiple operator hosts that share:
+//! Multiple operator hosts share:
 //!   - **Peer discovery** via a Hyperswarm topic derived from a shared
 //!     cluster secret in `freedom.yaml`.
 //!   - **WAL federation**: read-side Hypercore replication of remote
@@ -9,32 +8,29 @@
 //!   - **Provider routing**: an orchestrator maintains a load table
 //!     (rolling token/sec per peer) and dispatches each request to the
 //!     peer with the most idle headroom.
-//!   - **Election**: default orchestrator is "the instance the operator
-//!     interacts with most" (channel ingress count in last 24h). Manual
-//!     override via `cluster_roles` table.
+//!   - **Authenticated task delegation + result routing** over the live peer
+//!     stream registry.
 //!
-//! v0.1.x scope: types + dispatcher trait + stubs. Hyperswarm transport
-//! is multi-week (shares the R-A1 research note with Keet). What ships
-//! now is the orchestrator shape so future implementations slot in
-//! without re-designing the data model.
+//! The private mesh is a NEOTH protocol over peeroxide/Hyperswarm. It does not
+//! interoperate with Keet rooms or depend on a Pear/Pear Runtime HTTP API.
 
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
 /// R-7 Session 19 (2026-05-21): peeroxide-backed Hyperswarm
-/// discovery wire. Brings up a swarm, joins a topic, accepts
-/// peer connections. Heartbeat exchange + registry write
-/// land in the protocol-design follow-up.
+/// discovery wire. Brings up a swarm, joins a topic, authenticates peer
+/// connections, exchanges heartbeats/tasks/gossip, and updates the live
+/// registry.
 pub mod hyperswarm;
 /// iroh QUIC transport (dial-by-key NodeId) — an alternative to the peeroxide
 /// Hyperswarm transport. Feature-gated (`cluster-iroh`), default-off.
 #[cfg(feature = "cluster-iroh")]
 pub mod iroh_transport;
 
-/// Cluster auto-discovery primitives (Phase 1) — `cluster_key`
-/// derivation + HMAC-authenticated announce packets used by the
-/// future mDNS / Tailscale / Hysteria-relay discovery surfaces.
+/// Cluster auto-discovery primitives — `cluster_key` derivation plus
+/// HMAC-authenticated announce packets consumed by the mDNS, Tailscale, and
+/// relay discovery surfaces.
 /// SPEC: `PLAN/SPEC_cluster_auto_discovery_2026-05-22.md`.
 pub mod discovery;
 pub mod identity;
@@ -99,34 +95,18 @@ pub mod audit_sidecar;
 /// R-7 heartbeat wire protocol — per Chorus chat
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version
-/// handshake on connect. Connection-loop integration into
-/// hyperswarm::spawn_discovery_with_wal lands as a follow-up.
+/// handshake on connect. `hyperswarm::spawn_discovery_with_wal` owns the live
+/// connection loop and records received heartbeats in the peer registry.
 pub mod heartbeat;
 
-/// Phase 6 gossip state-sync primitives — `GossipTag` (per-event
-/// do_not_gossip opt-out), `GossipPolicy` (replicate_raw_ingress +
-/// replay_budget_days), `ReplayBudget` resolved view. Wire protocol
-/// (vector-clock gossip + JSONL append-stream) lands in follow-ups
-/// per `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
+/// Phase 6 gossip policy — wire tag, raw-ingress opt-in, and bounded replay.
+/// `wal_sync` enforces these values in the live sender/receiver paths.
 pub mod gossip;
 
-/// Phase 6 wire protocol primitives — VectorClock (Lamport 1978),
-/// GossipFrame envelope, GossipAcceptance receiver-side decision
-/// composing the existing GossipTag + ReplayBudget + per-origin
-/// dedup. Real transport (Hysteria relay or direct peer connection)
-/// + JSONL append-stream + BudgetToken Raft consensus land in
-/// multi-week follow-ups per
-/// `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
+/// Phase 6 wire protocol — VectorClock (Lamport 1978), GossipFrame envelope,
+/// and GossipAcceptance. Both live transports compose it with the shared
+/// persist-before-dedup `wal_sync` acceptance path.
 pub mod gossip_wire;
-
-/// Phase 5 Hysteria-shared relay registration primitives — operator-
-/// configured `RelayConfig` (endpoint + 5-peer-per-key cap),
-/// `RelayRegistration` wire shape, `PeerRoster` in-memory store with
-/// register / refresh / unregister / prune_stale. The standalone
-/// `neoth-relay` daemon + the Hysteria-side socket plumbing land in
-/// multi-week follow-ups per
-/// `PLAN/SPEC_cluster_phase5_hysteria_relay_2026-05-22.md`.
-pub mod relay;
 
 /// C-5 (Session 21) — typed payload shapes for cluster lifecycle
 /// WAL events `EVENT_TYPE_CLUSTER_ROLE_CHANGED` (0xE8) +
@@ -134,30 +114,6 @@ pub mod relay;
 /// transport wiring (C-1..C-4) is gated on the K-1 Hyperswarm
 /// path decision.
 pub mod wal_payloads;
-
-// ── Cluster C-1..C-4 (Session 21, 2026-05-23) — Pears transport ──────
-//
-// Agent panel verdict on D-101 picked the Pears HTTP bridge as the
-// shared transport for both Keet messaging + cluster operations. The
-// four C-* modules below are the cluster-side counterparts of
-// channels::pears_bridge:
-//
-//   C-1  pears_peer_discovery — peer announce/lookup over cluster topic
-//        (adopts openclaw bonjour watchdog state machine)
-//   C-2  pears_federation     — WAL segment shipping trait (default
-//        impl returns Deferred until live `pear` validation)
-//   C-3  pears_routing        — request routing policy + decision shape
-//   C-4  pears_election       — lowest-pubkey-wins orchestrator election
-//
-// All four are unit-tested but UNTESTED against a live `pear` runtime —
-// the actual transport round-trip needs operator-side K-3.5 pairing
-// validation first. Gated behind freedom.yaml::cluster.transport =
-// "pears" (default "disabled"), with a one-shot operator warn on first
-// enable explaining the live-test gap.
-pub mod pears_election;
-pub mod pears_federation;
-pub mod pears_peer_discovery;
-pub mod pears_routing;
 
 /// Stable identifier for a peer's *session/role* in the cluster.
 /// Format = UUID v7 string. First peer that brings a freshly-paired
@@ -185,8 +141,8 @@ impl PeerSessionId {
 /// same shape as [`registry::PairedPeer`]'s `pub_key_hex`. The single
 /// canonical pubkey identity across the cluster: it keys the gossip
 /// [`gossip_wire::VectorClock`] AND drives the lowest-pubkey-wins
-/// [`pears_election`]. Pre ARCH-21 this was TWO redundant newtypes
-/// (`gossip_wire::PeerId` + `pears_election::PeerPubkey`).
+/// the cluster protocol. Pre ARCH-21 this collided by name with
+/// `gossip_wire::PeerId`.
 ///
 /// `#[serde(transparent)]` so it serialises as a bare string — gossip
 /// wire frames are byte-identical to the pre-ARCH-21 `gossip_wire::PeerId`.
@@ -233,8 +189,8 @@ pub enum RoutingDecision {
     NoPeerAvailable,
 }
 
-/// Policy trait. v0.1.x scope provides `LocalOnly` (current behaviour:
-/// always run locally) + `LeastLoaded` (route to the healthy peer with
+/// Routing policy implemented by `LocalOnly` (always run locally) and
+/// `LeastLoaded` (route to the healthy peer with
 /// the lowest `tokens_per_sec`). Operators pick the policy in
 /// `freedom.yaml::cluster.policy`.
 pub trait OrchestratingPolicy: Send + Sync {
@@ -282,20 +238,6 @@ impl OrchestratingPolicy for LeastLoaded {
             Some(p) => RoutingDecision::Remote(p.peer.clone()),
             None => RoutingDecision::Local,
         }
-    }
-}
-
-/// Hyperswarm-backed peer discovery — stub for v0.1.x. Returns
-/// `NoPeerAvailable` synchronously until the real transport lands.
-#[derive(Debug)]
-pub struct HyperswarmPeerRegistry;
-
-impl HyperswarmPeerRegistry {
-    pub fn join(_topic: &str) -> anyhow::Result<Self> {
-        anyhow::bail!(
-            "cluster: Hyperswarm peer discovery deferred. \
-             Single-node operation is fully supported via LocalOnly policy."
-        )
     }
 }
 
@@ -455,14 +397,6 @@ mod tests {
     fn least_loaded_falls_back_to_local_when_no_healthy_peer() {
         let policy = LeastLoaded::default();
         assert_eq!(policy.pick_peer(&[]), RoutingDecision::Local);
-    }
-
-    #[test]
-    fn hyperswarm_join_bails_in_v0_1() {
-        let r = HyperswarmPeerRegistry::join("test-topic");
-        assert!(r.is_err());
-        let msg = format!("{}", r.unwrap_err());
-        assert!(msg.contains("deferred"));
     }
 
     // ── R-7 PeerLoadRegistry ─────────────────────────────────────────

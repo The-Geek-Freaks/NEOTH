@@ -10,7 +10,8 @@
 //! - `lsp::types::LspDiagnostic` — output type mirroring `coding::cargo_check::CargoDiagnostic`
 //!
 //! No tower-lsp / lsp-types dependency. Uses `mcp::transport::{frame, parse_frame}`
-//! (Content-Length framing identical for MCP and LSP), and `std::sync::mpsc`
+//! (`Content-Length` framing is local to LSP; MCP uses newline-delimited JSON),
+//! and `std::sync::mpsc`
 //! for read-timeout in the sync context of `cli::edit::run`.
 //!
 //! Wire point: `cli::edit::run()` after `apply_hashline_diff` writes the file.

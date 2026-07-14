@@ -159,7 +159,14 @@ fn render_route((method, path): (String, String), cfg: &HealthzConfig) -> String
             ),
         ),
         "/healthz" => match build_snapshot(cfg) {
-            Ok(snap) => http_response(200, "application/json", &snap.render_json()),
+            Ok(snap) => match snap.render_json() {
+                Ok(json) => http_response(200, "application/json", &json),
+                Err(error) => http_response(
+                    500,
+                    "text/plain",
+                    &format!("snapshot encoding error: {error}\n"),
+                ),
+            },
             Err(e) => http_response(500, "text/plain", &format!("snapshot error: {e}\n")),
         },
         "/metrics" => match build_snapshot(cfg) {

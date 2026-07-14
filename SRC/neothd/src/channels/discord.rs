@@ -1,25 +1,10 @@
-//! Discord channel adapter (Session 14 Pick #15) — Phase 1: SEND-ONLY.
+//! Discord channel adapter — live Gateway receive + REST send.
 //!
-//! NEOTH can POST messages to a Discord channel via the bot REST API.
-//! Receiving messages requires Discord's Gateway WebSocket protocol
-//! (heartbeats, sequence resumes, sharding, intents) which is a
-//! multi-hundred-LOC endeavour — that's Phase 2. Send-only is
-//! immediately useful for "NEOTH posts cron-driven briefings to my
-//! Discord channel" + "NEOTH echoes channel-EGRESS into Discord
-//! when the operator wants to mirror conversation state across
-//! channels".
-//!
-//! ## Status: SEND-ONLY in v0.1 / v0.2 / v0.3 (Codex feedback Pick #29)
-//!
-//! Receive (Gateway WSS) is **explicitly deferred to v0.3+** so the
-//! channel-status surface stays honest. Operator running `neoth
-//! channels list` (or reading freedom.yaml + `neoth doctor`) sees
-//! Discord as send-capable + receive-deferred — there is no silent
-//! "it should work but doesn't" gap. Path to receive: Slack
-//! Socket-Mode is the reference template (`channels/slack_socket.rs`
-//! ships an analogous reconnect-with-backoff WSS loop + ACK
-//! contract + JSON envelope decoder). When Discord receive lands it
-//! follows the same shape against `wss://gateway.discord.gg`.
+//! `DiscordChannel::run` maintains the authenticated Gateway WebSocket loop
+//! (heartbeats, resume sequence, reconnect backoff, intents) and routes
+//! `MESSAGE_CREATE` envelopes into the shared channel pipeline. Replies and
+//! proactive messages use Discord's v10 REST API. `validate_bot` performs the
+//! read-only identity probe used by `neoth channel test discord`.
 //!
 //! ## Wire shape
 //!
@@ -43,15 +28,16 @@
 //! - Rate-limit headers (`X-RateLimit-Remaining` / `Retry-After`)
 //!   are honoured: 429 maps to `ChannelError::RateLimited`.
 //!
-//! ## Phase 2 follow-up
+//! ## Deliberately out of scope
 //!
-//! - Gateway WebSocket connection + sharding for receive path
+//! - Multi-shard coordination for very large guild deployments
 //! - Slash command + interaction handling
 //! - Embed objects + file attachments (`multipart/form-data`)
 //! - Voice channel signalling (probably never — out of NEOTH scope)
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
 
 use super::{Channel, ChannelError, MessageId, PipelineHandler};
@@ -65,6 +51,13 @@ pub const DISCORD_MAX_CONTENT_CHARS: usize = 2000;
 /// v10 is the long-term-stable contract per Discord's docs.
 pub const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
 
+/// Discord responses used here are tiny JSON envelopes. Bound them so a
+/// compromised/misbehaving upstream cannot turn an identity probe or send
+/// acknowledgement into an unbounded allocation.
+const DISCORD_MAX_RESPONSE_BYTES: usize = 64 * 1024;
+const DISCORD_USER_AGENT: &str =
+    concat!("NEOTH/", env!("CARGO_PKG_VERSION"), " (+https://neoth.dev)");
+
 /// Send-only Discord adapter. Holds the bot token + a shared HTTP
 /// client. Stateless — every send call is one HTTP round trip.
 pub struct DiscordChannel {
@@ -74,17 +67,89 @@ pub struct DiscordChannel {
 
 impl DiscordChannel {
     pub fn new(bot_token: SecretString) -> Result<Self> {
-        let http = crate::providers::http_client::build_client()
+        let http = crate::providers::http_client::build_client_no_redirect()
             .context("build reqwest client for Discord adapter")?;
         Ok(Self { bot_token, http })
     }
 
+    /// Validate the configured bot token without sending a message.
+    ///
+    /// Discord's `GET /users/@me` returns the immutable bot snowflake and
+    /// display identity. Redirects are disabled by the shared client so the
+    /// authorization header cannot be redirected away from Discord's origin.
+    pub async fn validate_bot(&self) -> std::result::Result<DiscordBotIdentity, ChannelError> {
+        validate_bot_at(&self.http, DISCORD_API_BASE, &self.bot_token).await
+    }
 }
 
 /// The Discord REST `Authorization` header value — single source of the
 /// `Bot <token>` format (contract-pinned by test).
 fn auth_header_value(bot_token: &SecretString) -> String {
     format!("Bot {}", bot_token.expose())
+}
+
+/// Public, secret-free result of Discord's authenticated identity probe.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct DiscordBotIdentity {
+    /// Immutable Discord snowflake. This is the identity key; usernames can
+    /// change and must never be used for authorization.
+    pub id: String,
+    pub username: String,
+    #[serde(default)]
+    pub global_name: Option<String>,
+}
+
+/// Base-URL-injectable core of [`DiscordChannel::validate_bot`]. Keeping the
+/// HTTP client injectable lets the wire contract be tested against loopback
+/// without weakening the production endpoint or leaking a real credential.
+pub(crate) async fn validate_bot_at(
+    http: &reqwest::Client,
+    base_url: &str,
+    bot_token: &SecretString,
+) -> std::result::Result<DiscordBotIdentity, ChannelError> {
+    let url = format!("{}/users/@me", base_url.trim_end_matches('/'));
+    let response = http
+        .get(&url)
+        .header(reqwest::header::AUTHORIZATION, auth_header_value(bot_token))
+        .header(reqwest::header::USER_AGENT, DISCORD_USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| ChannelError::Transport(format!("discord GET /users/@me: {e}")))?;
+
+    let status = response.status();
+    if status.as_u16() == 429 {
+        let retry_after_secs = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok())
+            .map(|n| n.ceil() as u64)
+            .unwrap_or(1);
+        return Err(ChannelError::RateLimited { retry_after_secs });
+    }
+
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        return Err(ChannelError::Auth(format!(
+            "discord GET /users/@me returned HTTP {}",
+            status.as_u16()
+        )));
+    }
+    if !status.is_success() {
+        return Err(ChannelError::Transport(format!(
+            "discord GET /users/@me returned HTTP {}",
+            status.as_u16()
+        )));
+    }
+
+    let body = response_bytes_limited(response, DISCORD_MAX_RESPONSE_BYTES).await?;
+    let identity: DiscordBotIdentity = serde_json::from_slice(&body)
+        .map_err(|e| ChannelError::Transport(format!("discord identity response parse: {e}")))?;
+    if identity.id.trim().is_empty() || identity.username.trim().is_empty() {
+        return Err(ChannelError::Transport(
+            "discord identity response omitted id or username".into(),
+        ));
+    }
+    Ok(identity)
 }
 
 #[async_trait]
@@ -206,10 +271,7 @@ async fn post_one_chunk(
         .post(&url)
         .header(reqwest::header::AUTHORIZATION, auth_header_value(bot_token))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(
-            reqwest::header::USER_AGENT,
-            "NEOTH/0.1 (+https://neoth.dev)",
-        )
+        .header(reqwest::header::USER_AGENT, DISCORD_USER_AGENT)
         .json(&body)
         .send()
         .await
@@ -227,26 +289,49 @@ async fn post_one_chunk(
         return Err(ChannelError::RateLimited { retry_after_secs });
     }
     if status.as_u16() == 401 || status.as_u16() == 403 {
-        let body_text = response.text().await.unwrap_or_default();
         return Err(ChannelError::Auth(format!(
-            "discord HTTP {}: {}",
-            status.as_u16(),
-            body_text.trim()
+            "discord message create returned HTTP {}",
+            status.as_u16()
         )));
     }
     if !status.is_success() {
-        let body_text = response.text().await.unwrap_or_default();
         return Err(ChannelError::Transport(format!(
-            "discord HTTP {}: {}",
-            status.as_u16(),
-            body_text.trim()
+            "discord message create returned HTTP {}",
+            status.as_u16()
         )));
     }
-    let parsed: MessageCreateResponse = response
-        .json()
-        .await
+    let body = response_bytes_limited(response, DISCORD_MAX_RESPONSE_BYTES).await?;
+    let parsed: MessageCreateResponse = serde_json::from_slice(&body)
         .map_err(|e| ChannelError::Transport(format!("discord response parse: {e}")))?;
     Ok(MessageId(parsed.id))
+}
+
+async fn response_bytes_limited(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> std::result::Result<Vec<u8>, ChannelError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(ChannelError::Transport(format!(
+            "discord response exceeds {max_bytes}-byte limit"
+        )));
+    }
+
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|e| ChannelError::Transport(format!("discord response body: {e}")))?;
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(ChannelError::Transport(format!(
+                "discord response exceeds {max_bytes}-byte limit"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 /// Split a text payload into ≤max-char chunks. Boundary preference:
@@ -305,6 +390,62 @@ mod tests {
         let header = auth_header_value(&SecretString::new("abc123".into()));
         assert!(header.starts_with("Bot "));
         assert!(header.ends_with("abc123"));
+    }
+
+    #[tokio::test]
+    async fn validate_bot_at_gets_identity_without_sending_message() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me"))
+            .and(header("authorization", "Bot fake-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"id":"123456789","username":"neoth","global_name":"NEOTH Bot"}"#,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let http = crate::providers::http_client::build_client_no_redirect().unwrap();
+        let identity = validate_bot_at(&http, &server.uri(), &SecretString::from("fake-token"))
+            .await
+            .unwrap();
+        assert_eq!(identity.id, "123456789");
+        assert_eq!(identity.username, "neoth");
+        assert_eq!(identity.global_name.as_deref(), Some("NEOTH Bot"));
+    }
+
+    #[tokio::test]
+    async fn validate_bot_at_rejects_auth_and_incomplete_identity() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let unauthorized = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&unauthorized)
+            .await;
+        let http = crate::providers::http_client::build_client_no_redirect().unwrap();
+        let err = validate_bot_at(&http, &unauthorized.uri(), &SecretString::from("bad-token"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ChannelError::Auth(_)));
+
+        let incomplete = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"id":"","username":"neoth"}"#),
+            )
+            .mount(&incomplete)
+            .await;
+        let err = validate_bot_at(&http, &incomplete.uri(), &SecretString::from("token"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ChannelError::Transport(_)));
     }
 
     #[test]

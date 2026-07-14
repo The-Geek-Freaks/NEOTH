@@ -19,13 +19,16 @@
 //! daemon spawns it at startup) — a send before then returns a clear
 //! `Transport` error rather than opening a throwaway connection.
 //!
-//! ## Restart de-duplication
+//! ## Restart catch-up + de-duplication
 //!
 //! Gift-wrap OUTER timestamps are randomized (up to ~2 days back) to resist
-//! timing analysis, so a `since` filter on the wrap is unreliable. Instead we
-//! filter on the INNER rumor's `created_at` (the genuine send time): a DM whose
-//! rumor predates the moment this loop went live is skipped, so a restart does
-//! not re-answer old messages.
+//! timing analysis. A plain `since(now)` subscription therefore loses messages
+//! received while the daemon was offline, while filtering on the INNER rumor at
+//! each startup loses the same messages by construction. NEOTH keeps a durable
+//! cursor instead: first boot subscribes live-only, later boots overlap the last
+//! completed relay scan by the full NIP-59 timestamp-tweak window and de-duplicate
+//! stable outer event IDs. Cursor claims are persisted before dispatch, giving
+//! restart-safe at-most-once delivery instead of duplicate LLM turns/replies.
 //!
 //! ## Operator prerequisite
 //!
@@ -33,15 +36,130 @@
 //! `credentials.yaml`. NEOTH dials OUT to the relays, so no public URL is
 //! needed. Text only; media / NIP-17 file attachments are documented follow-ups.
 
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::secret::SecretString;
 
 use super::nostr_api::{map_nostr_dm, nostr_text_chunks};
 use super::{Channel, ChannelError, MessageId, PipelineHandler};
+
+/// NIP-59 randomizes gift-wrap timestamps backwards by at most two days.
+/// Keep one extra second so an inclusive/exclusive relay boundary cannot lose
+/// an event exactly at the edge.
+const GIFT_WRAP_OVERLAP_SECS: u64 = 172_801;
+/// Accept modest sender clock skew around the first-enable boundary without
+/// reopening arbitrary pre-install history on the first catch-up.
+const INITIAL_CLOCK_SKEW_SECS: u64 = 300;
+/// Defensive disk bound. Normal pruning retains only the two-day overlap; this
+/// cap protects an open channel from an unbounded spam-created cursor file.
+const MAX_CURSOR_EVENT_IDS: usize = 50_000;
+const CURSOR_VERSION: u8 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NostrCursorState {
+    version: u8,
+    identity_pubkey: String,
+    initialized_at_unix: u64,
+    completed_scan_unix: u64,
+    /// Stable outer gift-wrap event ID -> randomized outer created_at.
+    processed_event_ids: BTreeMap<String, u64>,
+}
+
+impl NostrCursorState {
+    fn new(identity_pubkey: String, now: u64) -> Self {
+        Self {
+            version: CURSOR_VERSION,
+            identity_pubkey,
+            initialized_at_unix: now,
+            completed_scan_unix: now,
+            processed_event_ids: BTreeMap::new(),
+        }
+    }
+
+    fn load_or_initialize(path: &Path, identity_pubkey: &str, now: u64) -> Result<(Self, bool)> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let state = Self::new(identity_pubkey.to_string(), now);
+                state.persist(path)?;
+                return Ok((state, true));
+            }
+            Err(e) => {
+                return Err(e).with_context(|| format!("read Nostr cursor {}", path.display()));
+            }
+        };
+        let state: Self = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse Nostr cursor {}", path.display()))?;
+        if state.version != CURSOR_VERSION {
+            anyhow::bail!(
+                "unsupported Nostr cursor version {} in {} (expected {})",
+                state.version,
+                path.display(),
+                CURSOR_VERSION
+            );
+        }
+        if state.identity_pubkey != identity_pubkey {
+            // A rotated key is a different inbox. Reusing the old identity's
+            // cursor could suppress the new inbox, so establish a clean live
+            // boundary and atomically replace the old state.
+            let state = Self::new(identity_pubkey.to_string(), now);
+            state.persist(path)?;
+            return Ok((state, true));
+        }
+        Ok((state, false))
+    }
+
+    fn persist(&self, path: &Path) -> Result<()> {
+        let bytes = serde_json::to_vec_pretty(self).context("serialize Nostr cursor")?;
+        crate::util::atomic_write::atomic_write(path, &bytes)
+            .with_context(|| format!("persist Nostr cursor {}", path.display()))
+    }
+
+    /// Claim an event durably before any policy/pipeline/reply side effect.
+    /// Returns false for an already-claimed relay replay.
+    fn claim(&mut self, path: &Path, event_id: String, outer_created_at: u64) -> Result<bool> {
+        if self.processed_event_ids.contains_key(&event_id) {
+            return Ok(false);
+        }
+        self.processed_event_ids
+            .insert(event_id.clone(), outer_created_at);
+        if let Err(e) = self.persist(path) {
+            self.processed_event_ids.remove(&event_id);
+            return Err(e);
+        }
+        Ok(true)
+    }
+
+    fn complete_scan(&mut self, path: &Path, scan_started_at: u64) -> Result<()> {
+        self.completed_scan_unix = self.completed_scan_unix.max(scan_started_at);
+        let retain_after = self
+            .completed_scan_unix
+            .saturating_sub(GIFT_WRAP_OVERLAP_SECS);
+        self.processed_event_ids
+            .retain(|_, outer_created_at| *outer_created_at >= retain_after);
+
+        if self.processed_event_ids.len() > MAX_CURSOR_EVENT_IDS {
+            let mut by_age: Vec<(String, u64)> = self
+                .processed_event_ids
+                .iter()
+                .map(|(id, ts)| (id.clone(), *ts))
+                .collect();
+            by_age.sort_unstable_by_key(|(_, ts)| *ts);
+            let remove_count = by_age.len() - MAX_CURSOR_EVENT_IDS;
+            for (id, _) in by_age.into_iter().take(remove_count) {
+                self.processed_event_ids.remove(&id);
+            }
+        }
+        self.persist(path)
+    }
+}
 
 /// Nostr adapter. Holds the operator's signing key + the relay list + the live
 /// client handle (published by the receive loop once it connects).
@@ -53,6 +171,9 @@ pub struct NostrChannel {
     allowed_pubkey: Option<String>,
     /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
+    /// Durable restart cursor. Required for a live adapter; injected from the
+    /// daemon's actual (possibly non-default) NEOTH home.
+    cursor_path: Option<PathBuf>,
 }
 
 impl NostrChannel {
@@ -73,6 +194,7 @@ impl NostrChannel {
             client: tokio::sync::OnceCell::new(),
             allowed_pubkey: None,
             gate_writer: None,
+            cursor_path: None,
         }
     }
 
@@ -85,6 +207,12 @@ impl NostrChannel {
     ) -> Self {
         self.allowed_pubkey = allowed_pubkey;
         self.gate_writer = Some(gate_writer);
+        self
+    }
+
+    /// Bind the durable restart cursor to the daemon's real home directory.
+    pub fn with_cursor_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.cursor_path = Some(path.into());
         self
     }
 
@@ -109,6 +237,16 @@ impl Channel for NostrChannel {
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
         let keys = self.keys()?;
         let my_pubkey = keys.public_key();
+        let cursor_path = self
+            .cursor_path
+            .as_deref()
+            .context("nostr cursor path not configured")?;
+        let scan_started_at = crate::time::now_unix_secs();
+        let (mut cursor, first_boot) = NostrCursorState::load_or_initialize(
+            cursor_path,
+            &my_pubkey.to_hex(),
+            scan_started_at,
+        )?;
         let client = Client::builder().signer(keys).build();
         for relay in &self.relays {
             client
@@ -124,24 +262,74 @@ impl Channel for NostrChannel {
         // loop runs.
         let _ = self.client.set(client.clone());
 
-        // Subscribe to gift wraps (kind 1059) p-tagged to us.
-        let filter = Filter::new().kind(Kind::GiftWrap).pubkey(my_pubkey);
-        client
+        // Create the broadcast receiver BEFORE subscribing; otherwise a fast
+        // relay can emit stored events/EOSE before a receiver exists.
+        let mut notifications = client.notifications();
+        // First enable is intentionally live-only. On later runs, query from
+        // the last fully completed scan minus the full NIP-59 backdate window.
+        let mut filter = Filter::new().kind(Kind::GiftWrap).pubkey(my_pubkey);
+        if first_boot {
+            filter = filter.limit(0);
+        } else {
+            filter = filter.since(Timestamp::from(
+                cursor
+                    .completed_scan_unix
+                    .saturating_sub(GIFT_WRAP_OVERLAP_SECS),
+            ));
+        }
+        let subscription = client
             .subscribe(filter, None)
             .await
             .context("nostr subscribe to gift wraps")?;
-
-        // Anything whose INNER rumor predates this moment is an old DM — skip it
-        // so a restart never re-answers history.
-        let start_ts = crate::time::now_unix_secs();
-        let mut notifications = client.notifications();
-        info!(relays = self.relays.len(), "nostr adapter live");
+        if subscription.success.is_empty() {
+            anyhow::bail!(
+                "nostr subscription failed on every relay ({} failures)",
+                subscription.failed.len()
+            );
+        }
+        if !subscription.failed.is_empty() {
+            warn!(
+                failed_relays = subscription.failed.len(),
+                live_relays = subscription.success.len(),
+                "nostr subscription partially degraded"
+            );
+        }
+        let subscription_id = subscription.val;
+        let mut awaiting_eose: HashSet<RelayUrl> = subscription.success;
+        info!(
+            relays = awaiting_eose.len(),
+            catch_up = !first_boot,
+            "nostr adapter live"
+        );
 
         while let Ok(notification) = notifications.recv().await {
-            let RelayPoolNotification::Event { event, .. } = notification else {
-                continue;
+            let event = match notification {
+                RelayPoolNotification::Message {
+                    relay_url,
+                    message: RelayMessage::EndOfStoredEvents(id),
+                } if id.as_ref() == &subscription_id => {
+                    awaiting_eose.remove(&relay_url);
+                    if awaiting_eose.is_empty() && cursor.completed_scan_unix < scan_started_at {
+                        cursor.complete_scan(cursor_path, scan_started_at)?;
+                        info!(
+                            completed_scan_unix = cursor.completed_scan_unix,
+                            "nostr catch-up cursor advanced"
+                        );
+                    }
+                    continue;
+                }
+                RelayPoolNotification::Event {
+                    subscription_id: id,
+                    event,
+                    ..
+                } if id == subscription_id => event,
+                _ => continue,
             };
             if event.kind != Kind::GiftWrap {
+                continue;
+            }
+            let outer_id = event.id.to_hex();
+            if !cursor.claim(cursor_path, outer_id.clone(), event.created_at.as_secs())? {
                 continue;
             }
             let unwrapped = match client.unwrap_gift_wrap(&event).await {
@@ -152,6 +340,9 @@ impl Channel for NostrChannel {
                 }
             };
             let sender = unwrapped.sender;
+            if sender == my_pubkey {
+                continue; // never answer our own NIP-17 sent-copy
+            }
             // D2 — drop + audit a sender not on the operator allowlist before
             // the pipeline sees the message (open when None).
             if super::sender_blocked_by_allowlist(
@@ -165,13 +356,24 @@ impl Channel for NostrChannel {
                 continue;
             }
             let rumor = unwrapped.rumor;
-            let rumor_ts = rumor.created_at.as_secs();
-            if rumor_ts < start_ts {
-                continue; // old DM surfaced on restart — do not re-answer
-            }
-            let Some(inbound) = map_nostr_dm(&sender.to_hex(), &rumor.content, rumor_ts) else {
+            if rumor.kind != Kind::PrivateDirectMessage {
+                warn!(
+                    kind = rumor.kind.as_u16(),
+                    "nostr gift-wrap contained a non-DM rumor; skipping"
+                );
                 continue;
+            }
+            let rumor_ts = rumor.created_at.as_secs();
+            if rumor_ts.saturating_add(INITIAL_CLOCK_SKEW_SECS) < cursor.initialized_at_unix {
+                continue; // never import arbitrary pre-enable history
+            }
+            let mut inbound = match map_nostr_dm(&sender.to_hex(), &rumor.content, rumor_ts) {
+                Some(inbound) => inbound,
+                None => continue,
             };
+            // The inner rumor ID is stable across gift wraps and is the useful
+            // provider correlation ID for WAL/edit/de-dup observability.
+            inbound.message_id = Some(rumor.id.unwrap_or_else(|| rumor.compute_id()).to_hex());
             match handler(inbound).await {
                 Ok(Some(out)) => {
                     for chunk in nostr_text_chunks(&out.text) {
@@ -247,6 +449,88 @@ mod tests {
             c.relays,
             vec!["wss://relay.damus.io", "wss://nos.lol"],
             "trims spaces + drops the trailing empty"
+        );
+    }
+
+    #[test]
+    fn cursor_initializes_atomically_and_reloads_for_same_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nostr-cursor.json");
+        let (created, first_boot) =
+            NostrCursorState::load_or_initialize(&path, "pubkey-a", 1_000).unwrap();
+        assert!(first_boot);
+        assert_eq!(created.initialized_at_unix, 1_000);
+        assert!(path.exists());
+
+        let (reloaded, first_boot) =
+            NostrCursorState::load_or_initialize(&path, "pubkey-a", 2_000).unwrap();
+        assert!(!first_boot);
+        assert_eq!(reloaded.initialized_at_unix, 1_000);
+        assert_eq!(reloaded.completed_scan_unix, 1_000);
+    }
+
+    #[test]
+    fn cursor_rotation_starts_a_new_identity_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nostr-cursor.json");
+        let (mut old, _) = NostrCursorState::load_or_initialize(&path, "pubkey-a", 1_000).unwrap();
+        assert!(old.claim(&path, "event-a".into(), 900).unwrap());
+
+        let (rotated, first_boot) =
+            NostrCursorState::load_or_initialize(&path, "pubkey-b", 2_000).unwrap();
+        assert!(first_boot);
+        assert_eq!(rotated.identity_pubkey, "pubkey-b");
+        assert_eq!(rotated.initialized_at_unix, 2_000);
+        assert!(rotated.processed_event_ids.is_empty());
+    }
+
+    #[test]
+    fn cursor_claim_is_durable_and_duplicate_safe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nostr-cursor.json");
+        let (mut state, _) =
+            NostrCursorState::load_or_initialize(&path, "pubkey-a", 1_000).unwrap();
+        assert!(state.claim(&path, "event-a".into(), 950).unwrap());
+        assert!(!state.claim(&path, "event-a".into(), 950).unwrap());
+
+        let (mut reloaded, _) =
+            NostrCursorState::load_or_initialize(&path, "pubkey-a", 2_000).unwrap();
+        assert!(!reloaded.claim(&path, "event-a".into(), 950).unwrap());
+    }
+
+    #[test]
+    fn completed_scan_prunes_only_outside_the_nip59_overlap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nostr-cursor.json");
+        let now = GIFT_WRAP_OVERLAP_SECS + 10_000;
+        let mut state = NostrCursorState::new("pubkey-a".into(), 1);
+        state.processed_event_ids.insert("expired".into(), 9_998);
+        state.processed_event_ids.insert("edge".into(), 9_999);
+        state.processed_event_ids.insert("recent".into(), now);
+        state.persist(&path).unwrap();
+
+        state.complete_scan(&path, now).unwrap();
+        assert!(!state.processed_event_ids.contains_key("expired"));
+        assert!(state.processed_event_ids.contains_key("edge"));
+        assert!(state.processed_event_ids.contains_key("recent"));
+    }
+
+    #[test]
+    fn malformed_cursor_fails_closed_instead_of_replaying_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nostr-cursor.json");
+        std::fs::write(&path, b"not-json").unwrap();
+        let err = NostrCursorState::load_or_initialize(&path, "pubkey-a", 1_000).unwrap_err();
+        assert!(err.to_string().contains("parse Nostr cursor"));
+    }
+
+    #[test]
+    fn live_adapter_requires_explicit_cursor_binding() {
+        assert!(ch().cursor_path.is_none());
+        let c = ch().with_cursor_path("custom-home/channel-state/nostr.json");
+        assert_eq!(
+            c.cursor_path.as_deref(),
+            Some(Path::new("custom-home/channel-state/nostr.json"))
         );
     }
 

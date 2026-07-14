@@ -10,33 +10,35 @@
 //! `granted.allows(required)` and, on a shortfall, REFUSES fail-closed
 //! (`emit_event` → no WAL write + return code 7; `recall_top` →
 //! returns 0 hits) and emits a `0xC7 PLUGIN_CAP_DENIED` audit frame.
-//! The granted level equals the plugin's manifest `requested_permissions`
-//! (`RequestedPermission`), which the operator approved by running
-//! `neoth plugin enable <id>` — a plugin cannot forge a higher one.
+//! The granted level comes from the exact approval record written by
+//! `neoth plugin enable <id>` and bound to the canonical manifest + WASM
+//! digests. Dispatch never derives authority from a mutable manifest.
 //! The Linker imports are namespaced under `neoth` so the wasm module
 //! declares them as `(import "neoth" "log" ...)`.
 //!
-//! ## Bound surface (Phase 1)
+//! ## Bound surface (guest ABI v1)
 //!
 //! | Import name        | Permission | Effect |
 //! |--------------------|-----------|--------|
 //! | `neoth.log`        | None       | Stderr line — diagnostic only. |
 //! | `neoth.fuel_left`  | None       | Returns remaining fuel as i64. |
 //! | `neoth.emit_event` | Write      | Appends a WAL frame (0xC4 hostcall). |
-//! | `neoth.recall_top` | ReadOnly   | Returns the top-K recall hit count for the prompt-hash. |
+//! | `neoth.recall_top` | ReadOnly   | Returns the episode count for the supplied text hash. |
 //!
 //! ## Phase 2 (follow-up)
 //!
 //! `host_send_text` (Execute), `host_open_url` (Dangerous), and
-//! capability-token threading through a typed handle table land in
-//! Pick #34b. The Phase-1 surface keeps the API minimal — three
-//! hostcalls cover 80% of operator-useful plugins.
+//! capability-token threading through a typed handle table are not part of ABI
+//! v1. Adding them requires a versioned ABI change and runtime-policy tests.
 //!
 //! Compiled only when the `wasm-plugin-host` Cargo feature is on.
 
 #![cfg(feature = "wasm-plugin-host")]
 
 use anyhow::{Context, Result};
+use neoth_plugin_sdk::guest::{
+    HOSTCALL_EMIT_EVENT, HOSTCALL_FUEL_LEFT, HOSTCALL_LOG, HOSTCALL_RECALL_TOP, IMPORT_MODULE,
+};
 use wasmtime::{Caller, Linker};
 
 use super::engine::{PluginStoreState, RecallDbHandle};
@@ -122,18 +124,7 @@ fn build_hostcall_payload(plugin_id: &str, kind: &[u8], payload_bytes: usize) ->
         "kind": kind_str,
         "payload_bytes": payload_bytes,
     });
-    serde_json::to_vec(&value).unwrap_or_else(|_| {
-        // Fallback: hand-build a minimal frame so a serde_json
-        // regression cannot starve the audit chain. Operators reading
-        // this format see the same shape, just with the plugin_id
-        // sanitised more aggressively.
-        format!(
-            "{{\"plugin\":\"{}\",\"kind\":\"\",\"payload_bytes\":{}}}",
-            plugin_id.replace('"', ""),
-            payload_bytes
-        )
-        .into_bytes()
-    })
+    serde_json::to_vec(&value).expect("PLUGIN_HOSTCALL payload is a serde_json::Value")
 }
 
 /// KF-09 — body for a `0xC6 PLUGIN_CAP_USED` frame. `prompt_hash` renders
@@ -153,15 +144,7 @@ fn build_cap_used_payload(
         "prompt_hash": format!("{:016x}", prompt_hash as u64),
         "hits": hits,
     });
-    serde_json::to_vec(&value).unwrap_or_else(|_| {
-        format!(
-            "{{\"plugin\":\"{}\",\"capability\":\"{}\",\"hits\":{}}}",
-            plugin_id.replace('"', ""),
-            capability,
-            hits
-        )
-        .into_bytes()
-    })
+    serde_json::to_vec(&value).expect("PLUGIN_CAP_USED payload is a serde_json::Value")
 }
 
 /// Permission level the hostcall requires. Mirrors the
@@ -245,16 +228,7 @@ fn build_cap_denied_payload(
         "required": required.as_str(),
         "granted": granted.as_str(),
     });
-    serde_json::to_vec(&value).unwrap_or_else(|_| {
-        format!(
-            "{{\"plugin\":\"{}\",\"hostcall\":\"{}\",\"required\":\"{}\",\"granted\":\"{}\"}}",
-            plugin_id.replace('"', ""),
-            hostcall,
-            required.as_str(),
-            granted.as_str()
-        )
-        .into_bytes()
-    })
+    serde_json::to_vec(&value).expect("PLUGIN_CAP_DENIED payload is a serde_json::Value")
 }
 
 /// Best-effort emit of a `0xC7 PLUGIN_CAP_DENIED` frame. Called from a
@@ -305,8 +279,8 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
     // the bytes + log them under `target: "wasm_plugin"`.
     linker
         .func_wrap(
-            "neoth",
-            "log",
+            IMPORT_MODULE,
+            HOSTCALL_LOG,
             |mut caller: Caller<'_, PluginStoreState>, ptr: i32, len: i32| {
                 let plugin_id = caller.data().plugin_id.clone();
                 let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
@@ -349,8 +323,8 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
     // know won't fit.
     linker
         .func_wrap(
-            "neoth",
-            "fuel_left",
+            IMPORT_MODULE,
+            HOSTCALL_FUEL_LEFT,
             |caller: Caller<'_, PluginStoreState>| -> i64 {
                 caller.get_fuel().map(|f| f as i64).unwrap_or(0)
             },
@@ -379,8 +353,8 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
     //         frame is emitted instead. Fail-closed.
     linker
         .func_wrap(
-            "neoth",
-            "emit_event",
+            IMPORT_MODULE,
+            HOSTCALL_EMIT_EVENT,
             |mut caller: Caller<'_, PluginStoreState>,
              kind_ptr: i32,
              kind_len: i32,
@@ -532,8 +506,8 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
     // need diagnostic detail can call `host.log`.
     linker
         .func_wrap(
-            "neoth",
-            "recall_top",
+            IMPORT_MODULE,
+            HOSTCALL_RECALL_TOP,
             |caller: Caller<'_, PluginStoreState>, prompt_hash: i64| -> i32 {
                 let plugin_id = caller.data().plugin_id.clone();
                 let writer = caller.data().wal_writer.clone();

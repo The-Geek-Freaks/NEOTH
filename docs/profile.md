@@ -75,16 +75,19 @@ Autonomy affects when NEOTH asks:
 | Strict | Queue memory proposals for explicit approval. |
 | Standard | Queue sensitive or uncertain claims; allow low-risk preferences based on policy. |
 | Elevated | Apply routine claims, queue sensitive/high-impact claims. |
-| Full | Apply within policy scope, still audit everything. |
+| Full | Apply within policy scope; profile mutation events remain auditable. |
 
 ## Local extraction
 
 Profile extraction is designed to run locally where possible.
 
 ```bash
-neoth model fetch qwen
-neoth model fetch ouro
+neoth init --force --provider local_qwen
+neoth doctor
 ```
+
+Qwen selection is handled by onboarding, not by `neoth models pull`. Ouro is a
+separate optional main provider and uses `neoth ouro list` / `neoth ouro fetch`.
 
 Cloud fallback for profile extraction must be explicit. If local inference is unavailable and fallback is disabled, NEOTH should skip learning instead of silently uploading private context.
 
@@ -152,7 +155,7 @@ neoth profile export --format md --out profile.md
 neoth profile show --evidence
 neoth profile pending
 neoth privacy audit --last 30d
-neoth wal verify
+neoth verify
 ```
 
 You should be able to answer:

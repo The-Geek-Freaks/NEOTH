@@ -15,12 +15,13 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use tokio::sync::Notify;
 
-use crate::daemon::companion::{CompanionInvite, CompanionState, render_pairing_qr,
-    spawn_companion_p2p_listener};
+use crate::daemon::companion::{
+    CompanionInvite, CompanionState, render_pairing_qr, spawn_companion_p2p_listener,
+};
 
 /// Invite TTL advertised in the pairing URL, in seconds. 300s (5 min) is long
 /// enough to pick up the phone and scan, short enough that a leaked QR/URL
@@ -64,6 +65,27 @@ pub async fn run_companion(args: CompanionArgs) -> Result<()> {
 }
 
 async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
+    // Validate the daemon-backed contract before minting or displaying a
+    // secret invite. Otherwise the default `p2p_enabled: false` configuration
+    // leaves a live-looking QR and an invite file that no process consumes.
+    let serve_handoff = if write_invite_for_serve {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let cfg = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+            .context("load companion configuration; run `neoth init` first")?;
+        validate_serve_handoff_config(&cfg)?;
+        let pid = crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))
+            .context("check whether `neoth serve` is running")?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no running `neoth serve` daemon found; start it before using \
+                     `--write-invite-for-serve`"
+                )
+            })?;
+        Some((home, pid))
+    } else {
+        None
+    };
+
     let invite = CompanionInvite::generate()?;
     let url = invite.pairing_url(PAIR_INVITE_TTL_SECS);
 
@@ -87,9 +109,20 @@ async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
     // and mints the token into its long-lived store (so it is valid on the
     // loopback HTTP path too). This is the daemon-backed flow; the transient
     // in-process path below only fits a no-daemon one-shot.
-    if write_invite_for_serve {
-        let home = crate::config::FreedomConfig::default_neoth_home();
+    if let Some((home, daemon_pid)) = serve_handoff {
         let invite_path = home.join("companion_pending_invite.json");
+        let _lock = crate::util::locked_file::lock_file_blocking(
+            &home.join("companion_pending_invite.lock"),
+            "companion pending invite",
+        )?;
+        if invite_path.exists() {
+            anyhow::bail!(
+                "a companion invite is already pending at {}; wait for daemon pid {} \
+                 to consume it or remove it after confirming that pairing has expired",
+                invite_path.display(),
+                daemon_pid
+            );
+        }
         let json = serde_json::to_vec(&invite.to_pending_invite_json(PAIR_INVITE_TTL_SECS))
             .map_err(|e| anyhow::anyhow!("serialise pending invite: {e}"))?;
         crate::util::atomic_write::atomic_write(&invite_path, &json).map_err(|e| {
@@ -99,9 +132,10 @@ async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
             )
         })?;
         println!(
-            "Invite handed to the running daemon at {}.\n\
+            "Invite handed to daemon pid {} at {}.\n\
              The serve-side coordinator (companion.p2p_enabled: true) picks it up \
              within ~2s and completes the pairing into the daemon's token store.",
+            daemon_pid,
             invite_path.display()
         );
         return Ok(());
@@ -117,8 +151,8 @@ async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
     // the daemon's WAL for the session-start approach if needed.
     let wal_dir = tempfile::tempdir().map_err(|e| anyhow::anyhow!("tempdir: {e}"))?;
     let seg = wal_dir.path().join("companion_pair.wal");
-    let (writer, _wal_join) = crate::wal::writer::spawn(seg)
-        .map_err(|e| anyhow::anyhow!("spawn WAL writer: {e}"))?;
+    let (writer, _wal_join) =
+        crate::wal::writer::spawn(seg).map_err(|e| anyhow::anyhow!("spawn WAL writer: {e}"))?;
 
     // The transient state shares port 0 (unused in P2P path — port is only
     // relevant for the HTTP companion server's CSRF check).
@@ -163,4 +197,52 @@ async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
 
     // `_wal_join` and `wal_dir` drop here; WAL writer flushes its final frame.
     Ok(())
+}
+
+fn validate_serve_handoff_config(cfg: &crate::config::FreedomConfig) -> Result<()> {
+    if !cfg.companion.enabled {
+        anyhow::bail!(
+            "daemon-backed companion pairing requires `companion.enabled: true`; \
+             enable it and restart `neoth serve`"
+        );
+    }
+    if !cfg.companion.p2p_enabled {
+        anyhow::bail!(
+            "daemon-backed companion pairing requires `companion.p2p_enabled: true`; \
+             enable it and restart `neoth serve`"
+        );
+    }
+    #[cfg(not(feature = "cluster"))]
+    anyhow::bail!("daemon-backed companion pairing requires a build with the `cluster` feature");
+    #[cfg(feature = "cluster")]
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serve_handoff_rejects_default_disabled_config() {
+        let err = validate_serve_handoff_config(&crate::config::FreedomConfig::default())
+            .expect_err("default companion config must fail closed");
+        assert!(err.to_string().contains("companion.enabled"));
+    }
+
+    #[test]
+    fn serve_handoff_rejects_disabled_p2p_before_creating_invite() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.companion.enabled = true;
+        let err = validate_serve_handoff_config(&cfg).expect_err("P2P must be enabled");
+        assert!(err.to_string().contains("companion.p2p_enabled"));
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn serve_handoff_accepts_fully_enabled_cluster_config() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.companion.enabled = true;
+        cfg.companion.p2p_enabled = true;
+        validate_serve_handoff_config(&cfg).unwrap();
+    }
 }

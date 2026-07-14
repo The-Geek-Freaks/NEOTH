@@ -194,6 +194,7 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
                 text: self.0.clone(),
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,
@@ -207,7 +208,8 @@ mod tests {
     #[tokio::test]
     async fn judge_returns_true_on_yes_reply() {
         let provider = FixedProvider("YES".into());
-        let result = judge_goal_met("finish the task", "I finished the task.", &provider, None).await;
+        let result =
+            judge_goal_met("finish the task", "I finished the task.", &provider, None).await;
         assert!(result, "YES reply must return true");
     }
 
@@ -261,8 +263,7 @@ mod tests {
     async fn judge_fails_open_on_provider_error() {
         // A broken judge MUST return false (fail-open) so the normal nudge path
         // fires rather than silently exiting the loop.
-        let result =
-            judge_goal_met("finish the task", "Done.", &ErrorProvider, None).await;
+        let result = judge_goal_met("finish the task", "Done.", &ErrorProvider, None).await;
         assert!(
             !result,
             "provider error must return false (fail-open, not silent loop exit)"

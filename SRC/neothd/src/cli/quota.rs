@@ -54,7 +54,7 @@ fn run_status(
     provider_filter: Option<&str>,
     output: &OutputFormat,
 ) -> Result<()> {
-    let tracker = QuotaTracker::load_from(path);
+    let tracker = QuotaTracker::load_from(path).context("load quota state")?;
     let now = now_unix();
     let mut rows: Vec<_> = tracker
         .snapshot()
@@ -119,7 +119,7 @@ fn run_status(
 }
 
 fn run_reset(path: &std::path::Path, provider: &str, output: &OutputFormat) -> Result<()> {
-    let mut tracker = QuotaTracker::load_from(path);
+    let mut tracker = QuotaTracker::load_from(path).context("load quota state")?;
     if tracker.get(provider).is_none() {
         anyhow::bail!(
             "no quota state recorded for `{provider}`. Use `neoth quota status` to see \
@@ -151,7 +151,7 @@ fn run_set_cap(
     cap: u32,
     output: &OutputFormat,
 ) -> Result<()> {
-    let mut tracker = QuotaTracker::load_from(path);
+    let mut tracker = QuotaTracker::load_from(path).context("load quota state")?;
     tracker.set_cap(provider, cap, now_unix());
     tracker.save().context("save quota.json after set-cap")?;
     match output {
@@ -190,7 +190,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("quota.json");
         run_set_cap(&path, "openai_api", 200, &OutputFormat::Json).unwrap();
-        let reloaded = QuotaTracker::load_from(&path);
+        let reloaded = QuotaTracker::load_from(&path).unwrap();
         assert_eq!(
             reloaded.get("openai_api").unwrap().estimated_daily_cap,
             Some(200)
@@ -210,7 +210,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("quota.json");
         {
-            let mut t = QuotaTracker::load_from(&path);
+            let mut t = QuotaTracker::load_from(&path).unwrap();
             t.record_success("openai_api", now_unix());
             t.record_success("gemini_api", now_unix());
             t.save().unwrap();

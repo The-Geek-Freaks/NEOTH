@@ -21,11 +21,13 @@ use std::collections::HashMap;
 use anyhow::{Context as _, Result};
 use rusqlite::Connection;
 
-use super::collapse::{detect_collapse, CollapseEventRecord, CollapseEventType};
+use super::collapse::{CollapseEventRecord, CollapseEventType, detect_collapse};
 use super::config::BabelConfig;
 use super::feature::BabelFeatureAccumulator;
+use super::khist::KdFailureReason;
 use super::norm::Normaliser;
 use super::score::BabelScores;
+use super::signals::{SignalKind, SignalPosture};
 use super::store;
 use super::window::{BabelWindow, WindowAccumulator, WindowGranularity};
 
@@ -43,7 +45,10 @@ pub struct WalEventRecord {
 pub enum WalEventKind {
     /// 0xC0 MCP_TOOL_CALLED — feeds C_d coupling. `agent_id = None` means
     /// the operator's own session (counted as one implicit agent).
-    McpToolCalled { tool: String, agent_id: Option<String> },
+    McpToolCalled {
+        tool: String,
+        agent_id: Option<String>,
+    },
     /// 0xFC AGENT_DISPATCHED — feeds A_d density + C_d agent set.
     AgentDispatched { agent_id: String },
     /// 0x21 LLM_RESPONSE — feeds K_d (histogram), V_d (tokens), M_d (ratio).
@@ -52,8 +57,25 @@ pub enum WalEventKind {
         token_histogram: HashMap<u32, u32>,
         context_used_ratio: Option<f64>,
     },
+    /// Live local embedding derived at the response source. No text crosses
+    /// the feed.
+    LlmEmbedding {
+        vector: Vec<f32>,
+        model_identity: String,
+    },
+    /// Explicit degraded K_d sample; the closed reason is kept in the K_d
+    /// posture while K deterministically falls back to zero.
+    LlmEmbeddingFailure {
+        model_identity: String,
+        reason: KdFailureReason,
+    },
+    /// Content-free optional memory / final skill-routing signal.
+    AuxSignal(SignalKind),
     /// 0x47 vram / 0x2F budget snapshots — feeds M_d.
-    ResourceSnapshot { vram_pct: Option<f64>, budget_consumed_ratio: Option<f64> },
+    ResourceSnapshot {
+        vram_pct: Option<f64>,
+        budget_consumed_ratio: Option<f64>,
+    },
     /// Context-window boundary report — feeds M_d + context_limit_failure.
     ContextBoundary { context_used_ratio: f64 },
     /// 0xC1 tool schema conflict — feeds D_d.
@@ -65,11 +87,17 @@ pub enum WalEventKind {
     /// Endpoint known to have no redundant route — feeds H_d denominator.
     SolePathEndpoint { endpoint: String },
     /// Retry of a (tool, agent) pair — feeds agent_loop / retry_storm.
-    Retry { tool: Option<String>, agent_id: Option<String> },
+    Retry {
+        tool: Option<String>,
+        agent_id: Option<String>,
+    },
     /// Tool call timed out — feeds tool_timeout_cascade.
     ToolTimeout { tool: Option<String> },
     /// Tool call errored — feeds tool_timeout_cascade (timeout error_kind).
-    ToolError { tool: Option<String>, error_kind: Option<String> },
+    ToolError {
+        tool: Option<String>,
+        error_kind: Option<String>,
+    },
     /// Inference finished (possibly with an error) — feeds
     /// context_limit_failure.
     InferenceEnd { error_kind: Option<String> },
@@ -83,7 +111,11 @@ pub enum CronEvent {
     /// A window closed and its row was persisted.
     WindowComputed(Box<BabelWindow>),
     /// The 15-minute window's normalised B_d crossed the operator threshold.
-    ThresholdBreached { window_id: String, score: f64, threshold: f64 },
+    ThresholdBreached {
+        window_id: String,
+        score: f64,
+        threshold: f64,
+    },
 }
 
 /// Per-granularity in-flight window state. Only the collapse-relevant
@@ -95,6 +127,7 @@ struct GranState {
     features: BabelFeatureAccumulator,
     collapse_events: Vec<CollapseEventRecord>,
     token_sum: u64,
+    signals: SignalPosture,
 }
 
 impl GranState {
@@ -104,12 +137,21 @@ impl GranState {
         autonomy_scalar: u8,
         v_max: f64,
         tools: usize,
+        k_d_embedding_model: Option<String>,
+        memory_signals: bool,
+        skill_signals: bool,
     ) -> Self {
         Self {
             meta: WindowAccumulator::new(granularity, ts_start),
-            features: BabelFeatureAccumulator::new(autonomy_scalar, v_max, tools),
+            features: BabelFeatureAccumulator::new(
+                autonomy_scalar,
+                v_max,
+                tools,
+                k_d_embedding_model,
+            ),
             collapse_events: Vec::new(),
             token_sum: 0,
+            signals: SignalPosture::new(memory_signals, skill_signals),
         }
     }
 }
@@ -123,6 +165,9 @@ pub struct BabelCronState {
     threshold: f64,
     epsilon: Option<f64>,
     mcp_tool_count: usize,
+    k_d_embedding_model: Option<String>,
+    memory_signals: bool,
+    skill_signals: bool,
     normaliser: Normaliser,
     /// K_d of the last 3 closed 5-min windows — the semantic_degradation
     /// detector's sub-window series. ponytail: stale K values survive empty
@@ -147,7 +192,18 @@ impl BabelCronState {
         );
         let grans = WindowGranularity::all()
             .iter()
-            .map(|&g| GranState::new(g, now, autonomy_scalar, cfg.v_max_default, mcp_tool_count))
+            .map(|&g| {
+                GranState::new(
+                    g,
+                    now,
+                    autonomy_scalar,
+                    cfg.v_max_default,
+                    mcp_tool_count,
+                    cfg.k_d_embedding_model.clone(),
+                    cfg.memory_signals,
+                    cfg.skill_signals,
+                )
+            })
             .collect();
         Self {
             session_id_pseudo,
@@ -156,6 +212,9 @@ impl BabelCronState {
             threshold: cfg.threshold,
             epsilon: cfg.epsilon_calibrated,
             mcp_tool_count,
+            k_d_embedding_model: cfg.k_d_embedding_model.clone(),
+            memory_signals: cfg.memory_signals,
+            skill_signals: cfg.skill_signals,
             normaliser: Normaliser::cold_start(),
             recent_k5: Vec::new(),
             grans,
@@ -225,28 +284,30 @@ impl BabelCronState {
         let close_ts = self.grans[idx].meta.deadline();
         let old = std::mem::replace(
             &mut self.grans[idx],
-            GranState::new(g, close_ts, self.autonomy_scalar, self.v_max, self.mcp_tool_count),
+            GranState::new(
+                g,
+                close_ts,
+                self.autonomy_scalar,
+                self.v_max,
+                self.mcp_tool_count,
+                self.k_d_embedding_model.clone(),
+                self.memory_signals,
+                self.skill_signals,
+            ),
         );
         if old.meta.event_count == 0 {
             return Ok(());
         }
         let tps = old.token_sum as f64 / g.secs() as f64;
-        let Some(features) = old.features.finish(tps) else {
-            // A dropped window is data loss — error, not warn: a latent
-            // extractor bug on a specific event pattern would otherwise
-            // zero out detection silently.
-            tracing::error!(
-                window_secs = g.secs(),
-                ts_start = old.meta.ts_start,
-                event_count = old.meta.event_count,
-                "babel window features failed validation, dropped"
-            );
-            return Ok(());
-        };
+        let features = old.features.finish(tps);
         let scores = BabelScores::compute(&features, &self.normaliser, self.epsilon);
         // 5-min windows ARE the sub-window series — they get no series of
         // their own; larger windows read the ring of recent 5-min K values.
-        let k_series: &[f64] = if g == WindowGranularity::FiveMin { &[] } else { &self.recent_k5 };
+        let k_series: &[f64] = if g == WindowGranularity::FiveMin {
+            &[]
+        } else {
+            &self.recent_k5
+        };
         let collapse = detect_collapse(&old.collapse_events, k_series);
         if g == WindowGranularity::FiveMin {
             self.recent_k5.push(features.k);
@@ -264,6 +325,7 @@ impl BabelCronState {
             features,
             scores,
             collapse,
+            signal_posture: old.signals,
             schema_version: BabelWindow::SCHEMA_VERSION.to_string(),
             algorithm_version_c: av.c,
             algorithm_version_k: av.k,
@@ -277,7 +339,11 @@ impl BabelCronState {
         // loses this window (next tick starts fresh). The context makes the
         // loss identifiable in the daemon's error log.
         store::insert_window(conn, &window).with_context(|| {
-            format!("persist babel window (window_secs={}, ts_end={})", g.secs(), close_ts)
+            format!(
+                "persist babel window (window_secs={}, ts_end={})",
+                g.secs(),
+                close_ts
+            )
         })?;
         if g == WindowGranularity::FifteenMin {
             if let Some(b_mult) = window.scores.b_mult {
@@ -297,7 +363,12 @@ impl BabelCronState {
 
 /// Feed one event into a granularity's feature accumulator + event log.
 fn ingest(gran: &mut GranState, ev: &WalEventRecord) {
-    gran.meta.event_count += 1;
+    // Optional posture-only signals must not create otherwise-empty score
+    // windows. They are retained when a real feature/collapse event makes the
+    // same window eligible for persistence.
+    if !matches!(&ev.kind, WalEventKind::AuxSignal(_)) {
+        gran.meta.event_count += 1;
+    }
     match &ev.kind {
         WalEventKind::McpToolCalled { tool, agent_id } => {
             let agent = agent_id.clone().unwrap_or_else(|| "operator".to_string());
@@ -309,16 +380,56 @@ fn ingest(gran: &mut GranState, ev: &WalEventRecord) {
             gran.features.distinct_agents.insert(agent_id.clone());
             gran.features.agent_dispatch_ids.insert(agent_id.clone());
         }
-        WalEventKind::LlmResponse { output_tokens, token_histogram, context_used_ratio } => {
+        WalEventKind::LlmResponse {
+            output_tokens,
+            token_histogram,
+            context_used_ratio,
+        } => {
             if !token_histogram.is_empty() {
-                gran.features.output_histograms.push(token_histogram.clone());
+                gran.features
+                    .output_histograms
+                    .push(token_histogram.clone());
             }
             gran.token_sum += u64::from(*output_tokens);
             if let Some(r) = context_used_ratio {
                 gran.features.max_context_used_ratio = gran.features.max_context_used_ratio.max(*r);
             }
         }
-        WalEventKind::ResourceSnapshot { vram_pct, budget_consumed_ratio } => {
+        WalEventKind::LlmEmbedding {
+            vector,
+            model_identity,
+        } => {
+            gran.features
+                .embedding_models
+                .insert(model_identity.clone());
+            if gran.features.output_embeddings.len() < super::feature::MAX_K_D_EMBEDDING_SAMPLES {
+                gran.features.output_embeddings.push(vector.clone());
+            } else {
+                gran.features.embedding_failure_count =
+                    gran.features.embedding_failure_count.saturating_add(1);
+                gran.features
+                    .embedding_failure_reasons
+                    .insert(KdFailureReason::SampleCap.as_str().to_string());
+            }
+        }
+        WalEventKind::LlmEmbeddingFailure {
+            model_identity,
+            reason,
+        } => {
+            gran.features.embedding_failure_count =
+                gran.features.embedding_failure_count.saturating_add(1);
+            gran.features
+                .embedding_models
+                .insert(model_identity.clone());
+            gran.features
+                .embedding_failure_reasons
+                .insert(reason.as_str().to_string());
+        }
+        WalEventKind::AuxSignal(kind) => gran.signals.record(*kind),
+        WalEventKind::ResourceSnapshot {
+            vram_pct,
+            budget_consumed_ratio,
+        } => {
             if let Some(v) = vram_pct {
                 gran.features.max_vram_pct = gran.features.max_vram_pct.max(*v);
             }
@@ -328,8 +439,10 @@ fn ingest(gran: &mut GranState, ev: &WalEventRecord) {
             }
         }
         WalEventKind::ContextBoundary { context_used_ratio } => {
-            gran.features.max_context_used_ratio =
-                gran.features.max_context_used_ratio.max(*context_used_ratio);
+            gran.features.max_context_used_ratio = gran
+                .features
+                .max_context_used_ratio
+                .max(*context_used_ratio);
         }
         WalEventKind::SchemaConflict => {
             gran.features.schema_conflict_count += 1;
@@ -407,6 +520,9 @@ fn to_collapse_record(ev: &WalEventRecord) -> Option<CollapseEventRecord> {
         WalEventKind::McpToolCalled { .. }
         | WalEventKind::AgentDispatched { .. }
         | WalEventKind::LlmResponse { .. }
+        | WalEventKind::LlmEmbedding { .. }
+        | WalEventKind::LlmEmbeddingFailure { .. }
+        | WalEventKind::AuxSignal(_)
         | WalEventKind::ResourceSnapshot { .. }
         | WalEventKind::SchemaConflict
         | WalEventKind::SolePathEndpoint { .. } => return None,
@@ -449,7 +565,9 @@ mod tests {
         vec![
             WalEventRecord {
                 ts_unix: t0 + 10,
-                kind: WalEventKind::AgentDispatched { agent_id: "agent_a".into() },
+                kind: WalEventKind::AgentDispatched {
+                    agent_id: "agent_a".into(),
+                },
             },
             WalEventRecord {
                 ts_unix: t0 + 20,
@@ -468,7 +586,9 @@ mod tests {
     fn window_computed_with_finite_b_log_after_boundary() {
         let conn = mem_db();
         let mut st = state(&BabelConfig::default());
-        let out = st.tick(BASE + 301, active_burst(BASE), 4, &conn).expect("tick");
+        let out = st
+            .tick(BASE + 301, active_burst(BASE), 4, &conn)
+            .expect("tick");
         let computed: Vec<_> = out
             .iter()
             .filter_map(|e| match e {
@@ -489,7 +609,8 @@ mod tests {
     fn window_row_persisted_in_sqlite() {
         let conn = mem_db();
         let mut st = state(&BabelConfig::default());
-        st.tick(BASE + 301, active_burst(BASE), 4, &conn).expect("tick");
+        st.tick(BASE + 301, active_burst(BASE), 4, &conn)
+            .expect("tick");
         let (count, secs, variables): (i64, i64, String) = conn
             .query_row(
                 "SELECT COUNT(*), MAX(window_secs), MAX(variables) FROM idx_babel_windows",
@@ -501,8 +622,74 @@ mod tests {
         assert_eq!(secs, 300);
         let vars: serde_json::Value = serde_json::from_str(&variables).expect("valid JSON");
         assert!(vars["C"].is_number(), "raw features present");
-        assert_eq!(vars["algo"]["k"], "K_d_v0", "algorithm versions persisted per-row");
+        assert_eq!(
+            vars["algo"]["k"], "K_d_v0",
+            "algorithm versions persisted per-row"
+        );
         assert_eq!(vars["schema"], BabelWindow::SCHEMA_VERSION);
+        assert_eq!(vars["k_d_posture"]["mode"], "histogram_v0");
+        assert_eq!(
+            vars["signal_posture"]["mapping_version"],
+            crate::analytics::babel::signals::SIGNAL_MAPPING_VERSION
+        );
+    }
+
+    #[test]
+    fn optional_signals_persist_as_posture_without_changing_feature_weights() {
+        let conn = mem_db();
+        let cfg = BabelConfig {
+            memory_signals: true,
+            skill_signals: true,
+            ..BabelConfig::default()
+        };
+        let mut st = state(&cfg);
+        let mut events = vec![
+            WalEventRecord {
+                ts_unix: BASE + 1,
+                kind: WalEventKind::AuxSignal(SignalKind::MemoryRecallMiss),
+            },
+            WalEventRecord {
+                ts_unix: BASE + 2,
+                kind: WalEventKind::AuxSignal(SignalKind::SkillNoMatch),
+            },
+        ];
+        events.extend(active_burst(BASE));
+        let out = st.tick(BASE + 301, events, 4, &conn).expect("tick");
+        let window = out
+            .iter()
+            .find_map(|event| match event {
+                CronEvent::WindowComputed(window) => Some(window),
+                _ => None,
+            })
+            .expect("5m score window with signal posture");
+        assert_eq!(window.signal_posture.memory_recall_misses, 1);
+        assert_eq!(window.signal_posture.skill_no_match, 1);
+        assert_eq!(window.features.d, 1.0, "signal posture must not rewrite D");
+        assert_eq!(window.features.h, 1.0, "signal posture must not rewrite H");
+    }
+
+    #[test]
+    fn optional_signals_alone_do_not_create_score_windows() {
+        let conn = mem_db();
+        let cfg = BabelConfig {
+            memory_signals: true,
+            skill_signals: true,
+            ..BabelConfig::default()
+        };
+        let mut st = state(&cfg);
+        let events = vec![WalEventRecord {
+            ts_unix: BASE + 1,
+            kind: WalEventKind::AuxSignal(SignalKind::MemoryRecallMiss),
+        }];
+        let out = st.tick(BASE + 301, events, 4, &conn).expect("tick");
+        assert!(
+            out.is_empty(),
+            "posture-only input must not fabricate a score window"
+        );
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_babel_windows", [], |r| r.get(0))
+            .expect("select");
+        assert_eq!(count, 0);
     }
 
     #[test]
@@ -526,9 +713,16 @@ mod tests {
             ..BabelConfig::default()
         };
         let mut st = state(&cfg);
-        let out = st.tick(BASE + 901, active_burst(BASE), 4, &conn).expect("tick");
-        let breach = out.iter().find(|e| matches!(e, CronEvent::ThresholdBreached { .. }));
-        let Some(CronEvent::ThresholdBreached { score, threshold, .. }) = breach else {
+        let out = st
+            .tick(BASE + 901, active_burst(BASE), 4, &conn)
+            .expect("tick");
+        let breach = out
+            .iter()
+            .find(|e| matches!(e, CronEvent::ThresholdBreached { .. }));
+        let Some(CronEvent::ThresholdBreached {
+            score, threshold, ..
+        }) = breach
+        else {
             panic!("expected a threshold breach on the 15-min window close");
         };
         assert!(score.is_finite());
@@ -546,10 +740,18 @@ mod tests {
         let mut st = state(&BabelConfig::default());
         let tool_call = |ts: i64| WalEventRecord {
             ts_unix: ts,
-            kind: WalEventKind::McpToolCalled { tool: "bash".into(), agent_id: None },
+            kind: WalEventKind::McpToolCalled {
+                tool: "bash".into(),
+                agent_id: None,
+            },
         };
-        st.tick(BASE + 601, vec![tool_call(BASE + 30), tool_call(BASE + 350)], 4, &conn)
-            .expect("tick");
+        st.tick(
+            BASE + 601,
+            vec![tool_call(BASE + 30), tool_call(BASE + 350)],
+            4,
+            &conn,
+        )
+        .expect("tick");
         let mut stmt = conn
             .prepare(
                 "SELECT ts_start FROM idx_babel_windows WHERE window_secs = 300 ORDER BY ts_start",

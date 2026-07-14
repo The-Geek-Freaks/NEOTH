@@ -8,32 +8,27 @@ pub mod compaction;
 /// for sealed WAL segments. Pure sync wrappers; the writer calls them
 /// during segment finalization (not on the hot per-frame path).
 pub mod compress;
-/// GOLD-ADAPT-CRYPTO-01..04 — AEAD-at-rest primitives (typed zeroizing keys,
-/// HKDF subkeys, resume-safe nonce counter, AES-256-GCM-SIV blob encrypt/decrypt).
-/// Foundation slice; WAL-core wiring (encrypt-on-seal) lands separately.
-pub mod crypto;
-/// GOLD-ADAPT-CRYPTO-04 slice 2 — WAL master-key lifecycle (load/init/backup/
-/// restore), reusing the existing DPAPI-wrap key path. Recovery for the
-/// lose-key-lose-content footgun.
-pub mod master_key;
 /// ADV-01 (F4 finding, SPEC §4.3) — HMAC-SHA256 authenticator + .cpt
 /// file format + crash-recovery apply path. Closes the pre-placed-
 /// .cpt-injection attack window on the WAL recovery boundary.
 pub mod cpt_auth;
 pub mod cpt_format;
 pub mod cpt_recovery;
+/// GOLD-ADAPT-CRYPTO-01..04 — AEAD-at-rest primitives (typed zeroizing keys,
+/// HKDF subkeys, resume-safe nonce counter, AES-256-GCM-SIV blob encrypt/decrypt).
+/// Foundation slice; WAL-core wiring (encrypt-on-seal) lands separately.
+pub mod crypto;
 #[cfg(windows)]
 pub mod dpapi;
 pub mod error;
-/// GOLD-ADAPT-CRYPTO-01 — deterministic 96-bit nonce generator for future
-/// AEAD-at-rest (WAL frames / config blobs). Non-Clone/non-Copy by design;
-/// prevents nonce reuse. No live consumer today — wired when `wal/aead.rs`
-/// or `wal/encrypt.rs` lands (AEAD-at-rest gate, GOLD-ADAPT-CRYPTO-04).
-pub mod nonce_counter;
 pub mod events;
 pub mod frame;
 pub mod header;
 pub mod hlc;
+/// GOLD-ADAPT-CRYPTO-04 slice 2 — WAL master-key lifecycle (load/init/backup/
+/// restore), reusing the existing DPAPI-wrap key path. Recovery for the
+/// lose-key-lose-content footgun.
+pub mod master_key;
 pub mod payloads_u04;
 pub mod payloads_w08;
 pub mod proof_bundle;
@@ -66,7 +61,7 @@ pub mod writer;
 // regressions. Re-exports get added here as wired-up Day-by-Day.
 pub use builder::{HeaderBuilder, make_header};
 pub use types::EventFlags;
-pub use writer::spawn;
+pub use writer::{spawn, spawn_for_home};
 
 /// Concern-1 fix (Session 24) — process-global HLC state.
 ///

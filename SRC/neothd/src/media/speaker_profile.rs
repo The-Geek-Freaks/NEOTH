@@ -38,6 +38,10 @@
 //! STT post-processing step once embeddings are available. That wire is tracked
 //! as a follow-up.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+
 /// EMA weight on the existing centroid (old).
 const EMA_ALPHA: f32 = 0.7;
 /// EMA weight on the new embedding (new).
@@ -270,6 +274,47 @@ struct ProfileStore {
     profiles: Vec<SpeakerProfile>,
 }
 
+type ProfileTransactionLock = Mutex<()>;
+
+/// Process-wide lock registry keyed by the canonical speaker-profile path.
+///
+/// Speaker labelling is a read-modify-write transaction: loading and matching
+/// under separate locks would still allow two concurrent STT calls to assign
+/// the same `SPEAKER_NN` or lose one centroid update. A distinct lock per home
+/// preserves concurrency between isolated NEOTH homes while serialising the
+/// full transaction within one home. Weak entries keep the registry bounded as
+/// short-lived/test homes disappear.
+static PROFILE_TRANSACTION_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<ProfileTransactionLock>>>> =
+    OnceLock::new();
+
+fn profile_lock_key(home: &Path) -> PathBuf {
+    let absolute_home = if home.is_absolute() {
+        home.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(home))
+            .unwrap_or_else(|_| home.to_path_buf())
+    };
+    std::fs::canonicalize(&absolute_home)
+        .unwrap_or(absolute_home)
+        .join("speaker_profiles.json")
+}
+
+fn profile_transaction_lock(home: &Path) -> Arc<ProfileTransactionLock> {
+    let key = profile_lock_key(home);
+    let registry = PROFILE_TRANSACTION_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = registry
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
+
 /// Default profile-store path: `<home>/speaker_profiles.json`.
 pub fn profiles_path(home: &std::path::Path) -> std::path::PathBuf {
     home.join("speaker_profiles.json")
@@ -308,7 +353,9 @@ pub fn load_profiles(path: &std::path::Path, incoming_dim: usize) -> Vec<Speaker
     // Accept only if the actual centroid lengths match incoming_dim.
     if let Ok(profiles) = serde_json::from_str::<Vec<SpeakerProfile>>(&raw) {
         let consistent = profiles.is_empty()
-            || profiles.iter().all(|p| p.avg_embedding.len() == incoming_dim);
+            || profiles
+                .iter()
+                .all(|p| p.avg_embedding.len() == incoming_dim);
         if consistent {
             return profiles;
         }
@@ -321,8 +368,10 @@ pub fn load_profiles(path: &std::path::Path, incoming_dim: usize) -> Vec<Speaker
     Vec::new()
 }
 
-/// Persist the profiles (atomic write). Best-effort: a write/serialise error is
-/// logged, never propagated (speaker labelling must never fail a transcription).
+/// Persist the profiles (atomic private write). Best-effort: a write/serialise
+/// error is logged, never propagated (speaker labelling must never fail a
+/// transcription). On Unix the store is always narrowed to mode `0600` before
+/// its biometric centroids are written.
 ///
 /// Writes the new envelope format with `embedding_dim` recorded.
 pub fn save_profiles(path: &std::path::Path, profiles: &[SpeakerProfile], embedding_dim: usize) {
@@ -344,10 +393,13 @@ pub fn save_profiles(path: &std::path::Path, profiles: &[SpeakerProfile], embedd
         }
     };
 
-    let store = ProfileStore { embedding_dim, profiles: profiles.to_vec() };
+    let store = ProfileStore {
+        embedding_dim,
+        profiles: profiles.to_vec(),
+    };
     match serde_json::to_vec_pretty(&store) {
         Ok(bytes) => {
-            if let Err(e) = crate::util::atomic_write::atomic_write(path, &bytes) {
+            if let Err(e) = crate::util::atomic_write::atomic_write_private(path, &bytes) {
                 tracing::warn!(error = %e, "speaker_profile: persist failed (non-fatal)");
             }
         }
@@ -366,6 +418,10 @@ pub fn label_embeddings(home: &std::path::Path, embeddings: &[Vec<f32>]) -> Vec<
     if embeddings.is_empty() {
         return Vec::new();
     }
+    let transaction_lock = profile_transaction_lock(home);
+    let _transaction_guard = transaction_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let incoming_dim = embeddings[0].len();
     let path = profiles_path(home);
     let mut matcher = SpeakerMatcher::from_profiles(load_profiles(&path, incoming_dim));
@@ -406,7 +462,103 @@ mod tests {
         assert!(profiles_path(home).exists(), "store persisted");
         // Re-present speaker A → SAME label from the persisted profile (learning).
         let again = label_embeddings(home, &[a]);
-        assert_eq!(again[0], first[0], "persisted profile re-identifies speaker A");
+        assert_eq!(
+            again[0], first[0],
+            "persisted profile re-identifies speaker A"
+        );
+    }
+
+    // ── transactional persistence ───────────────────────────────────────────────
+
+    #[test]
+    fn concurrent_updates_in_one_home_are_not_lost() {
+        const THREADS: usize = 16;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Arc::new(tmp.path().to_path_buf());
+        let barrier = Arc::new(std::sync::Barrier::new(THREADS));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|index| {
+                let home = Arc::clone(&home);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let mut embedding = vec![0.0f32; THREADS];
+                    embedding[index] = 1.0;
+                    barrier.wait();
+                    let labels = label_embeddings(&home, &[embedding]);
+                    assert_eq!(labels.len(), 1);
+                    assert!(labels[0].is_some());
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let profiles = load_profiles(&profiles_path(&home), THREADS);
+        assert_eq!(
+            profiles.len(),
+            THREADS,
+            "every concurrent update must survive"
+        );
+        let unique_names: std::collections::HashSet<_> = profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect();
+        assert_eq!(
+            unique_names.len(),
+            THREADS,
+            "speaker ids must remain unique"
+        );
+    }
+
+    #[test]
+    fn profile_transactions_are_scoped_per_home() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+
+        let first_lock = profile_transaction_lock(first.path());
+        let first_lock_again = profile_transaction_lock(first.path());
+        let second_lock = profile_transaction_lock(second.path());
+        assert!(Arc::ptr_eq(&first_lock, &first_lock_again));
+        assert!(!Arc::ptr_eq(&first_lock, &second_lock));
+
+        let embedding = vec![1.0f32, 0.0, 0.0];
+        assert_eq!(
+            label_embeddings(first.path(), std::slice::from_ref(&embedding))[0].as_deref(),
+            Some("SPEAKER_01")
+        );
+        assert_eq!(
+            label_embeddings(second.path(), std::slice::from_ref(&embedding))[0].as_deref(),
+            Some("SPEAKER_01")
+        );
+        label_embeddings(first.path(), &[embedding]);
+
+        let first_profiles = load_profiles(&profiles_path(first.path()), 3);
+        let second_profiles = load_profiles(&profiles_path(second.path()), 3);
+        assert_eq!(first_profiles[0].count, 2);
+        assert_eq!(second_profiles[0].count, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_store_is_private_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = profiles_path(tmp.path());
+        std::fs::write(&path, b"legacy").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let profile = SpeakerProfile::new("Alice", vec![1.0f32, 0.0, 0.0]);
+        save_profiles(&path, &[profile], 3);
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "speaker centroids must never be world-readable"
+        );
     }
 
     // ── dim-migration ─────────────────────────────────────────────────────────
@@ -454,7 +606,11 @@ mod tests {
         std::fs::write(&path, &json).unwrap();
 
         let loaded = load_profiles(&path, 4);
-        assert_eq!(loaded.len(), 1, "legacy format with matching dim should load");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "legacy format with matching dim should load"
+        );
         assert_eq!(loaded[0].name, "Carol");
     }
 
@@ -609,7 +765,8 @@ mod tests {
     fn near_match_above_threshold_returns_name() {
         let mut m = SpeakerMatcher::default();
         // Seed profile at [1,0].
-        m.profiles.push(SpeakerProfile::new("Bob", vec![1.0_f32, 0.0]));
+        m.profiles
+            .push(SpeakerProfile::new("Bob", vec![1.0_f32, 0.0]));
         // Query very close to [1,0] — should match.
         let query = unit_normalise(&[0.99_f32, 0.01]);
         let result = m.match_and_label(&query).expect("should match Bob");

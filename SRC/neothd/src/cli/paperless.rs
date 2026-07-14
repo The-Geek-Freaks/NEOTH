@@ -122,13 +122,15 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
                         let subject = truncate(&it.subject, 18);
                         let from = truncate(&it.from, 28);
                         let uid = truncate(&it.uid, 28);
-                        println!("{uid:<30} {from:<30} {subject:<20} {:>12} {:>8} {}",
-                            it.received_unix,
-                            it.high_finding_count,
-                            it.reason_kind,
+                        println!(
+                            "{uid:<30} {from:<30} {subject:<20} {:>12} {:>8} {}",
+                            it.received_unix, it.high_finding_count, it.reason_kind,
                         );
                     }
-                    println!("\n{} item(s). Use `neoth paperless quarantine show <uid>` to inspect.", items.len());
+                    println!(
+                        "\n{} item(s). Use `neoth paperless quarantine show <uid>` to inspect.",
+                        items.len()
+                    );
                 }
                 QuarantineAction::Show { uid } => {
                     match quarantine::load_quarantine_item(&neoth_home, &uid)
@@ -272,7 +274,10 @@ fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            s.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 

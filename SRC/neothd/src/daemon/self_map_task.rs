@@ -79,6 +79,7 @@ pub fn spawn(
     provider_kind: Option<ProviderKind>,
     provider_key: Option<String>,
     provider_endpoint: Option<String>,
+    views_db: PathBuf,
 ) -> JoinHandle<anyhow::Result<()>> {
     let subdir = subdir.unwrap_or_else(|| DEFAULT_SUBDIR.to_string());
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
@@ -94,6 +95,7 @@ pub fn spawn(
             provider_kind,
             provider_key,
             provider_endpoint,
+            views_db,
         )
         .await
     })
@@ -111,6 +113,7 @@ async fn run(
     provider_kind: Option<ProviderKind>,
     provider_key: Option<String>,
     provider_endpoint: Option<String>,
+    views_db: PathBuf,
 ) -> anyhow::Result<()> {
     info!(
         vault = %vault.display(),
@@ -137,6 +140,7 @@ async fn run(
             &provider_kind,
             &provider_key,
             &provider_endpoint,
+            &views_db,
         )
         .await
         {
@@ -181,6 +185,7 @@ async fn run_one_tick(
     provider_kind: &Option<ProviderKind>,
     provider_key: &Option<String>,
     provider_endpoint: &Option<String>,
+    views_db: &Path,
 ) -> anyhow::Result<()> {
     // Guard: source directory must exist.
     if !source_dir.exists() {
@@ -221,7 +226,14 @@ async fn run_one_tick(
     // Runs BEFORE Step 2 (locate output files) so the labeled GRAPH_REPORT.md
     // is the one copied to the vault and ingested — not the unlabeled version.
     let communities_labeled: u64 = if label_enabled {
-        run_label_step(source_dir, provider_kind, provider_key, provider_endpoint, label_model).await
+        run_label_step(
+            source_dir,
+            provider_kind,
+            provider_key,
+            provider_endpoint,
+            label_model,
+        )
+        .await
     } else {
         0
     };
@@ -275,12 +287,13 @@ async fn run_one_tick(
     // Use DISTINCT scope "neoth-self-map" (not "neoth-self-wiki") to avoid
     // scope collision with the wiki-rebuild cron's revoke pass (pitfall #5).
     let report_dest_buf = report_dest.clone();
+    let views_db = views_db.to_path_buf();
     let now_ns = crate::time::now_unix_ns_i64();
     let gt_inserted = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
-        let sources = crate::wiki::discover_sources(report_dest_buf.parent().unwrap_or(Path::new(".")))
-            .context("self-map: discover_sources for ingest")?;
-        let conn = crate::memory::store::open(&crate::memory::store::default_path())
-            .context("self-map: open views.db")?;
+        let sources =
+            crate::wiki::discover_sources(report_dest_buf.parent().unwrap_or(Path::new(".")))
+                .context("self-map: discover_sources for ingest")?;
+        let conn = crate::memory::store::open(&views_db).context("self-map: open views.db")?;
         let stats = crate::wiki::ingest_sources(&conn, &sources, now_ns)
             .context("self-map: ingest_sources failed")?;
         Ok(stats.inserted as u64)
@@ -295,7 +308,8 @@ async fn run_one_tick(
         "communities_labeled": communities_labeled,
         "ts_unix":             now_ns / 1_000_000_000,
     });
-    let body = serde_json::to_vec(&payload).unwrap_or_default();
+    let body = serde_json::to_vec(&payload)
+        .expect("self-map payload contains only infallible JSON values");
     let header = HeaderBuilder::new(EVENT_TYPE_SELF_MAP_COMPLETE, &body).build();
     if let Err(e) = writer.append(header, body).await {
         warn!(error = %e, "self-map cron: WAL append failed (non-fatal)");
@@ -303,9 +317,7 @@ async fn run_one_tick(
 
     info!(
         pages_written,
-        gt_inserted,
-        communities_labeled,
-        "self-map cron tick complete (GOLD-ADAPT-GRAPH-05/07)",
+        gt_inserted, communities_labeled, "self-map cron tick complete (GOLD-ADAPT-GRAPH-05/07)",
     );
     Ok(())
 }
@@ -334,7 +346,14 @@ pub(crate) async fn run_label_step_one_shot(
     provider_endpoint: &Option<String>,
     label_model: &Option<String>,
 ) -> u64 {
-    run_label_step(source_dir, provider_kind, provider_key, provider_endpoint, label_model).await
+    run_label_step(
+        source_dir,
+        provider_kind,
+        provider_key,
+        provider_endpoint,
+        label_model,
+    )
+    .await
 }
 
 async fn run_label_step(
@@ -349,7 +368,9 @@ async fn run_label_step(
             let key = match provider_key {
                 Some(k) => k.clone(),
                 None => {
-                    warn!("GRAPH-07: AnthropicApi selected but no provider_key configured; skipping label step");
+                    warn!(
+                        "GRAPH-07: AnthropicApi selected but no provider_key configured; skipping label step"
+                    );
                     return 0;
                 }
             };
@@ -359,7 +380,9 @@ async fn run_label_step(
             let key = match provider_key {
                 Some(k) => k.clone(),
                 None => {
-                    warn!("GRAPH-07: OpenaiApi selected but no provider_key configured; skipping label step");
+                    warn!(
+                        "GRAPH-07: OpenaiApi selected but no provider_key configured; skipping label step"
+                    );
                     return 0;
                 }
             };
@@ -378,14 +401,18 @@ async fn run_label_step(
             let key = match provider_key {
                 Some(k) => k.clone(),
                 None => {
-                    warn!("GRAPH-07: OpenaiCompat selected but no provider_key configured; skipping label step");
+                    warn!(
+                        "GRAPH-07: OpenaiCompat selected but no provider_key configured; skipping label step"
+                    );
                     return 0;
                 }
             };
             let base = match provider_endpoint {
                 Some(e) => e.clone(),
                 None => {
-                    warn!("GRAPH-07: OpenaiCompat requires provider_endpoint (base URL); skipping label step");
+                    warn!(
+                        "GRAPH-07: OpenaiCompat requires provider_endpoint (base URL); skipping label step"
+                    );
                     return 0;
                 }
             };
@@ -484,6 +511,13 @@ mod tests {
         let vault_dir = tempfile::tempdir().unwrap();
         let source_dir = tempfile::tempdir().unwrap();
         let wal_dir = tempfile::tempdir().unwrap();
+        let home_dir = tempfile::tempdir().unwrap();
+        let views_db = home_dir.path().join("views.db");
+        assert_ne!(
+            views_db,
+            crate::config::FreedomConfig::default_neoth_home().join("views.db"),
+            "test must not target the process-default NEOTH home"
+        );
         let (writer, _writer_join) =
             crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
 
@@ -498,6 +532,7 @@ mod tests {
             None,  // provider_kind
             None,  // provider_key
             None,  // provider_endpoint
+            views_db,
         );
         // Let the task burn the first tick and enter the loop.
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -544,8 +579,14 @@ mod tests {
         // Direct call is simpler than mocking the subprocess, and the task
         // abort/loop test above already covers the spawn path.
         {
-            let report_dest = vault_dir.path().join(DEFAULT_SUBDIR).join(GRAPH_REPORT_NAME);
-            assert!(!report_dest.exists(), "precondition: report must not exist yet");
+            let report_dest = vault_dir
+                .path()
+                .join(DEFAULT_SUBDIR)
+                .join(GRAPH_REPORT_NAME);
+            assert!(
+                !report_dest.exists(),
+                "precondition: report must not exist yet"
+            );
 
             // Manually run the copy+ingest+WAL portion (skip Python probe by
             // directly wiring the tick body logic we can test without Python).
@@ -571,7 +612,10 @@ mod tests {
             .build();
             writer.append(header, body).await.unwrap();
 
-            assert!(report_dest.exists(), "GRAPH_REPORT.md must be written to vault/NEOTH-Self/");
+            assert!(
+                report_dest.exists(),
+                "GRAPH_REPORT.md must be written to vault/NEOTH-Self/"
+            );
         }
 
         drop(writer);

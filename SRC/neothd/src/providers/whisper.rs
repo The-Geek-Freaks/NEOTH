@@ -2,9 +2,9 @@
 //!
 //! Wraps candle-transformers' whisper model into a NEOTH-friendly
 //! transcribe API. Operators get speech-to-text without depending on a
-//! cloud service; default model is `openai/whisper-large-v3-turbo` (the
-//! fastest of the high-quality whisper variants — multilingual,
-//! ~1.6 GiB cached).
+//! cloud service. The canonical STT dispatcher selects the size-specific
+//! repository and explicit NEOTH model root; the low-level constructor retains
+//! `openai/whisper-large-v3-turbo` only as its compatibility default.
 //!
 //! Pipeline per chunk:
 //!   1. Pad / clip raw samples to exactly 30 s (`N_SAMPLES`).
@@ -41,62 +41,6 @@ use candle_nn::VarBuilder;
 use candle_transformers::models::whisper as cw;
 use tokenizers::Tokenizer;
 
-// ── Global shared engine (HANDY-05) ─────────────────────────────────────────
-//
-// One `Arc<WhisperEngine>` is shared across ALL call sites:
-//   - `media::audio::transcribe_if_cached` (audio-ingest path)
-//   - `media::stt_provider::WhisperLocalProvider::transcribe` (STT-provider path)
-//
-// Using `std::sync::OnceLock` (stable ≥ 1.70) for synchronous lazy init
-// compatible with the `spawn_blocking` mini-runtime in `transcribe_if_cached`.
-static GLOBAL_WHISPER_ENGINE: std::sync::OnceLock<Arc<WhisperEngine>> =
-    std::sync::OnceLock::new();
-
-/// Obtain (or lazily build) the process-wide `WhisperEngine`.
-///
-/// Returns `None` when the model artifacts are not cached — the caller should
-/// log/skip rather than fail hard. The engine is constructed with the idle
-/// timeout from `FreedomConfig.media.whisper_idle_unload_secs` (default 120 s).
-///
-/// # Panics
-/// Never. Config read errors fall back to the default 120 s idle timeout.
-pub fn global_whisper_engine() -> Option<Arc<WhisperEngine>> {
-    GLOBAL_WHISPER_ENGINE.get().cloned()
-}
-
-/// Lazily initialise `GLOBAL_WHISPER_ENGINE` synchronously (inside
-/// `spawn_blocking` / a mini current-thread runtime). Call once; subsequent
-/// calls are no-ops.
-///
-/// `idle_secs` overrides the config-derived timeout (useful in tests).
-pub(crate) fn init_global_engine_sync(
-    idle_secs: Option<u64>,
-) -> Result<Arc<WhisperEngine>> {
-    if let Some(e) = GLOBAL_WHISPER_ENGINE.get() {
-        return Ok(Arc::clone(e));
-    }
-    // Check model artifacts on disk before building the engine (avoids
-    // paying the Arc alloc for a guaranteed-fail path).
-    let cache = default_cache_dir(DEFAULT_WHISPER_REPO);
-    let weights = cache.join(SAFETENSORS_FILE);
-    let tokenizer = cache.join(TOKENIZER_FILE);
-    let config = cache.join(CONFIG_FILE);
-    if !weights.exists() || !tokenizer.exists() || !config.exists() {
-        anyhow::bail!("whisper model not cached at {}", cache.display());
-    }
-
-    // Build the engine synchronously on the current thread's mini-runtime.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("build mini runtime for WhisperEngine init")?;
-    let engine = rt.block_on(WhisperEngine::new_with_idle_secs(None, idle_secs))?;
-    let arc = Arc::new(engine);
-    // `set` is a no-op if another thread races here — both see the winner's value.
-    let _ = GLOBAL_WHISPER_ENGINE.set(Arc::clone(&arc));
-    Ok(GLOBAL_WHISPER_ENGINE.get().cloned().unwrap_or(arc))
-}
-
 /// Hugging Face repo we default to. Operator can override via
 /// `freedom.yaml::whisper_repo` once we surface that config field.
 pub const DEFAULT_WHISPER_REPO: &str = "openai/whisper-large-v3-turbo";
@@ -104,6 +48,115 @@ pub const DEFAULT_WHISPER_REPO: &str = "openai/whisper-large-v3-turbo";
 pub const TOKENIZER_FILE: &str = "tokenizer.json";
 pub const CONFIG_FILE: &str = "config.json";
 pub const SAFETENSORS_FILE: &str = "model.safetensors";
+
+#[derive(Clone, Copy)]
+struct WhisperArtifactManifest {
+    revision: &'static str,
+    artifacts: [crate::media::model_manager::RequiredArtifact; 3],
+}
+
+const fn whisper_artifact_manifest(
+    revision: &'static str,
+    tokenizer_len: u64,
+    tokenizer_sha256: &'static str,
+    config_len: u64,
+    config_sha256: &'static str,
+    weights_len: u64,
+    weights_sha256: &'static str,
+) -> WhisperArtifactManifest {
+    use crate::media::model_manager::{
+        ArtifactKind, ExpectedArtifactFingerprint, RequiredArtifact,
+    };
+    WhisperArtifactManifest {
+        revision,
+        artifacts: [
+            RequiredArtifact {
+                filename: TOKENIZER_FILE,
+                kind: ArtifactKind::JsonObject,
+                expected: Some(ExpectedArtifactFingerprint {
+                    len: tokenizer_len,
+                    sha256: tokenizer_sha256,
+                }),
+            },
+            RequiredArtifact {
+                filename: CONFIG_FILE,
+                kind: ArtifactKind::JsonObject,
+                expected: Some(ExpectedArtifactFingerprint {
+                    len: config_len,
+                    sha256: config_sha256,
+                }),
+            },
+            RequiredArtifact {
+                filename: SAFETENSORS_FILE,
+                kind: ArtifactKind::Safetensors,
+                expected: Some(ExpectedArtifactFingerprint {
+                    len: weights_len,
+                    sha256: weights_sha256,
+                }),
+            },
+        ],
+    }
+}
+
+fn artifact_manifest(repo: &str) -> Option<WhisperArtifactManifest> {
+    Some(match repo {
+        "openai/whisper-tiny" => whisper_artifact_manifest(
+            "169d4a4341b33bc18d8881c4b69c2e104e1cc0af",
+            2_480_466,
+            "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566",
+            1_983,
+            "ffdccec4f3211f4c63310f2b7098f309fe70f3952cedc5e4d11e43f5b2379b98",
+            151_061_672,
+            "7ebd0e69e78190ffe1438491fa05cc1f5c1aa3a4c4db3bc1723adbb551ea2395",
+        ),
+        "openai/whisper-base" => whisper_artifact_manifest(
+            "e37978b90ca9030d5170a5c07aadb050351a65bb",
+            2_480_466,
+            "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566",
+            1_983,
+            "a153c53883a6799b6f056b4a8d1a515c9926d03994682ba88a7616618d7da0c1",
+            290_403_936,
+            "07cadb9f25677c8d50df603e66a98fbd842cce45047139baeb16e6219a1e807b",
+        ),
+        "openai/whisper-small" => whisper_artifact_manifest(
+            "973afd24965f72e36ca33b3055d56a652f456b4d",
+            2_480_466,
+            "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566",
+            1_967,
+            "e6a2b489da1b5aed65a8eb8d1e7466fa867ad5643a8bc138ba708bd56b2875c4",
+            966_995_080,
+            "1d7734884874f1a1513ed9aa760a4f8e97aaa02fd6d93a3a85d27b2ae9ca596b",
+        ),
+        "openai/whisper-medium" => whisper_artifact_manifest(
+            "abdf7c39ab9d0397620ccaea8974cc764cd0953e",
+            2_480_466,
+            "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566",
+            1_991,
+            "18706810eb740d1dc54d1db181358d5f8578600d0f449e51dfd4798c0223a1f5",
+            3_055_544_304,
+            "62f73550fa6db24b0c6f6c5962bd0dae80fa644e93cde9cd9c3792971b47fd28",
+        ),
+        "openai/whisper-large-v3" => whisper_artifact_manifest(
+            "06f233fe06e710322aca913c1bc4249a0d71fce1",
+            2_480_617,
+            "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+            1_272,
+            "ad0e8d1e46f4d01f7861a21509e5d0f977d6cc1f367a370603c92541d819807b",
+            3_087_130_976,
+            "a8e94b85976e5864ba3e9525c7e6c83b2a1eca42d4b797a0c7c24d778e40fd95",
+        ),
+        "openai/whisper-large-v3-turbo" => whisper_artifact_manifest(
+            "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+            2_710_337,
+            "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+            1_256,
+            "c5b526b3e3cd64cd8940dabb45e8ba726629e22d8ed389c29b552f9140daf04a",
+            1_617_824_864,
+            "542566a422ae4f3fd23f1ba11add198fca01bbf82e66e6a2857b3f608b1eb9d1",
+        ),
+        _ => return None,
+    })
+}
 
 /// Operator-overrideable transcription knobs.
 #[derive(Clone, Debug)]
@@ -154,9 +207,12 @@ impl Default for WhisperOptions {
 
 pub struct WhisperEngine {
     repo: String,
+    manifest: WhisperArtifactManifest,
+    hf_cache_dir: PathBuf,
     tokenizer_path: PathBuf,
     config_path: PathBuf,
     weights_path: PathBuf,
+    allow_pending_validation: bool,
     /// Pre-computed mel filterbank, `n_mels × (N_FFT/2 + 1)` floats.
     /// Populated by `ensure_artifacts` so transcription doesn't pay the
     /// ~5 ms recompute cost on every chunk.
@@ -227,39 +283,43 @@ impl Drop for LoadingGuard {
 }
 
 impl WhisperEngine {
-    /// Construct an engine + lazily ensure the model artifacts are on
-    /// disk. Pulls from `~/.neoth/models/<repo-flattened>/` like
-    /// `LocalQwenAdapter`. ~1.6 GiB download for the turbo variant.
+    /// Construct against an explicit NEOTH-owned model root.
     ///
-    /// Hardware probe runs once here and selects the candle `Device`
-    /// (CUDA / Metal / CPU). The 500 ms nvidia-smi timeout is acceptable
-    /// because `WhisperEngine::new` is already async and the probe is
-    /// identical to the `LocalQwenAdapter` path.
-    ///
-    /// Idle timeout is read from `FreedomConfig.media.whisper_idle_unload_secs`
-    /// (default `Some(120)`). Use [`WhisperEngine::new_with_idle_secs`] to
-    /// supply an explicit value (tests / callers without a config file).
-    pub async fn new(repo: Option<String>) -> Result<Self> {
-        let idle_secs = crate::config::FreedomConfig::load_from_default_path()
-            .ok()
-            .and_then(|c| c.media.whisper_idle_unload_secs)
-            .or(Some(120));
-        Self::new_with_idle_secs(repo, idle_secs).await
-    }
-
-    /// Like [`WhisperEngine::new`] but accepts an explicit idle timeout.
-    ///
-    /// `idle_secs = None` or `Some(0)` disables idle unloading (the model
-    /// stays loaded forever after first use). Used by tests for hermetic
-    /// timeout control without requiring a `freedom.yaml`.
-    pub async fn new_with_idle_secs(
+    /// Runtime callers with a custom `NEOTH_HOME` or daemon home must use this
+    /// seam; otherwise the provider can pass policy checks for one home while
+    /// reading or writing model artifacts below another user's `~/.neoth`.
+    pub(crate) async fn new_with_models_root(
         repo: Option<String>,
         idle_secs: Option<u64>,
+        models_root: &Path,
+    ) -> Result<Self> {
+        Self::build_with_models_root(repo, idle_secs, models_root, None).await
+    }
+
+    /// Network-capable construction is only reachable with the central
+    /// durable D7/D8 attempt that owns this exact model cache.
+    pub(crate) async fn new_for_download_attempt(
+        repo: Option<String>,
+        idle_secs: Option<u64>,
+        models_root: &Path,
+        attempt: &crate::media::model_manager::ModelDownloadAttempt,
+    ) -> Result<Self> {
+        Self::build_with_models_root(repo, idle_secs, models_root, Some(attempt)).await
+    }
+
+    async fn build_with_models_root(
+        repo: Option<String>,
+        idle_secs: Option<u64>,
+        models_root: &Path,
+        attempt: Option<&crate::media::model_manager::ModelDownloadAttempt>,
     ) -> Result<Self> {
         let repo = repo.unwrap_or_else(|| DEFAULT_WHISPER_REPO.to_string());
-        let cache_dir = default_cache_dir(&repo);
-        std::fs::create_dir_all(&cache_dir)
-            .with_context(|| format!("create cache dir {}", cache_dir.display()))?;
+        let manifest = artifact_manifest(&repo).ok_or_else(|| {
+            anyhow::anyhow!(
+                "unsupported Whisper repository `{repo}`: no reviewed revision/SHA-256 manifest"
+            )
+        })?;
+        let cache_dir = cache_dir_at(models_root, &repo);
 
         // Run the hardware probe and select the best available device.
         // Identical one-shot semantics to `LocalQwenAdapter` — never re-probed.
@@ -273,10 +333,9 @@ impl WhisperEngine {
         let in_flight = Arc::new(AtomicUsize::new(0));
 
         // ── HANDY-05: spawn idle-watcher task ──────────────────────────
-        // Only spawn when called from an async context with a Tokio runtime.
-        // When called from `init_global_engine_sync` inside a mini current-
-        // thread runtime that will be dropped immediately, the JoinHandle is
-        // kept in `_idle_cancel` — dropping it aborts the task cleanly.
+        // The engine is constructed from an async runtime. Keeping the watch
+        // sender in `_idle_cancel` gives the watcher the same lifetime as the
+        // engine and drops it cleanly with the engine.
         let idle_cancel = match (idle_secs, idle_secs.unwrap_or(0)) {
             (None, _) | (_, 0) => None,
             (Some(secs), _) => {
@@ -321,9 +380,12 @@ impl WhisperEngine {
 
         let mut engine = WhisperEngine {
             repo: repo.clone(),
+            manifest,
+            hf_cache_dir: models_root.join(".hf-hub"),
             tokenizer_path: cache_dir.join(TOKENIZER_FILE),
             config_path: cache_dir.join(CONFIG_FILE),
             weights_path: cache_dir.join(SAFETENSORS_FILE),
+            allow_pending_validation: attempt.is_some(),
             mel_filters: Vec::new(),
             loaded,
             device,
@@ -331,7 +393,7 @@ impl WhisperEngine {
             in_flight,
             _idle_cancel: idle_cancel,
         };
-        engine.ensure_artifacts().await?;
+        engine.ensure_artifacts(attempt).await?;
         // Pre-compute mel filters based on the model's expected n_mels.
         // We peek at the config without loading the weights so the cost
         // is paid up-front but very cheap.
@@ -374,37 +436,131 @@ impl WhisperEngine {
         let _ = self; // keep clippy happy — no real action needed for the slot test
     }
 
-    async fn ensure_artifacts(&self) -> Result<()> {
-        use hf_hub::api::tokio::Api;
-        use std::time::Duration;
-        let need = !self.tokenizer_path.exists()
-            || !self.config_path.exists()
-            || !self.weights_path.exists();
-        if !need {
+    async fn ensure_artifacts(
+        &self,
+        attempt: Option<&crate::media::model_manager::ModelDownloadAttempt>,
+    ) -> Result<()> {
+        use hf_hub::api::tokio::ApiBuilder;
+        use hf_hub::{Repo, RepoType};
+        let cache_dir = self
+            .tokenizer_path
+            .parent()
+            .context("Whisper cache path has no parent")?;
+        let health = if attempt.is_some() {
+            crate::media::model_manager::verified_cache_health_during_install(
+                cache_dir,
+                &self.manifest.artifacts,
+            )
+        } else {
+            crate::media::model_manager::verified_cache_health(cache_dir, &self.manifest.artifacts)
+        };
+        if health.is_ready() {
             return Ok(());
         }
-        let api = Api::new().context("init HF Hub API")?;
-        let repo_handle = api.model(self.repo.clone());
-        for (filename, target) in [
-            (TOKENIZER_FILE, &self.tokenizer_path),
-            (CONFIG_FILE, &self.config_path),
-            (SAFETENSORS_FILE, &self.weights_path),
-        ] {
-            let downloaded =
-                tokio::time::timeout(Duration::from_secs(900), repo_handle.download(filename))
-                    .await
-                    .with_context(|| format!("HF download timeout for {filename}"))?
-                    .with_context(|| format!("HF download error for {filename}"))?;
-            if &downloaded != target {
-                std::fs::copy(&downloaded, target).with_context(|| {
+        let attempt = attempt.with_context(|| {
+            format!(
+                "Whisper cache is not verified ({health}); model downloads require a durable D7/D8 attempt"
+            )
+        })?;
+        if !attempt.network_authorized(cache_dir, &self.repo) {
+            anyhow::bail!(
+                "Whisper network access for `{}` is not authorised by a confirmed D7 attempt",
+                self.repo
+            );
+        }
+        let api = ApiBuilder::new()
+            .with_cache_dir(self.hf_cache_dir.clone())
+            .build()
+            .context("init HF Hub API")?;
+        let repo_handle = api.repo(Repo::with_revision(
+            self.repo.clone(),
+            RepoType::Model,
+            self.manifest.revision.to_string(),
+        ));
+        for artifact in self.manifest.artifacts {
+            let filename = artifact.filename;
+            let target = cache_dir.join(filename);
+            let downloaded = repo_handle
+                .download(filename)
+                .await
+                .with_context(|| format!("HF download error for {filename}"))?;
+            if downloaded != target {
+                let expected = artifact
+                    .expected
+                    .context("pinned Whisper artifact lacks a fingerprint")?;
+                let expected = crate::media::model_manager::ArtifactFingerprint {
+                    len: expected.len,
+                    sha256: expected.sha256.to_string(),
+                };
+                crate::media::model_manager::install_from_hf_source(
+                    &downloaded,
+                    &target,
+                    &expected,
+                )
+                .await
+                .with_context(|| {
                     format!(
-                        "copy HF cache {} -> {}",
+                        "atomically install HF cache {} -> {}",
                         downloaded.display(),
                         target.display()
                     )
                 })?;
             }
         }
+        let health = crate::media::model_manager::verified_cache_health_during_install(
+            cache_dir,
+            &self.manifest.artifacts,
+        );
+        if !health.is_ready() {
+            anyhow::bail!("Whisper artifacts failed post-install validation: {health}");
+        }
+        Ok(())
+    }
+
+    /// Prove the pinned SHA-256 generation and construct the real Candle model
+    /// before a D8 `ready` event can be emitted. Structural cache checks alone
+    /// cannot detect a valid-looking but incompatible tokenizer/tensor set.
+    pub(crate) async fn validate_load(&self) -> Result<()> {
+        let cache_dir = self
+            .tokenizer_path
+            .parent()
+            .context("Whisper cache path has no parent")?
+            .to_path_buf();
+        let artifacts = self.manifest.artifacts;
+        let allow_pending = self.allow_pending_validation;
+        let health = tokio::task::spawn_blocking(move || {
+            if allow_pending {
+                crate::media::model_manager::verified_cache_health_during_install(
+                    &cache_dir, &artifacts,
+                )
+            } else {
+                crate::media::model_manager::verified_cache_health(&cache_dir, &artifacts)
+            }
+        })
+        .await
+        .context("join Whisper SHA-256 validation")?;
+        if !health.is_ready() {
+            anyhow::bail!("Whisper cache failed full integrity validation: {health}");
+        }
+
+        let _guard = self.loading_guard();
+        let loaded = Arc::clone(&self.loaded);
+        let tokenizer_path = self.tokenizer_path.clone();
+        let config_path = self.config_path.clone();
+        let weights_path = self.weights_path.clone();
+        let device = self.device.clone();
+        tokio::task::spawn_blocking(move || {
+            ensure_loaded(
+                &loaded,
+                &tokenizer_path,
+                &config_path,
+                &weights_path,
+                &WhisperOptions::default(),
+                device,
+            )
+        })
+        .await
+        .context("join Whisper backend validation")??;
         Ok(())
     }
 
@@ -415,6 +571,15 @@ impl WhisperEngine {
     /// prevents the idle-watcher task from unloading mid-inference and
     /// refreshes `last_used` on completion.
     pub async fn transcribe(&self, samples: &[f32], options: WhisperOptions) -> Result<String> {
+        let cache_dir = self
+            .tokenizer_path
+            .parent()
+            .context("Whisper cache path has no parent")?;
+        let _model_lock = crate::media::model_manager::lock_model_cache(cache_dir).await?;
+        let health = crate::media::model_manager::cache_health(cache_dir, &self.manifest.artifacts);
+        if !health.is_ready() {
+            anyhow::bail!("Whisper cache became unavailable before transcription: {health}");
+        }
         // Acquire BEFORE spawn_blocking so the idle task cannot race.
         let _guard = self.loading_guard();
 
@@ -468,9 +633,12 @@ fn ensure_loaded(
     // file lives under `~/.neoth/models/` (mode-0600 / DACL-locked).
     // Multi-process read (daemon + `neoth ingest`) is allowed; the
     // single sanctioned writer is `neoth models pull` which is a
-    // no-op against an existing cache. If a third party tampers with
-    // the file mid-run the result is UB and the operator owns it —
-    // a stable HMAC check is tracked as a Phase 2 hardening item.
+    // no-op against an existing cache. Engine construction and
+    // explicit validation hash every artifact against the reviewed
+    // revision/length/SHA-256 manifest before this mapping is created.
+    // A third party that can ignore the cache lock and mutate an
+    // operator-owned file afterwards is outside NEOTH's process trust
+    // boundary.
     let vb = unsafe {
         VarBuilder::from_mmaped_safetensors(&[weights_path], cw::DTYPE, &device)
             .with_context(|| format!("mmap safetensors {}", weights_path.display()))?
@@ -821,12 +989,8 @@ fn device_for_hw_probe(probe: &crate::media::hw_probe::HwProbe) -> Device {
     match probe.accelerator {
         AcceleratorClass::Cuda => {
             // Guard: candle CUDA kernels also use FMA3 paths.
-            if let Err(msg) =
-                crate::media::hw_probe::require_fma3(probe.cpu_caps.fma3)
-            {
-                tracing::warn!(
-                    "whisper: {msg}; falling back to Device::Cpu"
-                );
+            if let Err(msg) = crate::media::hw_probe::require_fma3(probe.cpu_caps.fma3) {
+                tracing::warn!("whisper: {msg}; falling back to Device::Cpu");
                 return Device::Cpu;
             }
             #[cfg(feature = "qwen-cuda")]
@@ -852,12 +1016,8 @@ fn device_for_hw_probe(probe: &crate::media::hw_probe::HwProbe) -> Device {
             Device::Cpu
         }
         AcceleratorClass::Metal => {
-            if let Err(msg) =
-                crate::media::hw_probe::require_fma3(probe.cpu_caps.fma3)
-            {
-                tracing::warn!(
-                    "whisper: {msg}; falling back to Device::Cpu"
-                );
+            if let Err(msg) = crate::media::hw_probe::require_fma3(probe.cpu_caps.fma3) {
+                tracing::warn!("whisper: {msg}; falling back to Device::Cpu");
                 return Device::Cpu;
             }
             #[cfg(feature = "qwen-metal")]
@@ -883,22 +1043,61 @@ fn device_for_hw_probe(probe: &crate::media::hw_probe::HwProbe) -> Device {
             Device::Cpu
         }
         AcceleratorClass::OpenVino => {
-            tracing::warn!(
-                "whisper: OpenVINO is not a candle backend; using CPU."
-            );
+            tracing::warn!("whisper: OpenVINO is not a candle backend; using CPU.");
             Device::Cpu
         }
         AcceleratorClass::Cpu => Device::Cpu,
     }
 }
 
+#[cfg(test)]
 fn default_cache_dir(repo: &str) -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let flattened = repo.replace('/', "-");
-    home.join(".neoth").join("models").join(flattened)
+    let models_root = crate::config::FreedomConfig::default_neoth_home().join("models");
+    cache_dir_at(&models_root, repo)
+}
+
+pub(crate) fn cache_dir_at(models_root: &Path, repo: &str) -> PathBuf {
+    models_root.join(super::model_cache_component(repo))
+}
+
+pub(crate) fn cache_health_at(
+    models_root: &Path,
+    repo: &str,
+) -> crate::media::model_manager::CacheHealth {
+    let cache = cache_dir_at(models_root, repo);
+    let Some(manifest) = artifact_manifest(repo) else {
+        return crate::media::model_manager::CacheHealth::Corrupt {
+            path: cache,
+            reason: format!(
+                "unsupported Whisper repository `{repo}` has no reviewed revision/SHA-256 manifest"
+            ),
+        };
+    };
+    crate::media::model_manager::cache_health(&cache, &manifest.artifacts)
+}
+
+pub(crate) fn verified_cache_health_at(
+    models_root: &Path,
+    repo: &str,
+    during_attempt: bool,
+) -> crate::media::model_manager::CacheHealth {
+    let cache = cache_dir_at(models_root, repo);
+    let Some(manifest) = artifact_manifest(repo) else {
+        return crate::media::model_manager::CacheHealth::Corrupt {
+            path: cache,
+            reason: format!(
+                "unsupported Whisper repository `{repo}` has no reviewed revision/SHA-256 manifest"
+            ),
+        };
+    };
+    if during_attempt {
+        crate::media::model_manager::verified_cache_health_during_install(
+            &cache,
+            &manifest.artifacts,
+        )
+    } else {
+        crate::media::model_manager::verified_cache_health(&cache, &manifest.artifacts)
+    }
 }
 
 /// Peek at the `num_mel_bins` field in config.json without instantiating
@@ -1025,10 +1224,21 @@ mod tests {
     #[test]
     fn default_cache_dir_flattens_repo_path() {
         let p = default_cache_dir("openai/whisper-large-v3-turbo");
-        let s = p.to_string_lossy();
-        assert!(s.contains("openai-whisper-large-v3-turbo"));
-        assert!(s.contains(".neoth"));
-        assert!(s.contains("models"));
+        assert_eq!(
+            p,
+            crate::config::FreedomConfig::default_neoth_home()
+                .join("models")
+                .join("openai-whisper-large-v3-turbo")
+        );
+    }
+
+    #[test]
+    fn explicit_models_root_never_falls_back_to_process_home() {
+        let root = PathBuf::from("isolated-neoth-home").join("models");
+        assert_eq!(
+            cache_dir_at(&root, "openai/whisper-base"),
+            root.join("openai-whisper-base")
+        );
     }
 
     #[test]
@@ -1148,7 +1358,11 @@ mod tests {
     fn device_for_hw_probe_no_panic_on_cuda_with_fma3() {
         use crate::media::hw_probe::{AcceleratorClass, CpuCaps, HwProbe};
         let probe = HwProbe {
-            cpu_caps: CpuCaps { fma3: true, avx2: true, avx: true },
+            cpu_caps: CpuCaps {
+                fma3: true,
+                avx2: true,
+                avx: true,
+            },
             accelerator: AcceleratorClass::Cuda,
         };
         // require_fma3 must succeed (fma3=true)
@@ -1161,7 +1375,11 @@ mod tests {
     fn device_for_hw_probe_falls_back_to_cpu_when_no_fma3() {
         use crate::media::hw_probe::{AcceleratorClass, CpuCaps, HwProbe};
         let probe = HwProbe {
-            cpu_caps: CpuCaps { fma3: false, avx2: false, avx: false },
+            cpu_caps: CpuCaps {
+                fma3: false,
+                avx2: false,
+                avx: false,
+            },
             accelerator: AcceleratorClass::Cuda,
         };
         let device = device_for_hw_probe(&probe);
@@ -1175,7 +1393,11 @@ mod tests {
     fn device_for_hw_probe_cpu_class_skips_fma3_guard() {
         use crate::media::hw_probe::{AcceleratorClass, CpuCaps, HwProbe};
         let probe = HwProbe {
-            cpu_caps: CpuCaps { fma3: false, avx2: false, avx: false },
+            cpu_caps: CpuCaps {
+                fma3: false,
+                avx2: false,
+                avx: false,
+            },
             accelerator: AcceleratorClass::Cpu,
         };
         let device = device_for_hw_probe(&probe);
@@ -1197,9 +1419,17 @@ mod tests {
             in_flight: Arc::clone(&in_flight),
             last_used: Arc::clone(&last_used),
         };
-        assert_eq!(in_flight.load(Ordering::Acquire), 1, "in_flight should be 1 while guard is live");
+        assert_eq!(
+            in_flight.load(Ordering::Acquire),
+            1,
+            "in_flight should be 1 while guard is live"
+        );
         drop(guard);
-        assert_eq!(in_flight.load(Ordering::Acquire), 0, "in_flight should be 0 after guard drop");
+        assert_eq!(
+            in_flight.load(Ordering::Acquire),
+            0,
+            "in_flight should be 0 after guard drop"
+        );
     }
 
     /// Multiple overlapping guards increment/decrement correctly (concurrency
@@ -1210,11 +1440,20 @@ mod tests {
         let last_used = Arc::new(Mutex::new(Instant::now()));
         // Simulate 3 concurrent guards.
         in_flight.fetch_add(1, Ordering::AcqRel);
-        let g1 = LoadingGuard { in_flight: Arc::clone(&in_flight), last_used: Arc::clone(&last_used) };
+        let g1 = LoadingGuard {
+            in_flight: Arc::clone(&in_flight),
+            last_used: Arc::clone(&last_used),
+        };
         in_flight.fetch_add(1, Ordering::AcqRel);
-        let g2 = LoadingGuard { in_flight: Arc::clone(&in_flight), last_used: Arc::clone(&last_used) };
+        let g2 = LoadingGuard {
+            in_flight: Arc::clone(&in_flight),
+            last_used: Arc::clone(&last_used),
+        };
         in_flight.fetch_add(1, Ordering::AcqRel);
-        let g3 = LoadingGuard { in_flight: Arc::clone(&in_flight), last_used: Arc::clone(&last_used) };
+        let g3 = LoadingGuard {
+            in_flight: Arc::clone(&in_flight),
+            last_used: Arc::clone(&last_used),
+        };
         assert_eq!(in_flight.load(Ordering::Acquire), 3);
         drop(g1);
         assert_eq!(in_flight.load(Ordering::Acquire), 2);
@@ -1222,27 +1461,6 @@ mod tests {
         assert_eq!(in_flight.load(Ordering::Acquire), 1);
         drop(g3);
         assert_eq!(in_flight.load(Ordering::Acquire), 0);
-    }
-
-    /// `init_global_engine_sync` returns Err when the model is not cached
-    /// (standard CI environment without ~1.6 GiB model files).
-    #[test]
-    fn init_global_engine_sync_fails_gracefully_when_model_not_cached() {
-        // This test does NOT need model artifacts — it checks the error path.
-        // If CI happens to have the model cached, the call might succeed; that
-        // is fine too. We assert either success or a "not cached" error, NOT
-        // a panic or an unexpected error type.
-        let result = init_global_engine_sync(None);
-        match result {
-            Ok(_) => { /* model cached on this machine — all good */ }
-            Err(e) => {
-                let msg = e.to_string();
-                assert!(
-                    msg.contains("not cached") || msg.contains("cache dir") || msg.contains("model"),
-                    "unexpected error from init_global_engine_sync: {msg}"
-                );
-            }
-        }
     }
 
     /// `default_whisper_idle_unload_secs` returns `Some(120)` — the

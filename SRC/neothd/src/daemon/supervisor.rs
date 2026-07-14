@@ -27,11 +27,6 @@ pub use crate::config::SupervisorKind;
 pub const LAUNCHD_LABEL: &str = "io.neoth.daemon";
 /// Windows Task Scheduler task name.
 pub const WINDOWS_TASK_NAME: &str = "NEOTH Daemon";
-/// Exit code the supervisor treats as "deliberate stop — do NOT restart".
-/// `neoth serve` returns this on an operator-initiated `neoth stop`.
-/// Any other exit code = "restart me" (crash or self-update swap).
-pub const EXIT_CODE_STOP: i32 = 2;
-
 /// The supervisor kind native to the host OS. `None` on unknown targets.
 pub fn recommended_kind() -> SupervisorKind {
     if cfg!(target_os = "linux") {
@@ -224,35 +219,20 @@ pub fn uninstall(config_home: &Path, home: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Should the supervisor loop relaunch `neoth serve` given its exit
-/// code? Everything except the deliberate-stop code restarts (a crash
-/// or a self-update swap both exit non-2). A `None` code (killed by
-/// signal) also restarts — a SIGKILL/console-close should bring the
-/// daemon back.
-pub fn should_restart(exit_code: Option<i32>) -> bool {
-    exit_code != Some(EXIT_CODE_STOP)
-}
-
-/// The `neoth supervisor-loop` body: spawn `neoth serve` as a child,
-/// wait, relaunch unless it exited with [`EXIT_CODE_STOP`]. This is the
+/// The `neoth supervisor loop` body: spawn `neoth serve` as a child,
+/// wait, and relaunch it after every exit. This is the
 /// target the Windows Task Scheduler `onlogon` task runs (Task Scheduler
 /// has no restart-on-crash for user tasks; systemd/launchd provide it
 /// natively, so this loop is primarily the Windows path but is OS-
-/// agnostic). Never returns while restarts continue; returns `Ok(())`
-/// after a deliberate stop.
+/// agnostic). Stop the wrapper itself through Task Scheduler or
+/// `neoth supervisor uninstall`; there is no child exit code that stops
+/// the wrapper.
 pub fn run_supervisor_loop(exe: &Path) -> Result<()> {
     loop {
         let status = std::process::Command::new(exe)
             .arg("serve")
             .status()
             .with_context(|| format!("spawn {} serve", exe.display()))?;
-        if !should_restart(status.code()) {
-            tracing::info!(
-                code = EXIT_CODE_STOP,
-                "supervisor-loop: deliberate stop — not restarting"
-            );
-            return Ok(());
-        }
         tracing::warn!(
             code = ?status.code(),
             "supervisor-loop: `neoth serve` exited; restarting in 3s"
@@ -390,21 +370,6 @@ mod tests {
         } else if cfg!(target_os = "macos") {
             assert_eq!(k, SupervisorKind::LaunchdAgent);
         }
-    }
-
-    #[test]
-    fn should_restart_only_skips_deliberate_stop_code() {
-        assert!(
-            !should_restart(Some(EXIT_CODE_STOP)),
-            "stop code = no restart"
-        );
-        assert!(
-            should_restart(Some(0)),
-            "clean exit (self-update swap) = restart"
-        );
-        assert!(should_restart(Some(1)), "crash exit = restart");
-        assert!(should_restart(Some(101)), "panic abort = restart");
-        assert!(should_restart(None), "signal-killed = restart");
     }
 
     #[test]

@@ -1,6 +1,9 @@
 # SPEC: Skill + Plugin Extension System — NEOTH v1.1
 
-> **Status:** BUILD-READY. Fixes S3 from ADVERSARIAL/03 (`PermissionToken<T>` was a phantom type — referenced but never defined). Now fully specified.
+> **Status:** CURRENT IMPLEMENTATION CONTRACT (corrected 2026-07-14).
+> `PermissionToken<T>` exists as typed Rust API guidance; it is not an
+> unforgeable runtime grant. WASM authority is enforced by the operator-bound
+> activation record and the Wasmtime hostcall gate described below.
 > **Framework-Basis:** Tool-Framework v4.1 "Pflegbarer Garten"
 > **Design-Basis:** `00_DESIGN_v1.0_FINAL.md` (NEOTH brand) + ADVERSARIAL/00 review
 
@@ -70,82 +73,69 @@ introspection:
 
 ## 3. Plugin Format
 
-### 3.1 Phase 1 Compiled-In Manifest
+### 3.1 Native Rust SDK hooks
 
-`plugin.toml` manifest (embedded in Rust crate via `include_str!`):
-
-```toml
-[plugin]
-id = "example_plugin"
-name = "Example Plugin"
-version = "0.1.0"
-author = "yourname"
-
-[plugin.permissions]
-required = "ReadOnly"           # PermissionLevel — see §6
-allowed_resources = ["wal.read", "idx_episode.read"]
-oauth_vault_access = false
-
-[plugin.hooks]
-registered = ["pre_recall", "post_provider_call", "on_tool_invocation"]
-
-[plugin.locality]
-schicht = 1
-sandboxed = true
-```
-
-Rust registration via `inventory`:
+The published SDK exposes a typed `Hook<L>` interface for trusted, compiled-in
+Rust integrations:
 
 ```rust
-use neoth_plugin_sdk::{Hook, HookContext, HookResult, hooks::PreRecallHook};
-use inventory;
+use neoth_plugin_sdk::{Hook, HookContext, HookOutput, HookResult, PipelineStage, ReadOnly};
 
 pub struct ExamplePlugin;
 
-impl PreRecallHook for ExamplePlugin {
-    fn name(&self) -> &str { "example_plugin::pre_recall" }
-    fn on_pre_recall(&self, ctx: &mut HookContext) -> HookResult {
-        ctx.recall_params.keyword_filter.push("neoth".to_string());
-        HookResult::Continue
+impl Hook<ReadOnly> for ExamplePlugin {
+    fn id(&self) -> &'static str { "example_plugin" }
+    fn stage(&self) -> PipelineStage { PipelineStage::PrePipeline }
+    fn run(&self, _ctx: HookContext<'_, ReadOnly>) -> HookResult {
+        Ok(HookOutput::Continue)
     }
 }
-
-inventory::submit!(Hook::PreRecall(Box::new(ExamplePlugin)));
 ```
 
-`neothd` iterates `inventory::iter::<Hook>()` at startup, validates manifests, registers into immutable HookTable.
+There is currently no `inventory`-based auto-discovery path in `neothd`.
+Native hooks are trusted in-process code and must be wired explicitly by the
+daemon. The typed marker catches Rust API level mismatches; it does not sandbox
+native code or authorize effects at runtime.
 
 ### 3.2 Phase 2 WASM Manifest
 
 `plugin.toml` for WASM plugins (separate from compiled-in):
 
 ```toml
-[plugin]
 id = "needle"
 name = "Cactus Needle on-device router"
 version = "0.1.0"
-wasm = "needle.wasm"        # path relative to plugin dir
-type = "wasm"
-
-[plugin.permissions]
-required = "ReadOnly"
-oauth_vault_access = false
-
-[plugin.hooks]
-registered = ["pre_provider_call"]
-
-[plugin.activation]
-default = "off"             # opt-in
-config_flag = "use_needle_router"
-
-[plugin.wasm_runtime]
-fuel_limit         = 10_000_000
-memory_max_bytes   = 67_108_864   # 64 MiB
-timeout_ms         = 5_000
-hostcall_allowlist = ["log", "recall_read", "embed", "current_time_ns"]
+description = "Local routing plugin"
+requested_permissions = "read_only"
+# Advisory/display metadata; it does not auto-register the plugin as a hook.
+hook_stages = ["pre_provider_call"]
+fuel_budget_override = 1000000
+memory_limit_bytes = 67108864
 ```
 
-WASM activation: `~/.neoth/config.toml` `[plugins.needle] enabled = true`. Reload requires daemon restart.
+The sibling payload is always `plugin.wasm`. A discovered plugin defaults to
+`pending`; the operator activates it with `neoth plugin enable needle`.
+`freedom.yaml::plugins.wasm.activations` then stores an approval bound to the
+canonical manifest hash, WASM hash, and exact requested permission. Any change
+requires explicit re-consent; legacy active entries without that binding grant
+no authority.
+
+### 3.3 Guest ABI v1
+
+Rust guests should use `neoth_plugin_sdk::export_wasm_plugin!`, which emits the
+two exports required by the daemon:
+
+```text
+neoth_abi_version() -> i32  # must return 1
+neoth_run() -> i32          # 0 = success; non-zero = failed invocation
+```
+
+The host validates `neoth_abi_version` before calling `neoth_run`; a missing,
+mistyped, or mismatched export is rejected. Every invocation receives a fresh
+Wasmtime store whose fuel and memory limits are the validated values captured
+from the same manifest covered by the activation approval. The guest ABI is a
+compatibility contract; authority still comes only from the hash-bound approval
+and per-hostcall runtime checks.
 
 ## 4. Loader Lifecycle
 
@@ -154,7 +144,9 @@ discover → validate → load → register → [running] → unload
 ```
 
 **Discover** (startup): scan `~/.neoth/skills/`. Plugin `inventory::iter` walk (Phase 1). WASM scan `~/.neoth/plugins/*/plugin.toml` (Phase 2).
-**Validate**: schema conformance, `locality.sandboxed=true`, `max_tokens<=2000`, no code fields in skills. Plugin permission ≤ FREEDOM.yaml grant. WASM fuel/memory caps within global limits.
+**Validate**: schema conformance, `max_tokens<=2000`, no code fields in skills.
+For WASM plugins, validate manifest/WASM integrity, cap fuel and memory, and
+require the persisted approval to match permission plus both hashes exactly.
 **Load**: render `health_check.test_render`. Skills cached in Block-B (session-length) or Block-D (per-request). Plugins immutable post-startup.
 **Register**: `SkillRegistry` HashMap by `skill_id` + keyword-trigger entries in Basal Ganglia `idx_habit`. HookTable frozen.
 **Unload**: SIGHUP or `neoth reload-skills` — skills only. Plugins require rebuild + restart.
@@ -174,24 +166,29 @@ All hooks Schicht-1, receive `HookContext`, return `HookResult::Continue | Abort
 | `on_council_verdict` | After CouncilVerdict produced | none (notification) |
 | `on_wal_event` | After WAL frame written | none (metrics) |
 
-**Critical:** No hook may call Schicht-0 tool. `HookContext` type has no tool-call method. Compile-time enforced via §6 PermissionToken type system.
+**Critical:** `HookContext` intentionally exposes no tool-call method. That is a
+useful API-shape restriction, not a security boundary for trusted native Rust
+code. Operator effects still require the daemon's runtime permission gate. WASM
+plugins can reach only the explicitly linked hostcalls, each checked at runtime.
 
-## 6. PermissionToken<T> Implementation (S3 fix — was phantom type)
+## 6. PermissionToken<T>: current scope and limits
 
-**Problem v0.8:** Spec referenced `PermissionToken<Execute>` as "compile-time enforced" without ever defining the type. Vault security claim was theater.
+**Original problem:** the design referenced `PermissionToken<Execute>` before a
+type existed. The SDK now implements the five-level sealed lattice,
+`PermissionToken<L>`, `FreedomGrant<L>`, `AtLeast<L>`, and type erasure for Rust
+adapter ergonomics.
 
-**Fix v1.1:** Full implementation below. Sealed trait prevents external `PermissionLevel` types; `PhantomData` makes tokens zero-sized; `pub(crate) fn mint()` prevents external forging.
+**Security correction:** these zero-sized values are not runtime authority.
+Constructors and upgrades are hidden from the default SDK surface behind the
+`_host` Cargo feature, but dependency features are consumer-selectable. Any
+consumer can opt into `_host` and construct the markers. Sealing prevents new
+lattice types; it does not make existing tokens or grants unforgeable.
 
-> **Scope of enforcement (Rust Architect review, OPEN_DECISIONS.md D-004 cross-cut):**
-> The `PermissionToken<T>` typestate is a **Phase 1 (compiled-in skills) compile-time
-> guarantee only**. The sealed-trait + `pub(crate) mint()` pattern relies on Rust's
-> module privacy. Once the WASM plugin host lands (Day 23), plugin code crosses
-> the wasmtime ABI boundary — `PermissionToken<T>` zero-sized types cannot be
-> transmitted as wasm values, and the compile-time seal does not apply across
-> the boundary. Phase 2 (WASM) enforcement uses **runtime `hostcall_allowlist`
-> checks** as defined in §7. Do not market the typestate as the security primitive
-> for Phase 2; mixing the two enforcement models in one security claim is a
-> spec lie that will confuse plugin authors and reviewers.
+For WASM plugins no token crosses the ABI. The real boundary is the Wasmtime
+sandbox plus the activation approval bound to manifest/WASM hashes and the
+runtime `HostcallPermission` check on every hostcall. For native integrations,
+privileged operations must independently pass the daemon's `Action`/`Gate`
+policy; a typed function signature is compile-time guidance only.
 
 ### 6.1 PermissionLevel sealed marker types
 
@@ -225,150 +222,75 @@ impl<T: sealed::PermissionLevel> PermissionLevel for T {}
 ```rust
 use std::marker::PhantomData;
 
-/// Zero-sized typestate token proving the holder has at least permission level T.
-/// Cannot be constructed outside the `permission` module — `mint()` is `pub(crate)`.
-/// PhantomData ensures runtime cost = 0 bytes.
+/// Zero-sized Rust API marker at permission level T.
 pub struct PermissionToken<Level: PermissionLevel>(PhantomData<Level>);
 
 impl<L: PermissionLevel> PermissionToken<L> {
-    /// MINT FUNCTION — only the permission manager (this crate's internal logic)
-    /// can call this. External crates cannot forge tokens.
-    pub(crate) fn mint() -> Self {
+    /// Host-integration constructor. Feature gating prevents accidental use,
+    /// not deliberate construction by a Cargo consumer.
+    #[cfg(feature = "_host")]
+    pub fn mint() -> Self {
         PermissionToken(PhantomData)
     }
 }
 
-/// Token upgrade requires explicit grant — never cast.
+/// Typed transition for Rust adapters. This models an intended policy flow;
+/// the caller must validate real operator authority separately.
 impl PermissionToken<ReadOnly> {
-    /// Upgrade to Execute requires an explicit FREEDOM grant.
-    /// The grant is consumed (moved) — cannot be reused for multiple upgrades.
+    #[cfg(feature = "_host")]
     pub fn upgrade_to_execute(self, _grant: FreedomGrant<Execute>) -> PermissionToken<Execute> {
         PermissionToken(PhantomData)
     }
 }
 
 impl PermissionToken<Execute> {
+    #[cfg(feature = "_host")]
     pub fn upgrade_to_dangerous(self, _grant: FreedomGrant<Dangerous>) -> PermissionToken<Dangerous> {
         PermissionToken(PhantomData)
     }
 }
 
-/// FreedomGrant<T> — produced by `freedom.check(level)` after reading FREEDOM.yaml.
-/// Move-only (no Clone) so each grant gets consumed at use site.
+/// Typed marker for Rust integration transitions; not a persisted or
+/// cryptographic grant and not automatically issued by freedom.yaml checks.
 pub struct FreedomGrant<Level: PermissionLevel> {
     _phantom: PhantomData<Level>,
 }
 
 impl<L: PermissionLevel> FreedomGrant<L> {
-    pub(crate) fn issue() -> Self {
+    #[cfg(feature = "_host")]
+    pub fn issue() -> Self {
         FreedomGrant { _phantom: PhantomData }
     }
 }
 ```
 
-### 6.3 Vault APIs gated by token level
+### 6.3 What the type system does enforce
 
-```rust
-/// vault_read requires PermissionToken<Execute>.
-/// Calling without Execute = COMPILE ERROR, not runtime check.
-pub fn vault_read(
-    _token: &PermissionToken<Execute>,
-    key: &str,
-) -> Result<Secret, VaultError> {
-    /* implementation */
-    todo!()
-}
+Rust APIs can require `PermissionToken<L>` or `L: AtLeast<Required>`. The
+compiler then catches accidental level mismatches at those call sites. This is
+valuable interface discipline, but it protects only code that voluntarily uses
+the typed API. It cannot authorize a provider call, file write, process spawn,
+or network request and cannot sandbox trusted in-process Rust code.
 
-/// shell_exec requires PermissionToken<Dangerous>.
-pub fn shell_exec(
-    _token: &PermissionToken<Dangerous>,
-    cmd: &subprocess::SafeCommand,
-) -> Result<Output, ShellError> {
-    todo!()
-}
+### 6.4 WASM runtime authorization
 
-/// recall_query needs at least ReadOnly.
-pub fn recall_query<L: PermissionLevel + AtLeast<ReadOnly>>(
-    _token: &PermissionToken<L>,
-    q: Query,
-) -> Result<RecallResult, RecallError> {
-    todo!()
-}
+1. `neoth plugin enable <id>` persists the exact approved permission,
+   canonical manifest SHA-256, and WASM SHA-256.
+2. Discovery refuses legacy/unbound activations and any changed permission,
+   manifest, or module until the operator re-enables the plugin.
+3. Dispatch derives `HostcallPermission` only from that bound approval; a
+   missing approval defaults to `None`.
+4. Every linked hostcall checks `granted.allows(required)` inside the Wasmtime
+   closure before performing its effect.
 
-/// AtLeast<T> marker — implemented for the strict superset of T in the level ordering.
-pub trait AtLeast<T: PermissionLevel> {}
-impl AtLeast<None> for None {}
-impl AtLeast<None> for ReadOnly {}
-impl AtLeast<None> for Write {}
-impl AtLeast<None> for Execute {}
-impl AtLeast<None> for Dangerous {}
-impl AtLeast<ReadOnly> for ReadOnly {}
-impl AtLeast<ReadOnly> for Write {}
-impl AtLeast<ReadOnly> for Execute {}
-impl AtLeast<ReadOnly> for Dangerous {}
-impl AtLeast<Write> for Write {}
-impl AtLeast<Write> for Execute {}
-impl AtLeast<Write> for Dangerous {}
-impl AtLeast<Execute> for Execute {}
-impl AtLeast<Execute> for Dangerous {}
-impl AtLeast<Dangerous> for Dangerous {}
-```
+### 6.5 Permission audit trail
 
-### 6.4 HookContext binds token to hemisphere + plugin
-
-```rust
-pub struct HookContext<'a> {
-    pub session_id:    SessionId,
-    pub hemisphere:    Originator,
-    pub recall_params: &'a mut RecallParams,
-    /// Permission token for the *currently invoking plugin*.
-    /// Plugin manifest declared `required = "ReadOnly"` → token is `PermissionToken<ReadOnly>`.
-    pub token:         PermissionTokenAny,  // erased enum; downcast via match
-}
-
-/// Type-erased wrapper — the actual L is known at compile time but stored in an enum
-/// because HookContext is a single concrete type across all plugins.
-pub enum PermissionTokenAny {
-    None(PermissionToken<None>),
-    ReadOnly(PermissionToken<ReadOnly>),
-    Write(PermissionToken<Write>),
-    Execute(PermissionToken<Execute>),
-    Dangerous(PermissionToken<Dangerous>),
-}
-```
-
-A hook trying to call `vault_read` extracts the Execute variant:
-```rust
-fn on_pre_provider_call(&self, ctx: &mut HookContext) -> HookResult {
-    let secret = match &ctx.token {
-        PermissionTokenAny::Execute(t) => vault_read(t, "anthropic_api_key").ok(),
-        PermissionTokenAny::Dangerous(t) => {
-            // Dangerous-token holder may still call vault_read via downgrade
-            // (or via subtyping if AtLeast<Execute> matching).
-            None  // simplified
-        }
-        _ => None,  // ReadOnly/Write/None cannot call vault_read
-    };
-    HookResult::Continue
-}
-```
-
-### 6.5 Permission Audit Trail
-
-Every vault access emits `0x4A VAULT_ACCESSED` WAL event:
-
-```rust
-pub struct VaultAccessed {
-    pub plugin_id:        String,
-    pub key_path:         String,        // e.g. "anthropic_api_key" — never the value
-    pub token_level:      &'static str,  // "Execute" | "Dangerous"
-    pub session_id:       SessionId,
-    pub hemisphere:       Originator,
-    pub hlc:              Hlc,
-}
-```
-
-No secret material in audit log — only key path + access metadata.
+A denied WASM hostcall emits immediate-sync `0xC7 PLUGIN_CAP_DENIED` with the
+plugin id, hostcall, required level, and granted level. Successful privileged
+hostcalls emit their corresponding `0xC4 PLUGIN_HOSTCALL` or `0xC6
+PLUGIN_CAP_USED` frame. There is no `0x4A VAULT_ACCESSED` event in the current
+registry; `0x4A` is `CHANNEL_SILENCE_ALERT`. Documentation must not reuse event
+codes from speculative designs.
 
 ## 7. Skill Auto-Loading Routing
 
@@ -394,39 +316,29 @@ Request-preprocessing → tokenize user msg → `idx_habit` keyword lookup → m
 - **openhuman `traits.rs`:** `PermissionLevel` enum adopted directly. `ToolCategory::Skill` variant for Basal Ganglia routing tracking. `ToolScope` reserved for future parallel dispatch.
 - **hermes `extensions.py`:** Path-traversal guard `_is_safe_relative_path()` adopted in `skill::load_template()`. `_MAX_URL_LIST = 32` → NEOTH caps keyword triggers at 32 per skill.
 
-## 10. Phase 2 WASM Hostcall Surface (capability-API per Codex v0.6 verdict)
+## 10. Phase 2 WASM Hostcall Surface
 
-```rust
-/// hostcalls exposed to WASM plugins. Sealed enum — adding new hostcalls
-/// requires neothd recompile + version bump.
-pub enum Hostcall {
-    /// Log message at level X. Writes to neoth log + WAL trajectory.
-    Log { level: LogLevel, message: String },
-    /// Read from idx_episode / idx_semantic (read-only). Requires PermissionToken<ReadOnly>.
-    RecallRead { params: RecallParams },
-    /// Encode text → 1024d f32 vector via candle Qwen3-Embedding. CPU cost: ~50ms.
-    Embed { text: String },
-    /// Current wall-clock nanoseconds (UTC). For non-cryptographic timing only.
-    CurrentTimeNs,
-}
+The current linker exposes exactly four imports:
 
-/// Per-call limits (config in plugin.toml).
-pub struct WasmRuntime {
-    pub fuel_limit:         u64,
-    pub memory_max_bytes:   u32,
-    pub timeout_ms:         u32,
-    pub hostcall_allowlist: Vec<HostcallName>,
-}
-```
+| Import | Required runtime permission | Effect |
+|--------|-----------------------------|--------|
+| `neoth.log` | `none` | bounded diagnostic log |
+| `neoth.fuel_left` | `none` | remaining fuel counter |
+| `neoth.recall_top` | `read_only` | bounded recall hit-count query |
+| `neoth.emit_event` | `write` | bounded WAL plugin event |
 
-Hostcall execution flow:
-1. WASM plugin calls hostcall (via wasmtime ABI)
-2. Host checks `plugin.hostcall_allowlist`. Not allowed → return error to WASM.
-3. Host emits `0x28 PLUGIN_HOSTCALL` WAL event (audit).
-4. Host executes hostcall body. Time-budget enforced via wasmtime epoch interruption.
-5. Return value serialized to WASM linear memory.
+The manifest requests one maximum permission level; it does not provide a
+consumer-controlled hostcall allowlist. The operator approves the exact
+permission together with both artifact hashes. At invocation, each linker
+closure reads the approval-derived `PluginStoreState::granted`, refuses calls
+above that level before the effect, and writes `0xC7 PLUGIN_CAP_DENIED` on the
+denied path. Successful privileged calls write `0xC4`/`0xC6` audit frames.
 
-**No ambient filesystem, no network.** WASM cannot open files or sockets. Only hostcalls listed in allowlist.
+Fuel and linear-memory limits are enforced by the Wasmtime store (defaults:
+1,000,000 fuel and 64 MiB; manifest overrides are capped). No WASI filesystem
+or socket interface is linked, so the module has no ambient file or network
+access. Adding an Execute/Dangerous hostcall requires a new explicit linker
+binding, permission level, audit contract, and tests.
 
 ## 11. Built-in Skills — Phase 1 MVP (Day 23)
 
@@ -447,7 +359,7 @@ Hostcall execution flow:
 | G.1 Stateful Tool | N/A (data only) | Hooks run Schicht-1 — transient |
 | G.2 Self-Modifying | Skills immutable post-load | HookTable frozen at startup |
 | G.4 Meta-Decision | Skills inject data | Hooks return Continue/Abort |
-| G.5 Emergent Comp | Skills don't call tools | Hooks cannot call Schicht-0 tools (S3 typestate enforced) |
+| G.5 Emergent Comp | Skills don't call tools | WASM has only fixed, runtime-gated hostcalls; native hooks remain trusted code and require explicit daemon wiring |
 | G.11 Closed-Loop | Ecology RO only | Same |
 | G.12 Level-Confusion | Skills mount Schicht-1 boundary | Hooks execute Schicht-1 |
 | G.13 Bateson-III | No identity/self-reflection | No self-modification path |
@@ -462,4 +374,9 @@ Hostcall execution flow:
 
 ## 14. Status
 
-**v1.1 skill+plugin BUILD-READY.** S3 (PermissionToken<T> phantom type) RESOLVED via full sealed-trait + PhantomData + pub(crate) mint() implementation. Compile-time vault-access enforcement.
+**Current implementation:** the SDK typestate is implemented and useful for
+compile-time Rust API checks, but it is deliberately not described as an
+authorization primitive. Operator-loadable WASM plugins are default-pending,
+artifact/permission approvals are hash-bound, and hostcall authority is
+enforced and audited at runtime. Native SDK hooks have no automatic inventory
+loader and remain an explicitly wired trusted-code surface.

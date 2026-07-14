@@ -147,6 +147,40 @@ impl ProposedAction {
     }
 }
 
+/// Adopt an operator-approved Skill proposal into the live skill loader path.
+///
+/// This is the single schema boundary used by both `neoth proactive accept`
+/// and the curator reconciliation cron. The draft is parsed as the real
+/// [`SkillManifest`], its id is validated as a safe directory component, and
+/// the shared atomic writer creates `<home>/skills/<id>/skill.yaml`.
+pub fn adopt_approved_skill(home: &Path, proposal: &ProposedAction) -> anyhow::Result<PathBuf> {
+    use crate::skills::creator::{validate_skill_id, write_skill_yaml};
+    use crate::skills::schema::SkillManifest;
+    use anyhow::Context;
+
+    if proposal.kind != ProposalKind::Skill {
+        anyhow::bail!("proposal {} is not a Skill proposal", proposal.id);
+    }
+    if proposal.status != ProposalStatus::Approved {
+        anyhow::bail!(
+            "skill proposal {} is not operator-approved (status={})",
+            proposal.id,
+            proposal.status.as_str()
+        );
+    }
+
+    let manifest: SkillManifest =
+        serde_yaml::from_str(&proposal.draft_yaml).with_context(|| {
+            format!(
+                "approved skill proposal {} carries invalid draft_yaml",
+                proposal.id
+            )
+        })?;
+    validate_skill_id(&manifest.id)
+        .with_context(|| format!("skill id {:?} is not a safe directory name", manifest.id))?;
+    write_skill_yaml(&home.join("skills"), &manifest.id, &proposal.draft_yaml)
+}
+
 fn escape_yaml_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -180,11 +214,7 @@ pub fn make_proposal_id(
 /// Use this for auto-extract paths where idempotency-across-time is the
 /// goal. Use [`make_proposal_id`] for cron/config proposals that are
 /// legitimately different across ticks even with equal content.
-pub fn make_proposal_id_content_only(
-    kind: ProposalKind,
-    title: &str,
-    draft_yaml: &str,
-) -> String {
+pub fn make_proposal_id_content_only(kind: ProposalKind, title: &str, draft_yaml: &str) -> String {
     let hash_input = format!("{title}|{draft_yaml}");
     let hash = xxhash_rust::xxh3::xxh3_64(hash_input.as_bytes());
     let short = format!("{:08x}", hash & 0xFFFF_FFFF);
@@ -455,7 +485,10 @@ mod tests {
         assert_eq!(parts[0], "skill");
         // Hash suffix is exactly 8 hex chars.
         assert_eq!(parts[1].len(), 8, "hash suffix must be 8 hex chars");
-        assert!(parts[1].chars().all(|c| c.is_ascii_hexdigit()), "suffix must be hex");
+        assert!(
+            parts[1].chars().all(|c| c.is_ascii_hexdigit()),
+            "suffix must be hex"
+        );
     }
 
     #[test]

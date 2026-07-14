@@ -6,8 +6,8 @@
 //!
 //! - `idx_babel_windows` — one row per closed window (canonical DDL mirrors
 //!   the doc block in `window.rs`).
-//! - `idx_babel_norm`    — p1/p99 normalisation snapshots per (variable,
-//!   window_secs), swept every 5 min (doc block in `norm.rs`).
+//! - `idx_babel_norm`    — p1/p99 snapshots of the consumed `b_raw`
+//!   distribution per window size, swept every 5 min (doc block in `norm.rs`).
 //! - `idx_babel_labels`  — collapse labels per window, from the post-hoc
 //!   detector pass or operator CLI labelling (`human_confirmed = 1`).
 //!
@@ -17,6 +17,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+use super::collapse::NegativeControlType;
 use super::window::BabelWindow;
 
 /// Create the three Babel tables + query-path indexes. Idempotent.
@@ -37,6 +38,11 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             collapse_30m  INTEGER,
             collapse_kind TEXT,
             negative_ctrl INTEGER NOT NULL DEFAULT 0,
+            negative_control_type TEXT CHECK (
+                negative_control_type IS NULL OR negative_control_type IN (
+                    'synthetic_stable', 'isolated_run', 'replay_deterministic'
+                )
+            ),
             submitted     INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_babel_windows_ts_end
@@ -63,6 +69,25 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
         );
         "#,
     )?;
+
+    // `CREATE TABLE IF NOT EXISTS` cannot evolve an existing installation.
+    // Add the v0.4 negative-control discriminator in place; old rows remain
+    // valid because the operator-tagged control bit never had a producer.
+    let mut columns = conn.prepare("PRAGMA table_info(idx_babel_windows)")?;
+    let has_negative_control_type = columns
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == "negative_control_type");
+    drop(columns);
+    if !has_negative_control_type {
+        conn.execute(
+            "ALTER TABLE idx_babel_windows ADD COLUMN negative_control_type TEXT \
+             CHECK (negative_control_type IS NULL OR negative_control_type IN (\
+               'synthetic_stable', 'isolated_run', 'replay_deterministic'))",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -83,14 +108,16 @@ pub fn insert_window(conn: &Connection, w: &BabelWindow) -> Result<()> {
             "v": w.algorithm_version_v, "d": w.algorithm_version_d,
             "h": w.algorithm_version_h,
         },
+        "k_d_posture": w.features.k_d_posture,
+        "signal_posture": w.signal_posture,
         "schema": w.schema_version,
     });
     conn.execute(
         "INSERT INTO idx_babel_windows
          (id, session_id, window_secs, ts_start, ts_end,
           b_log, b_mult, b_bottleneck, variables,
-          collapse_5m, collapse_30m, collapse_kind, negative_ctrl)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+          collapse_5m, collapse_30m, collapse_kind, negative_ctrl, negative_control_type)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
             w.id,
             w.session_id_pseudo,
@@ -103,11 +130,37 @@ pub fn insert_window(conn: &Connection, w: &BabelWindow) -> Result<()> {
             variables.to_string(),
             i64::from(w.collapse.collapse_within_5m),
             w.collapse.collapse_within_30m.map(i64::from),
-            w.collapse.collapse_kind.map(super::collapse::CollapseLabel::as_str),
+            w.collapse
+                .collapse_kind
+                .map(super::collapse::CollapseLabel::as_str),
             i64::from(w.collapse.negative_control),
+            w.collapse
+                .negative_control_type
+                .map(NegativeControlType::as_str),
         ],
     )?;
     Ok(())
+}
+
+/// Set or clear an operator-declared negative control on an existing window.
+/// The boolean and discriminator are updated together so exports and
+/// federation can never observe a half-tagged control.
+pub fn persist_negative_control(
+    conn: &Connection,
+    window_id: &str,
+    control_type: Option<NegativeControlType>,
+) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE idx_babel_windows
+         SET negative_ctrl = ?2, negative_control_type = ?3
+         WHERE id = ?1",
+        rusqlite::params![
+            window_id,
+            i64::from(control_type.is_some()),
+            control_type.map(NegativeControlType::as_str),
+        ],
+    )?;
+    Ok(changed == 1)
 }
 
 // ── GOLD-DELTA-10 — federation read/mark path ────────────────────────────────
@@ -157,14 +210,16 @@ pub fn load_unsubmitted_windows(
     epsilon: Option<f64>,
 ) -> Result<Vec<(BabelWindow, bool)>> {
     use super::collapse::CollapseDetection;
-    use super::feature::{BabelFeatures, FeatureAlgorithmVersions};
+    use super::feature::{BabelFeatures, FeatureAlgorithmVersions, KdPosture};
     use super::score::BabelScores;
+    use super::signals::SignalPosture;
     use super::window::WindowGranularity;
 
     let mut stmt = conn.prepare(
         "SELECT id, session_id, window_secs, ts_start, ts_end,
                 b_log, b_mult, b_bottleneck, variables,
-                collapse_5m, collapse_30m, collapse_kind, negative_ctrl
+                collapse_5m, collapse_30m, collapse_kind, negative_ctrl,
+                negative_control_type
          FROM idx_babel_windows
          WHERE window_secs = 900 AND submitted = 0 AND collapse_30m IS NOT NULL
          ORDER BY ts_end ASC LIMIT ?1",
@@ -184,6 +239,7 @@ pub fn load_unsubmitted_windows(
             r.get::<_, Option<i64>>(10)?,
             r.get::<_, Option<String>>(11)?,
             r.get::<_, i64>(12)?,
+            r.get::<_, Option<String>>(13)?,
         ))
     })?;
     let mut out = Vec::new();
@@ -202,6 +258,7 @@ pub fn load_unsubmitted_windows(
             collapse_30m,
             collapse_kind,
             negative_ctrl,
+            negative_control_type,
         ) = row?;
         let Some(granularity) = WindowGranularity::from_secs(window_secs as u64) else {
             continue; // unknown granularity row — never ours, skip
@@ -215,6 +272,59 @@ pub fn load_unsubmitted_windows(
             }
         };
         let get = |k: &str| vars.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let row_schema = vars
+            .get("schema")
+            .and_then(|s| s.as_str())
+            .unwrap_or(BabelWindow::SCHEMA_VERSION)
+            .to_string();
+        let has_all_fields = |key: &str, fields: &[&str]| {
+            vars.get(key)
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|object| fields.iter().all(|field| object.contains_key(*field)))
+        };
+        let k_d_posture = vars
+            .get("k_d_posture")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<KdPosture>(value).ok());
+        let signal_posture = vars
+            .get("signal_posture")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<SignalPosture>(value).ok());
+        let current_posture_complete = has_all_fields(
+            "k_d_posture",
+            &[
+                "mode",
+                "requested_model",
+                "effective_model",
+                "sample_count",
+                "failure_count",
+                "failure_reasons",
+                "degraded_reason",
+            ],
+        ) && has_all_fields(
+            "signal_posture",
+            &[
+                "mapping_version",
+                "memory_enabled",
+                "skill_enabled",
+                "memory_contradictions",
+                "memory_recall_misses",
+                "skill_mode",
+                "skill_keyword",
+                "skill_embedding",
+                "skill_no_match",
+                "skill_suppressed",
+            ],
+        );
+        if row_schema == BabelWindow::SCHEMA_VERSION
+            && (!current_posture_complete || k_d_posture.is_none() || signal_posture.is_none())
+        {
+            tracing::warn!(
+                window_id = %id,
+                "babel federation: current-schema row has incomplete/invalid posture, skipped"
+            );
+            continue;
+        }
         let algo = |k: &str| {
             vars.get("algo")
                 .and_then(|a| a.get(k))
@@ -230,6 +340,7 @@ pub fn load_unsubmitted_windows(
             v: get("V"),
             d: get("D").max(1e-9),
             h: get("H").max(1e-9),
+            k_d_posture: k_d_posture.unwrap_or_default(),
             algorithm_versions: FeatureAlgorithmVersions {
                 c: algo("c"),
                 k: algo("k"),
@@ -239,6 +350,22 @@ pub fn load_unsubmitted_windows(
                 d: algo("d"),
                 h: algo("h"),
             },
+        };
+        let negative_control_type = match (negative_ctrl, negative_control_type.as_deref()) {
+            (0, None) => None,
+            (1, Some(value)) => match value.parse::<NegativeControlType>() {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    tracing::warn!(window_id = %id, %error,
+                        "babel federation: invalid negative-control type, window skipped");
+                    continue;
+                }
+            },
+            _ => {
+                tracing::warn!(window_id = %id,
+                    "babel federation: inconsistent negative-control state, window skipped");
+                continue;
+            }
         };
         let is_collapse = collapse_5m == Some(1) || collapse_30m == Some(1);
         let window = BabelWindow {
@@ -257,16 +384,12 @@ pub fn load_unsubmitted_windows(
             collapse: CollapseDetection {
                 collapse_within_5m: collapse_5m == Some(1),
                 collapse_within_30m: collapse_30m.map(|v| v == 1),
-                collapse_at_next_task: None,
                 collapse_kind: collapse_kind.and_then(|s| s.parse().ok()),
                 negative_control: negative_ctrl == 1,
-                negative_control_type: None,
+                negative_control_type,
             },
-            schema_version: vars
-                .get("schema")
-                .and_then(|s| s.as_str())
-                .unwrap_or(BabelWindow::SCHEMA_VERSION)
-                .to_string(),
+            signal_posture: signal_posture.unwrap_or_default(),
+            schema_version: row_schema,
             algorithm_version_c: features.algorithm_versions.c.clone(),
             algorithm_version_k: features.algorithm_versions.k.clone(),
             algorithm_version_m: features.algorithm_versions.m.clone(),
@@ -347,7 +470,11 @@ fn median(values: &mut [f64]) -> Option<f64> {
     }
     values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = values.len() / 2;
-    Some(if values.len() % 2 == 0 { (values[mid - 1] + values[mid]) / 2.0 } else { values[mid] })
+    Some(if values.len() % 2 == 0 {
+        (values[mid - 1] + values[mid]) / 2.0
+    } else {
+        values[mid]
+    })
 }
 
 /// Compare the PRIMARY (15-min) windows around `change_ts`: median
@@ -419,6 +546,29 @@ mod tests {
     }
 
     #[test]
+    fn ensure_schema_migrates_existing_windows_table() {
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch(
+            "CREATE TABLE idx_babel_windows (
+                id TEXT PRIMARY KEY,
+                negative_ctrl INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .expect("legacy table");
+        ensure_schema(&conn).expect("migration");
+        ensure_schema(&conn).expect("migration is idempotent");
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(idx_babel_windows)")
+            .expect("pragma");
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query")
+            .collect::<std::result::Result<_, _>>()
+            .expect("columns");
+        assert!(columns.iter().any(|name| name == "negative_control_type"));
+    }
+
+    #[test]
     fn windows_table_accepts_a_canonical_row() {
         let conn = Connection::open_in_memory().expect("mem db");
         ensure_schema(&conn).expect("schema");
@@ -441,6 +591,43 @@ mod tests {
             .query_row("SELECT submitted FROM idx_babel_windows", [], |r| r.get(0))
             .expect("select");
         assert_eq!(submitted, 0, "federation flag defaults to not-submitted");
+    }
+
+    #[test]
+    fn negative_control_tag_is_atomic_typed_and_clearable() {
+        let conn = Connection::open_in_memory().expect("mem db");
+        ensure_schema(&conn).expect("schema");
+        conn.execute(
+            "INSERT INTO idx_babel_windows
+             (id, session_id, window_secs, ts_start, ts_end, b_bottleneck, variables)
+             VALUES ('w1', 'a1b2c3d4e5f60718', 900, 0, 900, 0.4, '{}')",
+            [],
+        )
+        .expect("window");
+
+        assert!(
+            persist_negative_control(&conn, "w1", Some(NegativeControlType::SyntheticStable))
+                .expect("tag")
+        );
+        let tagged: (i64, Option<String>) = conn
+            .query_row(
+                "SELECT negative_ctrl, negative_control_type FROM idx_babel_windows WHERE id='w1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("tagged row");
+        assert_eq!(tagged, (1, Some("synthetic_stable".to_string())));
+
+        assert!(persist_negative_control(&conn, "w1", None).expect("clear"));
+        let cleared: (i64, Option<String>) = conn
+            .query_row(
+                "SELECT negative_ctrl, negative_control_type FROM idx_babel_windows WHERE id='w1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("cleared row");
+        assert_eq!(cleared, (0, None));
+        assert!(!persist_negative_control(&conn, "missing", None).expect("missing"));
     }
 
     const CT: i64 = 1_800_100_000;
@@ -474,7 +661,9 @@ mod tests {
     #[test]
     fn fitness_reinforce_on_sustained_lower_b() {
         let conn = fitness_db(1.0, 0.5, false);
-        let f = babel_fitness(&conn, CT, 7200).expect("query").expect("both sides observable");
+        let f = babel_fitness(&conn, CT, 7200)
+            .expect("query")
+            .expect("both sides observable");
         assert_eq!(f.verdict(), FitnessVerdict::Reinforce);
         assert!(f.after_median < f.before_median);
         assert_eq!(f.collapses_after, 0);
@@ -483,19 +672,29 @@ mod tests {
     #[test]
     fn fitness_flag_on_higher_b_or_collapse() {
         let higher = fitness_db(0.5, 1.0, false);
-        let f = babel_fitness(&higher, CT, 7200).expect("query").expect("observable");
+        let f = babel_fitness(&higher, CT, 7200)
+            .expect("query")
+            .expect("observable");
         assert_eq!(f.verdict(), FitnessVerdict::Flag, "higher B_d flags");
 
         let collapsed = fitness_db(1.0, 0.5, true);
-        let f = babel_fitness(&collapsed, CT, 7200).expect("query").expect("observable");
-        assert_eq!(f.verdict(), FitnessVerdict::Flag, "a collapse flags even with lower B_d");
+        let f = babel_fitness(&collapsed, CT, 7200)
+            .expect("query")
+            .expect("observable");
+        assert_eq!(
+            f.verdict(),
+            FitnessVerdict::Flag,
+            "a collapse flags even with lower B_d"
+        );
         assert_eq!(f.collapses_after, 1);
     }
 
     #[test]
     fn fitness_neutral_inside_the_band_and_none_when_unobservable() {
         let flat = fitness_db(1.0, 1.0, false);
-        let f = babel_fitness(&flat, CT, 7200).expect("query").expect("observable");
+        let f = babel_fitness(&flat, CT, 7200)
+            .expect("query")
+            .expect("observable");
         assert_eq!(f.verdict(), FitnessVerdict::Neutral);
 
         let thin = Connection::open_in_memory().expect("mem db");
@@ -512,7 +711,8 @@ mod tests {
         let conn = Connection::open_in_memory().expect("mem db");
         ensure_schema(&conn).expect("schema");
         let ins = "INSERT INTO idx_babel_labels (window_id, label, labeled_at) VALUES (?1, ?2, ?3)";
-        conn.execute(ins, rusqlite::params!["w1", "agent_loop", 1_i64]).expect("first");
+        conn.execute(ins, rusqlite::params!["w1", "agent_loop", 1_i64])
+            .expect("first");
         let dup = conn.execute(ins, rusqlite::params!["w1", "agent_loop", 2_i64]);
         assert!(dup.is_err(), "PK (window_id,label) must reject duplicates");
     }

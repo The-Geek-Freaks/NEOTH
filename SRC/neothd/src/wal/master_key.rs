@@ -15,7 +15,7 @@
 //! enabling encryption.
 
 use super::compaction::{maybe_unwrap_dpapi, write_key_securely};
-use super::crypto::{derive_subkey, WalMasterKey, WalSegmentKey, INFO_CONFIG, INFO_WAL_SEGMENT};
+use super::crypto::{INFO_CONFIG, INFO_WAL_SEGMENT, WalMasterKey, WalSegmentKey, derive_subkey};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -37,16 +37,22 @@ pub fn default_segment_key() -> Option<&'static WalSegmentKey> {
     static KEY: OnceLock<Option<WalSegmentKey>> = OnceLock::new();
     KEY.get_or_init(|| {
         let home = crate::config::FreedomConfig::default_neoth_home();
-        let path = master_key_path(&home);
-        if !path.exists() {
-            return None;
-        }
-        let body = std::fs::read(&path).ok()?;
-        let raw = maybe_unwrap_dpapi(&body, &path).ok()?;
-        let master = WalMasterKey::from_bytes(&raw).ok()?;
-        derive_subkey(&master, INFO_WAL_SEGMENT).ok()
+        segment_key_at(&home)
     })
     .as_ref()
+}
+
+/// Load the WAL segment subkey for an explicit daemon instance home.
+/// Load-only: a missing key returns `None` and never creates state.
+pub fn segment_key_at(home: &Path) -> Option<WalSegmentKey> {
+    let path = master_key_path(home);
+    if !path.exists() {
+        return None;
+    }
+    let body = std::fs::read(&path).ok()?;
+    let raw = maybe_unwrap_dpapi(&body, &path).ok()?;
+    let master = WalMasterKey::from_bytes(&raw).ok()?;
+    derive_subkey(&master, INFO_WAL_SEGMENT).ok()
 }
 
 /// Process-memoized read of `freedom.yaml::wal.encryption` — `true` when the
@@ -54,13 +60,24 @@ pub fn default_segment_key() -> Option<&'static WalSegmentKey> {
 /// seal; the reader does NOT (it decrypts based on the segment's ENC magic,
 /// independent of the flag, so a config that's later turned off still reads
 /// already-encrypted history).
-pub fn wal_encryption_enabled() -> bool {
-    static EN: OnceLock<bool> = OnceLock::new();
-    *EN.get_or_init(|| {
+pub fn wal_encryption_enabled() -> Result<bool> {
+    static EN: OnceLock<std::result::Result<bool, String>> = OnceLock::new();
+    match EN.get_or_init(|| {
         let home = crate::config::FreedomConfig::default_neoth_home();
-        crate::config::wal::load_wal_config(&home.join("freedom.yaml")).encryption
-            == crate::config::wal::WalEncryption::Aes256GcmSiv
-    })
+        crate::config::wal::load_wal_config(&home.join("freedom.yaml"))
+            .map(|config| config.encryption == crate::config::wal::WalEncryption::Aes256GcmSiv)
+            .map_err(|error| format!("load WAL encryption policy: {error:#}"))
+    }) {
+        Ok(enabled) => Ok(*enabled),
+        Err(message) => anyhow::bail!("{message}"),
+    }
+}
+
+/// Resolve the WAL encryption policy for an explicit daemon instance.
+pub fn wal_encryption_enabled_at(home: &Path) -> Result<bool> {
+    crate::config::wal::load_wal_config(&home.join("freedom.yaml"))
+        .map(|config| config.encryption == crate::config::wal::WalEncryption::Aes256GcmSiv)
+        .context("load instance WAL encryption policy")
 }
 
 /// Config-at-rest subkey (CRYPTO-04 #5) — domain-separated (`INFO_CONFIG`) from
@@ -68,7 +85,12 @@ pub fn wal_encryption_enabled() -> bool {
 /// master.key exists.
 pub fn config_subkey() -> Option<WalSegmentKey> {
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let path = master_key_path(&home);
+    config_subkey_at(&home)
+}
+
+/// Config-at-rest subkey for an explicit daemon instance home.
+pub fn config_subkey_at(home: &Path) -> Option<WalSegmentKey> {
+    let path = master_key_path(home);
     if !path.exists() {
         return None;
     }
@@ -82,7 +104,12 @@ pub fn config_subkey() -> Option<WalSegmentKey> {
 /// the `INFO_CONFIG` subkey. Creates the key on first encrypted credentials write.
 pub fn config_subkey_ensure() -> Option<WalSegmentKey> {
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let master = load_or_init_master_key(&master_key_path(&home)).ok()?;
+    config_subkey_ensure_at(&home)
+}
+
+/// Config-at-rest write subkey for an explicit daemon instance home.
+pub fn config_subkey_ensure_at(home: &Path) -> Option<WalSegmentKey> {
+    let master = load_or_init_master_key(&master_key_path(home)).ok()?;
     derive_subkey(&master, INFO_CONFIG).ok()
 }
 
@@ -91,7 +118,12 @@ pub fn config_subkey_ensure() -> Option<WalSegmentKey> {
 /// creation) and derive the segment subkey. `None` only on RNG/IO failure.
 pub fn writer_segment_key() -> Option<WalSegmentKey> {
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let master = load_or_init_master_key(&master_key_path(&home)).ok()?;
+    writer_segment_key_at(&home)
+}
+
+/// Writer-side segment subkey for an explicit daemon instance home.
+pub fn writer_segment_key_at(home: &Path) -> Option<WalSegmentKey> {
+    let master = load_or_init_master_key(&master_key_path(home)).ok()?;
     derive_subkey(&master, INFO_WAL_SEGMENT).ok()
 }
 
@@ -130,15 +162,19 @@ pub fn backup_master_key(src: &Path, dst: &Path) -> Result<()> {
 /// Windows), overwriting `dst`. Run with the daemon stopped. Refuses a key that
 /// is not exactly 32 bytes.
 pub fn restore_master_key(raw: &[u8], dst: &Path) -> Result<()> {
-    let _ = WalMasterKey::from_bytes(raw)
-        .context("restore source must be exactly 32 raw key bytes")?;
+    let _ =
+        WalMasterKey::from_bytes(raw).context("restore source must be exactly 32 raw key bytes")?;
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create master key parent {}", parent.display()))?;
     }
     if dst.exists() {
-        std::fs::remove_file(dst)
-            .with_context(|| format!("remove existing master key {} before restore", dst.display()))?;
+        std::fs::remove_file(dst).with_context(|| {
+            format!(
+                "remove existing master key {} before restore",
+                dst.display()
+            )
+        })?;
     }
     write_key_securely(dst, raw)
 }

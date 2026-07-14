@@ -69,7 +69,7 @@ pub struct ProactiveItem {
     /// twice within the same day even if the cron fires multiple times.
     pub dedup_key: String,
     /// Channel target by name as recognised by `channels::Channel::name`
-    /// (`telegram` / `keet` / `slack` / `cli`). Empty falls back to
+    /// (`telegram` / `slack` / `cli`). Empty falls back to
     /// the operator's default channel.
     pub channel: String,
     /// Producer tag for audit. e.g. `"g_01_mini"` / `"pl_03"` /
@@ -416,7 +416,11 @@ mod tests {
             ..item(50, "later", "x")
         });
         let drained = q.drain(0, 10);
-        assert_eq!(drained.len(), 1, "only the urgent item bypasses its schedule");
+        assert_eq!(
+            drained.len(),
+            1,
+            "only the urgent item bypasses its schedule"
+        );
         assert_eq!(drained[0].dedup_key, "urgent-signal");
     }
 
@@ -611,7 +615,11 @@ mod tests {
 
         let after = ProactiveQueue::load_from(&path).expect("reload");
         let keys: Vec<&str> = after.peek().iter().map(|i| i.dedup_key.as_str()).collect();
-        assert_eq!(keys, vec!["b", "c"], "delivered A removed; concurrent C survives");
+        assert_eq!(
+            keys,
+            vec!["b", "c"],
+            "delivered A removed; concurrent C survives"
+        );
         assert_eq!(
             after.budget_left(1_800_000_000),
             after.config.max_per_day - 1,
@@ -622,9 +630,18 @@ mod tests {
     #[test]
     fn prune_expired_drops_only_dead_items() {
         let mut q = ProactiveQueue::new();
-        q.enqueue(ProactiveItem { expires_unix: 100, ..item(50, "dead", "test") });
-        q.enqueue(ProactiveItem { expires_unix: 0, ..item(50, "evergreen", "test") });
-        q.enqueue(ProactiveItem { expires_unix: 500, ..item(50, "alive", "test") });
+        q.enqueue(ProactiveItem {
+            expires_unix: 100,
+            ..item(50, "dead", "test")
+        });
+        q.enqueue(ProactiveItem {
+            expires_unix: 0,
+            ..item(50, "evergreen", "test")
+        });
+        q.enqueue(ProactiveItem {
+            expires_unix: 500,
+            ..item(50, "alive", "test")
+        });
         assert_eq!(q.prune_expired(200), 1);
         let keys: Vec<&str> = q.peek().iter().map(|i| i.dedup_key.as_str()).collect();
         assert_eq!(keys, vec!["evergreen", "alive"]);

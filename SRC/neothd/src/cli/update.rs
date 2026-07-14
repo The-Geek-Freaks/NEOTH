@@ -23,9 +23,9 @@ pub struct UpdateArgs {
     pub check: bool,
 
     /// Probe, then update any component where installed != latest.
-    /// When combined with `--self`, runs the full daemon self-
-    /// update (download → SHA-256 verify → extract → atomic
-    /// replace) instead of the per-component CLI update.
+    /// When combined with `--self`, runs the full release-bundle
+    /// update (download, signature + SHA-256 verification,
+    /// preflight, transactional replace) instead of the managed-CLI update.
     #[arg(long, conflicts_with_all = ["check", "list"])]
     pub apply: bool,
 
@@ -33,16 +33,15 @@ pub struct UpdateArgs {
     #[arg(long, conflicts_with_all = ["check", "apply"])]
     pub list: bool,
 
-    /// V03-09 (2026-05-20): check whether a newer NEOTH daemon
-    /// release is published on GitHub. Without `--apply` this is
-    /// probe-only (Phase 1). With `--apply` runs the full Phase 2b
-    /// flow: download → SHA-256 verify → extract → atomic replace.
+    /// Check whether a newer NEOTH release is published on GitHub.
+    /// Without `--apply` this is check-only. With `--apply`, the signed
+    /// platform bundle is verified, preflighted, and transactionally applied.
     /// Pass `--self-repo owner/name` to point at a fork; default
     /// is `The-Geek-Freaks/NEOTH`.
     #[arg(long = "self", conflicts_with = "list")]
     pub self_check: bool,
 
-    /// Override the GitHub `owner/repo` slug for the self-check.
+    /// Override the configured GitHub `owner/repo` slug for self-check/apply.
     #[arg(long = "self-repo", value_name = "OWNER/REPO")]
     pub self_repo: Option<String>,
 
@@ -64,26 +63,41 @@ pub async fn run_update(args: UpdateArgs) -> Result<()> {
         return render_list(args.output);
     }
     if args.self_check {
-        // V03-09 daemon self-check + optional apply path. Default
-        // repo is the published public release; operators on a
-        // fork override via --self-repo.
-        let repo = args.self_repo.as_deref().unwrap_or("The-Geek-Freaks/NEOTH");
+        // The manual path consumes the same release policy as daemon probes
+        // and staging. `--self-repo` remains the explicit one-shot override.
+        let policy = load_self_update_policy()?;
+        let repo = args.self_repo.as_deref().unwrap_or(&policy.repo);
+        let channel = policy.channel;
         if args.apply {
             info!(
                 repo = repo,
-                "neoth update --self --apply: full Phase 2b flow"
+                channel = %channel,
+                "neoth update --self --apply: verified bundle apply"
             );
-            return run_self_apply(repo, args.allow_unsigned, args.output).await;
+            return run_self_apply(
+                repo,
+                channel,
+                policy.target_triple.as_deref(),
+                args.allow_unsigned,
+                args.output,
+            )
+            .await;
         }
-        info!(repo = repo, "neoth update --self: checking GitHub release");
-        let outcome = crate::updater::self_update::check_for_update(repo).await?;
-        render_self_check(&outcome, args.output);
+        info!(repo = repo, channel = %channel, "neoth update --self: checking GitHub release");
+        let outcome = crate::updater::self_update::check_for_update_channel(repo, channel).await?;
+        render_self_check(&outcome, channel, args.output);
         return Ok(());
     }
     if args.apply {
         info!("neoth update --apply: probing + installing");
         let home = crate::config::FreedomConfig::default_neoth_home();
         let config_path = home.join("freedom.yaml");
+        if !config_path.is_file() {
+            anyhow::bail!(
+                "no freedom.yaml found at {}. Run `neoth init` first; component updates stay blocked until an operator dependency policy exists",
+                config_path.display()
+            );
+        }
         let config =
             crate::config::FreedomConfig::load_from_path(&config_path).with_context(|| {
                 format!(
@@ -103,7 +117,25 @@ pub async fn run_update(args: UpdateArgs) -> Result<()> {
     Ok(())
 }
 
-fn render_self_check(check: &crate::updater::self_update::UpdateCheck, output: OutputFormat) {
+fn load_self_update_policy() -> Result<crate::config::AutoUpdateConfig> {
+    let path = crate::config::FreedomConfig::default_path();
+    load_self_update_policy_from(&path)
+}
+
+fn load_self_update_policy_from(path: &std::path::Path) -> Result<crate::config::AutoUpdateConfig> {
+    if !path.is_file() {
+        return Ok(crate::config::AutoUpdateConfig::default());
+    }
+    crate::config::FreedomConfig::load_from_path(path)
+        .map(|config| config.auto_update)
+        .with_context(|| format!("load self-update policy from {}", path.display()))
+}
+
+fn render_self_check(
+    check: &crate::updater::self_update::UpdateCheck,
+    channel: crate::config::ReleaseChannel,
+    output: OutputFormat,
+) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
@@ -111,6 +143,7 @@ fn render_self_check(check: &crate::updater::self_update::UpdateCheck, output: O
                 serde_json::json!({
                     "current": check.current,
                     "latest": check.latest,
+                    "channel": channel.as_str(),
                     "needs_update": check.needs_update,
                     "release_url": check.release_url,
                     "published_at": check.published_at,
@@ -118,9 +151,10 @@ fn render_self_check(check: &crate::updater::self_update::UpdateCheck, output: O
             );
         }
         OutputFormat::Table => {
-            println!("# NEOTH daemon self-update check");
+            println!("# NEOTH release-bundle self-update check");
             println!("  current      : {}", check.current);
             println!("  latest       : {}", check.latest);
+            println!("  channel      : {channel}");
             println!("  needs update : {}", check.needs_update);
             if check.needs_update {
                 println!();
@@ -136,15 +170,21 @@ fn render_self_check(check: &crate::updater::self_update::UpdateCheck, output: O
     }
 }
 
-/// V03-09 Phase 2b operator-facing apply path. Probes the release,
-/// short-circuits when the daemon is already on the latest version,
-/// and otherwise runs the full download → verify → extract →
-/// atomic-replace chain against the operator's current binary
-/// location (`std::env::current_exe()`).
-async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) -> Result<()> {
+/// Operator-facing apply path. Probes the release, short-circuits when the core
+/// is current, then runs the verified transactional bundle replacement in the
+/// directory containing `std::env::current_exe()`.
+async fn run_self_apply(
+    repo: &str,
+    channel: crate::config::ReleaseChannel,
+    configured_target: Option<&str>,
+    allow_unsigned: bool,
+    output: OutputFormat,
+) -> Result<()> {
     use crate::updater::self_update::{
-        apply_update, fetch_latest_release, host_target_triple, version_is_newer,
+        apply_update, fetch_release_for_channel, resolve_release_target, version_is_newer,
     };
+
+    let target = resolve_release_target(configured_target)?;
 
     // GOLD-SEC-10 / GR-043 — SIGNATURE REQUIRED BY DEFAULT for BOTH the staged
     // fast-path below AND the fresh-download path. Compute it once and fail
@@ -173,7 +213,34 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
         if let Some(pending) = crate::updater::self_update::read_pending(&stage_dir) {
             let current = crate::updater::self_update::current_version();
             let staged_present = std::path::Path::new(&pending.staged_archive).exists();
-            if staged_present && version_is_newer(&pending.to_version, current).unwrap_or(false) {
+            let staged_policy_matches = crate::updater::self_update::pending_matches_policy(
+                &pending, repo, channel, target,
+            );
+            let staged_newer = match version_is_newer(&pending.to_version, current) {
+                Ok(newer) => newer,
+                Err(error) => {
+                    warn!(
+                        version = %pending.to_version,
+                        error = %error,
+                        "discarding staged update with an invalid semantic version"
+                    );
+                    false
+                }
+            };
+            if !staged_present || !staged_newer || !staged_policy_matches {
+                if !staged_policy_matches {
+                    warn!(
+                        staged_channel = %pending.channel,
+                        selected_channel = %channel,
+                        staged_repo = %pending.source_repo,
+                        selected_repo = %repo,
+                        staged_target = %pending.target_triple,
+                        selected_target = %target,
+                        "discarding staged update that does not match current self-update policy"
+                    );
+                }
+                crate::updater::self_update::clear_staged(&stage_dir, &pending);
+            } else {
                 info!(
                     to = %pending.to_version,
                     "applying pre-staged + verified update (skipping download)"
@@ -184,6 +251,7 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
                     .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
                 match crate::updater::self_update::apply_from_staged(
                     &pending,
+                    &stage_dir,
                     install_dir,
                     require_signature,
                 ) {
@@ -192,12 +260,13 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
                         emit_self_update_applied(
                             &outcome,
                             repo,
+                            channel,
                             &pending.target_triple,
                             "manual_from_staged",
                         )
                         .await;
                         render_self_apply(&outcome, output);
-                        maybe_request_restart();
+                        maybe_request_restart()?;
                         return Ok(());
                     }
                     Err(e) => {
@@ -235,9 +304,9 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
         }
     }
 
-    let release = fetch_latest_release(repo).await?;
+    let release = fetch_release_for_channel(repo, channel).await?;
     let current = crate::updater::self_update::current_version();
-    let needs = version_is_newer(&release.tag_name, current).unwrap_or(false);
+    let needs = version_is_newer(&release.tag_name, current)?;
     if !needs {
         info!(
             current = %current,
@@ -254,17 +323,9 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
             release_url: release.html_url.clone(),
             published_at: release.published_at.clone(),
         };
-        render_self_check(&check, output);
+        render_self_check(&check, channel, output);
         return Ok(());
     }
-
-    let target = host_target_triple().ok_or_else(|| {
-        anyhow::anyhow!(
-            "host target triple is not in the cargo-dist matrix; \
-             cannot self-apply. Install manually from {}",
-            release.html_url
-        )
-    })?;
     let exe = std::env::current_exe().context("locate current executable")?;
     let install_dir = exe
         .parent()
@@ -274,13 +335,9 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
     // (and the no-pinned-key fail-closed bail) was already evaluated at the top
     // of this fn so it covers the staged fast-path too (GR-043); here we just
     // thread it into the fresh-download verify+apply.
-    // The on-disk binary + the archive member basename are both `neothd`
-    // (the Cargo package name; the release workflow packs `neothd` /
-    // `neothd.exe` into each archive). Pre-Session-28f this was the wrong
-    // string `"neoth"` (the product/CLI name, not the binary file), so the
-    // asset extractor + the atomic-replace target both pointed at a file
-    // that didn't exist. Aligned to reality.
-    let outcome = apply_update(&release, target, "neothd", install_dir, require_signature).await?;
+    // The archive is a version-locked bundle. The updater preserves a
+    // source-only footprint, but refreshes every installed release companion.
+    let outcome = apply_update(&release, target, "neoth", install_dir, require_signature).await?;
 
     // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — best-effort one-shot
     // writer (HF-01 pattern). Guard: if the daemon is live it owns the
@@ -288,12 +345,12 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
     // (the binary swap already succeeded; the audit frame is a nicety,
     // never load-bearing for the update itself). `trigger_source =
     // "manual"` — the operator ran `neoth update --self --apply`. The
-    // future unattended daemon path emits the same frame with "auto"
-    // via the daemon's own WAL writer handle (no one-shot guard).
-    emit_self_update_applied(&outcome, repo, target, "manual").await;
+    // The daemon's stage-only path emits its own staged-pending frame through
+    // the live WAL writer; binary replacement remains operator-initiated.
+    emit_self_update_applied(&outcome, repo, channel, target, "manual").await;
 
     render_self_apply(&outcome, output);
-    maybe_request_restart();
+    maybe_request_restart()?;
     Ok(())
 }
 
@@ -302,12 +359,12 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
 /// marker so a RUNNING daemon picks up the new binary on its next watcher
 /// tick (it drains + exits → the supervisor relaunches). No-op when no
 /// supervisor is configured (an exit would just leave the daemon down).
-fn maybe_request_restart() {
-    let enabled = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.supervisor.enabled)
-        .unwrap_or(false);
+fn maybe_request_restart() -> Result<()> {
+    let enabled = crate::config::FreedomConfig::load_from_default_path_or_default()?
+        .supervisor
+        .enabled;
     if !enabled {
-        return;
+        return Ok(());
     }
     let home = crate::config::FreedomConfig::default_neoth_home();
     match crate::daemon::supervisor::request_restart(&home) {
@@ -319,6 +376,7 @@ fn maybe_request_restart() {
             warn!(error = %e, "could not write restart.request marker (restart the daemon manually)");
         }
     }
+    Ok(())
 }
 
 fn now_unix_secs() -> u64 {
@@ -332,6 +390,7 @@ fn now_unix_secs() -> u64 {
 async fn emit_self_update_applied(
     outcome: &crate::updater::self_update::UpdateApplied,
     repo: &str,
+    channel: crate::config::ReleaseChannel,
     target: &str,
     trigger_source: &str,
 ) {
@@ -340,6 +399,7 @@ async fn emit_self_update_applied(
         "to_version": outcome.to_version,
         "backup_path": outcome.backup_path.display().to_string(),
         "repo": repo,
+        "channel": channel.as_str(),
         "target_triple": target,
         "archive_sha256": outcome.archive_sha256,
         "download_url": outcome.download_url,
@@ -347,7 +407,7 @@ async fn emit_self_update_applied(
         "trigger_source": trigger_source,
         "ts_unix": now_unix_secs(),
     }))
-    .unwrap_or_default();
+    .expect("self-update applied payload contains only infallible JSON values");
     if let Ok(Some(_pid)) =
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
     {
@@ -402,13 +462,15 @@ async fn emit_self_update_rejected(
     let payload = serde_json::to_vec(&serde_json::json!({
         "to_version": pending.to_version,
         "repo": repo,
+        "staged_repo": pending.source_repo,
+        "channel": pending.channel.as_str(),
         "target_triple": pending.target_triple,
         "archive_sha256": pending.archive_sha256,
         "reason": reason,
         "trigger_source": trigger_source,
         "ts_unix": now_unix_secs(),
     }))
-    .unwrap_or_default();
+    .expect("self-update rejected payload contains only infallible JSON values");
     if let Ok(Some(_pid)) =
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
     {
@@ -462,7 +524,7 @@ fn render_self_apply(applied: &crate::updater::self_update::UpdateApplied, outpu
             );
         }
         OutputFormat::Table => {
-            println!("# NEOTH daemon self-update applied");
+            println!("# NEOTH release-bundle self-update applied");
             println!("  from         : {}", applied.from_version);
             println!("  to           : {}", applied.to_version);
             println!("  backup       : {}", applied.backup_path.display());
@@ -597,5 +659,37 @@ mod tests {
         render_report(&report, OutputFormat::Table);
         render_report(&report, OutputFormat::Json);
         render_report(&report, OutputFormat::Jsonl);
+    }
+
+    #[test]
+    fn self_update_policy_loader_honors_channel_repo_and_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "auto_update:\n  channel: nightly\n  repo: example/fork\n  target_triple: x86_64-unknown-linux-musl\n",
+        )
+        .unwrap();
+        let policy = load_self_update_policy_from(&path).unwrap();
+        assert_eq!(policy.channel, crate::config::ReleaseChannel::Nightly);
+        assert_eq!(policy.repo, "example/fork");
+        assert_eq!(
+            policy.target_triple.as_deref(),
+            Some("x86_64-unknown-linux-musl")
+        );
+    }
+
+    #[test]
+    fn self_update_policy_loader_defaults_only_when_file_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.yaml");
+        assert_eq!(
+            load_self_update_policy_from(&missing).unwrap(),
+            crate::config::AutoUpdateConfig::default()
+        );
+
+        let invalid = dir.path().join("invalid.yaml");
+        std::fs::write(&invalid, "auto_update:\n  channel: beta\n").unwrap();
+        assert!(load_self_update_policy_from(&invalid).is_err());
     }
 }

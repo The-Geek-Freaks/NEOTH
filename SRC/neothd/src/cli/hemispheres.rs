@@ -15,6 +15,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::config::inference::{HemisphereRole, InferenceProvider};
+use crate::providers::Provider;
 
 #[derive(Args, Debug, Clone)]
 pub struct HemispheresArgs {
@@ -481,6 +482,75 @@ async fn run_set(
     endpoint: Option<String>,
     output: &OutputFormat,
 ) -> Result<()> {
+    let result = rebind_at(
+        &FreedomConfig::default_neoth_home(),
+        role_str,
+        provider_str,
+        model,
+        key,
+        endpoint,
+    )
+    .await?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "role": result.role.as_str(),
+                    "prior_provider": result.prior.provider.map(|p| p.as_str()),
+                    "new_provider": result.provider.as_str(),
+                    "model": result.new_slot.model,
+                    "mode": result.mode.as_str(),
+                    "audit_segment": result.audit_segment.display().to_string(),
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            let prior_p = result
+                .prior
+                .provider
+                .map(|p| p.as_str())
+                .unwrap_or("(default)");
+            println!(
+                "# Hemisphere rebind: {:?}  {prior_p} → {}",
+                result.role,
+                result.provider.as_str()
+            );
+            println!(
+                "  freedom.yaml::inference.{} updated atomically (mode now {})",
+                result.role.as_str(),
+                result.mode.as_str()
+            );
+            println!(
+                "  WAL 0x1F HEMISPHERE_REBOUND audit frame written to {}",
+                result.audit_segment.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) struct RebindResult {
+    pub role: HemisphereRole,
+    pub provider: InferenceProvider,
+    pub prior: crate::config::inference::HemisphereSlot,
+    pub new_slot: crate::config::inference::HemisphereSlot,
+    pub mode: crate::config::inference::TopologyMode,
+    pub audit_segment: std::path::PathBuf,
+}
+
+/// Shared hemisphere rebind used by CLI and slash dispatch. Config mutation is
+/// a locked reload-under-lock RMW; an optional API key is written only to the
+/// role-specific credentials field, never freedom.yaml.
+pub(crate) async fn rebind_at(
+    home: &std::path::Path,
+    role_str: &str,
+    provider_str: &str,
+    model: Option<String>,
+    key: Option<String>,
+    endpoint: Option<String>,
+) -> Result<RebindResult> {
     let role = parse_role(role_str)?;
     let provider = InferenceProvider::from_str(provider_str).ok_or_else(|| {
         anyhow::anyhow!(
@@ -489,51 +559,25 @@ async fn run_set(
              aws_bedrock, azure_openai"
         )
     })?;
-
-    let mut cfg = FreedomConfig::load_from_default_path().context("load freedom.yaml")?;
-    let prior = cfg.inference.slot_for(role).clone();
-
-    // Switch the topology to Custom so per-slot overrides take effect.
-    if matches!(
-        cfg.inference.mode,
-        crate::config::inference::TopologyMode::Single
-    ) {
-        cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
+    let path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    if key.is_some() {
+        crate::config::credentials::Credentials::load_or_default(&credentials_path)
+            .context("validate credentials.yaml before provider rebind")?;
     }
 
-    let new_slot = crate::config::inference::HemisphereSlot {
-        provider: Some(provider),
-        model,
-        key: key.map(crate::secret::SecretString::from),
-        endpoint,
-        region: None,
-        api_version: None,
-        // GOLD-WIRE-04: preserve any specialist voice already set on this slot
-        // — rebinding the provider/model must not silently drop the voice.
-        voice: cfg.inference.slot_for(role).voice,
-    };
-    match role {
-        HemisphereRole::Left => cfg.inference.left = new_slot.clone(),
-        HemisphereRole::Right => cfg.inference.right = new_slot.clone(),
-        HemisphereRole::Cerebellum => cfg.inference.cerebellum = new_slot.clone(),
-    }
-
-    let path = FreedomConfig::default_path();
+    let snapshot = FreedomConfig::load_from_path(&path).context("load freedom.yaml")?;
     let now_unix = crate::time::now_unix_i64();
-
-    // A3 / B-Rollback: snapshot the freedom.yaml BEFORE rewriting it,
-    // so `neoth rollback apply` can restore the prior hemisphere
-    // binding if this rebind turns out to be wrong. Off when operator
-    // removed `config_write` from `rollback.capture_kinds`.
-    let prior_yaml_bytes = std::fs::read(&path).unwrap_or_default();
-    let wal_dir = FreedomConfig::default_wal_dir();
+    let prior_yaml_bytes = std::fs::read(&path)
+        .with_context(|| format!("read pre-mutation config at {}", path.display()))?;
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
-    let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{}.wal", now_unix));
-    let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment.clone())
+    let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{now_unix}.wal"));
+    let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment)
         .context("spawn WAL writer for hemispheres rollback snapshot")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
         &snap_writer,
-        &cfg.rollback,
+        &snapshot.rollback,
         crate::wal::snapshot::MutationKind::ConfigWrite,
         path.display().to_string(),
         &prior_yaml_bytes,
@@ -545,46 +589,60 @@ async fn run_set(
     drop(snap_writer);
     let _ = snap_join.await;
 
-    cfg.save_public_to_default_path()
-        .with_context(|| format!("write {}", path.display()))?;
-
-    // SPEC §4: emit the rebind audit frame immediately so the operator
-    // sees provenance in the WAL even when the daemon is not running.
-    // Mirrors the `memory forget --audit` pattern from CDX-01.
-    let audit_segment = emit_rebind_audit(role, &prior, &new_slot, now_unix).await?;
-
-    match output {
-        OutputFormat::Json | OutputFormat::Jsonl => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "role": role.as_str(),
-                    "prior_provider": prior.provider.map(|p| p.as_str()),
-                    "new_provider": provider.as_str(),
-                    "model": new_slot.model,
-                    "mode": cfg.inference.mode.as_str(),
-                    "audit_segment": audit_segment.display().to_string(),
-                }))?
-            );
-        }
-        OutputFormat::Table => {
-            let prior_p = prior.provider.map(|p| p.as_str()).unwrap_or("(default)");
-            println!(
-                "# Hemisphere rebind: {role:?}  {prior_p} → {}",
-                provider.as_str()
-            );
-            println!(
-                "  freedom.yaml::inference.{} updated atomically (mode now {})",
-                role.as_str(),
-                cfg.inference.mode.as_str()
-            );
-            println!(
-                "  WAL 0x1F HEMISPHERE_REBOUND audit frame written to {}",
-                audit_segment.display()
-            );
-        }
+    // Store a supplied key first. If the later config RMW fails, this leaves
+    // only an inert credential behind; writing config first could activate a
+    // provider without its new key and expose a partial routing state on the
+    // next process start.
+    if let Some(key) = key {
+        let key = crate::secret::SecretString::from(key);
+        crate::config::credentials::Credentials::update_at(&credentials_path, |credentials| {
+            match role {
+                HemisphereRole::Left => credentials.inference_left_key = Some(key.clone()),
+                HemisphereRole::Right => credentials.inference_right_key = Some(key.clone()),
+                HemisphereRole::Cerebellum => {
+                    credentials.inference_cerebellum_key = Some(key.clone())
+                }
+            }
+            Ok(())
+        })
+        .context("write role-specific provider key to credentials.yaml")?;
     }
-    Ok(())
+
+    let (prior, new_slot, mode) = FreedomConfig::update_at(&path, |cfg| {
+        let prior = cfg.inference.slot_for(role).clone();
+        if matches!(
+            cfg.inference.mode,
+            crate::config::inference::TopologyMode::Single
+        ) {
+            cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
+        }
+        let new_slot = crate::config::inference::HemisphereSlot {
+            provider: Some(provider),
+            model: model.clone(),
+            key: None,
+            endpoint: endpoint.clone(),
+            region: None,
+            api_version: None,
+            voice: cfg.inference.slot_for(role).voice,
+        };
+        match role {
+            HemisphereRole::Left => cfg.inference.left = new_slot.clone(),
+            HemisphereRole::Right => cfg.inference.right = new_slot.clone(),
+            HemisphereRole::Cerebellum => cfg.inference.cerebellum = new_slot.clone(),
+        }
+        Ok((prior, new_slot, cfg.inference.mode))
+    })
+    .with_context(|| format!("update {}", path.display()))?;
+
+    let audit_segment = emit_rebind_audit_to(&wal_dir, role, &prior, &new_slot, now_unix).await?;
+    Ok(RebindResult {
+        role,
+        provider,
+        prior,
+        new_slot,
+        mode,
+        audit_segment,
+    })
 }
 
 /// Open a one-shot WAL segment under `~/.neoth/wal/` and append the
@@ -663,6 +721,18 @@ async fn run_test(
     let provider = crate::providers::from_config_for_role(cfg, role)
         .await
         .with_context(|| format!("build provider for role {}", role.as_str()))?;
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+            cfg.autonomy_policy(),
+        )?,
+        cfg.inference
+            .slot_for(role)
+            .model
+            .clone()
+            .or_else(|| cfg.provider_model.clone()),
+        "hemispheres.test",
+    );
     let construct_elapsed_ms = started.elapsed().as_millis();
 
     // Live-call branch (D-1 Session 13). Gated by `question.is_some()` so
@@ -683,7 +753,7 @@ async fn run_test(
         if dry_run {
             Some(LiveResult::dry_run(q))
         } else {
-            Some(run_test_live_call(provider.as_ref(), q).await?)
+            Some(run_test_live_call(&provider, q).await?)
         }
     } else {
         None
@@ -970,6 +1040,7 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
                 text: format!("echo: {}", req.prompt),
+                identity: Default::default(),
                 model: "echo-1".to_string(),
                 latency: std::time::Duration::from_millis(1),
                 input_tokens: Some(req.prompt.split_whitespace().count() as u32),

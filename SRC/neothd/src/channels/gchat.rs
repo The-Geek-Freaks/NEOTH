@@ -37,7 +37,8 @@ use super::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
 use crate::secret::SecretString;
 
 /// Combined scope for one token: pull/ack the subscription + send as the app.
-const SCOPES: &str = "https://www.googleapis.com/auth/pubsub https://www.googleapis.com/auth/chat.bot";
+const SCOPES: &str =
+    "https://www.googleapis.com/auth/pubsub https://www.googleapis.com/auth/chat.bot";
 /// Refresh the cached token when less than this much lifetime remains.
 const TOKEN_SLACK: Duration = Duration::from_secs(60);
 /// Messages per pull request.
@@ -269,7 +270,9 @@ impl GChatChannel {
                 "gchat message send failed (HTTP {status})"
             )));
         }
-        let val: serde_json::Value = resp.json().await.unwrap_or_default();
+        let val: serde_json::Value = resp.json().await.map_err(|error| {
+            ChannelError::Transport(format!("gchat message response parse: {error}"))
+        })?;
         let name = val
             .get("name")
             .and_then(|v| v.as_str())
@@ -414,7 +417,10 @@ mod tests {
         let ch = GChatChannel::new(&key, "projects/p/subscriptions/s").unwrap();
         let err = ch.bearer().await.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("not a valid RSA PEM"), "clear diagnosis: {msg}");
+        assert!(
+            msg.contains("not a valid RSA PEM"),
+            "clear diagnosis: {msg}"
+        );
         assert!(!msg.contains("not-a-pem"), "key material never echoed");
     }
 

@@ -33,8 +33,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::wal::events::{
-    EVENT_TYPE_CONTEXT_COMPACTION_DONE, EVENT_TYPE_MCP_TOOL_CALLED,
-    EVENT_TYPE_MODE_CHECKPOINT, EVENT_TYPE_PROVIDER_REQUEST,
+    EVENT_TYPE_CONTEXT_COMPACTION_DONE, EVENT_TYPE_MCP_TOOL_CALLED, EVENT_TYPE_MODE_CHECKPOINT,
+    EVENT_TYPE_PROVIDER_REQUEST,
 };
 
 /// Payload format for the `MODE_CHECKPOINT` WAL frame. The writer
@@ -66,8 +66,15 @@ pub struct ModeCheckpoint {
     pub council_mode: String,
     /// MCP servers explicitly scoped into this session — operator may
     /// have toggled them via `/mcp` slash commands during the prior
-    /// turns. Empty Vec means "default scope" (smart loader decides).
+    /// turns. Empty Vec is an exact empty scope when
+    /// `mcp_scope_recorded=true`.
     pub scoped_mcp_servers: Vec<String>,
+    /// True when `scoped_mcp_servers` is an exact, complete snapshot. Older
+    /// checkpoints did not carry this discriminator; keeping false omitted
+    /// during serialization preserves their original checkpoint hash, while
+    /// resume rejects them because exact tool re-scoping is impossible.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mcp_scope_recorded: bool,
     /// Pipeline phase the checkpoint represents (e.g.
     /// "council:awaiting-synthesis", "code:tests-failing",
     /// "decompose:step-3-of-7"). Free-form string the resume code
@@ -75,6 +82,10 @@ pub struct ModeCheckpoint {
     pub phase: String,
     /// Unix-seconds timestamp at emit time.
     pub ts_unix: i64,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl ModeCheckpoint {
@@ -265,11 +276,27 @@ mod tests {
             provider_target: "claude_cli".into(),
             council_mode: "off".into(),
             scoped_mcp_servers: vec!["paperless".into(), "fs".into()],
+            mcp_scope_recorded: true,
             phase: "chat:awaiting-user".into(),
             ts_unix: 1_700_000_000,
         };
         cp.stamp_hash();
         cp
+    }
+
+    #[test]
+    fn legacy_checkpoint_hash_stays_stable_without_scope_discriminator() {
+        let mut legacy = sample_checkpoint();
+        legacy.mcp_scope_recorded = false;
+        legacy.stamp_hash();
+        let encoded = serde_json::to_string(&legacy).unwrap();
+        assert!(
+            !encoded.contains("mcp_scope_recorded"),
+            "false discriminator must stay absent so historical hashes still verify"
+        );
+        let decoded: ModeCheckpoint = serde_json::from_str(&encoded).unwrap();
+        assert!(!decoded.mcp_scope_recorded);
+        assert_eq!(decoded.compute_hash(), decoded.checkpoint_hash);
     }
 
     fn build_in_memory_db() -> rusqlite::Connection {

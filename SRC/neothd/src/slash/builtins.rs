@@ -156,7 +156,7 @@ pub fn built_in_commands() -> Vec<SlashCommand> {
         ),
         action_cmd(
             "connect",
-            "Connect a channel adapter (whatsapp / telegram / slack / discord / keet).",
+            "Connect a channel adapter (whatsapp / telegram / slack / discord).",
             SlashAction::ConnectChannel,
             "Usage: /connect <channel>\n\
              Walks credential entry + token verification before the \
@@ -296,7 +296,8 @@ pub fn built_in_commands() -> Vec<SlashCommand> {
                  - `prompt:` the user-turn template, referencing each parameter as \
                  `{{key}}` (double braces). REQUIRED, non-empty.\n\
                  - optional `instructions:` a system-prompt template (also {{key}}-templated).\n\
-                 - optional `settings:` with `model:` and/or `temperature:`.\n\
+                 - optional `settings:` with `model:`, `temperature:`, `top_p:`, \
+                 and/or `sampling_seed:`.\n\
                  Make every {{token}} in prompt/instructions a declared parameter. End \
                  with a one-line comment showing an example invocation: \
                  `# neoth recipe run <name>.yaml --param key=value`."

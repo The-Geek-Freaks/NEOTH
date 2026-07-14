@@ -1,6 +1,6 @@
 # Channels Codemap — Adapters
 
-**Last Updated:** 2026-05-15
+**Last Updated:** 2026-07-14
 **Entry Points:** `SRC/neothd/src/channels/mod.rs`
 
 ## Architecture
@@ -41,13 +41,14 @@ MediaPayload { kind: MediaKind, mime: String, filename: Option<String>, data: Ve
 TelegramChannel::new(token: SecretString, allowed_user_id: Option<u64>)
 ```
 
-`allowed_user_id: None` = open to anyone (not for production). Single-user allowlist only
-in v0.1.x; multi-user allowlist is a TODO.
+`allowed_user_id: None` = open to anyone (not for production). The v1 contract is
+single-operator: `Some(id)` pins one numeric Telegram identity, including in groups. A
+multi-user bot is outside that trust model rather than an unwired v1 promise.
 
 ### run() flow
 
 1. `bot.get_me()` — verify token before entering the poll loop
-2. `teloxide::repl` long-polling loop
+2. `teloxide::Dispatcher` long-polling loop with message + edited-message branches
 3. Per message: allowlist check FIRST → `download_attachment_if_any` → assemble
    `InboundMessage` → call handler → send reply (MarkdownV2 with plain-text fallback)
 
@@ -60,24 +61,34 @@ in v0.1.x; multi-user allowlist is a TODO.
 | `photo` | `Image` | `image/jpeg` (Telegram always converts) |
 | `voice` | `Audio` | from API or `audio/ogg` |
 | `audio` | `Audio` | from API or `audio/mpeg` |
+| `video` | `Video` | from API or `video/mp4` |
+| `document` | `Document` | from API or `application/octet-stream` |
+| `sticker` | `Sticker` | `image/webp`, `application/x-tgsticker`, or `video/webm` |
 
 Pre-download size gate: reject before download if API reports size > 16 MiB.
 Post-download gate: reject if downloaded bytes > 16 MiB (covers API that omits size).
 
-Documents deferred — need mime/extension routing before media pipeline ingestion.
-
 ### send_text
 
-MarkdownV2 parse mode; falls back to plain on parse error (teloxide returns an error for
-malformed Markdown without sending).
+MarkdownV2 parse mode; falls back to plain only on Telegram's explicit
+`CantParseEntities` rejection. Short, explicit flood-control responses are retried once;
+ambiguous network failures are never blindly retried because that could duplicate a send.
 
 ### send_media
 
-`NotSupported { feature: "telegram.send_media" }` — not wired in v0.1.x.
+Native Bot API mapping is live for image, video, audio, document, and sticker payloads.
+Uploads are preflighted for non-empty bytes, kind-specific MIME allowlists, safe filenames,
+and a 16 MiB project ceiling (10 MiB photos, 512 KiB stickers). Captions up to 1024
+characters ride with supported media; longer captions and all sticker captions are split
+through the Telegram formatter and sent after the attachment. Post-upload caption failures
+are logged but do not turn the successful attachment into a retryable error. Telegram
+`RetryAfter <= 5s` is honored once; longer waits surface as `ChannelError::RateLimited`.
+Transport errors redact the bot token before entering logs.
 
 ## channels/whatsapp.rs
 
-**Status:** Credential surface only. `run()` bails immediately.
+**Status:** Live outbound through the Meta Graph API; live inbound through the
+daemon-owned shared webhook listener.
 
 ### Constructor
 
@@ -89,22 +100,26 @@ WhatsAppChannel::new(
 )
 ```
 
-### run() error
+### Live paths
 
-```
-"whatsapp channel: webhook receiver deferred to Phase 2 — needs an HTTPS endpoint
- operator-side. Credentials accepted + serialised so the next release can wire the
- receiver without re-pairing. Use Telegram or CLI for v0.1.x."
-```
-
-### Phase 2 plan
-
-hyper HTTPS webhook receiver; `POST /webhook` verifies Meta's `hub.verify_token`;
-`/messages` Graph API for `send_text`; TLS via rustls or fronted by Caddy/nginx.
+- `send_text` calls the versioned `/messages` Graph API and returns the Meta
+  `wamid`; proactive sends delegate to the same implementation.
+- `Channel::run()` is intentionally not the receive entry point because Meta
+  pushes webhooks. `cli/serve_tasks.rs::spawn_channel_adapters` starts
+  `channels/webhook_listener.rs` when the access token, phone id, verify token,
+  app secret, and provider are available.
+- The listener binds to `127.0.0.1:<whatsapp_webhook_port>` (default `8443`).
+  The operator supplies the public HTTPS reverse proxy or tunnel.
+- GET verification checks the configured verify token. POST delivery verifies
+  the Meta app-secret signature, deduplicates `wamid` redeliveries, decodes the
+  payload, dispatches the pipeline, and routes governed replies through the
+  Graph API. In-flight webhook work is tracked and drained during shutdown.
+- With only send credentials, `neoth serve` reports `OUTBOUND-ONLY` instead of
+  pretending the inbound listener started.
 
 ## channels/slack.rs
 
-**Status:** Credential surface only. `run()` bails immediately.
+**Status:** Fully operational through Slack Socket Mode plus Web API sends.
 
 ### Constructor
 
@@ -115,18 +130,31 @@ SlackChannel::new(
 )
 ```
 
-### run() error
+### Live paths
 
-```
-"slack channel: socket-mode WebSocket client deferred to Phase 2. Credentials are
- accepted + serialised so a future release wires the receiver without re-creating the
- Slack app. Use Telegram or CLI for v0.1.x."
-```
+1. `run()` calls `apps.connections.open` with the `xapp-` token.
+2. `slack_socket::run_socket_loop` connects to the returned WSS URL, ACKs every
+   envelope, decodes `events_api` messages, and dispatches them to the pipeline.
+3. Replies and proactive messages use `chat.postMessage` with the `xoxb-` token.
+4. Streaming previews use `chat.update`; Slack reports message-edit support to
+   `LiveDelivery` so API failures surface instead of silently degrading.
 
-### Phase 2 plan
+## channels/discord.rs
 
-tokio-tungstenite socket-mode WebSocket; `apps.connections.open` for the WSS URL;
-events_api JSON envelope decode; `chat.postMessage` / `chat.update` for streaming replies.
+**Status:** Live Gateway receive, REST send, and read-only credential probe.
+
+### Live paths
+
+- `run()` owns the authenticated Gateway WebSocket loop: heartbeat, resume
+  sequence, reconnect backoff, intents, `MESSAGE_CREATE` decode, pipeline
+  dispatch, and REST reply.
+- `send_text` posts to Discord API v10 and chunks content at Discord's
+  2,000-character limit. Proactive sends delegate to the same path.
+- `validate_bot` performs `GET /users/@me` without sending a message. This is
+  the path behind `neoth channel test discord`; it returns the immutable bot
+  snowflake and display identity and fails closed on auth/protocol errors.
+- Redirects are disabled for authenticated REST calls, responses are bounded,
+  and rate-limit responses surface as `ChannelError::RateLimited`.
 
 ## ChannelError Variants
 
@@ -140,5 +168,5 @@ events_api JSON envelope decode; `chat.postMessage` / `chat.update` for streamin
 
 - `cli/serve.rs::handle_media_attachment` — calls `route_to_first_match` for channel-attached media
 - `channels/rate_limit.rs` — per-channel rate limiting (shared across all adapters)
-- `channels/keet.rs` — Keet.io scaffold (separate from WhatsApp/Slack — P2P messenger)
-- `config/credentials.rs` — credential field names referenced by all three adapters
+- Keet is intentionally absent: upstream exposes no supported public chat API; the removed guessed adapter is not part of the build.
+- `config/credentials.rs` — credential field names referenced by the adapters

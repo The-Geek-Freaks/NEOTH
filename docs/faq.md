@@ -13,7 +13,7 @@ It combines:
 - coding canvas and Kanban
 - Obsidian mirror
 - n8n/cron automation
-- Paperless/email/calendar workflows
+- Paperless/CalDAV workflows plus optional source-build IMAP triage
 - private mesh and cluster pairing
 - auditable policy and permission gates
 
@@ -26,7 +26,7 @@ Both normal users and pros.
 | Normal user | `neoth gui`, guided wizard, plain-language settings, no YAML happy path. |
 | Developer | `neoth code`, canvas, Kanban, repo memory, review promotion, tests. |
 | Privacy hardliner | Local profile extraction, redaction, audit, no silent cloud fallback. |
-| Homelab operator | Tailscale/Hysteria/Keet mesh, cluster status, local models, n8n, Paperless. |
+| Homelab operator | Tailscale/Hysteria/peeroxide mesh, cluster status, local models, n8n, Paperless. |
 | Automation builder | Cron, n8n localhost API, plugins, skills, capability gates. |
 
 ## Does NEOTH send my data to the cloud?
@@ -59,10 +59,13 @@ Yes, if you configure a capable local model for the tasks you expect.
 Cloud providers are useful for high-end reasoning and convenience. Local Qwen/Ouro paths are useful for profile learning, private recall, and local reasoning when your hardware can handle it.
 
 ```bash
-neoth model list
-neoth model fetch qwen
-neoth model fetch ouro
+neoth init --force --provider local_qwen
+neoth ouro list
+neoth ouro fetch --checkpoint ByteDance/Ouro-1.4B-Thinking
 ```
+
+CLIP and Whisper use `neoth models pull`; Qwen is selected through onboarding.
+See [local-models.md](local-models.md) for the distinct cache workflows.
 
 ## Does NEOTH work offline?
 
@@ -77,7 +80,7 @@ Partially to fully, depending on your model setup.
 | CLIP/Whisper local media processing | Works offline after model download. |
 | Cloud provider calls | Require network. |
 | External channels | Require network. |
-| Tailscale/Hysteria/Keet mesh | Depends on network path. |
+| Tailscale/Hysteria/peeroxide NEOTH mesh | Depends on network path. |
 
 ## How do I delete or correct memory?
 
@@ -120,7 +123,7 @@ NEOTH has a sensitive local runtime: memory, WAL, provider routing, plugins, cha
 Rust is a good fit because it gives:
 
 - predictable performance
-- single-binary deployment
+- a self-contained core binary, with separately shipped GUI/migration/relay tools
 - strong type boundaries
 - no garbage collector pauses in the WAL path
 - safer plugin and permission plumbing
@@ -154,12 +157,16 @@ See the comparison table in the root [README](../README.md#comparison).
 
 The WAL is NEOTH's write-ahead event log.
 
-It is the durable source of truth for memory and sensitive runtime events: profile changes, provider calls, plugin actions, channel sends, automation, recovery, and verification.
+It is the durable source of truth for recorded memory and runtime events,
+including governed profile changes, provider calls, plugin actions, channel
+sends, automation, recovery, and verification. Audit coverage is
+surface-specific; not every optional network helper currently emits a typed WAL
+event.
 
 Useful commands:
 
 ```bash
-neoth wal verify
+neoth verify
 neoth wal show --last 50
 ```
 
@@ -208,7 +215,7 @@ Channel integrations can identify different humans and isolate their conversatio
 neoth doctor
 neoth status
 neoth privacy audit
-neoth wal verify
+neoth verify
 ```
 
 Then check [troubleshooting.md](troubleshooting.md).

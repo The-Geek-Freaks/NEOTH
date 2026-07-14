@@ -23,8 +23,10 @@
 //! ## Storage
 //!
 //! `~/.neoth/api_tokens.json` — 0600 (Unix) / DACL (Windows).
-//! JSON array of `ApiTokenRecord`. Written atomically via temp-file rename.
-//! The token store is a single operator-local file; no DB involved.
+//! JSON array of `ApiTokenRecord`. Mutations take a process mutex plus a
+//! cross-process sibling-file lock before re-reading and atomically replacing
+//! the store. The rename prevents torn reads; the lock prevents lost updates
+//! between the daemon and concurrent `neoth keys` processes.
 //!
 //! ## Hashing
 //!
@@ -53,6 +55,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use base64::Engine;
+
+static STORE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
@@ -154,6 +158,10 @@ pub fn store_path(home: &Path) -> PathBuf {
     home.join("api_tokens.json")
 }
 
+fn store_lock_path(home: &Path) -> PathBuf {
+    home.join("api_tokens.lock")
+}
+
 // ── load / save ──────────────────────────────────────────────────────────────
 
 /// Load the token store. Returns an empty vec if the file does not exist yet.
@@ -191,13 +199,42 @@ pub fn save_store(home: &Path, records: &[ApiTokenRecord]) -> Result<()> {
     Ok(())
 }
 
+/// Execute one read-modify-write transaction under both the process-local and
+/// cross-process store lock. The callback returns `(value, changed)`; unchanged
+/// reads avoid a needless secure-file rewrite.
+fn with_locked_store<T>(
+    home: &Path,
+    mutate: impl FnOnce(&mut Vec<ApiTokenRecord>) -> Result<(T, bool)>,
+) -> Result<T> {
+    let _process_guard = STORE_MUTEX
+        .lock()
+        .map_err(|_| anyhow::anyhow!("api token store mutex poisoned"))?;
+    let _file_guard =
+        crate::util::locked_file::lock_file_blocking(&store_lock_path(home), "api token store")?;
+    // Re-read only after both locks are held. A snapshot loaded before this
+    // point could resurrect a concurrently revoked token on save.
+    let mut records = load_store(home)?;
+    let (value, changed) = mutate(&mut records)?;
+    if changed {
+        save_store(home, &records)?;
+    }
+    Ok(value)
+}
+
+/// Public transaction primitive for CLI create/revoke operations.
+pub fn mutate_store<T>(
+    home: &Path,
+    mutate: impl FnOnce(&mut Vec<ApiTokenRecord>) -> Result<T>,
+) -> Result<T> {
+    with_locked_store(home, |records| mutate(records).map(|value| (value, true)))
+}
+
 // ── create ───────────────────────────────────────────────────────────────────
 
 /// Expand scopes so that write-access implies read-access.
 fn expand_scopes(scopes: &[String]) -> Vec<String> {
     let mut out: Vec<String> = scopes.to_vec();
-    if out.iter().any(|s| s == SCOPE_MEMORY_WRITE) && !out.iter().any(|s| s == SCOPE_RECALL_READ)
-    {
+    if out.iter().any(|s| s == SCOPE_MEMORY_WRITE) && !out.iter().any(|s| s == SCOPE_RECALL_READ) {
         out.push(SCOPE_RECALL_READ.to_string());
     }
     out.sort();
@@ -224,13 +261,8 @@ fn hash_token(plaintext: &str, salt: &[u8]) -> [u8; DK_LEN] {
     use hmac::Hmac;
     use sha2::Sha256;
     let mut dk = [0u8; DK_LEN];
-    pbkdf2::pbkdf2::<Hmac<Sha256>>(
-        plaintext.as_bytes(),
-        salt,
-        PBKDF2_ITERATIONS,
-        &mut dk,
-    )
-    .expect("PBKDF2 infallible for fixed-size output");
+    pbkdf2::pbkdf2::<Hmac<Sha256>>(plaintext.as_bytes(), salt, PBKDF2_ITERATIONS, &mut dk)
+        .expect("PBKDF2 infallible for fixed-size output");
     dk
 }
 
@@ -339,6 +371,22 @@ pub fn verify_token_for_scope(
     }
 }
 
+/// Verify a scoped token and durably persist `last_used` without racing
+/// create/revoke operations. All PBKDF2 work and the conditional save happen
+/// inside the same transaction, so an older auth snapshot can never overwrite
+/// a newer revocation.
+pub fn verify_token_for_scope_persisted(
+    home: &Path,
+    candidate: &str,
+    required_scope: &str,
+) -> Result<VerifyResult> {
+    with_locked_store(home, |records| {
+        let result = verify_token_for_scope(records, candidate, required_scope);
+        let changed = matches!(result, VerifyResult::Ok { .. });
+        Ok((result, changed))
+    })
+}
+
 // ── revoke ────────────────────────────────────────────────────────────────────
 
 /// Set `revoked_at` on the record with `id`. Returns `true` if found.
@@ -392,7 +440,11 @@ mod tests {
         let (record2, _) = make_token(&[SCOPE_RECALL_READ]);
         let mut records = vec![record2];
         // Use plaintext from a different token → no match.
-        let result = verify_token_for_scope(&mut records, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", SCOPE_RECALL_READ);
+        let result = verify_token_for_scope(
+            &mut records,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            SCOPE_RECALL_READ,
+        );
         assert_eq!(result, VerifyResult::Denied);
     }
 
@@ -490,6 +542,48 @@ mod tests {
         let dir = tempdir().unwrap();
         let loaded = load_store(dir.path()).unwrap();
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn locked_auth_write_cannot_resurrect_a_concurrent_revocation() {
+        let dir = tempdir().unwrap();
+        let home = std::sync::Arc::new(dir.path().to_path_buf());
+        let (record, plaintext) = make_token(&[SCOPE_RECALL_READ]);
+        let token_id = record.id.clone();
+        save_store(&home, &[record]).unwrap();
+
+        let start = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let auth_home = std::sync::Arc::clone(&home);
+        let auth_start = std::sync::Arc::clone(&start);
+        let auth = std::thread::spawn(move || {
+            auth_start.wait();
+            verify_token_for_scope_persisted(&auth_home, &plaintext, SCOPE_RECALL_READ).unwrap()
+        });
+
+        let revoke_home = std::sync::Arc::clone(&home);
+        let revoke_start = std::sync::Arc::clone(&start);
+        let revoke = std::thread::spawn(move || {
+            revoke_start.wait();
+            mutate_store(&revoke_home, |records| {
+                assert!(revoke_token(records, &token_id));
+                Ok(())
+            })
+            .unwrap();
+        });
+
+        start.wait();
+        let auth_result = auth.join().unwrap();
+        revoke.join().unwrap();
+
+        assert!(matches!(
+            auth_result,
+            VerifyResult::Ok { .. } | VerifyResult::Denied
+        ));
+        let persisted = load_store(&home).unwrap();
+        assert!(
+            persisted[0].revoked_at.is_some(),
+            "a last_used write must never overwrite a completed revocation"
+        );
     }
 
     #[test]

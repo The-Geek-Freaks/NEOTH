@@ -1,6 +1,7 @@
 //! Operational, plugin, updater, supervisor, and profile configuration.
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PluginsConfig {
@@ -24,9 +25,12 @@ pub struct WasmPluginsConfig {
     pub enabled: bool,
     /// D-102 (Session 21, 2026-05-23, 6/6 agent panel) — per-plugin
     /// operator activation. Keyed by manifest id. Newly discovered
-    /// ids default to [`PluginActivation::Pending`] and are NOT
+    /// ids default to `PluginActivation::Pending` and are NOT
     /// instantiated until the operator runs `neoth plugin enable
     /// <id>` (or accepts them via the first-run wizard multiselect).
+    /// Active records bind the approved permission, canonical manifest
+    /// digest, and WASM digest; legacy scalar `active` entries deserialize
+    /// safely but require explicit re-consent before they may run.
     ///
     /// Why default-inactive: wasmtime sandbox is strong but the
     /// hostcall surface (channel send, fs, WAL) is the attack
@@ -36,7 +40,7 @@ pub struct WasmPluginsConfig {
     /// conservative defaults n8n + Obsidian already use.
     #[serde(default)]
     pub activations:
-        std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivation>,
+        std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivationRecord>,
     /// SC-03 — operator-pinned `plugin.wasm` SHA-256 hashes, keyed by
     /// manifest id (lowercase hex). Before instantiating a plugin the
     /// daemon recomputes the hash and refuses to run it on a mismatch
@@ -82,7 +86,7 @@ fn default_wasm_plugins_enabled() -> bool {
     //
     // NOTE: D-102 (Session 21) — `enabled: true` only governs whether
     // the HOST is live. Each individual plugin still requires the
-    // operator to flip its `activations[id]` to `Active` before it
+    // operator to persist an approval-bound Active record before it
     // runs. Default-on host + default-inactive plugins is the
     // intentional combination: zero-friction for operators who never
     // install any plugins; explicit consent for those who do.
@@ -146,9 +150,9 @@ impl Default for DoctorConfig {
 /// dep reason for living in the config crate.
 ///
 /// Default mirrors `daemon::updater_cron::DEFAULT_UPDATER_INTERVAL_SECS`
-/// (6h tick). All three updater lanes (neoth_self, cli_version,
-/// skill_plugin) share the interval today — per-lane override lands
-/// when an operator asks for it.
+/// (6h tick). `enabled` is the global background-probe switch. CLI and skill
+/// probes use `interval_secs`; the neoth-self probe uses the more specific
+/// `auto_update.check_interval_secs` so checks and staging stay aligned.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct UpdaterConfig {
     #[serde(default = "default_updater_enabled")]
@@ -396,12 +400,12 @@ pub struct SelfEditConfig {
     #[serde(default = "default_self_edit_max_lines")]
     pub max_lines_changed: usize,
     /// Require the isolated worktree `cargo check` to pass before applying to
-    /// the live tree. Default `true`. Setting `false` skips Layer 5 —
-    /// **development/test use only**.
+    /// the live tree. Default `true`. Setting `false` skips Layer 5 for dry-run
+    /// previews only; every live apply fails closed without a green test.
     #[serde(default = "default_self_edit_require_green")]
     pub require_green_tests: bool,
     /// Minimum seconds between two successive live applies (anti-loop guard).
-    /// The daemon CLI is the single enforcement point; the GUI cannot bypass.
+    /// Enforced inside the central self-source gate for every caller.
     /// Default 300 (5 minutes).
     #[serde(default = "default_self_edit_apply_cooldown")]
     pub apply_cooldown_secs: u64,
@@ -471,27 +475,29 @@ impl Default for TaskEngineConfig {
     }
 }
 
-/// V03-09 Phase 2a — operator-facing self-update knobs.
+/// Operator-facing self-update policy.
 ///
 /// Field semantics:
 ///   - `enabled` — master switch. Default `false` so a stock
 ///     contributor build (or a daemon running behind a
 ///     restricted-egress firewall) never reaches out to GitHub
 ///     for releases. Operators flip to `true` during onboarding.
-///   - `auto_apply` — Phase 2b consumes this. `true` = download
-///     + verify SHA-256 + extract + atomic-replace + emit
-///     "restart required" hint. `false` (default) = check-only,
-///     surface the new version + URL in `neoth doctor` and let
-///     the operator install manually.
-///   - `channel` — release channel. Today only `"stable"` is
-///     wired; `"rc"` + `"nightly"` are reserved for future
-///     cargo-dist matrix variants.
+///   - `auto_apply` — `true` allows an Elevated/Full daemon to download,
+///     authenticate, and stage a release. The daemon never swaps the running
+///     binary; the operator completes that step with
+///     `neoth update --self --apply`. `false` (default) is check-only.
+///   - `channel` — release channel. `stable` selects final releases only;
+///     `rc` also accepts release candidates; `nightly` accepts final, RC, and
+///     nightly-tagged SemVer releases. Alpha/beta tags belong to no ring.
+///     The selected channel is shared by checks, unattended staging, and
+///     operator-initiated apply.
 ///   - `check_interval_secs` — how often the background check
 ///     fires. Defaults to 24h (86400s). `0` disables the
 ///     periodic task even when `enabled: true` (operator runs
 ///     `neoth update --self` on demand).
-///   - `repo` — owner/repo slug. Default
-///     `"The-Geek-Freaks/NEOTH"`. Forks override.
+///   - `repo` — validated GitHub owner/repo slug. Default
+///     `"The-Geek-Freaks/NEOTH"`. Forks override. The exact source is stored
+///     with staged artifacts so a later repo switch cannot reuse old bytes.
 ///   - `target_triple` — operator override for the cargo-dist
 ///     target triple used during asset lookup. `None` (default)
 ///     means the daemon detects via
@@ -506,17 +512,66 @@ pub struct AutoUpdateConfig {
     #[serde(default)]
     pub auto_apply: bool,
     #[serde(default = "default_update_channel")]
-    pub channel: String,
+    pub channel: ReleaseChannel,
     #[serde(default = "default_check_interval_secs")]
     pub check_interval_secs: u64,
-    #[serde(default = "default_update_repo")]
+    #[serde(
+        default = "default_update_repo",
+        deserialize_with = "deserialize_update_repo"
+    )]
     pub repo: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_update_target_triple")]
     pub target_triple: Option<String>,
 }
 
-fn default_update_channel() -> String {
-    "stable".to_string()
+/// Ordered self-update release rings. Each wider ring includes the narrower
+/// ones so an RC/nightly operator still receives a final release when it wins
+/// SemVer precedence.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseChannel {
+    #[default]
+    Stable,
+    Rc,
+    Nightly,
+}
+
+impl ReleaseChannel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Rc => "rc",
+            Self::Nightly => "nightly",
+        }
+    }
+}
+
+impl std::fmt::Display for ReleaseChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+fn default_update_channel() -> ReleaseChannel {
+    ReleaseChannel::Stable
+}
+
+fn deserialize_update_target_triple<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let target = raw.trim();
+    if !crate::updater::self_update::release_target_is_supported(target) {
+        return Err(D::Error::custom(format!(
+            "unsupported auto_update.target_triple {target:?}; expected one of {}",
+            crate::updater::self_update::SUPPORTED_RELEASE_TARGETS.join(", ")
+        )));
+    }
+    Ok(Some(target.to_string()))
 }
 
 fn default_check_interval_secs() -> u64 {
@@ -525,6 +580,20 @@ fn default_check_interval_secs() -> u64 {
 
 fn default_update_repo() -> String {
     "The-Geek-Freaks/NEOTH".to_string()
+}
+
+fn deserialize_update_repo<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    let repo = raw.trim();
+    if !crate::updater::self_update::owner_repo_is_valid(repo) {
+        return Err(D::Error::custom(format!(
+            "invalid auto_update.repo {repo:?}; expected a GitHub owner/repo slug"
+        )));
+    }
+    Ok(repo.to_string())
 }
 
 impl Default for AutoUpdateConfig {

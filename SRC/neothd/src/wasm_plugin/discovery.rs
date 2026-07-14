@@ -20,7 +20,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::manifest::{ManifestError, PluginManifest, parse_manifest};
+use super::manifest::{ManifestError, PluginManifest, RequestedPermission, parse_manifest};
 
 /// SC-03 — a minisign detached signature is tiny (~300 bytes); cap the
 /// read so a HOSTILE multi-GB `plugin.wasm.minisig` can't OOM the daemon
@@ -102,6 +102,11 @@ fn read_no_follow(path: &Path) -> std::io::Result<Vec<u8>> {
 pub struct DiscoveredPlugin {
     pub dir: PathBuf,
     pub manifest: PluginManifest,
+    /// SHA-256 of the canonical, parsed manifest representation. Unlike the
+    /// optional plugin.wasm pin this binds every authority-bearing manifest
+    /// field (especially `requested_permissions`) to the operator's activation
+    /// decision. Whitespace/comment-only TOML edits do not change this digest.
+    pub manifest_hash: String,
     pub wasm_bytes: Vec<u8>,
     /// SC-03 — lowercase-hex SHA-256 of `wasm_bytes`, computed at load.
     /// The operator pins the value they trust in
@@ -169,6 +174,130 @@ impl Default for PluginActivation {
     fn default() -> Self {
         PluginActivation::Pending
     }
+}
+
+/// The exact authority and artifact identity the operator approved when a
+/// plugin was enabled. This is deliberately separate from the mutable
+/// `plugin.toml`: startup must compare the current plugin against this record,
+/// never derive a fresh grant from whatever the manifest says today.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PluginApproval {
+    pub approved_permission: RequestedPermission,
+    pub manifest_sha256: String,
+    pub wasm_sha256: String,
+}
+
+/// Persisted activation plus its approval binding.
+///
+/// The custom deserializer accepts the historical scalar wire form
+/// (`plugin_id: active`) as a legacy record with no approval. Such a record is
+/// readable for migration/diagnostics but can never instantiate a plugin; the
+/// operator must explicitly run `neoth plugin enable <id>` again.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PluginActivationRecord {
+    pub state: PluginActivation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<PluginApproval>,
+}
+
+impl PluginActivationRecord {
+    pub fn from_state(state: PluginActivation) -> Self {
+        Self {
+            state,
+            approval: None,
+        }
+    }
+
+    /// Create the only form of Active record startup is allowed to execute.
+    pub fn active_for(plugin: &DiscoveredPlugin) -> Self {
+        Self {
+            state: PluginActivation::Active,
+            approval: Some(PluginApproval {
+                approved_permission: plugin.manifest.requested_permissions,
+                manifest_sha256: plugin.manifest_hash.clone(),
+                wasm_sha256: plugin.content_hash.clone(),
+            }),
+        }
+    }
+
+    /// Re-validate the current on-disk plugin against the exact operator
+    /// approval. No min-grant or silent downgrade is allowed: any change needs
+    /// an explicit re-enable so the operator sees the new capability/artifact.
+    pub fn validate_for(
+        &self,
+        plugin: &DiscoveredPlugin,
+    ) -> Result<RequestedPermission, PluginApprovalError> {
+        if self.state != PluginActivation::Active {
+            return Err(PluginApprovalError::NotActive);
+        }
+        let approval = self
+            .approval
+            .as_ref()
+            .ok_or(PluginApprovalError::MissingApproval)?;
+        if approval.approved_permission != plugin.manifest.requested_permissions {
+            return Err(PluginApprovalError::PermissionChanged {
+                approved: approval.approved_permission,
+                current: plugin.manifest.requested_permissions,
+            });
+        }
+        if approval.manifest_sha256 != plugin.manifest_hash {
+            return Err(PluginApprovalError::ManifestChanged);
+        }
+        if approval.wasm_sha256 != plugin.content_hash {
+            return Err(PluginApprovalError::WasmChanged);
+        }
+        Ok(approval.approved_permission)
+    }
+}
+
+impl Default for PluginActivationRecord {
+    fn default() -> Self {
+        Self::from_state(PluginActivation::Pending)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PluginActivationRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Legacy(PluginActivation),
+            Bound {
+                state: PluginActivation,
+                #[serde(default)]
+                approval: Option<PluginApproval>,
+            },
+        }
+
+        Ok(
+            match <Wire as serde::Deserialize>::deserialize(deserializer)? {
+                Wire::Legacy(state) => Self::from_state(state),
+                Wire::Bound { state, approval } => Self { state, approval },
+            },
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PluginApprovalError {
+    #[error("plugin is not active")]
+    NotActive,
+    #[error("legacy active record has no bound approval; run `neoth plugin enable <id>` again")]
+    MissingApproval,
+    #[error(
+        "requested permission changed from approved {approved:?} to {current:?}; explicit re-enable required"
+    )]
+    PermissionChanged {
+        approved: RequestedPermission,
+        current: RequestedPermission,
+    },
+    #[error("canonical plugin manifest changed after approval; explicit re-enable required")]
+    ManifestChanged,
+    #[error("plugin.wasm changed after approval; explicit re-enable required")]
+    WasmChanged,
 }
 
 /// What went wrong for one plugin subdirectory. Operator-readable;
@@ -357,6 +486,7 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
         dir: dir.to_path_buf(),
         source: e,
     })?;
+    let manifest_hash = canonical_manifest_sha256(&manifest);
     // Enforce id matches directory name so `~/.neoth/plugins/<id>/`
     // is a reliable lookup key. Without this, two plugins with the
     // same manifest id but different directory names would silently
@@ -390,10 +520,20 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
     Ok(DiscoveredPlugin {
         dir: dir.to_path_buf(),
         manifest,
+        manifest_hash,
         wasm_bytes,
         content_hash,
         signature,
     })
+}
+
+/// Stable digest of the parsed manifest rather than its raw TOML bytes.
+/// Struct-field serialization order is deterministic, so comments and
+/// formatting do not force re-consent while every semantic field does.
+pub fn canonical_manifest_sha256(manifest: &PluginManifest) -> String {
+    let canonical = serde_json::to_vec(manifest)
+        .expect("PluginManifest contains no fallible serde value types");
+    sha256_hex(&canonical)
 }
 
 /// Lowercase-hex SHA-256 of a byte slice. Shared by load + the
@@ -523,50 +663,6 @@ pub fn verify_integrity(
             reason: e.to_string(),
         }),
     }
-}
-
-/// Full-auto operating mode — is this discovered, currently-`Pending` plugin
-/// eligible for AUTOMATIC activation without an explicit `neoth plugin enable`?
-///
-/// The bar is deliberately HIGHER than [`verify_integrity`] (which only gates
-/// what may run once Active): full-auto auto-activation requires TWO
-/// independent operator trust signals, so flipping into full-auto can never
-/// silently run untrusted third-party WASM. Eligible iff ALL hold:
-///
-///   1. Clears the full integrity gate (not revoked, pin matches if present,
-///      `require_all_pinned` honoured) — [`verify_integrity`] returns `Ok`.
-///   2. Has an EXPLICIT hash pin for its own id — `policy.pinned` contains it
-///      (merely "no pin and pins not required" is NOT enough; the operator must
-///      have pinned exactly this binary).
-///   3. Carries a signature that VERIFIES against the configured trusted author
-///      key — `verify_plugin_signature(.., require=true) == Ok(Verified)`. An
-///      unsigned plugin, a missing author key, or a soft "UnsignedAllowed"
-///      outcome all fail here.
-///
-/// Anything not eligible stays `Pending` even in full-auto — the operator
-/// activates it with `neoth plugin enable <id>`. Revoked / invalid-signature
-/// plugins are refused by the integrity gate as always.
-pub fn auto_activation_eligible(plugin: &DiscoveredPlugin, policy: &IntegrityPolicy<'_>) -> bool {
-    // 1. Must clear the standard integrity gate first.
-    if verify_integrity(plugin, policy).is_err() {
-        return false;
-    }
-    // 2. Trust signal #1 — an explicit pin for THIS plugin id.
-    if !policy.pinned.contains_key(&plugin.manifest.id) {
-        return false;
-    }
-    // 3. Trust signal #2 — a real, verified author signature. `require=true`
-    //    makes unsigned / no-key return Err (not a permissive Ok), so only a
-    //    genuine `Verified` passes.
-    matches!(
-        verify_plugin_signature(
-            &plugin.wasm_bytes,
-            plugin.signature.as_deref(),
-            policy.author_pubkey,
-            true,
-        ),
-        Ok(PluginSigOutcome::Verified)
-    )
 }
 
 /// SC-03 — outcome of a plugin signature check that did NOT hard-fail.
@@ -874,6 +970,110 @@ mod tests {
         assert_eq!(p.content_hash, sha256_hex(MINIMAL_WASM));
     }
 
+    #[test]
+    fn canonical_manifest_hash_ignores_toml_layout_and_comments() {
+        let compact = parse_manifest(
+            b"id='same'\nname='Same'\nversion='1.0.0'\nrequested_permissions='read_only'\n",
+        )
+        .unwrap();
+        let reformatted = parse_manifest(
+            b"# operator note\nname = 'Same'\n\nversion = '1.0.0'\nid = 'same'\nrequested_permissions = 'read_only' # same authority\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            canonical_manifest_sha256(&compact),
+            canonical_manifest_sha256(&reformatted)
+        );
+    }
+
+    #[test]
+    fn bound_activation_survives_unchanged_restart() {
+        let plugin = discovered("approved", MINIMAL_WASM);
+        let record = PluginActivationRecord::active_for(&plugin);
+
+        assert_eq!(record.validate_for(&plugin), Ok(RequestedPermission::None));
+    }
+
+    #[test]
+    fn post_enable_permission_escalation_requires_reconsent() {
+        let plugin = discovered("escalated", MINIMAL_WASM);
+        let record = PluginActivationRecord::active_for(&plugin);
+        let mut changed = plugin.clone();
+        changed.manifest.requested_permissions = RequestedPermission::Write;
+        changed.manifest_hash = canonical_manifest_sha256(&changed.manifest);
+
+        assert!(matches!(
+            record.validate_for(&changed),
+            Err(PluginApprovalError::PermissionChanged {
+                approved: RequestedPermission::None,
+                current: RequestedPermission::Write,
+            })
+        ));
+    }
+
+    #[test]
+    fn post_enable_permission_change_never_silently_degrades() {
+        let mut plugin = discovered("permission_changed", MINIMAL_WASM);
+        plugin.manifest.requested_permissions = RequestedPermission::Write;
+        plugin.manifest_hash = canonical_manifest_sha256(&plugin.manifest);
+        let record = PluginActivationRecord::active_for(&plugin);
+        let mut changed = plugin.clone();
+        changed.manifest.requested_permissions = RequestedPermission::ReadOnly;
+        changed.manifest_hash = canonical_manifest_sha256(&changed.manifest);
+
+        assert!(matches!(
+            record.validate_for(&changed),
+            Err(PluginApprovalError::PermissionChanged {
+                approved: RequestedPermission::Write,
+                current: RequestedPermission::ReadOnly,
+            })
+        ));
+    }
+
+    #[test]
+    fn post_enable_manifest_mutation_requires_reconsent() {
+        let plugin = discovered("mutated", MINIMAL_WASM);
+        let record = PluginActivationRecord::active_for(&plugin);
+        let mut changed = plugin.clone();
+        changed.manifest.name = "new manifest name".to_string();
+        changed.manifest_hash = canonical_manifest_sha256(&changed.manifest);
+
+        assert_eq!(
+            record.validate_for(&changed),
+            Err(PluginApprovalError::ManifestChanged)
+        );
+    }
+
+    #[test]
+    fn post_enable_wasm_mutation_requires_reconsent() {
+        let plugin = discovered("wasm_changed", MINIMAL_WASM);
+        let record = PluginActivationRecord::active_for(&plugin);
+        let mut changed = plugin.clone();
+        changed.wasm_bytes = b"different wasm bytes".to_vec();
+        changed.content_hash = sha256_hex(&changed.wasm_bytes);
+
+        assert_eq!(
+            record.validate_for(&changed),
+            Err(PluginApprovalError::WasmChanged)
+        );
+    }
+
+    #[test]
+    fn legacy_active_record_is_readable_but_never_grants_authority() {
+        let mut plugin = discovered("legacy", MINIMAL_WASM);
+        plugin.manifest.requested_permissions = RequestedPermission::Dangerous;
+        plugin.manifest_hash = canonical_manifest_sha256(&plugin.manifest);
+        let record: PluginActivationRecord = serde_yaml::from_str("active").unwrap();
+
+        assert_eq!(record.state, PluginActivation::Active);
+        assert!(record.approval.is_none());
+        assert_eq!(
+            record.validate_for(&plugin),
+            Err(PluginApprovalError::MissingApproval)
+        );
+    }
+
     /// A hash-pin-only policy (no signature key, no revocations) — the
     /// pre-SC-03-signature default. Keeps the existing pin tests terse.
     fn pin_policy(pinned: &BTreeMap<String, String>, require_all: bool) -> IntegrityPolicy<'_> {
@@ -1008,89 +1208,6 @@ mod tests {
         // NOTE: the Verified path needs a real keypair + signature, which
         // a unit test can't mint without embedding a private key — same
         // documented limitation as updater::sig_verify.
-    }
-
-    #[test]
-    fn auto_activation_rejects_unsigned_even_when_pinned() {
-        // Full-auto floor: a pinned-but-UNSIGNED plugin is NOT auto-activated.
-        // A hash pin proves the bytes didn't change; it does NOT prove who
-        // produced them. Without a verified author signature it stays Pending.
-        let p = discovered("pinnedunsigned", MINIMAL_WASM);
-        let mut pinned = BTreeMap::new();
-        pinned.insert("pinnedunsigned".to_string(), p.content_hash.clone());
-        let policy = IntegrityPolicy {
-            pinned: &pinned,
-            require_all_pinned: false,
-            author_pubkey: Some("RWQabc"), // key configured, but plugin is unsigned
-            require_signature: false,
-            revoked: &[],
-        };
-        assert!(
-            !auto_activation_eligible(&p, &policy),
-            "an unsigned plugin must never auto-activate, even pinned"
-        );
-    }
-
-    #[test]
-    fn auto_activation_rejects_unpinned_plugin() {
-        // Passes a permissive integrity gate (no pin required, no key) yet is
-        // NOT auto-activated: no explicit pin = no trust signal #1.
-        let p = discovered("loose", MINIMAL_WASM);
-        let empty = BTreeMap::new();
-        let policy = IntegrityPolicy {
-            pinned: &empty,
-            require_all_pinned: false,
-            author_pubkey: None,
-            require_signature: false,
-            revoked: &[],
-        };
-        assert!(
-            verify_integrity(&p, &policy).is_ok(),
-            "precondition: a loose plugin clears the standard integrity gate"
-        );
-        assert!(
-            !auto_activation_eligible(&p, &policy),
-            "an unpinned plugin must never auto-activate"
-        );
-    }
-
-    #[test]
-    fn auto_activation_rejects_revoked_plugin() {
-        let p = discovered("badactor", MINIMAL_WASM);
-        let mut pinned = BTreeMap::new();
-        pinned.insert("badactor".to_string(), p.content_hash.clone());
-        let revoked = vec!["badactor".to_string()];
-        let policy = IntegrityPolicy {
-            pinned: &pinned,
-            require_all_pinned: false,
-            author_pubkey: Some("RWQabc"),
-            require_signature: false,
-            revoked: &revoked,
-        };
-        assert!(
-            !auto_activation_eligible(&p, &policy),
-            "a revoked plugin must never auto-activate (integrity gate refuses it)"
-        );
-    }
-
-    #[test]
-    fn auto_activation_rejects_when_no_author_key_configured() {
-        // Pinned but no author key to verify against → can't establish trust
-        // signal #2, so it stays Pending.
-        let p = discovered("pinnednokey", MINIMAL_WASM);
-        let mut pinned = BTreeMap::new();
-        pinned.insert("pinnednokey".to_string(), p.content_hash.clone());
-        let policy = IntegrityPolicy {
-            pinned: &pinned,
-            require_all_pinned: false,
-            author_pubkey: None,
-            require_signature: false,
-            revoked: &[],
-        };
-        assert!(
-            !auto_activation_eligible(&p, &policy),
-            "without a configured author key no plugin can auto-activate"
-        );
     }
 
     #[test]

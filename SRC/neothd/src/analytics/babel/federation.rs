@@ -64,7 +64,7 @@
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
-use super::anonymize::{SubmissionMetadata, MIN_WINDOW_SECS};
+use super::anonymize::{MIN_WINDOW_SECS, SubmissionMetadata};
 use super::window::BabelWindow;
 
 /// ALPN for the federation QUIC stream (versioned, distinct from cluster gossip).
@@ -123,14 +123,21 @@ pub struct SamplingDecision {
 
 impl SamplingDecision {
     pub fn new() -> Self {
-        Self { total_windows: 0, submitted_windows: 0, submitted_collapse: 0, submitted_non_collapse: 0 }
+        Self {
+            total_windows: 0,
+            submitted_windows: 0,
+            submitted_collapse: 0,
+            submitted_non_collapse: 0,
+        }
     }
 
     /// Returns true if this window should be submitted.
     /// Collapse windows: submit if non-collapse count >= collapse count (1:1 enforced).
     /// Non-collapse windows: submit when total submitted < 10% of total windows.
     pub fn should_submit(&self, is_collapse: bool) -> bool {
-        if self.total_windows == 0 { return false; }
+        if self.total_windows == 0 {
+            return false;
+        }
         let pct_submitted = self.submitted_windows as f64 / self.total_windows as f64;
         if is_collapse {
             // Always submit collapse windows (they are rare and valuable)
@@ -144,12 +151,18 @@ impl SamplingDecision {
 
     pub fn record_submitted(&mut self, is_collapse: bool) {
         self.submitted_windows += 1;
-        if is_collapse { self.submitted_collapse += 1; } else { self.submitted_non_collapse += 1; }
+        if is_collapse {
+            self.submitted_collapse += 1;
+        } else {
+            self.submitted_non_collapse += 1;
+        }
     }
 }
 
 impl Default for SamplingDecision {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Gate that enforces all consent requirements before allowing federation.
@@ -187,6 +200,23 @@ pub fn validate_window_for_submission(w: &BabelWindow) -> Result<(), &'static st
     if w.features.validate().is_err() {
         return Err("feature validation failed");
     }
+    if w.schema_version != BabelWindow::SCHEMA_VERSION {
+        return Err("window schema is not the current federation schema");
+    }
+    if w.signal_posture.mapping_version != crate::analytics::babel::signals::SIGNAL_MAPPING_VERSION
+    {
+        return Err("signal mapping version mismatch");
+    }
+    if w.algorithm_version_k != w.features.algorithm_versions.k {
+        return Err("K_d algorithm labels disagree");
+    }
+    match (
+        w.algorithm_version_k.as_str(),
+        w.features.k_d_posture.mode.as_str(),
+    ) {
+        ("K_d_v0", "histogram_v0") | ("K_d_embed_v1", "embedding_v1") => {}
+        _ => return Err("K_d algorithm/posture mismatch"),
+    }
     Ok(())
 }
 
@@ -197,13 +227,13 @@ pub fn anonymise_for_batch(
     meta: &SubmissionMetadata,
     local_salt: &[u8],
 ) -> serde_json::Value {
-    use super::anonymize::{pseudonymise_id, normalise_repo_slug};
+    use super::anonymize::{normalise_repo_slug, pseudonymise_id};
 
     let session_pseudo = pseudonymise_id(local_salt, &window.session_id_pseudo);
     let window_id_pseudo = pseudonymise_id(local_salt, &window.id);
 
     serde_json::json!({
-        "schema_version": BabelWindow::SCHEMA_VERSION,
+        "schema_version": window.schema_version,
         "window": {
             "id": window_id_pseudo,
             "granularity_secs": window.granularity.secs(),
@@ -235,15 +265,16 @@ pub fn anonymise_for_batch(
             "D": window.algorithm_version_d,
             "H": window.algorithm_version_h,
         },
+        "k_d_posture": window.features.k_d_posture,
+        "signal_posture": window.signal_posture,
         "candidate_scores": build_scores_json(&window.scores),
         "labels": {
             "collapse_within_5m": window.collapse.collapse_within_5m,
             "collapse_within_30m": window.collapse.collapse_within_30m,
-            "collapse_at_next_task": window.collapse.collapse_at_next_task,
             "collapse_kind": window.collapse.collapse_kind.map(|l| l.as_str()),
             "negative_control": window.collapse.negative_control,
             "negative_control_type": window.collapse.negative_control_type
-                .map(|t| format!("{:?}", t).to_lowercase()),
+                .map(|value| value.as_str()),
         },
         "submission_metadata": {
             "contributor_id": meta.contributor_id,
@@ -267,11 +298,16 @@ fn build_scores_json(scores: &super::score::BabelScores) -> serde_json::Value {
         m.insert("B_neoth_mult".into(), serde_json::json!(v));
         if let Some(eps) = scores.b_mult_epsilon {
             m.insert("B_neoth_mult_epsilon".into(), serde_json::json!(eps));
-            m.insert("B_neoth_mult_epsilon_rule".into(),
-                serde_json::json!(scores.b_mult_epsilon_rule));
+            m.insert(
+                "B_neoth_mult_epsilon_rule".into(),
+                serde_json::json!(scores.b_mult_epsilon_rule),
+            );
         }
     }
-    m.insert("B_neoth_bottleneck".into(), serde_json::json!(scores.b_bottleneck));
+    m.insert(
+        "B_neoth_bottleneck".into(),
+        serde_json::json!(scores.b_bottleneck),
+    );
     serde_json::Value::Object(m)
 }
 
@@ -350,6 +386,11 @@ pub fn submit_pending_batch(
         return Ok(None);
     }
     let counts = super::store::submission_counts(conn)?;
+    // Defense in depth for rows produced by an older process version: never
+    // let a persisted multiplicative score leave the instance while the live
+    // 7-day normaliser is below its calibration floor.
+    let b_mult_calibrated = super::norm::load_normaliser(conn, 900)?
+        .is_some_and(|normaliser| normaliser.is_calibrated());
     let mut sampling = SamplingDecision {
         total_windows: counts.total_windows,
         submitted_windows: counts.submitted_windows,
@@ -367,7 +408,12 @@ pub fn submit_pending_batch(
             continue;
         }
         sampling.record_submitted(*is_collapse);
-        records.push(anonymise_for_batch(window, meta, local_salt));
+        let mut federated_window = window.clone();
+        if !b_mult_calibrated {
+            federated_window.scores.b_mult = None;
+            federated_window.scores.b_mult_epsilon = None;
+        }
+        records.push(anonymise_for_batch(&federated_window, meta, local_salt));
         ids.push(window.id.clone());
     }
     if records.is_empty() {
@@ -375,8 +421,11 @@ pub fn submit_pending_batch(
     }
 
     // Sign over SHA-256 of the gzip JSONL payload (one window per line).
-    let jsonl: String =
-        records.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
+    let jsonl: String = records
+        .iter()
+        .map(|r| r.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     let payload_gz = gzip_bytes(jsonl.as_bytes())?;
     let digest = {
         use sha2::{Digest, Sha256};
@@ -412,8 +461,11 @@ pub fn submit_pending_batch(
     std::fs::write(&tmp, &payload_gz)
         .with_context(|| format!("write pending payload {}", tmp.display()))?;
     std::fs::rename(&tmp, &jsonl_path).context("rename pending payload into place")?;
-    std::fs::write(&meta_path, serde_json::to_vec_pretty(&batch_envelope(&batch))?)
-        .with_context(|| format!("write pending envelope {}", meta_path.display()))?;
+    std::fs::write(
+        &meta_path,
+        serde_json::to_vec_pretty(&batch_envelope(&batch))?,
+    )
+    .with_context(|| format!("write pending envelope {}", meta_path.display()))?;
 
     // Only after the batch is durable on disk do the rows flip.
     super::store::mark_submitted(conn, &ids)?;
@@ -423,7 +475,11 @@ pub fn submit_pending_batch(
         pending = %jsonl_path.display(),
         "babel federation: batch queued (pending-first)"
     );
-    Ok(Some(SubmitOutcome { batch_id: batch.batch_id, windows: window_count, pending_path: jsonl_path }))
+    Ok(Some(SubmitOutcome {
+        batch_id: batch.batch_id,
+        windows: window_count,
+        pending_path: jsonl_path,
+    }))
 }
 
 /// The envelope written next to the payload: the full batch minus the
@@ -455,8 +511,7 @@ fn fingerprint_of_pubkey(pubkey: &[u8]) -> String {
 
 fn gzip_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     use std::io::Write as _;
-    let mut enc =
-        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     enc.write_all(bytes).context("gzip write")?;
     enc.finish().context("gzip finish")
 }
@@ -476,8 +531,11 @@ pub async fn drain_pending(
     let mut payloads: Vec<PathBuf> = rd
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.file_name().and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with(".pending.jsonl.gz")))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(".pending.jsonl.gz"))
+        })
         .collect();
     payloads.sort();
     for path in payloads {
@@ -491,8 +549,7 @@ pub async fn drain_pending(
         };
         // The envelope sidecar carries the signature the receiver checks —
         // without it the payload is unauthenticatable; leave it pending.
-        let meta_path =
-            PathBuf::from(path.to_string_lossy().replace(".jsonl.gz", ".meta.json"));
+        let meta_path = PathBuf::from(path.to_string_lossy().replace(".jsonl.gz", ".meta.json"));
         let envelope_json: serde_json::Value = match std::fs::read(&meta_path)
             .map_err(anyhow::Error::from)
             .and_then(|b| serde_json::from_slice(&b).map_err(Into::into))
@@ -727,25 +784,41 @@ mod tests {
 
     #[test]
     fn consent_gate_rejects_when_federate_disabled() {
-        let g = ConsentGate { federate_enabled: false, autonomy_level: 4, calibration_window_count: 100 };
+        let g = ConsentGate {
+            federate_enabled: false,
+            autonomy_level: 4,
+            calibration_window_count: 100,
+        };
         assert!(g.check().is_err());
     }
 
     #[test]
     fn consent_gate_rejects_below_elevated() {
-        let g = ConsentGate { federate_enabled: true, autonomy_level: 2, calibration_window_count: 100 };
+        let g = ConsentGate {
+            federate_enabled: true,
+            autonomy_level: 2,
+            calibration_window_count: 100,
+        };
         assert!(g.check().is_err());
     }
 
     #[test]
     fn consent_gate_rejects_uncalibrated() {
-        let g = ConsentGate { federate_enabled: true, autonomy_level: 3, calibration_window_count: 10 };
+        let g = ConsentGate {
+            federate_enabled: true,
+            autonomy_level: 3,
+            calibration_window_count: 10,
+        };
         assert!(g.check().is_err());
     }
 
     #[test]
     fn consent_gate_passes_when_all_conditions_met() {
-        let g = ConsentGate { federate_enabled: true, autonomy_level: 3, calibration_window_count: 50 };
+        let g = ConsentGate {
+            federate_enabled: true,
+            autonomy_level: 3,
+            calibration_window_count: 50,
+        };
         assert!(g.check().is_ok());
     }
 
@@ -778,7 +851,15 @@ mod tests {
                 "C": 0.5, "K": 0.4, "M": 0.3, "A": 0.5, "V": 0.2, "D": 1.0, "H": 1.0,
                 "algo": {"c": "C_d_v0", "k": "K_d_v0", "m": "M_d_v0", "a": "A_d_v0",
                           "v": "V_d_v0", "d": "D_d_v0", "h": "H_d_v0"},
-                "schema": "neoth-babel-window/0.2.0",
+                "k_d_posture": {"mode": "histogram_v0", "requested_model": null,
+                    "effective_model": null, "sample_count": 3, "failure_count": 0,
+                    "failure_reasons": [], "degraded_reason": null},
+                "signal_posture": {"mapping_version": "BabelSignalMap_v1",
+                    "memory_enabled": false, "skill_enabled": false,
+                    "memory_contradictions": 0, "memory_recall_misses": 0,
+                    "skill_mode": 0, "skill_keyword": 0, "skill_embedding": 0,
+                    "skill_no_match": 0, "skill_suppressed": 0},
+                "schema": "neoth-babel-window/0.4.0",
             });
             // Every 10th window is a collapse; all horizons stamped.
             conn.execute(
@@ -820,6 +901,32 @@ mod tests {
     }
 
     #[test]
+    fn operator_negative_control_reaches_federated_record() {
+        let conn = seeded_db(1);
+        super::super::store::persist_negative_control(
+            &conn,
+            "w0",
+            Some(super::super::collapse::NegativeControlType::ReplayDeterministic),
+        )
+        .expect("tag negative control");
+        let (window, _) = super::super::store::load_unsubmitted_windows(&conn, 1, Some(0.01))
+            .expect("load")
+            .into_iter()
+            .next()
+            .expect("window");
+        let record = anonymise_for_batch(&window, &test_meta(), b"local-salt");
+        assert_eq!(record["labels"]["negative_control"], true);
+        assert_eq!(
+            record["labels"]["negative_control_type"],
+            "replay_deterministic"
+        );
+        assert!(
+            record["labels"].get("collapse_at_next_task").is_none(),
+            "an unimplemented label must not be published as a permanent null"
+        );
+    }
+
+    #[test]
     fn submit_returns_none_when_gate_closed() {
         let conn = seeded_db(60);
         let dir = tempfile::tempdir().expect("tempdir");
@@ -830,12 +937,21 @@ mod tests {
             calibration_window_count: 60,
         };
         let out = submit_pending_batch(
-            &conn, &gate, &test_meta(), &key, b"salt", dir.path(), Some(0.01), T,
+            &conn,
+            &gate,
+            &test_meta(),
+            &key,
+            b"salt",
+            dir.path(),
+            Some(0.01),
+            T,
         )
         .expect("no error");
         assert!(out.is_none(), "closed gate is a no-op, not an error");
         assert_eq!(
-            std::fs::read_dir(dir.path()).map(|d| d.count()).unwrap_or(0),
+            std::fs::read_dir(dir.path())
+                .map(|d| d.count())
+                .unwrap_or(0),
             0,
             "nothing written"
         );
@@ -847,8 +963,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let out = submit_pending_batch(
-            &conn, &gate_and_salt(&conn), &test_meta(), &key, b"salt", dir.path(),
-            Some(0.01), T,
+            &conn,
+            &gate_and_salt(&conn),
+            &test_meta(),
+            &key,
+            b"salt",
+            dir.path(),
+            Some(0.01),
+            T,
         )
         .expect("submit pass")
         .expect("batch produced");
@@ -867,11 +989,16 @@ mod tests {
             let v: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
             let wid = v["window"]["id"].as_str().expect("window id present");
             assert!(!wid.starts_with('w'), "window id pseudonymised: {wid}");
-            assert_eq!(v["submission_metadata"]["protocol_version"], "neoth-federation/0.1.0");
+            assert_eq!(
+                v["submission_metadata"]["protocol_version"],
+                "neoth-federation/0.1.0"
+            );
         }
 
         // Envelope sidecar carries a verifiable signature block.
-        let meta_path = dir.path().join(format!("{}.pending.meta.json", out.batch_id));
+        let meta_path = dir
+            .path()
+            .join(format!("{}.pending.meta.json", out.batch_id));
         let env: serde_json::Value =
             serde_json::from_slice(&std::fs::read(meta_path).expect("meta")).expect("json");
         assert_eq!(env["window_count"], out.windows);
@@ -880,7 +1007,9 @@ mod tests {
 
         // Self-signed model: the envelope alone must let the receiver
         // authenticate the payload (external-review fix 2026-07-02).
-        let pubkey_hex = env["signer_pubkey_hex"].as_str().expect("pubkey in envelope");
+        let pubkey_hex = env["signer_pubkey_hex"]
+            .as_str()
+            .expect("pubkey in envelope");
         let pubkey: [u8; 32] = hex::decode(pubkey_hex)
             .expect("hex pubkey")
             .try_into()
@@ -908,17 +1037,73 @@ mod tests {
 
         // Rows flipped; a second pass finds the pool at its sampling cap.
         let submitted: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_babel_windows WHERE submitted = 1", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM idx_babel_windows WHERE submitted = 1",
+                [],
+                |r| r.get(0),
+            )
             .expect("count");
         assert_eq!(submitted as usize, out.windows);
         let again = submit_pending_batch(
-            &conn, &gate_and_salt(&conn), &test_meta(), &key, b"salt", dir.path(),
-            Some(0.01), T,
+            &conn,
+            &gate_and_salt(&conn),
+            &test_meta(),
+            &key,
+            b"salt",
+            dir.path(),
+            Some(0.01),
+            T,
         )
         .expect("second pass");
-        assert!(again.is_none(), "sampling cap reached — no second batch from the same pool");
+        assert!(
+            again.is_none(),
+            "sampling cap reached — no second batch from the same pool"
+        );
+    }
+
+    #[test]
+    fn federation_emits_b_mult_only_with_a_calibrated_live_normaliser() {
+        for sample_count in [10_i64, super::super::norm::MIN_SAMPLES as i64] {
+            let conn = seeded_db(60);
+            conn.execute("UPDATE idx_babel_windows SET b_mult = 0.75", [])
+                .expect("seed legacy multiplicative scores");
+            conn.execute(
+                "INSERT INTO idx_babel_norm
+                 (variable, window_secs, p1, p99, sample_count, updated_at)
+                 VALUES (?1, 900, 0.0, 1.0, ?2, ?3)",
+                rusqlite::params![super::super::norm::B_RAW_VARIABLE, sample_count, T],
+            )
+            .expect("seed live normaliser posture");
+
+            let dir = tempfile::tempdir().expect("tempdir");
+            let key = ed25519_dalek::SigningKey::from_bytes(&[8_u8; 32]);
+            let out = submit_pending_batch(
+                &conn,
+                &gate_and_salt(&conn),
+                &test_meta(),
+                &key,
+                b"salt",
+                dir.path(),
+                Some(0.01),
+                T,
+            )
+            .expect("submit pass")
+            .expect("batch produced");
+            let gz = std::fs::read(out.pending_path).expect("read payload");
+            let mut decoder = flate2::read::GzDecoder::new(gz.as_slice());
+            let mut jsonl = String::new();
+            std::io::Read::read_to_string(&mut decoder, &mut jsonl).expect("gunzip");
+
+            let emitted = jsonl.lines().all(|line| {
+                let record: serde_json::Value = serde_json::from_str(line).expect("record JSON");
+                record["candidate_scores"].get("B_neoth_mult").is_some()
+            });
+            assert_eq!(
+                emitted,
+                sample_count >= super::super::norm::MIN_SAMPLES as i64,
+                "sample_count={sample_count} must determine multiplicative-score egress"
+            );
+        }
     }
 
     fn gate_and_salt(conn: &rusqlite::Connection) -> ConsentGate {
@@ -972,8 +1157,10 @@ mod tests {
         let mut h = Sha256::new();
         h.update(payload.as_bytes());
         let sig = key.sign(&h.finalize());
-        let envelope =
-            PredictorEnvelope { payload, signature_hex: hex::encode(sig.to_bytes()) };
+        let envelope = PredictorEnvelope {
+            payload,
+            signature_hex: hex::encode(sig.to_bytes()),
+        };
         (envelope, hex::encode(key.verifying_key().as_bytes()))
     }
 
@@ -994,8 +1181,8 @@ mod tests {
     fn predictor_rejected_without_pinned_key_and_on_wrong_domain() {
         let (envelope, pubkey) = signed_predictor("neoth");
         let gate = open_gate(100);
-        let err = verify_pooled_predictor(&gate, &envelope, None)
-            .expect_err("no pin = fail-closed");
+        let err =
+            verify_pooled_predictor(&gate, &envelope, None).expect_err("no pin = fail-closed");
         assert!(err.to_string().contains("fail-closed"), "{err}");
 
         let (oss, oss_key) = signed_predictor("oss");
@@ -1026,7 +1213,10 @@ mod tests {
         let local = 0.8;
         let advisory = apply_advisory(&predictor, local);
         assert!((advisory.delta - (0.72 - 0.8)).abs() < 1e-12);
-        assert_eq!(advisory.local_threshold, local, "advisory never mutates anything");
+        assert_eq!(
+            advisory.local_threshold, local,
+            "advisory never mutates anything"
+        );
 
         // Cache round-trip re-verifies on load.
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1064,9 +1254,12 @@ mod tests {
             fail_on: std::sync::Mutex::new(0),
             frames: std::sync::Mutex::new(Vec::new()),
         };
-        let (delivered, remaining) =
-            drain_pending(dir.path(), &uploader).await.expect("drain");
-        assert_eq!((delivered, remaining), (1, 2), "a delivered; b failed; c orphaned");
+        let (delivered, remaining) = drain_pending(dir.path(), &uploader).await.expect("drain");
+        assert_eq!(
+            (delivered, remaining),
+            (1, 2),
+            "a delivered; b failed; c orphaned"
+        );
 
         // The live transport receives envelope AND payload in one frame.
         let frames = uploader.frames.lock().expect("lock");
@@ -1087,8 +1280,14 @@ mod tests {
             .flatten()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        assert!(left.contains(&"b.pending.jsonl.gz".to_string()), "failed batch stays");
-        assert!(left.contains(&"c.pending.jsonl.gz".to_string()), "orphan stays pending");
+        assert!(
+            left.contains(&"b.pending.jsonl.gz".to_string()),
+            "failed batch stays"
+        );
+        assert!(
+            left.contains(&"c.pending.jsonl.gz".to_string()),
+            "orphan stays pending"
+        );
         assert!(
             !left.contains(&"a.pending.jsonl.gz".to_string()),
             "delivered batch removed"

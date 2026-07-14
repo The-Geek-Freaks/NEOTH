@@ -1,5 +1,5 @@
 PackageIdentifier: TheGeekFreaks.NEOTH
-PackageVersion: 0.3.0
+PackageVersion: 1.0.0
 PackageLocale: en-US
 Publisher: TheGeekFreaks
 PublisherUrl: https://github.com/The-Geek-Freaks
@@ -7,7 +7,7 @@ PublisherSupportUrl: https://github.com/The-Geek-Freaks/NEOTH/issues
 PackageName: NEOTH
 PackageUrl: https://github.com/The-Geek-Freaks/NEOTH
 License: MIT OR Apache-2.0
-LicenseUrl: https://github.com/The-Geek-Freaks/NEOTH/blob/main/LICENSE
+LicenseUrl: https://github.com/The-Geek-Freaks/NEOTH/blob/main/README.md#license
 ShortDescription: Personal AI agent — Neoth knows.
 Description: |
   NEOTH is a personal AI agent that runs locally. It learns from your

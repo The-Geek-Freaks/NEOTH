@@ -1,238 +1,200 @@
-# NEOTH Import Format
+# NEOTH prior-assistant import contract
 
-> Pre-v1.0 normative spec for **how operators bring data INTO NEOTH** —
-> covers the `neoth-migrate` binary's input shape, the file layouts
-> the migrator recognises, and the WAL frames the migration emits so
-> imported events round-trip through `neoth recall`.
+`neoth-migrate` brings operator-owned memory from OpenClaw, Hermes,
+OpenHuman, Veronica, Obsidian and generic local exports into NEOTH's
+`idx_groundtruth` view. Imported rows are candidates: they keep their source
+provenance and do not become operator-verified facts merely because they were
+present in another assistant.
 
-This document is the **public contract**. Operators writing custom
-migrators (Hermes-incompatible profile tools, third-party chat
-exports, bespoke knowledge bases) follow this spec to produce a
-shape `neoth-migrate import` can consume without bespoke per-source
-patching.
+The runnable 1.0 flow is:
 
-Closes **E-08** (PROGRESS.md) — the pre-v1.0 ship gate that
-operators have a documented path for "I have N MB of past chat
-history; how do I get NEOTH to see it as memory?"
-
-> **Command status (current binary `1.0.0`).** This document is the
-> import/export *contract*; the binary you run today exposes only:
->
-> - `neoth-migrate dry-run --manifest <file>` — ✅ **works**: validates the
->   manifest + reports rows/sample entries, scan-only (never writes the WAL).
-> - `neoth-migrate apply --manifest <file>` — ⚠️ **preview-only in this release**:
->   validates the manifest then refuses and points you back at `dry-run`. The
->   real WAL-writing import (the `MIGRATE_RAN` + per-event frames described
->   below) is **post-v1.0** — not yet implemented.
-> - `neoth-migrate export <file>` (§5) — ⚠️ **not yet implemented** (the planned
->   reverse path).
->
-> So where this spec writes `neoth-migrate import …` it means the consume-side
-> contract; the runnable command today is `dry-run`.
-
----
-
-## 1. Input shape — `<source_id>.import.jsonl`
-
-NEOTH ingests data via a single `.import.jsonl` file per source. The
-file MUST be UTF-8 + one JSON object per line + ≤ 64 KB per line.
-The wire shape:
-
-```json
-{
-  "source_kind": "chat_export",
-  "source_ref": "telegram-2024-09-12",
-  "imported_at_unix": 1700000000,
-  "events": [
-    {
-      "ts_unix": 1700000000,
-      "kind": "raw_text",
-      "text": "Hello, this is the imported message.",
-      "channel_hint": "telegram",
-      "operator_role": "user",
-      "importance": 0.55
-    },
-    {
-      "ts_unix": 1700000060,
-      "kind": "provider_response",
-      "text": "And this is the reply.",
-      "channel_hint": "telegram",
-      "operator_role": "assistant"
-    }
-  ]
-}
+```text
+neoth-migrate detect --output import-manifest.yaml
+neoth-migrate dry-run --manifest import-manifest.yaml
+neoth-migrate apply --manifest import-manifest.yaml --confirm
+neoth-migrate status
 ```
 
-### Top-level fields (required unless noted)
+`detect` and `dry-run` are read-only. `apply` requires explicit `--confirm`,
+preflights every declared source, writes all rows in one SQLite transaction,
+and records a durable local audit lifecycle. A failed source aborts the whole
+run; there is no default partial-import mode.
 
-| Field | Type | Purpose |
+## Manifest
+
+The input is YAML:
+
+```yaml
+sources:
+  - name: openhuman-home
+    path: ~/.openhuman
+    kind: assistant_home
+    hint: openhuman
+
+  - name: operator-vault
+    path: ~/Documents/Notes
+    kind: markdown
+    hint: scope:global
+```
+
+Each source has four fields:
+
+| Field | Required | Meaning |
 | --- | --- | --- |
-| `source_kind` | string (enum) | One of `chat_export`, `markdown_vault`, `voice_log`, `pdf_archive`, `email_thread`, `custom` |
-| `source_ref` | string | Operator-readable identifier (e.g. `telegram-2024-09-12`, `obsidian-vault`). Stored on each emitted WAL frame so `neoth recall` can filter by source. |
-| `imported_at_unix` | i64 | Unix seconds at import time. Migrator stamps this on every emitted frame. |
-| `events` | array | One element per memory-worthy event in the source. Empty array → no-op import (still writes a `MIGRATE_RAN` audit frame). |
-| `operator_id` | string (optional) | Override the operator id for these events. Default = `~/.neoth/freedom.yaml::operator_id`. |
-| `notes` | string (optional) | Free-form operator note kept in the audit frame for "why I imported this". |
+| `name` | yes | Unique operator-readable name used in reports and audit events. |
+| `path` | yes | Absolute path or a path beginning with `~/`, resolved against `--root`/the operator home. |
+| `kind` | yes | Reader selected from the table below. |
+| `hint` | no | Assistant family for `assistant_home`, SQLite provenance hint, or `scope:<scope>` override. |
 
-### Per-event fields
+Duplicate or empty source names are rejected on apply. Missing paths are
+reported by dry-run and rejected by apply.
 
-| Field | Type | Purpose |
+## Reader kinds
+
+| `kind` | Input | Apply support |
 | --- | --- | --- |
-| `ts_unix` | i64 | Unix seconds when the event happened in the source system. Migrator emits this verbatim as the WAL frame's `ts_unix` field; **NEVER overwritten to now**. |
-| `kind` | string (enum) | One of `raw_text`, `provider_response`, `voice_transcript`, `pdf_text`, `markdown_note`, `custom` |
-| `text` | string | The event body. Trimmed; empty text is rejected with `EmptyText` error (caller must filter). |
-| `channel_hint` | string (optional) | Free-form channel name (e.g. `telegram`, `slack`, `obsidian`). Surfaces in `neoth recall` "via X" labels. |
-| `operator_role` | string (optional) | `user` / `assistant` / `system`. Default `user`. Drives the WAL event's role field. |
-| `importance` | f32 (optional) | `[0.0, 1.0]` operator-assigned importance hint. Default `0.5`. Hebbian decay tier (`memory::tiers`) uses this for initial placement. |
-| `embedding` | array<f32> (optional) | Pre-computed embedding vector. When absent, the migrator embeds via the operator's configured `inference.embedding_provider` (Day-14b path). |
-| `tags` | array<string> (optional) | Operator tags. Stored verbatim, queryable via `neoth recall --tag <tag>`. |
+| `assistant_home` | Complete OpenClaw/Hermes/OpenHuman/Veronica home | yes; requires `hint: openclaw`, `hermes`, `openhuman`, or `veronica` |
+| `markdown` | Recursive Markdown directory | yes |
+| `markdown_file` | One Markdown file | yes |
+| `json_dir` | Recursive `.json`/`.ajson` directory | yes |
+| `json_file` | One JSON value/array/object | yes |
+| `sqlite` | One SQLite file, or one directory containing a direct SQLite file | yes |
+| `lance_arrow` | Lance dataset inventory | scan only |
+| `git_tree` | Git repository inventory | scan only |
+| `faiss_flat` | Flat-vector inventory | scan only |
 
----
+An apply manifest containing a scan-only kind is rejected before any row is
+written. This is deliberate: an inventory-only reader must not be silently
+reported as a completed migration.
 
-## 2. Source-kind tables
+### Whole-home reader
 
-Different `source_kind` values get different default classification +
-WAL routing. The migrator MAY skip events whose `kind` doesn't match
-the source's expected kinds.
+`assistant_home` is what generated manifests use. It recursively discovers:
 
-| `source_kind` | Expected event `kind`s | WAL event types emitted |
-| --- | --- | --- |
-| `chat_export` | `raw_text`, `provider_response`, `voice_transcript` | `0x20 RAW_TEXT`, `0x21 PROVIDER_RESPONSE`, `0x22 VOICE_TRANSCRIPT` |
-| `markdown_vault` | `markdown_note` | `0x23 MARKDOWN_NOTE` |
-| `voice_log` | `voice_transcript` | `0x22 VOICE_TRANSCRIPT` |
-| `pdf_archive` | `pdf_text` | `0x24 PDF_TEXT` |
-| `email_thread` | `raw_text`, `provider_response` | `0x20 RAW_TEXT`, `0x21 PROVIDER_RESPONSE` |
-| `custom` | any `kind` | `0x2F MIGRATE_CUSTOM` (operator-defined; migrator stamps `tags` for differentiation) |
+- Markdown (`.md`, `.markdown`), including nested workspace, memory, skill and
+  vault notes;
+- JSON and nested JSON containers (`.json`, `.ajson`);
+- line-delimited JSON (`.jsonl`, `.ndjson`);
+- every file with a real SQLite header and extension `.db`, `.sqlite`, or
+  `.sqlite3`, not merely the first database in one hard-coded directory.
 
----
+OpenHuman `profile_facts(subject, predicate, object, confidence)` rows are
+preserved as complete triples, with the existing `confidence > 0.7` gate.
+Other SQLite stores contribute non-empty text columns. JSON extraction follows
+known content fields (`statement`, `text`, `content`, `body`, `message`,
+`fact`, `claim`, `note`, `value`) through nested arrays/objects. Exact claims
+are deterministically sorted and deduplicated before insertion.
 
-## 3. Audit frames — every import emits these
+The whole-home policy excludes credential/auth/secret/keychain/cookie/browser
+stores, `.env`, cache/log/temp/build trees, and the complete NEOTH target tree.
+Those exclusions prevent secrets or the target database itself from becoming
+recall candidates. Provider config conversion is a separate explicit surface:
 
-Regardless of event count, every successful `neoth-migrate import
-<file>` invocation emits two audit frames:
+```text
+neoth-migrate import-config --auth-profiles <path> --models-providers <path>
+```
 
-1. **`MIGRATE_RAN` (event_type `0x14`)** — wraps the import surface.
-   Payload: `{ source_kind, source_ref, imported_at_unix,
-   neoth_version, events_count, events_emitted, notes? }`.
-   Operators can recover "what did I import + when" via
-   `neoth wal show --kind migrate_ran`.
+That command strips sensitive fields and emits reviewable `freedom.yaml`
+provider stanzas; it never writes API keys into memory. Cron conversion is
+similarly explicit and review-first:
 
-2. **`PROFILE_BASELINE_SNAPSHOT` (event_type `0x1B`)** — emitted only
-   when the import covered profile-relevant content (`source_kind`
-   in `{chat_export, markdown_vault, email_thread}`) AND the
-   operator's `profile.learn_enabled = true`. Captures the
-   pre-import profile snapshot so a post-import diff is comparable
-   for "did importing change my profile?".
+```text
+neoth-migrate import-crons --timer <unit.timer> --crontab <file>
+```
 
----
+It emits jobs for operator review rather than activating foreign automation
+implicitly.
 
-## 4. Pre-flight checks the migrator runs
+## Self-target and atomicity guarantees
 
-Before emitting any frame, `neoth-migrate import` validates:
+Before mutation, apply rejects a source that:
 
-| Check | Error code |
+- resolves to the target `views.db` path;
+- is a symlink or hard-link alias of that file;
+- lives inside the target workspace (normally `~/.neoth`);
+- is the target workspace itself; or
+- is an ambiguous `sqlite` directory containing the target database.
+
+A recursive source may be an ancestor of the target (for example a manually
+declared operator home), but the target workspace is pruned from its walk.
+This makes whole-home discovery useful without permitting self-ingestion.
+
+Every supported source is fully parsed before `BEGIN IMMEDIATE`. If preflight
+fails, zero rows are inserted. Insertions then run in one transaction. Any
+database error rolls it back. Re-running a successful migration is idempotent:
+`INSERT OR IGNORE` relies on NEOTH's unique `(statement, scope)` index and
+never resets the state of an existing fact.
+
+The audit file is opened once and held for the complete operation. If a
+terminal audit write nevertheless fails after SQLite has committed, the
+command returns an explicit "rows committed" error and attempts a
+`MIGRATION_FAILED` event with `rolled_back: false`; it never misreports that
+committed data was rolled back.
+
+## Persistence and provenance
+
+Each imported claim is inserted with:
+
+- `fact_state = candidate`;
+- `confidence = 0.5`;
+- `maturity = emerging`;
+- source weight `{<source-tag>: 1}`;
+- provenance tag `import:openclaw`, `import:hermes`, `import:openhuman`,
+  `import:veronica`, `import:obsidian`, or `import:session`.
+
+The default scope is `global`. A manual source can set `hint: scope:<value>`.
+For OpenHuman profile triples the scope is `subject:<subject>` so facts about
+different people do not collapse into one global identity.
+
+## Audit and status
+
+Real applies append fsynced JSONL events to:
+
+```text
+~/.neoth/neoth-migrate-audit.jsonl
+```
+
+On Unix the file is forced to mode `0600`. Audit intent must be writable before
+mutation starts. Events are:
+
+| Event | Meaning |
 | --- | --- |
-| File exists + readable | `FileNotFound` |
-| Valid UTF-8 | `InvalidUtf8` |
-| Every line parses as JSON | `MalformedLine { line_no, err }` |
-| `events[*].text` non-empty after trim | `EmptyText { line_no, event_idx }` |
-| `events[*].ts_unix` within `(0, now + 86_400]` | `InvalidTimestamp` |
-| `source_kind` is a known enum | `UnknownSourceKind` |
-| Per-event `kind` allowed for `source_kind` | `KindNotAllowed { event_idx, expected }` |
-| `importance` in `[0.0, 1.0]` | `ImportanceOutOfRange` |
-| `embedding.len() == inference.embedding_provider.default_dim()` (when present) | `EmbeddingDimMismatch { expected, got }` |
+| `MIGRATION_STARTED` | Durable intent with operation id, source count, target path and atomicity flag. |
+| `MIGRATION_BATCH` | One committed source result: claims seen, inserted, duplicate count. Emitted only after commit. |
+| `MIGRATION_COMPLETE` | Successful terminal result; retains legacy `GROUNDTRUTH_IMPORTED` / `0x99` fields. |
+| `MIGRATION_FAILED` | Failed preflight, transaction, or post-commit audit; stage, bounded error detail, and truthful rollback outcome. |
 
-The migrator is **atomic per file**: if any pre-flight check fails,
-NO frames are emitted (no partial state). Operators get a single
-error report listing every failure they need to fix.
+`neoth-migrate status` reads the latest lifecycle and reports
+`never_started`, `in_progress`, `complete`, or `failed`; `--json` exposes the
+same state for GUI/automation consumers.
 
----
+The sidecar is not the daemon WAL. A standalone migrator must not violate the
+daemon's single-writer invariant by opening its WAL concurrently.
 
-## 5. Reverse path — exporting from NEOTH
+## Operator verification
 
-> ⚠️ **Not yet implemented.** `export` is the planned reverse path (post-v1.0);
-> the binary today exposes only `dry-run` + `apply`. This section is the target
-> contract, not a shipped command.
+After a successful apply:
 
-`neoth-migrate export <output.jsonl>` will produce a file in this exact
-same format so operators moving to a different daemon (or backing
-up before a destructive op) can round-trip. The reverse path:
-
-1. Walks `idx_episode` + `idx_consolidated` + `idx_longterm` tiers
-2. Writes one event per row in the order encountered (oldest first)
-3. Tags each event with its original `source_ref` if known, else
-   the WAL segment offset
-
-Round-trip identity is not byte-perfect (embeddings are re-computed
-on the import side; the Hebbian decay state is dropped — fresh
-import starts at the default importance), but **semantic identity
-holds**: `neoth recall "query"` against the exported-then-reimported
-WAL returns the same hits as against the source.
-
----
-
-## 6. Wire shape stability guarantee
-
-NEOTH commits to the import shape above being **wire-stable** through
-v1.x. Field additions land via `serde(default)` so older
-`.import.jsonl` files keep parsing. The migrator emits the same
-audit frames regardless of future field additions, so historical
-imports stay queryable.
-
-Breaking changes (field removal, type changes) require a major
-version bump + a `neoth-migrate v1-to-v2 <file>` upgrade path. We
-have not committed any such changes yet.
-
----
-
-## 7. Operator quick-start
-
-```bash
-# 1. Build the file. Anything that walks your data source + emits
-#    one JSON object per event works (Python, jq, Rust, hand-typed).
-python3 -c '
-import json, sys
-events = []
-# ... walk your data source, append dicts to events ...
-print(json.dumps({
-    "source_kind": "chat_export",
-    "source_ref": "my-export-2026-05-23",
-    "imported_at_unix": 1735000000,
-    "events": events,
-}))
-' > my-export.import.jsonl
-
-# 2. Dry-run — validates every event, scan-only (no WAL frames). WORKS TODAY.
-neoth-migrate dry-run --manifest my-export.import.jsonl
-
-# 3. Apply — PREVIEW-ONLY in this release: validates then refuses and points
-#    you back at dry-run. The real WAL-writing import (audit + per-event
-#    frames) is post-v1.0.
-neoth-migrate apply --manifest my-export.import.jsonl
-
-# 4. Verify with recall (once the real apply ships).
-neoth recall "something you imported" --since 30d
+```text
+neoth-migrate status --json
+neoth groundtruth list --limit 50
 ```
 
----
+Review candidates before promoting them. Keep the foreign assistant home
+read-only during cutover and retain its backup until recall parity has been
+checked.
 
-## 8. Where this fits in the broader migration story
+## Compatibility
 
-`neoth-migrate` ships TWO related but distinct surfaces:
+Unknown manifest fields are ignored by Serde's default map handling; existing
+reader names remain stable. New reader variants may be added, but a scan-only
+variant never becomes silently mutating inside an existing binary. A future
+breaking manifest change requires a new major contract version and an explicit
+converter.
 
-- **`import` (this spec)** — operator-curated `.import.jsonl` files.
-  Used for one-off historical bring-ins ("here are 3 years of
-  Telegram exports").
-- **`legacy-import` / migration helpers** — project-specific migration
-  tools can reuse the same WAL-write layer for private historical stores.
-  Those helpers are not part of the generic user-facing import contract.
+## Changelog
 
-The two binaries share the WAL-write layer (same `MIGRATE_RAN`
-0x14 audit frame, same atomicity rules), so operators who later
-want to use both paths get one consistent set of WAL audit events.
-
----
-
-## 9. Changelog
-
-- **2026-05-23** — Initial import shape pinned for v1.x compatibility.
+- 2026-07-13 — Corrected the public contract to the shipped manifest/apply
+  implementation; added complete assistant-home discovery, self-target
+  refusal, fail-closed atomic preflight, durable failure audit and status.
+- 2026-05-23 — Initial pre-implementation import proposal.

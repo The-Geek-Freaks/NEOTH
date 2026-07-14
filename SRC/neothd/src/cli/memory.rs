@@ -4,6 +4,7 @@
 //! Phase 28a R-22 MT-5 (tier filter + session-archive browse).
 //!
 //! Modes (mutually exclusive groups):
+//!   `show [groundtruth_id]` inspect fact provenance + resolve episode backlinks
 //!   `--show`  (default) print the assembled NEOTH.md blocks with attribution
 //!   `--paths` list only the source paths, one per line
 //!   `--size`  print total byte count + per-block breakdown
@@ -13,7 +14,8 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, Subcommand};
+use serde::Serialize;
 use tracing::info;
 
 use crate::cli::OutputFormat;
@@ -28,8 +30,24 @@ pub enum TierFilter {
     Cold,
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone)]
+pub enum MemoryAction {
+    /// Inspect verified facts and resolve their episode provenance across hot,
+    /// warm, and cold tiers. Pass an id to inspect one row in any lifecycle state.
+    Show {
+        /// Ground-truth id. Omit to show recent rows in every active trust state.
+        id: Option<i64>,
+        /// Restrict the default all-active operator inspection to verified rows.
+        #[arg(long)]
+        verified_only: bool,
+    },
+}
+
+#[derive(Args, Debug, Clone, Default)]
 pub struct MemoryArgs {
+    #[command(subcommand)]
+    pub action: Option<MemoryAction>,
+
     /// Print the full assembled context with source-attribution headers.
     #[arg(long, conflicts_with_all = ["paths", "size", "tier", "archive"])]
     pub show: bool,
@@ -133,12 +151,12 @@ pub struct MemoryArgs {
     #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin", "people", "embed_backfill"])]
     pub pipeline_scorecard: bool,
 
-    /// Max rows for `--tier` recall.
-    #[arg(long, default_value = "20")]
+    /// Max rows for `--tier` recall or `memory show` provenance inspection.
+    #[arg(long, default_value = "20", global = true)]
     pub limit: usize,
 
-    /// Override the views.db path for `--tier`.
-    #[arg(long, value_name = "PATH")]
+    /// Override the views.db path for tier/provenance inspection.
+    #[arg(long, value_name = "PATH", global = true)]
     pub db: Option<PathBuf>,
 
     /// Output format. Inherited from the global `--output` flag.
@@ -147,6 +165,12 @@ pub struct MemoryArgs {
 }
 
 pub async fn run_memory(args: MemoryArgs) -> Result<()> {
+    if let Some(action) = args.action.as_ref() {
+        return match action {
+            MemoryAction::Show { id, verified_only } => run_memory_show(&args, *id, *verified_only),
+        };
+    }
+
     // ── --tier and --archive land *before* operator_md assembly because
     //    they don't need the rules/memory file scan. Either query the
     //    views.db (tier) or sweep the archive dir (archive).
@@ -276,6 +300,156 @@ fn source_label(s: BlockSource) -> &'static str {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct EvidenceEpisode {
+    event_id: i64,
+    tier: String,
+    text: String,
+    ts_ns: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct MemoryShowRow {
+    fact: crate::memory::groundtruth::GroundTruth,
+    provenance_kind: &'static str,
+    episode_evidence: Vec<EvidenceEpisode>,
+    unresolved_episode_ids: Vec<i64>,
+}
+
+fn resolve_evidence_episode(
+    conn: &rusqlite::Connection,
+    event_id: i64,
+) -> Result<Option<EvidenceEpisode>> {
+    use rusqlite::OptionalExtension;
+
+    conn.query_row(
+        "SELECT tier, text, ts_ns FROM (\
+             SELECT 'hot' AS tier, text, ts_ns, 0 AS tier_order \
+             FROM idx_episode WHERE event_id = ?1 \
+             UNION ALL \
+             SELECT 'warm', text, consolidated_ts, 1 \
+             FROM idx_consolidated WHERE event_id = ?1 \
+             UNION ALL \
+             SELECT 'cold', text, promoted_ts, 2 \
+             FROM idx_longterm WHERE event_id = ?1\
+         ) ORDER BY tier_order ASC LIMIT 1",
+        rusqlite::params![event_id],
+        |r| {
+            Ok(EvidenceEpisode {
+                event_id,
+                tier: r.get(0)?,
+                text: r.get(1)?,
+                ts_ns: r.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .with_context(|| format!("resolve evidence episode {event_id}"))
+}
+
+fn load_memory_show_rows(
+    conn: &rusqlite::Connection,
+    id: Option<i64>,
+    limit: usize,
+    verified_only: bool,
+) -> Result<Vec<MemoryShowRow>> {
+    use crate::memory::groundtruth;
+
+    let facts = if let Some(id) = id {
+        vec![
+            groundtruth::get(conn, id)?
+                .ok_or_else(|| anyhow::anyhow!("ground-truth fact {id} not found"))?,
+        ]
+    } else {
+        let query_limit = if limit == 0 { usize::MAX } else { limit };
+        groundtruth::surface_for_recall(conn, query_limit, !verified_only)?
+    };
+
+    facts
+        .into_iter()
+        .map(|fact| {
+            let evidence_ids: Vec<i64> = serde_json::from_str(&fact.evidence)
+                .with_context(|| format!("ground-truth fact {} has malformed evidence", fact.id))?;
+            let provenance_kind = if evidence_ids.is_empty() {
+                "source-attribution"
+            } else {
+                "episode-backlinks"
+            };
+            let mut episode_evidence = Vec::with_capacity(evidence_ids.len());
+            let mut unresolved_episode_ids = Vec::new();
+            for event_id in evidence_ids {
+                match resolve_evidence_episode(conn, event_id)? {
+                    Some(evidence) => episode_evidence.push(evidence),
+                    None => unresolved_episode_ids.push(event_id),
+                }
+            }
+            Ok(MemoryShowRow {
+                fact,
+                provenance_kind,
+                episode_evidence,
+                unresolved_episode_ids,
+            })
+        })
+        .collect()
+}
+
+/// `neoth memory show [groundtruth_id]` — NN-MEM-03 operator provenance path.
+fn run_memory_show(args: &MemoryArgs, id: Option<i64>, verified_only: bool) -> Result<()> {
+    use crate::memory::store;
+
+    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path)
+        .with_context(|| format!("open views.db for memory show: {}", db_path.display()))?;
+    let rows = load_memory_show_rows(&conn, id, args.limit, verified_only)?;
+
+    match args.output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
+        OutputFormat::Jsonl => {
+            for row in &rows {
+                println!("{}", serde_json::to_string(row)?);
+            }
+        }
+        OutputFormat::Table => {
+            if rows.is_empty() {
+                println!("no active verified ground-truth facts.");
+                return Ok(());
+            }
+            println!("# {} ground-truth provenance row(s)", rows.len());
+            for row in &rows {
+                let fact = &row.fact;
+                println!(
+                    "  [{:>6}] {:<12} {:<22} {:<20} {}",
+                    fact.id, fact.fact_state, fact.source, fact.scope, fact.statement
+                );
+                println!(
+                    "           maturity={} confidence={:.3} confirmed={} provenance={}",
+                    fact.maturity, fact.confidence, fact.confirmed_count, row.provenance_kind
+                );
+                println!("           sources={}", fact.source_weight);
+                for evidence in &row.episode_evidence {
+                    let preview = evidence
+                        .text
+                        .chars()
+                        .take(100)
+                        .collect::<String>()
+                        .replace(['\n', '\r'], " ");
+                    println!(
+                        "           episode={} tier={} ts={}  {}",
+                        evidence.event_id, evidence.tier, evidence.ts_ns, preview
+                    );
+                }
+                if !row.unresolved_episode_ids.is_empty() {
+                    println!(
+                        "           unresolved_episode_ids={:?}",
+                        row.unresolved_episode_ids
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `neoth memory --tier <hot|warm|cold>` — list rows from the matching
 /// SQLite view ordered by importance × tier_weight (recency-penalised).
 async fn run_memory_tier(args: &MemoryArgs, tier: TierFilter) -> Result<()> {
@@ -383,10 +557,10 @@ async fn run_memory_tier(args: &MemoryArgs, tier: TierFilter) -> Result<()> {
 /// Without `--confirm` this is a dry-run that prints what would be
 /// deleted (operator sees the impact before committing). With
 /// `--confirm` the deletion executes against the views.db; the
-/// `memory::forget::forget_by_topic` function handles tier cascade +
-/// ground-truth revocation + embedding wipe. WAL TOMBSTONE emission
-/// is Phase 2 work — for now the audit row is a textual log entry on
-/// the operator's terminal + the SQLite-side deletion is final.
+/// `memory::forget::forget_by_topic` handles the complete SQLite cascade,
+/// installs an anti-resurrection sentinel atomically, and the confirmed path
+/// writes a TOMBSTONE_REQUESTED WAL audit anchor. `--physical` additionally
+/// redacts the matching payload bytes from WAL segments.
 async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     use crate::memory::{forget, store};
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
@@ -394,48 +568,29 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
         .with_context(|| format!("open views.db for forget: {}", db_path.display()))?;
 
     if !args.confirm {
-        // Dry-run preview: COUNT matches per tier instead of DELETE.
-        // Escape LIKE wildcards + ESCAPE so the preview matches the real
-        // delete exactly (GOLD-SEC-04) — a `%` topic counts literal-`%`
-        // rows, not the whole store.
-        let pattern = format!("%{}%", crate::memory::escape_like(topic));
-        let count = |sql: &str| -> i64 {
-            conn.query_row(sql, rusqlite::params![&pattern], |r| r.get(0))
-                .unwrap_or(0)
-        };
-        let ep =
-            count("SELECT COUNT(*) FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'");
-        let co = count(
-            "SELECT COUNT(*) FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
-        );
-        let lt = count(
-            "SELECT COUNT(*) FROM idx_longterm WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
-        );
-        let pr = count(
-            "SELECT COUNT(*) FROM idx_profile \
-             WHERE field COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
-                OR value_json COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
-        );
-        let gt = count(
-            "SELECT COUNT(*) FROM idx_groundtruth \
-             WHERE revoked_at IS NULL AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
-        );
-        let emb = count(
-            "SELECT COUNT(*) FROM idx_embedding WHERE source_ref COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
-        );
-        let total = ep + co + lt + pr + gt + emb;
+        let report = forget::preview_forget_by_topic(&conn, topic)?;
+        let total = report.total();
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 let body = serde_json::json!({
                     "dry_run": true,
                     "topic": topic,
                     "would_delete": {
-                        "idx_episode": ep,
-                        "idx_consolidated": co,
-                        "idx_longterm": lt,
-                        "idx_profile": pr,
-                        "idx_groundtruth_revoke": gt,
-                        "idx_embedding": emb,
+                        "idx_episode": report.episode_rows,
+                        "idx_consolidated": report.consolidated_rows,
+                        "idx_longterm": report.longterm_rows,
+                        "raw_turns": report.raw_turn_rows,
+                        "idx_profile": report.profile_rows,
+                        "idx_profile_pending": report.profile_pending_rows,
+                        "idx_profile_outbox": report.profile_outbox_rows,
+                        "idx_groundtruth_revoke": report.groundtruth_revoked,
+                        "idx_embedding": report.embedding_rows,
+                        "idx_entities": report.entity_rows,
+                        "idx_relations": report.relation_rows,
+                        "idx_memory_links": report.link_rows,
+                        "idx_contradictions": report.contradiction_rows,
+                        "idx_foreign_events": report.foreign_event_rows,
+                        "people_json": report.people_rows,
                         "total": total,
                     },
                     "confirm_with": "neoth memory --forget \"<topic>\" --confirm",
@@ -444,12 +599,27 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
             }
             OutputFormat::Table => {
                 println!("# Forget dry-run for topic `{topic}`");
-                println!("  idx_episode      : {ep} rows");
-                println!("  idx_consolidated : {co} rows");
-                println!("  idx_longterm     : {lt} rows");
-                println!("  idx_profile      : {pr} claims");
-                println!("  idx_groundtruth  : {gt} would be revoked");
-                println!("  idx_embedding    : {emb} vectors");
+                println!("  idx_episode      : {} rows", report.episode_rows);
+                println!("  idx_consolidated : {} rows", report.consolidated_rows);
+                println!("  idx_longterm     : {} rows", report.longterm_rows);
+                println!("  raw_turns        : {} rows", report.raw_turn_rows);
+                println!("  idx_profile      : {} claims", report.profile_rows);
+                println!("  idx_profile_pend : {} rows", report.profile_pending_rows);
+                println!("  idx_profile_outb : {} rows", report.profile_outbox_rows);
+                println!(
+                    "  idx_groundtruth  : {} would be revoked",
+                    report.groundtruth_revoked
+                );
+                println!("  idx_embedding    : {} vectors", report.embedding_rows);
+                println!("  idx_entities     : {} nodes", report.entity_rows);
+                println!("  idx_relations    : {} edges", report.relation_rows);
+                println!("  idx_memory_links : {} links", report.link_rows);
+                println!("  idx_contradict   : {} rows", report.contradiction_rows);
+                println!(
+                    "  idx_foreign_evt  : {} peer frames",
+                    report.foreign_event_rows
+                );
+                println!("  people.json      : {} rows", report.people_rows);
                 println!("  total            : {total}");
                 println!();
                 println!("  No changes made. Re-run with `--confirm` to execute.");
@@ -467,27 +637,25 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     let segment = wal_dir.join(format!("memory-forget-{}.wal", now_unix));
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer for tombstone")?;
-    let report = forget::forget_by_topic_with_audit(&conn, topic, now_unix, "cli", &writer).await?;
+    // `rusqlite::Connection` is Send but not Sync. Move it through the
+    // audited async operation so no `&Connection` survives the WAL await.
+    let (conn, report) =
+        forget::forget_by_topic_with_audit(conn, topic, now_unix, "cli", &writer).await?;
     drop(writer);
-    let _ = writer_join.await;
+    writer_join.await.context("join memory-forget WAL writer")?;
     // GR-005: the idx_embedding SQLite wipe inside forget does NOT touch the
     // on-disk HNSW snapshot — forgotten vectors stay searchable via the
-    // cold-load path until a rebuild. Purge them by rebuilding the snapshot from
-    // the now-wiped SQLite. Best-effort: a failure logs but doesn't fail the
-    // forget (the SQLite truth is already erased; recall cold-loads from it / the
-    // snapshot-refresh cron rebuilds later). Acts only when embeddings were forgotten.
+    // cold-load path until a rebuild. Purge them by invalidating the old snapshot
+    // first, then rebuilding it from the now-wiped SQLite. A rebuild failure is
+    // surfaced, but recall remains privacy-safe because the stale snapshot is no
+    // longer present. Acts only when embeddings were forgotten.
     if report.embedding_rows > 0 {
         let home = crate::config::FreedomConfig::default_neoth_home();
-        match crate::memory::embeddings::rebuild_snapshot_if_present(&conn, &home) {
-            Ok(Some(n)) => info!(
+        if let Some(n) = crate::memory::embeddings::rebuild_snapshot_if_present(&conn, &home)? {
+            info!(
                 vectors = n,
                 "GR-005: HNSW snapshot rebuilt after forget — forgotten embeddings purged from the searchable index"
-            ),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(
-                error = %e,
-                "GR-005: HNSW snapshot rebuild after forget failed; recall cold-loads from the (already-wiped) SQLite until the snapshot-refresh cron rebuilds it"
-            ),
+            );
         }
     }
     info!(
@@ -501,6 +669,13 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
         profile = report.profile_rows,
         profile_pending = report.profile_pending_rows,
         profile_outbox = report.profile_outbox_rows,
+        raw_turns = report.raw_turn_rows,
+        entities = report.entity_rows,
+        relations = report.relation_rows,
+        memory_links = report.link_rows,
+        contradictions = report.contradiction_rows,
+        foreign_events = report.foreign_event_rows,
+        people = report.people_rows,
         audit_segment = %segment.display(),
         "forget executed (TOMBSTONE_REQUESTED audit frame written)"
     );
@@ -516,6 +691,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 report.consolidated_rows
             );
             println!("  idx_longterm     : {} rows deleted", report.longterm_rows);
+            println!("  raw_turns        : {} rows deleted", report.raw_turn_rows);
             println!(
                 "  idx_groundtruth  : {} revoked",
                 report.groundtruth_revoked
@@ -535,6 +711,21 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 "  idx_embedding    : {} vectors wiped",
                 report.embedding_rows
             );
+            println!(
+                "  idx_foreign_evt  : {} peer frames deleted",
+                report.foreign_event_rows
+            );
+            println!("  idx_entities     : {} nodes deleted", report.entity_rows);
+            println!(
+                "  idx_relations    : {} edges deleted",
+                report.relation_rows
+            );
+            println!("  idx_memory_links : {} links deleted", report.link_rows);
+            println!(
+                "  idx_contradict   : {} rows deleted",
+                report.contradiction_rows
+            );
+            println!("  people.json      : {} rows deleted", report.people_rows);
             println!("  total            : {}", report.total());
         }
     }
@@ -847,12 +1038,12 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
     use crate::memory::{embeddings, store};
 
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
-    let conn = store::open(&db_path)
+    let mut conn = store::open(&db_path)
         .with_context(|| format!("open views.db for embed-backfill: {}", db_path.display()))?;
 
     // Resolve the embed provider from the operator's freedom.yaml.
-    let config = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml for embed-backfill")?;
+    let config =
+        FreedomConfig::load_from_default_path().context("load freedom.yaml for embed-backfill")?;
     let provider = match crate::providers::embed_provider_from_config(&config).await {
         Some(p) => p,
         None => {
@@ -873,7 +1064,7 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
 
     // Embed each candidate best-effort (failures are warned inside embed_episode_text).
     for (event_id, text) in &candidates {
-        embeddings::embed_episode_text(&conn, *event_id, text, provider.as_ref()).await;
+        conn = embeddings::embed_episode_text(conn, *event_id, text, provider.as_ref()).await;
     }
 
     // Count how many were actually written vs already present (second-run idempotence).
@@ -924,7 +1115,9 @@ pub(crate) fn unembedded_episode_ids(
         )
     };
 
-    let mut stmt = conn.prepare(&sql).context("prepare unembedded_episode_ids")?;
+    let mut stmt = conn
+        .prepare(&sql)
+        .context("prepare unembedded_episode_ids")?;
     let rows = stmt
         .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
         .context("query unembedded_episode_ids")?
@@ -946,8 +1139,12 @@ async fn run_memory_pipeline_scorecard(args: &MemoryArgs) -> Result<()> {
     use crate::memory::{scorecard, store};
 
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
-    let conn = store::open(&db_path)
-        .with_context(|| format!("open views.db for pipeline-scorecard: {}", db_path.display()))?;
+    let conn = store::open(&db_path).with_context(|| {
+        format!(
+            "open views.db for pipeline-scorecard: {}",
+            db_path.display()
+        )
+    })?;
 
     let now_unix = crate::time::now_unix_i64();
     let sc = scorecard::read_and_compute_pipeline_scorecard(&conn, now_unix)
@@ -983,7 +1180,10 @@ async fn run_memory_pipeline_scorecard(args: &MemoryArgs) -> Result<()> {
             );
             println!();
             if sc.is_healthy {
-                println!("  status: HEALTHY (grade {} >= C threshold)", sc.overall_grade);
+                println!(
+                    "  status: HEALTHY (grade {} >= C threshold)",
+                    sc.overall_grade
+                );
             } else {
                 println!(
                     "  status: UNHEALTHY (grade {} < C threshold — inspect subsystems above)",
@@ -1084,6 +1284,7 @@ mod tests {
 
     fn pin_test_args(db: PathBuf, pin: Option<i64>, unpin: Option<i64>) -> MemoryArgs {
         MemoryArgs {
+            action: None,
             show: false,
             paths: false,
             size: false,
@@ -1103,6 +1304,102 @@ mod tests {
             db: Some(db),
             output: OutputFormat::Table,
         }
+    }
+
+    #[test]
+    fn memory_show_subcommand_is_wired_and_resolves_episode_provenance() {
+        use crate::cli::{Cli, Commands};
+        use crate::memory::{groundtruth, store};
+        use clap::Parser;
+
+        let cli = Cli::try_parse_from(["neoth", "memory", "show", "--limit", "7"])
+            .expect("memory show must be a real clap subcommand");
+        let Commands::Memory(parsed) = cli.command else {
+            panic!("expected memory command");
+        };
+        assert!(matches!(
+            parsed.action,
+            Some(MemoryAction::Show {
+                id: None,
+                verified_only: false
+            })
+        ));
+        assert_eq!(parsed.limit, 7);
+
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_episode(&conn, 71, "source episode");
+        let fact_id = groundtruth::insert_with_evidence(
+            &conn,
+            "derived operator fact",
+            &groundtruth::Source::OperatorRuntime,
+            "global",
+            123,
+            &[71],
+        )
+        .unwrap();
+
+        let rows = load_memory_show_rows(&conn, Some(fact_id), 20, false).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].provenance_kind, "episode-backlinks");
+        assert_eq!(rows[0].episode_evidence.len(), 1);
+        assert_eq!(rows[0].episode_evidence[0].event_id, 71);
+        assert_eq!(rows[0].episode_evidence[0].tier, "hot");
+        assert!(rows[0].unresolved_episode_ids.is_empty());
+
+        let synthesis_id = groundtruth::insert_with_evidence(
+            &conn,
+            "candidate synthesis with provenance",
+            &groundtruth::Source::Synthesis,
+            "meta",
+            124,
+            &[71],
+        )
+        .unwrap();
+        let all_active = load_memory_show_rows(&conn, None, 20, false).unwrap();
+        assert!(
+            all_active.iter().any(|row| row.fact.id == synthesis_id),
+            "operator provenance inspection defaults to all active states"
+        );
+        let verified_only = load_memory_show_rows(&conn, None, 20, true).unwrap();
+        assert!(
+            verified_only.iter().all(|row| row.fact.id != synthesis_id),
+            "--verified-only retains the recall trust boundary"
+        );
+    }
+
+    #[test]
+    fn memory_show_reports_source_attribution_and_missing_historical_backlinks() {
+        use crate::memory::{groundtruth, store};
+
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        let direct_id = groundtruth::insert(
+            &conn,
+            "operator-attested fact",
+            &groundtruth::Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+        let direct = load_memory_show_rows(&conn, Some(direct_id), 20, false).unwrap();
+        assert_eq!(direct[0].provenance_kind, "source-attribution");
+
+        insert_episode(&conn, 72, "temporary source");
+        let derived_id = groundtruth::insert_with_evidence(
+            &conn,
+            "historical derived fact",
+            &groundtruth::Source::OperatorRuntime,
+            "global",
+            2,
+            &[72],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM idx_episode WHERE event_id = 72", [])
+            .unwrap();
+        let historical = load_memory_show_rows(&conn, Some(derived_id), 20, false).unwrap();
+        assert!(historical[0].episode_evidence.is_empty());
+        assert_eq!(historical[0].unresolved_episode_ids, vec![72]);
     }
 
     #[tokio::test]
@@ -1280,8 +1577,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::providers::embed::EmbedProvider for FixedEmbed2d {
-        fn name(&self) -> &'static str { "fixed-2d" }
-        fn default_dim(&self) -> usize { 2 }
+        fn name(&self) -> &'static str {
+            "fixed-2d"
+        }
+        fn default_dim(&self) -> usize {
+            2
+        }
         async fn embed(
             &self,
             _req: crate::providers::embed::EmbedRequest,
@@ -1312,7 +1613,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("views.db");
-        let conn = store::open(&db_path).unwrap();
+        let mut conn = store::open(&db_path).unwrap();
         insert_episode(&conn, 1, "first episode text");
         insert_episode(&conn, 2, "second episode text");
 
@@ -1322,7 +1623,7 @@ mod tests {
 
         let provider = FixedEmbed2d { x: 1.0, y: 0.0 };
         for (event_id, text) in &before {
-            embeddings::embed_episode_text(&conn, *event_id, text, &provider).await;
+            conn = embeddings::embed_episode_text(conn, *event_id, text, &provider).await;
         }
 
         let after = unembedded_episode_ids(&conn, 0).unwrap();
@@ -1350,7 +1651,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("views.db");
-        let conn = store::open(&db_path).unwrap();
+        let mut conn = store::open(&db_path).unwrap();
         insert_episode(&conn, 10, "some memory");
 
         let provider = FixedEmbed2d { x: 0.0, y: 1.0 };
@@ -1359,7 +1660,7 @@ mod tests {
         let pass1 = unembedded_episode_ids(&conn, 0).unwrap();
         assert_eq!(pass1.len(), 1);
         for (eid, text) in &pass1 {
-            embeddings::embed_episode_text(&conn, *eid, text, &provider).await;
+            conn = embeddings::embed_episode_text(conn, *eid, text, &provider).await;
         }
 
         // Second pass: nothing left to embed.

@@ -8,18 +8,23 @@
 #
 # A leading `~/` expands to your home directory; absolute paths pass
 # through unchanged. `kind` selects the reader; valid kinds are:
+#   assistant_home — a complete OpenClaw/Hermes/OpenHuman/Veronica home;
+#                    requires hint: openclaw | hermes | openhuman | veronica
 #   markdown       — a directory of .md files (e.g. an Obsidian vault)
 #   markdown_file  — a single .md file
 #   json_dir       — a directory of .json / .ajson files
 #   json_file      — a single .json file
 #   sqlite         — a .db file (or a directory containing one)
-#   lance_arrow    — a LanceDB directory (counts datasets, SCAN-ONLY — apply is a no-op)
-#   git_tree       — a directory of git repos (counts repos, SCAN-ONLY — apply is a no-op)
-#   faiss_flat     — a directory of .bin flat-vector files (SCAN-ONLY — apply is a no-op)
+#   lance_arrow    — a LanceDB directory (SCAN-ONLY; apply rejects the manifest)
+#   git_tree       — a directory of git repos (SCAN-ONLY; apply rejects the manifest)
+#   faiss_flat     — flat-vector .bin files (SCAN-ONLY; apply rejects the manifest)
 #
-# `hint` is optional and serves two mutually-exclusive purposes:
+# `hint` is optional and serves these mutually-exclusive purposes:
 #
-#   1. Sub-format discriminator (sqlite kind only) — tells the reader which
+#   1. Assistant-family discriminator (`assistant_home`, REQUIRED):
+#        hint: "openclaw" | "hermes" | "openhuman" | "veronica"
+#
+#   2. Sub-format discriminator (sqlite kind only) — tells the reader which
 #      schema the .db file follows so it can extract the right tables:
 #        hint: "hermes"      — Hermes / neothd memory store
 #        hint: "openhuman"   — OpenHuman sqlite exports
@@ -27,7 +32,7 @@
 #        hint: "veronica"    — Veronica assistant DB
 #      Without a hint the sqlite reader attempts a generic key/value scan.
 #
-#   2. Scope override (all kinds) — prefix "scope:" to pin where imported
+#   3. Scope override (all non-assistant-home kinds) — prefix "scope:" to pin where imported
 #      claims land in idx_groundtruth instead of defaulting to "global":
 #        hint: "scope:global"     — store in the global scope (default)
 #        hint: "scope:host:myhostname" — restrict to a specific host scope
@@ -35,11 +40,20 @@
 #      scope tag. A hint that does NOT start with "scope:" is treated as a
 #      sub-format key (case 1 above) and scope defaults to "global".
 #
-#   NOTE: sub-format key and scope override are mutually exclusive per source.
+#   NOTE: family/sub-format key and scope override are mutually exclusive per source.
 #   If you need both (e.g. Hermes DB in a non-global scope), split the source
 #   into two entries using a wrapper script that exports to a JSON file first.
 
 sources:
+  # `neoth-migrate detect --output import.yaml` generates entries like this.
+  # The reader walks the WHOLE assistant home recursively, including nested
+  # Markdown, JSON/JSONL and every real SQLite store. Credential/auth/browser
+  # stores, caches and the NEOTH target tree are excluded by policy.
+  - name: openhuman_home
+    path: ~/.openhuman
+    kind: assistant_home
+    hint: openhuman
+
   - name: notes_vault
     path: ~/Documents/MyVault           # your Obsidian / markdown notes
     kind: markdown

@@ -172,10 +172,17 @@ pub fn run_sweep(
             res.ok().and_then(|(source_ref, blob, channel)| {
                 let vec = blob_to_floats(&blob);
                 if vec.is_empty() {
-                    warn!(source_ref, "consolidation_sweep: skipping embedding with bad blob");
+                    warn!(
+                        source_ref,
+                        "consolidation_sweep: skipping embedding with bad blob"
+                    );
                     return None;
                 }
-                Some(EmbRow { event_id_str: source_ref, vec, channel })
+                Some(EmbRow {
+                    event_id_str: source_ref,
+                    vec,
+                    channel,
+                })
             })
         })
         .collect()
@@ -231,7 +238,11 @@ pub fn run_sweep(
 
     if qualifying.is_empty() {
         debug!("consolidation_sweep: no qualifying clusters — nothing to boost");
-        return Ok(SweepReport { clusters_found: 0, members_boosted: 0, merged_to_groundtruth: 0 });
+        return Ok(SweepReport {
+            clusters_found: 0,
+            members_boosted: 0,
+            merged_to_groundtruth: 0,
+        });
     }
 
     // ── 3. Load episode metadata for qualifying cluster members ─────────────
@@ -254,7 +265,10 @@ pub fn run_sweep(
         let event_id: i64 = match id_str.parse() {
             Ok(v) => v,
             Err(_) => {
-                warn!(source_ref = id_str, "consolidation_sweep: bad event_id string — skip");
+                warn!(
+                    source_ref = id_str,
+                    "consolidation_sweep: bad event_id string — skip"
+                );
                 continue;
             }
         };
@@ -268,7 +282,15 @@ pub fn run_sweep(
             .context("query idx_episode for sweep member")?;
 
         if let Some((text, importance, ts_ns)) = meta {
-            ep_cache.insert(id_str.to_string(), EpMeta { event_id, text, importance, ts_ns });
+            ep_cache.insert(
+                id_str.to_string(),
+                EpMeta {
+                    event_id,
+                    text,
+                    importance,
+                    ts_ns,
+                },
+            );
         }
     }
 
@@ -293,8 +315,8 @@ pub fn run_sweep(
 
         // 4a. Boost importance for all members present in idx_episode.
         for meta in &metas {
-            let new_importance = (meta.importance * IMPORTANCE_BOOST_FACTOR)
-                .min(cfg.importance_boost_cap);
+            let new_importance =
+                (meta.importance * IMPORTANCE_BOOST_FACTOR).min(cfg.importance_boost_cap);
             tx.execute(
                 "UPDATE idx_episode SET importance = ?1 WHERE event_id = ?2",
                 params![new_importance, meta.event_id],
@@ -311,45 +333,42 @@ pub fn run_sweep(
             metas.iter().map(|m| m.importance).sum::<f64>() / metas.len() as f64;
 
         if span_ns >= MATURE_SPAN_NS && avg_importance >= MATURE_MIN_AVG_IMPORTANCE {
+            let mut evidence_members = metas.clone();
+            evidence_members.sort_by_key(|meta| meta.ts_ns);
+            let evidence_ids: Vec<i64> = evidence_members
+                .into_iter()
+                .map(|meta| meta.event_id)
+                .collect();
+
             // Pick highest-importance member as canonical.
             if let Some(canonical) = metas.iter().max_by(|a, b| {
                 a.importance
                     .partial_cmp(&b.importance)
                     .unwrap_or(std::cmp::Ordering::Equal)
             }) {
-                let now_unix_secs = now_ns / 1_000_000_000;
-                match groundtruth::insert(
+                match groundtruth::insert_with_evidence(
                     &tx,
                     &canonical.text,
                     &Source::Synthesis, // closest existing automated-cron source
                     "meta",
-                    now_unix_secs,
+                    now_ns,
+                    &evidence_ids,
                 ) {
-                    Ok(fact_id) => {
+                    Ok(_) => {
                         report.merged_to_groundtruth += 1;
-                        // GOLD-ADAPT-NN-MEM-03: thread the evidence backlink so the
-                        // groundtruth row records which consolidated episode it came
-                        // from. Non-fatal — a failure here must not abort the sweep.
-                        if let Err(e) =
-                            groundtruth::record_evidence(&tx, fact_id, canonical.event_id)
-                        {
-                            debug!(
-                                error = %e,
-                                "consolidation_sweep: record_evidence skipped (non-fatal)"
-                            );
-                        }
                     }
                     Err(e) => {
-                        // Non-fatal — log and continue. A duplicate statement
-                        // is handled by groundtruth::insert corroboration path.
-                        debug!(error = %e, "consolidation_sweep: groundtruth insert skipped");
+                        // Non-fatal at sweep level, but insert_with_evidence is
+                        // atomic: a failed backlink cannot leave an orphan fact.
+                        debug!(error = %e, "consolidation_sweep: derived fact skipped");
                     }
                 }
             }
         }
     }
 
-    tx.commit().context("commit consolidation sweep transaction")?;
+    tx.commit()
+        .context("commit consolidation sweep transaction")?;
     Ok(report)
 }
 
@@ -366,10 +385,7 @@ mod tests {
 
     /// Insert a minimal L2-normalised embedding for an episode event_id.
     fn insert_embedding(conn: &Connection, event_id: i64, vec: &[f32]) {
-        let blob: Vec<u8> = vec
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let blob: Vec<u8> = vec.iter().flat_map(|f| f.to_le_bytes()).collect();
         let dim = vec.len() as i64;
         let now = 1_000_000i64;
         conn.execute(
@@ -446,7 +462,11 @@ mod tests {
 
         // Verify importance was boosted and capped.
         let imp: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(imp > 0.4, "importance must be boosted");
         assert!(imp <= 0.85, "importance must not exceed cap");
@@ -467,7 +487,11 @@ mod tests {
         assert_eq!(report.members_boosted, 2);
 
         let imp: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(
             (imp - 0.85).abs() < 1e-9,
@@ -514,11 +538,29 @@ mod tests {
 
         // Verify a groundtruth row was created.
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_groundtruth WHERE scope = 'meta'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM idx_groundtruth WHERE scope = 'meta'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(count, 1, "one groundtruth row should exist after mature merge");
+        assert_eq!(
+            count, 1,
+            "one groundtruth row should exist after mature merge"
+        );
+
+        let evidence: String = conn
+            .query_row(
+                "SELECT evidence FROM idx_groundtruth WHERE scope = 'meta'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<i64>>(&evidence).unwrap(),
+            vec![1, 2],
+            "the consolidated fact must link every contributing episode, not only the canonical one"
+        );
     }
 
     #[test]
@@ -548,7 +590,14 @@ mod tests {
 
         // Cosine = 1.0 (identical unit vectors) — would cluster without the
         // same-domain guard; channel mismatch must prevent it.
-        insert_episode_with_channel(&conn, 1, "rust is fast", 0.5, 1_000_000_000, Some("telegram"));
+        insert_episode_with_channel(
+            &conn,
+            1,
+            "rust is fast",
+            0.5,
+            1_000_000_000,
+            Some("telegram"),
+        );
         insert_episode_with_channel(
             &conn,
             2,
@@ -629,14 +678,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("views.db")).unwrap();
 
-        insert_episode_with_channel(
-            &conn,
-            1,
-            "tagged",
-            0.5,
-            1_000_000_000,
-            Some("telegram"),
-        );
+        insert_episode_with_channel(&conn, 1, "tagged", 0.5, 1_000_000_000, Some("telegram"));
         insert_episode(&conn, 2, "untagged", 0.5, 2_000_000_000); // channel=None
         insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);

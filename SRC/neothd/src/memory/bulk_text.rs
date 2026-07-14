@@ -17,13 +17,18 @@
 //!      provider call itself lives in the caller (CLI / wizard) so this
 //!      module stays sync + dependency-free of the provider stack.
 //!
-//! Dedup happens via `xxh3_64(normalize(claim))` against an in-memory
-//! `HashSet<u64>` for the current pass + the persistent
-//! `ground_truth_fingerprints` set (Phase 28c follow-up, not yet wired).
+//! Dedup uses the canonical normalised statement as the equality proof. An
+//! `xxh3_64` fingerprint is retained only as a lookup accelerator: a hash
+//! collision can never make two different normalised claims equal. The
+//! current pass uses an in-memory `HashSet<String>`; completed import attempts
+//! are recorded transactionally in `ground_truth_fingerprints`, so a restart
+//! or a later import cannot re-assert the same claim as fresh corroboration.
 //!
 //! Output is always `Vec<Claim>` so the caller can hand them to
 //! `groundtruth::insert(Source::BulkText, ...)`.
 
+use anyhow::{Context, Result};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashSet;
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -32,9 +37,22 @@ use unicode_segmentation::UnicodeSegmentation;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Claim {
     pub statement: String,
-    /// 64-bit fingerprint over the normalised form. Same content from a
-    /// re-paste collides and the caller can skip the duplicate.
+    /// 64-bit lookup accelerator over the normalised form. Equality is always
+    /// checked against the full normalised statement as well.
     pub fingerprint: u64,
+}
+
+/// Durable outcome of importing one claim.
+///
+/// Re-pasting an active claim is a no-op: it does not increment
+/// `source_weight`, confidence, or `confirmed_count`. A revoked row (or a hard
+/// deleted row whose fingerprint ledger remains) is an operator tombstone and
+/// is likewise not resurrected by a bulk import.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersistClaimOutcome {
+    Inserted { id: i64 },
+    SkippedActive { id: i64 },
+    SkippedTombstone { id: Option<i64> },
 }
 
 /// Hard cap per claim. Anything longer is truncated at the next word
@@ -52,22 +70,35 @@ const NOISE_PREFIXES: &[&str] = &["Note:", "TODO", "TBD", "See also"];
 /// Heuristic-only extractor. Returns deduped claims in document order.
 pub fn extract_claims_heuristic(text: &str) -> Vec<Claim> {
     let mut out = Vec::new();
-    let mut seen: HashSet<u64> = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for paragraph in text.split("\n\n") {
         for chunk in split_paragraph(paragraph) {
             let trimmed = chunk.trim();
             if !is_acceptable(trimmed) {
                 continue;
             }
-            let capped = cap_at_word_boundary(trimmed, MAX_CLAIM_CHARS);
-            let normalised = normalise_for_dedup(&capped);
-            let fingerprint = xxhash_rust::xxh3::xxh3_64(normalised.as_bytes());
-            if seen.insert(fingerprint) {
-                out.push(Claim {
-                    statement: capped,
-                    fingerprint,
-                });
+            if let Some(claim) = claim_from_statement(trimmed, &mut seen) {
+                out.push(claim);
             }
+        }
+    }
+    out
+}
+
+/// Parse operator-curated, one-claim-per-line input. This path deliberately
+/// keeps the raw line semantics (no sentence splitting or noise-prefix
+/// filtering), but shares the exact same cap, normaliser, collision guard, and
+/// in-pass dedup implementation as heuristic and LLM extraction.
+pub fn extract_claims_raw(text: &str) -> Vec<Claim> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.chars().count() < MIN_CLAIM_CHARS {
+            continue;
+        }
+        if let Some(claim) = claim_from_statement(trimmed, &mut seen) {
+            out.push(claim);
         }
     }
     out
@@ -89,26 +120,161 @@ pub fn build_llm_prompt(chunk: &str) -> (String, String) {
 /// returns an empty vec (caller decides whether that's an error).
 pub fn parse_llm_output(response: &str) -> Vec<Claim> {
     let mut out = Vec::new();
-    let mut seen: HashSet<u64> = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for raw in response.lines() {
         let stripped = strip_bullet(raw).trim();
         if !is_acceptable(stripped) {
             continue;
         }
-        let capped = cap_at_word_boundary(stripped, MAX_CLAIM_CHARS);
-        let normalised = normalise_for_dedup(&capped);
-        let fingerprint = xxhash_rust::xxh3::xxh3_64(normalised.as_bytes());
-        if seen.insert(fingerprint) {
-            out.push(Claim {
-                statement: capped,
-                fingerprint,
-            });
+        if let Some(claim) = claim_from_statement(stripped, &mut seen) {
+            out.push(claim);
         }
     }
     out
 }
 
+/// Persist one bulk claim and its canonical identity as one SQLite operation.
+///
+/// The ledger row is reserved before `idx_groundtruth` is touched. SQLite's
+/// unique `(scope, normalised_statement)` key serialises racing importers; the
+/// loser observes the committed row and skips instead of corroborating it. A
+/// SAVEPOINT keeps this composable with caller-owned transactions and ensures
+/// an insert failure cannot leave a fingerprint without its fact (or vice
+/// versa).
+pub fn persist_claim(
+    conn: &Connection,
+    claim: &Claim,
+    scope: &str,
+    now_ns: i64,
+) -> Result<PersistClaimOutcome> {
+    let scope = scope.trim();
+    if scope.is_empty() {
+        anyhow::bail!("bulk-text scope must be non-empty");
+    }
+    let statement = claim.statement.trim();
+    if statement.is_empty() {
+        anyhow::bail!("bulk-text claim must be non-empty");
+    }
+    let normalised = normalise_for_dedup(statement);
+    if normalised.is_empty() {
+        anyhow::bail!("bulk-text claim normalises to an empty statement");
+    }
+    let fingerprint = fingerprint_for_normalised(&normalised);
+    persist_normalised(conn, statement, scope, &normalised, fingerprint, now_ns)
+}
+
+fn persist_normalised(
+    conn: &Connection,
+    statement: &str,
+    scope: &str,
+    normalised: &str,
+    fingerprint: u64,
+    now_ns: i64,
+) -> Result<PersistClaimOutcome> {
+    conn.execute_batch("SAVEPOINT bulk_text_persist")
+        .context("begin bulk-text persistence savepoint")?;
+
+    let result = (|| {
+        let fingerprint_bytes = fingerprint.to_be_bytes();
+        let reserved = conn
+            .execute(
+                "INSERT INTO ground_truth_fingerprints \
+                     (scope, fingerprint, normalised_statement, groundtruth_id, first_seen_at) \
+                 VALUES (?1, ?2, ?3, NULL, ?4) \
+                 ON CONFLICT(scope, normalised_statement) DO NOTHING",
+                params![scope, &fingerprint_bytes[..], normalised, now_ns],
+            )
+            .context("reserve persistent bulk-text fingerprint")?;
+
+        if reserved == 0 {
+            let existing: Option<(Option<i64>, Option<i64>, Option<i64>)> = conn
+                .query_row(
+                    "SELECT f.groundtruth_id, g.id, g.revoked_at \
+                     FROM ground_truth_fingerprints f \
+                     LEFT JOIN idx_groundtruth g ON g.id = f.groundtruth_id \
+                     WHERE f.scope = ?1 AND f.normalised_statement = ?2",
+                    params![scope, normalised],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .context("read persistent bulk-text fingerprint")?;
+            let (ledger_id, joined_id, revoked_at) = existing.ok_or_else(|| {
+                anyhow::anyhow!("bulk-text fingerprint conflict disappeared inside savepoint")
+            })?;
+            return Ok(match (ledger_id, joined_id, revoked_at) {
+                (Some(id), Some(_), None) => PersistClaimOutcome::SkippedActive { id },
+                (id, _, _) => PersistClaimOutcome::SkippedTombstone { id },
+            });
+        }
+
+        let id = crate::memory::groundtruth::insert(
+            conn,
+            statement,
+            &crate::memory::groundtruth::Source::BulkText,
+            scope,
+            now_ns,
+        )?;
+        let linked = conn
+            .execute(
+                "UPDATE ground_truth_fingerprints SET groundtruth_id = ?1 \
+                 WHERE scope = ?2 AND normalised_statement = ?3 \
+                   AND groundtruth_id IS NULL",
+                params![id, scope, normalised],
+            )
+            .context("link bulk-text fingerprint to ground-truth row")?;
+        if linked != 1 {
+            anyhow::bail!("bulk-text fingerprint reservation lost before ground-truth link");
+        }
+        Ok(PersistClaimOutcome::Inserted { id })
+    })();
+
+    finish_savepoint(conn, result)
+}
+
+fn finish_savepoint(
+    conn: &Connection,
+    result: Result<PersistClaimOutcome>,
+) -> Result<PersistClaimOutcome> {
+    match result {
+        Ok(outcome) => match conn.execute_batch("RELEASE SAVEPOINT bulk_text_persist") {
+            Ok(()) => Ok(outcome),
+            Err(release_error) => {
+                let _ = conn.execute_batch(
+                    "ROLLBACK TO SAVEPOINT bulk_text_persist; \
+                     RELEASE SAVEPOINT bulk_text_persist",
+                );
+                Err(anyhow::Error::new(release_error)
+                    .context("commit bulk-text persistence savepoint"))
+            }
+        },
+        Err(error) => {
+            let rollback = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT bulk_text_persist; \
+                 RELEASE SAVEPOINT bulk_text_persist",
+            );
+            if let Err(rollback_error) = rollback {
+                return Err(error.context(format!(
+                    "rollback bulk-text persistence savepoint failed: {rollback_error}"
+                )));
+            }
+            Err(error)
+        }
+    }
+}
+
 // ── internals ───────────────────────────────────────────────────────────────
+
+fn claim_from_statement(statement: &str, seen: &mut HashSet<String>) -> Option<Claim> {
+    let capped = cap_at_word_boundary(statement, MAX_CLAIM_CHARS);
+    let normalised = normalise_for_dedup(&capped);
+    if normalised.is_empty() || !seen.insert(normalised.clone()) {
+        return None;
+    }
+    Some(Claim {
+        statement: capped,
+        fingerprint: fingerprint_for_normalised(&normalised),
+    })
+}
 
 fn is_acceptable(s: &str) -> bool {
     if s.chars().count() < MIN_CLAIM_CHARS {
@@ -207,7 +373,7 @@ fn cap_at_word_boundary(s: &str, max: usize) -> String {
     s[..last_space].to_string()
 }
 
-fn normalise_for_dedup(s: &str) -> String {
+pub(crate) fn normalise_for_dedup(s: &str) -> String {
     // Lower-case + collapse whitespace. Drop trailing punctuation so
     // "X is Y." and "X is Y" hash to the same fingerprint — repeated
     // pastes after a punctuation tweak shouldn't duplicate rows.
@@ -225,10 +391,16 @@ fn normalise_for_dedup(s: &str) -> String {
             prev_was_space = false;
         }
     }
-    let trimmed: String = out
-        .trim_end_matches(['.', '!', '?', ';', ':', ','])
-        .to_string();
-    trimmed
+    out.trim_end()
+        .trim_end_matches([
+            '.', '!', '?', ';', ':', ',', '。', '！', '？', '；', '：', '，',
+        ])
+        .trim_end()
+        .to_string()
+}
+
+pub(crate) fn fingerprint_for_normalised(normalised: &str) -> u64 {
+    xxhash_rust::xxh3::xxh3_64(normalised.as_bytes())
 }
 
 #[cfg(test)]
@@ -399,5 +571,170 @@ mod tests {
         assert!(extract_claims_heuristic("").is_empty());
         assert!(extract_claims_heuristic("    \n\n   \n").is_empty());
         assert!(parse_llm_output("").is_empty());
+    }
+
+    #[test]
+    fn raw_and_heuristic_share_the_canonical_normaliser() {
+        let raw = extract_claims_raw("  THE   operator builds NEOTH on Windows!!!  ");
+        let heuristic = extract_claims_heuristic("The operator builds neoth on windows.\n");
+        assert_eq!(raw.len(), 1);
+        assert_eq!(heuristic.len(), 1);
+        assert_eq!(raw[0].fingerprint, heuristic[0].fingerprint);
+        assert_eq!(
+            normalise_for_dedup(&raw[0].statement),
+            normalise_for_dedup(&heuristic[0].statement)
+        );
+    }
+
+    #[test]
+    fn persistent_dedup_survives_reopen_without_corroboration_bump() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let first = extract_claims_raw("The operator builds NEOTH on Windows.")
+            .pop()
+            .unwrap();
+        let conn = crate::memory::store::open(&path).unwrap();
+        let inserted = persist_claim(&conn, &first, "global", 10).unwrap();
+        let id = match inserted {
+            PersistClaimOutcome::Inserted { id } => id,
+            other => panic!("first import unexpectedly skipped: {other:?}"),
+        };
+        drop(conn);
+
+        let second = extract_claims_raw("  THE   OPERATOR builds neoth on windows!!!  ")
+            .pop()
+            .unwrap();
+        let conn = crate::memory::store::open(&path).unwrap();
+        assert_eq!(
+            persist_claim(&conn, &second, "global", 20).unwrap(),
+            PersistClaimOutcome::SkippedActive { id }
+        );
+        let (rows, source_weight, confirmed_count, confidence): (i64, String, i64, f64) = conn
+            .query_row(
+                "SELECT COUNT(*), source_weight, confirmed_count, confidence \
+                 FROM idx_groundtruth WHERE scope = 'global'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(source_weight, r#"{"bulk-text":1}"#);
+        assert_eq!(confirmed_count, 0, "re-paste is not corroboration");
+        assert!((confidence - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn persistent_dedup_is_scope_qualified() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let claim = extract_claims_raw("The gateway listens on the private network.")
+            .pop()
+            .unwrap();
+        assert!(matches!(
+            persist_claim(&conn, &claim, "host:a", 1).unwrap(),
+            PersistClaimOutcome::Inserted { .. }
+        ));
+        assert!(matches!(
+            persist_claim(&conn, &claim, "host:b", 2).unwrap(),
+            PersistClaimOutcome::Inserted { .. }
+        ));
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 2);
+    }
+
+    #[test]
+    fn fingerprint_collision_never_proves_claim_equality() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let forced_collision = 0xA11CE_u64;
+        let first = "The alpha gateway listens on port one thousand.";
+        let second = "The beta gateway listens on port two thousand.";
+        assert!(matches!(
+            persist_normalised(
+                &conn,
+                first,
+                "global",
+                &normalise_for_dedup(first),
+                forced_collision,
+                1,
+            )
+            .unwrap(),
+            PersistClaimOutcome::Inserted { .. }
+        ));
+        assert!(matches!(
+            persist_normalised(
+                &conn,
+                second,
+                "global",
+                &normalise_for_dedup(second),
+                forced_collision,
+                2,
+            )
+            .unwrap(),
+            PersistClaimOutcome::Inserted { .. }
+        ));
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ground_truth_fingerprints \
+                 WHERE fingerprint = ?1",
+                params![&forced_collision.to_be_bytes()[..]],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 2, "full canonical text guards hash collisions");
+    }
+
+    #[test]
+    fn revoked_and_deleted_rows_remain_import_tombstones() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let claim = extract_claims_raw("The retired gateway used the legacy address.")
+            .pop()
+            .unwrap();
+        let id = match persist_claim(&conn, &claim, "global", 1).unwrap() {
+            PersistClaimOutcome::Inserted { id } => id,
+            other => panic!("first import unexpectedly skipped: {other:?}"),
+        };
+        crate::memory::groundtruth::revoke(&conn, id, 2).unwrap();
+        assert_eq!(
+            persist_claim(&conn, &claim, "global", 3).unwrap(),
+            PersistClaimOutcome::SkippedTombstone { id: Some(id) }
+        );
+
+        conn.execute("DELETE FROM idx_groundtruth WHERE id = ?1", params![id])
+            .unwrap();
+        assert_eq!(
+            persist_claim(&conn, &claim, "global", 4).unwrap(),
+            PersistClaimOutcome::SkippedTombstone { id: None },
+            "hard delete keeps the import ledger as a non-resurrection tombstone"
+        );
+    }
+
+    #[test]
+    fn failed_groundtruth_insert_rolls_back_fingerprint_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_bulk_claim BEFORE INSERT ON idx_groundtruth \
+             BEGIN SELECT RAISE(ABORT, 'forced groundtruth failure'); END;",
+        )
+        .unwrap();
+        let claim = extract_claims_raw("The rollback test statement is long enough.")
+            .pop()
+            .unwrap();
+        assert!(persist_claim(&conn, &claim, "global", 1).is_err());
+        let fingerprints: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ground_truth_fingerprints",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let facts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!((fingerprints, facts), (0, 0));
     }
 }

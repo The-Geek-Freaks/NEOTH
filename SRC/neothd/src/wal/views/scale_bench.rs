@@ -24,7 +24,7 @@
 //! must never run in the default `cargo test` sweep). Run it on demand:
 //!
 //! ```text
-//! cargo test -p neothd --lib scale_bench -- --ignored --nocapture --test-threads=1
+//! cargo test -p neoth --lib scale_bench -- --ignored --nocapture --test-threads=1
 //! ```
 //!
 //! `--nocapture` surfaces the measured latencies; the test also asserts a

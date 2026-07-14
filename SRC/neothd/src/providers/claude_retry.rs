@@ -25,9 +25,8 @@
 //! message). No regex dep — pure substring + lowercase scan so the
 //! classifier is allocation-light and fully deterministic.
 //!
-//! Wiring (deferred): `complete_tmux_uncached` + future PTY-subprocess
-//! path consume `RetryDecision` to drive their loops. v0.2 lands the
-//! wire-up; this commit ships the classifier surface + the contract.
+//! `claude_cli::plan_tmux_retry` consumes the classifier and turns each
+//! decision into the live tmux retry/reset plan.
 
 use std::time::Duration;
 

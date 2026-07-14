@@ -123,7 +123,7 @@ async fn run_apply(
     // the apply REFUSES if the `0xDA PRESET_APPLIED` audit cannot be written
     // (live daemon + unreachable audit-RPC listener). Identical contract to the
     // external-task-write gate.
-    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
     let audit_home = crate::config::FreedomConfig::default_neoth_home();
     let daemon_live = matches!(
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
@@ -238,7 +238,11 @@ fn run_list(home: &Path, json: bool) -> Result<()> {
         } else {
             " "
         };
-        let tag = if row.builtin { "[built-in]" } else { "[yours]   " };
+        let tag = if row.builtin {
+            "[built-in]"
+        } else {
+            "[yours]   "
+        };
         println!("{marker} {:<16} {tag}  {}", row.name, row.description);
     }
     Ok(())

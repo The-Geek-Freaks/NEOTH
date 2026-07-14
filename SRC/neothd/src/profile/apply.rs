@@ -26,9 +26,6 @@
 //! What this stage still does NOT do (real Phase-2 / v0.3-alpha follow-ups):
 //!   - **region_tag wire-header cryptographic enforcement** — waits on
 //!     the wire-format extension tracked in `SPEC_wire_header_v2_slim.md`.
-//!   - **TOMBSTONE-anchored physical WAL rewrite** for
-//!     `neoth memory --forget <topic>` — current path SQLite-wipes the
-//!     row; rewriting the WAL bytes is Phase-2.
 //!   - **Codex-flagged consistency hole** at the post-commit / pre-WAL
 //!     emit boundary (Pick #11 — Option B WAL-first materialisation,
 //!     ratified by ADR-002 / 2026-05-18 architecture review).
@@ -55,11 +52,9 @@
 //! `neoth profile rollback --to <event_id>` operator surface reads the
 //! audit frames directly to produce the inverse plan.
 //!
-//! If the operator NEEDS coarse-grained "wipe everything since this
-//! point" semantics (which the per-claim audit can't reconstruct
-//! cheaply), `neoth memory --forget <topic>` is the existing path —
-//! today it SQLite-wipes the affected rows; WAL TOMBSTONE-anchored
-//! physical rewrite of the underlying bytes is Phase-2.
+//! If the operator needs coarse-grained topic erasure, use
+//! `neoth memory --forget <topic> --confirm`; add `--physical` to redact the
+//! underlying bytes in live and sealed/compressed WAL segments.
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
@@ -167,20 +162,25 @@ pub async fn apply_delta(
     let mut to_emit: Vec<ClaimEvent> = Vec::with_capacity(delta.claims.len());
 
     let tx = conn.transaction().context("begin apply tx")?;
+    let active_redactions = crate::profile::redaction::list_active(&tx)
+        .context("load active redactions for apply-time recheck")?;
     for claim in &delta.claims {
         // ADV-04 (Session 28) — redaction recheck. The Stage-5 guard
         // already filtered redacted fields, BUT a delta can sit in
         // `idx_profile_pending` between approval-gate parking and
         // operator-driven `neoth profile approve`; an operator who
         // adds a redaction in that window expects the apply step to
-        // honour it. We re-lookup the active redaction per claim,
-        // drop the insert + emit a `PROFILE_REDACT_BLOCKED` audit
-        // frame post-commit when one is present. Cheap (single
-        // indexed row lookup) + idempotent (no row written so retry
-        // is a no-op).
-        if let Some(redaction) = crate::profile::redaction::lookup_active(&tx, &claim.field)?
-            && redaction.never_recreate
-        {
+        // honour it. The active registry snapshot was loaded inside this
+        // transaction and covers exact fields plus forget-topic sentinels;
+        // drop the insert + emit a `PROFILE_REDACT_BLOCKED` audit frame
+        // post-commit when one matches. Idempotent: no row is written.
+        if let Some(redaction) = active_redactions.iter().find(|redaction| {
+            crate::memory::forget::redaction_blocks_claim(
+                &redaction.field,
+                &claim.field,
+                &claim.value_json,
+            )
+        }) {
             redact_blocked += 1;
             to_emit.push(ClaimEvent::RedactBlocked {
                 field: claim.field.clone(),
@@ -190,7 +190,8 @@ pub async fn apply_delta(
             continue;
         }
         let prior = lookup_active_for_field(&tx, &claim.field)?;
-        let value_json = serde_json::to_string(&claim.value_json).unwrap_or_else(|_| "null".into());
+        let value_json = serde_json::to_string(&claim.value_json)
+            .expect("serde_json::Value is infallibly serializable");
         match prior {
             None => {
                 let event_id = insert_profile_row(
@@ -579,9 +580,10 @@ fn insert_profile_row(
     guard_version: &str,
     now_unix: i64,
 ) -> Result<i64> {
-    let value_json = serde_json::to_string(&claim.value_json).unwrap_or_else(|_| "null".into());
-    let evidence_json =
-        serde_json::to_string(&claim.evidence_event_ids).unwrap_or_else(|_| "[]".into());
+    let value_json = serde_json::to_string(&claim.value_json)
+        .expect("serde_json::Value is infallibly serializable");
+    let evidence_json = serde_json::to_string(&claim.evidence_event_ids)
+        .expect("integer evidence ids are infallibly serializable");
     tx.execute(
         "INSERT INTO idx_profile \
          (extraction_id, event_id, field, value_json, confidence, \
@@ -725,6 +727,44 @@ mod tests {
             .query_row("SELECT field FROM idx_profile", [], |r| r.get(0))
             .unwrap();
         assert_eq!(surviving_field, "skills.rust");
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn apply_time_recheck_honours_forget_topic_sentinel() {
+        let (_dir, mut conn, writer, join) = setup().await;
+        crate::profile::redaction::add(
+            &conn,
+            "_tombstone.berlin",
+            true,
+            Some("operator forget"),
+            "cli",
+            1,
+        )
+        .unwrap();
+        let d = ProfileDelta {
+            extraction_id: "ext-after-forget".into(),
+            conversation_hash: "hash".into(),
+            claims: vec![RawClaim {
+                field: "preferences.city".into(),
+                value_json: serde_json::json!({"name": "Berlin"}),
+                confidence: 0.95,
+                reasoning: String::new(),
+                evidence_event_ids: vec![10],
+            }],
+            guard_version: "1.0.0".into(),
+            ..Default::default()
+        };
+
+        let out = apply_delta(&mut conn, &writer, &d, 2).await.unwrap();
+        assert_eq!(out.claims_applied, 0);
+        assert_eq!(out.claims_redact_blocked, 1);
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_profile", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
 
         drop(writer);
         let _ = join.await;

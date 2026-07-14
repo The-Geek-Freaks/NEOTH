@@ -56,7 +56,8 @@ pub fn tiebreak_system_prompt() -> &'static str {
 /// free text (see `summarize_findings`).
 pub fn build_tiebreak_prompt(subject: &str, body: &str, assessment: &ThreatAssessment) -> String {
     // identity_locked=false: email ingest does not carry persona-lock state.
-    let subject_clean = crate::security::ingress_sanitizer::sanitize(subject, "email-subject", false);
+    let subject_clean =
+        crate::security::ingress_sanitizer::sanitize(subject, "email-subject", false);
     let subject_display = if subject_clean.quarantined {
         "[subject withheld — injection pattern detected]".to_string()
     } else {
@@ -193,11 +194,13 @@ pub async fn tiebreak_review_inbound(
         return triage;
     };
     let prompt = build_tiebreak_prompt(&triage.subject, &triage.clean_body, &assessment);
+    let temperature =
+        crate::providers::internal_temperature(provider, 0.0, "email.threat_tiebreak");
     let req = Request {
         prompt,
         system: Some(tiebreak_system_prompt().to_string()),
         model: None,
-        temperature: Some(0.0),
+        temperature,
         top_p: None,
         sampling_seed: None,
         stop_sequences: Vec::new(),
@@ -446,6 +449,7 @@ mod tests {
             match &self.reply {
                 Ok(text) => Ok(Completion {
                     text: text.clone(),
+                    identity: Default::default(),
                     model: "mock".to_string(),
                     latency: Duration::from_millis(0),
                     input_tokens: None,

@@ -1,50 +1,70 @@
 //! GOLD-ADAPT-OH-01 — prior-AI source detector.
 //!
-//! Scans the CANONICAL install locations of the assistants NEOTH knows
-//! how to import (OpenClaw, Hermes, OpenHuman, Veronica) and generates a
+//! Scans the complete install homes of the assistants NEOTH knows how to
+//! import (OpenClaw, Hermes, OpenHuman, Veronica) and generates a
 //! ready-to-edit `import-manifest.yaml` for `dry-run` / `apply`. Nothing
 //! is imported here — detection is read-only and the operator reviews
 //! the generated manifest before running `apply --confirm`.
 //!
-//! Canonical paths mirror `neothd::memory::foreign_import`'s module doc;
-//! non-canonical stores (custom paths, memory-index JSON exports) are
-//! declared by hand in the manifest as before — `detect` is a starter,
-//! not a replacement for the manifest.
+//! A generated `assistant_home` source recursively discovers every supported
+//! memory artifact below that home. Custom roots remain operator-declarable.
 
 use std::path::{Path, PathBuf};
 
-use crate::readers::{scan_all, ImportKind, ImportManifest, ImportSource, StoreScan};
+use crate::readers::{ImportKind, ImportManifest, ImportSource, StoreScan, scan_all};
 
-/// One canonical candidate: (relative-to-home path, source name, kind,
-/// sqlite/sub-format hint, expects-directory).
+/// One prior-assistant home candidate: (relative-to-operator-home path,
+/// source name, family hint). Legacy OpenClaw names and OpenHuman's staging
+/// home are explicit so upgrades do not strand data in an old root.
 const CANDIDATES: &[(&str, &str, ImportKind, Option<&str>, bool)] = &[
     (
-        ".openclaw/layers",
-        "openclaw-layers",
-        ImportKind::Markdown,
-        None,
+        ".openclaw",
+        "openclaw-home",
+        ImportKind::AssistantHome,
+        Some("openclaw"),
         true,
     ),
     (
-        ".hermes/memory/hermes.db",
-        "hermes-memory",
-        ImportKind::Sqlite,
+        ".clawdbot",
+        "clawdbot-home",
+        ImportKind::AssistantHome,
+        Some("openclaw"),
+        true,
+    ),
+    (
+        ".moltbot",
+        "moltbot-home",
+        ImportKind::AssistantHome,
+        Some("openclaw"),
+        true,
+    ),
+    (
+        ".hermes",
+        "hermes-home",
+        ImportKind::AssistantHome,
         Some("hermes"),
-        false,
+        true,
     ),
     (
-        ".openhuman/db/profiles.sqlite",
-        "openhuman-profiles",
-        ImportKind::Sqlite,
+        ".openhuman",
+        "openhuman-home",
+        ImportKind::AssistantHome,
         Some("openhuman"),
-        false,
+        true,
     ),
     (
-        ".veronica/memory.jsonl",
-        "veronica-memory",
-        ImportKind::JsonFile,
+        ".openhuman-staging",
+        "openhuman-staging-home",
+        ImportKind::AssistantHome,
+        Some("openhuman"),
+        true,
+    ),
+    (
+        ".veronica",
+        "veronica-home",
+        ImportKind::AssistantHome,
         Some("veronica"),
-        false,
+        true,
     ),
 ];
 
@@ -56,7 +76,7 @@ pub struct Detection {
 }
 
 /// Scan `home` (the operator's home directory — parameterised for tests)
-/// for canonical prior-AI stores. Only paths that actually exist (and
+/// for complete prior-AI homes. Only paths that actually exist (and
 /// match the expected file-vs-directory shape) make it into the manifest.
 pub fn detect_sources(home: &Path) -> Detection {
     let mut sources = Vec::new();
@@ -136,19 +156,19 @@ mod tests {
     }
 
     #[test]
-    fn detects_only_present_canonical_sources() {
+    fn detects_only_present_assistant_homes() {
         let home = fake_home();
         let d = detect_sources(home.path());
         let names: Vec<&str> = d.manifest.sources.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["openclaw-layers", "hermes-memory", "veronica-memory"],
+            vec!["openclaw-home", "hermes-home", "veronica-home"],
             "openhuman absent from the fake home must not be detected"
         );
-        // Hints ride along for the sqlite sub-format dispatch.
+        // Hints ride along for assistant-family provenance dispatch.
         let hermes = &d.manifest.sources[1];
         assert_eq!(hermes.hint.as_deref(), Some("hermes"));
-        assert_eq!(hermes.kind, ImportKind::Sqlite);
+        assert_eq!(hermes.kind, ImportKind::AssistantHome);
         // Paths are absolute (work from any cwd).
         assert!(Path::new(&d.manifest.sources[0].path).is_absolute());
         // Scans carry estimates for every detected source.
@@ -161,6 +181,32 @@ mod tests {
         let d = detect_sources(dir.path());
         assert!(d.manifest.sources.is_empty());
         assert!(d.scans.is_empty());
+    }
+
+    #[test]
+    fn detects_current_nested_openhuman_home_as_one_complete_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir
+            .path()
+            .join(".openhuman/users/operator/workspace/memory");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(
+            workspace.join("MEMORY.md"),
+            "OpenHuman stores durable personal memory in nested workspaces.",
+        )
+        .unwrap();
+
+        let detection = detect_sources(dir.path());
+        assert_eq!(detection.manifest.sources.len(), 1);
+        let source = &detection.manifest.sources[0];
+        assert_eq!(source.name, "openhuman-home");
+        assert_eq!(source.kind, ImportKind::AssistantHome);
+        assert_eq!(source.hint.as_deref(), Some("openhuman"));
+        assert_eq!(detection.scans[0].row_count, 1);
+        assert!(matches!(
+            detection.scans[0].status,
+            crate::readers::ScanStatus::Ok
+        ));
     }
 
     #[test]
@@ -181,11 +227,9 @@ mod tests {
 
     #[test]
     fn wrong_shape_is_skipped() {
-        // A FILE where the layers DIRECTORY is expected must not detect.
+        // A FILE where the assistant-home DIRECTORY is expected must not detect.
         let dir = tempfile::tempdir().unwrap();
-        let oc = dir.path().join(".openclaw");
-        std::fs::create_dir_all(&oc).unwrap();
-        std::fs::write(oc.join("layers"), "not a dir").unwrap();
+        std::fs::write(dir.path().join(".openclaw"), "not a dir").unwrap();
         let d = detect_sources(dir.path());
         assert!(d.manifest.sources.is_empty());
     }

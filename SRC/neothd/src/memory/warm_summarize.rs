@@ -36,8 +36,7 @@ const MAX_SUMMARY_INPUT_CHARS: usize = 2000;
 /// `append` (lowest-priority instruction) slot, so an operator's
 /// `skills.meeting_summary.*` layers override either independently.
 pub const DEFAULT_SUMMARY_SYSTEM: &str = "You are a terse memory summarizer.";
-pub const DEFAULT_SUMMARY_INSTRUCTION: &str =
-    "Summarize the following memory events from a single day in 2-3 sentences. \
+pub const DEFAULT_SUMMARY_INSTRUCTION: &str = "Summarize the following memory events from a single day in 2-3 sentences. \
      Preserve names, dates, and decisions; drop filler.";
 
 /// Build the bounded event body (truncated, UTF-8-safe). Pure (no I/O).
@@ -118,6 +117,11 @@ pub fn summary_layers(cfg: Option<&MeetingSummaryConfig>) -> SummarizePromptLaye
 /// prompt via `freedom.yaml::skills.meeting_summary`. The event body is appended
 /// to the composed instruction. Empty composed sides fall back to the hardcoded
 /// defaults (defence-in-depth — `summary_layers` always seeds them).
+///
+/// This helper deliberately accepts the generic provider test surface. Its
+/// unattended production caller (`memory::decay_task`) must pass a
+/// `CostAuthorizingProvider`; a provider name alone cannot prove that fallback
+/// or compaction children are offline.
 pub async fn summarize_day_batch(
     provider: &dyn Provider,
     events: &[(i64, String)],
@@ -248,6 +252,7 @@ mod tests {
             assert!(req.prompt.contains("Summarize"));
             Ok(Completion {
                 text: "  Alex shipped Nostr and OP-01.  ".to_string(),
+                identity: Default::default(),
                 model: "stub".to_string(),
                 latency: Duration::from_millis(1),
                 input_tokens: None,

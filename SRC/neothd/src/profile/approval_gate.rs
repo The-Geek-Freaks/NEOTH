@@ -155,14 +155,7 @@ pub fn pending_payload(delta: &ProfileDelta, now_unix: u64) -> Vec<u8> {
         "field_summary": field_summary,
         "ts_unix": now_unix,
     });
-    serde_json::to_vec(&value).unwrap_or_else(|_| {
-        format!(
-            "{{\"extraction_id\":\"{}\",\"claim_count\":{}}}",
-            delta.extraction_id.replace('"', ""),
-            delta.claims.len(),
-        )
-        .into_bytes()
-    })
+    serde_json::to_vec(&value).expect("PROFILE_DELTA_PENDING payload is a serde_json::Value")
 }
 
 /// Build the JSON payload for an `EVENT_TYPE_PROFILE_DELTA_APPROVED`
@@ -173,7 +166,7 @@ pub fn approved_payload(extraction_id: &str, claim_count: usize, now_unix: u64) 
         "claim_count": claim_count,
         "approved_at_ts_unix": now_unix,
     });
-    serde_json::to_vec(&value).unwrap_or_else(|_| Vec::new())
+    serde_json::to_vec(&value).expect("PROFILE_DELTA_APPROVED payload is a serde_json::Value")
 }
 
 /// Build the JSON payload for an `EVENT_TYPE_PROFILE_DELTA_DECLINED`
@@ -192,7 +185,7 @@ pub fn declined_payload(
         "declined_at_ts_unix": now_unix,
         "reason": reason,
     });
-    serde_json::to_vec(&value).unwrap_or_else(|_| Vec::new())
+    serde_json::to_vec(&value).expect("PROFILE_DELTA_DECLINED payload is a serde_json::Value")
 }
 
 /// Constants re-exported so the cli + runner can reference these

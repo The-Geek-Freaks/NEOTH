@@ -45,7 +45,9 @@ pub fn parse_trajectory(content: &str) -> Vec<TurnRecord> {
 }
 
 pub fn run_trace_replay(args: TraceReplayArgs) -> Result<()> {
-    let path = args.file.unwrap_or_else(|| trajectory_path(&args.session_id));
+    let path = args
+        .file
+        .unwrap_or_else(|| trajectory_path(&args.session_id));
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("read trajectory {}", path.display()))?;
     let turns = parse_trajectory(&content);
@@ -89,8 +91,8 @@ mod tests {
         let jsonl = concat!(
             r#"{"turn":1,"prompt_hash":"abc123","prompt_len":42,"tool_calls":["fs/read_file"],"verdict":"tool_calls","ts_unix":100}"#,
             "\n",
-            "   \n",                 // blank line skipped
-            "not json at all\n",     // garbled line skipped
+            "   \n",             // blank line skipped
+            "not json at all\n", // garbled line skipped
             r#"{"turn":2,"prompt_hash":"def456","prompt_len":10,"tool_calls":[],"verdict":"clean_exit","ts_unix":200}"#,
             "\n",
         );

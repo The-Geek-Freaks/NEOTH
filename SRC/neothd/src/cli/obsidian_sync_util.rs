@@ -11,13 +11,16 @@
 //!   changes NEOTH itself produced (avoids feedback loops).
 //! * [`detect_sync_conflicts`] / [`SyncConflictReport`] — IGNIS-04: walk the
 //!   vault and detect cloud-sync conflict-marker files left by Syncthing,
-//!   Dropbox, iCloud, or similar.  Call before writing to the vault.
+//!   Dropbox, iCloud, or similar. [`obsidian_core_sync_enabled`] separately
+//!   checks Obsidian's built-in Sync plugin. Call both before writing.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
+
+const CORE_PLUGINS_MAX_BYTES: u64 = 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Shared hasher — reuses the same xxh3_64 already used in obsidian.rs.
@@ -99,8 +102,7 @@ impl WriteCoalescer {
 
             // Atomic write: write to .tmp then rename.
             let tmp = dst.with_extension("coalesce.tmp");
-            std::fs::write(&tmp, &bytes)
-                .with_context(|| format!("write tmp {}", tmp.display()))?;
+            std::fs::write(&tmp, &bytes).with_context(|| format!("write tmp {}", tmp.display()))?;
             std::fs::rename(&tmp, &dst)
                 .with_context(|| format!("rename {} -> {}", tmp.display(), dst.display()))?;
             written += 1;
@@ -194,7 +196,10 @@ pub struct EchoGuard {
 
 impl EchoGuard {
     pub fn new(ttl: Duration) -> Self {
-        Self { ring: Vec::with_capacity(ECHO_RING_CAP), ttl }
+        Self {
+            ring: Vec::with_capacity(ECHO_RING_CAP),
+            ttl,
+        }
     }
 
     /// Record that NEOTH just wrote `bytes` to `path`.
@@ -227,7 +232,8 @@ impl EchoGuard {
 
     fn evict_expired(&mut self) {
         let now = Instant::now();
-        self.ring.retain(|e| now.duration_since(e.written_at) < self.ttl);
+        self.ring
+            .retain(|e| now.duration_since(e.written_at) < self.ttl);
     }
 }
 
@@ -235,7 +241,67 @@ impl EchoGuard {
 // IGNIS-04 — SyncConflictReport / detect_sync_conflicts
 // ---------------------------------------------------------------------------
 
+/// Read `.obsidian/core-plugins.json` and report whether Obsidian's built-in
+/// Sync plugin is enabled.
+///
+/// Obsidian has used both an array of enabled plugin IDs and a boolean object
+/// representation over time, so both `["sync"]` and `{ "sync": true }` are
+/// accepted. Missing configuration means the plugin is not enabled. An
+/// unreadable, oversized, symlinked, or malformed file is an error so callers
+/// can fail closed instead of writing while the sync state is unknown.
+pub fn obsidian_core_sync_enabled(vault_dir: &Path) -> Result<bool> {
+    let path = vault_dir.join(".obsidian").join("core-plugins.json");
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("stat {}", path.display()));
+        }
+    };
+
+    if !metadata.file_type().is_file() {
+        anyhow::bail!(
+            "{} must be a regular file before Obsidian sync can run",
+            path.display()
+        );
+    }
+    if metadata.len() > CORE_PLUGINS_MAX_BYTES {
+        anyhow::bail!(
+            "{} exceeds the {} byte safety limit",
+            path.display(),
+            CORE_PLUGINS_MAX_BYTES
+        );
+    }
+
+    let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+
+    match value {
+        serde_json::Value::Object(entries) => match entries.get("sync") {
+            Some(serde_json::Value::Bool(enabled)) => Ok(*enabled),
+            Some(_) => anyhow::bail!("{}.sync must be a boolean", path.display()),
+            None => Ok(false),
+        },
+        serde_json::Value::Array(entries) => {
+            let mut enabled = false;
+            for entry in entries {
+                let serde_json::Value::String(plugin_id) = entry else {
+                    anyhow::bail!("{} must contain only plugin IDs", path.display());
+                };
+                enabled |= plugin_id == "sync";
+            }
+            Ok(enabled)
+        }
+        _ => anyhow::bail!(
+            "{} must be an object or an array of plugin IDs",
+            path.display()
+        ),
+    }
+}
+
 /// Aggregated result of a vault conflict-file scan.
+#[derive(Debug)]
 pub struct SyncConflictReport {
     /// Paths of conflict-marker files found in the vault.
     pub conflicts: Vec<PathBuf>,
@@ -275,14 +341,12 @@ impl SyncConflictReport {
 /// - Generic:    `*.conflict.*`                      (e.g. `note.conflict.1.md`)
 fn is_conflict_name(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.contains(".sync-conflict-")
-        || lower.contains("conflicted copy")
-        || {
-            // `*.conflict.*` — must have a dot before AND after "conflict"
-            // to avoid matching file names that merely contain the word.
-            let mut it = lower.splitn(3, ".conflict.");
-            it.next().is_some() && it.next().map(|s| !s.is_empty()).unwrap_or(false)
-        }
+    lower.contains(".sync-conflict-") || lower.contains("conflicted copy") || {
+        // `*.conflict.*` — must have a dot before AND after "conflict"
+        // to avoid matching file names that merely contain the word.
+        let mut it = lower.splitn(3, ".conflict.");
+        it.next().is_some() && it.next().map(|s| !s.is_empty()).unwrap_or(false)
+    }
 }
 
 /// Walk `vault_dir` and collect every file whose name matches a cloud-sync
@@ -293,47 +357,73 @@ fn is_conflict_name(name: &str) -> bool {
 /// unusual characters and that the operator should not need to touch.
 ///
 /// # Robustness
-/// - Unreadable directories are silently skipped (never panics).
+/// - Any unreadable directory/entry or unsupported symlink/special file returns
+///   an error. The sync caller treats an incomplete scan as a write blocker.
 /// - If `vault_dir` does not exist, returns an empty report.
 /// - No allocation beyond the result `Vec`; the walk is done with a plain
 ///   stack (`Vec<PathBuf>`) to avoid a `walkdir` dependency.
-pub fn detect_sync_conflicts(vault_dir: &Path) -> SyncConflictReport {
+pub fn detect_sync_conflicts(vault_dir: &Path) -> Result<SyncConflictReport> {
     let mut conflicts = Vec::new();
     let mut scanned = 0usize;
 
-    if !vault_dir.exists() {
-        return SyncConflictReport { conflicts, scanned };
+    let root_metadata = match std::fs::symlink_metadata(vault_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SyncConflictReport { conflicts, scanned });
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect Obsidian vault root {}", vault_dir.display()));
+        }
+    };
+    if !root_metadata.file_type().is_dir() {
+        anyhow::bail!(
+            "Obsidian vault root is not a traversable directory: {}",
+            vault_dir.display()
+        );
     }
 
     // Iterative DFS to avoid stack overflow on deep vaults.
     let mut stack = vec![vault_dir.to_path_buf()];
 
     while let Some(dir) = stack.pop() {
-        let rd = match std::fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(_) => continue, // unreadable — skip silently
-        };
+        let rd = std::fs::read_dir(&dir)
+            .with_context(|| format!("scan Obsidian vault directory {}", dir.display()))?;
 
-        for entry in rd.flatten() {
+        for entry in rd {
+            let entry = entry.with_context(|| {
+                format!("read entry under Obsidian vault dir {}", dir.display())
+            })?;
             scanned += 1;
             let path = entry.path();
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("inspect Obsidian vault entry {}", path.display()))?;
 
-            // Skip hidden directories (`.obsidian`, `.git`, etc.).
-            if name_str.starts_with('.') {
+            // Skip hidden directories (`.obsidian`, `.git`, etc.), but still
+            // inspect hidden files whose names carry a conflict marker.
+            if file_type.is_dir() && name_str.starts_with('.') {
                 continue;
             }
 
-            match entry.file_type() {
-                Ok(ft) if ft.is_dir() => stack.push(path),
-                Ok(ft) if ft.is_file() && is_conflict_name(&name_str) => conflicts.push(path),
-                _ => {} // non-conflict files / symlinks / errors — ignore
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() {
+                if is_conflict_name(&name_str) {
+                    conflicts.push(path);
+                }
+            } else {
+                anyhow::bail!(
+                    "unsupported symlink or special file in Obsidian vault scan: {}",
+                    path.display()
+                );
             }
         }
     }
 
-    SyncConflictReport { conflicts, scanned }
+    Ok(SyncConflictReport { conflicts, scanned })
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +545,10 @@ mod tests {
     fn dir_mtime_cache_nonexistent_returns_true() {
         let mut cache = DirMtimeCache::new();
         let p = PathBuf::from("/nonexistent/path/that/does/not/exist");
-        assert!(cache.is_changed(&p), "missing dir must be treated as changed");
+        assert!(
+            cache.is_changed(&p),
+            "missing dir must be treated as changed"
+        );
     }
 
     // ── IGNIS-03 EchoGuard ──────────────────────────────────────────────────
@@ -542,6 +635,38 @@ mod tests {
     // ── IGNIS-04 detect_sync_conflicts ──────────────────────────────────────
 
     #[test]
+    fn core_sync_guard_accepts_object_and_array_shapes() {
+        let dir = tempdir().unwrap();
+        let obsidian = dir.path().join(".obsidian");
+        std::fs::create_dir_all(&obsidian).unwrap();
+        let config = obsidian.join("core-plugins.json");
+
+        std::fs::write(&config, br#"{"sync":true,"file-explorer":true}"#).unwrap();
+        assert!(obsidian_core_sync_enabled(dir.path()).unwrap());
+
+        std::fs::write(&config, br#"["file-explorer","sync"]"#).unwrap();
+        assert!(obsidian_core_sync_enabled(dir.path()).unwrap());
+
+        std::fs::write(&config, br#"{"sync":false}"#).unwrap();
+        assert!(!obsidian_core_sync_enabled(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn core_sync_guard_missing_is_disabled_and_malformed_fails_closed() {
+        let dir = tempdir().unwrap();
+        assert!(!obsidian_core_sync_enabled(dir.path()).unwrap());
+
+        let obsidian = dir.path().join(".obsidian");
+        std::fs::create_dir_all(&obsidian).unwrap();
+        let config = obsidian.join("core-plugins.json");
+        std::fs::write(&config, b"not-json").unwrap();
+        assert!(obsidian_core_sync_enabled(dir.path()).is_err());
+
+        std::fs::write(&config, br#"{"sync":"yes"}"#).unwrap();
+        assert!(obsidian_core_sync_enabled(dir.path()).is_err());
+    }
+
+    #[test]
     fn conflict_detector_finds_syncthing_and_dropbox_patterns() {
         let dir = tempdir().unwrap();
 
@@ -559,7 +684,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = detect_sync_conflicts(dir.path());
+        let report = detect_sync_conflicts(dir.path()).unwrap();
         assert_eq!(
             report.conflicts.len(),
             2,
@@ -577,8 +702,11 @@ mod tests {
         std::fs::write(dir.path().join("daily-note.md"), b"# 2024-01-01").unwrap();
         std::fs::write(dir.path().join("todo.md"), b"- [ ] thing").unwrap();
 
-        let report = detect_sync_conflicts(dir.path());
-        assert!(report.conflicts.is_empty(), "clean vault must produce no conflicts");
+        let report = detect_sync_conflicts(dir.path()).unwrap();
+        assert!(
+            report.conflicts.is_empty(),
+            "clean vault must produce no conflicts"
+        );
         assert!(report.describe().is_none());
     }
 
@@ -598,7 +726,7 @@ mod tests {
         // Clean note at the vault root — should not appear in conflicts.
         std::fs::write(dir.path().join("note.md"), b"# note").unwrap();
 
-        let report = detect_sync_conflicts(dir.path());
+        let report = detect_sync_conflicts(dir.path()).unwrap();
         assert!(
             report.conflicts.is_empty(),
             "conflict file inside .obsidian must be skipped; got {:?}",
@@ -608,9 +736,10 @@ mod tests {
 
     #[test]
     fn conflict_detector_absent_vault_returns_empty() {
-        let report = detect_sync_conflicts(
-            std::path::Path::new("/nonexistent/vault/that/does/not/exist"),
-        );
+        let report = detect_sync_conflicts(std::path::Path::new(
+            "/nonexistent/vault/that/does/not/exist",
+        ))
+        .unwrap();
         assert!(report.conflicts.is_empty());
         assert_eq!(report.scanned, 0);
         assert!(report.describe().is_none());
@@ -619,18 +748,29 @@ mod tests {
     #[test]
     fn conflict_detector_generic_dot_conflict_dot_pattern() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("note.conflict.1.md"), b"generic conflict")
-            .unwrap();
+        std::fs::write(dir.path().join("note.conflict.1.md"), b"generic conflict").unwrap();
         // Plain name with "conflict" as a whole word but no surrounding dots — not a match.
-        std::fs::write(dir.path().join("conflict-log.md"), b"not a conflict file")
-            .unwrap();
+        std::fs::write(dir.path().join("conflict-log.md"), b"not a conflict file").unwrap();
 
-        let report = detect_sync_conflicts(dir.path());
+        let report = detect_sync_conflicts(dir.path()).unwrap();
         assert_eq!(
             report.conflicts.len(),
             1,
             "only the *.conflict.* pattern should match; got {:?}",
             report.conflicts
+        );
+    }
+
+    #[test]
+    fn conflict_detector_fails_closed_when_root_cannot_be_traversed() {
+        let dir = tempdir().unwrap();
+        let not_a_directory = dir.path().join("vault-file");
+        std::fs::write(&not_a_directory, b"not a directory").unwrap();
+
+        let error = detect_sync_conflicts(&not_a_directory).unwrap_err();
+        assert!(
+            error.to_string().contains("not a traversable directory"),
+            "traversal failure must be surfaced, not interpreted as a clean vault: {error:#}"
         );
     }
 }
