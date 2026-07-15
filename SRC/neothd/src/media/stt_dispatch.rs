@@ -1,10 +1,9 @@
 //! MM-01 — Speech-to-text dispatcher + live transcript primitives.
 //!
-//! Mirrors the [`super::tts_dispatch`] split: this module ships the
-//! provider enum + request/response model + a `LiveTranscriptBuffer`
-//! that consumes PCM chunks + emits utterance boundaries; the
-//! actual `whisper-rs` / cloud API integration lands in MM-01b once
-//! a provider trait is wired.
+//! Mirrors the [`super::tts_dispatch`] split: this module owns the provider
+//! enum, request/response model, and live utterance buffer. The production
+//! provider factory, cloud consent/audit boundary, and fallback dispatcher
+//! live in [`super::stt_provider`].
 //!
 //! ## Why the buffer ships now
 //!
@@ -33,13 +32,11 @@ pub enum SttProvider {
     OpenAiWhisperApi,
     #[serde(rename = "azure_speech")]
     AzureSpeech,
-    #[serde(rename = "vosk")]
-    Vosk,
-    /// JV-VOICE-02/03 — `faster-whisper` Python CLI subprocess with int8
-    /// quantisation. Significantly faster than the candle-based `WhisperRsLocal`
-    /// on CPU (CTranslate2 backend), requires `pip install faster-whisper`.
-    /// Model files are downloaded on first use by the CLI itself. Local, no
-    /// network for inference, private transcript.
+    /// JV-VOICE-02/03 — the `faster_whisper` Python module with int8
+    /// quantisation, invoked through NEOTH's bounded JSONL bridge. Significantly
+    /// faster than the candle-based `WhisperRsLocal` on CPU (CTranslate2
+    /// backend). Model downloads remain subject to the updater policy; inference
+    /// is local and the transcript stays private.
     #[serde(rename = "faster_whisper_local")]
     FasterWhisperLocal,
 }
@@ -54,16 +51,12 @@ impl SttProvider {
             Self::WhisperRsLocal => "candle_whisper_local",
             Self::OpenAiWhisperApi => "openai_whisper_api",
             Self::AzureSpeech => "azure_speech",
-            Self::Vosk => "vosk",
             Self::FasterWhisperLocal => "faster_whisper_local",
         }
     }
 
     pub fn is_local(self) -> bool {
-        matches!(
-            self,
-            Self::WhisperRsLocal | Self::Vosk | Self::FasterWhisperLocal
-        )
+        matches!(self, Self::WhisperRsLocal | Self::FasterWhisperLocal)
     }
 
     pub fn requires_credentials(self) -> bool {
@@ -77,9 +70,8 @@ impl SttProvider {
             }
             Self::OpenAiWhisperApi => "OpenAI Whisper API — best quality, paid + cloud",
             Self::AzureSpeech => "Azure Speech — cloud, regional endpoints, paid",
-            Self::Vosk => "Vosk — local offline, smaller memory, lower accuracy than whisper",
             Self::FasterWhisperLocal => {
-                "faster-whisper int8 — local subprocess, CTranslate2, faster than candle, needs pip install"
+                "faster-whisper int8 — local Python-module bridge, CTranslate2, faster than candle"
             }
         }
     }
@@ -122,12 +114,16 @@ impl WhisperModelSize {
     }
 }
 
-/// Audio sample format for input PCM.
+/// Audio byte format supplied to an STT provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioFormat {
+    /// Headerless signed 16-bit little-endian mono PCM.
     PcmS16leMono,
+    /// Headerless IEEE f32 little-endian mono PCM.
     PcmF32leMono,
+    /// A RIFF/WAVE container containing signed 16-bit mono PCM.
+    WavPcmS16leMono,
 }
 
 impl AudioFormat {
@@ -135,6 +131,7 @@ impl AudioFormat {
         match self {
             Self::PcmS16leMono => "pcm_s16le_mono",
             Self::PcmF32leMono => "pcm_f32le_mono",
+            Self::WavPcmS16leMono => "wav_pcm_s16le_mono",
         }
     }
 }
@@ -191,6 +188,11 @@ pub struct TranscriptionResult {
     /// confidence return `None`; tests assert non-degradation.
     #[serde(default)]
     pub confidence: Option<f32>,
+    /// Optional speaker re-identification labels. With timed segments this is
+    /// index-aligned with `segments`, including `None` for an unlabeled segment.
+    /// A result without timed segments may carry one whole-utterance label.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub speaker_labels: Vec<Option<String>>,
     /// B20 — `SttProviderKind::as_str()` of the provider that actually produced
     /// this transcript. Stamped by `dispatch_transcription` (primary or fallback
     /// arm) so audit/metadata surfaces describe the same effective provider that
@@ -313,6 +315,15 @@ impl LiveTranscriptBuffer {
         self.seen_speech = false;
         Some(out)
     }
+
+    /// Finish an input stream and drain its final speech utterance even when
+    /// no trailing hangover silence arrived. Silence-only input is discarded.
+    /// The buffer is fully reset in both cases and can immediately be reused.
+    pub fn finish(&mut self) -> Option<Vec<f32>> {
+        let out = self.seen_speech.then(|| std::mem::take(&mut self.pending));
+        self.reset();
+        out
+    }
 }
 
 /// Compute RMS energy over a PCM-f32 chunk. Public for tests +
@@ -393,7 +404,11 @@ pub fn resolve_language(requested: Option<&str>, supported: &[&str]) -> Resolved
                 let sl = s.to_lowercase();
                 sl == tag_lower
                     || sl == primary_lower
-                    || sl.split('-').next().map(|p| p == primary_lower).unwrap_or(false)
+                    || sl
+                        .split('-')
+                        .next()
+                        .map(|p| p == primary_lower)
+                        .unwrap_or(false)
             });
             if is_supported {
                 ResolvedLanguage {
@@ -443,33 +458,6 @@ impl Default for MediaSttConfig {
     }
 }
 
-/// Dispatcher config.
-///
-/// # Deprecated
-///
-/// Use [`MediaSttConfig`] instead. `MediaSttConfig` is the canonical B20
-/// per-call config embedded at `media.stt` in `freedom.yaml`. This struct
-/// remains for one release for backward-compat and will be removed in v1.1.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SttDispatcherConfig {
-    pub primary: SttProvider,
-    #[serde(default)]
-    pub fallback: Option<SttProvider>,
-    pub default_model_size: WhisperModelSize,
-    pub default_language: String,
-}
-
-impl Default for SttDispatcherConfig {
-    fn default() -> Self {
-        Self {
-            primary: SttProvider::WhisperRsLocal,
-            fallback: None,
-            default_model_size: WhisperModelSize::Base,
-            default_language: String::new(), // auto-detect
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,7 +469,6 @@ mod tests {
         assert_eq!(SttProvider::WhisperRsLocal.as_str(), "candle_whisper_local");
         assert_eq!(SttProvider::OpenAiWhisperApi.as_str(), "openai_whisper_api");
         assert_eq!(SttProvider::AzureSpeech.as_str(), "azure_speech");
-        assert_eq!(SttProvider::Vosk.as_str(), "vosk");
         assert_eq!(
             SttProvider::FasterWhisperLocal.as_str(),
             "faster_whisper_local"
@@ -491,7 +478,6 @@ mod tests {
     #[test]
     fn provider_locality_classification() {
         assert!(SttProvider::WhisperRsLocal.is_local());
-        assert!(SttProvider::Vosk.is_local());
         assert!(SttProvider::FasterWhisperLocal.is_local());
         assert!(!SttProvider::OpenAiWhisperApi.is_local());
         assert!(!SttProvider::AzureSpeech.is_local());
@@ -502,7 +488,6 @@ mod tests {
         assert!(SttProvider::OpenAiWhisperApi.requires_credentials());
         assert!(SttProvider::AzureSpeech.requires_credentials());
         assert!(!SttProvider::WhisperRsLocal.requires_credentials());
-        assert!(!SttProvider::Vosk.requires_credentials());
         assert!(!SttProvider::FasterWhisperLocal.requires_credentials());
     }
 
@@ -512,7 +497,6 @@ mod tests {
             SttProvider::WhisperRsLocal,
             SttProvider::OpenAiWhisperApi,
             SttProvider::AzureSpeech,
-            SttProvider::Vosk,
             SttProvider::FasterWhisperLocal,
         ] {
             assert!(!p.description().is_empty(), "{:?}", p);
@@ -525,6 +509,16 @@ mod tests {
         assert_eq!(json, "\"faster_whisper_local\"");
         let back: SttProvider = serde_json::from_str(&json).unwrap();
         assert_eq!(back, SttProvider::FasterWhisperLocal);
+    }
+
+    #[test]
+    fn removed_vosk_wire_value_is_rejected() {
+        let error = serde_yaml::from_str::<MediaSttConfig>(
+            "primary: vosk\nfallback: null\nmodel_size: base\nlanguage: ''\nazure_region: ''\n",
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("unknown variant `vosk`"), "got: {message}");
     }
 
     // ── model size surface ────────────────────────────────────────
@@ -563,6 +557,7 @@ mod tests {
     fn format_as_str_pinned() {
         assert_eq!(AudioFormat::PcmS16leMono.as_str(), "pcm_s16le_mono");
         assert_eq!(AudioFormat::PcmF32leMono.as_str(), "pcm_f32le_mono");
+        assert_eq!(AudioFormat::WavPcmS16leMono.as_str(), "wav_pcm_s16le_mono");
     }
 
     // ── request defaults ──────────────────────────────────────────
@@ -672,15 +667,28 @@ mod tests {
         assert!(b.poll_completed_utterance().is_none());
     }
 
-    // ── dispatcher config defaults ────────────────────────────────
+    #[test]
+    fn buffer_finish_drains_final_speech_without_hangover() {
+        let mut b = LiveTranscriptBuffer::new(16_000);
+        let speech = vec![0.3; 4_000];
+        b.feed_pcm_f32(&speech);
+
+        assert_eq!(b.finish(), Some(speech));
+        assert_eq!(b.pending_samples(), 0);
+        assert!(b.poll_completed_utterance().is_none());
+    }
 
     #[test]
-    fn default_dispatcher_config_local_no_fallback_base_auto() {
-        let c = SttDispatcherConfig::default();
-        assert_eq!(c.primary, SttProvider::WhisperRsLocal);
-        assert_eq!(c.fallback, None);
-        assert_eq!(c.default_model_size, WhisperModelSize::Base);
-        assert!(c.default_language.is_empty());
+    fn buffer_finish_discards_silence_only_and_resets() {
+        let mut b = LiveTranscriptBuffer::new(16_000);
+        b.feed_pcm_f32(&vec![0.0; 8_000]);
+
+        assert!(b.finish().is_none());
+        assert_eq!(b.pending_samples(), 0);
+
+        let speech = vec![0.4; 1_000];
+        b.feed_pcm_f32(&speech);
+        assert_eq!(b.finish(), Some(speech));
     }
 
     // ── HANDY-06 resolve_language ─────────────────────────────────
@@ -768,6 +776,7 @@ mod tests {
             }],
             language: "de".into(),
             confidence: Some(0.93),
+            speaker_labels: vec![Some("SPEAKER_01".into())],
             provider: "openai_whisper_api".into(),
         };
         let json = serde_json::to_string(&r).unwrap();

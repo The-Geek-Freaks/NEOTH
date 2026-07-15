@@ -53,21 +53,13 @@
 //!                                    for a self-hosted/operator-configured
 //!                                    server. Same explicit channel-adapter
 //!                                    category as Slack socket mode.
-//!   - `src/channels/pears_bridge.rs`
-//!                                  — LOCALHOST-ONLY HTTP client for the
-//!                                    operator-bundled `pear` runtime
-//!                                    (Holepunch CLI). Construction is
-//!                                    routed through `normalise_localhost_url`
-//!                                    which rejects every non-loopback host
-//!                                    at the boundary (test coverage:
-//!                                    `pears_bridge::tests::new_rejects_*`
-//!                                    pins the invariant — 4 explicit
-//!                                    reject cases for remote-IP, public
-//!                                    DNS, file://, empty URL). The
-//!                                    `reqwest::Client` only ever dials
-//!                                    `127.0.0.1` / `localhost` / `[::1]`
-//!                                    — same operator-opt-in category as
-//!                                    the other channel adapters above.
+//!   - `src/channels/matrix_client.rs`
+//!                                  — operator-configured Matrix homeserver
+//!                                    authentication. Token bootstrap makes
+//!                                    one timeout-bounded, redirect-disabled
+//!                                    `/account/whoami` request so the SDK
+//!                                    session can bind the token to its exact
+//!                                    user and device before syncing.
 //!   - `src/telemetry/`             — OPT-IN anonymous version-check
 //!                                    POST. Default OFF (drift-guarded by
 //!                                    `telemetry::tests::default_config_is_off`).
@@ -111,14 +103,13 @@
 //!                                    opt-in category as the channel adapters
 //!                                    above — an explicit, configured upstream,
 //!                                    never an unsolicited phone-home.
-//!   - `src/daemon/omi_ingest_task.rs`
-//!                                  — OM-01 operator-configured LOCAL OMI
-//!                                    transcript poll. Default OFF
-//!                                    (`omi.enabled: false`); when enabled the
-//!                                    SC-14 startup gate REFUSES any non-local
-//!                                    endpoint (api.omi.me rejected), so the
-//!                                    `reqwest` GET only ever dials the
-//!                                    operator's self-hosted backend.
+//!   - `src/daemon/omi_{client,ingest_task}.rs`
+//!                                  — default-OFF OMI conversation import and
+//!                                    optional official export. Legacy mode is
+//!                                    local-only. Developer API mode permits a
+//!                                    public endpoint only when the operator
+//!                                    explicitly enables `allow_cloud_api`, and
+//!                                    requires a dedicated `omi_dev_*` key.
 //!   - `src/daemon/email_ingest_cron.rs`
 //!                                  — GOLD-ADAPT-JV-PAPERLESS-01 default-OFF
 //!                                    email → Paperless NGX cron. IMAP is
@@ -191,12 +182,22 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/channels/discord_gateway_loop.rs",
     "src/channels/line_api.rs",
     "src/channels/mattermost.rs",
-    "src/channels/keet_udp.rs",
-    "src/channels/pears_bridge.rs",
+    // Operator-configured Matrix homeserver egress. Token bootstrap performs
+    // one bounded `/account/whoami` request to recover and verify the token's
+    // user + device identity before handing the exact session to matrix-sdk.
+    // Redirects are disabled and response bodies are capped; no implicit
+    // endpoint is used.
+    "src/channels/matrix_client.rs",
+    // Explicit operator-owned Baileys sidecar egress. The adapter uses only
+    // its dedicated bearer token, refuses redirects/userinfo/query fragments,
+    // permits plaintext HTTP only on loopback, and requires HTTPS remotely.
+    // It never falls back to Meta Cloud credentials or an implicit endpoint.
+    "src/channels/whatsapp_baileys.rs",
     "src/telemetry/",
     "src/cluster/",
     "src/transport/",
     "src/email/imap_fetch.rs",
+    "src/daemon/omi_client.rs",
     "src/daemon/omi_ingest_task.rs",
     // GOLD-ADAPT-JV-PAPERLESS-01 — default-OFF email ingest cron. IMAP fetch is
     // build-feature + credential gated; Paperless NGX upload requires the

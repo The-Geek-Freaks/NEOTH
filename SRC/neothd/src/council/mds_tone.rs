@@ -86,9 +86,28 @@ const URGENCY_MARKERS: &[&str] = &[
 /// Simple greeting patterns that classify a short prompt as `Low` regardless
 /// of length. Matched as whole-prompt prefix/suffix after trim + lower.
 const GREETING_PATTERNS: &[&str] = &[
-    "hi", "hallo", "hey", "hello", "guten morgen", "guten tag", "guten abend",
-    "moin", "servus", "jo", "ok", "okay", "ja", "nein", "danke", "thanks",
-    "thx", "bitte", "bye", "tschüss", "ciao", "later",
+    "hi",
+    "hallo",
+    "hey",
+    "hello",
+    "guten morgen",
+    "guten tag",
+    "guten abend",
+    "moin",
+    "servus",
+    "jo",
+    "ok",
+    "okay",
+    "ja",
+    "nein",
+    "danke",
+    "thanks",
+    "thx",
+    "bitte",
+    "bye",
+    "tschüss",
+    "ciao",
+    "later",
 ];
 
 /// Count how many urgency markers appear in `text` (case-insensitive).
@@ -157,9 +176,11 @@ pub fn classify_intensity(prompt: &str) -> InputIntensity {
 
     // ── Greeting fast-path (short, no urgency) → Low ─────────────────────
     if char_count <= 30 {
-        let is_greeting = GREETING_PATTERNS
-            .iter()
-            .any(|&pat| lower == pat || lower.starts_with(&format!("{pat} ")) || lower.ends_with(&format!(" {pat}")));
+        let is_greeting = GREETING_PATTERNS.iter().any(|&pat| {
+            lower == pat
+                || lower.starts_with(&format!("{pat} "))
+                || lower.ends_with(&format!(" {pat}"))
+        });
         if is_greeting {
             return InputIntensity::Low;
         }
@@ -234,7 +255,10 @@ mod tests {
     #[test]
     fn urgency_marker_en_escalates_to_high() {
         assert_eq!(classify_intensity("fix this asap"), InputIntensity::High);
-        assert_eq!(classify_intensity("urgent: server is down"), InputIntensity::High);
+        assert_eq!(
+            classify_intensity("urgent: server is down"),
+            InputIntensity::High
+        );
         assert_eq!(
             classify_intensity("I need this immediately"),
             InputIntensity::High
@@ -313,8 +337,7 @@ mod tests {
 
     #[test]
     fn base_persona_preserved_in_modifier() {
-        let m =
-            modifier_for_intensity(InputIntensity::High, Some("blunt, no padding")).unwrap();
+        let m = modifier_for_intensity(InputIntensity::High, Some("blunt, no padding")).unwrap();
         assert!(m.starts_with("blunt, no padding"));
         assert!(m.contains("—"));
     }
@@ -328,8 +351,7 @@ mod tests {
 
     #[test]
     fn modifier_for_medium_with_base() {
-        let m =
-            modifier_for_intensity(InputIntensity::Medium, Some("laconic")).unwrap();
+        let m = modifier_for_intensity(InputIntensity::Medium, Some("laconic")).unwrap();
         assert!(m.starts_with("laconic"));
         assert!(m.contains("direct"));
     }

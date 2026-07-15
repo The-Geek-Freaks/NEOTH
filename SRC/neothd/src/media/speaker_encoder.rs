@@ -9,16 +9,11 @@
 //! weights, and carries NO license encumbrance** — it runs offline today and
 //! the matcher (SPEAKR-02 / 02b) consumes it unchanged.
 //!
-//! ## Why this and not a neural ECAPA-TDNN (the upgrade path)
-//! candle-transformers 0.8 ships **zero** speaker models, so a neural encoder
-//! (ECAPA-TDNN, EER 0.69%) means ~450 lines of hand-rolled candle (Res2Block /
-//! SE-block / attentive-statistics-pooling) **plus** an offline SpeechBrain
-//! `spkrec-ecapa-voxceleb` `.ckpt`→safetensors conversion, a SHA-pinned HF
-//! artifact behind the SC-10 download gate + HF-01 audit, and a license
-//! resolution (Apache-2.0 vs CC-BY-4.0 is disputed across sources). Until
-//! those weights are produced + hosted, a neural module would be an inert stub
-//! (model never cached). This encoder makes speaker re-id **functional now**;
-//! swapping in a neural forward pass later is a drop-in behind [`embed_samples`].
+//! ## Tiered inference
+//! The common STT path first attempts the fully implemented ECAPA-TDNN and
+//! x-vector candle encoders when the operator has provisioned compatible
+//! safetensors. This weight-free encoder is the always-available third tier,
+//! keeping speaker re-identification functional without a model download.
 //!
 //! ## Quality ceiling (honest)
 //! Spectral-statistics embeddings discriminate speakers far less sharply than
@@ -28,7 +23,7 @@
 //! neural encoder would produce. Good enough to *learn + re-identify* across a
 //! session, not a forensic voiceprint.
 
-use crate::media::speaker_profile::{unit_normalise, SPEAKER_EMBEDDING_DIM};
+use crate::media::speaker_profile::{SPEAKER_EMBEDDING_DIM, unit_normalise};
 use crate::media::stt_dispatch::{AudioFormat, TextSegment};
 use realfft::RealFftPlanner;
 
@@ -48,6 +43,32 @@ const MEL_FMAX: f32 = 8_000.0;
 /// near-zero-norm embeddings that would spawn junk `SPEAKER_NN` profiles, so
 /// they are dropped (return `None`) rather than encoded.
 const MIN_SAMPLES: usize = 8_000;
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum SpeakerAudioError {
+    #[error("{format} PCM byte length {len} is not aligned to {bytes_per_sample} bytes per sample")]
+    MisalignedPcm {
+        format: &'static str,
+        len: usize,
+        bytes_per_sample: usize,
+    },
+    #[error("invalid sample rate {0} Hz")]
+    InvalidSampleRate(u32),
+    #[error("WAV header sample rate {header_hz} Hz does not match request rate {request_hz} Hz")]
+    SampleRateMismatch { header_hz: u32, request_hz: u32 },
+    #[error("PCM sample at index {index} is not finite")]
+    NonFiniteSample { index: usize },
+    #[error("invalid mono PCM16 WAV: {0}")]
+    InvalidWav(String),
+    #[error(transparent)]
+    Resample(#[from] crate::media::resampler::ResampleError),
+}
+
+#[derive(Debug)]
+struct DecodedPcm {
+    samples: Vec<f32>,
+    sample_rate_hz: u32,
+}
 
 // HTK mel scale.
 fn hz_to_mel(hz: f32) -> f32 {
@@ -95,7 +116,9 @@ fn log_mel_frames(samples: &[f32], fb: &[Vec<f32>]) -> Vec<Vec<f32>> {
     let mut planner = RealFftPlanner::<f32>::new();
     let r2c = planner.plan_fft_forward(N_FFT);
     let window: Vec<f32> = (0..FRAME_LEN)
-        .map(|n| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * n as f32 / (FRAME_LEN as f32 - 1.0)).cos())
+        .map(|n| {
+            0.5 - 0.5 * (2.0 * std::f32::consts::PI * n as f32 / (FRAME_LEN as f32 - 1.0)).cos()
+        })
         .collect();
     let mut indata = r2c.make_input_vec();
     let mut spectrum = r2c.make_output_vec();
@@ -163,17 +186,159 @@ pub fn embed_samples(samples: &[f32]) -> Option<Vec<f32>> {
     Some(unit_normalise(&emb))
 }
 
-/// Decode raw interleaved-but-mono PCM into `f32` samples in `[-1, 1]`.
-fn decode(bytes: &[u8], format: AudioFormat) -> Vec<f32> {
-    match format {
-        AudioFormat::PcmS16leMono => bytes
+fn validate_sample_rate(sample_rate_hz: u32) -> Result<(), SpeakerAudioError> {
+    if (crate::media::resampler::MIN_SAMPLE_RATE_HZ..=crate::media::resampler::MAX_SAMPLE_RATE_HZ)
+        .contains(&sample_rate_hz)
+    {
+        Ok(())
+    } else {
+        Err(SpeakerAudioError::InvalidSampleRate(sample_rate_hz))
+    }
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let value = bytes.get(offset..offset.checked_add(2)?)?;
+    Some(u16::from_le_bytes([value[0], value[1]]))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let value = bytes.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
+}
+
+fn decode_wav_s16le_mono(bytes: &[u8]) -> Result<DecodedPcm, SpeakerAudioError> {
+    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err(SpeakerAudioError::InvalidWav(
+            "missing RIFF/WAVE signature".to_string(),
+        ));
+    }
+
+    let mut offset = 12usize;
+    let mut format = None;
+    let mut data = None;
+    while offset < bytes.len() {
+        let header_end = offset.checked_add(8).ok_or_else(|| {
+            SpeakerAudioError::InvalidWav("chunk header offset overflow".to_string())
+        })?;
+        let header = bytes
+            .get(offset..header_end)
+            .ok_or_else(|| SpeakerAudioError::InvalidWav("truncated chunk header".to_string()))?;
+        let chunk_len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        let chunk_end = header_end
+            .checked_add(chunk_len)
+            .ok_or_else(|| SpeakerAudioError::InvalidWav("chunk length overflow".to_string()))?;
+        let chunk = bytes
+            .get(header_end..chunk_end)
+            .ok_or_else(|| SpeakerAudioError::InvalidWav("truncated chunk payload".to_string()))?;
+
+        match &header[..4] {
+            b"fmt " => {
+                if chunk.len() < 16 {
+                    return Err(SpeakerAudioError::InvalidWav(
+                        "fmt chunk is shorter than 16 bytes".to_string(),
+                    ));
+                }
+                let audio_format = read_u16(chunk, 0).expect("validated fmt length");
+                let channels = read_u16(chunk, 2).expect("validated fmt length");
+                let sample_rate_hz = read_u32(chunk, 4).expect("validated fmt length");
+                let block_align = read_u16(chunk, 12).expect("validated fmt length");
+                let bits_per_sample = read_u16(chunk, 14).expect("validated fmt length");
+                if audio_format != 1 || channels != 1 || block_align != 2 || bits_per_sample != 16 {
+                    return Err(SpeakerAudioError::InvalidWav(format!(
+                        "expected PCM format=1, mono, block_align=2, 16-bit; got format={audio_format}, channels={channels}, block_align={block_align}, bits={bits_per_sample}"
+                    )));
+                }
+                validate_sample_rate(sample_rate_hz)?;
+                format = Some(sample_rate_hz);
+            }
+            b"data" => data = Some(chunk),
+            _ => {}
+        }
+
+        offset = chunk_end.checked_add(chunk_len & 1).ok_or_else(|| {
+            SpeakerAudioError::InvalidWav("chunk padding offset overflow".to_string())
+        })?;
+        if offset > bytes.len() {
+            return Err(SpeakerAudioError::InvalidWav(
+                "truncated chunk padding".to_string(),
+            ));
+        }
+    }
+
+    let sample_rate_hz =
+        format.ok_or_else(|| SpeakerAudioError::InvalidWav("missing fmt chunk".to_string()))?;
+    let data =
+        data.ok_or_else(|| SpeakerAudioError::InvalidWav("missing data chunk".to_string()))?;
+    if data.len() % 2 != 0 {
+        return Err(SpeakerAudioError::MisalignedPcm {
+            format: "WAV s16le",
+            len: data.len(),
+            bytes_per_sample: 2,
+        });
+    }
+    Ok(DecodedPcm {
+        samples: data
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
             .collect(),
-        AudioFormat::PcmF32leMono => bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect(),
+        sample_rate_hz,
+    })
+}
+
+/// Decode raw mono PCM or a WAV container into `f32` samples in `[-1, 1]`.
+fn decode(
+    bytes: &[u8],
+    format: AudioFormat,
+    sample_rate_hz: u32,
+) -> Result<DecodedPcm, SpeakerAudioError> {
+    validate_sample_rate(sample_rate_hz)?;
+    match format {
+        AudioFormat::PcmS16leMono => {
+            if bytes.len() % 2 != 0 {
+                return Err(SpeakerAudioError::MisalignedPcm {
+                    format: "s16le",
+                    len: bytes.len(),
+                    bytes_per_sample: 2,
+                });
+            }
+            Ok(DecodedPcm {
+                samples: bytes
+                    .chunks_exact(2)
+                    .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+                    .collect(),
+                sample_rate_hz,
+            })
+        }
+        AudioFormat::PcmF32leMono => {
+            if bytes.len() % 4 != 0 {
+                return Err(SpeakerAudioError::MisalignedPcm {
+                    format: "f32le",
+                    len: bytes.len(),
+                    bytes_per_sample: 4,
+                });
+            }
+            let samples: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            if let Some(index) = samples.iter().position(|sample| !sample.is_finite()) {
+                return Err(SpeakerAudioError::NonFiniteSample { index });
+            }
+            Ok(DecodedPcm {
+                samples,
+                sample_rate_hz,
+            })
+        }
+        AudioFormat::WavPcmS16leMono => {
+            let decoded = decode_wav_s16le_mono(bytes)?;
+            if decoded.sample_rate_hz != sample_rate_hz {
+                return Err(SpeakerAudioError::SampleRateMismatch {
+                    header_hz: decoded.sample_rate_hz,
+                    request_hz: sample_rate_hz,
+                });
+            }
+            Ok(decoded)
+        }
     }
 }
 
@@ -181,17 +346,25 @@ fn decode(bytes: &[u8], format: AudioFormat) -> Vec<f32> {
 ///
 /// Shared by both encoder paths (log-mel + x-vector) so callers that need
 /// the raw 16 kHz buffer before segmenting don't have to inline the decode/
-/// resample logic.  Returns an empty `Vec` if the format is unsupported or
-/// the input is empty.
-pub fn decode_to_f32(bytes: &[u8], format: AudioFormat, sample_rate_hz: u32) -> Vec<f32> {
-    let decoded = decode(bytes, format);
-    if decoded.is_empty() {
-        return Vec::new();
+/// resample logic. Empty input remains a valid empty buffer; malformed or
+/// mislabelled audio returns a typed error.
+pub fn decode_to_f32(
+    bytes: &[u8],
+    format: AudioFormat,
+    sample_rate_hz: u32,
+) -> Result<Vec<f32>, SpeakerAudioError> {
+    let decoded = decode(bytes, format, sample_rate_hz)?;
+    if decoded.samples.is_empty() {
+        return Ok(Vec::new());
     }
-    if sample_rate_hz != SAMPLE_RATE {
-        crate::media::resampler::resample_mono(&decoded, sample_rate_hz, SAMPLE_RATE)
+    if decoded.sample_rate_hz != SAMPLE_RATE {
+        Ok(crate::media::resampler::resample_mono(
+            &decoded.samples,
+            decoded.sample_rate_hz,
+            SAMPLE_RATE,
+        )?)
     } else {
-        decoded
+        Ok(decoded.samples)
     }
 }
 
@@ -209,18 +382,13 @@ pub fn embed_segments(
     format: AudioFormat,
     sample_rate_hz: u32,
     segments: &[TextSegment],
-) -> Vec<Vec<f32>> {
-    let decoded = decode(audio, format);
-    if decoded.is_empty() {
-        return Vec::new();
+) -> Result<Vec<Vec<f32>>, SpeakerAudioError> {
+    let samples = decode_to_f32(audio, format, sample_rate_hz)?;
+    if samples.is_empty() {
+        return Ok(Vec::new());
     }
-    let samples = if sample_rate_hz != SAMPLE_RATE {
-        crate::media::resampler::resample_mono(&decoded, sample_rate_hz, SAMPLE_RATE)
-    } else {
-        decoded
-    };
     if segments.is_empty() {
-        return embed_samples(&samples).into_iter().collect();
+        return Ok(embed_samples(&samples).into_iter().collect());
     }
     let mut out = Vec::new();
     for seg in segments {
@@ -232,7 +400,7 @@ pub fn embed_segments(
             out.push(v);
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -291,17 +459,31 @@ mod tests {
     fn segments_window_into_the_clip() {
         let audio = sine_s16le(400.0, 3.0);
         let segs = vec![
-            TextSegment { start_ms: 0, end_ms: 1000, text: String::new() },
-            TextSegment { start_ms: 1000, end_ms: 2500, text: String::new() },
+            TextSegment {
+                start_ms: 0,
+                end_ms: 1000,
+                text: String::new(),
+            },
+            TextSegment {
+                start_ms: 1000,
+                end_ms: 2500,
+                text: String::new(),
+            },
         ];
-        let embs = embed_segments(&audio, AudioFormat::PcmS16leMono, 16_000, &segs);
+        let embs = embed_segments(&audio, AudioFormat::PcmS16leMono, 16_000, &segs).unwrap();
         assert_eq!(embs.len(), 2);
         assert!(embs.iter().all(|e| e.len() == SPEAKER_EMBEDDING_DIM));
     }
 
     #[test]
     fn no_segments_encodes_whole_clip() {
-        let embs = embed_segments(&sine_s16le(400.0, 1.0), AudioFormat::PcmS16leMono, 16_000, &[]);
+        let embs = embed_segments(
+            &sine_s16le(400.0, 1.0),
+            AudioFormat::PcmS16leMono,
+            16_000,
+            &[],
+        )
+        .unwrap();
         assert_eq!(embs.len(), 1);
     }
 
@@ -314,7 +496,7 @@ mod tests {
             let s = (2.0 * std::f32::consts::PI * 300.0 * i as f32 / 8_000.0).sin();
             bytes.extend_from_slice(&((s * 16000.0) as i16).to_le_bytes());
         }
-        let embs = embed_segments(&bytes, AudioFormat::PcmS16leMono, 8_000, &[]);
+        let embs = embed_segments(&bytes, AudioFormat::PcmS16leMono, 8_000, &[]).unwrap();
         assert_eq!(embs.len(), 1);
         assert_eq!(embs[0].len(), SPEAKER_EMBEDDING_DIM);
     }
@@ -326,7 +508,33 @@ mod tests {
         for s in &samples {
             bytes.extend_from_slice(&s.to_le_bytes());
         }
-        let embs = embed_segments(&bytes, AudioFormat::PcmF32leMono, 16_000, &[]);
+        let embs = embed_segments(&bytes, AudioFormat::PcmF32leMono, 16_000, &[]).unwrap();
         assert_eq!(embs.len(), 1);
+    }
+
+    #[test]
+    fn malformed_raw_pcm_is_rejected_instead_of_truncated() {
+        assert!(matches!(
+            decode_to_f32(&[0, 1, 2], AudioFormat::PcmS16leMono, 16_000),
+            Err(SpeakerAudioError::MisalignedPcm { .. })
+        ));
+        assert!(matches!(
+            decode_to_f32(&[0, 1, 2], AudioFormat::PcmF32leMono, 16_000),
+            Err(SpeakerAudioError::MisalignedPcm { .. })
+        ));
+    }
+
+    #[test]
+    fn wav_container_is_decoded_as_wav_not_raw_pcm() {
+        let samples = sine_samples(440.0, 1.0);
+        let wav = crate::media::stt_provider::pcm_f32_to_wav(&samples).unwrap();
+        let decoded = decode_to_f32(&wav, AudioFormat::WavPcmS16leMono, 16_000).unwrap();
+
+        assert_eq!(
+            decoded.len(),
+            samples.len(),
+            "RIFF header must not become samples"
+        );
+        assert!((decoded[100] - samples[100]).abs() < 1e-3);
     }
 }

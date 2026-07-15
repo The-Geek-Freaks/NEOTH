@@ -110,7 +110,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9744/api/health
 ```json
 {
   "ok": true,
-  "data": { "version": "0.2.0", "uptime_secs": 312, "status": "ok" },
+  "data": { "version": "1.0.0", "uptime_secs": 312, "status": "ok" },
   "request_id": "01950e2c-..."
 }
 ```

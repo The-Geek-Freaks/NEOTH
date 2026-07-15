@@ -1,0 +1,22 @@
+[Unit]
+Description=NEOTH WhatsApp Baileys bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/neoth/whatsapp-baileys
+EnvironmentFile=%h/.config/neoth/whatsapp-baileys.env
+ExecStartPre=/usr/bin/env node src/check-env.mjs %h/.config/neoth/whatsapp-baileys.env
+ExecStart=/usr/bin/env node src/server.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.neoth/whatsapp-baileys-bridge
+UMask=0077
+
+[Install]
+WantedBy=default.target

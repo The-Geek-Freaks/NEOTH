@@ -15,7 +15,7 @@
 //! `tail -f` it during a session OR a future
 //! `neoth proactive items list` CLI surface paginates the recent
 //! tail. Channel-side delivery (Telegram message / Slack DM /
-//! Keet / Discord) is the L follow-on once each adapter consumes
+//! additional live adapters is the L follow-on once each adapter consumes
 //! the sidecar.
 //!
 //! ## Why sidecar not channel-direct
@@ -57,7 +57,9 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::config::FreedomConfig;
-use crate::permissions::{Action, AutonomyLevel, evaluate};
+#[cfg(test)]
+use crate::permissions::AutonomyLevel;
+use crate::permissions::{Action, evaluate};
 use crate::wal::writer::WalWriterHandle;
 
 /// Default drain-tick interval — 5 minutes in seconds. Producers
@@ -197,6 +199,10 @@ pub(crate) enum DeliveryRoute {
     Suppressed,
     /// Gate allowed but no live adapter for this channel/config — ledger only.
     SidecarOnly,
+    /// The named integration is known but cannot be delivered because no
+    /// supported upstream API/adapter exists. This is a hard failed route,
+    /// distinct from an intentionally ledger-only channel.
+    Unavailable,
     /// Deliver to Telegram. `chat_id` is the operator's OWN configured id
     /// (`telegram_user_id`) rendered as a decimal string — never a value
     /// the proactive item could influence (items carry no chat id), so the
@@ -212,6 +218,9 @@ pub(crate) enum DeliveryRoute {
     /// GOLD-FEAT-13 — deliver to WhatsApp Cloud. `recipient` = operator's
     /// configured `whatsapp_recipient` (E.164), never item-influenced.
     WhatsApp { recipient: String },
+    /// Deliver through the operator-hosted Baileys sidecar. This variant is
+    /// intentionally distinct from Meta Cloud and never consumes Meta creds.
+    WhatsAppBaileys { recipient: String },
     /// B9 — deliver via signal-cli. `recipient` = operator's configured
     /// `signal_recipient` routing destination, never item-influenced.
     Signal { recipient: String },
@@ -224,6 +233,11 @@ pub(crate) enum DeliveryRoute {
     /// B9 — deliver via BlueBubbles (iMessage). `chat_guid` = operator's
     /// configured `imessage_chat_guid`, never item-influenced.
     IMessage { chat_guid: String },
+    /// Matrix is feature-gated but does not require the receive loop: the
+    /// adapter restores its persistent device/session lazily and sends to the
+    /// operator-configured room. Room policy and E2EE are re-applied at send.
+    #[cfg(feature = "matrix-channel")]
+    Matrix { room_id: String },
 }
 
 /// G-01 / GOLD-FEAT-13 — decide how (and whether) to deliver an item whose
@@ -238,13 +252,14 @@ pub(crate) enum DeliveryRoute {
 /// the proactive item could influence — the anti-spoof invariant holds for
 /// every channel. A channel with no token or no configured destination →
 /// `SidecarOnly` (the operator still sees it in the ledger). Wired:
-/// Telegram/Slack/Discord/WhatsApp + B9 Signal/LINE/Mattermost/iMessage
-/// (stateless HTTP adapters). Connection-bound or feature-gated channels
-/// (Keet/Matrix/IRC/Twitch/Nostr/GoogleChat) stay `SidecarOnly` until the
-/// daemon's live adapter is shared with the tick.
+/// Telegram/Slack/Discord/WhatsApp + B9 Signal/LINE/Mattermost/iMessage and,
+/// when compiled, Matrix. Matrix restores its persistent SDK session lazily;
+/// remaining connection-bound adapters (IRC/Twitch/Nostr/GoogleChat) stay
+/// `SidecarOnly` until their live adapter is shared with the tick. Keet is
+/// explicitly `Unavailable`: no public supported Keet chat API exists.
 pub(crate) fn plan_delivery(
     channel: &str,
-    autonomy: AutonomyLevel,
+    policy: impl crate::permissions::PolicyArgument,
     config: &FreedomConfig,
     routing: &crate::channels::routing::ChannelRouting,
     credentials: &crate::config::credentials::Credentials,
@@ -252,7 +267,7 @@ pub(crate) fn plan_delivery(
     let action = Action::ProactiveChannelSend {
         channel: channel.to_string(),
     };
-    if !evaluate(&action, autonomy).is_allow() {
+    if !evaluate(&action, policy).is_allow() {
         return DeliveryRoute::Suppressed;
     }
     let dest = routing.destinations.for_channel(channel);
@@ -279,7 +294,7 @@ pub(crate) fn plan_delivery(
             },
             _ => DeliveryRoute::SidecarOnly,
         },
-        "whatsapp" | "whatsapp_business" | "whatsapp_baileys" => match (
+        "whatsapp" | "whatsapp_business" => match (
             credentials.whatsapp_token.as_ref(),
             credentials.whatsapp_phone_id.as_ref(),
             credentials.whatsapp_verify_token.as_ref(),
@@ -288,6 +303,19 @@ pub(crate) fn plan_delivery(
             (Some(_), Some(_), Some(_), Some(recipient)) => DeliveryRoute::WhatsApp {
                 recipient: recipient.to_string(),
             },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        "whatsapp_baileys" => match (
+            credentials.whatsapp_baileys_url.as_ref(),
+            credentials.whatsapp_baileys_token.as_ref(),
+            credentials.whatsapp_baileys_allowed_senders.as_ref(),
+            dest,
+        ) {
+            (Some(_), Some(_), Some(senders), Some(recipient)) if !senders.trim().is_empty() => {
+                DeliveryRoute::WhatsAppBaileys {
+                    recipient: recipient.to_string(),
+                }
+            }
             _ => DeliveryRoute::SidecarOnly,
         },
         // B9 — Signal via signal-cli REST: needs the daemon URL + own number
@@ -332,22 +360,66 @@ pub(crate) fn plan_delivery(
             },
             _ => DeliveryRoute::SidecarOnly,
         },
-        // GOLD-FEAT-13: Keet proactive send needs a live Pears bridge that the
-        // delivery tick can't construct on-demand (the daemon's running Keet
-        // adapter holds it). Until that bridge is shared with the tick, a Keet
-        // route resolves to the ledger (SidecarOnly) rather than a
-        // guaranteed-failed send — slice-3 follow-up.
-        "keet" => DeliveryRoute::SidecarOnly,
-        // B9 — connection-bound adapters (live socket / relay pool / matrix
-        // client held by the serve loop): same constraint as Keet — the tick
-        // can't construct them on demand, so routing destinations are stored
-        // but delivery stays ledger-only until the daemon adapter is shared.
+        #[cfg(feature = "matrix-channel")]
+        "matrix" => {
+            let homeserver = credentials
+                .matrix_homeserver
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
+            let user_id = credentials
+                .matrix_user_id
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
+            let auth = credentials
+                .matrix_password
+                .as_ref()
+                .is_some_and(|value| !value.expose().trim().is_empty())
+                || credentials
+                    .matrix_access_token
+                    .as_ref()
+                    .is_some_and(|value| !value.expose().trim().is_empty());
+            match (homeserver, user_id, auth, dest) {
+                (true, true, true, Some(room_id))
+                    if crate::channels::routing::is_valid_matrix_room_id(room_id) =>
+                {
+                    DeliveryRoute::Matrix {
+                        room_id: room_id.to_string(),
+                    }
+                }
+                _ => DeliveryRoute::SidecarOnly,
+            }
+        }
+        #[cfg(not(feature = "matrix-channel"))]
+        "matrix" => DeliveryRoute::SidecarOnly,
+        "keet" => DeliveryRoute::Unavailable,
+        // B9 — remaining connection-bound adapters (live socket / relay pool):
+        // the tick can't construct them on demand, so routing destinations are
+        // stored but delivery stays ledger-only until the daemon adapter is shared.
         // gchat additionally sits behind the `gchat-channel` cargo feature,
         // which this always-compiled tick can't assume.
-        "matrix" | "irc" | "twitch" | "nostr" | "gchat" | "google_chat" => {
-            DeliveryRoute::SidecarOnly
-        }
+        "irc" | "twitch" | "nostr" | "gchat" | "google_chat" => DeliveryRoute::SidecarOnly,
         _ => DeliveryRoute::SidecarOnly,
+    }
+}
+
+/// Whether a route can perform a live external send and therefore needs the
+/// at-most-once claim file before dispatch.
+fn route_needs_claim(route: &DeliveryRoute) -> bool {
+    match route {
+        DeliveryRoute::Suppressed | DeliveryRoute::SidecarOnly | DeliveryRoute::Unavailable => {
+            false
+        }
+        DeliveryRoute::Telegram { .. }
+        | DeliveryRoute::Slack { .. }
+        | DeliveryRoute::Discord { .. }
+        | DeliveryRoute::WhatsApp { .. }
+        | DeliveryRoute::WhatsAppBaileys { .. }
+        | DeliveryRoute::Signal { .. }
+        | DeliveryRoute::Line { .. }
+        | DeliveryRoute::Mattermost { .. }
+        | DeliveryRoute::IMessage { .. } => true,
+        #[cfg(feature = "matrix-channel")]
+        DeliveryRoute::Matrix { .. } => true,
     }
 }
 
@@ -649,7 +721,7 @@ pub async fn run_proactive_delivery_tick(
         return Ok(0);
     }
 
-    let autonomy = config.autonomy;
+    let autonomy_policy = config.autonomy_policy();
     // GOLD-FEAT-13 — load the per-purpose routing + credentials ONCE per tick
     // (cheap file reads, mirroring the queue load above). A missing routing
     // file → default (no rules: items keep their own channel / sidecar). A
@@ -683,6 +755,11 @@ pub async fn run_proactive_delivery_tick(
     // stays crash-protected — deleting per-item mid-loop would let an
     // already-sent earlier item re-drain (queue not yet saved) → double-fire.
     let mut claimed_keys: Vec<String> = Vec::new();
+    // Reuse one lazy Matrix client for every Matrix item in this bounded tick.
+    // Credentials are loaded once above, so constructing more than one would
+    // only repeat session restore/whoami and contend on the same crypto store.
+    #[cfg(feature = "matrix-channel")]
+    let mut matrix_channel: Option<crate::channels::matrix::MatrixChannel> = None;
 
     for item in drained {
         // GOLD-FEAT-13 — route by the item's `source` (per-purpose), falling
@@ -702,23 +779,19 @@ pub async fn run_proactive_delivery_tick(
         let route = if item.source == "g_01_mini" {
             DeliveryRoute::SidecarOnly
         } else {
-            plan_delivery(&target_channel, autonomy, config, &routing, &credentials)
+            plan_delivery(
+                &target_channel,
+                &autonomy_policy,
+                config,
+                &routing,
+                &credentials,
+            )
         };
 
         // At-most-once guard: write the claim file BEFORE any live send.
         // Suppressed + SidecarOnly never touch the network, so no claim
         // file is needed for them.
-        let needs_claim = matches!(
-            route,
-            DeliveryRoute::Telegram { .. }
-                | DeliveryRoute::Slack { .. }
-                | DeliveryRoute::Discord { .. }
-                | DeliveryRoute::WhatsApp { .. }
-                | DeliveryRoute::Signal { .. }
-                | DeliveryRoute::Line { .. }
-                | DeliveryRoute::Mattermost { .. }
-                | DeliveryRoute::IMessage { .. }
-        );
+        let needs_claim = route_needs_claim(&route);
         if needs_claim {
             match write_inflight_claim(home, &item) {
                 // Track the key so its claim is deleted AFTER the queue save.
@@ -737,6 +810,14 @@ pub async fn run_proactive_delivery_tick(
         let (status, recipient) = match route {
             DeliveryRoute::Suppressed => (ProactiveStatus::Suppressed, String::new()),
             DeliveryRoute::SidecarOnly => (ProactiveStatus::SidecarOnly, String::new()),
+            DeliveryRoute::Unavailable => {
+                warn!(
+                    channel = %target_channel,
+                    dedup_key = %item.dedup_key,
+                    "proactive route unavailable; no supported adapter exists"
+                );
+                (ProactiveStatus::Failed, String::new())
+            }
             DeliveryRoute::Telegram { chat_id } => {
                 // Safe: plan_delivery returned Telegram only when the token
                 // is present. Clone the secret only at the send site.
@@ -854,6 +935,53 @@ pub async fn run_proactive_delivery_tick(
                             dedup_key = %item.dedup_key,
                             error = %e,
                             "proactive send failed; recorded as failed (not re-enqueued)"
+                        );
+                        (ProactiveStatus::Failed, recipient)
+                    }
+                }
+            }
+            DeliveryRoute::WhatsAppBaileys { recipient } => {
+                let url = credentials
+                    .whatsapp_baileys_url
+                    .clone()
+                    .expect("plan_delivery guarantees whatsapp_baileys_url is Some");
+                let token = credentials
+                    .whatsapp_baileys_token
+                    .clone()
+                    .expect("plan_delivery guarantees whatsapp_baileys_token is Some");
+                let senders = credentials
+                    .whatsapp_baileys_allowed_senders
+                    .clone()
+                    .expect("plan_delivery guarantees whatsapp_baileys_allowed_senders is Some");
+                use crate::channels::Channel;
+                match crate::channels::whatsapp_baileys::WhatsAppBaileysChannel::new(
+                    url,
+                    token,
+                    senders,
+                    credentials.whatsapp_baileys_allowed_groups.as_deref(),
+                    home.join("channel-state/whatsapp-baileys-cursor.json"),
+                ) {
+                    Ok(channel) => match channel.send_proactive(&recipient, &item.body).await {
+                        Ok(_) => {
+                            delivered += 1;
+                            (ProactiveStatus::Delivered, recipient)
+                        }
+                        Err(error) => {
+                            warn!(
+                                channel = "whatsapp_baileys",
+                                dedup_key = %item.dedup_key,
+                                error = %error,
+                                "proactive Baileys send failed; recorded as failed (not re-enqueued)"
+                            );
+                            (ProactiveStatus::Failed, recipient)
+                        }
+                    },
+                    Err(error) => {
+                        warn!(
+                            channel = "whatsapp_baileys",
+                            dedup_key = %item.dedup_key,
+                            error = %error,
+                            "Baileys adapter construction failed; recorded as failed"
                         );
                         (ProactiveStatus::Failed, recipient)
                     }
@@ -997,6 +1125,52 @@ pub async fn run_proactive_delivery_tick(
                     }
                 }
             }
+            #[cfg(feature = "matrix-channel")]
+            DeliveryRoute::Matrix { room_id } => {
+                let channel = matrix_channel.get_or_insert_with(|| {
+                    let homeserver = credentials
+                        .matrix_homeserver
+                        .clone()
+                        .expect("plan_delivery guarantees matrix_homeserver is Some");
+                    let user_id = credentials
+                        .matrix_user_id
+                        .clone()
+                        .expect("plan_delivery guarantees matrix_user_id is Some");
+                    crate::channels::matrix::MatrixChannel::new(
+                        homeserver,
+                        user_id,
+                        credentials.matrix_password.clone(),
+                        credentials.matrix_access_token.clone(),
+                        credentials
+                            .matrix_store_path
+                            .as_deref()
+                            .filter(|value| !value.trim().is_empty())
+                            .map(PathBuf::from),
+                    )
+                    .with_policy(
+                        credentials.matrix_allowed_user_id.clone(),
+                        credentials.matrix_allowed_room_ids.clone(),
+                        credentials.matrix_requires_encryption(),
+                        writer.clone(),
+                    )
+                });
+                use crate::channels::Channel;
+                match channel.send_proactive(&room_id, &item.body).await {
+                    Ok(_) => {
+                        delivered += 1;
+                        (ProactiveStatus::Delivered, room_id)
+                    }
+                    Err(e) => {
+                        warn!(
+                            channel = "matrix",
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "proactive send failed; recorded as failed (not re-enqueued)"
+                        );
+                        (ProactiveStatus::Failed, room_id)
+                    }
+                }
+            }
         };
 
         // Distinct WAL frame (0x3A) so an operator can grep exactly when
@@ -1009,10 +1183,10 @@ pub async fn run_proactive_delivery_tick(
             "dedup_key": item.dedup_key,
             "source": item.source,
             "status": status.as_str(),
-            "autonomy": autonomy.as_str(),
+            "autonomy": autonomy_policy.level().as_str(),
             "ts_unix": now_unix,
         }))
-        .unwrap_or_default();
+        .map_err(|error| format!("serialize PROACTIVE_SENT audit payload: {error}"))?;
         let header =
             crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROACTIVE_SENT, &payload)
                 .build();
@@ -1120,18 +1294,19 @@ pub fn spawn_proactive_drain_loop(
         loop {
             ticker.tick().await;
             let now_unix = crate::time::utc_now().timestamp();
-            // Fresh config read per tick — honours mid-run enable/disable.
-            let proactive_enabled = FreedomConfig::load_from_default_path()
-                .map(|c| c.proactive.enabled)
-                .unwrap_or(false);
-            if proactive_enabled {
-                let config = match FreedomConfig::load_from_default_path() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        warn!(error = %e, "proactive tick: config reload failed; skipping");
-                        continue;
-                    }
-                };
+            // One strict fresh snapshot per tick — honours mid-run changes
+            // without letting malformed policy masquerade as disabled defaults.
+            let config = match FreedomConfig::load_from_default_path_or_default() {
+                Ok(config) => config,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "proactive tick: config invalid; delivery blocked fail-closed"
+                    );
+                    continue;
+                }
+            };
+            if config.proactive.enabled {
                 match run_proactive_delivery_tick(&home, &config, &writer, now_unix).await {
                     Ok(0) => tracing::debug!("proactive delivery tick: nothing delivered"),
                     Ok(n) => info!(delivered = n, "proactive delivery tick: {n} live-sent"),
@@ -1504,22 +1679,139 @@ mod tests {
 
     #[test]
     fn plan_delivery_b9_connection_bound_channels_are_sidecar_only() {
-        // Matrix/IRC/Twitch/Nostr are connection-bound — destinations are
+        // IRC/Twitch/Nostr/GChat remain connection-bound — destinations are
         // stored but the tick can't construct their adapters on demand.
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         let mut rt = default_rt();
-        rt.destinations.matrix_room_id = Some("!r:server".to_string());
         rt.destinations.irc_channel = Some("#neoth".to_string());
         rt.destinations.twitch_channel = Some("#chan".to_string());
         rt.destinations.nostr_recipient = Some("npub1x".to_string());
         rt.destinations.gchat_space = Some("spaces/AAAA".to_string());
-        for ch in ["matrix", "irc", "twitch", "nostr", "gchat", "google_chat"] {
+        for ch in ["irc", "twitch", "nostr", "gchat", "google_chat"] {
             assert_eq!(
                 plan_delivery(ch, AutonomyLevel::Full, &cfg, &rt, &default_creds()),
                 DeliveryRoute::SidecarOnly,
                 "{ch} is connection-bound → sidecar-only"
             );
         }
+    }
+
+    #[cfg(feature = "matrix-channel")]
+    #[test]
+    fn plan_delivery_matrix_feature_on_accepts_token_or_password_and_valid_room() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.matrix_room_id = Some("!ops:example.org".to_string());
+        let token_creds = crate::config::credentials::Credentials {
+            matrix_homeserver: Some("https://matrix.example.org".to_string()),
+            matrix_user_id: Some("@neoth:example.org".to_string()),
+            matrix_access_token: Some(crate::secret::SecretString::from("syt_token")),
+            matrix_allowed_user_id: Some("@operator:example.org".to_string()),
+            matrix_allowed_room_ids: Some("!ops:example.org".to_string()),
+            matrix_require_encryption: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("matrix", AutonomyLevel::Full, &cfg, &rt, &token_creds),
+            DeliveryRoute::Matrix {
+                room_id: "!ops:example.org".to_string()
+            }
+        );
+
+        let password_creds = crate::config::credentials::Credentials {
+            matrix_access_token: None,
+            matrix_password: Some(crate::secret::SecretString::from("password")),
+            ..token_creds
+        };
+        assert_eq!(
+            plan_delivery("matrix", AutonomyLevel::Full, &cfg, &rt, &password_creds),
+            DeliveryRoute::Matrix {
+                room_id: "!ops:example.org".to_string()
+            }
+        );
+    }
+
+    #[cfg(feature = "matrix-channel")]
+    #[test]
+    fn plan_delivery_matrix_feature_on_fails_closed_for_partial_or_bad_destination() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let complete = crate::config::credentials::Credentials {
+            matrix_homeserver: Some("https://matrix.example.org".to_string()),
+            matrix_user_id: Some("@neoth:example.org".to_string()),
+            matrix_access_token: Some(crate::secret::SecretString::from("syt_token")),
+            ..Default::default()
+        };
+        let mut no_destination = default_rt();
+        assert_eq!(
+            plan_delivery(
+                "matrix",
+                AutonomyLevel::Full,
+                &cfg,
+                &no_destination,
+                &complete
+            ),
+            DeliveryRoute::SidecarOnly
+        );
+
+        no_destination.destinations.matrix_room_id = Some("not-a-room".to_string());
+        assert_eq!(
+            plan_delivery(
+                "matrix",
+                AutonomyLevel::Full,
+                &cfg,
+                &no_destination,
+                &complete
+            ),
+            DeliveryRoute::SidecarOnly
+        );
+
+        no_destination.destinations.matrix_room_id = Some("!ops:example.org".to_string());
+        let missing_auth = crate::config::credentials::Credentials {
+            matrix_homeserver: complete.matrix_homeserver.clone(),
+            matrix_user_id: complete.matrix_user_id.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery(
+                "matrix",
+                AutonomyLevel::Full,
+                &cfg,
+                &no_destination,
+                &missing_auth
+            ),
+            DeliveryRoute::SidecarOnly
+        );
+    }
+
+    #[cfg(not(feature = "matrix-channel"))]
+    #[test]
+    fn plan_delivery_matrix_feature_off_stays_sidecar_only() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.matrix_room_id = Some("!ops:example.org".to_string());
+        let creds = crate::config::credentials::Credentials {
+            matrix_homeserver: Some("https://matrix.example.org".to_string()),
+            matrix_user_id: Some("@neoth:example.org".to_string()),
+            matrix_access_token: Some(crate::secret::SecretString::from("syt_token")),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("matrix", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::SidecarOnly
+        );
+    }
+
+    #[test]
+    fn route_claim_classification_covers_live_and_sidecar_routes() {
+        assert!(!route_needs_claim(&DeliveryRoute::Suppressed));
+        assert!(!route_needs_claim(&DeliveryRoute::SidecarOnly));
+        assert!(route_needs_claim(&DeliveryRoute::Telegram {
+            chat_id: "123".to_string()
+        }));
+        #[cfg(feature = "matrix-channel")]
+        assert!(route_needs_claim(&DeliveryRoute::Matrix {
+            room_id: "!ops:example.org".to_string()
+        }));
     }
 
     #[test]
@@ -1582,16 +1874,54 @@ mod tests {
     }
 
     #[test]
-    fn plan_delivery_keet_is_sidecar_only_pending_bridge() {
-        // Keet proactive send needs a live Pears bridge the tick can't build →
-        // ledger-only (SidecarOnly), even with a configured topic.
+    fn plan_delivery_keeps_baileys_and_meta_credentials_separate() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.whatsapp_recipient = Some("+15550000001".to_string());
+        rt.destinations.whatsapp_baileys_recipient = Some("+15550000002".to_string());
+
+        let meta = crate::config::credentials::Credentials {
+            whatsapp_token: Some(crate::secret::SecretString::from("meta")),
+            whatsapp_phone_id: Some("phone".into()),
+            whatsapp_verify_token: Some(crate::secret::SecretString::from("verify")),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("whatsapp_baileys", AutonomyLevel::Full, &cfg, &rt, &meta),
+            DeliveryRoute::SidecarOnly,
+            "Meta credentials must never activate the Baileys route"
+        );
+
+        let baileys = crate::config::credentials::Credentials {
+            whatsapp_baileys_url: Some("http://127.0.0.1:9120".into()),
+            whatsapp_baileys_token: Some(crate::secret::SecretString::from(
+                "0123456789abcdef0123456789abcdef",
+            )),
+            whatsapp_baileys_allowed_senders: Some("+15550000002".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("whatsapp", AutonomyLevel::Full, &cfg, &rt, &baileys),
+            DeliveryRoute::SidecarOnly,
+            "Baileys credentials must never activate the Meta route"
+        );
+        assert_eq!(
+            plan_delivery("whatsapp_baileys", AutonomyLevel::Full, &cfg, &rt, &baileys,),
+            DeliveryRoute::WhatsAppBaileys {
+                recipient: "+15550000002".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn plan_delivery_keet_is_explicitly_unavailable() {
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         let mut rt = default_rt();
         rt.destinations.keet_topic = Some("topic".to_string());
         assert_eq!(
             plan_delivery("keet", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
-            DeliveryRoute::SidecarOnly,
-            "keet routes to ledger until the bridge is shared with the tick"
+            DeliveryRoute::Unavailable,
+            "legacy Keet routes must fail closed instead of implying a pending bridge"
         );
     }
 
@@ -1915,8 +2245,8 @@ mod tests {
         let n = run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
         assert_eq!(n, 1, "reflection item must drain to sidecar (count=1)");
 
-        let sidecar = std::fs::read_to_string(tmp.path().join(PROACTIVE_DELIVERED_SIDECAR))
-            .unwrap();
+        let sidecar =
+            std::fs::read_to_string(tmp.path().join(PROACTIVE_DELIVERED_SIDECAR)).unwrap();
         let line = sidecar.lines().next().unwrap();
         let v: serde_json::Value = serde_json::from_str(line).unwrap();
         assert_eq!(

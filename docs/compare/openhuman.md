@@ -37,6 +37,5 @@ that may have moved since:
 | Automation | Built-in cron and localhost n8n | Integration-centric |
 | Plugins | Skills plus WASM capability sandbox | Integration/tool ecosystem |
 | Runtime self-diagnosis | Babel-Index: collapse prediction on NEOTH's own event stream, pre-registered failure labels, self-calibrating early warning ([details](../babel-index.md)) | None documented |
-| Private mesh | LAN/mDNS, Tailscale, Hysteria, Keet-style path | Not core |
+| Private mesh | LAN/mDNS, Tailscale, Hysteria, NEOTH peeroxide/Hyperswarm protocol | Not core |
 | Best user | Wants a loyal assistant that can grow from simple GUI into serious local control | Wants consumer convenience and many managed integrations fast |
-

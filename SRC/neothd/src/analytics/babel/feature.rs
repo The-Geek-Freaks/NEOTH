@@ -12,7 +12,7 @@
 //! | K_d | 0x20 LLM_REQUEST, 0x21 LLM_RESPONSE (output embedding) |
 //! | M_d | 0x20 context_used_ratio, 0x47 vram_pct, 0x2F budget cap/total |
 //! | A_d | 0xFC AGENT_DISPATCHED (distinct agent_id values) |
-//! | V_d | local_load::tokens_per_sec() / V_MAX from norm table |
+//! | V_d | local_load::tokens_per_sec() / configured V_MAX |
 //! | D_d | tool schema conflict events (0xC1) and role-schema embedding divergence |
 //! | H_d | fallback_attempt / fallback_result events in the window |
 //!
@@ -23,11 +23,15 @@
 //! - `K_d_v0`: mean pairwise cosine similarity of last N output-token-frequency
 //!   histograms (no external embedding model; uses in-process token-freq
 //!   approximation as a v0 proxy — BLEU-2 fallback documented).
+//! - `K_d_embed_v1`: mean pairwise cosine of up to 64 bounded local response
+//!   embeddings. Negative cosine maps to 0 (maximum diversity); fewer than
+//!   three valid samples or an unavailable provider deterministically yields
+//!   K=0 and is recorded in `k_d_posture`, never mixed with K_d_v0.
 //! - `M_d_v0`: max(context_used_ratio, vram_pct/100, budget_consumed_ratio).
 //! - `A_d_v0`: distinct AGENT_DISPATCHED agent_id count, normalised by
 //!   AutonomyLevel scalar (Strict=1, Standard=2, Elevated=3, Full=4).
-//! - `V_d_v0`: tokens_per_sec / V_MAX (p99 from norm table; cold-start default
-//!   150.0 tps), clamped [0, 1].
+//! - `V_d_v0`: tokens_per_sec / operator-configured V_MAX (default 150.0 tps),
+//!   clamped [0, 1].
 //! - `D_d_v0`: binary 0/1 flag "any tool schema conflict in window" as v0 proxy
 //!   (full Jensen–Shannon divergence over tool-schema token distributions deferred
 //!   to v1).
@@ -36,6 +40,10 @@
 //!   fallbacks were attempted (neutral: no observed absence of redundancy).
 
 use serde::{Deserialize, Serialize};
+
+/// First-N deterministic cap per rolling window. Combined with the bounded
+/// source queue, this bounds vector memory independently of response volume.
+pub const MAX_K_D_EMBEDDING_SAMPLES: usize = 64;
 
 /// All seven normalised features for one window, all in [0,1] for C,K,M,A,V,D
 /// and (0,1] for D,H (schema enforces exclusiveMinimum:0 on D and H).
@@ -55,9 +63,41 @@ pub struct BabelFeatures {
     pub d: f64,
     /// H_d: heterarchy / redundancy (0,1].
     pub h: f64,
+    /// K_d extraction posture. Separate from K itself so failures and model
+    /// identity remain stratifiable without changing another feature weight.
+    #[serde(default)]
+    pub k_d_posture: KdPosture,
     /// Algorithm version string for each feature — allows sensitivity analysis
     /// across contributors using different extraction methods.
     pub algorithm_versions: FeatureAlgorithmVersions,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KdPosture {
+    pub mode: String,
+    pub requested_model: Option<String>,
+    pub effective_model: Option<String>,
+    pub sample_count: u32,
+    pub failure_count: u32,
+    /// Sorted closed failure codes observed in this window. Never carries an
+    /// error message, path, response, or other operator content.
+    pub failure_reasons: Vec<String>,
+    pub degraded_reason: Option<String>,
+}
+
+impl Default for KdPosture {
+    fn default() -> Self {
+        Self {
+            mode: "histogram_v0".to_string(),
+            requested_model: None,
+            effective_model: None,
+            sample_count: 0,
+            failure_count: 0,
+            failure_reasons: Vec::new(),
+            degraded_reason: None,
+        }
+    }
 }
 
 /// One version tag per feature so sensitivity analysis across contributors is
@@ -104,13 +144,27 @@ impl BabelFeatures {
     /// Validate that all features are finite and within their documented ranges.
     /// Returns the first field name that fails, or Ok(()).
     pub fn validate(&self) -> Result<(), &'static str> {
-        if !self.c.is_finite() || self.c < 0.0 { return Err("C"); }
-        if !self.k.is_finite() || self.k < 0.0 { return Err("K"); }
-        if !self.m.is_finite() || self.m < 0.0 { return Err("M"); }
-        if !self.a.is_finite() || self.a < 0.0 { return Err("A"); }
-        if !self.v.is_finite() || self.v < 0.0 { return Err("V"); }
-        if !self.d.is_finite() || self.d <= 0.0 { return Err("D"); }
-        if !self.h.is_finite() || self.h <= 0.0 { return Err("H"); }
+        if !self.c.is_finite() || self.c < 0.0 {
+            return Err("C");
+        }
+        if !self.k.is_finite() || self.k < 0.0 {
+            return Err("K");
+        }
+        if !self.m.is_finite() || self.m < 0.0 {
+            return Err("M");
+        }
+        if !self.a.is_finite() || self.a < 0.0 {
+            return Err("A");
+        }
+        if !self.v.is_finite() || self.v < 0.0 {
+            return Err("V");
+        }
+        if !self.d.is_finite() || self.d <= 0.0 {
+            return Err("D");
+        }
+        if !self.h.is_finite() || self.h <= 0.0 {
+            return Err("H");
+        }
         Ok(())
     }
 }
@@ -128,6 +182,11 @@ pub struct BabelFeatureAccumulator {
     // K_d: convergence pressure — v0 uses token-freq histogram vectors
     // stored as (token_hash → count) maps, one per response.
     pub output_histograms: Vec<std::collections::HashMap<u32, u32>>,
+    pub output_embeddings: Vec<Vec<f32>>,
+    pub embedding_models: std::collections::HashSet<String>,
+    pub embedding_failure_count: u32,
+    pub embedding_failure_reasons: std::collections::BTreeSet<String>,
+    pub k_d_embedding_model: Option<String>,
 
     // M_d: resource pressure
     pub max_context_used_ratio: f64,
@@ -151,42 +210,83 @@ pub struct BabelFeatureAccumulator {
 }
 
 impl BabelFeatureAccumulator {
-    pub fn new(autonomy_scalar: u8, v_max_tps: f64, total_tools_available: usize) -> Self {
+    pub fn new(
+        autonomy_scalar: u8,
+        v_max_tps: f64,
+        total_tools_available: usize,
+        k_d_embedding_model: Option<String>,
+    ) -> Self {
         Self {
             autonomy_scalar: autonomy_scalar.clamp(1, 4),
-            v_max_tps: if v_max_tps > 0.0 { v_max_tps } else { 150.0 },
+            v_max_tps: if v_max_tps.is_finite() && v_max_tps > 0.0 {
+                v_max_tps
+            } else {
+                150.0
+            },
             total_tools_available,
+            k_d_embedding_model: k_d_embedding_model
+                .map(|model| super::khist::bounded_model_identity(&model)),
             ..Default::default()
         }
     }
 
-    /// Convert accumulated state into normalised BabelFeatures.
-    /// Returns None if the window has insufficient data (< MIN_EVENTS).
-    pub fn finish(&self, current_tps: f64) -> Option<BabelFeatures> {
+    /// Convert accumulated state into normalised `BabelFeatures`.
+    ///
+    /// This operation is total, including for sparse accumulators. The cron's
+    /// explicit `event_count == 0` gate owns empty-window suppression; feature
+    /// finalisation itself never drops an eligible window.
+    pub fn finish(&self, current_tps: f64) -> BabelFeatures {
         // C_d_v0
         let c = self.coupling_density();
-        // K_d_v0
-        let k = self.convergence_pressure();
+        let (k, k_algorithm, k_d_posture) = self.convergence_pressure_with_posture();
         // M_d_v0
-        let m = (self.max_context_used_ratio
+        let m = (self
+            .max_context_used_ratio
             .max(self.max_vram_pct / 100.0)
             .max(self.max_budget_consumed_ratio))
-            .clamp(0.0, 1.0);
+        .clamp(0.0, 1.0);
         // A_d_v0
         let a = self.agent_density();
         // V_d_v0
-        let v = (current_tps / self.v_max_tps).clamp(0.0, 1.0);
+        let current_tps = if current_tps.is_finite() {
+            current_tps.max(0.0)
+        } else {
+            0.0
+        };
+        let v_max_tps = if self.v_max_tps.is_finite() && self.v_max_tps > 0.0 {
+            self.v_max_tps
+        } else {
+            150.0
+        };
+        let v = (current_tps / v_max_tps).clamp(0.0, 1.0);
         // D_d_v0
-        let d = if self.schema_conflict_count > 0 { 0.3_f64 } else { 1.0_f64 };
+        let d = if self.schema_conflict_count > 0 {
+            0.3_f64
+        } else {
+            1.0_f64
+        };
         // H_d_v0
         let h = self.heterarchy();
 
         let f = BabelFeatures {
-            c, k, m, a, v, d, h,
-            algorithm_versions: FeatureAlgorithmVersions::default(),
+            c,
+            k,
+            m,
+            a,
+            v,
+            d,
+            h,
+            k_d_posture,
+            algorithm_versions: FeatureAlgorithmVersions {
+                k: k_algorithm,
+                ..FeatureAlgorithmVersions::default()
+            },
         };
-        if f.validate().is_err() { return None; }
-        Some(f)
+        debug_assert!(
+            f.validate().is_ok(),
+            "BabelFeatureAccumulator::finish must produce valid features"
+        );
+        f
     }
 
     /// C_d_v0 — bipartite coupling density: |edges| / (|agents| × |tools|),
@@ -196,7 +296,9 @@ impl BabelFeatureAccumulator {
     fn coupling_density(&self) -> f64 {
         let n_agents = self.distinct_agents.len();
         let n_tools = self.distinct_tools.len();
-        if n_agents == 0 || n_tools == 0 { return 0.0; }
+        if n_agents == 0 || n_tools == 0 {
+            return 0.0;
+        }
         if n_agents == 1 {
             // Single-agent: fraction of available tools called
             let denom = self.total_tools_available.max(1);
@@ -210,7 +312,9 @@ impl BabelFeatureAccumulator {
         // K_d_v0: mean pairwise cosine similarity of output histograms.
         // Returns 0.0 (maximum diversity) when fewer than 3 outputs available.
         let hists = &self.output_histograms;
-        if hists.len() < 3 { return 0.0; }
+        if hists.len() < 3 {
+            return 0.0;
+        }
         let mut total_sim = 0.0_f64;
         let mut count = 0usize;
         for i in 0..hists.len() {
@@ -219,13 +323,85 @@ impl BabelFeatureAccumulator {
                 count += 1;
             }
         }
-        if count == 0 { return 0.0; }
+        if count == 0 {
+            return 0.0;
+        }
         (total_sim / count as f64).clamp(0.0, 1.0)
+    }
+
+    fn convergence_pressure_with_posture(&self) -> (f64, String, KdPosture) {
+        let Some(requested_model) = self.k_d_embedding_model.clone() else {
+            return (
+                self.convergence_pressure(),
+                "K_d_v0".to_string(),
+                KdPosture {
+                    sample_count: self.output_histograms.len() as u32,
+                    ..KdPosture::default()
+                },
+            );
+        };
+
+        let effective_model = if self.embedding_models.len() == 1 {
+            self.embedding_models.iter().next().cloned()
+        } else {
+            None
+        };
+        let mut posture = KdPosture {
+            mode: "embedding_v1".to_string(),
+            requested_model: Some(requested_model),
+            effective_model,
+            sample_count: self.output_embeddings.len() as u32,
+            failure_count: self.embedding_failure_count,
+            failure_reasons: self.embedding_failure_reasons.iter().cloned().collect(),
+            degraded_reason: None,
+        };
+        if self.embedding_models.len() > 1 {
+            posture.degraded_reason = Some("mixed_model_identity".to_string());
+            return (0.0, "K_d_embed_v1".to_string(), posture);
+        }
+        if self.output_embeddings.len() < 3 {
+            if self.embedding_failure_count > 0 {
+                posture.degraded_reason = Some("embedding_failures".to_string());
+            }
+            return (0.0, "K_d_embed_v1".to_string(), posture);
+        }
+        let expected_dim = self.output_embeddings[0].len();
+        if expected_dim == 0
+            || self
+                .output_embeddings
+                .iter()
+                .any(|v| v.len() != expected_dim || v.iter().any(|x| !x.is_finite()))
+        {
+            posture.degraded_reason = Some("invalid_or_mixed_dimensions".to_string());
+            return (0.0, "K_d_embed_v1".to_string(), posture);
+        }
+        let mut total = 0.0_f64;
+        let mut pairs = 0usize;
+        for i in 0..self.output_embeddings.len() {
+            for j in (i + 1)..self.output_embeddings.len() {
+                let similarity = crate::providers::embed::cosine(
+                    &self.output_embeddings[i],
+                    &self.output_embeddings[j],
+                );
+                // Pre-hoc mapping: negative semantic similarity is maximum
+                // diversity (0), not negative convergence pressure.
+                total += f64::from(similarity.clamp(0.0, 1.0));
+                pairs += 1;
+            }
+        }
+        if self.embedding_failure_count > 0 {
+            posture.degraded_reason = Some("partial_embedding_failures".to_string());
+        }
+        (
+            (total / pairs as f64).clamp(0.0, 1.0),
+            "K_d_embed_v1".to_string(),
+            posture,
+        )
     }
 
     fn agent_density(&self) -> f64 {
         let raw = self.agent_dispatch_ids.len() as f64;
-        let scaled = raw / self.autonomy_scalar as f64;
+        let scaled = raw / self.autonomy_scalar.max(1) as f64;
         // Normalise against a soft ceiling of 8 agents per autonomy unit
         (scaled / 8.0).clamp(0.0, 1.0)
     }
@@ -249,14 +425,21 @@ fn cosine_similarity_histograms(
     a: &std::collections::HashMap<u32, u32>,
     b: &std::collections::HashMap<u32, u32>,
 ) -> f64 {
-    if a.is_empty() || b.is_empty() { return 0.0; }
-    let dot: f64 = a.iter()
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let dot: f64 = a
+        .iter()
         .filter_map(|(k, &va)| b.get(k).map(|&vb| va as f64 * vb as f64))
         .sum();
     let norm_a: f64 = a.values().map(|&v| (v as f64).powi(2)).sum::<f64>().sqrt();
     let norm_b: f64 = b.values().map(|&v| (v as f64).powi(2)).sum::<f64>().sqrt();
     let denom = norm_a * norm_b;
-    if denom == 0.0 { 0.0 } else { (dot / denom).clamp(0.0, 1.0) }
+    if denom == 0.0 {
+        0.0
+    } else {
+        (dot / denom).clamp(0.0, 1.0)
+    }
 }
 
 #[cfg(test)]
@@ -266,9 +449,14 @@ mod tests {
     #[test]
     fn features_validate_rejects_zero_d_and_h() {
         let bad = BabelFeatures {
-            c: 0.5, k: 0.5, m: 0.5, a: 0.5, v: 0.5,
+            c: 0.5,
+            k: 0.5,
+            m: 0.5,
+            a: 0.5,
+            v: 0.5,
             d: 0.0, // violates exclusiveMinimum: 0
             h: 0.5,
+            k_d_posture: KdPosture::default(),
             algorithm_versions: FeatureAlgorithmVersions::default(),
         };
         assert_eq!(bad.validate(), Err("D"));
@@ -277,8 +465,14 @@ mod tests {
     #[test]
     fn clamp_denominators_ensures_d_h_positive() {
         let f = BabelFeatures {
-            c: 0.1, k: 0.1, m: 0.1, a: 0.1, v: 0.1,
-            d: 0.0, h: 0.0,
+            c: 0.1,
+            k: 0.1,
+            m: 0.1,
+            a: 0.1,
+            v: 0.1,
+            d: 0.0,
+            h: 0.0,
+            k_d_posture: KdPosture::default(),
             algorithm_versions: FeatureAlgorithmVersions::default(),
         };
         let clamped = f.clamp_denominators();
@@ -288,7 +482,7 @@ mod tests {
 
     #[test]
     fn single_agent_coupling_uses_tool_fraction() {
-        let mut acc = BabelFeatureAccumulator::new(2, 150.0, 10);
+        let mut acc = BabelFeatureAccumulator::new(2, 150.0, 10, None);
         acc.distinct_agents.insert("agent_a".into());
         acc.distinct_tools.insert("tool_1".into());
         acc.distinct_tools.insert("tool_2".into());
@@ -299,13 +493,13 @@ mod tests {
 
     #[test]
     fn convergence_pressure_zero_for_fewer_than_three_outputs() {
-        let acc = BabelFeatureAccumulator::new(2, 150.0, 4);
+        let acc = BabelFeatureAccumulator::new(2, 150.0, 4, None);
         assert_eq!(acc.convergence_pressure(), 0.0);
     }
 
     #[test]
     fn identical_histograms_give_max_convergence() {
-        let mut acc = BabelFeatureAccumulator::new(2, 150.0, 4);
+        let mut acc = BabelFeatureAccumulator::new(2, 150.0, 4, None);
         let hist: std::collections::HashMap<u32, u32> = [(1, 5), (2, 3)].into();
         acc.output_histograms.push(hist.clone());
         acc.output_histograms.push(hist.clone());
@@ -314,9 +508,55 @@ mod tests {
     }
 
     #[test]
+    fn embedding_mode_is_versioned_and_uses_bounded_cosine_mapping() {
+        let mut acc =
+            BabelFeatureAccumulator::new(2, 150.0, 4, Some("org/local-embed".to_string()));
+        acc.embedding_models.insert("org/local-embed".to_string());
+        acc.output_embeddings = vec![vec![1.0, 0.0], vec![1.0, 0.0], vec![0.0, 1.0]];
+        let features = acc.finish(0.0);
+        assert_eq!(features.algorithm_versions.k, "K_d_embed_v1");
+        assert_eq!(features.k_d_posture.mode, "embedding_v1");
+        assert_eq!(
+            features.k_d_posture.effective_model.as_deref(),
+            Some("org/local-embed")
+        );
+        assert!((features.k - (1.0 / 3.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn embedding_failure_degrades_to_zero_without_histogram_fallback() {
+        let mut acc =
+            BabelFeatureAccumulator::new(2, 150.0, 4, Some("org/local-embed".to_string()));
+        acc.embedding_models.insert("org/local-embed".to_string());
+        acc.embedding_failure_count = 1;
+        acc.embedding_failure_reasons
+            .insert("provider_unavailable".to_string());
+        acc.output_histograms.push([(7, 4)].into());
+        let features = acc.finish(0.0);
+        assert_eq!(features.k, 0.0, "must not silently mix in K_d_v0");
+        assert_eq!(features.algorithm_versions.k, "K_d_embed_v1");
+        assert_eq!(
+            features.k_d_posture.degraded_reason.as_deref(),
+            Some("embedding_failures")
+        );
+        assert_eq!(
+            features.k_d_posture.failure_reasons,
+            vec!["provider_unavailable".to_string()]
+        );
+    }
+
+    #[test]
     fn heterarchy_defaults_to_one_when_no_fallbacks_attempted() {
-        let acc = BabelFeatureAccumulator::new(2, 150.0, 4);
+        let acc = BabelFeatureAccumulator::new(2, 150.0, 4, None);
         assert_eq!(acc.heterarchy(), 1.0);
+    }
+
+    #[test]
+    fn finish_is_total_for_sparse_or_non_finite_velocity_input() {
+        let features = BabelFeatureAccumulator::default().finish(f64::NAN);
+
+        assert_eq!(features.v, 0.0);
+        assert!(features.validate().is_ok());
     }
 
     #[test]

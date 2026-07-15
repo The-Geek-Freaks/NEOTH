@@ -434,7 +434,10 @@ mod tests {
     fn curated_27b_abliterated_resolves_and_is_reachable() {
         // F36/G-03 — the 27B curated tier resolves to the verified huihui repo.
         let abl = curated_fallback(27.0, VariantClass::Abliterated).unwrap();
-        assert_eq!(abl.repo, "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF");
+        assert_eq!(
+            abl.repo,
+            "huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF"
+        );
         assert_eq!(abl.class, VariantClass::Abliterated);
         let std = curated_fallback(27.0, VariantClass::Standard).unwrap();
         assert_eq!(std.repo, "bartowski/Qwen_Qwen3.6-27B-GGUF");
@@ -452,8 +455,14 @@ mod tests {
     fn hf_search_url_27b_uses_qwen3_6_family_not_qwen2_5() {
         // F36 — a 27B live search must target Qwen3.6, not the wrong Qwen2.5-27B.
         let url = hf_search_url(27.0, VariantClass::Abliterated);
-        assert!(url.contains("Qwen3.6-27B"), "expected Qwen3.6-27B, got: {url}");
-        assert!(!url.contains("Qwen2.5-27B"), "must not search wrong family: {url}");
+        assert!(
+            url.contains("Qwen3.6-27B"),
+            "expected Qwen3.6-27B, got: {url}"
+        );
+        assert!(
+            !url.contains("Qwen2.5-27B"),
+            "must not search wrong family: {url}"
+        );
         // a non-27 size keeps the Qwen2.5 family.
         assert!(hf_search_url(14.0, VariantClass::Standard).contains("Qwen2.5-14B-Instruct"));
     }

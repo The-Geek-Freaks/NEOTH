@@ -1,7 +1,7 @@
-//! `neoth mcp {list, tools <server>, call <server> <tool> [--args JSON]}` —
-//! operator surface for the Model Context Protocol client.
+//! `neoth mcp` — operator surface for MCP clients plus NEOTH's built-in
+//! read-only codegraph server.
 //!
-//! Three actions:
+//! Five actions:
 //!   - `list` dumps `~/.neoth/mcp_servers.yaml`. No process spawning;
 //!     pure read against the config.
 //!   - `tools <server>` spawns the named server + runs `tools/list`
@@ -9,6 +9,8 @@
 //!     produces a working handshake.
 //!   - `call <server> <tool> --args '{...}'` invokes one tool. The args
 //!     JSON is passed through unchanged.
+//!   - `codegraph-serve` runs NEOTH's built-in read-only codegraph MCP server.
+//!   - `codegraph-install` registers that server with an exact allowlist.
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -44,30 +46,144 @@ pub enum McpAction {
         #[arg(long, default_value = "{}")]
         args: String,
     },
+    /// Serve NEOTH's six read-only codegraph tools over MCP stdio. Intended as
+    /// a subprocess entrypoint for MCP hosts; stdout contains protocol messages
+    /// only. Run `codegraph-install` to register it in NEOTH itself.
+    CodegraphServe {
+        /// Override the persisted code-map database path.
+        #[arg(long)]
+        db: Option<std::path::PathBuf>,
+    },
+    /// Idempotently register the built-in codegraph stdio server in
+    /// `~/.neoth/mcp_servers.yaml` with an exact tool allowlist.
+    CodegraphInstall {
+        /// Override the code-map database passed to the server process.
+        #[arg(long)]
+        db: Option<std::path::PathBuf>,
+    },
 }
 
 pub async fn run_mcp(args: McpArgs) -> Result<()> {
-    let servers = McpServers::load()?;
     match args.action {
-        McpAction::List => run_list(&servers, &args.output),
-        McpAction::Tools { server } => run_tools(&servers, &server, &args.output).await,
+        McpAction::List => run_list(&McpServers::load()?, &args.output),
+        McpAction::Tools { server } => run_tools(&McpServers::load()?, &server, &args.output).await,
         McpAction::Call {
             server,
             tool,
             args: tool_args,
-        } => run_call(&servers, &server, &tool, &tool_args, &args.output).await,
+        } => {
+            run_call(
+                &McpServers::load()?,
+                &server,
+                &tool,
+                &tool_args,
+                &args.output,
+            )
+            .await
+        }
+        McpAction::CodegraphServe { db } => {
+            crate::mcp::codegraph_server::serve_stdio(
+                db.unwrap_or_else(crate::code_map::persist::default_path),
+            )
+            .await
+        }
+        McpAction::CodegraphInstall { db } => install_codegraph_server(db, &args.output),
+    }
+}
+
+fn install_codegraph_server(db: Option<std::path::PathBuf>, output: &OutputFormat) -> Result<()> {
+    const SERVER_ID: &str = "neoth-codegraph";
+    let executable = std::env::current_exe()?.canonicalize()?;
+    let desired = codegraph_server_config(&executable, db);
+    desired.validate_launcher()?;
+    let path = McpServers::default_path();
+    McpServers::update_at(&path, |servers| {
+        match servers
+            .servers
+            .iter_mut()
+            .find(|server| server.id == SERVER_ID)
+        {
+            Some(existing) if existing == &desired => return Ok(false),
+            Some(existing) => *existing = desired.clone(),
+            None => servers.servers.push(desired.clone()),
+        }
+        Ok(true)
+    })?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "installed": true,
+                "id": SERVER_ID,
+                "config": path,
+                "command": desired.command,
+                "args": desired.args,
+                "allow_tools": desired.allow_tools,
+            })
+        ),
+        OutputFormat::Table => println!(
+            "installed `{SERVER_ID}` in {} ({} read-only tools)",
+            path.display(),
+            crate::mcp::codegraph_server::TOOL_NAMES.len()
+        ),
+    }
+    Ok(())
+}
+
+fn codegraph_server_config(
+    executable: &std::path::Path,
+    db: Option<std::path::PathBuf>,
+) -> crate::mcp::McpServerConfig {
+    let mut server_args = vec!["mcp".to_string(), "codegraph-serve".to_string()];
+    if let Some(db) = db {
+        server_args.push("--db".into());
+        server_args.push(db.canonicalize().unwrap_or(db).display().to_string());
+    }
+    crate::mcp::McpServerConfig {
+        id: "neoth-codegraph".into(),
+        description: Some("NEOTH's read-only persisted codegraph tools".into()),
+        command: executable.display().to_string(),
+        args: server_args,
+        env: std::collections::HashMap::new(),
+        enabled: true,
+        allow_tools: Some(
+            crate::mcp::codegraph_server::TOOL_NAMES
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        ),
+        trust_all_tools: false,
+        smart_approve: true,
+        autonomy_gate: None,
     }
 }
 
 fn run_list(servers: &McpServers, output: &OutputFormat) -> Result<()> {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
+            let launcher_posture: Vec<serde_json::Value> = servers
+                .servers
+                .iter()
+                .map(|server| match server.validate_launcher() {
+                    Ok(posture) => serde_json::json!({
+                        "id": server.id,
+                        "valid": true,
+                        "posture": posture.as_str(),
+                    }),
+                    Err(error) => serde_json::json!({
+                        "id": server.id,
+                        "valid": false,
+                        "error": error.to_string(),
+                    }),
+                })
+                .collect();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "count": servers.servers.len(),
                     "enabled_count": servers.enabled().len(),
                     "servers": servers.servers,
+                    "launcher_posture": launcher_posture,
                 }))?
             );
         }
@@ -83,9 +199,13 @@ fn run_list(servers: &McpServers, output: &OutputFormat) -> Result<()> {
             for s in &servers.servers {
                 let status = if s.enabled { "ON " } else { "OFF" };
                 let desc = s.description.as_deref().unwrap_or("(no description)");
+                let launcher = s
+                    .validate_launcher()
+                    .map(|posture| posture.as_str().to_string())
+                    .unwrap_or_else(|error| format!("INVALID: {error}"));
                 println!(
-                    "  {status}  {:<20}  command={} args={:?}",
-                    s.id, s.command, s.args
+                    "  {status}  {:<20}  launcher={launcher} command={} args={:?}",
+                    s.id, s.command, s.args,
                 );
                 println!("           {desc}");
             }
@@ -160,9 +280,8 @@ async fn run_call(
     })?;
     let args: serde_json::Value = serde_json::from_str(args_json)
         .map_err(|e| anyhow::anyhow!("--args is not valid JSON: {e}"))?;
-    let autonomy = FreedomConfig::load_from_default_path()
-        .map(|c| c.autonomy)
-        .unwrap_or(crate::permissions::AutonomyLevel::Standard);
+    let config = FreedomConfig::load_from_default_path_or_default()?;
+    let autonomy_policy = config.autonomy_policy();
     let mut client = McpClient::spawn(cfg).await?;
     let now_unix = crate::time::now_unix_i64();
     // `neoth mcp call` is an explicit operator one-shot — no SmartApprove
@@ -172,7 +291,7 @@ async fn run_call(
         cfg,
         tool,
         args,
-        autonomy,
+        &autonomy_policy,
         None,
         None,
         None,
@@ -203,10 +322,12 @@ async fn run_call(
         Err(GateError::PermissionDenied { reason, .. }) => {
             anyhow::bail!(
                 "MCP `{server_id}::{tool}` denied by autonomy policy ({}): {reason}",
-                autonomy.as_str()
+                autonomy_policy.level().as_str()
             );
         }
-        Err(GateError::AutonomyGate { required, current, .. }) => {
+        Err(GateError::AutonomyGate {
+            required, current, ..
+        }) => {
             anyhow::bail!(
                 "MCP `{server_id}::{tool}` denied: this server requires autonomy ≥ {} \
                  (current {}). Raise autonomy via `neoth init`, or clear the server's \
@@ -219,7 +340,7 @@ async fn run_call(
             anyhow::bail!(
                 "MCP `{server_id}::{tool}` requires operator confirm ({}): {reason}. \
                  Lower autonomy via `neoth init` or extend allow_tools.",
-                autonomy.as_str()
+                autonomy_policy.level().as_str()
             );
         }
         // SC-11 — `neoth mcp call` invokes a tool directly (no skill
@@ -263,6 +384,34 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn built_in_codegraph_registration_is_hardened_and_complete() {
+        let config = codegraph_server_config(std::path::Path::new("neothd"), None);
+        assert_eq!(config.id, "neoth-codegraph");
+        assert_eq!(config.command, "neothd");
+        assert_eq!(config.args, ["mcp", "codegraph-serve"]);
+        assert_eq!(
+            config.allow_tools.as_deref().unwrap(),
+            crate::mcp::codegraph_server::TOOL_NAMES
+        );
+        assert!(!config.trust_all_tools);
+        assert!(
+            config.smart_approve,
+            "built-in tools declare read-only effects"
+        );
+        config.validate_launcher().unwrap();
+    }
+
+    #[test]
+    fn built_in_codegraph_registration_threads_db_override_as_one_arg() {
+        let db = std::path::PathBuf::from("relative-code-map.db");
+        let config = codegraph_server_config(std::path::Path::new("neothd"), Some(db));
+        assert_eq!(
+            config.args,
+            ["mcp", "codegraph-serve", "--db", "relative-code-map.db"]
+        );
+    }
+
+    #[test]
     fn run_list_renders_empty_state_cleanly() {
         let s = McpServers::default();
         run_list(&s, &OutputFormat::Json).unwrap();
@@ -279,7 +428,7 @@ mod tests {
                 command: "npx".into(),
                 args: vec![
                     "-y".into(),
-                    "@modelcontextprotocol/server-filesystem".into(),
+                    "@modelcontextprotocol/server-filesystem@1.0.0".into(),
                 ],
                 env: HashMap::new(),
                 enabled: true,
@@ -289,6 +438,29 @@ mod tests {
                 autonomy_gate: None,
             }],
         };
+        run_list(&s, &OutputFormat::Json).unwrap();
+        run_list(&s, &OutputFormat::Table).unwrap();
+        assert!(s.servers[0].validate_launcher().is_ok());
+    }
+
+    #[test]
+    fn list_surfaces_invalid_launcher_without_spawning_it() {
+        let s = McpServers {
+            smart_loading: true,
+            servers: vec![McpServerConfig {
+                id: "drifting".into(),
+                description: None,
+                command: "npx".into(),
+                args: vec!["-y".into(), "example@latest".into()],
+                env: HashMap::new(),
+                enabled: false,
+                allow_tools: Some(vec!["read".into()]),
+                trust_all_tools: false,
+                smart_approve: false,
+                autonomy_gate: None,
+            }],
+        };
+        assert!(s.servers[0].validate_launcher().is_err());
         run_list(&s, &OutputFormat::Json).unwrap();
         run_list(&s, &OutputFormat::Table).unwrap();
     }

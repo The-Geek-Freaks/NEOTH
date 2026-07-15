@@ -83,9 +83,7 @@ async fn models_handler(catalog_path: &Path) -> HandlerOutcome {
                 error = %join_err,
                 "oai_serve: spawn_blocking panicked reading models catalog"
             );
-            return HandlerOutcome::internal(
-                "catalog read panicked — check logs",
-            );
+            return HandlerOutcome::internal("catalog read panicked — check logs");
         }
     };
 
@@ -100,10 +98,9 @@ async fn models_handler(catalog_path: &Path) -> HandlerOutcome {
                 id: model_entry.id.clone(),
                 object: "model".to_string(),
                 owned_by: provider_name.clone(),
-                // context_length: stub 0 — ModelEntry has no token-window field yet.
-                // A follow-up schema extension to ModelEntry will populate this.
-                context_length: 0,
-                // pricing: null — same stub rationale.
+                // Unknown metadata is omitted rather than fabricated. Optional
+                // fields can be populated once catalog sources carry them.
+                context_length: None,
                 pricing: None,
             });
         }
@@ -157,6 +154,8 @@ mod tests {
                 );
                 assert_eq!(data[0]["object"], "model");
                 assert_eq!(data[0]["owned_by"], "anthropic_api");
+                assert!(data[0].get("context_length").is_none());
+                assert!(data[0].get("pricing").is_none());
             }
             HandlerOutcome::Err { status, message } => {
                 panic!("expected Ok, got Err {status}: {message}");

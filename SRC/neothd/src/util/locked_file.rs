@@ -84,7 +84,9 @@ pub(crate) fn try_lock_file_once(lock_path: &Path, what: &str) -> Result<Option<
         {
             Ok(f) => Ok(Some(f)),
             Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Ok(None),
-            Err(e) => Err(e).with_context(|| format!("open {what} lock file {}", lock_path.display())),
+            Err(e) => {
+                Err(e).with_context(|| format!("open {what} lock file {}", lock_path.display()))
+            }
         }
     }
     #[cfg(unix)]
@@ -136,7 +138,10 @@ mod tests {
         // Nested, not-yet-existing parent.
         let lock = dir.path().join("sub").join("nested").join("x.lock");
         let _h = lock_file_blocking(&lock, "nested").unwrap();
-        assert!(lock.exists(), "lock file (and its parent dir) must be created");
+        assert!(
+            lock.exists(),
+            "lock file (and its parent dir) must be created"
+        );
     }
 
     #[test]
@@ -148,6 +153,9 @@ mod tests {
         std::fs::write(&file_as_parent, b"x").unwrap();
         let lock = file_as_parent.join("child.lock");
         let r = lock_file_blocking(&lock, "bad");
-        assert!(r.is_err(), "creating a lock under a file-parent must error, not spin");
+        assert!(
+            r.is_err(),
+            "creating a lock under a file-parent must error, not spin"
+        );
     }
 }

@@ -195,8 +195,7 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
 /// lowercased ids. Missing / unreadable / unparseable freedom.yaml → empty
 /// list (no skills disabled) — identical to the pre-HON-11 behaviour, so a
 /// fresh install with no freedom.yaml is unaffected. Read as a raw
-/// `serde_yaml::Value` (house style, mirrors `cluster::policy::
-/// load_policy_from_freedom`) so the loader stays decoupled from the full
+/// `serde_yaml::Value` so the loader stays decoupled from the full
 /// `FreedomConfig` type.
 fn read_disabled_skill_ids(skills_dir: &Path) -> Vec<String> {
     let Some(home) = skills_dir.parent() else {
@@ -961,7 +960,10 @@ system_prompt: |
             .find(|s| s.id() == "manual-skill")
             .expect("manual-skill loaded");
 
-        assert!(s.is_enabled(), "user_invocable_only skill must stay enabled");
+        assert!(
+            s.is_enabled(),
+            "user_invocable_only skill must stay enabled"
+        );
         assert_eq!(
             s.visibility(),
             crate::config::SkillVisibility::UserInvocableOnly,

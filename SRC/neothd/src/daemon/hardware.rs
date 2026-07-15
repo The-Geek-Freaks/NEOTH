@@ -17,6 +17,7 @@
 
 use std::path::Path;
 
+use anyhow::Result;
 use serde::Serialize;
 
 use super::accelerator::{Accelerator, probe as probe_accelerator};
@@ -121,10 +122,23 @@ pub struct ExternalBinaries {
 pub struct CachedModels {
     pub qwen2_5_3b: bool,
     pub qwen3_7b: bool,
-    /// Whisper large-v3-turbo — the actual default the engine pulls.
-    /// The previous `whisper_base` field was a stale name from the
-    /// scaffold; field renamed to match `providers::whisper::DEFAULT_WHISPER_REPO`.
+    /// Legacy serialized field retained for snapshot compatibility. Canonical
+    /// STT no longer probes a hardcoded turbo repository, so this stays false.
     pub whisper_large_v3_turbo: bool,
+    /// Whether the effective configured local STT target is complete in its
+    /// canonical runtime cache.
+    pub whisper_configured: bool,
+    /// Exact repository checked by `whisper_configured`.
+    pub configured_whisper_repo: String,
+    /// Effective configured STT backend checked by `whisper_configured`.
+    pub configured_whisper_backend: String,
+    /// Exact runtime cache directory checked by `whisper_configured`.
+    pub configured_whisper_cache: String,
+    /// Structural cache state shared with the runtime, models CLI and doctor.
+    pub configured_whisper_health: String,
+    /// Actionable reason no local Whisper target exists (cloud primary).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_whisper_error: Option<String>,
     pub clip_vit_b32: bool,
 }
 
@@ -148,23 +162,32 @@ impl DiskInfo {
     }
 }
 
-/// Run the probe. Always returns a populated report — every field has
-/// a sensible default when detection fails (cpu=unknown, ram=0, etc.).
-pub fn probe(neoth_home: &Path) -> HardwareReport {
+/// Run the probe. Hardware detection itself remains best-effort, but an
+/// existing invalid operator config is surfaced because it selects the STT
+/// model/cache targets reported to the operator.
+pub fn probe(neoth_home: &Path) -> Result<HardwareReport> {
     let cpu = probe_cpu();
     let memory = probe_memory();
     let accelerator = probe_acc();
     let binaries = probe_binaries();
-    let cached_models = probe_cached_models(neoth_home);
+    let config =
+        crate::config::FreedomConfig::load_from_path_or_default(&neoth_home.join("freedom.yaml"))?;
+    let whisper_size = config.media.stt.model_size;
+    let whisper_target = crate::media::stt_provider::resolve_local_whisper_target(
+        neoth_home,
+        config.media.stt.primary,
+        whisper_size,
+    );
+    let cached_models = probe_cached_models(neoth_home, config.media.stt.primary, whisper_target);
     let disk = probe_disk(neoth_home);
     let recommended_qwen_repo = recommend_qwen(&cpu, &memory, &accelerator);
     // Approximate cache footprint for the curated model set. These
     // numbers are stable per model release; the wizard's disk-check
     // step uses them to warn about ENOSPC before the download starts.
     //   Qwen2.5-3B-Instruct  ~6.0 GiB f16
-    //   whisper-large-v3-turbo ~1.6 GiB
+    //   configured Whisper size (see WhisperModelSize::approx_size_mb)
     //   openai/clip-vit-base-patch32 ~0.6 GiB
-    let estimated_full_cache_gib = 6.0 + 1.6 + 0.6;
+    let estimated_full_cache_gib = 6.0 + f64::from(whisper_size.approx_size_mb()) / 1024.0 + 0.6;
     // SL-03 — best-effort LIVE VRAM read (nvidia-smi/rocm-smi). None on a
     // CPU-only host or when no GPU tool is on PATH; never fails the probe.
     let vram = crate::daemon::resource_watch::read_gpu_vram();
@@ -172,7 +195,7 @@ pub fn probe(neoth_home: &Path) -> HardwareReport {
     // GPU load is one short nvidia-smi subprocess. Both are best-effort.
     let cpu_load_pct = probe_cpu_load();
     let gpu_load = probe_gpu_load();
-    HardwareReport {
+    Ok(HardwareReport {
         cpu,
         memory,
         accelerator,
@@ -184,7 +207,7 @@ pub fn probe(neoth_home: &Path) -> HardwareReport {
         vram,
         cpu_load_pct,
         gpu_load,
-    }
+    })
 }
 
 fn probe_cpu() -> CpuInfo {
@@ -252,25 +275,65 @@ fn is_on_path(name: &str) -> bool {
     false
 }
 
-fn probe_cached_models(neoth_home: &Path) -> CachedModels {
+fn probe_cached_models(
+    neoth_home: &Path,
+    configured_backend: crate::media::stt_dispatch::SttProvider,
+    whisper_target: Result<
+        crate::media::stt_provider::LocalWhisperTarget,
+        crate::media::stt_provider::SttFactoryError,
+    >,
+) -> CachedModels {
     let models = neoth_home.join("models");
+    let (
+        whisper_configured,
+        configured_whisper_repo,
+        configured_whisper_cache,
+        configured_whisper_health,
+        error,
+    ) = match whisper_target {
+        Ok(target) => {
+            let health = target.cache_health();
+            let error = matches!(
+                &health,
+                crate::media::model_manager::CacheHealth::Corrupt { .. }
+            )
+            .then(|| health.to_string());
+            (
+                health.is_ready(),
+                target.model_id().to_string(),
+                target.cache_path().display().to_string(),
+                health.label().to_string(),
+                error,
+            )
+        }
+        Err(error) => (
+            false,
+            String::new(),
+            String::new(),
+            "unavailable".to_string(),
+            Some(error.to_string()),
+        ),
+    };
     CachedModels {
-        qwen2_5_3b: models
-            .join("Qwen-Qwen2.5-3B-Instruct")
-            .join("model.safetensors")
-            .exists(),
+        qwen2_5_3b: crate::providers::local_qwen::validate_runtime_artifacts_at(
+            &crate::providers::local_qwen::cache_dir_at(
+                neoth_home,
+                crate::providers::local_qwen::DEFAULT_HF_REPO,
+            ),
+            false,
+        )
+        .is_ok(),
         qwen3_7b: models
             .join("Qwen-Qwen3-7B-Instruct")
             .join("model.safetensors")
             .exists(),
-        // Engine pulls openai/whisper-large-v3-turbo (flattened repo
-        // name = openai-whisper-large-v3-turbo). The previous probe
-        // looked for `openai-whisper-base` which never matched the
-        // real cache directory.
-        whisper_large_v3_turbo: models
-            .join("openai-whisper-large-v3-turbo")
-            .join("model.safetensors")
-            .exists(),
+        whisper_large_v3_turbo: false,
+        whisper_configured,
+        configured_whisper_repo,
+        configured_whisper_backend: configured_backend.as_str().to_string(),
+        configured_whisper_cache,
+        configured_whisper_health,
+        configured_whisper_error: error,
         clip_vit_b32: models
             .join("openai-clip-vit-base-patch32")
             .join("model.safetensors")
@@ -338,11 +401,7 @@ fn probe_cpu_load() -> Option<f32> {
     std::thread::sleep(std::time::Duration::from_millis(200));
     sys.refresh_cpu_usage();
     let pct = sys.global_cpu_usage();
-    if pct.is_nan() {
-        None
-    } else {
-        Some(pct)
-    }
+    if pct.is_nan() { None } else { Some(pct) }
 }
 
 /// GPU runtime metrics from one `nvidia-smi` call. `None` on any failure
@@ -429,12 +488,24 @@ impl HardwareReport {
         );
         let _ = writeln!(
             s,
-            "  Cached models: qwen2.5-3b={} qwen3-7b={} whisper-turbo={} clip-vit-b32={}",
+            "  Cached models: qwen2.5-3b={} qwen3-7b={} whisper={} \
+             (health={} backend={} repo={} cache={}) clip-vit-b32={}",
             self.cached_models.qwen2_5_3b,
             self.cached_models.qwen3_7b,
-            self.cached_models.whisper_large_v3_turbo,
+            self.cached_models.whisper_configured,
+            self.cached_models.configured_whisper_health,
+            self.cached_models.configured_whisper_backend,
+            self.cached_models.configured_whisper_repo,
+            self.cached_models.configured_whisper_cache,
             self.cached_models.clip_vit_b32,
         );
+        if let Some(error) = &self.cached_models.configured_whisper_error {
+            let _ = writeln!(
+                s,
+                "  Whisper target: {} ({error})",
+                self.cached_models.configured_whisper_health
+            );
+        }
         let _ = writeln!(
             s,
             "  Disk:          {:.1} GiB free / {:.1} GiB total ({})",
@@ -444,7 +515,7 @@ impl HardwareReport {
         );
         let _ = writeln!(
             s,
-            "  Full model cache: ~{:.1} GiB (qwen + whisper-turbo + clip)",
+            "  Full model cache: ~{:.1} GiB (qwen + configured whisper + clip)",
             self.estimated_full_cache_gib,
         );
         let _ = writeln!(s, "  Recommended Qwen: {}", self.recommended_qwen_repo);
@@ -467,11 +538,60 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn write_minimal_safetensors(path: &Path) {
+        let header = br#"{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+        let mut bytes = Vec::with_capacity(8 + header.len() + 4);
+        bytes.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(&[0_u8; 4]);
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn materialize_candle_cache(cache: &Path) {
+        std::fs::create_dir_all(cache).unwrap();
+        std::fs::write(cache.join("config.json"), b"{}").unwrap();
+        std::fs::write(cache.join("tokenizer.json"), b"{}").unwrap();
+        write_minimal_safetensors(&cache.join("model.safetensors"));
+    }
+
+    fn materialize_faster_cache(cache: &Path) {
+        const REVISION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let snapshot = cache.join("snapshots").join(REVISION);
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(cache.join("refs")).unwrap();
+        std::fs::write(cache.join("refs").join("main"), REVISION).unwrap();
+        std::fs::write(snapshot.join("model.bin"), [0_u8; 16]).unwrap();
+        std::fs::write(snapshot.join("config.json"), b"{}").unwrap();
+        std::fs::write(snapshot.join("tokenizer.json"), b"{}").unwrap();
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn render_summary_shows_vram_line_only_when_present() {
         use crate::daemon::resource_watch::VramReading;
         let dir = tempdir().unwrap();
-        let mut report = probe(dir.path());
+        let mut report = probe(dir.path()).unwrap();
         // With a reading → a GPU VRAM line is present + json carries `vram`.
         report.vram = Some(VramReading {
             used_mib: 4000,
@@ -494,7 +614,7 @@ mod tests {
     #[test]
     fn probe_returns_non_zero_cpu_and_memory_on_real_host() {
         let dir = tempdir().unwrap();
-        let report = probe(dir.path());
+        let report = probe(dir.path()).unwrap();
         assert!(report.cpu.logical_cores >= 1);
         assert!(report.memory.total_bytes > 0);
         // accelerator.picked is always one of the four known strings.
@@ -503,36 +623,149 @@ mod tests {
     }
 
     #[test]
+    fn probe_rejects_malformed_existing_config() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("freedom.yaml"), "media: [unterminated\n").unwrap();
+
+        let error = probe(dir.path()).unwrap_err();
+
+        assert!(format!("{error:#}").contains("parse YAML"));
+    }
+
+    #[test]
     fn cached_models_all_false_on_empty_home() {
         let dir = tempdir().unwrap();
-        let report = probe(dir.path());
+        let report = probe(dir.path()).unwrap();
         assert!(!report.cached_models.qwen2_5_3b);
         assert!(!report.cached_models.qwen3_7b);
         assert!(!report.cached_models.whisper_large_v3_turbo);
+        assert!(!report.cached_models.whisper_configured);
+        assert_eq!(
+            report.cached_models.configured_whisper_repo,
+            "openai/whisper-base"
+        );
+        assert_eq!(
+            report.cached_models.configured_whisper_backend,
+            "candle_whisper_local"
+        );
+        assert_eq!(
+            report.cached_models.configured_whisper_cache,
+            dir.path()
+                .join("models")
+                .join("openai-whisper-base")
+                .display()
+                .to_string()
+        );
+        assert_eq!(report.cached_models.configured_whisper_health, "missing");
+        assert!(report.cached_models.configured_whisper_error.is_none());
         assert!(!report.cached_models.clip_vit_b32);
     }
 
     #[test]
-    fn whisper_cache_check_targets_turbo_repo() {
-        // Regression guard: the engine pulls openai/whisper-large-v3-turbo
-        // (flattened to openai-whisper-large-v3-turbo). A stale check
-        // against `openai-whisper-base` would silently report "not
-        // cached" forever.
+    fn whisper_cache_check_targets_configured_stt_repo() {
+        // No freedom.yaml means the serde default (Base). The hardware surface
+        // must check the same cache as the canonical STT factory and models CLI.
         let dir = tempdir().unwrap();
-        let turbo = dir
+        let configured = dir.path().join("models").join("openai-whisper-base");
+        materialize_candle_cache(&configured);
+        let report = probe(dir.path()).unwrap();
+        assert!(report.cached_models.whisper_configured);
+        assert_eq!(
+            report.cached_models.configured_whisper_repo,
+            "openai/whisper-base"
+        );
+        assert_eq!(
+            report.cached_models.configured_whisper_backend,
+            "candle_whisper_local"
+        );
+        assert_eq!(
+            report.cached_models.configured_whisper_cache,
+            configured.display().to_string()
+        );
+        assert_eq!(report.cached_models.configured_whisper_health, "ready");
+        assert!(report.cached_models.configured_whisper_error.is_none());
+        assert!(!report.cached_models.whisper_large_v3_turbo);
+    }
+
+    #[test]
+    fn hardware_uses_faster_whisper_runtime_target_and_neoth_owned_default_cache() {
+        let dir = tempdir().unwrap();
+        let _env = crate::test_env::lock();
+        let _hub = EnvGuard::remove("HUGGINGFACE_HUB_CACHE");
+        let _hf_home = EnvGuard::remove("HF_HOME");
+        let _xdg = EnvGuard::remove("XDG_CACHE_HOME");
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "media:\n  stt:\n    primary: faster_whisper_local\n    model_size: small\n",
+        )
+        .unwrap();
+        let cache = dir
             .path()
-            .join("models")
-            .join("openai-whisper-large-v3-turbo");
-        std::fs::create_dir_all(&turbo).unwrap();
-        std::fs::write(turbo.join("model.safetensors"), b"fake").unwrap();
-        let report = probe(dir.path());
-        assert!(report.cached_models.whisper_large_v3_turbo);
+            .join("cache")
+            .join("huggingface")
+            .join("hub")
+            .join("models--Systran--faster-whisper-small");
+        materialize_faster_cache(&cache);
+
+        let report = probe(dir.path()).unwrap();
+
+        assert!(report.cached_models.whisper_configured);
+        assert_eq!(
+            report.cached_models.configured_whisper_backend,
+            "faster_whisper_local"
+        );
+        assert_eq!(
+            report.cached_models.configured_whisper_repo,
+            "Systran/faster-whisper-small"
+        );
+        assert_eq!(
+            report.cached_models.configured_whisper_cache,
+            cache.display().to_string()
+        );
+        assert_eq!(report.cached_models.configured_whisper_health, "ready");
+        assert!(report.cached_models.configured_whisper_error.is_none());
+        assert!(!report.cached_models.whisper_large_v3_turbo);
+    }
+
+    #[test]
+    fn hardware_reports_actionable_non_local_whisper_primary() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "media:\n  stt:\n    primary: openai_whisper_api\n",
+        )
+        .unwrap();
+
+        let report = probe(dir.path()).unwrap();
+
+        assert!(!report.cached_models.whisper_configured);
+        assert_eq!(
+            report.cached_models.configured_whisper_backend,
+            "openai_whisper_api"
+        );
+        assert!(report.cached_models.configured_whisper_repo.is_empty());
+        assert!(report.cached_models.configured_whisper_cache.is_empty());
+        assert_eq!(
+            report.cached_models.configured_whisper_health,
+            "unavailable"
+        );
+        let error = report
+            .cached_models
+            .configured_whisper_error
+            .as_deref()
+            .unwrap();
+        assert!(error.contains("no managed local Whisper model"));
+        assert!(
+            report
+                .render_summary()
+                .contains("Whisper target: unavailable")
+        );
     }
 
     #[test]
     fn disk_info_is_populated_or_zero() {
         let dir = tempdir().unwrap();
-        let report = probe(dir.path());
+        let report = probe(dir.path()).unwrap();
         // Either we resolved a mount (total > 0) OR we fell back to
         // zeros — never panic, never NaN.
         let d = &report.disk;
@@ -543,26 +776,49 @@ mod tests {
     #[test]
     fn estimated_full_cache_in_known_ballpark() {
         let dir = tempdir().unwrap();
-        let report = probe(dir.path());
-        // The hand-computed sum is 6.0 + 1.6 + 0.6 = 8.2 GiB. Catch
-        // accidental constant drift.
+        let report = probe(dir.path()).unwrap();
+        let expected = 6.0
+            + f64::from(crate::media::stt_dispatch::WhisperModelSize::Base.approx_size_mb())
+                / 1024.0
+            + 0.6;
         assert!(
-            (report.estimated_full_cache_gib - 8.2).abs() < 0.1,
+            (report.estimated_full_cache_gib - expected).abs() < 0.01,
             "estimated cache footprint drifted: {}",
             report.estimated_full_cache_gib
         );
     }
 
     #[test]
-    fn cached_models_true_when_safetensors_present() {
+    fn qwen_cache_is_not_ready_with_only_a_safetensors_filename() {
         let dir = tempdir().unwrap();
         let qwen_dir = dir.path().join("models").join("Qwen-Qwen2.5-3B-Instruct");
         std::fs::create_dir_all(&qwen_dir).unwrap();
         std::fs::write(qwen_dir.join("model.safetensors"), b"fake").unwrap();
-        let report = probe(dir.path());
-        assert!(report.cached_models.qwen2_5_3b);
+        let report = probe(dir.path()).unwrap();
+        assert!(!report.cached_models.qwen2_5_3b);
         assert!(!report.cached_models.qwen3_7b);
         assert!(!report.cached_models.whisper_large_v3_turbo);
+        assert!(!report.cached_models.whisper_configured);
+    }
+
+    #[test]
+    fn hardware_does_not_report_corrupt_whisper_cache_as_cached() {
+        let dir = tempdir().unwrap();
+        let cache = dir.path().join("models").join("openai-whisper-base");
+        materialize_candle_cache(&cache);
+        std::fs::write(cache.join("config.json"), b"not-json").unwrap();
+
+        let report = probe(dir.path()).unwrap();
+
+        assert!(!report.cached_models.whisper_configured);
+        assert_eq!(report.cached_models.configured_whisper_health, "corrupt");
+        assert!(
+            report
+                .cached_models
+                .configured_whisper_error
+                .as_deref()
+                .is_some_and(|error| error.contains("config.json"))
+        );
     }
 
     #[test]
@@ -637,7 +893,7 @@ mod tests {
     #[test]
     fn render_summary_includes_every_section() {
         let dir = tempdir().unwrap();
-        let report = probe(dir.path());
+        let report = probe(dir.path()).unwrap();
         let s = report.render_summary();
         assert!(s.contains("CPU:"));
         assert!(s.contains("RAM:"));

@@ -329,7 +329,11 @@ for lifetime errors in async contexts. Tokio 2.0 beta dropped the same week with
 task scheduler that reduces p99 latency by roughly 30 percent on IO-heavy workloads. The Bevy \
 game engine reached 0.13 with GPU-driven rendering enabled by default on Vulkan targets.";
         let s = score_briefing(output, 50);
-        assert!(s.passed, "substantive briefing should pass; score={}", s.score);
+        assert!(
+            s.passed,
+            "substantive briefing should pass; score={}",
+            s.score
+        );
         assert!(s.has_title);
         assert!(s.citation_count >= 2);
     }
@@ -349,8 +353,7 @@ game engine reached 0.13 with GPU-driven rendering enabled by default on Vulkan 
         assert!(
             !s.passed,
             "filler-heavy output should fail; score={} filler_ratio={}",
-            s.score,
-            s.filler_ratio
+            s.score, s.filler_ratio
         );
         assert!(s.filler_ratio > 0.10, "filler_ratio should be significant");
     }
@@ -362,7 +365,10 @@ game engine reached 0.13 with GPU-driven rendering enabled by default on Vulkan 
         let output = "The quick brown fox jumps over the lazy sleeping dog";
         let s = score_briefing(output, 10);
         // May or may not pass, but must NOT be stuck at score 0.0.
-        assert!(s.score > 0.0, "at-boundary output must not hard-fail with score=0");
+        assert!(
+            s.score > 0.0,
+            "at-boundary output must not hard-fail with score=0"
+        );
     }
 
     /// Markdown heading is detected as title.
@@ -390,7 +396,11 @@ game engine reached 0.13 with GPU-driven rendering enabled by default on Vulkan 
             Additional context (source: internal). More text needed for word count \
             threshold to be satisfied in this test case here.";
         let s = score_briefing(output, 20);
-        assert!(s.citation_count >= 4, "should count 2 URLs + 2 numeric refs, got {}", s.citation_count);
+        assert!(
+            s.citation_count >= 4,
+            "should count 2 URLs + 2 numeric refs, got {}",
+            s.citation_count
+        );
     }
 
     /// should_regenerate mirrors !passed.

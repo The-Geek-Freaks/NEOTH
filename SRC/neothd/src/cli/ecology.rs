@@ -138,7 +138,7 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
             Ok(())
         }
         EcologyAction::Status => {
-            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = FreedomConfig::load_from_default_path_or_default()?;
             run_status(cfg.ecology.enabled, args.output);
             Ok(())
         }
@@ -146,7 +146,7 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
             min_streak,
             wal_dir,
         } => {
-            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = FreedomConfig::load_from_default_path_or_default()?;
             let min_streak = min_streak
                 .unwrap_or(cfg.ecology.correlation_min_streak)
                 .max(1);

@@ -34,9 +34,8 @@ pub(crate) fn check_post_init_readiness(home: &Path) -> CheckOutcome {
     }
 
     // ── 2. freedom.yaml — provider kind present? ─────────────────────
-    let freedom_path = home.join("freedom.yaml");
-    let cfg = match crate::config::FreedomConfig::load_from_path(&freedom_path) {
-        Ok(c) => c,
+    let readiness = match crate::cli::onboarding_readiness::load(home) {
+        Ok((_, readiness)) => readiness,
         Err(_) => {
             // freedom.yaml missing or unparseable — other checks (config domain)
             // already surface this as a Fail. Return a contextual Warn here
@@ -51,52 +50,7 @@ pub(crate) fn check_post_init_readiness(home: &Path) -> CheckOutcome {
         }
     };
 
-    let mut gaps: Vec<&'static str> = Vec::new();
-
-    // ── 3. Provider wired? ────────────────────────────────────────────
-    // `provider_kind` defaults to `local_qwen` on a fresh config.  If the
-    // operator didn't visit the provider step the value is still the default
-    // and the credentials file won't have any API key. We treat "local_qwen
-    // with no local weights" as un-wired rather than trying to stat the model
-    // cache here (that check lives in `providers::check_local_qwen_weights`).
-    // The simple and correct heuristic: if the credentials file is absent AND
-    // provider is local_qwen, flag it.
-    let has_provider = {
-        let kind_str = serde_yaml::to_string(&cfg.provider_kind)
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
-        let creds_ok = home.join("credentials.yaml").exists();
-        // cloud provider kinds always need a credentials file; local_qwen is
-        // self-contained when weights are present (we can't cheaply verify
-        // weights here, so we accept local_qwen as "has provider").
-        !kind_str.is_empty() && (creds_ok || kind_str.contains("local_qwen") || kind_str.contains("antigravity"))
-    };
-    if !has_provider {
-        gaps.push("provider not wired (no credentials.yaml for the configured provider_kind)");
-    }
-
-    // ── 4. Channel credential present? ───────────────────────────────
-    let has_channel = {
-        let creds_path = home.join("credentials.yaml");
-        if creds_path.exists() {
-            match crate::config::credentials::Credentials::load_or_default(&creds_path) {
-                Ok(c) => {
-                    c.telegram_token.is_some()
-                        || c.slack_bot_token.is_some()
-                        || c.discord_bot_token.is_some()
-                        || c.whatsapp_token.is_some()
-                }
-                Err(_) => false,
-            }
-        } else {
-            false
-        }
-    };
-    if !has_channel {
-        gaps.push("no channel token found (Telegram/Slack/Discord/WhatsApp) — \
-                   run `neoth init` or `neoth credential set`");
-    }
+    let gaps = readiness.gaps();
 
     // ── 5. Synthesise result ─────────────────────────────────────────
     if gaps.is_empty() {
@@ -109,10 +63,7 @@ pub(crate) fn check_post_init_readiness(home: &Path) -> CheckOutcome {
         CheckOutcome {
             name: "post-init readiness",
             status: CheckStatus::Warn,
-            detail: format!(
-                "onboarding gaps detected: {}",
-                gaps.join("; ")
-            ),
+            detail: format!("onboarding gaps detected: {}", gaps.join("; ")),
         }
     }
 }
@@ -170,10 +121,11 @@ mod tests {
             "operator_id: test\nprovider_kind: openai_api\n",
         )
         .unwrap();
-        // Write a minimal credentials.yaml with a telegram token
+        // Both the provider key and a channel token are required for this
+        // metered provider path.
         std::fs::write(
             dir.path().join("credentials.yaml"),
-            "telegram_token: \"123:abc\"\n",
+            "provider_key: \"sk-test\"\ntelegram_token: \"123:abc\"\n",
         )
         .unwrap();
         let out = check_post_init_readiness(dir.path());
@@ -191,7 +143,11 @@ mod tests {
         )
         .unwrap();
         // credentials.yaml exists but no channel tokens
-        std::fs::write(dir.path().join("credentials.yaml"), "{}\n").unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "provider_key: \"sk-test\"\n",
+        )
+        .unwrap();
         let out = check_post_init_readiness(dir.path());
         assert_eq!(out.status, CheckStatus::Warn);
         assert!(
@@ -199,6 +155,25 @@ mod tests {
             "should mention missing channel: {}",
             out.detail
         );
+    }
+
+    #[test]
+    fn local_and_cli_providers_do_not_need_credentials_file() {
+        for provider in ["claude_cli", "local_qwen", "local_ouro", "local_ollama"] {
+            let dir = tempdir().unwrap();
+            std::fs::write(dir.path().join(".initialized"), b"{}").unwrap();
+            std::fs::write(
+                dir.path().join("freedom.yaml"),
+                format!("operator_id: test\nprovider_kind: {provider}\n"),
+            )
+            .unwrap();
+            let out = check_post_init_readiness(dir.path());
+            assert!(
+                !out.detail.contains("provider"),
+                "{provider} was falsely rejected: {}",
+                out.detail
+            );
+        }
     }
 
     #[test]

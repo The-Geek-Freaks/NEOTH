@@ -91,28 +91,27 @@ pub async fn run_consolidation_sweep_tick(
     let path = db_path.to_path_buf();
     let now_ns = crate::time::now_unix_ns_i64();
 
-    let report = tokio::task::spawn_blocking(move || -> crate::memory::consolidation_sweep::SweepReport {
-        match store::open(&path) {
-            Err(e) => {
-                tracing::error!(error = %e, "consolidation_sweep_cron: open db failed");
-                crate::memory::consolidation_sweep::SweepReport::default()
-            }
-            Ok(conn) => {
-                match run_sweep(&conn, now_ns, &cfg) {
+    let report =
+        tokio::task::spawn_blocking(move || -> crate::memory::consolidation_sweep::SweepReport {
+            match store::open(&path) {
+                Err(e) => {
+                    tracing::error!(error = %e, "consolidation_sweep_cron: open db failed");
+                    crate::memory::consolidation_sweep::SweepReport::default()
+                }
+                Ok(conn) => match run_sweep(&conn, now_ns, &cfg) {
                     Ok(r) => r,
                     Err(e) => {
                         tracing::error!(error = %e, "consolidation_sweep_cron: sweep failed");
                         crate::memory::consolidation_sweep::SweepReport::default()
                     }
-                }
+                },
             }
-        }
-    })
-    .await
-    .unwrap_or_else(|e| {
-        tracing::error!(error = %e, "consolidation_sweep_cron: spawn_blocking panicked");
-        crate::memory::consolidation_sweep::SweepReport::default()
-    });
+        })
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "consolidation_sweep_cron: spawn_blocking panicked");
+            crate::memory::consolidation_sweep::SweepReport::default()
+        });
 
     // Emit DONE after blocking returns.
     let ts_unix_done = crate::time::now_unix_i64();
@@ -159,12 +158,7 @@ pub fn spawn_consolidation_sweep_cron_loop(
         );
         loop {
             ticker.tick().await;
-            let report = run_consolidation_sweep_tick(
-                &db_path,
-                config,
-                &writer,
-            )
-            .await;
+            let report = run_consolidation_sweep_tick(&db_path, config, &writer).await;
             tracing::info!(
                 clusters_found = report.clusters_found,
                 members_boosted = report.members_boosted,
@@ -209,11 +203,15 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_returns_none_when_disabled() {
-        let cfg = ConsolidationSweepConfig { enabled: false, ..Default::default() };
+        let cfg = ConsolidationSweepConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let seg_dir = tempfile::tempdir().unwrap();
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
-        let handle = spawn_consolidation_sweep_cron_loop(cfg, "/nonexistent".into(), writer.clone());
+        let handle =
+            spawn_consolidation_sweep_cron_loop(cfg, "/nonexistent".into(), writer.clone());
         assert!(handle.is_none(), "disabled config must return None");
         drop(writer);
         join.await.ok();
@@ -248,12 +246,9 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
 
-        let report = run_consolidation_sweep_tick(
-            &db_path,
-            ConsolidationSweepConfig::default(),
-            &writer,
-        )
-        .await;
+        let report =
+            run_consolidation_sweep_tick(&db_path, ConsolidationSweepConfig::default(), &writer)
+                .await;
 
         assert_eq!(report.clusters_found, 0);
         assert_eq!(report.members_boosted, 0);
@@ -262,5 +257,4 @@ mod tests {
         drop(writer);
         join.await.ok();
     }
-
 }

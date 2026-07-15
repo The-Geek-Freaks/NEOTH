@@ -1,9 +1,10 @@
-//! GOLD-ADAPT-CRYPTO-01..04 — WAL/config AEAD-at-rest primitives.
+//! GOLD-ADAPT-CRYPTO-02..04 — live WAL/config AEAD-at-rest primitives.
 //!
-//! The foundation slice for confidentiality-at-rest: typed keys, HKDF subkey
-//! derivation, a resume-safe nonce counter, and an AES-256-GCM-SIV blob
-//! encrypt/decrypt. No file I/O, no WAL-core wiring — those land in later
-//! slices (master-key lifecycle, encrypt-on-seal, reader threading).
+//! This module provides typed keys, HKDF subkey derivation, AES-256-GCM-SIV
+//! encryption/decryption, and the on-disk encrypted-blob framing. The WAL
+//! writer uses it when sealing encrypted segments; the shared read chokepoint
+//! decrypts those segments, redaction decrypts and re-encrypts them, and the
+//! credentials store uses the config-domain subkey.
 //!
 //! ## Why AES-256-GCM-SIV (CRYPTO-04)
 //! The WAL is **at-rest storage that resumes across restarts**, not a transport
@@ -15,10 +16,13 @@
 //! model (stolen disk / same-user rogue process — the threat `dpapi.rs` targets)
 //! that residual is acceptable; a GCM auth bypass is not.
 //!
-//! ## CRYPTO-01/02/03
-//! - **CRYPTO-01** is the EXISTING [`super::nonce_counter::NonceCounter`]
-//!   (`prefix || counter_be`, 2⁴⁸ cap, resume-safe) — the AEAD seam here
-//!   consumes its `next_nonce()` output; it is NOT re-implemented in this module.
+//! Every encryption writes a fresh random 96-bit nonce from the operating
+//! system RNG and stores it beside the ciphertext. AES-256-GCM-SIV remains
+//! misuse-resistant if an RNG failure ever repeats a nonce; RNG errors fail
+//! the write closed. The earlier deterministic `NonceCounter` foundation was
+//! never consumed and has been removed rather than kept as speculative API.
+//!
+//! ## CRYPTO-02/03
 //! - **CRYPTO-02** [`derive_subkey`]: HKDF-SHA256 with the intermediate output
 //!   buffer zeroized before return (the upstream `hkdf` papercut).
 //! - **CRYPTO-03** [`WalMasterKey`] / [`WalSegmentKey`]: typed `[u8; 32]`
@@ -27,7 +31,7 @@
 
 use aes_gcm_siv::aead::{Aead, KeyInit, Payload};
 use aes_gcm_siv::{Aes256GcmSiv, Nonce};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -115,7 +119,13 @@ pub fn encrypt_blob(
     let cipher = Aes256GcmSiv::new_from_slice(key.expose())
         .map_err(|e| anyhow!("AES-256-GCM-SIV key init: {e}"))?;
     cipher
-        .encrypt(Nonce::from_slice(nonce), Payload { msg: plaintext, aad })
+        .encrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|e| anyhow!("AES-256-GCM-SIV encrypt: {e}"))
 }
 
@@ -130,7 +140,13 @@ pub fn decrypt_blob(
     let cipher = Aes256GcmSiv::new_from_slice(key.expose())
         .map_err(|e| anyhow!("AES-256-GCM-SIV key init: {e}"))?;
     cipher
-        .decrypt(Nonce::from_slice(nonce), Payload { msg: ciphertext, aad })
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|e| anyhow!("AES-256-GCM-SIV decrypt (wrong key / nonce / aad, or tampered): {e}"))
 }
 
@@ -158,9 +174,7 @@ pub fn split_encrypted(bytes: &[u8]) -> Result<([u8; 12], &[u8])> {
     if after_magic.len() < 12 {
         return Err(anyhow!("encrypted blob truncated (no nonce)"));
     }
-    let nonce: [u8; 12] = after_magic[..12]
-        .try_into()
-        .context("read 12-byte nonce")?;
+    let nonce: [u8; 12] = after_magic[..12].try_into().context("read 12-byte nonce")?;
     Ok((nonce, &after_magic[12..]))
 }
 
@@ -210,7 +224,11 @@ mod tests {
         let master = WalMasterKey::from_bytes(&[9u8; 32]).unwrap();
         let seg = derive_subkey(&master, INFO_WAL_SEGMENT).unwrap();
         let cfg = derive_subkey(&master, INFO_CONFIG).unwrap();
-        assert_ne!(seg.expose(), cfg.expose(), "different info → different keys");
+        assert_ne!(
+            seg.expose(),
+            cfg.expose(),
+            "different info → different keys"
+        );
     }
 
     #[test]
@@ -222,7 +240,10 @@ mod tests {
         assert!(is_encrypted(&blob));
         let (got_nonce, got_ct) = split_encrypted(&blob).unwrap();
         assert_eq!(got_nonce, nonce);
-        assert_eq!(decrypt_blob(&key, &got_nonce, b"", got_ct).unwrap(), b"hello");
+        assert_eq!(
+            decrypt_blob(&key, &got_nonce, b"", got_ct).unwrap(),
+            b"hello"
+        );
         // A plaintext segment header (magic NTHW) is not mistaken for encrypted.
         assert!(!is_encrypted(b"NTHW\x00\x00"));
     }

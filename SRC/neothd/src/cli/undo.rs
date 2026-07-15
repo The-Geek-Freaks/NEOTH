@@ -286,7 +286,8 @@ fn run_list(wal_dir: &PathBuf, limit: usize, output: OutputFormat) -> Result<()>
                 .collect();
             println!(
                 "{}",
-                serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string())
+                serde_json::to_string_pretty(&arr)
+                    .expect("serde_json::Value arrays are always JSON-serializable")
             );
         }
         OutputFormat::Table => {

@@ -21,10 +21,12 @@
 //!
 //! ## Privacy + anti-poison (mirrors KF-05 operator-scope)
 //!
-//! Recording is gated upstream to in-learn-scope senders only (the same
-//! [`super::channel_weights::learn_factor`] gate the channel-weight recorder
-//! uses), so a stranger flooding an open channel can't manufacture a
-//! high-priority "relationship" or skew whom NEOTH chooses to reach out to.
+//! Recording uses the same [`super::channel_weights::learn_factor`] scope as
+//! the channel-weight recorder. Operator/allowlisted senders contribute at
+//! full weight; `all_tiny` strangers contribute at `0.1`, and `off`/
+//! `allowlisted` skip out-of-scope senders. The weight scales every accumulator
+//! and the score's confidence, so ten tiny samples equal one trusted sample
+//! instead of one tiny sample receiving a full recency/depth boost.
 //!
 //! ## Why a JSON file, not the WAL/SQLite
 //!
@@ -33,6 +35,7 @@
 //! weight class. A write failure is non-fatal: the operator loses one
 //! interaction's worth of signal, never a turn.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -47,7 +50,15 @@ use serde::{Deserialize, Serialize};
 static PEOPLE_LOCK: Mutex<()> = Mutex::new(());
 
 pub const PEOPLE_FILE: &str = "people.json";
-pub const PEOPLE_SCHEMA_VERSION: u32 = 1;
+pub const PEOPLE_SCHEMA_VERSION: u32 = 2;
+const LEGACY_PEOPLE_SCHEMA_VERSION: u32 = 1;
+/// Hard cardinality bound for untrusted/open-channel identities.
+pub const MAX_PEOPLE_ROWS: usize = 4_096;
+/// Reject a corrupt or attacker-grown snapshot before allocating it.
+pub const MAX_PEOPLE_FILE_BYTES: u64 = 8 * 1024 * 1024;
+pub const MAX_PERSON_KEY_BYTES: usize = 256;
+pub const MAX_CHANNEL_BYTES: usize = 64;
+pub const MAX_DISPLAY_CHARS: usize = 256;
 
 /// Saturating cap on a person's cumulative interaction count. Past this the
 /// frequency signal is already maxed, so a flood adds nothing — bounding it
@@ -118,55 +129,165 @@ fn people_path(home: &Path) -> PathBuf {
     home.join(PEOPLE_FILE)
 }
 
-/// Load from disk. Missing / malformed / wrong-schema → empty (never panics),
-/// matching the best-effort contract of `channel_weights`.
+fn people_lock_path(home: &Path) -> PathBuf {
+    home.join(format!("{PEOPLE_FILE}.lock"))
+}
+
+fn validate_people(people: &People) -> Result<()> {
+    anyhow::ensure!(
+        people.schema_version == PEOPLE_SCHEMA_VERSION,
+        "people.json schema mismatch: loaded {}, expected {}",
+        people.schema_version,
+        PEOPLE_SCHEMA_VERSION
+    );
+    anyhow::ensure!(
+        people.rows.len() <= MAX_PEOPLE_ROWS,
+        "people.json has {} rows, cap is {MAX_PEOPLE_ROWS}",
+        people.rows.len()
+    );
+    let mut keys = HashSet::with_capacity(people.rows.len());
+    for row in &people.rows {
+        anyhow::ensure!(
+            !row.person_key.trim().is_empty() && row.person_key.len() <= MAX_PERSON_KEY_BYTES,
+            "people.json contains an invalid person key"
+        );
+        anyhow::ensure!(
+            !row.channel.trim().is_empty() && row.channel.len() <= MAX_CHANNEL_BYTES,
+            "people.json contains an invalid channel"
+        );
+        anyhow::ensure!(
+            row.display
+                .as_deref()
+                .map(|display| display.chars().count() <= MAX_DISPLAY_CHARS)
+                .unwrap_or(true),
+            "people.json contains an oversized display name"
+        );
+        anyhow::ensure!(
+            row.interaction_count.is_finite()
+                && (0.0..=MAX_INTERACTION_COUNT).contains(&row.interaction_count)
+                && row.reply_to_bot_count.is_finite()
+                && row.reply_to_bot_count >= 0.0
+                && row.reply_to_bot_count <= row.interaction_count + f32::EPSILON
+                && row.msg_len_total.is_finite()
+                && row.msg_len_total >= 0.0
+                && row.msg_len_total
+                    <= f64::from(row.interaction_count) * f64::from(DEPTH_SATURATION_CHARS)
+                        + f64::EPSILON,
+            "people.json contains invalid interaction accumulators"
+        );
+        anyhow::ensure!(
+            keys.insert(row.person_key.as_str()),
+            "people.json contains duplicate person keys"
+        );
+    }
+    Ok(())
+}
+
+fn migrate_legacy_people(mut people: People) -> People {
+    for row in &mut people.rows {
+        if row.interaction_count.is_finite() && row.interaction_count > MAX_INTERACTION_COUNT {
+            let factor = MAX_INTERACTION_COUNT / row.interaction_count;
+            row.interaction_count = MAX_INTERACTION_COUNT;
+            row.reply_to_bot_count *= factor;
+            row.msg_len_total *= f64::from(factor);
+        }
+        if row.interaction_count.is_finite() && row.interaction_count >= 0.0 {
+            row.reply_to_bot_count = row.reply_to_bot_count.min(row.interaction_count).max(0.0);
+            row.msg_len_total = row
+                .msg_len_total
+                .min(f64::from(row.interaction_count) * f64::from(DEPTH_SATURATION_CHARS))
+                .max(0.0);
+        }
+    }
+    if people.rows.len() > MAX_PEOPLE_ROWS {
+        people.rows.sort_by(|a, b| {
+            b.last_seen_unix
+                .cmp(&a.last_seen_unix)
+                .then_with(|| b.interaction_count.total_cmp(&a.interaction_count))
+                .then_with(|| a.person_key.cmp(&b.person_key))
+        });
+        people.rows.truncate(MAX_PEOPLE_ROWS);
+    }
+    people.schema_version = PEOPLE_SCHEMA_VERSION;
+    people
+}
+
+/// Strict loader for every read-modify-write path. Existing malformed bytes
+/// are never converted into an empty store and overwritten.
+fn load_people_strict(home: &Path) -> Result<People> {
+    let path = people_path(home);
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(People::default());
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("stat {}", path.display()));
+        }
+    };
+    anyhow::ensure!(
+        metadata.len() <= MAX_PEOPLE_FILE_BYTES,
+        "{} exceeds the {}-byte safety cap",
+        path.display(),
+        MAX_PEOPLE_FILE_BYTES
+    );
+    let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_PEOPLE_FILE_BYTES,
+        "{} grew beyond the safety cap while reading",
+        path.display()
+    );
+    let mut people: People = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse {} without discarding it", path.display()))?;
+    if people.schema_version == LEGACY_PEOPLE_SCHEMA_VERSION {
+        tracing::info!(
+            path = %path.display(),
+            "people.json v1 loaded; bounded scorer migration will persist on the next mutation"
+        );
+        people = migrate_legacy_people(people);
+    }
+    validate_people(&people)?;
+    Ok(people)
+}
+
+/// Best-effort read-only load. Mutating paths use [`load_people_strict`] so a
+/// malformed snapshot can never be silently replaced with an empty one.
 pub fn load_people(home: &Path) -> People {
     let path = people_path(home);
-    match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice::<People>(&bytes) {
-            Ok(p) if p.schema_version == PEOPLE_SCHEMA_VERSION => p,
-            Ok(p) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    loaded = p.schema_version,
-                    expected = PEOPLE_SCHEMA_VERSION,
-                    "people.json schema mismatch — starting empty"
-                );
-                People::default()
-            }
-            Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "people.json malformed — starting empty");
-                People::default()
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => People::default(),
-        Err(e) => {
-            tracing::warn!(path = %path.display(), error = %e, "people.json unreadable — starting empty");
+    match load_people_strict(home) {
+        Ok(people) => people,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "people.json invalid — preserving bytes and returning an empty read-only view"
+            );
             People::default()
         }
     }
 }
 
-/// Atomic temp+rename write; mode-0600 on Unix (the file names correspondents
-/// → treat it like the other `~/.neoth` secrets).
-pub fn save_people(home: &Path, people: &People) -> Result<()> {
+fn save_people_unlocked(home: &Path, people: &People) -> Result<()> {
+    validate_people(people)?;
     let path = people_path(home);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
     let body = serde_json::to_vec_pretty(people).context("serialise people.json")?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &body).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&path)?.permissions();
-        perms.set_mode(0o600);
-        std::fs::set_permissions(&path, perms)?;
-    }
-    Ok(())
+    anyhow::ensure!(
+        body.len() as u64 <= MAX_PEOPLE_FILE_BYTES,
+        "serialized people.json exceeds the safety cap"
+    );
+    crate::util::atomic_write::atomic_write_private(&path, &body)
+        .with_context(|| format!("atomically write private {}", path.display()))
+}
+
+/// Validated, crash-safe private write serialized against daemon and CLI
+/// writers in this process and in other processes.
+pub fn save_people(home: &Path, people: &People) -> Result<()> {
+    let _guard = PEOPLE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _os_guard =
+        crate::util::locked_file::lock_file_blocking(&people_lock_path(home), "people scorer")?;
+    save_people_unlocked(home, people)
 }
 
 /// Apply Hebbian frequency decay per elapsed day.
@@ -179,6 +300,36 @@ fn apply_frequency_decay(count: f32, anchor_unix: u64, now_unix: u64) -> f32 {
     count * FREQUENCY_DAILY_DECAY.powi(days)
 }
 
+fn decay_row(row: &mut PersonStat, now_unix: u64) {
+    let previous = row.interaction_count;
+    let decayed = apply_frequency_decay(previous, row.decay_anchor_unix, now_unix);
+    let factor = if previous > 0.0 {
+        (decayed / previous).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    row.interaction_count = decayed;
+    row.reply_to_bot_count *= factor;
+    row.msg_len_total *= f64::from(factor);
+}
+
+fn clamp_accumulators(row: &mut PersonStat) {
+    if row.interaction_count > MAX_INTERACTION_COUNT {
+        let factor = MAX_INTERACTION_COUNT / row.interaction_count;
+        row.interaction_count = MAX_INTERACTION_COUNT;
+        row.reply_to_bot_count *= factor;
+        row.msg_len_total *= f64::from(factor);
+    }
+    row.reply_to_bot_count = row.reply_to_bot_count.min(row.interaction_count);
+    row.msg_len_total = row
+        .msg_len_total
+        .min(f64::from(row.interaction_count) * f64::from(DEPTH_SATURATION_CHARS));
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
 fn row_index(people: &People, person_key: &str) -> Option<usize> {
     people.rows.iter().position(|r| r.person_key == person_key)
 }
@@ -187,7 +338,8 @@ fn row_index(people: &People, person_key: &str) -> Option<usize> {
 /// in-scope inbound that produced a reply.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Interaction<'a> {
-    /// `human_uuid` when resolved, else `sender_id`. Required.
+    /// Stable `human_uuid` when resolved, otherwise a channel-qualified native
+    /// sender id. Required.
     pub person_key: &'a str,
     pub channel: &'a str,
     pub display: Option<&'a str>,
@@ -196,55 +348,130 @@ pub struct Interaction<'a> {
     pub is_reply_to_bot: bool,
     /// Length in chars of the inbound text (the depth signal).
     pub msg_len: u32,
+    /// Operator-scope learning weight. `AllTiny` strangers use `0.1`; trusted
+    /// correspondents use `1.0`. It scales every accumulator consistently.
+    pub weight: f32,
 }
 
 /// Record one interaction: load, lazily decay frequency, increment counters,
 /// stamp `last_seen`, save. Best-effort — the caller treats a write error as
 /// non-fatal (one interaction's signal lost, never a turn).
 pub fn record_interaction(home: &Path, ix: &Interaction<'_>, now_unix: u64) -> Result<()> {
+    anyhow::ensure!(
+        !ix.person_key.trim().is_empty() && ix.person_key.len() <= MAX_PERSON_KEY_BYTES,
+        "person key is empty or exceeds {MAX_PERSON_KEY_BYTES} bytes"
+    );
+    anyhow::ensure!(
+        !ix.channel.trim().is_empty() && ix.channel.len() <= MAX_CHANNEL_BYTES,
+        "channel is empty or exceeds {MAX_CHANNEL_BYTES} bytes"
+    );
+    anyhow::ensure!(
+        ix.weight.is_finite() && ix.weight > 0.0 && ix.weight <= 1.0,
+        "people learning weight must be finite and in (0, 1]"
+    );
     // COR-30: hold the lock across load→mutate→save so a concurrent record
     // can't read the same pre-state, mutate, and clobber our write.
     let _guard = PEOPLE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut people = load_people(home);
+    let _os_guard =
+        crate::util::locked_file::lock_file_blocking(&people_lock_path(home), "people scorer")?;
+    let mut people = load_people_strict(home)?;
     match row_index(&people, ix.person_key) {
         Some(idx) => {
             let row = &mut people.rows[idx];
-            row.interaction_count =
-                apply_frequency_decay(row.interaction_count, row.decay_anchor_unix, now_unix);
-            row.interaction_count = (row.interaction_count + 1.0).min(MAX_INTERACTION_COUNT);
+            let effective_now = now_unix.max(row.last_seen_unix).max(row.decay_anchor_unix);
+            decay_row(row, effective_now);
+            row.interaction_count += ix.weight;
             if ix.is_reply_to_bot {
-                row.reply_to_bot_count += 1.0;
+                row.reply_to_bot_count += ix.weight;
             }
-            row.msg_len_total += ix.msg_len as f64;
-            row.last_seen_unix = now_unix;
-            row.decay_anchor_unix = now_unix;
+            row.msg_len_total +=
+                f64::from(ix.msg_len).min(f64::from(DEPTH_SATURATION_CHARS)) * f64::from(ix.weight);
+            clamp_accumulators(row);
+            row.last_seen_unix = effective_now;
+            row.decay_anchor_unix = effective_now;
             row.channel = ix.channel.to_string();
             // Refresh display when the channel surfaced a newer name.
             if let Some(d) = ix.display {
-                row.display = Some(d.to_string());
+                row.display = Some(truncate_chars(d, MAX_DISPLAY_CHARS));
             }
         }
-        None => people.rows.push(PersonStat {
-            person_key: ix.person_key.to_string(),
-            channel: ix.channel.to_string(),
-            display: ix.display.map(str::to_string),
-            interaction_count: 1.0,
-            reply_to_bot_count: if ix.is_reply_to_bot { 1.0 } else { 0.0 },
-            msg_len_total: ix.msg_len as f64,
-            last_seen_unix: now_unix,
-            decay_anchor_unix: now_unix,
-        }),
+        None => {
+            let candidate = PersonStat {
+                person_key: ix.person_key.to_string(),
+                channel: ix.channel.to_string(),
+                display: ix
+                    .display
+                    .map(|display| truncate_chars(display, MAX_DISPLAY_CHARS)),
+                interaction_count: ix.weight,
+                reply_to_bot_count: if ix.is_reply_to_bot { ix.weight } else { 0.0 },
+                msg_len_total: f64::from(ix.msg_len).min(f64::from(DEPTH_SATURATION_CHARS))
+                    * f64::from(ix.weight),
+                last_seen_unix: now_unix,
+                decay_anchor_unix: now_unix,
+            };
+            if people.rows.len() < MAX_PEOPLE_ROWS {
+                people.rows.push(candidate);
+            } else if let Some((lowest_idx, lowest)) =
+                people.rows.iter().enumerate().min_by(|(_, a), (_, b)| {
+                    score_person(a, now_unix)
+                        .total_cmp(&score_person(b, now_unix))
+                        .then_with(|| a.last_seen_unix.cmp(&b.last_seen_unix))
+                        .then_with(|| b.person_key.cmp(&a.person_key))
+                })
+            {
+                let candidate_order = score_person(&candidate, now_unix)
+                    .total_cmp(&score_person(lowest, now_unix))
+                    .then_with(|| candidate.last_seen_unix.cmp(&lowest.last_seen_unix))
+                    .then_with(|| lowest.person_key.cmp(&candidate.person_key));
+                if candidate_order.is_gt() {
+                    people.rows[lowest_idx] = candidate;
+                } else {
+                    tracing::debug!(
+                        person_hash = xxhash_rust::xxh3::xxh3_64(ix.person_key.as_bytes()),
+                        "people scorer at capacity; lower-priority new identity not persisted"
+                    );
+                    return Ok(());
+                }
+            }
+        }
     }
-    save_people(home, &people)
+    save_people_unlocked(home, &people)
+}
+
+/// Count every [`PersonStat`] whose `display` name contains `topic`
+/// (case-insensitive), using the same strict loader and locking discipline as
+/// [`forget_people_by_display`]. This is the read-only half of the CLI forget
+/// preview: malformed state fails loudly instead of understating the erasure
+/// scope.
+pub fn count_people_by_display(home: &Path, topic: &str) -> Result<i64> {
+    let needle = topic.trim().to_lowercase();
+    if needle.is_empty() {
+        return Ok(0);
+    }
+    let _guard = PEOPLE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _os_guard =
+        crate::util::locked_file::lock_file_blocking(&people_lock_path(home), "people scorer")?;
+    let people = load_people_strict(home)?;
+    Ok(people
+        .rows
+        .iter()
+        .filter(|row| {
+            row.display
+                .as_deref()
+                .is_some_and(|display| display.to_lowercase().contains(&needle))
+        })
+        .count() as i64)
 }
 
 /// GDPR (D4) — remove every [`PersonStat`] whose `display` name contains
 /// `topic` (case-insensitive). Held under [`PEOPLE_LOCK`] across
 /// load→filter→save for atomicity. Returns the number of rows removed. A
-/// missing / unreadable / empty people.json returns 0 (best-effort — the file
-/// may simply not exist yet). Rows with no display name are kept: with no
+/// missing file returns 0. Malformed/unreadable state fails loudly and is
+/// preserved. Rows with no display name are kept: with no
 /// human-readable name they can't match the topic, and `person_key` is an
 /// opaque id, not a re-identifier.
 pub fn forget_people_by_display(home: &Path, topic: &str) -> Result<i64> {
@@ -255,7 +482,9 @@ pub fn forget_people_by_display(home: &Path, topic: &str) -> Result<i64> {
     let _guard = PEOPLE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut people = load_people(home);
+    let _os_guard =
+        crate::util::locked_file::lock_file_blocking(&people_lock_path(home), "people scorer")?;
+    let mut people = load_people_strict(home)?;
     let before = people.rows.len();
     people.rows.retain(|row| {
         row.display
@@ -265,7 +494,7 @@ pub fn forget_people_by_display(home: &Path, topic: &str) -> Result<i64> {
     });
     let removed = (before - people.rows.len()) as i64;
     if removed > 0 {
-        save_people(home, &people)?;
+        save_people_unlocked(home, &people)?;
     }
     Ok(removed)
 }
@@ -299,7 +528,15 @@ pub fn score_person(row: &PersonStat, now_unix: u64) -> f32 {
         0.0
     };
 
-    (W_RECENCY * recency + W_FREQUENCY * frequency + W_RECIPROCITY * reciprocity + W_DEPTH * depth)
+    // Fractional AllTiny samples must not receive the full recency/depth score
+    // of one trusted interaction. Ten 0.1 samples build the same confidence as
+    // one full-weight sample; ratios remain unchanged.
+    let confidence = decayed_freq.clamp(0.0, 1.0);
+    (confidence
+        * (W_RECENCY * recency
+            + W_FREQUENCY * frequency
+            + W_RECIPROCITY * reciprocity
+            + W_DEPTH * depth))
         .clamp(0.0, 1.0)
 }
 
@@ -331,13 +568,14 @@ pub fn top_people(home: &Path, n: usize, now_unix: u64) -> Vec<ScoredPerson> {
             last_seen_unix: r.last_seen_unix,
         })
         .collect();
-    // Highest score first; ties broken by most-recent so the ordering is
-    // deterministic (no NaN — score is always finite + clamped).
+    // Highest score first; final opaque-key tie-break makes the ordering stable
+    // across filesystems/processes too (no NaN — validated finite inputs).
     scored.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(b.last_seen_unix.cmp(&a.last_seen_unix))
+            .then_with(|| a.person_key.cmp(&b.person_key))
     });
     if n > 0 {
         scored.truncate(n);
@@ -358,6 +596,7 @@ mod tests {
             display: Some("Alice"),
             is_reply_to_bot: reply,
             msg_len: len,
+            weight: 1.0,
         }
     }
 
@@ -396,7 +635,56 @@ mod tests {
             record_interaction(dir.path(), &ix("alice", false, 10), 1000).unwrap();
         }
         let p = load_people(dir.path());
-        assert!((p.rows[0].interaction_count - MAX_INTERACTION_COUNT).abs() < 1e-3);
+        let row = &p.rows[0];
+        assert!((row.interaction_count - MAX_INTERACTION_COUNT).abs() < 1e-3);
+        assert!(
+            (row.msg_len_total / f64::from(row.interaction_count) - 10.0).abs() < 1e-6,
+            "capping must scale the denominator and depth numerator together"
+        );
+    }
+
+    #[test]
+    fn all_tiny_weight_scales_every_accumulator_and_score_confidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tiny = ix("stranger", true, 400);
+        tiny.weight = 0.1;
+        record_interaction(dir.path(), &tiny, 1000).unwrap();
+        let row = load_people(dir.path()).rows.remove(0);
+        assert!((row.interaction_count - 0.1).abs() < 1e-6);
+        assert!((row.reply_to_bot_count - 0.1).abs() < 1e-6);
+        assert!((row.msg_len_total - 40.0).abs() < 1e-5);
+
+        let mut trusted = row.clone();
+        trusted.interaction_count = 1.0;
+        trusted.reply_to_bot_count = 1.0;
+        trusted.msg_len_total = 400.0;
+        assert!(
+            score_person(&row, 1000) < score_person(&trusted, 1000) * 0.11,
+            "one tiny sample must not receive a full trusted-contact score"
+        );
+    }
+
+    #[test]
+    fn decay_scales_ratio_numerators_with_the_denominator() {
+        let dir = tempfile::tempdir().unwrap();
+        record_interaction(dir.path(), &ix("alice", true, 200), 1000).unwrap();
+        record_interaction(dir.path(), &ix("alice", false, 100), 1000 + DAY).unwrap();
+        let row = load_people(dir.path()).rows.remove(0);
+        let expected_old = FREQUENCY_DAILY_DECAY;
+        assert!((row.interaction_count - (expected_old + 1.0)).abs() < 1e-5);
+        assert!((row.reply_to_bot_count - expected_old).abs() < 1e-5);
+        assert!((row.msg_len_total - (200.0 * f64::from(expected_old) + 100.0)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn backwards_clock_does_not_move_a_person_back_in_time() {
+        let dir = tempfile::tempdir().unwrap();
+        record_interaction(dir.path(), &ix("alice", false, 10), 2000).unwrap();
+        record_interaction(dir.path(), &ix("alice", false, 10), 1000).unwrap();
+        let row = load_people(dir.path()).rows.remove(0);
+        assert_eq!(row.last_seen_unix, 2000);
+        assert_eq!(row.decay_anchor_unix, 2000);
+        assert_eq!(row.interaction_count, 2.0);
     }
 
     #[test]
@@ -547,6 +835,7 @@ mod tests {
                     display: Some("Bob"),
                     is_reply_to_bot: true,
                     msg_len: 400,
+                    weight: 1.0,
                 },
                 now,
             )
@@ -561,6 +850,7 @@ mod tests {
                 display: Some("Carol"),
                 is_reply_to_bot: false,
                 msg_len: 5,
+                weight: 1.0,
             },
             now,
         )
@@ -593,6 +883,7 @@ mod tests {
                 display: Some("Old"),
                 is_reply_to_bot: false,
                 msg_len: 10,
+                weight: 1.0,
             },
             1000,
         )
@@ -605,6 +896,7 @@ mod tests {
                 display: Some("New"),
                 is_reply_to_bot: false,
                 msg_len: 10,
+                weight: 1.0,
             },
             1000,
         )
@@ -618,8 +910,18 @@ mod tests {
     #[test]
     fn malformed_json_loads_empty() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(people_path(dir.path()), b"{ not json").unwrap();
+        let malformed = b"{ not json";
+        std::fs::write(people_path(dir.path()), malformed).unwrap();
         assert!(load_people(dir.path()).rows.is_empty());
+        assert!(
+            record_interaction(dir.path(), &ix("alice", true, 100), 1000).is_err(),
+            "a mutating path must fail closed on malformed state"
+        );
+        assert_eq!(
+            std::fs::read(people_path(dir.path())).unwrap(),
+            malformed,
+            "malformed recovery bytes must be preserved"
+        );
     }
 
     #[test]
@@ -631,6 +933,42 @@ mod tests {
         )
         .unwrap();
         assert!(load_people(dir.path()).rows.is_empty());
+    }
+
+    #[test]
+    fn v1_snapshot_migrates_overgrown_accumulators_without_erasing_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            people_path(dir.path()),
+            br#"{
+                "schema_version": 1,
+                "rows": [{
+                    "person_key": "legacy",
+                    "channel": "telegram",
+                    "display": "Alice",
+                    "interaction_count": 100.0,
+                    "reply_to_bot_count": 250.0,
+                    "msg_len_total": 1000000.0,
+                    "last_seen_unix": 5,
+                    "decay_anchor_unix": 5
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let migrated = load_people(dir.path());
+        assert_eq!(migrated.schema_version, PEOPLE_SCHEMA_VERSION);
+        assert_eq!(migrated.rows[0].person_key, "legacy");
+        assert_eq!(migrated.rows[0].reply_to_bot_count, 100.0);
+        assert_eq!(
+            migrated.rows[0].msg_len_total,
+            f64::from(MAX_INTERACTION_COUNT) * f64::from(DEPTH_SATURATION_CHARS)
+        );
+
+        record_interaction(dir.path(), &ix("legacy", false, 10), 5).unwrap();
+        let persisted: People =
+            serde_json::from_slice(&std::fs::read(people_path(dir.path())).unwrap()).unwrap();
+        assert_eq!(persisted.schema_version, PEOPLE_SCHEMA_VERSION);
     }
 
     #[test]
@@ -657,7 +995,47 @@ mod tests {
     fn save_leaves_no_tmp_file() {
         let dir = tempfile::tempdir().unwrap();
         save_people(dir.path(), &People::default()).unwrap();
-        assert!(!people_path(dir.path()).with_extension("json.tmp").exists());
+        let leftovers = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
+        assert!(people_lock_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn validation_rejects_oversized_or_duplicate_identity_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut invalid = People {
+            schema_version: PEOPLE_SCHEMA_VERSION,
+            rows: vec![PersonStat {
+                person_key: "x".repeat(MAX_PERSON_KEY_BYTES + 1),
+                channel: "telegram".into(),
+                display: None,
+                interaction_count: 1.0,
+                reply_to_bot_count: 0.0,
+                msg_len_total: 1.0,
+                last_seen_unix: 1,
+                decay_anchor_unix: 1,
+            }],
+        };
+        assert!(save_people(dir.path(), &invalid).is_err());
+
+        invalid.rows[0].person_key = "same".into();
+        invalid.rows.push(invalid.rows[0].clone());
+        assert!(save_people(dir.path(), &invalid).is_err());
+    }
+
+    #[test]
+    fn deterministic_final_tie_break_uses_person_key() {
+        let dir = tempfile::tempdir().unwrap();
+        for key in ["z", "a"] {
+            record_interaction(dir.path(), &ix(key, true, 100), 1000).unwrap();
+        }
+        let ranked = top_people(dir.path(), 0, 1000);
+        assert_eq!(ranked[0].person_key, "a");
+        assert_eq!(ranked[1].person_key, "z");
     }
 
     #[test]

@@ -58,15 +58,18 @@ pub fn resolve_entity_id(conn: &Connection, name: &str) -> Result<Option<i64>> {
 
 /// Merge `new` attribute facts into an existing `{...}` JSON attributes string
 /// (overlay: new keys add, existing keys are overwritten with the latest value).
-/// A non-object / unparseable `existing` is treated as empty. Returns a
-/// sorted-key JSON object string. Pure — unit-tested (MEM-14).
-pub(crate) fn merge_attributes(existing_json: &str, new: &BTreeMap<String, String>) -> String {
+/// Invalid stored JSON is an error: treating it as empty would erase evidence
+/// on the next merge. Returns a sorted-key JSON object string.
+pub(crate) fn merge_attributes(
+    existing_json: &str,
+    new: &BTreeMap<String, String>,
+) -> Result<String> {
     let mut merged: BTreeMap<String, String> =
-        serde_json::from_str(existing_json).unwrap_or_default();
+        serde_json::from_str(existing_json).context("parse stored entity attributes")?;
     for (k, v) in new {
         merged.insert(k.clone(), v.clone());
     }
-    serde_json::to_string(&merged).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string(&merged).context("serialize merged entity attributes")
 }
 
 /// Insert the entity if absent (with `attrs` as its initial attributes), else
@@ -84,11 +87,6 @@ pub fn resolve_or_create_entity_with_attrs(
         anyhow::bail!("entity name must be non-empty");
     }
     if let Some(id) = resolve_entity_id(conn, name)? {
-        conn.execute(
-            "UPDATE idx_entities SET source_count = source_count + 1, last_seen = ?2 WHERE id = ?1",
-            params![id, now_unix],
-        )
-        .context("bump entity source_count")?;
         // Attribute merge: overlay any new attribute facts onto the stored set.
         if !attrs.is_empty() {
             let existing: String = conn
@@ -97,17 +95,24 @@ pub fn resolve_or_create_entity_with_attrs(
                     params![id],
                     |r| r.get(0),
                 )
-                .unwrap_or_else(|_| "{}".to_string());
-            let merged = merge_attributes(&existing, attrs);
+                .context("load stored entity attributes")?;
+            let merged = merge_attributes(&existing, attrs)?;
             conn.execute(
-                "UPDATE idx_entities SET attributes = ?2 WHERE id = ?1",
-                params![id, merged],
+                "UPDATE idx_entities SET source_count = source_count + 1, last_seen = ?2, \
+                 attributes = ?3 WHERE id = ?1",
+                params![id, now_unix, merged],
             )
             .context("merge entity attributes")?;
+        } else {
+            conn.execute(
+                "UPDATE idx_entities SET source_count = source_count + 1, last_seen = ?2 WHERE id = ?1",
+                params![id, now_unix],
+            )
+            .context("bump entity source_count")?;
         }
         return Ok(id);
     }
-    let attrs_json = merge_attributes("{}", attrs);
+    let attrs_json = merge_attributes("{}", attrs)?;
     conn.execute(
         "INSERT INTO idx_entities (name, entity_type, attributes, first_seen, last_seen) \
          VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -295,7 +300,8 @@ fn one_hop(conn: &Connection, id: i64) -> Result<Vec<(i64, String)>> {
     let rows = stmt.query_map(params![id], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
     })?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect one-hop entity relations")
 }
 
 /// Bounded breadth-first expansion from the entity named `name`: returns every
@@ -361,7 +367,8 @@ pub fn forget_entities_like(conn: &Connection, like_pattern: &str) -> Result<(i6
                 OR attributes COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
         )?;
         let rows = stmt.query_map(params![like_pattern], |r| r.get::<_, i64>(0))?;
-        rows.filter_map(|r| r.ok()).collect()
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect entity ids for forget cascade")?
     };
     if victim_ids.is_empty() {
         return Ok((0, 0));
@@ -506,16 +513,19 @@ pub fn parse_extraction(response: &str) -> Result<Extraction> {
     })
 }
 
-/// Run the LLM extraction for `text` through `provider`. Temperature 0 for
-/// determinism. Returns the parsed [`Extraction`].
+/// Run the LLM extraction for `text` through `provider`. Sampling-capable
+/// providers receive temperature 0 as a determinism hint; incompatible leaves
+/// omit it with a warning. Returns the parsed [`Extraction`].
 pub async fn entity_extract(
     text: &str,
     provider: &dyn crate::providers::Provider,
 ) -> Result<Extraction> {
+    let temperature =
+        crate::providers::internal_temperature(provider, 0.0, "memory.entity_extract");
     let req = crate::providers::Request {
         prompt: build_extraction_prompt(text),
         system: Some(EXTRACTION_SYSTEM.to_string()),
-        temperature: Some(0.0),
+        temperature,
         ..Default::default()
     };
     let completion = provider
@@ -729,7 +739,7 @@ mod tests {
         let mut a = BTreeMap::new();
         a.insert("role".to_string(), "engineer".to_string());
         a.insert("city".to_string(), "Berlin".to_string());
-        let merged = merge_attributes("{\"role\":\"intern\"}", &a);
+        let merged = merge_attributes("{\"role\":\"intern\"}", &a).unwrap();
         let back: BTreeMap<String, String> = serde_json::from_str(&merged).unwrap();
         assert_eq!(
             back.get("role").unwrap(),
@@ -737,10 +747,26 @@ mod tests {
             "existing key overwritten"
         );
         assert_eq!(back.get("city").unwrap(), "Berlin", "new key added");
-        // Unparseable existing → treated as empty, new keys still applied.
-        let from_garbage = merge_attributes("not json", &a);
-        let back2: BTreeMap<String, String> = serde_json::from_str(&from_garbage).unwrap();
-        assert_eq!(back2.len(), 2);
+        assert!(merge_attributes("not json", &a).is_err());
+    }
+
+    #[test]
+    fn corrupt_stored_attributes_block_resighting_without_partial_count_bump() {
+        let (_d, c) = conn();
+        let id = resolve_or_create_entity(&c, "Alice", "person", 100).unwrap();
+        c.execute(
+            "UPDATE idx_entities SET attributes = '{not json' WHERE id = ?1",
+            params![id],
+        )
+        .unwrap();
+        let mut attrs = BTreeMap::new();
+        attrs.insert("city".to_string(), "Berlin".to_string());
+        let error = resolve_or_create_entity_with_attrs(&c, "Alice", "person", &attrs, 200)
+            .unwrap_err();
+        assert!(error.to_string().contains("parse stored entity attributes"));
+        let entity = get_entity(&c, "Alice").unwrap().unwrap();
+        assert_eq!(entity.source_count, 1);
+        assert_eq!(entity.attributes, "{not json");
     }
 
     #[test]
@@ -862,7 +888,10 @@ mod tests {
         let closed =
             invalidate_relation_by_names(&c, "Alice", "works_at", "Mozilla", now + 1).unwrap();
         assert!(closed, "name-based close succeeds");
-        assert!(get_neighbors(&c, "Alice", 1).unwrap().is_empty(), "BFS sees nothing");
+        assert!(
+            get_neighbors(&c, "Alice", 1).unwrap().is_empty(),
+            "BFS sees nothing"
+        );
 
         // Unknown entity returns false without error.
         let miss =
@@ -882,10 +911,12 @@ mod tests {
         // Both edges active before wildcard close.
         assert_eq!(get_neighbors(&c, "Alice", 1).unwrap().len(), 1);
 
-        let closed =
-            invalidate_relation_by_names(&c, "Alice", "*", "Mozilla", now + 1).unwrap();
+        let closed = invalidate_relation_by_names(&c, "Alice", "*", "Mozilla", now + 1).unwrap();
         assert!(closed, "wildcard close stamped at least one row");
-        assert!(get_neighbors(&c, "Alice", 1).unwrap().is_empty(), "all edges closed");
+        assert!(
+            get_neighbors(&c, "Alice", 1).unwrap().is_empty(),
+            "all edges closed"
+        );
     }
 
     #[test]
@@ -919,6 +950,7 @@ mod tests {
         ) -> Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
                 text: self.0.clone(),
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,

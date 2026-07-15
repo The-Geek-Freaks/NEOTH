@@ -1,8 +1,8 @@
 # winget package manifests for NEOTH
 
 These manifests prepare NEOTH for submission to
-[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) so
-Windows operators can install via:
+[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). The command
+below is the post-submission contract; it is not live yet:
 
 ```powershell
 winget install TheGeekFreaks.NEOTH
@@ -10,27 +10,27 @@ winget install TheGeekFreaks.NEOTH
 
 ## Status
 
-**Stub manifests pending the Windows release-matrix extension.** The
-current `.github/workflows/release.yml` ships Linux + macOS binaries
-only; Windows is a `stretch goal` per the workflow comment. Until the
-Windows targets land in the matrix, `winget install` would fail with
-404 on the InstallerUrl.
+**Pre-submission manifests, intentionally blocked on real release hashes.**
+`.github/workflows/release.yml` builds x64 and ARM64 Windows ZIPs and packages
+`neoth.exe`, the `neothd.exe` compatibility launcher, `neothd-gui.exe`,
+`neoth-migrate.exe`, and `neoth-relay.exe`.
+The stable `v1.0.0` tag/assets do not exist yet, and both SHA-256 fields remain
+all zeroes. Do not submit these manifests or claim `winget install` works until
+the published sidecars have replaced those placeholders.
 
 R-08 closure path:
 
-1. **Extend release.yml** with two Windows targets:
-   - `x86_64-pc-windows-msvc`
-   - `aarch64-pc-windows-msvc`
-   Use `.zip` archive format (Windows convention; matches winget's
-   default `NestedInstallerType: portable` handling).
-2. **Cut a release tag** (e.g. `v0.3.0`). The matrix builds + uploads
-   `neothd-vX.Y.Z-{x86_64,aarch64}-pc-windows-msvc.zip` + `.sha256`.
-3. **Refresh these manifests** with real values:
-   - `PackageVersion` → vX.Y.Z
+1. **Push the explicitly approved release tag.** The existing matrix builds
+   and signs `neoth-vX.Y.Z-{x86_64,aarch64}-pc-windows-msvc.zip` and publishes
+   a `.sha256` sidecar for each archive.
+2. **Refresh these manifests from the published assets:**
+   - `PackageVersion` → `X.Y.Z` (no `v` prefix)
    - `InstallerUrl` → release-download URL
    - `InstallerSha256` → from the published `.sha256` sidecars
+3. Run `winget validate --manifest packaging\winget\` and refuse submission if
+   either zero hash remains.
 4. **PR to microsoft/winget-pkgs**:
-   `manifests/t/TheGeekFreaks/NEOTH/0.3.0/` with all three YAMLs:
+   `manifests/t/TheGeekFreaks/NEOTH/X.Y.Z/` with all three YAMLs:
    - `TheGeekFreaks.NEOTH.installer.yaml`
    - `TheGeekFreaks.NEOTH.yaml` (version manifest)
    - `TheGeekFreaks.NEOTH.locale.en-US.yaml` (locale + metadata)
@@ -38,27 +38,23 @@ R-08 closure path:
 
 ## Operator install paths (today)
 
-Until the winget submission lands, operators have three paths:
+Until the stable release and winget submission land, install from source:
 
 ```bash
-# Linux + macOS (zero-install binary download)
-curl -sSf https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install-binary.sh | bash
-```
-
-```powershell
-# Windows (zero-install binary download — works once Windows release artifacts ship)
-iwr -useb https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install-binary.ps1 | iex
-```
-
-```bash
-# Source build (any OS with Rust toolchain)
 git clone https://github.com/The-Geek-Freaks/NEOTH.git
-cd NEOTH/scripts && bash install.sh
+cd NEOTH/SRC
+cargo install --locked --path neothd --features release-desktop
+cargo install --locked --path neothd-gui
+cargo install --locked --path neoth-migrate
+cargo install --locked --path neoth-relay
 ```
+
+After the stable assets ship, the canonical binary installers are
+`SRC/install.sh` and `SRC/install.ps1`.
 
 ## Local validation
 
-Once values are filled in:
+After the URLs and real hashes are filled in:
 
 ```powershell
 winget validate --manifest packaging\winget\

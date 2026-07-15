@@ -172,15 +172,30 @@ mod tests {
         assert!(filtered.contains("fn foo()"), "fn foo must survive");
         assert!(filtered.contains("fn bar()"), "fn bar must survive");
         // Ignored region is gone.
-        assert!(!filtered.contains("fn kept()"), "kept() must be hidden from LLM");
-        assert!(!filtered.contains(START), "start-marker must not appear in filtered body");
-        assert!(!filtered.contains(END), "end-marker must not appear in filtered body");
+        assert!(
+            !filtered.contains("fn kept()"),
+            "kept() must be hidden from LLM"
+        );
+        assert!(
+            !filtered.contains(START),
+            "start-marker must not appear in filtered body"
+        );
+        assert!(
+            !filtered.contains(END),
+            "end-marker must not appear in filtered body"
+        );
         // A placeholder was injected.
         assert_eq!(blocks.len(), 1);
-        assert!(filtered.contains("neoth-ignore"), "placeholder must appear in filtered body");
+        assert!(
+            filtered.contains("neoth-ignore"),
+            "placeholder must appear in filtered body"
+        );
         // The placeholder reports 3 lines (start-marker line + body + end-marker line).
-        assert!(blocks[0].placeholder.contains('3') || blocks[0].placeholder.contains("3 lines"),
-            "placeholder must mention 3 lines: {:?}", blocks[0].placeholder);
+        assert!(
+            blocks[0].placeholder.contains('3') || blocks[0].placeholder.contains("3 lines"),
+            "placeholder must mention 3 lines: {:?}",
+            blocks[0].placeholder
+        );
     }
 
     #[test]
@@ -200,8 +215,10 @@ mod tests {
         assert!(!filtered.contains("second ignored"));
         assert_eq!(blocks.len(), 2);
         // Placeholders are unique because byte-offsets differ.
-        assert_ne!(blocks[0].placeholder, blocks[1].placeholder,
-            "placeholders must be unique even when line counts match");
+        assert_ne!(
+            blocks[0].placeholder, blocks[1].placeholder,
+            "placeholders must be unique even when line counts match"
+        );
     }
 
     // ── restore_blocks ────────────────────────────────────────────────────
@@ -255,14 +272,18 @@ mod tests {
         let body = "fn foo() {}\n// neoth-ignore-start\norphan line\n";
         let (filtered, blocks) = apply_block_filter(body, START, END, TMPL);
         // The block content must be preserved (not lost silently).
-        assert!(filtered.contains("orphan line"), "unclosed block must pass through");
+        assert!(
+            filtered.contains("orphan line"),
+            "unclosed block must pass through"
+        );
         assert!(blocks.is_empty(), "no blocks emitted for unclosed region");
     }
 
     #[test]
     fn custom_markers_work() {
         let body = "a\n#begin-skip\nb\n#end-skip\nc\n";
-        let (filtered, blocks) = apply_block_filter(body, "#begin-skip", "#end-skip", "SKIP({lines})");
+        let (filtered, blocks) =
+            apply_block_filter(body, "#begin-skip", "#end-skip", "SKIP({lines})");
         assert!(filtered.contains("SKIP(3)"), "custom template applied");
         assert!(!filtered.contains("#begin-skip"));
         let restored = restore_blocks(&filtered, &blocks);
@@ -274,7 +295,13 @@ mod tests {
         // Ensure the default_placeholder() function produces a non-empty template
         // that contains the required substitution tokens.
         let tmpl = default_placeholder();
-        assert!(tmpl.contains("{lines}"), "default template must contain {{lines}}");
-        assert!(tmpl.contains("{offset}"), "default template must contain {{offset}}");
+        assert!(
+            tmpl.contains("{lines}"),
+            "default template must contain {{lines}}"
+        );
+        assert!(
+            tmpl.contains("{offset}"),
+            "default template must contain {{offset}}"
+        );
     }
 }

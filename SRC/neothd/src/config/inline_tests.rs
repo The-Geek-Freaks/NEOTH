@@ -6,20 +6,214 @@ mod config_defaults_tests {
 
     #[test]
     fn omi_config_defaults_off_and_local() {
-        // OM-01 — default OFF, local endpoint, 30s/0.75 knobs; serde round-trips.
+        // OMI-MULTIMODAL-01 — default OFF and selects the supported Developer
+        // API path; every media/privacy surface has an explicit safe default.
         let d = OmiConfig::default();
         assert!(!d.enabled);
+        assert_eq!(d.mode, OmiIngestMode::DeveloperApi);
         assert_eq!(d.endpoint, crate::installers::omi::DEFAULT_OMI_ENDPOINT);
+        assert!(!d.allow_cloud_api);
         assert_eq!(d.poll_interval_secs, 30);
         assert!((d.confidence_threshold - 0.75).abs() < 1e-6);
+        assert_eq!(d.listen_addr, "127.0.0.1:8003");
+        assert_eq!(d.initial_lookback_secs, 86_400);
+        assert_eq!(d.max_conversations_per_poll, 100);
+        assert!(!d.retain_transcripts);
+        assert!(!d.audio_enabled);
+        assert!(!d.visual_enabled);
+        assert!(!d.video_enabled);
+        assert!(d.create_actions);
+        assert!(d.seed_groundtruth);
+        assert!(d.summary_enabled);
+        assert!(!d.allow_cloud_summary);
+        assert_eq!(d.retention_days, 30);
+        assert_eq!(d.max_audio_bytes_per_stream, 64 * 1024 * 1024);
+        assert_eq!(d.max_image_bytes, 16 * 1024 * 1024);
+        assert_eq!(d.max_connections, 4);
+        assert_eq!(d.max_active_calls, 64);
+        assert_eq!(d.idle_timeout_secs, 120);
+        assert!(d.allowed_uids.is_empty());
+        d.validate().expect("defaults must be valid");
+
         let absent: FreedomConfig = serde_yaml::from_str("operator_id: a\n").expect("parse");
         assert!(!absent.omi.enabled);
-        let set: FreedomConfig = serde_yaml::from_str(
+        let old_yaml: FreedomConfig = serde_yaml::from_str(
             "operator_id: a\nomi:\n  enabled: true\n  endpoint: http://127.0.0.1:9999\n",
         )
         .expect("parse");
-        assert!(set.omi.enabled);
-        assert_eq!(set.omi.endpoint, "http://127.0.0.1:9999");
+        assert!(old_yaml.omi.enabled);
+        assert_eq!(old_yaml.omi.endpoint, "http://127.0.0.1:9999");
+        assert_eq!(old_yaml.omi.mode, OmiIngestMode::DeveloperApi);
+        assert!(!old_yaml.omi.allow_cloud_api);
+        assert!(!old_yaml.omi.audio_enabled);
+        assert!(old_yaml.omi.create_actions);
+        assert!(old_yaml.omi.seed_groundtruth);
+
+        let encoded = serde_yaml::to_string(&old_yaml.omi).expect("serialize OMI config");
+        let decoded: OmiConfig = serde_yaml::from_str(&encoded).expect("round-trip OMI config");
+        assert_eq!(decoded, old_yaml.omi);
+    }
+
+    #[test]
+    fn omi_ingest_mode_helpers_and_serde_are_pinned() {
+        assert!(OmiIngestMode::DeveloperApi.polls());
+        assert!(!OmiIngestMode::DeveloperApi.listens());
+        assert!(!OmiIngestMode::NativeIngest.polls());
+        assert!(OmiIngestMode::NativeIngest.listens());
+        assert!(OmiIngestMode::Both.polls());
+        assert!(OmiIngestMode::Both.listens());
+        assert!(OmiIngestMode::LegacyMemories.polls());
+        assert!(!OmiIngestMode::LegacyMemories.listens());
+        assert_eq!(
+            serde_yaml::to_string(&OmiIngestMode::NativeIngest)
+                .expect("serialize mode")
+                .trim(),
+            "native_ingest"
+        );
+    }
+
+    #[test]
+    fn omi_config_validation_rejects_unsafe_and_zero_bounds() {
+        let mut cfg = OmiConfig::default();
+        cfg.endpoint = "https://api.omi.me".to_string();
+        assert!(cfg.validate().is_err(), "cloud polling endpoint must fail");
+
+        cfg.allow_cloud_api = true;
+        cfg.validate()
+            .expect("explicit cloud Developer API opt-in must pass");
+
+        cfg.mode = OmiIngestMode::LegacyMemories;
+        assert!(
+            cfg.validate().is_err(),
+            "legacy memories must remain local even with cloud opt-in"
+        );
+
+        let mut cfg = OmiConfig::default();
+        cfg.listen_addr = "0.0.0.0:8003".to_string();
+        assert!(cfg.validate().is_err(), "wildcard listener must fail");
+
+        let mut cfg = OmiConfig::default();
+        cfg.listen_addr = "127.0.0.1:0".to_string();
+        assert!(cfg.validate().is_err(), "zero port must fail");
+
+        let zero_cases: &[fn(&mut OmiConfig)] = &[
+            |c| c.poll_interval_secs = 0,
+            |c| c.confidence_threshold = 0.0,
+            |c| c.initial_lookback_secs = 0,
+            |c| c.max_conversations_per_poll = 0,
+            |c| c.retention_days = 0,
+            |c| c.max_audio_bytes_per_stream = 0,
+            |c| c.max_image_bytes = 0,
+            |c| c.max_connections = 0,
+            |c| c.max_active_calls = 0,
+            |c| c.idle_timeout_secs = 0,
+        ];
+        for make_invalid in zero_cases {
+            let mut cfg = OmiConfig::default();
+            make_invalid(&mut cfg);
+            assert!(cfg.validate().is_err(), "zero bound must fail: {cfg:?}");
+        }
+
+        let mut cfg = OmiConfig::default();
+        cfg.confidence_threshold = f32::NAN;
+        assert!(cfg.validate().is_err(), "NaN confidence must fail");
+
+        let mut cfg = OmiConfig::default();
+        cfg.allowed_uids = vec!["".to_string()];
+        assert!(cfg.validate().is_err(), "blank UID must fail");
+
+        let mut cfg = OmiConfig::default();
+        cfg.allowed_uids = vec!["device-a".to_string(), "device-a".to_string()];
+        assert!(cfg.validate().is_err(), "duplicate UID must fail");
+    }
+
+    #[test]
+    fn omi_enabled_surfaces_require_their_dedicated_credentials() {
+        use crate::config::credentials::Credentials;
+        use crate::secret::SecretString;
+
+        let mut cfg = OmiConfig {
+            enabled: true,
+            ..OmiConfig::default()
+        };
+        assert!(
+            cfg.validate_with_credentials(&Credentials::default())
+                .is_err()
+        );
+
+        let developer = Credentials {
+            omi_developer_api_key: Some(SecretString::from("omi_dev_test")),
+            ..Credentials::default()
+        };
+        cfg.validate_with_credentials(&developer)
+            .expect("Developer API key satisfies Developer API mode");
+
+        cfg.mode = OmiIngestMode::NativeIngest;
+        assert!(cfg.validate_with_credentials(&developer).is_err());
+        let native = Credentials {
+            omi_ingest_token: Some(SecretString::from("local-ingest-token-at-least-32-bytes")),
+            ..Credentials::default()
+        };
+        cfg.validate_with_credentials(&native)
+            .expect("ingest token satisfies native mode");
+
+        cfg.mode = OmiIngestMode::Both;
+        let both = Credentials {
+            omi_developer_api_key: Some(SecretString::from("omi_dev_test")),
+            omi_ingest_token: Some(SecretString::from("local-ingest-token-at-least-32-bytes")),
+            ..Credentials::default()
+        };
+        cfg.validate_with_credentials(&both)
+            .expect("both mode requires and accepts both dedicated secrets");
+
+        cfg.mode = OmiIngestMode::LegacyMemories;
+        cfg.validate_with_credentials(&Credentials::default())
+            .expect("legacy local compatibility remains credential-free");
+
+        cfg.enabled = false;
+        cfg.mode = OmiIngestMode::Both;
+        cfg.validate_with_credentials(&Credentials::default())
+            .expect("disabled OMI must not force unused credentials");
+    }
+
+    #[test]
+    fn omi_multimodal_controls_survive_the_real_config_load_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            concat!(
+                "operator_id: reload-test\n",
+                "omi:\n",
+                "  enabled: true\n",
+                "  mode: both\n",
+                "  endpoint: https://api.omi.me\n",
+                "  allow_cloud_api: true\n",
+                "  listen_addr: 192.168.1.40:8003\n",
+                "  retain_transcripts: true\n",
+                "  audio_enabled: true\n",
+                "  visual_enabled: true\n",
+                "  video_enabled: true\n",
+                "  allow_cloud_summary: true\n",
+                "  allowed_uids: [device-a, device-b]\n",
+            ),
+        )
+        .unwrap();
+
+        let loaded = FreedomConfig::load_from_path(&path).expect("real config load path");
+        assert_eq!(loaded.omi.mode, OmiIngestMode::Both);
+        assert!(loaded.omi.allow_cloud_api);
+        assert_eq!(loaded.omi.listen_addr, "192.168.1.40:8003");
+        assert!(loaded.omi.retain_transcripts);
+        assert!(loaded.omi.audio_enabled);
+        assert!(loaded.omi.visual_enabled);
+        assert!(loaded.omi.video_enabled);
+        assert!(loaded.omi.allow_cloud_summary);
+        assert_eq!(
+            loaded.omi.allowed_uids,
+            vec!["device-a".to_string(), "device-b".to_string()]
+        );
+        loaded.omi.validate().expect("reloaded OMI config is valid");
     }
 
     #[test]
@@ -32,6 +226,32 @@ mod config_defaults_tests {
         let set: FreedomConfig =
             serde_yaml::from_str("operator_id: a\ngoal:\n  max_turns: 12\n").expect("parse");
         assert_eq!(set.goal.max_turns, 12);
+    }
+
+    #[test]
+    fn companion_p2p_requires_loopback_http_consumer_on_real_load_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: p2p-test\ncompanion:\n  enabled: false\n  p2p_enabled: true\n",
+        )
+        .unwrap();
+
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("companion.p2p_enabled requires companion.enabled=true"),
+            "unexpected load error: {error:#}"
+        );
+
+        std::fs::write(
+            &path,
+            "operator_id: p2p-test\ncompanion:\n  enabled: true\n  p2p_enabled: true\n",
+        )
+        .unwrap();
+        FreedomConfig::load_from_path(&path).expect("fully wired companion config must load");
     }
 
     #[test]
@@ -65,6 +285,45 @@ mod config_defaults_tests {
         .expect("parse full email block");
         assert!(full.email.llm_tiebreak);
         assert!(full.email.llm_tiebreak_allow_downgrade);
+    }
+}
+
+#[cfg(test)]
+mod custom_autonomy_config_tests {
+    use super::super::FreedomConfig;
+    use crate::permissions::{ActionKind, AutonomyLevel, CustomDecision};
+
+    #[test]
+    fn missing_custom_policy_defaults_to_standard_baseline_map() {
+        let cfg: FreedomConfig = serde_yaml::from_str("autonomy: custom\n").unwrap();
+        assert_eq!(cfg.autonomy, AutonomyLevel::Custom);
+        assert!(cfg.custom_autonomy.overrides.is_empty());
+    }
+
+    #[test]
+    fn nested_custom_policy_deserializes_and_rejects_invalid_wire_values() {
+        let cfg: FreedomConfig = serde_yaml::from_str(
+            "autonomy: custom\ncustom_autonomy:\n  overrides:\n    external_http_request: deny\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.custom_autonomy
+                .overrides
+                .get(&ActionKind::ExternalHttpRequest),
+            Some(&CustomDecision::Deny)
+        );
+        assert!(
+            serde_yaml::from_str::<FreedomConfig>(
+                "custom_autonomy:\n  overrides:\n    unknown_action: allow\n"
+            )
+            .is_err()
+        );
+        assert!(
+            serde_yaml::from_str::<FreedomConfig>(
+                "custom_autonomy:\n  overrides:\n    read: maybe\n"
+            )
+            .is_err()
+        );
     }
 }
 
@@ -224,6 +483,35 @@ mod tests {
         let path = dir.path().join("nope.yaml");
         let err = FreedomConfig::load_from_path(&path).unwrap_err();
         assert!(err.to_string().contains("neoth init"));
+    }
+
+    #[test]
+    fn load_or_default_defaults_only_for_a_missing_path() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+
+        let config = FreedomConfig::load_from_path_or_default(&path).unwrap();
+
+        assert_eq!(
+            serde_yaml::to_value(config).unwrap(),
+            serde_yaml::to_value(FreedomConfig::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn load_or_default_rejects_malformed_existing_config() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(dir.path(), "operator_id: [unterminated\n");
+        let before = std::fs::read(&path).unwrap();
+
+        let error = FreedomConfig::load_from_path_or_default(&path).unwrap_err();
+
+        assert!(format!("{error:#}").contains("parse YAML"));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "failed load must preserve the operator config as evidence"
+        );
     }
 
     #[test]
@@ -484,7 +772,7 @@ mod tests {
         let cfg = AutoUpdateConfig::default();
         assert!(!cfg.enabled, "auto-update master switch must default OFF");
         assert!(!cfg.auto_apply, "auto_apply must default OFF (check-only)");
-        assert_eq!(cfg.channel, "stable");
+        assert_eq!(cfg.channel, ReleaseChannel::Stable);
         assert_eq!(cfg.check_interval_secs, 24 * 60 * 60);
         assert_eq!(cfg.repo, "The-Geek-Freaks/NEOTH");
         assert!(cfg.target_triple.is_none());
@@ -513,7 +801,7 @@ mod tests {
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.auto_update.enabled);
         assert!(!cfg.auto_update.auto_apply);
-        assert_eq!(cfg.auto_update.channel, "stable");
+        assert_eq!(cfg.auto_update.channel, ReleaseChannel::Stable);
         assert_eq!(cfg.auto_update.repo, "The-Geek-Freaks/NEOTH");
     }
 
@@ -527,7 +815,7 @@ mod tests {
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.auto_update.enabled);
         assert!(cfg.auto_update.auto_apply);
-        assert_eq!(cfg.auto_update.channel, "rc");
+        assert_eq!(cfg.auto_update.channel, ReleaseChannel::Rc);
         assert_eq!(cfg.auto_update.check_interval_secs, 3_600);
         assert_eq!(cfg.auto_update.repo, "example/fork");
         assert_eq!(
@@ -545,7 +833,7 @@ mod tests {
             auto_update: AutoUpdateConfig {
                 enabled: true,
                 auto_apply: true,
-                channel: "stable".to_string(),
+                channel: ReleaseChannel::Stable,
                 check_interval_secs: 7_200,
                 repo: "The-Geek-Freaks/NEOTH".to_string(),
                 target_triple: None,
@@ -557,6 +845,107 @@ mod tests {
         assert!(yaml.contains("auto_apply: true"));
         assert!(yaml.contains("check_interval_secs: 7200"));
         assert!(yaml.contains("channel: stable"));
+    }
+
+    #[test]
+    fn auto_update_config_rejects_unknown_channel_at_parse_time() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nauto_update:\n  channel: beta\n",
+        );
+        let error = FreedomConfig::load_from_path(&path)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown variant") || error.contains("stable"));
+    }
+
+    #[test]
+    fn auto_update_config_rejects_target_outside_release_matrix() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nauto_update:\n  target_triple: riscv64gc-unknown-linux-gnu\n",
+        );
+        let error = FreedomConfig::load_from_path(&path)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unsupported auto_update.target_triple"));
+        assert!(error.contains("x86_64-unknown-linux-gnu"));
+    }
+
+    #[test]
+    fn auto_update_config_rejects_invalid_release_repo() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nauto_update:\n  repo: example/fork/releases\n",
+        );
+        let error = FreedomConfig::load_from_path(&path)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("invalid auto_update.repo"));
+        assert!(error.contains("owner/repo"));
+    }
+
+    // ── GOLD-FEAT-06 — SwarmConfig live wiring ───────────────────────────
+
+    #[test]
+    fn swarm_config_defaults_and_round_trips() {
+        let defaults = SwarmConfig::default();
+        assert!(defaults.enabled);
+        assert_eq!(defaults.interval_secs, 30);
+        assert_eq!(defaults.stale_after_secs, 300);
+        assert_eq!(
+            defaults.interval_duration(),
+            std::time::Duration::from_secs(30)
+        );
+
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nswarm:\n  enabled: false\n  interval_secs: 45\n  stale_after_secs: 900\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert_eq!(
+            cfg.swarm,
+            SwarmConfig {
+                enabled: false,
+                interval_secs: 45,
+                stale_after_secs: 900,
+            }
+        );
+        assert_eq!(
+            cfg.swarm.interval_duration(),
+            std::time::Duration::from_secs(45)
+        );
+    }
+
+    #[test]
+    fn swarm_config_rejects_non_positive_intervals() {
+        let dir = tempdir().unwrap();
+        for (name, body) in [
+            (
+                "zero-interval.yaml",
+                "operator_id: alice\nswarm:\n  interval_secs: 0\n",
+            ),
+            (
+                "zero-stale.yaml",
+                "operator_id: alice\nswarm:\n  stale_after_secs: 0\n",
+            ),
+            (
+                "negative-stale.yaml",
+                "operator_id: alice\nswarm:\n  stale_after_secs: -1\n",
+            ),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            let error = FreedomConfig::load_from_path(&path)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("invalid swarm config"), "{error}");
+            assert!(error.contains("greater than zero"), "{error}");
+        }
     }
 
     // ── NOOB-UX-3 PluginsConfig runtime gate ────────────────────────
@@ -1018,9 +1407,8 @@ mod council_weighting_tests {
 
         let absent: FreedomConfig =
             serde_yaml::from_str("operator_id: a\n").expect("parse absent council");
-        let empty_block: FreedomConfig =
-            serde_yaml::from_str("operator_id: a\ncouncil: {}\n")
-                .expect("parse empty council block");
+        let empty_block: FreedomConfig = serde_yaml::from_str("operator_id: a\ncouncil: {}\n")
+            .expect("parse empty council block");
         let explicit: FreedomConfig = serde_yaml::from_str(
             "operator_id: a\ncouncil:\n  locality_tie_break: true\n  locality_tie_epsilon: 0.05\n  local_score_bonus: 0.0\n",
         )
@@ -1048,11 +1436,183 @@ mod council_weighting_tests {
         }
 
         // pin the concrete default values so regressions are obvious
-        assert!(rust_default.locality_tie_break, "tie_break must default true");
+        assert!(
+            rust_default.locality_tie_break,
+            "tie_break must default true"
+        );
         assert!(
             (rust_default.locality_tie_epsilon - 0.05).abs() < 1e-9,
             "epsilon must default to 0.05"
         );
-        assert_eq!(rust_default.local_score_bonus, 0.0, "bonus must default to 0.0");
+        assert_eq!(
+            rust_default.local_score_bonus, 0.0,
+            "bonus must default to 0.0"
+        );
+    }
+}
+
+#[cfg(test)]
+mod locked_update_tests {
+    use std::sync::{Arc, Barrier};
+
+    use super::super::FreedomConfig;
+
+    fn write_default(path: &std::path::Path) {
+        let body = serde_yaml::to_string(&FreedomConfig::default()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn update_at_preserves_malformed_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let malformed = b"operator_id: [unterminated\n";
+        std::fs::write(&path, malformed).unwrap();
+
+        let err = FreedomConfig::update_at(&path, |cfg| {
+            cfg.operator_id = Some("must-not-land".into());
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("parse YAML"));
+        assert_eq!(std::fs::read(&path).unwrap(), malformed);
+    }
+
+    #[test]
+    fn update_at_serialises_concurrent_read_modify_write_cycles() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = Arc::new(dir.path().join("freedom.yaml"));
+        write_default(&path);
+        let start = Arc::new(Barrier::new(3));
+
+        let operator_path = Arc::clone(&path);
+        let operator_start = Arc::clone(&start);
+        let operator = std::thread::spawn(move || {
+            operator_start.wait();
+            for n in 0..16 {
+                FreedomConfig::update_at(&operator_path, |cfg| {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    cfg.operator_id = Some(format!("operator-{n}"));
+                    Ok(())
+                })
+                .unwrap();
+            }
+        });
+
+        let language_path = Arc::clone(&path);
+        let language_start = Arc::clone(&start);
+        let language = std::thread::spawn(move || {
+            language_start.wait();
+            for n in 0..16 {
+                FreedomConfig::update_at(&language_path, |cfg| {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    cfg.language_primary = Some(format!("lang-{n}"));
+                    Ok(())
+                })
+                .unwrap();
+            }
+        });
+
+        start.wait();
+        operator.join().unwrap();
+        language.join().unwrap();
+
+        let final_config = FreedomConfig::load_from_path(&path).unwrap();
+        assert_eq!(final_config.operator_id.as_deref(), Some("operator-15"));
+        assert_eq!(final_config.language_primary.as_deref(), Some("lang-15"));
+    }
+}
+
+#[cfg(test)]
+mod cluster_config_tests {
+    use super::super::{
+        ClusterConfig, ClusterTransport, DEFAULT_CLUSTER_LISTEN_PORT, FreedomConfig,
+    };
+
+    #[test]
+    fn cluster_defaults_are_typed_and_privacy_gated() {
+        let cluster = ClusterConfig::default();
+        assert!(!cluster.enabled);
+        assert_eq!(cluster.transport, ClusterTransport::Peeroxide);
+        assert!(cluster.peers.is_empty());
+        assert!(cluster.mdns.enabled);
+        assert!(!cluster.policy.announce_on_untrusted_wifi);
+        assert!(cluster.policy.trusted_ssids.is_empty());
+        assert_eq!(cluster.listen_port, DEFAULT_CLUSTER_LISTEN_PORT);
+        cluster.validate().expect("cluster defaults must be valid");
+    }
+
+    #[test]
+    fn cluster_full_shape_round_trips_through_freedom_config() {
+        let yaml = r#"
+cluster:
+  name: studio
+  enabled: true
+  transport: iroh
+  peers: [peer-a, peer-b]
+  mdns:
+    enabled: false
+  policy:
+    announce_on_untrusted_wifi: true
+    trusted_ssids: [home]
+  listen_port: 4242
+"#;
+        let config: FreedomConfig = serde_yaml::from_str(yaml).expect("typed cluster parse");
+        assert_eq!(config.cluster.name.as_deref(), Some("studio"));
+        assert!(config.cluster.enabled);
+        assert_eq!(config.cluster.transport, ClusterTransport::Iroh);
+        assert_eq!(config.cluster.peers, ["peer-a", "peer-b"]);
+        assert!(!config.cluster.mdns.enabled);
+        assert!(config.cluster.policy.announce_on_untrusted_wifi);
+        assert_eq!(config.cluster.policy.trusted_ssids, ["home"]);
+        assert_eq!(config.cluster.listen_port, 4242);
+        if cfg!(feature = "cluster-iroh") {
+            assert!(
+                config.cluster.validate().is_err(),
+                "fixture peer ids are deliberately not real iroh endpoint ids"
+            );
+        } else {
+            assert!(
+                config
+                    .cluster
+                    .validate()
+                    .unwrap_err()
+                    .contains("cluster-iroh")
+            );
+        }
+
+        let encoded = serde_yaml::to_string(&config).expect("serialize freedom config");
+        let decoded: FreedomConfig = serde_yaml::from_str(&encoded).expect("round trip");
+        assert_eq!(decoded.cluster.transport, ClusterTransport::Iroh);
+        assert_eq!(decoded.cluster.listen_port, 4242);
+    }
+
+    #[test]
+    fn cluster_rejects_unknown_transport_and_invalid_values() {
+        let error = serde_yaml::from_str::<FreedomConfig>("cluster:\n  transport: magic\n")
+            .expect_err("unknown transport must not silently select peeroxide");
+        assert!(error.to_string().contains("unknown variant"));
+
+        let mut zero_port = ClusterConfig::default();
+        zero_port.listen_port = 0;
+        assert_eq!(
+            zero_port.validate().unwrap_err(),
+            "listen_port must be greater than zero"
+        );
+
+        let mut blank_peer = ClusterConfig::default();
+        blank_peer.peers.push("  ".to_string());
+        assert_eq!(
+            blank_peer.validate().unwrap_err(),
+            "peers must not contain empty endpoint ids"
+        );
+
+        let mut unnamed = ClusterConfig::default();
+        unnamed.enabled = true;
+        assert_eq!(
+            unnamed.validate().unwrap_err(),
+            "name is required when cluster.enabled is true"
+        );
     }
 }

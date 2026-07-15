@@ -16,8 +16,7 @@
 //! Memory, the WAL, and Inference all run inside the NEOTH binary, with no shared
 //! service to stand up. The messaging channels themselves vary: long-polling
 //! transports (Telegram) need nothing external, while the **webhook** listeners
-//! (`webhook_listener`, `whatsapp_webhook`, Slack), the **Pears HTTP bridge**
-//! (`pears_bridge`), and the **cluster / relay** surfaces are **opt-in,
+//! (`webhook_listener`, `whatsapp_webhook`, Slack) and the **cluster / relay** surfaces are **opt-in,
 //! operator-deployed** — they run only when the operator configures and exposes
 //! them, and none is required for a working single-node install.
 
@@ -25,20 +24,6 @@ pub mod discord;
 pub mod discord_gateway;
 pub mod discord_gateway_loop;
 pub mod formatter;
-pub mod identity;
-#[cfg(feature = "irc-channel")]
-pub mod irc;
-/// GOLD-FEAT-10 — IRC. The pure protocol-mapping module (`irc_api`) is always
-/// compiled (carries no `irc` dependency); the connection adapter (`irc`) is
-/// behind the `irc-channel` feature.
-pub mod irc_api;
-pub mod keet;
-pub mod keet_bencode;
-pub mod keet_crypto;
-pub mod keet_dht;
-pub mod keet_pairing;
-pub mod keet_udp;
-pub mod keet_wal;
 /// B9 — Google Chat via a GCP Pub/Sub PULL subscription (NEOTH dials out, no
 /// public URL). The pure wire types + event mapping (`gchat_api`) stay
 /// always-compiled; the pull/send adapter (`gchat`) is behind the
@@ -46,6 +31,18 @@ pub mod keet_wal;
 #[cfg(feature = "gchat-channel")]
 pub mod gchat;
 pub mod gchat_api;
+pub mod identity;
+/// GOLD-FEAT-10b — iMessage via a local BlueBubbles server (REST polling).
+/// Zero extra deps (pure `reqwest` + `serde` — both always-on). NEOTH dials
+/// OUT to the operator's BB Mac, so no public URL is needed. No feature gate:
+/// same always-compiled stance as Mattermost and LINE.
+pub mod imessage_bluebubbles;
+#[cfg(feature = "irc-channel")]
+pub mod irc;
+/// GOLD-FEAT-10 — IRC. The pure protocol-mapping module (`irc_api`) is always
+/// compiled (carries no `irc` dependency); the connection adapter (`irc`) is
+/// behind the `irc-channel` feature.
+pub mod irc_api;
 /// GOLD-FEAT-10 — LINE Messaging API adapter. Inbound rides the shared webhook
 /// listener (LINE pushes events to a public URL); outbound goes through the
 /// push REST endpoint. Zero extra deps (pure reqwest + serde) → always
@@ -74,18 +71,12 @@ pub mod nostr;
 /// chunker stay always-compiled (`nostr_api`); the relay adapter (`nostr`) is
 /// behind the `nostr-channel` feature (heavy `nostr-sdk` tree).
 pub mod nostr_api;
-pub mod pears_bridge;
 pub mod probe;
 pub mod rate_limit;
 pub mod routing;
 pub mod send_gate;
 pub mod signal;
 pub mod signal_api;
-/// GOLD-FEAT-10b — iMessage via a local BlueBubbles server (REST polling).
-/// Zero extra deps (pure `reqwest` + `serde` — both always-on). NEOTH dials
-/// OUT to the operator's BB Mac, so no public URL is needed. No feature gate:
-/// same always-compiled stance as Mattermost and LINE.
-pub mod imessage_bluebubbles;
 pub mod slack;
 pub mod slack_api;
 pub mod slack_events;
@@ -96,6 +87,7 @@ pub mod webhook_router;
 pub mod webhook_verify;
 pub mod whatsapp;
 pub mod whatsapp_api;
+pub mod whatsapp_baileys;
 pub mod whatsapp_webhook;
 
 use anyhow::Result;
@@ -152,16 +144,24 @@ pub(crate) async fn emit_gate_rejected(
     sender_id: &str,
     channel: &str,
 ) {
+    emit_gate_rejected_reason(writer, sender_id, channel, "not_on_allowlist").await;
+}
+
+/// Matrix has two additional pre-pipeline rejection boundaries (invite policy
+/// and encrypted-room policy). Keep them on the canonical `0x3B` audit event
+/// while recording the precise static reason; no message text or secret is
+/// accepted by this helper.
+pub(crate) async fn emit_gate_rejected_reason(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    sender_id: &str,
+    channel: &str,
+    reason: &'static str,
+) {
     let Some(w) = writer else {
         return;
     };
     let ts_unix = crate::time::now_unix_i64();
-    let payload = match serde_json::to_vec(&serde_json::json!({
-        "channel": channel,
-        "sender_id": sender_id,
-        "reason": "not_on_allowlist",
-        "ts_unix": ts_unix,
-    })) {
+    let payload = match gate_rejected_payload(sender_id, channel, reason, ts_unix) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "serialize CHANNEL_GATE_REJECTED failed");
@@ -175,6 +175,20 @@ pub(crate) async fn emit_gate_rejected(
     if let Err(e) = w.append(header, payload).await {
         tracing::warn!(error = %e, "CHANNEL_GATE_REJECTED append failed (non-fatal)");
     }
+}
+
+fn gate_rejected_payload(
+    sender_id: &str,
+    channel: &str,
+    reason: &'static str,
+    ts_unix: i64,
+) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({
+        "channel": channel,
+        "sender_id": sender_id,
+        "reason": reason,
+        "ts_unix": ts_unix,
+    }))
 }
 
 /// Concrete messenger family. SP-5 C-prime: replaces the previous
@@ -296,13 +310,6 @@ pub enum MentionKind {
 /// vendor cannot provide (e.g. WhatsApp Business edit_message). Callers must
 /// handle `NotSupported` instead of treating it as a generic failure — the
 /// streaming-preview pipeline drops intermediate edits when that happens.
-///
-/// `Deferred` is the v0.1.x scaffold tag: the channel adapter is
-/// configured + credential surface is live, but the runtime transport
-/// (webhook receiver / WebSocket / Hyperswarm) hasn't shipped yet. The
-/// daemon's channel-spawn loop matches this variant and skips
-/// restart-loop attempts — distinguishing "not implemented yet" from
-/// "transport blew up" so logs aren't noisy.
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
     #[error("channel transport error: {0}")]
@@ -311,8 +318,6 @@ pub enum ChannelError {
     NotSupported { feature: &'static str },
     #[error("rate limited; retry after {retry_after_secs}s")]
     RateLimited { retry_after_secs: u64 },
-    #[error("deferred — {reason}")]
-    Deferred { reason: &'static str },
     #[error("auth error: {0}")]
     Auth(String),
 }
@@ -320,7 +325,7 @@ pub enum ChannelError {
 /// One inbound message as it arrives from a channel transport, normalized
 /// across vendors so the daemon pipeline can be channel-agnostic downstream.
 ///
-/// SP-5 C-prime envelope: future-proofed for Keet / Slack / WhatsApp without
+/// SP-5 C-prime envelope: future-proofed for Slack / WhatsApp without
 /// adopting cross-channel identity (UUID v7) at v0.1.x. See
 /// `memory/neoth-sp5-channel-api.md`.
 #[derive(Debug, Clone)]
@@ -398,16 +403,22 @@ pub type PipelineHandler = Box<
 /// Implemented by every channel adapter. Object-safe so the daemon can hold
 /// `Box<dyn Channel>` in its registry.
 ///
-/// SP-5 C-prime: `name()` + `run(handler)` are the existing v0.1 surface;
-/// `send_text` + `send_media` were added for proactive paths the handler
-/// closure cannot reach. Everything else from `SPEC_channels.md`
-/// (`edit_message`, `ack_received`, `send_proactive`, `get_chat_meta`,
-/// `send_action_indicator`) stays deferred — adapters never implement them
-/// until a second production messenger lands.
+/// `run` owns inbound delivery. `send_text`/`send_media` own replies,
+/// `edit_message` powers live progressive previews on capable adapters, and
+/// `send_proactive` is the gated daemon-initiated delivery seam.
 #[async_trait]
 pub trait Channel: Send + Sync {
     /// Short identifier for logs + WAL events: "telegram", "whatsapp", ...
     fn name(&self) -> &'static str;
+
+    /// Whether this adapter can replace a previously sent text message in
+    /// place. The live-provider pipeline only exposes progressive previews to
+    /// adapters that explicitly opt in here; every other adapter remains
+    /// final-only, avoiding a burst of separate messages when edit support is
+    /// absent.
+    fn supports_message_edits(&self) -> bool {
+        false
+    }
 
     /// Long-running task. Receives messages from the transport, calls
     /// `handler` for each. Returns when the channel is shut down (handler
@@ -437,70 +448,6 @@ pub trait Channel: Send + Sync {
     ) -> std::result::Result<MessageId, ChannelError> {
         Err(ChannelError::NotSupported {
             feature: "send_media",
-        })
-    }
-
-    // ── C-10 (Session 21) — extended trait surface ─────────────────
-    //
-    // Five methods reserved by `SPEC_channels.md` for the second-
-    // production-adapter milestone. Default impls return
-    // `NotSupported` so the existing v0.1 adapters (Telegram /
-    // WhatsApp / Slack) keep compiling unchanged. When the second
-    // adapter lands + needs one of these surfaces, the daemon's
-    // channel-spawn loop will surface a clean "feature deferred"
-    // diagnostic instead of a panic.
-
-    /// Spawn the inbound-message receive loop as a long-running
-    /// task. Default impl is a no-op error so adapters that haven't
-    /// implemented it surface clearly. The legacy `run(handler)`
-    /// path stays the canonical entry point; this method is the
-    /// future-proofed split for adapters that want to expose the
-    /// receive loop independent of the handler.
-    async fn spawn_receive_loop(
-        &self,
-        _handler: PipelineHandler,
-    ) -> std::result::Result<tokio::task::JoinHandle<()>, ChannelError> {
-        Err(ChannelError::NotSupported {
-            feature: "spawn_receive_loop",
-        })
-    }
-
-    /// Acknowledge receipt of an inbound message. Some platforms
-    /// (e.g. WhatsApp Business, Discord interactions) require an
-    /// explicit ACK before the platform considers delivery
-    /// complete. Default `NotSupported` for adapters where ACK is
-    /// implicit (Telegram getUpdates / Slack events poll).
-    async fn ack_received(
-        &self,
-        _chat_id: &str,
-        _message_id: &MessageId,
-    ) -> std::result::Result<(), ChannelError> {
-        Err(ChannelError::NotSupported {
-            feature: "ack_received",
-        })
-    }
-
-    /// Fetch chat metadata (title, member count, topic) for a chat
-    /// the bot is in. Used by the future `neoth channels show
-    /// <id>` operator surface + by the cross-channel identity
-    /// resolver to enrich `InboundMessage::sender_display`.
-    async fn get_chat_meta(&self, _chat_id: &str) -> std::result::Result<ChatMeta, ChannelError> {
-        Err(ChannelError::NotSupported {
-            feature: "get_chat_meta",
-        })
-    }
-
-    /// Send a transient "typing…" / "uploading photo…" indicator
-    /// so the operator on the other end sees activity before the
-    /// reply lands. Telegram sendChatAction / Slack typing event /
-    /// WhatsApp presence update all map here.
-    async fn send_action_indicator(
-        &self,
-        _chat_id: &str,
-        _action: ChatAction,
-    ) -> std::result::Result<(), ChannelError> {
-        Err(ChannelError::NotSupported {
-            feature: "send_action_indicator",
         })
     }
 
@@ -543,56 +490,14 @@ pub trait Channel: Send + Sync {
     }
 }
 
-/// C-10 — minimal chat metadata returned by `Channel::get_chat_meta`.
-/// Vendor-specific fields stay in `extra` so the resolver doesn't
-/// have to bump the struct shape every time a platform adds a field.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ChatMeta {
-    pub chat_id: String,
-    pub title: Option<String>,
-    pub member_count: Option<u32>,
-    pub topic: Option<String>,
-    /// Vendor-specific extras as opaque key/value strings.
-    pub extra: std::collections::BTreeMap<String, String>,
-}
-
-/// C-10 — typing-style indicator the platform displays to the
-/// other side. Pinned exhaustively per the platforms NEOTH
-/// currently knows about; adding a new action needs an entry here
-/// + per-adapter mapping (Telegram chat-action / Slack typing /
-/// WhatsApp presence).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ChatAction {
-    /// "typing…" — operator should expect a text reply soon.
-    Typing,
-    /// "uploading photo…" / "sending image…"
-    UploadingPhoto,
-    /// "uploading document…" / "sending file…"
-    UploadingDocument,
-    /// "recording voice message…"
-    RecordingVoice,
-}
-
-impl ChatAction {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Typing => "typing",
-            Self::UploadingPhoto => "uploading_photo",
-            Self::UploadingDocument => "uploading_document",
-            Self::RecordingVoice => "recording_voice",
-        }
-    }
-}
-
 /// F-3: send a [`formatter::CanonicalReply`] through a Channel adapter,
 /// routing through the per-channel `Formatter` impl when one exists
 /// and falling back to plain `send_text(text)` otherwise.
 ///
 /// Returns the `MessageId` of every chunk the formatter produced (one
-/// per split-message, in order). All current [`ChannelKind`] variants
-/// have formatters; the `None` fallback is kept for future channel
-/// variants so the plain prose still sends even before a dialect
-/// formatter ships.
+/// per split-message, in order). A known unavailable integration fails before
+/// touching the supplied adapter; the `None` fallback is only for future
+/// supported channel variants awaiting a dialect formatter.
 ///
 /// Snapshot semantics: this helper does NOT emit `ChannelSend`
 /// rollback frames. Callers that want rollback coverage chain through
@@ -604,6 +509,11 @@ pub async fn send_canonical(
     chat_id: &str,
     reply: &formatter::CanonicalReply,
 ) -> std::result::Result<Vec<MessageId>, ChannelError> {
+    if kind == ChannelKind::Keet {
+        return Err(ChannelError::NotSupported {
+            feature: "keet (no supported public chat API)",
+        });
+    }
     match formatter::for_channel(kind) {
         Some(fmt) => {
             let chunks = fmt.format(reply);
@@ -767,6 +677,24 @@ mod tests {
     }
 
     #[test]
+    fn matrix_gate_audit_reason_is_precise_and_text_free() {
+        for reason in [
+            "invite_not_allowed",
+            "room_or_sender_not_allowed",
+            "unencrypted_room",
+        ] {
+            let payload =
+                gate_rejected_payload("@mallory:example.org", "matrix", reason, 42).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(value["channel"], "matrix");
+            assert_eq!(value["sender_id"], "@mallory:example.org");
+            assert_eq!(value["reason"], reason);
+            assert_eq!(value["ts_unix"], 42);
+            assert!(value.get("text").is_none());
+        }
+    }
+
+    #[test]
     fn channel_error_not_supported_carries_feature_name() {
         let err = ChannelError::NotSupported {
             feature: "edit_message",
@@ -824,63 +752,6 @@ mod tests {
         ));
     }
 
-    // ── C-10 default impls (Session 21) ──────────────────────────
-
-    #[tokio::test]
-    async fn default_spawn_receive_loop_returns_not_supported() {
-        let c = NoopChannel;
-        let handler: PipelineHandler = Box::new(|_inbound| Box::pin(async { Ok(None) }));
-        let err = c.spawn_receive_loop(handler).await.unwrap_err();
-        assert!(matches!(
-            err,
-            ChannelError::NotSupported {
-                feature: "spawn_receive_loop"
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn default_ack_received_returns_not_supported() {
-        let c = NoopChannel;
-        let err = c
-            .ack_received("x", &MessageId("m-1".into()))
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            ChannelError::NotSupported {
-                feature: "ack_received"
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn default_get_chat_meta_returns_not_supported() {
-        let c = NoopChannel;
-        let err = c.get_chat_meta("x").await.unwrap_err();
-        assert!(matches!(
-            err,
-            ChannelError::NotSupported {
-                feature: "get_chat_meta"
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn default_send_action_indicator_returns_not_supported() {
-        let c = NoopChannel;
-        let err = c
-            .send_action_indicator("x", ChatAction::Typing)
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            ChannelError::NotSupported {
-                feature: "send_action_indicator"
-            }
-        ));
-    }
-
     #[tokio::test]
     async fn default_edit_message_returns_not_supported() {
         let c = NoopChannel;
@@ -911,24 +782,6 @@ mod tests {
                 feature: "send_proactive"
             }
         ));
-    }
-
-    #[test]
-    fn chat_action_as_str_pinned() {
-        assert_eq!(ChatAction::Typing.as_str(), "typing");
-        assert_eq!(ChatAction::UploadingPhoto.as_str(), "uploading_photo");
-        assert_eq!(ChatAction::UploadingDocument.as_str(), "uploading_document");
-        assert_eq!(ChatAction::RecordingVoice.as_str(), "recording_voice");
-    }
-
-    #[test]
-    fn chat_meta_default_is_empty() {
-        let m = ChatMeta::default();
-        assert!(m.chat_id.is_empty());
-        assert!(m.title.is_none());
-        assert!(m.member_count.is_none());
-        assert!(m.topic.is_none());
-        assert!(m.extra.is_empty());
     }
 
     // ── C-13 human_uuid field (Session 21) ────────────────────────
@@ -1190,7 +1043,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_canonical_routes_through_keet_formatter() {
+    async fn send_canonical_rejects_unavailable_keet_transport() {
         let c = CapturingChannel {
             sent: std::sync::Mutex::new(Vec::new()),
         };
@@ -1202,12 +1055,11 @@ mod tests {
             }],
             length_hint: None,
         };
-        let ids = send_canonical(&c, ChannelKind::Keet, "chat-1", &reply)
+        let error = send_canonical(&c, ChannelKind::Keet, "chat-1", &reply)
             .await
-            .expect("send_canonical keet");
-        assert_eq!(ids.len(), 1);
-        let sent = c.sent.lock().unwrap();
-        assert_eq!(sent[0], "plain *unescaped* body\n```rust\nfn x() {}\n```");
+            .unwrap_err();
+        assert!(error.to_string().contains("no supported public chat API"));
+        assert!(c.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

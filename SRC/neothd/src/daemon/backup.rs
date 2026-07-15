@@ -30,12 +30,12 @@
 //!
 //! ## Secrets in the tarball
 //!
-//! `credentials.yaml` (API keys, Telegram/Slack tokens) is bundled BY
-//! DEFAULT so a restore is not silently missing every key (Pick #34).
-//! The archive is **plaintext** until `age` encryption lands, so backup
-//! emits a loud warning when it includes credentials and the operator
-//! can pass `--no-credentials` to exclude them (GOLD-SEC-27). Store the
-//! archive on encrypted media regardless.
+//! `credentials.yaml` (API keys, Telegram/Slack tokens) is excluded by
+//! default because the archive is plaintext. The operator must explicitly
+//! pass `--include-credentials`; backup then emits a loud warning. This keeps
+//! the default artifact safe to place on ordinary backup storage while still
+//! supporting a complete restore onto operator-controlled encrypted media
+//! (GOLD-SEC-27).
 //!
 //! ## Restore safety
 //!
@@ -48,9 +48,9 @@
 //! ## Format
 //!
 //! `tar.gz` with paths relative to `~/.neoth/`. Restore unpacks straight
-//! into an empty target directory. Operator passphrase encryption is a
-//! Phase 33c follow-up (`age` crate); for v0.1 the tarball is plaintext —
-//! the operator is responsible for storing it on encrypted media.
+//! into an empty target directory. The archive is plaintext, therefore
+//! secret-bearing files are opt-in and the operator is responsible for
+//! storing an opted-in archive on encrypted media.
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -97,9 +97,9 @@ const DEFAULT_INCLUDES: &[&str] = &[
 pub struct BackupOutcome {
     /// Number of top-level paths included in the tarball.
     pub included: usize,
-    /// True when the tarball contains the plaintext `credentials.yaml`
-    /// (API keys, channel tokens). The caller MUST warn the operator to
-    /// store the archive on encrypted media (GOLD-SEC-27).
+    /// True when the operator explicitly included the plaintext
+    /// `credentials.yaml` (API keys, channel tokens). The caller MUST warn the
+    /// operator to store the archive on encrypted media (GOLD-SEC-27).
     pub included_plaintext_credentials: bool,
 }
 
@@ -107,8 +107,9 @@ pub struct BackupOutcome {
 ///
 /// Missing files are silently skipped — a fresh install has no
 /// `tweaks.toml` and that's fine. Caller passes `include_wal = true` to
-/// add raw WAL segments to the bundle, and `include_credentials = true`
-/// to bundle `credentials.yaml` (plaintext secrets — the returned
+/// add raw WAL segments to the bundle, and must explicitly pass
+/// `include_credentials = true` to bundle `credentials.yaml` (plaintext
+/// secrets — the returned
 /// [`BackupOutcome::included_plaintext_credentials`] is set so the caller
 /// can warn the operator).
 pub fn write_backup(
@@ -130,7 +131,7 @@ pub fn write_backup(
     let mut included_plaintext_credentials = false;
     for rel in DEFAULT_INCLUDES {
         // credentials.yaml is plaintext secrets — only bundle it when the
-        // operator opted in (default true), and flag it so the caller warns.
+        // operator explicitly opted in, and flag it so the caller warns.
         if *rel == "credentials.yaml" && !include_credentials {
             continue;
         }
@@ -386,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn backup_includes_credentials_by_default_and_flags_them() {
+    fn backup_includes_credentials_when_explicitly_opted_in_and_flags_them() {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");
@@ -401,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn backup_excludes_credentials_when_opted_out() {
+    fn backup_excludes_credentials_by_default() {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");

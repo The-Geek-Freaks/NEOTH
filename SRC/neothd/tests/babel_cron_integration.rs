@@ -34,7 +34,9 @@ fn frame(event_type: u8, payload: serde_json::Value) -> Vec<u8> {
 }
 
 fn segment_bytes(frames: &[Vec<u8>]) -> Vec<u8> {
-    let mut out = SegmentHeader::new(0, 1, 0, 0, [0u8; 16]).to_le_bytes().to_vec();
+    let mut out = SegmentHeader::new(0, 1, 0, 0, [0u8; 16])
+        .to_le_bytes()
+        .to_vec();
     for f in frames {
         out.extend_from_slice(f);
     }
@@ -52,12 +54,16 @@ async fn settle() {
 async fn babel_spawn_returns_none_when_disabled() {
     let dir = tempfile::tempdir().expect("tempdir");
     let views = ViewsExecutor::open(&dir.path().join("views.db"), 1).expect("views");
-    let cfg = BabelConfig { enabled: false, ..BabelConfig::default() };
+    let cfg = BabelConfig {
+        enabled: false,
+        ..BabelConfig::default()
+    };
     let handle = spawn_babel_cron_loop(
         cfg,
         AutonomyLevel::Standard,
         dir.path().to_path_buf(),
         views,
+        None,
         None,
     );
     assert!(handle.is_none(), "disabled observer must not spawn a task");
@@ -71,12 +77,16 @@ async fn babel_cron_emits_window_row_in_sqlite() {
     let views_path = dir.path().join("views.db");
     let views = ViewsExecutor::open(&views_path, 1).expect("views");
 
-    let cfg = BabelConfig { tick_interval_secs: 1, ..BabelConfig::default() };
+    let cfg = BabelConfig {
+        tick_interval_secs: 1,
+        ..BabelConfig::default()
+    };
     let handle = spawn_babel_cron_loop(
         cfg,
         AutonomyLevel::Standard,
         wal_dir.clone(),
         views,
+        None,
         None,
     )
     .expect("enabled observer spawns");
@@ -120,7 +130,10 @@ async fn babel_cron_emits_window_row_in_sqlite() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     handle.abort();
-    assert!(count >= 1, "window row appears in idx_babel_windows (got {count})");
+    assert!(
+        count >= 1,
+        "window row appears in idx_babel_windows (got {count})"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -143,6 +156,7 @@ async fn babel_threshold_breach_reaches_sse_feed() {
         wal_dir.clone(),
         views,
         Some(Arc::new(tx)),
+        None,
     )
     .expect("enabled observer spawns");
     settle().await;
@@ -180,5 +194,9 @@ async fn babel_threshold_breach_reaches_sse_feed() {
     .expect("threshold breach reaches the SSE feed within 20s");
     handle.abort();
     assert_eq!(breach.actor, "babel");
-    assert!(breach.message.contains("15-min"), "breach names the window: {}", breach.message);
+    assert!(
+        breach.message.contains("15-min"),
+        "breach names the window: {}",
+        breach.message
+    );
 }

@@ -39,9 +39,7 @@ pub fn compute_cluster_key_proof(
     msg.extend_from_slice(CLUSTER_PEER_AUTH_NS);
     msg.extend_from_slice(signer_pk);
     msg.extend_from_slice(verifier_pk);
-    let mut out = [0u8; 32];
-    crate::channels::keet_crypto::hmac_sha256(&key.0, &msg, &mut out);
-    out
+    crate::util::hmac::sha256(&key.0, &msg)
 }
 
 /// Verify a peer's `claimed` proof. `peer_pk` is the peer's Noise static key
@@ -138,8 +136,7 @@ mod tests {
         msg.extend_from_slice(b"neoth-cluster-peer-auth/v1\0");
         msg.extend_from_slice(&A);
         msg.extend_from_slice(&B);
-        let mut want = [0u8; 32];
-        crate::channels::keet_crypto::hmac_sha256(&k.0, &msg, &mut want);
+        let want = crate::util::hmac::sha256(&k.0, &msg);
         assert_eq!(got, want);
     }
 }

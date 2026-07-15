@@ -33,8 +33,11 @@ Walking through this end to end demonstrates:
 ## 0. Setup (one-time, 3 minutes)
 
 ```bash
-# 0.1 — install neoth (release tarball preferred, cargo install fallback)
-cargo install neoth
+# 0.1 — current 1.0.0 install from the source tree
+git clone https://github.com/The-Geek-Freaks/NEOTH
+cd NEOTH/SRC
+cargo install --locked --path neothd --features release-server
+# After publication: cargo install neoth --locked --features release-server
 
 # 0.2 — initialise into a throwaway directory so this protocol does
 #       not pollute your real ~/.neoth/
@@ -234,9 +237,9 @@ rm -rf "$NEOTH_HOME"
 
 Out of scope for the v1 release proof:
 
-- **Multi-host cluster routing.** Single-host only — cluster transport
-  rides on the Keet adapter, which is gated on the R-A1 Hyperswarm
-  decision (see [R-A1 research note](../QUELLEN/research/R-A1_hyperswarm.md)
+- **Multi-host cluster routing.** Single-host only — cluster transport uses
+  NEOTH's own peeroxide/Hyperswarm protocol; it is not a Keet adapter
+  (see [R-A1 research note](../QUELLEN/research/R-A1_hyperswarm.md)
   if you have the operator-local docs).
 - **Hysteria QUIC transport.** Sidecar pattern only — the Hysteria
   daemon runs as a separate process today. Verify the sidecar shape

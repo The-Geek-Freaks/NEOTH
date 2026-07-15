@@ -14,9 +14,9 @@
 
 use crate::config::automation::AutoSkillExtractConfig;
 use crate::proactive::action_staging::{
-    make_proposal_id_content_only, ProposalKind, ProposedAction, ProposalStatus,
+    ProposalKind, ProposalStatus, ProposedAction, make_proposal_id_content_only,
 };
-use crate::skills::creator::{build_manifest, CreateParams};
+use crate::skills::creator::{CreateParams, build_manifest};
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
@@ -125,10 +125,11 @@ pub async fn maybe_extract_skill(
 
     // Call the provider. Uses the same provider as the turn (no extra auth
     // required, no separate utility-provider build needed at this call site).
+    let temperature = crate::providers::internal_temperature(provider, 0.1, "skills.auto_extract");
     let req = crate::providers::Request {
         prompt: extraction_prompt,
         system: None,
-        temperature: Some(0.1),
+        temperature,
         ..Default::default()
     };
 
@@ -195,11 +196,8 @@ pub async fn maybe_extract_skill(
     // Dedup is content-only: same {title, draft_yaml} at any timestamp → same id.
     // The timestamp is NOT part of the hash so re-extracting the same skill
     // in a later run produces the same proposal id (stable dedup across time).
-    let proposal_id = make_proposal_id_content_only(
-        ProposalKind::Skill,
-        &extracted.title,
-        &draft_yaml,
-    );
+    let proposal_id =
+        make_proposal_id_content_only(ProposalKind::Skill, &extracted.title, &draft_yaml);
 
     let rationale = format!(
         "Auto-extracted from an agent run with {} tool calls (confidence {:.2}). \
@@ -294,7 +292,9 @@ mod tests {
 
     impl MockProvider {
         fn returning(s: &str) -> Self {
-            Self { response: s.to_string() }
+            Self {
+                response: s.to_string(),
+            }
         }
     }
 
@@ -306,6 +306,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
                 text: self.response.clone(),
+                identity: Default::default(),
                 model: "mock-model".to_string(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,
@@ -328,7 +329,10 @@ mod tests {
 
     #[test]
     fn slugify_basic() {
-        assert_eq!(slugify_skill_id("debug docker container"), "debug-docker-container");
+        assert_eq!(
+            slugify_skill_id("debug docker container"),
+            "debug-docker-container"
+        );
     }
 
     #[test]
@@ -368,7 +372,10 @@ mod tests {
         );
         let config = default_config(); // min_tool_calls = 2
         let result = maybe_extract_skill("q", "a", 1, &[], &mock, &config).await;
-        assert!(result.is_none(), "should be None when tool_call_count < min_tool_calls");
+        assert!(
+            result.is_none(),
+            "should be None when tool_call_count < min_tool_calls"
+        );
     }
 
     #[tokio::test]
@@ -378,7 +385,10 @@ mod tests {
         );
         let config = default_config(); // threshold = 0.6
         let result = maybe_extract_skill("q", "a", 3, &[], &mock, &config).await;
-        assert!(result.is_none(), "should be None when confidence < threshold");
+        assert!(
+            result.is_none(),
+            "should be None when confidence < threshold"
+        );
     }
 
     #[tokio::test]
@@ -387,7 +397,10 @@ mod tests {
             r#"{"title":"t","steps":["think about it"],"tags":[],"confidence":0.9,"computer_executable":false}"#,
         );
         let result = maybe_extract_skill("q", "a", 3, &[], &mock, &default_config()).await;
-        assert!(result.is_none(), "should be None when computer_executable is false");
+        assert!(
+            result.is_none(),
+            "should be None when computer_executable is false"
+        );
     }
 
     #[tokio::test]
@@ -414,7 +427,10 @@ mod tests {
         assert!(result.is_some(), "should produce a proposal");
         let p = result.unwrap();
         assert_eq!(p.kind, ProposalKind::Skill);
-        assert!(p.draft_yaml.contains("docker"), "YAML should mention docker");
+        assert!(
+            p.draft_yaml.contains("docker"),
+            "YAML should mention docker"
+        );
         assert!(p.draft_yaml.contains("id:"), "YAML should have id field");
         // YAML must be loader-compatible (round-trip through SkillManifest).
         let m: crate::skills::schema::SkillManifest =
@@ -432,10 +448,17 @@ mod tests {
         let json = r#"{"title":"run-tests","steps":["cargo test"],"tags":["rust"],"confidence":0.75,"computer_executable":true}"#;
         let mock1 = MockProvider::returning(json);
         let mock2 = MockProvider::returning(json);
-        let r1 = maybe_extract_skill("q", "a", 2, &[], &mock1, &default_config()).await.unwrap();
-        let r2 = maybe_extract_skill("q", "a", 2, &[], &mock2, &default_config()).await.unwrap();
+        let r1 = maybe_extract_skill("q", "a", 2, &[], &mock1, &default_config())
+            .await
+            .unwrap();
+        let r2 = maybe_extract_skill("q", "a", 2, &[], &mock2, &default_config())
+            .await
+            .unwrap();
         // The ids must be byte-for-byte equal: content-only hash, no timestamp component.
-        assert_eq!(r1.id, r2.id, "same content must produce the same proposal id across calls");
+        assert_eq!(
+            r1.id, r2.id,
+            "same content must produce the same proposal id across calls"
+        );
         assert!(r1.id.contains("skill"), "id should contain kind 'skill'");
         assert_eq!(r1.kind, r2.kind);
         assert_eq!(r1.draft_yaml, r2.draft_yaml);
@@ -488,8 +511,14 @@ mod tests {
             },
         ];
         let digest = build_tool_digest(&records, 1200);
-        assert!(digest.contains("shell/run_command"), "digest must contain first tool");
-        assert!(digest.contains("filesystem/read_file"), "digest must contain second tool");
+        assert!(
+            digest.contains("shell/run_command"),
+            "digest must contain first tool"
+        );
+        assert!(
+            digest.contains("filesystem/read_file"),
+            "digest must contain second tool"
+        );
         assert!(digest.contains("→ ok"), "success records must show ok");
     }
 
@@ -554,6 +583,7 @@ mod tests {
                 *self.captured.lock().unwrap() = req.prompt.clone();
                 Ok(crate::providers::Completion {
                     text: r#"{"title":"run-cargo-test","steps":["cargo test"],"tags":["rust"],"confidence":0.82,"computer_executable":true}"#.to_string(),
+                    identity: Default::default(),
                     model: "mock".to_string(),
                     latency: std::time::Duration::ZERO,
                     input_tokens: None,
@@ -565,7 +595,9 @@ mod tests {
         }
 
         let captured = Arc::new(Mutex::new(String::new()));
-        let mock = CapturingMock { captured: captured.clone() };
+        let mock = CapturingMock {
+            captured: captured.clone(),
+        };
 
         // A dummy response string whose first 512 chars MUST NOT appear in the prompt.
         let dummy_response: String = "X".repeat(600);
@@ -595,7 +627,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_some(), "should produce a proposal from tool-digest path");
+        assert!(
+            result.is_some(),
+            "should produce a proposal from tool-digest path"
+        );
 
         let prompt_seen = captured.lock().unwrap().clone();
         // The distiller MUST see the tool digest, not the blind response prefix.

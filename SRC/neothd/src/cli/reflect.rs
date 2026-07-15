@@ -186,11 +186,18 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
         DigestPeriod::Yearly => "yearly-last.txt",
     };
     let marker_path = home.join("reflections").join(marker_name);
-    if std::fs::read_to_string(&marker_path)
-        .ok()
-        .map(|s| s.trim() == tag.as_str())
-        .unwrap_or(false)
+    let already_done = if marker_path
+        .try_exists()
+        .with_context(|| format!("inspect reflection marker {}", marker_path.display()))?
     {
+        std::fs::read_to_string(&marker_path)
+            .with_context(|| format!("read reflection marker {}", marker_path.display()))?
+            .trim()
+            == tag.as_str()
+    } else {
+        false
+    };
+    if already_done {
         if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
             println!(
                 "{}",
@@ -204,6 +211,10 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
         }
         return Ok(());
     }
+    // Validate the instance-local operator config before creating either the
+    // reflection archive record or an Obsidian side effect. Only a genuinely
+    // missing config may use compiled defaults.
+    let cfg = FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
     let topics =
         crate::reflection::top_topics_in_days(&conn, now_ns, window, n).context("topic query")?;
     let Some(refl) = periodic::build_reflection(kind, &tag, &topics, now_unix) else {
@@ -223,22 +234,17 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
     periodic::append(home, &refl).context("archive reflection")?;
     // GR-fix: record completion for this tag (same marker the daemon writes) so a
     // re-run on the same day is a no-op.
-    if let Some(p) = marker_path.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
-    let _ = std::fs::write(&marker_path, tag.as_str());
+    crate::util::atomic_write::atomic_write_private(&marker_path, tag.as_bytes())
+        .with_context(|| format!("persist reflection marker {}", marker_path.display()))?;
 
     // Obsidian sync if a vault is configured.
     let mut obsidian_path = None;
-    if let Ok(cfg) = FreedomConfig::load_from_default_path() {
-        if let Some(vault) = cfg.obsidian_vault.as_deref() {
-            let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
-            let o =
-                periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
-                    .context("Obsidian sync")?;
-            if o.written {
-                obsidian_path = Some(o.target_path.display().to_string());
-            }
+    if let Some(vault) = cfg.obsidian_vault.as_deref() {
+        let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
+        let o = periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
+            .context("Obsidian sync")?;
+        if o.written {
+            obsidian_path = Some(o.target_path.display().to_string());
         }
     }
 

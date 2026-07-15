@@ -3,11 +3,8 @@
 //! D14a: downloads model weights + tokenizer from Hugging Face into
 //! `~/.neoth/models/<name>/` on first construction, then caches.
 //!
-//! D14b (this slice): wires the actual candle forward pass. CPU + argmax
-//! sampling for v0.1.x — no top-p, no streaming, no GPU branching yet.
-//! Per `memory/neoth-inference-topology.md`: the operator already picked
-//! the accelerator in wizard step 5b; CUDA/Metal/OpenVINO branching lands
-//! when there is a real perf complaint against CPU.
+//! D14b and Gold: wires the candle forward pass, accelerator selection,
+//! temperature/top-p/seed sampling, stop sequences, and token streaming.
 //!
 //! Why local inference: per the operator-profile design, NEOTH extracts
 //! profile attributes (preferences, communication style, schedule patterns)
@@ -24,7 +21,10 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tracing::info;
 
-use super::{ChunkStream, Completion, CompletionChunk, Provider, Request};
+use super::{
+    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 
 use crate::daemon::accelerator::Accelerator;
 
@@ -83,6 +83,45 @@ pub const DEFAULT_HF_REPO: &str = "Qwen/Qwen2.5-3B-Instruct";
 pub const TOKENIZER_FILE: &str = "tokenizer.json";
 pub const CONFIG_FILE: &str = "config.json";
 pub const SAFETENSORS_FILE: &str = "model.safetensors";
+
+const REQUIRED_ARTIFACTS: [crate::media::model_manager::RequiredArtifact; 3] = [
+    crate::media::model_manager::RequiredArtifact {
+        filename: TOKENIZER_FILE,
+        kind: crate::media::model_manager::ArtifactKind::JsonObject,
+        expected: None,
+    },
+    crate::media::model_manager::RequiredArtifact {
+        filename: CONFIG_FILE,
+        kind: crate::media::model_manager::ArtifactKind::JsonObject,
+        expected: None,
+    },
+    crate::media::model_manager::RequiredArtifact {
+        filename: SAFETENSORS_FILE,
+        kind: crate::media::model_manager::ArtifactKind::Safetensors,
+        expected: None,
+    },
+];
+
+/// The shared Wizard/Doctor/runtime readiness contract. This validates the
+/// exact three files the runtime opens, including tokenizer/config parsing and
+/// safetensors structure; a populated HF metadata directory is never enough.
+pub(crate) fn validate_runtime_artifacts_at(cache_dir: &Path, during_install: bool) -> Result<()> {
+    let health = if during_install {
+        crate::media::model_manager::cache_health_during_install(cache_dir, &REQUIRED_ARTIFACTS)
+    } else {
+        crate::media::model_manager::cache_health(cache_dir, &REQUIRED_ARTIFACTS)
+    };
+    if !health.is_ready() {
+        anyhow::bail!("Qwen runtime cache is not loadable: {health}");
+    }
+    tokenizers::Tokenizer::from_file(cache_dir.join(TOKENIZER_FILE))
+        .map_err(|error| anyhow::anyhow!("load Qwen tokenizer.json: {error}"))?;
+    let config =
+        std::fs::read_to_string(cache_dir.join(CONFIG_FILE)).context("read Qwen config.json")?;
+    serde_json::from_str::<candle_transformers::models::qwen2::Config>(&config)
+        .context("parse Qwen2 config.json")?;
+    Ok(())
+}
 
 /// L-14 (Session 19, 2026-05-21): minimum free bytes required
 /// on the cache filesystem before we kick off the ~3 GB HF
@@ -184,7 +223,8 @@ impl SamplingConfig {
     /// Per-call override: any `Some(x)` field on `Request` wins over the
     /// adapter's cached default. Lets `neoth chat --temperature 0.8
     /// --top-p 0.95` flow through to the sampling loop without rebuilding
-    /// the adapter. Cloud providers ignore these fields entirely.
+    /// the adapter. Every provider leaf separately declares and validates its
+    /// supported controls before dispatch.
     pub fn merged_with_request(self, req: &Request) -> Self {
         SamplingConfig {
             temperature: req.temperature.unwrap_or(self.temperature),
@@ -282,96 +322,85 @@ impl LocalQwenAdapter {
     async fn ensure_artifacts(&mut self) -> Result<()> {
         use hf_hub::api::tokio::Api;
 
-        let need_download = !self.tokenizer_path.exists()
-            || !self.config_path.exists()
-            || !self.weights_path.exists();
-        if !need_download {
+        let pending = crate::media::model_manager::has_pending_download(&self.cache_dir)
+            .context("inspect pending Qwen download lifecycle")?;
+        let artifacts_ready = validate_runtime_artifacts_at(&self.cache_dir, pending).is_ok();
+        if artifacts_ready && !pending {
             info!(repo = %self.repo, cache = %self.cache_dir.display(), "Qwen artifacts already cached");
             return Ok(());
         }
 
-        // HF-01 — honour the operator's HuggingFace-download policy on the
-        // IMPLICIT first-use download path too (the explicit `neoth model
-        // pull` already gates on this). An air-gapped / bandwidth-capped /
-        // firewalled operator sets `updater.allow_huggingface_downloads =
-        // false`; refuse the silent ~3 GB fetch with an actionable error
-        // instead of reaching out anyway. Best-effort config read; absent
-        // config defaults permissive (matches the serde default `true`).
-        let allow_hf = crate::config::FreedomConfig::load_from_default_path()
-            .map(|c| c.updater.allow_huggingface_downloads)
-            .unwrap_or(true);
-        if !allow_hf {
-            anyhow::bail!(
-                "Hugging Face downloads are disabled \
-                 (freedom.yaml::updater.allow_huggingface_downloads = false), but the local_qwen \
-                 provider needs to fetch its weights from {}. Set it to true, pre-place the \
-                 artifacts under {}, or run `neoth model pull` on a connected machine.",
-                self.repo,
-                self.cache_dir.display(),
-            );
-        }
+        let audit_cache_dir = self.cache_dir.clone();
+        let audit_model_id = self.repo.clone();
+        crate::daemon::model_download_audit::run_implicit_model_download(
+            &audit_cache_dir,
+            &audit_model_id,
+            crate::daemon::model_download_audit::ImplicitModelDownloadSource::Qwen,
+            artifacts_ready,
+            |permit| async move {
+                // Type-level boundary: `Api::new` is unreachable until the
+                // exact cache/model attempt has a durable D7 acknowledgement.
+                permit.require(&self.cache_dir, &self.repo)?;
+                let allow_hf = crate::config::FreedomConfig::load_from_default_path_or_default()
+                    .context("load Qwen download policy from freedom.yaml")?
+                    .updater
+                    .allow_huggingface_downloads;
+                if !allow_hf {
+                    anyhow::bail!(
+                        "Hugging Face downloads are disabled \
+                         (freedom.yaml::updater.allow_huggingface_downloads = false), but the \
+                         local_qwen provider needs to fetch its weights from {}. Set it to true, \
+                         pre-place the artifacts under {}, or run `neoth model pull` on a \
+                         connected machine.",
+                        self.repo,
+                        self.cache_dir.display(),
+                    );
+                }
+                if std::env::var("NEOTH_QWEN_SKIP_DISK_PREFLIGHT")
+                    .ok()
+                    .as_deref()
+                    != Some("1")
+                {
+                    preflight_disk_space(&self.cache_dir, QWEN_DOWNLOAD_MIN_FREE_BYTES)
+                        .context("disk-space pre-flight before Qwen download")?;
+                }
+                info!(repo = %self.repo, "downloading Qwen artifacts from Hugging Face (one-time, ~3 GB)");
+                let api = Api::new().context("init HF Hub API")?;
+                let repo_handle = api.model(self.repo.clone());
 
-        // L-14 disk-space pre-flight. Bypassable via env var for
-        // CI / sandbox scenarios where the OS-reported free space
-        // is unreliable (tmpfs, overlayfs, etc).
-        if std::env::var("NEOTH_QWEN_SKIP_DISK_PREFLIGHT")
-            .ok()
-            .as_deref()
-            != Some("1")
-        {
-            preflight_disk_space(&self.cache_dir, QWEN_DOWNLOAD_MIN_FREE_BYTES)
-                .context("disk-space pre-flight before Qwen download")?;
-        }
-
-        // HF-01 implicit-emit (Session 28g+): pair the explicit-pull
-        // audit (`run_pull`) with a matching audit on the implicit first-
-        // use path so a silent ~3 GB fetch is no longer invisible in
-        // `neoth wal show`. The `trigger=implicit` discriminator in the
-        // payload lets the operator + threat-model audit tell the
-        // implicit path apart from `neoth model pull`. Best-effort:
-        // single-writer-invariant skip when a live daemon owns the
-        // segment; failure to emit must not abort the download.
-        crate::daemon::model_download_audit::emit_start(&self.repo).await;
-        let download_start = std::time::Instant::now();
-
-        info!(repo = %self.repo, "downloading Qwen artifacts from Hugging Face (one-time, ~3 GB)");
-        let api = Api::new().context("init HF Hub API")?;
-        let repo_handle = api.model(self.repo.clone());
-
-        for (filename, target) in [
-            (TOKENIZER_FILE, &self.tokenizer_path),
-            (CONFIG_FILE, &self.config_path),
-            (SAFETENSORS_FILE, &self.weights_path),
-        ] {
-            // Use a generous timeout for the safetensors fetch.
-            let downloaded =
-                tokio::time::timeout(Duration::from_secs(900), repo_handle.download(filename))
+                for (filename, target) in [
+                    (TOKENIZER_FILE, &self.tokenizer_path),
+                    (CONFIG_FILE, &self.config_path),
+                    (SAFETENSORS_FILE, &self.weights_path),
+                ] {
+                    let downloaded = tokio::time::timeout(
+                        Duration::from_secs(900),
+                        repo_handle.download(filename),
+                    )
                     .await
                     .with_context(|| format!("HF download timeout for {filename}"))?
                     .with_context(|| format!("HF download error for {filename}"))?;
-            // hf-hub returns its own cache path — copy/move to our cache dir.
-            if &downloaded != target {
-                std::fs::copy(&downloaded, target).with_context(|| {
-                    format!(
-                        "copy HF cache {} -> {}",
-                        downloaded.display(),
-                        target.display()
-                    )
-                })?;
-            }
-            info!(
-                file = filename,
-                size = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0),
-                "cached"
-            );
-        }
-        crate::daemon::model_download_audit::emit_complete(
-            &self.repo,
-            &self.cache_dir.display().to_string(),
-            download_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                    if &downloaded != target {
+                        std::fs::copy(&downloaded, target).with_context(|| {
+                            format!(
+                                "copy HF cache {} -> {}",
+                                downloaded.display(),
+                                target.display()
+                            )
+                        })?;
+                    }
+                    info!(
+                        file = filename,
+                        size = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0),
+                        "cached"
+                    );
+                }
+                validate_runtime_artifacts_at(&self.cache_dir, true)
+                    .context("validate downloaded Qwen runtime artifacts")?;
+                Ok(())
+            },
         )
-        .await;
-        Ok(())
+        .await
     }
 }
 
@@ -381,7 +410,19 @@ impl Provider for LocalQwenAdapter {
         "local_qwen"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.repo)
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         // GR-04: circuit breaker. For local inference the breaker
         // mainly catches model-load / weights-mmap / candle runtime
         // failures (e.g. OOM, GPU hang) — repeated crashes stop
@@ -416,7 +457,11 @@ impl Provider for LocalQwenAdapter {
         .await
     }
 
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+    async fn stream_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
         // GR-04 stream-wrap: same circuit-breaker semantics as `complete`.
         crate::providers::circuit_breaker_stream::run_stream_with_breaker("local_qwen", async {
             // Phase 2c: real token-by-token streaming. We spawn the sampling
@@ -722,6 +767,7 @@ fn run_stream(
                 let chunk = CompletionChunk {
                     delta,
                     done: false,
+                    identity: Default::default(),
                     input_tokens: None,
                     output_tokens: None,
                     cache_creation_tokens: None,
@@ -741,6 +787,7 @@ fn run_stream(
     let final_chunk = CompletionChunk {
         delta: String::new(),
         done: true,
+        identity: Default::default(),
         input_tokens: Some(input_token_count as u32),
         output_tokens: Some(new_tokens.len() as u32),
         cache_creation_tokens: None,
@@ -982,6 +1029,7 @@ fn run_forward(
     };
     Ok(Completion {
         text,
+        identity: Default::default(),
         model: req.model.clone().unwrap_or_else(|| repo.to_string()),
         latency: started.elapsed(),
         input_tokens: Some(input_token_count as u32),
@@ -1299,12 +1347,13 @@ fn human_bytes(n: u64) -> String {
 /// `~/.neoth/models/<repo-flattened>/`. `Qwen/Qwen2.5-3B-Instruct` becomes
 /// `Qwen-Qwen2.5-3B-Instruct/` (forward slash replaced; safe on every OS).
 pub fn default_cache_dir(repo: &str) -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let flattened = repo.replace('/', "-");
-    home.join(".neoth").join("models").join(flattened)
+    cache_dir_at(&crate::config::FreedomConfig::default_neoth_home(), repo)
+}
+
+pub(crate) fn cache_dir_at(neoth_home: &Path, repo: &str) -> PathBuf {
+    neoth_home
+        .join("models")
+        .join(super::model_cache_component(repo))
 }
 
 #[cfg(test)]
@@ -1416,11 +1465,12 @@ mod tests {
     #[test]
     fn cache_dir_flattens_repo_path() {
         let path = default_cache_dir("Qwen/Qwen2.5-3B-Instruct");
-        let s = path.to_string_lossy();
-        assert!(s.contains("Qwen-Qwen2.5-3B-Instruct"));
-        assert!(s.contains(".neoth"));
-        assert!(s.contains("models"));
-        assert!(!s.contains("Qwen/Qwen2.5"));
+        assert_eq!(
+            path,
+            crate::config::FreedomConfig::default_neoth_home()
+                .join("models")
+                .join("Qwen-Qwen2.5-3B-Instruct")
+        );
     }
 
     #[test]
@@ -1627,7 +1677,7 @@ mod tests {
     ///   1. `neoth init` + pick `local_qwen` → caches weights into
     ///      `~/.neoth/models/Qwen-Qwen2.5-3B-Instruct/`
     ///   2. `set NEOTH_QWEN_TEST_REPO_PATH=C:\Users\<you>\.neoth\models\Qwen-Qwen2.5-3B-Instruct`
-    ///   3. `cargo test -p neothd -- --ignored local_qwen`
+    ///   3. `cargo test -p neoth -- --ignored local_qwen`
     #[tokio::test]
     #[ignore = "requires local Qwen2 weights; set NEOTH_QWEN_TEST_REPO_PATH"]
     async fn local_qwen_forward_pass_against_cached_weights() {

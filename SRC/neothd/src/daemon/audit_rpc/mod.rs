@@ -58,11 +58,12 @@ mod tests;
 
 pub use client::{
     AuditRpcClientError, consume_fullauto_token, enforce_required_audit, is_reachable,
-    mint_fullauto_token, try_post_audit_frame,
+    mint_fullauto_token, try_post_audit_frame, try_post_audit_frame_with_subtype,
 };
 pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore};
 pub use server::{
-    ALLOWED_CLIENT_EVENT_TYPES, AuditRpcState, bind_and_serve, is_allowed_client_event,
+    ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState, bind_and_serve,
+    is_allowed_client_event, is_allowed_client_event_pair,
 };
 pub use sidecar::{SidecarGuard, read_sidecar, remove_sidecar, sidecar_path, write_sidecar};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};

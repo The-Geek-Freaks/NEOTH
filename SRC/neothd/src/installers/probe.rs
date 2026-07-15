@@ -1,6 +1,6 @@
 //! Shared CLI version-probe helper (GOLD-ARCH-14, origin D-35).
 //!
-//! Six installer modules (`node`/`obsidian`/`obs`/`pears`/`n8n`/`paperless`)
+//! Installer modules (`node`/`obsidian`/`obs`/`n8n`/`paperless`)
 //! each carried a byte-near-identical `cli_version` that wrapped a binary
 //! through `cmd /C` on Windows (so npm/docker shell-script shims like
 //! `claude.cmd`/`docker.cmd` resolve the same way as a real `.exe`) and parsed

@@ -181,10 +181,7 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
         // GOLD-ADAPT-JV-MODE-01 — identity anchor at position 1 when locked.
         identity_anchor_layer,
         // GOLD-FEAT-11 — cross-turn goal at position 2 (after identity, before context).
-        inputs
-            .current_goal
-            .map(str::trim)
-            .filter(|s| !s.is_empty()),
+        inputs.current_goal.map(str::trim).filter(|s| !s.is_empty()),
         inputs
             .operator_context
             .map(str::trim)
@@ -242,9 +239,7 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     // of the skill/persona fields.
     let system = match system {
         Some(s)
-            if skill_prompt_expanded.is_some()
-                || persona.is_some()
-                || inputs.identity_locked =>
+            if skill_prompt_expanded.is_some() || persona.is_some() || inputs.identity_locked =>
         {
             Some(format!("{s}\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"))
         }
@@ -328,7 +323,9 @@ mod tests {
         // KB-01: a skill layer is active → the non-disclosure guard is appended.
         assert_eq!(
             out.system,
-            Some(format!("plain skill prompt\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"))
+            Some(format!(
+                "plain skill prompt\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"
+            ))
         );
     }
 
@@ -411,7 +408,9 @@ mod tests {
         let out = build_enriched_request(inputs);
         assert_eq!(
             out.system,
-            Some(format!("Tone + persona: blunt + concise\n\nop\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"))
+            Some(format!(
+                "Tone + persona: blunt + concise\n\nop\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"
+            ))
         );
     }
 
@@ -422,7 +421,9 @@ mod tests {
         let out = build_enriched_request(inputs);
         assert_eq!(
             out.system,
-            Some(format!("Tone + persona: warmth + humour\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"))
+            Some(format!(
+                "Tone + persona: warmth + humour\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"
+            ))
         );
     }
 
@@ -582,7 +583,9 @@ mod tests {
         let out = build_enriched_request(inputs);
         assert_eq!(
             out.system,
-            Some(format!("Tone + persona: p\n\nop\n\nskill\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}")),
+            Some(format!(
+                "Tone + persona: p\n\nop\n\nskill\n\n{PROMPT_NON_DISCLOSURE_CLAUSE}"
+            )),
         );
     }
 

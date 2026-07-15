@@ -32,8 +32,8 @@
 //! v0.9 G-01 LLM-driven intent classification can replace this
 //! heuristic. The `GeneralTaskIntent` surface is drop-in compatible.
 
-use anyhow::Context as _;
 use crate::permissions::AutonomyLevel;
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 /// A detected general (non-coding) task intent. Carries confidence so
@@ -181,10 +181,7 @@ pub fn detect_general_task_intent(prompt: &str) -> Option<GeneralTaskIntent> {
 /// Note: `config.task_engine.decompose_non_coding` is the master kill-
 /// switch checked by the routing branch BEFORE calling this fn; it is
 /// not checked here to keep this function purely about intent + autonomy.
-pub fn should_auto_task_dispatch(
-    prompt: &str,
-    autonomy: AutonomyLevel,
-) -> bool {
+pub fn should_auto_task_dispatch(prompt: &str, autonomy: AutonomyLevel) -> bool {
     use crate::coding::intent::{IntentConfidence, detect_coding_intent};
 
     // Strict autonomy: never create tasks from channel input unattended.
@@ -241,10 +238,17 @@ pub fn decompose_non_coding(
     // Lightweight prompt fingerprint (no crypto dep — for dedup only).
     let prompt_hash = format!("{:016x}", ts_ns ^ prompt.len() as u64);
 
-    store::insert_session(conn, ts_ns, prompt, &prompt_hash, source_channel, operator_id)
-        .with_context(|| {
-            format!("insert kanban session for general task from channel {source_channel}")
-        })
+    store::insert_session(
+        conn,
+        ts_ns,
+        prompt,
+        &prompt_hash,
+        source_channel,
+        operator_id,
+    )
+    .with_context(|| {
+        format!("insert kanban session for general task from channel {source_channel}")
+    })
 }
 
 /// Derive a short session title from the prompt and detected intent.
@@ -264,7 +268,7 @@ pub fn derive_task_title(prompt: &str, intent: &GeneralTaskIntent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding::intent::{IntentConfidence, CODING_VERBS};
+    use crate::coding::intent::{CODING_VERBS, IntentConfidence};
     use crate::permissions::AutonomyLevel;
 
     // ── detect_general_task_intent: positive cases ─────────────────
@@ -288,16 +292,19 @@ mod tests {
 
     #[test]
     fn research_english_summarize() {
-        let i = detect_general_task_intent("research the latest news on Rust async and summarize the findings")
-            .expect("should detect research");
+        let i = detect_general_task_intent(
+            "research the latest news on Rust async and summarize the findings",
+        )
+        .expect("should detect research");
         assert_eq!(i.confidence, IntentConfidence::High);
         assert_eq!(i.category, GeneralTaskCategory::Research);
     }
 
     #[test]
     fn research_german() {
-        let i = detect_general_task_intent("Recherchiere die besten Alternativen zu diesel für SQLite")
-            .expect("should detect research");
+        let i =
+            detect_general_task_intent("Recherchiere die besten Alternativen zu diesel für SQLite")
+                .expect("should detect research");
         assert_eq!(i.confidence, IntentConfidence::High);
         assert_eq!(i.category, GeneralTaskCategory::Research);
     }

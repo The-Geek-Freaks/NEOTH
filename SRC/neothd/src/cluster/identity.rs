@@ -17,8 +17,8 @@ use crate::config::credentials::Credentials;
 pub struct ClusterIdentity {
     /// Public rendezvous name — seeds the Hyperswarm DHT topic + mDNS service.
     pub name: String,
-    /// HMAC key derived from the shared passphrase. Authenticates announces
-    /// and (future) gossip/task frames.
+    /// HMAC key derived from the shared passphrase. Authenticates announces,
+    /// gossip frames, and delegated-task frames.
     pub key: ClusterKey,
 }
 
@@ -194,6 +194,7 @@ mod tests {
         f.cluster = ClusterConfig {
             name: name.map(str::to_string),
             enabled,
+            ..Default::default()
         };
         f
     }

@@ -5,9 +5,9 @@
 //! language, captures LOC + bytes, returns a structured `RepoMap`.
 //!
 //! Hard rules:
-//!   - **NO file content in the map**. Operator privacy: the map
-//!     contains paths, counts, languages — never source code. Source
-//!     parsing happens later via tree-sitter in Phase 2.
+//!   - **NO file bodies in the map**. Operator privacy: source is read
+//!     transiently when symbol extraction is enabled, but the map persists
+//!     only paths, counts, hashes, languages, and declaration metadata.
 //!   - **Respects existing ignore files**: `.gitignore`,
 //!     `.ignore`, plus NEOTH-specific `.neothignore` for "operator
 //!     wants this hidden from the LLM context" semantics.
@@ -27,8 +27,7 @@ use sha2::{Digest, Sha256};
 
 use super::symbols::{Symbol, extract_symbols};
 
-/// Languages NEOTH currently recognises via extension. Phase 2's
-/// tree-sitter grammar list will mirror this enum.
+/// Languages NEOTH currently recognises via extension or shebang.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {

@@ -164,7 +164,9 @@ installer (~300), role-based model mapping (~150).
 
 - **Tauri AppHandle + React frontend (cc-switch)** — NEOTH's Slint GUI is the target.
 - **Multi-CLI config write-through (cc-switch)** — antithetical to NEOTH's self-contained rule.
-- **WebDAV provider (cc-switch)** — OpenDAL R-8 path already covers.
+- **WebDAV provider (cc-switch)** — the supported local-folder mirror already
+  covers operator-mounted WebDAV/vendor-sync folders; no protocol-specific
+  dependency is needed in NEOTH.
 - **UsageScript JS eval (cc-switch)** — unsafe execution surface.
 - **Chinese-only comments + zh-TW citation rules (cc-switch, academic)** — i18n later.
 - **Claude Code marketplace packaging (karpathy)** — not portable.

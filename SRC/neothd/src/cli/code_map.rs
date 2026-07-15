@@ -1,17 +1,17 @@
-//! `neoth code-map` — operator-facing repository code-map (Session
-//! 14 Pick #13).
+//! `neoth code-map` — operator-facing repository code-map.
 //!
 //! Subcommands:
 //!
 //!   - `scan [PATH]`  Walk the repository at PATH (default: cwd),
 //!                    classify files by language, count LOC + bytes,
-//!                    print a summary or full JSON map.
-//!
-//! Future sub-picks (Phase 2/3 of K-Repo-Map):
-//!
-//!   - `search <symbol>`  Tree-sitter-backed symbol search
-//!   - `imports <file>`   Cross-file reference graph for one file
-//!   - `refresh`          Re-scan + persist to `~/.neoth/code_map.db`
+//!                    optionally extract symbols, and print a summary
+//!                    or full JSON map.
+//!   - `persist [PATH]`  Re-scan and atomically replace that root's
+//!                       snapshot in `~/.neoth/code_map.db`.
+//!   - `load [PATH]`     Inspect a persisted snapshot without rescanning.
+//!   - `search <NAME>`   Find exact persisted symbol declarations.
+//!   - `relevant <PROMPT>` Rank files for the same repo-context engine
+//!                         used by chat and codegraph MCP consumers.
 
 use std::path::PathBuf;
 
@@ -73,8 +73,8 @@ pub enum CodeMapAction {
     /// Phase 3a (Session 14 Pick #22) — scan PATH (or cwd) and
     /// persist the resulting `RepoMap` into `~/.neoth/code_map.db`.
     /// Idempotent: a re-run against the same root replaces the
-    /// prior snapshot atomically. Phase 3b consumes this DB for
-    /// recall-time context injection.
+    /// prior snapshot atomically. Chat, coding, and MCP consumers
+    /// read this DB for repo-context and architecture queries.
     Persist {
         /// Root directory to scan + persist. Defaults to cwd.
         #[arg(value_name = "PATH")]
@@ -124,8 +124,8 @@ pub enum CodeMapAction {
     /// Phase 3b (Session 14 Pick #25) — given a free-text PROMPT,
     /// query the persisted code map for files that look relevant.
     /// Ranks by identifier-symbol matches first, path-keyword overlap
-    /// second. Use this to inspect what Phase 3c would inject as a
-    /// `<repo-context>` block without firing the actual chat.
+    /// second. Use this to inspect what chat would inject as a
+    /// `<repo-context>` block without firing a provider call.
     Relevant {
         /// Free-text prompt to score against the persisted map.
         #[arg(value_name = "PROMPT")]
@@ -380,7 +380,10 @@ fn run_persist(
             println!("  root:                   {}", map.root);
             println!("  db:                     {}", db_path.display());
             println!("  files inserted:         {}", stats.files_inserted);
-            println!("  files skipped (no-op):  {}", stats.files_skipped_unchanged);
+            println!(
+                "  files skipped (no-op):  {}",
+                stats.files_skipped_unchanged
+            );
             println!("  symbols inserted:       {}", stats.symbols_inserted);
             println!("  edges inserted:         {edges_inserted}");
             println!("  cycles detected:        {}", cycles.len());

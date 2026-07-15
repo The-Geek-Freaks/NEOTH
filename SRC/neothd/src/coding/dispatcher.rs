@@ -1,21 +1,15 @@
-//! Pick #6 Phase 2 — `dispatch_session()` orchestrator skeleton.
+//! `dispatch_session()` production orchestrator.
 //!
 //! Per `PLAN/CHORUS_dispatcher_design.md` (2026-05-20). This module
-//! lands the orchestration glue: pick BACKLOG tasks, transition them
-//! through `InProgress → Review` (or `Blocked`), capture the worker
-//! outcome. The four Chorus-gated decisions are placeholder-default:
+//! Picks BACKLOG tasks, transitions them through `InProgress → Review` (or
+//! `Blocked`), executes the bound worker, applies verified patches through the
+//! guarded worktree path, and persists/audits the outcome. The ratified
+//! decisions are:
 //!
-//!   Q1 patch safety → currently "trust the worker output path"
-//!     (the dispatcher just stores `WorkerOutcome.patch_path`; safe
-//!     because no actual git-apply happens yet)
-//!   Q2 streaming → currently batched (one COMPLETED frame at end);
-//!     30s heartbeat hook reserved via WAL 0x77 but not yet emitted
-//!   Q3 review gating → currently always operator-in-loop (the
-//!     dispatcher never auto-promotes; Pick #10's review CLI does)
+//!   Q1 patch safety → guarded worktree apply + verification
+//!   Q2 progress → lifecycle and heartbeat updates through WAL 0x77
+//!   Q3 review gating → policy-driven review/promotion
 //!   Q4 cycle prevention → time + count budget enforced (both)
-//!
-//! Concrete worker impls (LeftWorker against local_qwen,
-//! RightWorker against claude_cli/openai_compat) wire in Phase 3.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -159,8 +153,9 @@ impl ApplyOrigin {
 /// worktree; non-zero exit routes through the retry-policy
 /// path the same way a `git apply --check` rejection does.
 ///
-/// `autonomy` flows through `permissions::evaluate(PatchApplyToRepo,
-/// level)`; combined with `origin` it gates whether a `Confirm`
+/// `autonomy_policy` flows through
+/// `permissions::evaluate(PatchApplyToRepo, &policy_snapshot)`; combined with
+/// `origin` it gates whether a `Confirm`
 /// decision may degrade to Allow (see [`ApplyOrigin`]). Strict
 /// denies outright; other levels yield Confirm, degraded to Allow
 /// only when the origin is `CliConfirmed`.
@@ -174,7 +169,7 @@ pub struct DispatchApplyConfig {
     pub test_timeout: std::time::Duration,
     pub wal_writer: WalWriterRef,
     /// Pick #6 Phase 4 defense-in-depth (Chorus Q1a) —
-    /// per-task `permissions::evaluate(PatchApplyToRepo, level)`
+    /// per-task `permissions::evaluate(PatchApplyToRepo, &policy_snapshot)`
     /// gate. When `Some`, the dispatcher consults the policy
     /// BEFORE creating the worktree. Strict → Deny (task
     /// blocks); Standard/Elevated/Full → Confirm. The Confirm
@@ -183,7 +178,7 @@ pub struct DispatchApplyConfig {
     /// `DaemonScheduled` / `ChannelRequested` keep Confirm as a
     /// hard gate (fail-closed). When `None`, the gate is skipped
     /// (CLI one-shot operator-already-confirmed).
-    pub autonomy: Option<crate::permissions::AutonomyLevel>,
+    pub autonomy_policy: Option<crate::permissions::AutonomyPolicySnapshot>,
 }
 
 impl std::fmt::Debug for DispatchApplyConfig {
@@ -194,7 +189,7 @@ impl std::fmt::Debug for DispatchApplyConfig {
             .field("test_cmd", &self.test_cmd)
             .field("test_timeout", &self.test_timeout)
             .field("wal_writer", &self.wal_writer.as_ref().map(|_| "<live>"))
-            .field("autonomy", &self.autonomy)
+            .field("autonomy_policy", &self.autonomy_policy)
             .finish()
     }
 }
@@ -212,21 +207,28 @@ impl DispatchApplyConfig {
             test_cmd: None,
             test_timeout: std::time::Duration::from_secs(5 * 60),
             wal_writer: None,
-            autonomy: None,
+            autonomy_policy: None,
         }
     }
 
     /// Attach the operator's autonomy level so the dispatcher runs
-    /// `permissions::evaluate(PatchApplyToRepo, level)` per task. Strict
+    /// `permissions::evaluate(PatchApplyToRepo, &policy_snapshot)` per task. Strict
     /// denies the task before any IO. For `ApplyOrigin::CliConfirmed` a
     /// `Confirm` decision degrades to Allow (the operator already
     /// confirmed by passing `--apply` at a TTY); for `DaemonScheduled` /
     /// `ChannelRequested` a `Confirm` is a HARD gate (apply refused until
     /// a real confirmation channel exists) — see the gate in
     /// `apply_patch_via_worktree`.
-    pub fn with_autonomy(mut self, level: crate::permissions::AutonomyLevel) -> Self {
-        self.autonomy = Some(level);
+    pub fn with_policy(mut self, policy: crate::permissions::AutonomyPolicySnapshot) -> Self {
+        self.autonomy_policy = Some(policy);
         self
+    }
+
+    #[cfg(test)]
+    pub fn with_autonomy(self, level: crate::permissions::AutonomyLevel) -> Self {
+        self.with_policy(crate::permissions::AutonomyPolicySnapshot::test_level(
+            level,
+        ))
     }
 
     /// Builder-style — flip the operator's test command on
@@ -752,13 +754,13 @@ fn apply_patch_via_worktree(
     // Confirm — degraded to Allow because the CLI already
     // prompted via `--apply` (operator-confirmed once,
     // dispatcher trusts that signal for the session).
-    if let Some(level) = cfg.autonomy {
+    if let Some(policy) = cfg.autonomy_policy.as_ref() {
         use crate::permissions::{Action, Decision, evaluate};
         let action = Action::PatchApplyToRepo {
             repo_root: cfg.repo_root.clone(),
             task_id: task.task_id.raw() as u64,
         };
-        match evaluate(&action, level) {
+        match evaluate(&action, policy) {
             Decision::Allow => {}
             Decision::Confirm(_) => {
                 // ADV review-D (Session 30): the Confirm→Allow degrade is
@@ -830,7 +832,11 @@ fn apply_patch_via_worktree(
 
         // Determine override-lease status once (shared across all files in this patch).
         // Only consulted when autonomy is Elevated or Full — skip the I/O otherwise.
-        let autonomy_level = cfg.autonomy.unwrap_or(AutonomyLevel::Standard);
+        let autonomy_level = cfg
+            .autonomy_policy
+            .as_ref()
+            .map(crate::permissions::AutonomyPolicySnapshot::level)
+            .unwrap_or(AutonomyLevel::Standard);
         let has_override = match autonomy_level {
             AutonomyLevel::Elevated | AutonomyLevel::Full => {
                 // neoth: override token = a DangerousCommand lease granted to "operator".
@@ -1310,9 +1316,7 @@ fn handle_retryable_failure(
         // so a `?` here would silently strand the task InProgress (it was set
         // InProgress before execution). Log loudly instead — consistent with the
         // fn's other DB writes; the daemon reaper recovers InProgress tasks.
-        if let Err(e) =
-            store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
-        {
+        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns) {
             warn!(
                 error = %e,
                 task_id = ?task.task_id,

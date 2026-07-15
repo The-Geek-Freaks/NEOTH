@@ -86,8 +86,8 @@ struct SendRequest<'a> {
     recipients: Vec<String>,
 }
 
-/// `POST /v2/send` response (`{ "timestamp": 1718... }`). Tolerant: a 2xx
-/// with an unexpected body still counts as sent (`MessageId("sent")`).
+/// `POST /v2/send` response (`{ "timestamp": 1718... }`). A valid JSON body
+/// without a timestamp still counts as sent; malformed JSON does not.
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SendResponse {
     #[serde(default)]
@@ -164,7 +164,10 @@ pub async fn send_signal_message(
         .await
         .map_err(|e| ChannelError::Transport(format!("signal POST {url}: {e}")))?;
     map_status(&response, "signal send")?;
-    let parsed: SendResponse = response.json().await.unwrap_or_default();
+    let parsed: SendResponse = response
+        .json()
+        .await
+        .map_err(|error| ChannelError::Transport(format!("signal send response parse: {error}")))?;
     Ok(MessageId(
         parsed
             .timestamp
@@ -322,5 +325,28 @@ mod tests {
         let inbound: Vec<_> = arr.iter().filter_map(envelope_to_inbound).collect();
         assert_eq!(inbound.len(), 1, "only the data message is actionable");
         assert_eq!(inbound[0].text.as_deref(), Some("real"));
+    }
+
+    #[tokio::test]
+    async fn malformed_success_response_is_not_reported_as_sent() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .mount(&server)
+            .await;
+        let error = send_signal_message(
+            &reqwest::Client::new(),
+            &server.uri(),
+            "+4400",
+            "+4411",
+            "hello",
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("response parse"), "got: {error}");
     }
 }

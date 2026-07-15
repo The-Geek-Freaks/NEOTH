@@ -117,7 +117,7 @@ These are not requirements, but they were learned by trial-and-error and may sav
 
 1. **Never reboot a daemon host you cannot physically reach.** Reference deployment lost remote access twice this way. Use `systemctl restart neothd` instead — NEOTH recovers cleanly from process restart.
 2. **Treat `~/.neoth/freedom.yaml` like an SSH private key.** Rotate quarterly. Mode 0600 enforced at startup; if NEOTH refuses to start citing permissions, that is working as designed.
-3. **Run `neoth wal verify --crc` weekly** as a cron. Catches silent disk corruption before it cascades.
+3. **Run `neoth verify` weekly** as a cron. It verifies WAL compaction markers and catches integrity failures before they cascade; there is no separate `--crc` mode.
 4. **Keep one tested backup off the daemon host.** Reference setup runs nightly git-push of vault/ to a private remote.
 5. **The 0.95 / 5% rule:** if more than 5% of recall queries return nothing for a week, your importance threshold is wrong, not your hardware.
 

@@ -1,0 +1,7 @@
+id = "recall_summariser"
+name = "Recall Summariser ABI v1 Example"
+version = "0.1.0"
+description = "Queries recall and emits an operator-auditable WAL event."
+requested_permissions = "write"
+hook_stages = ["on_recall_query"]
+

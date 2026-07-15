@@ -1,10 +1,9 @@
 # =============================================================================
 # NEOTH — Release Workflow
 #
-# Triggered by tags matching vMAJOR.MINOR.PATCH (e.g., v0.1.0).
-# Builds release binaries for Linux (gnu + musl + aarch64) and macOS (x86_64 + arm64).
-# Windows: stretch goal, not included in Phase 1 (see ci.yml for rationale).
-# Signing: cosign keyless (Sigstore OIDC) — no key management required.
+# Triggered by tags matching vMAJOR.MINOR.PATCH (e.g., v1.0.0).
+# Builds release binaries for Linux, macOS, and Windows (x86_64 + ARM64 where supported).
+# Signing: cosign keyless provenance + mandatory minisign authenticity for self-update.
 # Release Engineer review (OPEN_DECISIONS.md D-001): cargo-dist rejected;
 # the matrix below already implements the chosen pipeline.
 # =============================================================================
@@ -37,28 +36,63 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Match tag to package manifests
         shell: python
+        env:
+          NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
         run: |
           import os
+          import json
           import pathlib
+          import re
           import tomllib
 
           ref_name = os.environ["GITHUB_REF_NAME"]
-          if not ref_name.startswith("v"):
-              raise SystemExit(f"release ref must start with 'v': {ref_name}")
+          tag_pattern = re.compile(
+              r"v(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)"
+              r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+          )
+          match = tag_pattern.fullmatch(ref_name)
+          if not match:
+              raise SystemExit(f"invalid strict SemVer release tag: {ref_name}")
+          prerelease = match.group(4)
+          if prerelease and any(
+              part.isdigit() and len(part) > 1 and part.startswith("0")
+              for part in prerelease.split(".")
+          ):
+              raise SystemExit(
+                  f"invalid strict SemVer numeric prerelease identifier: {ref_name}"
+              )
 
           tag_version = ref_name[1:]
-          manifests = {
-              "neothd": pathlib.Path("SRC/neothd/Cargo.toml"),
-              "neothd-gui": pathlib.Path("SRC/neothd-gui/Cargo.toml"),
-          }
+          core = tomllib.loads(
+              pathlib.Path("SRC/neothd/Cargo.toml").read_text(encoding="utf-8")
+          )
+          gui = tomllib.loads(
+              pathlib.Path("SRC/neothd-gui/Cargo.toml").read_text(encoding="utf-8")
+          )
+          migrate = tomllib.loads(
+              pathlib.Path("SRC/neoth-migrate/Cargo.toml").read_text(encoding="utf-8")
+          )
+          relay = tomllib.loads(
+              pathlib.Path("SRC/neoth-relay/Cargo.toml").read_text(encoding="utf-8")
+          )
+          sdk = tomllib.loads(
+              pathlib.Path("SRC/neoth-plugin-sdk/Cargo.toml").read_text(encoding="utf-8")
+          )
           versions = {
-              package: tomllib.loads(path.read_text(encoding="utf-8"))["package"]["version"]
-              for package, path in manifests.items()
+              "neoth": core["package"]["version"],
+              "neothd-gui": gui["package"]["version"],
+              "neoth-migrate": migrate["package"]["version"],
+              "neoth-relay": relay["package"]["version"],
           }
+          versions["whatsapp-baileys-bridge"] = json.loads(
+              pathlib.Path("bridges/whatsapp-baileys/package.json").read_text(encoding="utf-8")
+          )["version"]
           mismatches = [
               f"{package}={version}"
               for package, version in versions.items()
@@ -71,7 +105,76 @@ jobs:
               )
               raise SystemExit(1)
 
-          print(f"Release contract OK: {ref_name} == neothd == neothd-gui == {tag_version}")
+          if core["package"]["name"] != "neoth":
+              raise SystemExit(
+                  f"::error::Public package must be neoth, got {core['package']['name']}"
+              )
+          if gui["package"]["name"] != "neothd-gui":
+              raise SystemExit(
+                  f"::error::GUI package must be neothd-gui, got {gui['package']['name']}"
+              )
+          if migrate["package"]["name"] != "neoth-migrate":
+              raise SystemExit(
+                  f"::error::Migration package must be neoth-migrate, got {migrate['package']['name']}"
+              )
+          if relay["package"]["name"] != "neoth-relay":
+              raise SystemExit(
+                  f"::error::Relay package must be neoth-relay, got {relay['package']['name']}"
+              )
+          if sdk["package"]["name"] != "neoth-plugin-sdk":
+              raise SystemExit(
+                  f"::error::SDK package must be neoth-plugin-sdk, got {sdk['package']['name']}"
+              )
+          sdk_dependency = core["dependencies"]["neoth-plugin-sdk"]
+          if sdk_dependency.get("version") != sdk["package"]["version"]:
+              raise SystemExit(
+                  "::error::Core SDK dependency version must match the SDK manifest: "
+                  f"{sdk_dependency.get('version')} != {sdk['package']['version']}"
+              )
+          if sdk_dependency.get("path") != "../neoth-plugin-sdk":
+              raise SystemExit(
+                  "::error::Core SDK dependency must retain the workspace path"
+              )
+          if "_host" not in sdk_dependency.get("features", []):
+              raise SystemExit(
+                  "::error::Core SDK dependency must enable the _host integration feature"
+              )
+          if {target["name"] for target in migrate.get("bin", [])} != {"neoth-migrate"}:
+              raise SystemExit("::error::Migration package must expose neoth-migrate")
+          if {target["name"] for target in relay.get("bin", [])} != {"neoth-relay"}:
+              raise SystemExit("::error::Relay package must expose neoth-relay")
+          bin_names = {target["name"] for target in core.get("bin", [])}
+          if bin_names != {"neoth", "neothd"}:
+              raise SystemExit(
+                  "::error::Release package must build neoth + neothd binaries; "
+                  f"got {sorted(bin_names)}"
+              )
+          if core.get("lib", {}).get("name") != "neothd":
+              raise SystemExit("::error::Compatibility library target must remain neothd")
+
+          repository_key = pathlib.Path(
+              "NEOTH_RELEASE_MINISIGN_PUBKEY.txt"
+          ).read_text(encoding="utf-8").strip()
+          actions_key = os.environ.get("NEOTH_RELEASE_MINISIGN_PUBKEY", "").strip()
+          if not repository_key:
+              raise SystemExit("::error::repository release public key is empty")
+          if actions_key != repository_key:
+              raise SystemExit(
+                  "::error::NEOTH_RELEASE_MINISIGN_PUBKEY Actions variable does not "
+                  "match NEOTH_RELEASE_MINISIGN_PUBKEY.txt"
+              )
+          for installer_path in ("SRC/install.sh", "SRC/install.ps1"):
+              installer = pathlib.Path(installer_path).read_text(encoding="utf-8")
+              if repository_key not in installer:
+                  raise SystemExit(
+                      f"::error::{installer_path} does not pin the repository release key"
+                  )
+
+          print(
+              f"Release contract OK: {ref_name} == neoth == neothd-gui "
+              f"== neoth-migrate == neoth-relay == whatsapp-baileys-bridge "
+              f"== {tag_version}; neoth-plugin-sdk={sdk['package']['version']}"
+          )
 
   # ---------------------------------------------------------------------------
   # Build matrix
@@ -88,18 +191,23 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
             use_cross: false
+            include_gui: true
             archive_ext: tar.gz
 
           # Linux x86_64 musl — static binary, no libc dependency
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
             use_cross: true
+            include_gui: false
             archive_ext: tar.gz
 
-          # Linux aarch64 GNU — cross-compiled (Raspberry Pi / ARM servers)
+          # Linux aarch64 GNU — native public ARM runner. Keeping this native
+          # makes the Slint/rfd desktop artifact testable instead of silently
+          # downgrading every ARM machine to a CLI-only archive.
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-            use_cross: true
+            os: ubuntu-24.04-arm
+            use_cross: false
+            include_gui: true
             archive_ext: tar.gz
 
           # macOS x86_64 (Intel). GitHub's current standard Intel labels are
@@ -107,12 +215,14 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-15-intel
             use_cross: false
+            include_gui: true
             archive_ext: tar.gz
 
           # macOS aarch64 (Apple Silicon)
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
             use_cross: false
+            include_gui: true
             archive_ext: tar.gz
 
           # Windows x86_64 — R-08 Session 28: zero-install Windows
@@ -123,6 +233,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-2022
             use_cross: false
+            include_gui: true
             archive_ext: zip
 
           # Windows aarch64 (ARM laptops — Surface Pro X, Snapdragon
@@ -130,19 +241,20 @@ jobs:
           - target: aarch64-pc-windows-msvc
             os: windows-2022
             use_cross: false
+            include_gui: true
             archive_ext: zip
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
@@ -155,17 +267,34 @@ jobs:
 
       - name: Install cross
         if: matrix.use_cross
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: cross
 
+      # The desktop archive contract includes the separate Slint GUI binary.
+      # Linux's native Femtovg/Winit build needs the same headers as CI. The
+      # cross-compiled Linux server targets stay intentionally CLI-only: their
+      # containers do not carry a target display stack and the bootstrap
+      # installers report that distinction explicitly.
+      - name: Install Linux GUI build dependencies
+        if: matrix.include_gui && runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev
+
       # MAR-02: bake the release verification pubkey into the binary at build
       # time. `neoth release setup` sets this repo VARIABLE automatically via
-      # `gh variable set` — nothing to edit here. Empty until setup runs (then
-      # the self-updater simply has no pinned key yet, which is the safe default).
-      # Native desktop targets ship two extra features that the headless cross
-      # targets below (musl, aarch64-linux) deliberately OMIT — same native-only
-      # rationale for both:
+      # `gh variable set` — nothing to edit here. The version-contract job
+      # fails before this matrix when the key is missing.
+      # Every release target ships the complete optional channel surface. A
+      # configured Matrix/IRC/Twitch/Nostr/Google-Chat channel must never depend
+      # on the operator rebuilding from source. Native desktop targets add two
+      # further features that headless cross targets deliberately omit:
       #   * `os-clipboard` (PC-01) — `arboard`'s x11rb/wl-clipboard-rs (Linux) /
       #     native (macOS/Windows) backends build cleanly on a native runner; a
       #     clipboard is moot on a headless server and cross-compiling a display
@@ -176,20 +305,35 @@ jobs:
       #     server/embedded targets omit it (wasmtime cross-compile is fragile +
       #     plugins are a desktop surface). Runtime gated by `plugins.*` + the
       #     default-inactive `neoth plugin enable` flow; source builds opt in via
-      #     `--features wasm-plugin-host`.
+      #     `--features release-desktop` for the complete desktop contract.
       - name: Build (native)
         if: "!matrix.use_cross"
         working-directory: SRC/neothd
         env:
           NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
-        run: cargo build --release --features os-clipboard,wasm-plugin-host --target ${{ matrix.target }}
+        run: cargo build --release --locked --bins --features release-desktop --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross
         working-directory: SRC/neothd
         env:
           NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --locked --bins --features release-server --target ${{ matrix.target }}
+
+      - name: Build auxiliary binaries (native)
+        if: "!matrix.use_cross"
+        working-directory: SRC
+        run: cargo build --release --locked -p neoth-migrate -p neoth-relay --target ${{ matrix.target }}
+
+      - name: Build auxiliary binaries (cross)
+        if: matrix.use_cross
+        working-directory: SRC
+        run: cross build --release --locked -p neoth-migrate -p neoth-relay --target ${{ matrix.target }}
+
+      - name: Build desktop GUI
+        if: matrix.include_gui
+        working-directory: SRC
+        run: cargo build --release --locked -p neothd-gui --target ${{ matrix.target }}
 
       - name: Extract version from tag
         id: version
@@ -203,23 +347,66 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TARGET="${{ matrix.target }}"
           ARCHIVE_EXT="${{ matrix.archive_ext }}"
-          ARCHIVE_NAME="neothd-${VERSION}-${TARGET}"
+          INCLUDE_GUI="${{ matrix.include_gui }}"
+          ARCHIVE_NAME="neoth-${VERSION}-${TARGET}"
 
           # Binary name + extension differ on Windows. R-08 (Session
           # 28): branch on $TARGET so install-binary.{sh,ps1} +
           # winget can both pull the right archive shape.
           if [[ "$TARGET" == *windows* ]]; then
-            BINARY_NAME="neothd.exe"
+            BINARY_NAME="neoth.exe"
+            COMPAT_BINARY_NAME="neothd.exe"
+            GUI_BINARY_NAME="neothd-gui.exe"
+            MIGRATE_BINARY_NAME="neoth-migrate.exe"
+            RELAY_BINARY_NAME="neoth-relay.exe"
           else
-            BINARY_NAME="neothd"
+            BINARY_NAME="neoth"
+            COMPAT_BINARY_NAME="neothd"
+            GUI_BINARY_NAME="neothd-gui"
+            MIGRATE_BINARY_NAME="neoth-migrate"
+            RELAY_BINARY_NAME="neoth-relay"
           fi
           BINARY_PATH="SRC/target/${TARGET}/release/${BINARY_NAME}"
+          COMPAT_BINARY_PATH="SRC/target/${TARGET}/release/${COMPAT_BINARY_NAME}"
+          GUI_BINARY_PATH="SRC/target/${TARGET}/release/${GUI_BINARY_NAME}"
+          MIGRATE_BINARY_PATH="SRC/target/${TARGET}/release/${MIGRATE_BINARY_NAME}"
+          RELAY_BINARY_PATH="SRC/target/${TARGET}/release/${RELAY_BINARY_NAME}"
 
           mkdir -p "dist/${ARCHIVE_NAME}"
           cp "${BINARY_PATH}" "dist/${ARCHIVE_NAME}/${BINARY_NAME}"
-          cp README.md "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
-          cp LICENSE-MIT "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
-          cp LICENSE-APACHE "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp "${COMPAT_BINARY_PATH}" "dist/${ARCHIVE_NAME}/${COMPAT_BINARY_NAME}"
+          cp "${MIGRATE_BINARY_PATH}" "dist/${ARCHIVE_NAME}/${MIGRATE_BINARY_NAME}"
+          cp "${RELAY_BINARY_PATH}" "dist/${ARCHIVE_NAME}/${RELAY_BINARY_NAME}"
+          if [[ "$INCLUDE_GUI" == "true" ]]; then
+            cp "${GUI_BINARY_PATH}" "dist/${ARCHIVE_NAME}/${GUI_BINARY_NAME}"
+          fi
+          cp README.md "dist/${ARCHIVE_NAME}/"
+          cp LICENSE-MIT "dist/${ARCHIVE_NAME}/"
+          cp LICENSE-APACHE "dist/${ARCHIVE_NAME}/"
+          cp SRC/freedom.yaml.example "dist/${ARCHIVE_NAME}/"
+          cp SRC/neoth-migrate/examples/import-manifest.example.yaml "dist/${ARCHIVE_NAME}/"
+
+          # Installer inputs are release blockers, never best-effort extras.
+          required_files=(
+            "${BINARY_NAME}"
+            "${COMPAT_BINARY_NAME}"
+            "${MIGRATE_BINARY_NAME}"
+            "${RELAY_BINARY_NAME}"
+            README.md
+            LICENSE-MIT
+            LICENSE-APACHE
+            freedom.yaml.example
+            import-manifest.example.yaml
+          )
+          if [[ "$INCLUDE_GUI" == "true" ]]; then
+            required_files+=("${GUI_BINARY_NAME}")
+          fi
+          for required in "${required_files[@]}"; do
+            test -s "dist/${ARCHIVE_NAME}/${required}" || {
+              echo "::error::release artifact is missing ${required}"
+              exit 1
+            }
+          done
 
           cd dist
           if [[ "$ARCHIVE_EXT" == "zip" ]]; then
@@ -232,6 +419,24 @@ jobs:
             tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}/"
             ARCHIVE_FILE="${ARCHIVE_NAME}.tar.gz"
           fi
+
+          # Validate the archive that will actually be uploaded, not only its
+          # staging directory. This catches ZIP/tar command drift and keeps the
+          # bootstrap-installer contract fail-closed.
+          VERIFY_DIR="verify-${ARCHIVE_NAME}"
+          mkdir -p "$VERIFY_DIR"
+          if [[ "$ARCHIVE_EXT" == "zip" ]]; then
+            7z x -o"$VERIFY_DIR" "$ARCHIVE_FILE" >/dev/null
+          else
+            tar -xzf "$ARCHIVE_FILE" -C "$VERIFY_DIR"
+          fi
+          for required in "${required_files[@]}"; do
+            test -s "$VERIFY_DIR/${ARCHIVE_NAME}/${required}" || {
+              echo "::error::packed release archive is missing ${required}"
+              exit 1
+            }
+          done
+          rm -rf "$VERIFY_DIR"
 
           # SHA-256 sidecar for install-binary.{sh,ps1}. GNU sha256sum is on
           # Linux and Git-for-Windows bash; macOS provides shasum instead.
@@ -247,7 +452,7 @@ jobs:
           echo "archive_name=${ARCHIVE_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ steps.archive.outputs.archive_name }}
           path: |
@@ -255,12 +460,67 @@ jobs:
             dist/${{ steps.archive.outputs.checksum }}
           retention-days: 1
 
+  # The optional Node sidecar is a first-class release artifact, not something
+  # operators must recover from a source checkout. Its exact lockfile is tested
+  # before the source-only archive is produced; node_modules and account state
+  # are never packaged.
+  package-whatsapp-baileys:
+    name: Package WhatsApp Baileys bridge
+    needs: verify-release-version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+
+      - name: Install and test bridge
+        working-directory: bridges/whatsapp-baileys
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+
+      - name: Package bridge source
+        id: archive
+        shell: bash
+        run: |
+          ARCHIVE="neoth-whatsapp-baileys-${GITHUB_REF_NAME}.tar.gz"
+          ROOT="dist/whatsapp-baileys"
+          mkdir -p "$ROOT"
+          cp -R bridges/whatsapp-baileys/src "$ROOT/"
+          cp -R bridges/whatsapp-baileys/test "$ROOT/"
+          cp bridges/whatsapp-baileys/package.json "$ROOT/"
+          cp bridges/whatsapp-baileys/pnpm-lock.yaml "$ROOT/"
+          cp bridges/whatsapp-baileys/README.md "$ROOT/"
+          cp bridges/whatsapp-baileys/neoth-whatsapp-baileys.service "$ROOT/"
+          cp LICENSE-MIT LICENSE-APACHE "$ROOT/"
+          tar -C dist -czf "dist/$ARCHIVE" whatsapp-baileys
+          sha256sum "dist/$ARCHIVE" | sed 's#dist/##' > "dist/$ARCHIVE.sha256"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bridge artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-whatsapp-baileys-${{ github.ref_name }}
+          path: |
+            dist/${{ steps.archive.outputs.archive }}
+            dist/${{ steps.archive.outputs.archive }}.sha256
+          retention-days: 1
+
   # ---------------------------------------------------------------------------
   # Create GitHub Release + upload all assets
   # ---------------------------------------------------------------------------
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, package-whatsapp-baileys]
     runs-on: ubuntu-24.04
     permissions:
       contents: write       # create release + upload assets
@@ -268,10 +528,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist/
           merge-multiple: true
@@ -288,7 +548,7 @@ jobs:
       # Identity bound to the GitHub Actions workflow URL; transparency log entry
       # on Rekor (https://rekor.sigstore.dev).
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Sign archives (cosign keyless — public-download provenance)
         env:
@@ -299,9 +559,18 @@ jobs:
           # the prior loop covered only *.tar.gz, leaving every Windows
           # release artifact unsigned (gremium quality-lens v1.0 blocker).
           shopt -s nullglob
+          archive_count=0
           for f in *.tar.gz *.zip; do
+            archive_count=$((archive_count + 1))
             cosign sign-blob --yes "$f" --bundle "${f}.cosign.bundle"
           done
+          if [ "$archive_count" -eq 0 ]; then
+            echo "::error::no release archives found for cosign"; exit 1
+          fi
+          bundle_count=$(find . -maxdepth 1 -type f -name '*.cosign.bundle' | wc -l)
+          if [ "$bundle_count" -ne "$archive_count" ]; then
+            echo "::error::expected $archive_count cosign bundles, found $bundle_count"; exit 1
+          fi
 
       # Session 28f release-drift fix — TWO complementary signing schemes:
       #   1. cosign (above) → public-download PROVENANCE (Sigstore
@@ -311,12 +580,6 @@ jobs:
       #      `updater::sig_verify` has a compile-time pinned pubkey + reads
       #      a `<asset>.minisig` companion; ed25519, offline, rustls/no-ring
       #      friendly). MV-01b prereq #2.
-      #
-      # The minisign step is GRACEFUL-SKIP when the secrets aren't set, so
-      # adding the secrets is a non-breaking deploy: existing releases keep
-      # shipping cosign-only; once Alex provisions the keypair the next
-      # release also ships `.minisig` companions and the unattended
-      # self-update path (`require_signature = true`) starts accepting them.
       #
       # Provisioning (Alex action, one-time — DAU-friendly, NO `minisign` tool,
       # no install, no password). MAR-02: the keygen + signing are BUILT INTO
@@ -329,20 +592,18 @@ jobs:
       #   3. Bake the PUBLIC key into the release builds: set
       #      `NEOTH_RELEASE_MINISIGN_PUBKEY=<public key from keygen>` on the
       #      `cargo build --release` steps (working-directory: SRC/neothd, above).
-      #
-      # GRACEFUL-SKIP when the secret is unset (non-breaking: existing releases
-      # keep shipping cosign-only; once the secret lands the next release also
-      # ships `.minisig` companions and unattended self-update accepts them).
+      # Missing/mismatched key material is fatal: a stable v1 release must not
+      # publish binaries that its default self-updater cannot authenticate.
       - name: Sign archives (neoth release sign — in-process, self-update verify)
         env:
           NEOTH_RELEASE_MINISIGN_SECRET: ${{ secrets.NEOTH_RELEASE_MINISIGN_SECRET }}
+          NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
         run: |
-          if [ -z "$NEOTH_RELEASE_MINISIGN_SECRET" ]; then
-            echo "::notice::NEOTH_RELEASE_MINISIGN_SECRET not set — skipping signing."
-            echo "::notice::Run 'neoth release keygen' + add the secret to enable unattended self-update."
-            exit 0
+          if [ -z "$NEOTH_RELEASE_MINISIGN_SECRET" ] || [ -z "$NEOTH_RELEASE_MINISIGN_PUBKEY" ]; then
+            echo "::error::release minisign secret/public key is missing; refusing an unsigned release."
+            exit 1
           fi
-          # Dogfood: sign with NEOTH's OWN in-process signer — the linux neothd
+          # Dogfood: sign with NEOTH's OWN in-process signer — the linux neoth
           # binary from this very release. No external minisign tool, no password.
           LINUX_TARBALL=$(ls dist/*x86_64-unknown-linux-gnu*.tar.gz 2>/dev/null | head -1)
           if [ -z "$LINUX_TARBALL" ]; then
@@ -350,23 +611,44 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/signer"
           tar xzf "$LINUX_TARBALL" -C "$RUNNER_TEMP/signer"
-          NEOTH=$(find "$RUNNER_TEMP/signer" -name neothd -type f | head -1)
+          NEOTH=$(find "$RUNNER_TEMP/signer" -name neoth -type f | head -1)
           if [ -z "$NEOTH" ]; then
-            echo "::error::neothd binary not found inside $LINUX_TARBALL"; exit 1
+            echo "::error::neoth binary not found inside $LINUX_TARBALL"; exit 1
           fi
           chmod +x "$NEOTH"
+          cp NEOTH_RELEASE_MINISIGN_PUBKEY.txt dist/NEOTH_RELEASE_MINISIGN_PUBKEY.txt
           cd dist
           shopt -s nullglob
+          archive_count=0
           for f in *.tar.gz *.zip; do
+            archive_count=$((archive_count + 1))
             "$NEOTH" release sign "$f" \
               || { echo "::error::neoth release sign failed for $f"; exit 1; }
+            trusted_count=$(grep -c '^trusted comment:' "$f.minisig" || true)
+            if [ "$trusted_count" -ne 1 ] \
+                || ! grep -Fqx "trusted comment: file:$f" "$f.minisig"; then
+              echo "::error::minisign trusted comment is not bound to file:$f"
+              exit 1
+            fi
+            # This binary contains the public key baked during the matrix build.
+            # Verification here detects a mismatched secret/variable before any
+            # asset is made public.
+            "$NEOTH" release verify "$f" --signature "$f.minisig" \
+              || { echo "::error::release signature self-check failed for $f"; exit 1; }
           done
+          if [ "$archive_count" -eq 0 ]; then
+            echo "::error::no release archives found to sign"; exit 1
+          fi
+          sig_count=$(find . -maxdepth 1 -type f -name '*.minisig' | wc -l)
+          if [ "$sig_count" -ne "$archive_count" ]; then
+            echo "::error::expected $archive_count minisign companions, found $sig_count"; exit 1
+          fi
           echo "minisign companions produced (in-process, no minisign tool):"
-          ls -la *.minisig 2>/dev/null || echo "  (none — investigate)"
+          ls -la *.minisig NEOTH_RELEASE_MINISIGN_PUBKEY.txt
 
       - name: Create GitHub Release
         # SHA-pinned to immutable release tag (mutable @v2 tag is hijack risk).
-        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.0.8
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           draft: false
@@ -378,30 +660,36 @@ jobs:
             dist/SHA256SUMS
             dist/*.cosign.bundle
             dist/*.minisig
+            dist/NEOTH_RELEASE_MINISIGN_PUBKEY.txt
           body: |
             ## Installation
 
             Download the binary for your platform, verify the SHA-256 checksum,
-            and place `neothd` on your PATH.
+            and place `neoth` on your PATH.
 
             ```sh
             # Verify checksum (Linux example)
-            sha256sum -c neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
+            sha256sum -c neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
 
             # Verify cosign signature (public-download provenance — proves
             # the binary was built by this GitHub Actions workflow):
             cosign verify-blob \
-              --bundle neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.cosign.bundle \
-              --certificate-identity-regexp "https://github.com/.*/neoth/.github/workflows/release.yml@.*" \
+              --bundle neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.cosign.bundle \
+              --certificate-identity-regexp "^https://github\\.com/The-Geek-Freaks/NEOTH/\\.github/workflows/release\\.yml@refs/tags/v.*$" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+              neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
 
-            # Verify minisign signature (when a .minisig companion is present
-            # — used by the daemon's `neoth update --self` for unattended
-            # verification against a compile-time pinned pubkey; the public
-            # key is published with each release once provisioned):
+            # Verify minisign signature (mandatory; used by the daemon's
+            # default `neoth update --self` verification path):
             minisign -V -P "$(cat NEOTH_RELEASE_MINISIGN_PUBKEY.txt)" \
-              -m neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+              -m neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
             ```
 
-            See [PLAN/00_DESIGN_v1.1_FINAL.md](PLAN/00_DESIGN_v1.1_FINAL.md) for architecture notes.
+            The optional WhatsApp Web bridge is the signed
+            `neoth-whatsapp-baileys-${{ github.ref_name }}.tar.gz` asset. Extract
+            its `whatsapp-baileys/` directory to
+            `~/.local/share/neoth/whatsapp-baileys`, run
+            `pnpm install --frozen-lockfile`, and follow its bundled README.
+
+            See the [1.0 release notes](docs/release-notes-v1.0.md) and
+            [architecture guide](docs/architecture.md) for the complete contract.

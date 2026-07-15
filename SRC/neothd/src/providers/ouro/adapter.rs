@@ -30,7 +30,10 @@ use crate::providers::local_qwen::{
     build_chatml_prompt, default_cache_dir, device_for, preflight_disk_space, resolve_eos_id,
     sample_token,
 };
-use crate::providers::{ChunkStream, Completion, CompletionChunk, Provider, Request};
+use crate::providers::{
+    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 
 use super::forward::OuroModel;
 use super::model::{OuroConfig, OuroQuantMode};
@@ -257,85 +260,83 @@ impl LocalOuroAdapter {
     async fn ensure_artifacts(&mut self) -> Result<()> {
         use hf_hub::api::tokio::Api;
 
-        let need_download = !self.tokenizer_path.exists()
-            || !self.config_path.exists()
-            || !self.weights_path.exists();
-        if !need_download {
+        let pending = crate::media::model_manager::has_pending_download(&self.cache_dir)
+            .context("inspect pending Ouro download lifecycle")?;
+        let artifacts_ready =
+            self.tokenizer_path.exists() && self.config_path.exists() && self.weights_path.exists();
+        if artifacts_ready && !pending {
             info!(repo = %self.repo, cache = %self.cache_dir.display(), "Ouro artifacts already cached");
             return Ok(());
         }
-        // HF-01 — honour the operator's HuggingFace-download policy on the
-        // implicit first-use path (mirrors local_qwen + the explicit
-        // `neoth model pull`). Refuse the silent fetch when the operator
-        // disabled HF downloads. Best-effort read; absent config = default
-        // permissive.
-        let allow_hf = crate::config::FreedomConfig::load_from_default_path()
-            .map(|c| c.updater.allow_huggingface_downloads)
-            .unwrap_or(true);
-        if !allow_hf {
-            anyhow::bail!(
-                "Hugging Face downloads are disabled \
-                 (freedom.yaml::updater.allow_huggingface_downloads = false), but the local_ouro \
-                 provider needs to fetch its weights from {}. Set it to true, pre-place the \
-                 artifacts under {}, or run `neoth model pull` on a connected machine.",
-                self.repo,
-                self.cache_dir.display(),
-            );
-        }
-        if std::env::var("NEOTH_OURO_SKIP_DISK_PREFLIGHT")
-            .ok()
-            .as_deref()
-            != Some("1")
-        {
-            preflight_disk_space(&self.cache_dir, OURO_DOWNLOAD_MIN_FREE_BYTES)
-                .context("disk-space pre-flight before Ouro download")?;
-        }
-        // HF-01 implicit-emit (Session 28g+) — same audit-chain closure
-        // as `local_qwen::ensure_artifacts`: emit 0xD7 before the fetch,
-        // 0xD8 after, with `trigger=implicit` so the operator can tell
-        // the implicit first-use path apart from `neoth model pull` in
-        // the WAL log. Best-effort + single-writer-invariant safe.
-        crate::daemon::model_download_audit::emit_start(&self.repo).await;
-        let download_start = std::time::Instant::now();
-
-        info!(
-            repo = %self.repo,
-            "downloading Ouro artifacts from Hugging Face (one-time, ~3 GB)"
-        );
-        let api = Api::new().context("init HF Hub API")?;
-        let repo_handle = api.model(self.repo.clone());
-        for (filename, target) in [
-            (TOKENIZER_FILE, &self.tokenizer_path),
-            (CONFIG_FILE, &self.config_path),
-            (SAFETENSORS_FILE, &self.weights_path),
-        ] {
-            let downloaded =
-                tokio::time::timeout(Duration::from_secs(900), repo_handle.download(filename))
+        let audit_cache_dir = self.cache_dir.clone();
+        let audit_model_id = self.repo.clone();
+        crate::daemon::model_download_audit::run_implicit_model_download(
+            &audit_cache_dir,
+            &audit_model_id,
+            crate::daemon::model_download_audit::ImplicitModelDownloadSource::Ouro,
+            artifacts_ready,
+            |permit| async move {
+                permit.require(&self.cache_dir, &self.repo)?;
+                let allow_hf = crate::config::FreedomConfig::load_from_default_path_or_default()
+                    .context("load Ouro download policy from freedom.yaml")?
+                    .updater
+                    .allow_huggingface_downloads;
+                if !allow_hf {
+                    anyhow::bail!(
+                        "Hugging Face downloads are disabled \
+                         (freedom.yaml::updater.allow_huggingface_downloads = false), but the \
+                         local_ouro provider needs to fetch its weights from {}. Set it to true, \
+                         pre-place the artifacts under {}, or run `neoth model pull` on a \
+                         connected machine.",
+                        self.repo,
+                        self.cache_dir.display(),
+                    );
+                }
+                if std::env::var("NEOTH_OURO_SKIP_DISK_PREFLIGHT")
+                    .ok()
+                    .as_deref()
+                    != Some("1")
+                {
+                    preflight_disk_space(&self.cache_dir, OURO_DOWNLOAD_MIN_FREE_BYTES)
+                        .context("disk-space pre-flight before Ouro download")?;
+                }
+                info!(
+                    repo = %self.repo,
+                    "downloading Ouro artifacts from Hugging Face (one-time, ~3 GB)"
+                );
+                let api = Api::new().context("init HF Hub API")?;
+                let repo_handle = api.model(self.repo.clone());
+                for (filename, target) in [
+                    (TOKENIZER_FILE, &self.tokenizer_path),
+                    (CONFIG_FILE, &self.config_path),
+                    (SAFETENSORS_FILE, &self.weights_path),
+                ] {
+                    let downloaded = tokio::time::timeout(
+                        Duration::from_secs(900),
+                        repo_handle.download(filename),
+                    )
                     .await
                     .with_context(|| format!("HF download timeout for {filename}"))?
                     .with_context(|| format!("HF download error for {filename}"))?;
-            if &downloaded != target {
-                std::fs::copy(&downloaded, target).with_context(|| {
-                    format!(
-                        "copy HF cache {} -> {}",
-                        downloaded.display(),
-                        target.display()
-                    )
-                })?;
-            }
-            info!(
-                file = filename,
-                size = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0),
-                "cached"
-            );
-        }
-        crate::daemon::model_download_audit::emit_complete(
-            &self.repo,
-            &self.cache_dir.display().to_string(),
-            download_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                    if &downloaded != target {
+                        std::fs::copy(&downloaded, target).with_context(|| {
+                            format!(
+                                "copy HF cache {} -> {}",
+                                downloaded.display(),
+                                target.display()
+                            )
+                        })?;
+                    }
+                    info!(
+                        file = filename,
+                        size = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0),
+                        "cached"
+                    );
+                }
+                Ok(())
+            },
         )
-        .await;
-        Ok(())
+        .await
     }
 
     /// Read-only view — operator status surface uses this for
@@ -691,6 +692,7 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
         .map_err(|e| anyhow::anyhow!("decode generated tokens: {e}"))?;
     Ok(Completion {
         text,
+        identity: Default::default(),
         model: req.model.clone().unwrap_or_else(|| adapter.repo.clone()),
         latency: started.elapsed(),
         input_tokens: Some(input_token_count as u32),
@@ -757,7 +759,10 @@ fn run_ouro_stream(
         // Re-build from prompt ids so we can extend in-place.
         let enc = loaded
             .tokenizer
-            .encode(build_chatml_prompt(req.system.as_deref(), &req.prompt), true)
+            .encode(
+                build_chatml_prompt(req.system.as_deref(), &req.prompt),
+                true,
+            )
             .map_err(|e| anyhow::anyhow!("Ouro stream: re-tokenize: {e}"))?;
         enc.get_ids().to_vec()
     };
@@ -787,6 +792,7 @@ fn run_ouro_stream(
                     .blocking_send(Ok(CompletionChunk {
                         delta,
                         done: false,
+                        identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
                         cache_creation_tokens: None,
@@ -851,6 +857,7 @@ fn run_ouro_stream(
                     .blocking_send(Ok(CompletionChunk {
                         delta,
                         done: false,
+                        identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
                         cache_creation_tokens: None,
@@ -867,6 +874,7 @@ fn run_ouro_stream(
     let _ = tx.blocking_send(Ok(CompletionChunk {
         delta: String::new(),
         done: true,
+        identity: Default::default(),
         input_tokens: Some(input_token_count as u32),
         output_tokens: Some(new_tokens.len() as u32),
         cache_creation_tokens: None,
@@ -894,7 +902,19 @@ impl Provider for LocalOuroAdapter {
         "local_ouro"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING_WITHOUT_STOPS
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.repo)
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         // GR-04: circuit breaker — same local-inference rationale
         // as `local_qwen` (mmap / candle / OOM failure isolation).
         crate::providers::circuit_breaker::run_with_breaker("local_ouro", async {
@@ -932,7 +952,11 @@ impl Provider for LocalOuroAdapter {
         .await
     }
 
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+    async fn stream_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
         // GR-04 stream-wrap: same circuit-breaker semantics as `complete`.
         // Each public surface ({complete, stream}) takes its own permit so
         // an Open breaker fast-fails either entry point.
@@ -1263,7 +1287,7 @@ mod tests {
     // Every test in this section gated by NEOTH_OURO_TEST_REPO_PATH —
     // operator points at a cache dir with tokenizer.json + config.json
     // + model.safetensors from any of the 4 published Ouro checkpoints.
-    // Run via: `cargo test -p neothd --bin neothd -- --ignored ouro`.
+    // Run via: `cargo test -p neoth --bin neoth -- --ignored ouro`.
     //
     // CI without weights stays green because every test log-skips
     // when the env var or required files are missing.
@@ -1333,7 +1357,7 @@ mod tests {
         // not a single token spammed — a coarse but real signal the
         // context-blindness is gone. Run: set NEOTH_OURO_TEST_REPO_PATH to a
         // local Ouro repo (tokenizer.json + config.json + model.safetensors),
-        // then `cargo test -p neothd --lib providers::ouro -- --ignored`.
+        // then `cargo test -p neoth --lib providers::ouro -- --ignored`.
         let Some(cache) = ouro_weights_cache() else {
             return;
         };
@@ -1376,7 +1400,7 @@ mod tests {
         // synthetic parity oracle (zero-device-edge-cases) cannot. Sampling is
         // seeded, and the two paths produce bit-identical logits, so the token
         // sequences must match exactly. Run: set NEOTH_OURO_TEST_REPO_PATH, then
-        // `cargo test -p neothd --lib providers::ouro -- --ignored`.
+        // `cargo test -p neoth --lib providers::ouro -- --ignored`.
         let Some(cache) = ouro_weights_cache() else {
             return;
         };

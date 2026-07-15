@@ -1,14 +1,14 @@
 # CLI Codemap — Operational Commands
 
-**Last Updated:** 2026-05-15
-**Entry Points:** `SRC/neothd/src/cli/hysteria.rs`, `SRC/neothd/src/cli/cluster.rs`, `SRC/neothd/src/cli/cloud.rs`
+**Last Updated:** 2026-07-14
+**Entry Points:** `SRC/neothd/src/cli/hysteria.rs`, `SRC/neothd/src/cli/cluster.rs`, `SRC/neothd/src/cli/cluster_swarm.rs`, `SRC/neothd/src/cli/cloud.rs`
 
 ## cli/hysteria.rs
 
 `neoth hysteria status|render-config|test`
 
 Inspect + test the Hysteria transport config. No `start` / `stop` subcommands — the daemon
-owns the lifecycle via `HysteriaSupervisor` in `neothd serve`.
+owns the lifecycle via `HysteriaSupervisor` in `neoth serve`.
 
 ### Subcommands
 
@@ -31,17 +31,27 @@ YAML are not over-redacted.
 
 ## cli/cluster.rs
 
-`neoth cluster status|plan`
+`neoth cluster status|events|export-foreign|plan|list|topology|discover|swarm|confirm|revoke|enable|disable|restore`
 
-Operator-facing cluster routing surface. v0.1.x is single-node only; Hyperswarm transport
-deferred (see `QUELLEN/research/R-A1_hyperswarm.md`).
+Operator-facing surface for the authenticated cluster implementation. A disabled
+cluster or one with no active peer transport still resolves honestly to
+`local-only`; enabled builds can discover and confirm peers, inspect replicated
+foreign frames, restore same-origin backups, and read the live resource-snapshot
+dashboard. The peeroxide/Hyperswarm path is NEOTH's own protocol, not Keet
+interop.
 
 ### Subcommands
 
 | Subcommand | What it does |
 |------------|-------------|
-| `status` | Always reports `mode=single-node`, `policy=local-only`, `peer_count=0`. Reads `operator_id` from `freedom.yaml`. |
+| `status` | Reports effective cluster mode/policy and the actual confirmed-peer count from `cluster.yaml`; malformed registry state is an error, not a silent zero. |
 | `plan --peers a:10,b:5.5 [--policy local-only|least-loaded]` | Parse synthetic peer-load table, run the selected policy's `pick_peer`, print decision. |
+| `list` / `topology` | List confirmed peers, last-seen state, persisted heartbeat RTT, and stability. |
+| `discover [--timeout N] [--force]` | Browse authenticated mDNS announcements without mutating the peer registry. The policy gate can refuse discovery unless the operator explicitly forces this one scan. |
+| `confirm` / `revoke` / `enable` / `disable` | Atomically maintain the confirmed-peer registry and the mDNS policy switch. |
+| `events` / `export-foreign` | Inspect or export replicated foreign frames without mixing them into local recall. |
+| `restore <export> [--dry-run] [--yes]` | Restore only frames whose origin matches the local node identity; cross-origin rows are counted and skipped. |
+| `swarm [--watch] [--stale-secs N]` | In `cluster` builds, read local/peer CPU, RAM, and VRAM snapshot frames from WAL. Config supplies sampling cadence and the default positive stale window. |
 
 ### Policies
 
@@ -50,8 +60,17 @@ deferred (see `QUELLEN/research/R-A1_hyperswarm.md`).
 | `local-only` | `LocalOnly` | Always returns `RoutingDecision::Local`. |
 | `least-loaded` | `LeastLoaded` | Returns `RoutingDecision::Remote(peer)` for the healthy peer with the highest `tokens_per_sec`, falls back to `Local` when no healthy peers. |
 
-Peer spec format for `plan`: `name:tokens_per_sec[,name:tokens_per_sec,...]`. Both `0` and
-floating-point values are valid.
+Peer spec format for `plan`: `name:tokens_per_sec[,name:tokens_per_sec,...]`.
+Both `0` and floating-point values are valid. This is a deterministic policy
+preview; it does not create a peer session.
+
+### Swarm data flow
+
+`resource_snapshot_cron` emits `EXTENDED/LocalSnapshot` and authenticated peer
+gossip contributes `EXTENDED/SwarmResourceSnapshot`. `cluster_swarm` scans the
+relevant WAL window, keeps the newest record per node, and prunes snapshots
+older than the effective `stale_after_secs`. `--watch` reruns that read every
+five seconds; it does not change daemon sampling.
 
 ### Imports
 
@@ -89,7 +108,8 @@ the local filesystem inside the desktop client's sync folder.
 ## Related Areas
 
 - `transport/hysteria.rs` — `locate_binary`, `render_yaml_config`, `probe_socks_port`
-- `cluster/` — `LocalOnly`, `LeastLoaded`, `OrchestratingPolicy` trait
-- `cli/cloud_sync_task.rs` — background periodic sync task spawned by `neothd serve`
+- `cluster/` — routing policies, authenticated discovery/transports, foreign-event views, and swarm snapshot wire format
+- `daemon/resource_snapshot_cron.rs` — local sampling and WAL emission
+- `cli/cloud_sync_task.rs` — background periodic sync task spawned by `neoth serve`
 - `cli/doctor.rs` — `check_hysteria_config`, `check_cloud_archive_dest`, `check_disk_space`
 - `memory/archive.rs` — `default_archive_root` used by cloud sync

@@ -52,7 +52,8 @@ pub async fn run_recon(args: ReconArgs, output: OutputFormat) -> Result<()> {
             engine,
             limit,
         } => {
-            let autonomy = gate()?;
+            let config = gate()?;
+            let autonomy = config.autonomy;
             let home = FreedomConfig::default_neoth_home();
             let results = uncover::run(&query, &engine, limit).await?;
             recon::audit(
@@ -61,16 +62,33 @@ pub async fn run_recon(args: ReconArgs, output: OutputFormat) -> Result<()> {
                 results.len(),
             );
             let args_hash = hash_args(&format!("q={query}|e={}", engine.join(",")));
-            emit_recon_run(&home, "uncover", &args_hash, results.len(), autonomy).await;
+            emit_recon_run(
+                &home,
+                "uncover",
+                &args_hash,
+                results.len(),
+                autonomy,
+                config.operator_id.as_deref(),
+            )
+            .await;
             emit_uncover(&results, output)
         }
         ReconAction::Tlsx { host, port } => {
-            let autonomy = gate()?;
+            let config = gate()?;
+            let autonomy = config.autonomy;
             let home = FreedomConfig::default_neoth_home();
             let results = tlsx::run(&host, &port).await?;
             recon::audit("tlsx", &format!("hosts={host:?}"), results.len());
             let args_hash = hash_args(&format!("u={}|p={}", host.join(","), port.join(",")));
-            emit_recon_run(&home, "tlsx", &args_hash, results.len(), autonomy).await;
+            emit_recon_run(
+                &home,
+                "tlsx",
+                &args_hash,
+                results.len(),
+                autonomy,
+                config.operator_id.as_deref(),
+            )
+            .await;
             emit_tlsx(&results, output)
         }
     }
@@ -78,20 +96,17 @@ pub async fn run_recon(args: ReconArgs, output: OutputFormat) -> Result<()> {
 
 /// Recon is an external/active capability — refused under Strict autonomy.
 /// Returns the live autonomy level so the caller can stamp it into the audit.
-fn gate() -> Result<AutonomyLevel> {
-    // Fail CLOSED: a missing/corrupt/unreadable freedom.yaml must NOT
-    // silently drop to the Standard default and let an external/active
-    // recon run — assume the strictest level so the gate below refuses.
-    let autonomy = match FreedomConfig::load_from_default_path() {
-        Ok(c) => c.autonomy,
-        Err(_) => AutonomyLevel::Strict,
-    };
+fn gate() -> Result<FreedomConfig> {
+    // Recon is external/active, so it requires an explicit valid operator
+    // config. Preserve the same snapshot for the effect and audit metadata.
+    let config = FreedomConfig::load_from_default_path()?;
+    let autonomy = config.autonomy;
     if autonomy == AutonomyLevel::Strict {
         anyhow::bail!(
             "recon is refused under Strict autonomy — raise it (`neoth autonomy set standard`) to allow external recon"
         );
     }
-    Ok(autonomy)
+    Ok(config)
 }
 
 /// Stable hex hash of a recon invocation's args. The raw query / target hosts
@@ -111,10 +126,8 @@ async fn emit_recon_run(
     args_hash: &str,
     result_count: usize,
     autonomy: AutonomyLevel,
+    operator_id: Option<&str>,
 ) {
-    let operator_id = FreedomConfig::load_from_default_path()
-        .ok()
-        .and_then(|c| c.operator_id);
     let payload = serde_json::to_vec(&serde_json::json!({
         "tool": tool,
         "args_hash": args_hash,
@@ -123,7 +136,7 @@ async fn emit_recon_run(
         "operator_id": operator_id,
         "ts_unix": crate::time::now_unix_secs(),
     }))
-    .unwrap_or_else(|_| b"{}".to_vec());
+    .expect("RECON_RUN payload contains only infallibly serializable fields");
     let event_type = crate::wal::events::EVENT_TYPE_RECON_RUN;
 
     let pidfile = crate::daemon::pidfile::default_pidfile();

@@ -88,13 +88,13 @@ pub enum SlashAction {
     /// edit; this variant is reserved for the future split if list
     /// surfaces grow large enough to warrant separate commands.
     ConfigSet,
-    /// `/provider [role] <kind> [--model M] [--key K]` — switch one
+    /// `/provider [role] <kind> [--model M] [--key K] [--endpoint URL]` — switch one
     /// hemisphere's provider. `role` defaults to `left` per the
     /// chat dispatch fallback rule.
     ProviderSwitch,
     /// `/connect <channel>` — walk the operator through credential
     /// entry + token verification for a channel adapter
-    /// (whatsapp / telegram / slack / discord / keet).
+    /// (whatsapp / telegram / slack / discord).
     ConnectChannel,
     /// `/disconnect <channel>` — revoke credentials + leave the
     /// adapter shell. Idempotent for already-disconnected channels.
@@ -156,9 +156,8 @@ impl SlashAction {
     /// ADV-09: actions that MUTATE operator config / security state and
     /// so must require CLI + local auth — `dispatch_action` rejects them
     /// when the invocation arrives from a channel (privilege ceiling).
-    /// Read-only actions (ConfigGet / Quit) + the mixed list/mutate
-    /// registries (Skill/Plugin/Memory — sub-command-level granularity
-    /// is a future refinement) are NOT blocked here.
+    /// Mixed read/write actions are classified by
+    /// [`Self::is_destructive_with_args`], not flattened here.
     pub const fn is_destructive(self) -> bool {
         matches!(
             self,
@@ -167,30 +166,25 @@ impl SlashAction {
                 | Self::ProviderSwitch
                 | Self::ConnectChannel
                 | Self::DisconnectChannel
-                | Self::ConsentManage
                 | Self::ReloadConfig
-                | Self::AutonomyLevel
         )
     }
 
     /// ADV-09 sub-command-aware ceiling. The mixed-mode registries
-    /// (`SkillRegistry`/`PluginRegistry`/`MemoryView`) are NOT flatly
-    /// destructive — `/skill list`, `/plugin info`, `/memory view` are
-    /// read-only — but their MUTATING sub-commands (`enable`/`disable`,
-    /// `forget`/`tier`) must require local CLI auth just like the flat
-    /// mutators. `args` is the trailing slice after the command name; the
-    /// first token selects the sub-command. Used by the channel gate so a
-    /// `/skill enable …` over Telegram is rejected even though the handler
-    /// is `Pending` today — closing the gate BEFORE the write paths wire in
-    /// (the alternative is a silent bypass the day a handler goes live).
+    /// actions are NOT flatly destructive: `/config <key>`, `/skill list`,
+    /// `/plugin info`, `/memory tier`, `/consent list`, and `/autonomy` are
+    /// reads. Their write forms require local CLI authentication.
     pub fn is_destructive_with_args(self, args: &str) -> bool {
         if self.is_destructive() {
             return true;
         }
         let sub = args.split_whitespace().next().unwrap_or("");
         match self {
+            Self::ConfigGet => args.split_whitespace().count() >= 2,
             Self::SkillRegistry | Self::PluginRegistry => matches!(sub, "enable" | "disable"),
-            Self::MemoryView => matches!(sub, "forget" | "tier"),
+            Self::MemoryView => sub == "forget",
+            Self::ConsentManage => matches!(sub, "grant" | "revoke"),
+            Self::AutonomyLevel => !args.trim().is_empty(),
             _ => false,
         }
     }
@@ -200,7 +194,7 @@ impl Copy for SlashAction {}
 
 /// ADV-09: origin surface of a slash-command invocation. The channel
 /// privilege ceiling in [`crate::slash::dispatch_action`] rejects
-/// destructive actions ([`SlashAction::is_destructive`]) when the
+/// destructive actions ([`SlashAction::is_destructive_with_args`]) when the
 /// source is a channel — they require local CLI authentication.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandSource {

@@ -249,7 +249,10 @@ pub struct ImbaOmissionResult {
 impl ImbaOmissionResult {
     fn new(categories: Vec<ImbaCategory>) -> Self {
         let has_omission = !categories.is_empty();
-        Self { categories, has_omission }
+        Self {
+            categories,
+            has_omission,
+        }
     }
 }
 
@@ -337,10 +340,7 @@ pub fn imba_omission_scan(response: &str, prompt: &str) -> ImbaOmissionResult {
     }
 
     // (3) False assumption hedge: any match.
-    if FALSE_ASSUMPTION_HEDGES
-        .iter()
-        .any(|&h| r_lower.contains(h))
-    {
+    if FALSE_ASSUMPTION_HEDGES.iter().any(|&h| r_lower.contains(h)) {
         categories.push(ImbaCategory::FalseAssumptionHedge);
     }
 
@@ -460,10 +460,8 @@ mod tests {
     fn imba_no_flag_on_non_causal_prompt() {
         // Prompt has no "how"/"why" → MissingMechanism must NOT fire
         // even if the response has no mechanism markers.
-        let result = imba_omission_scan(
-            "The capital is Berlin.",
-            "What is the capital of Germany?",
-        );
+        let result =
+            imba_omission_scan("The capital is Berlin.", "What is the capital of Germany?");
         assert!(
             !result.categories.contains(&ImbaCategory::MissingMechanism),
             "non-causal prompt must not trigger MissingMechanism"
@@ -511,7 +509,9 @@ mod tests {
             "What is the best sorting algorithm?",
         );
         assert!(
-            result.categories.contains(&ImbaCategory::FalseAssumptionHedge),
+            result
+                .categories
+                .contains(&ImbaCategory::FalseAssumptionHedge),
             "false-assumption hedge must be detected: {:?}",
             result.categories
         );
@@ -520,10 +520,8 @@ mod tests {
     #[test]
     fn imba_detects_information_void() {
         // Very short response to a substantive question.
-        let result = imba_omission_scan(
-            "It depends.",
-            "What is the difference between TCP and UDP?",
-        );
+        let result =
+            imba_omission_scan("It depends.", "What is the difference between TCP and UDP?");
         assert!(
             result.categories.contains(&ImbaCategory::InformationVoid),
             "deflection answer must flag InformationVoid: {:?}",

@@ -76,7 +76,7 @@ pub(crate) fn strip_marker(reply: &str) -> String {
 }
 
 /// If `reply` asks for clarification (and we're enabled + on a TTY), run one
-/// clarification round-trip and return the resolved reply. Returns `None` when
+/// clarification round-trip and return the resolved completion. Returns `None` when
 /// no clarification happened — the caller then prints the original reply
 /// unchanged, so the default path is untouched.
 pub async fn maybe_clarify(
@@ -84,7 +84,7 @@ pub async fn maybe_clarify(
     original_prompt: &str,
     system: Option<&str>,
     reply: &str,
-) -> Option<String> {
+) -> Option<crate::providers::Completion> {
     if !enabled() || !clarify::is_ambiguous(reply) {
         return None;
     }
@@ -129,7 +129,7 @@ pub async fn maybe_clarify(
                 ..Default::default()
             };
             match provider.complete(req).await {
-                Ok(c) => Some(c.text),
+                Ok(c) => Some(c),
                 Err(e) => {
                     tracing::warn!(error = %e, "clarification re-issue failed; keeping original reply");
                     None
@@ -166,7 +166,10 @@ mod tests {
         // Case-insensitive, mid-string.
         assert_eq!(strip_marker("[[AMBIGUOUS]] two targets"), "two targets");
         // No marker → trimmed verbatim.
-        assert_eq!(strip_marker("  just a normal reply  "), "just a normal reply");
+        assert_eq!(
+            strip_marker("  just a normal reply  "),
+            "just a normal reply"
+        );
     }
 
     #[test]

@@ -11,11 +11,10 @@
 //! Plans never carry placeholder text. A plan with `TBD` looks like
 //! progress but ISN'T — implementers spend more time decoding the
 //! placeholder than executing the real task. [`validate_plan`] is the
-//! pure check that enforces this — but note it is **not yet wired into
-//! the kanban write path**: it has no production caller today (only
-//! tests exercise it), so nothing currently runs it before a plan lands
-//! in SQLite. It is ready to gate `store::insert_tasks` the moment that
-//! chain lands (see "What this is NOT" below).
+//! pure check that enforces this. The production `neoth code` brainstorm
+//! gate converts an approved [`BrainstormSpec`] with [`plan_from_brainstorm`]
+//! and runs `validate_plan` before the spec can reach decomposition or the
+//! kanban store; placeholder-bearing plans fail closed.
 //!
 //! ## What this module ships
 //!
@@ -29,10 +28,10 @@
 //!
 //! ## What this is NOT
 //!
-//! - The kanban DB write. That lives in `coding::store` today; this
-//!   module is the pure validation primitive. A future commit
-//!   chains `validate_plan(plan)` → `store::insert_tasks(plan)` so
-//!   broken plans never reach SQLite.
+//! - The kanban DB write. That lives in `coding::store`; this module is
+//!   the pure validation primitive. `cli::code::run_brainstorm_gate`
+//!   owns the production `plan_from_brainstorm` → `validate_plan` →
+//!   decomposition boundary.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -279,10 +278,7 @@ fn check_placeholder(field: &str, text: &str) -> Result<(), PlanValidationError>
 /// the spec's testing decisions, evidence = its implementation decisions
 /// (shared across tasks in v0 — per-story granularity arrives with the LLM
 /// plan writer).
-pub fn plan_from_brainstorm(
-    spec: &super::brainstorm::BrainstormSpec,
-    source_prompt: &str,
-) -> Plan {
+pub fn plan_from_brainstorm(spec: &super::brainstorm::BrainstormSpec, source_prompt: &str) -> Plan {
     let source = format!(
         "spec-{:016x}",
         xxhash_rust::xxh3::xxh3_64(source_prompt.as_bytes())

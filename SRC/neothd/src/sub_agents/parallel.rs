@@ -31,13 +31,12 @@
 //!   stats (`pass_count`, `fail_count`, `blocked_count`,
 //!   `panicked_count`) for the operator-facing renderer.
 //!
-//! ## What's NOT here (yet)
+//! ## Boundary
 //!
-//! - The actual coding-workflow worker. That's `coding::worker`
-//!   today, single-shot. A future commit replaces the dispatcher's
-//!   sequential loop with `dispatch_parallel` when the operator
-//!   passes `--parallel`.
-//! - The "domain-split" decision tree. The
+//! - The production provider worker lives in [`super::runtime`] and is
+//!   invoked by `neoth agents run`. The coding dispatcher keeps its own
+//!   hemisphere batching because its DB/apply lifecycle is different.
+//! - The "domain-split" decision tree stays in the
 //!   `dispatching_parallel_agents` skill (QM-22 batch A) carries
 //!   the prompt-side discipline that decides WHEN to fan out; this
 //!   module trusts the caller already made that call.
@@ -130,6 +129,10 @@ where
     }
 
     let total = requests.len();
+    let task_ids: Vec<String> = requests
+        .iter()
+        .map(|request| request.task_id.clone())
+        .collect();
     let concurrency = max_concurrent.unwrap_or(total).max(1).min(total);
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut joinset: JoinSet<(usize, Result<SubAgentResult>)> = JoinSet::new();
@@ -202,11 +205,11 @@ where
             Some(Ok(r)) => r,
             Some(Err(e)) => {
                 panicked_count += 1;
-                synth_blocked(idx, &format!("worker error: {e}"))
+                synth_blocked(&task_ids[idx], &format!("worker error: {e}"))
             }
             None => {
                 panicked_count += 1;
-                synth_blocked(idx, "no result returned (joinset missed)")
+                synth_blocked(&task_ids[idx], "no result returned (joinset missed)")
             }
         };
         match &result.verdict {
@@ -238,15 +241,18 @@ where
 /// Synthesise a `Blocked` `SubAgentResult` for a worker that
 /// errored or panicked. Used so the report stays one-per-input
 /// even when a worker fails to return a real result.
-fn synth_blocked(idx: usize, reason: &str) -> SubAgentResult {
+fn synth_blocked(task_id: &str, reason: &str) -> SubAgentResult {
     SubAgentResult {
         from: "<parallel-dispatcher>".into(),
         to: "<caller>".into(),
-        task_id: format!("synth-{idx}"),
+        task_id: task_id.to_string(),
         verdict: QaVerdict::Blocked {
             reason: reason.to_string(),
         },
         evidence: vec![],
+        output: String::new(),
+        provider_calls: vec![],
+        attempts: 0,
         next_agent: None,
         ts_unix: now_unix(),
     }
@@ -308,6 +314,9 @@ mod tests {
                 task_id: req.task_id,
                 verdict: QaVerdict::pass(),
                 evidence: vec!["worker ran".into()],
+                output: "ok".into(),
+                provider_calls: vec![],
+                attempts: 1,
                 next_agent: None,
                 ts_unix: 1_700_000_001,
             })
@@ -328,6 +337,9 @@ mod tests {
                     citation: None,
                 }]),
                 evidence: vec![],
+                output: "bad".into(),
+                provider_calls: vec![],
+                attempts: 1,
                 next_agent: None,
                 ts_unix: 1_700_000_001,
             })
@@ -353,6 +365,9 @@ mod tests {
                 task_id: req.task_id,
                 verdict: QaVerdict::pass(),
                 evidence: vec![],
+                output: "slow".into(),
+                provider_calls: vec![],
+                attempts: 1,
                 next_agent: None,
                 ts_unix: 1_700_000_010,
             })
@@ -372,6 +387,9 @@ mod tests {
                 task_id: req.task_id,
                 verdict: QaVerdict::pass(),
                 evidence: vec![],
+                output: "counted".into(),
+                provider_calls: vec![],
+                attempts: 1,
                 next_agent: None,
                 ts_unix: 1_700_000_001,
             })
@@ -512,6 +530,9 @@ mod tests {
                     task_id: req.task_id,
                     verdict,
                     evidence: vec![],
+                    output: "mixed".into(),
+                    provider_calls: vec![],
+                    attempts: 1,
                     next_agent: None,
                     ts_unix: 0,
                 })

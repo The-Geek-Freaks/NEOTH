@@ -9,11 +9,15 @@
 use std::path::PathBuf;
 use std::str::FromStr as _;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand};
+use rusqlite::OptionalExtension as _;
 
-use crate::analytics::babel::collapse::{persist_label, post_hoc_label_pass, CollapseLabel};
+use crate::analytics::babel::collapse::{
+    CollapseLabel, NegativeControlType, persist_label, post_hoc_label_pass,
+};
 use crate::analytics::babel::export::export_batch;
+use crate::analytics::babel::store::persist_negative_control;
 use crate::cli::OutputFormat;
 
 #[derive(Args, Debug, Clone)]
@@ -46,6 +50,11 @@ pub enum BabelAction {
         window_id: String,
         /// The collapse label to attach.
         label: String,
+    },
+    /// Tag or untag a deliberately stable window used as a negative control.
+    NegativeControl {
+        #[command(subcommand)]
+        action: NegativeControlAction,
     },
     /// Enable the observer (`babel.enabled = true` in freedom.yaml).
     Enable,
@@ -82,6 +91,22 @@ pub enum BabelAction {
     },
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum NegativeControlAction {
+    /// Mark a window as an operator-declared negative control.
+    Set {
+        /// The window id (`neoth babel windows` lists them).
+        window_id: String,
+        /// One of: synthetic_stable, isolated_run, replay_deterministic.
+        control_type: String,
+    },
+    /// Remove a negative-control tag from a window.
+    Clear {
+        /// The window id (`neoth babel windows` lists them).
+        window_id: String,
+    },
+}
+
 fn open_views() -> Result<rusqlite::Connection> {
     let path = crate::memory::store::default_path();
     let conn = crate::memory::store::open(&path)
@@ -95,7 +120,10 @@ fn set_enabled(enabled: bool) -> Result<()> {
     let mut fc = crate::config::FreedomConfig::load_from_path(&path)
         .with_context(|| format!("load {}", path.display()))?;
     if fc.babel.enabled == enabled {
-        println!("babel observer already {}", if enabled { "enabled" } else { "disabled" });
+        println!(
+            "babel observer already {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
         return Ok(());
     }
     fc.babel.enabled = enabled;
@@ -118,8 +146,8 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
             .context("load freedom.yaml for babel status")?
             .babel;
             let conn = open_views()?;
-            let total: i64 = conn
-                .query_row("SELECT COUNT(*) FROM idx_babel_windows", [], |r| r.get(0))?;
+            let total: i64 =
+                conn.query_row("SELECT COUNT(*) FROM idx_babel_windows", [], |r| r.get(0))?;
 
             // Per-granularity summary: (window_secs, count, last_ts_end)
             let mut stmt = conn.prepare(
@@ -135,6 +163,25 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 [],
                 |r| r.get(0),
             )?;
+            let negative_controls: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM idx_babel_windows WHERE negative_ctrl = 1",
+                [],
+                |r| r.get(0),
+            )?;
+            let last_variables: Option<String> = conn
+                .query_row(
+                    "SELECT variables FROM idx_babel_windows ORDER BY ts_end DESC LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let last_variables = last_variables
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+            let last_k_d_posture = last_variables
+                .as_ref()
+                .and_then(|v| v.get("k_d_posture"))
+                .cloned();
 
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
@@ -157,14 +204,31 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                             "federate": cfg.federate,
                             "total_windows": total,
                             "collapse_flagged": collapses,
+                            "negative_controls": negative_controls,
                             "windows_by_granularity": windows_by_granularity,
-                            "memory_signals_reserved": true,
-                            "skill_signals_reserved": true,
+                            "memory_signals": {
+                                "enabled": cfg.memory_signals,
+                                "mapping_version": crate::analytics::babel::signals::SIGNAL_MAPPING_VERSION,
+                                "sources": ["new_contradiction", "true_recall_miss"],
+                            },
+                            "skill_signals": {
+                                "enabled": cfg.skill_signals,
+                                "mapping_version": crate::analytics::babel::signals::SIGNAL_MAPPING_VERSION,
+                                "outcomes": ["mode", "keyword", "embedding", "no_match", "suppressed"],
+                            },
+                            "k_d": {
+                                "mode": if cfg.k_d_embedding_model.is_some() { "embedding_v1" } else { "histogram_v0" },
+                                "requested_model": cfg.k_d_embedding_model.as_deref(),
+                                "last_window_posture": last_k_d_posture,
+                            },
                         })
                     );
                 }
                 OutputFormat::Table => {
-                    println!("babel observer: {}", if cfg.enabled { "enabled" } else { "disabled" });
+                    println!(
+                        "babel observer: {}",
+                        if cfg.enabled { "enabled" } else { "disabled" }
+                    );
                     println!("threshold (15-min b_mult): {}", cfg.threshold);
                     match cfg.epsilon_calibrated {
                         Some(e) => println!("epsilon: {e} (frozen)"),
@@ -172,10 +236,40 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                     }
                     println!(
                         "federation: {}",
-                        if cfg.federate { "ENABLED (consent-gated at runtime)" } else { "disabled" }
+                        if cfg.federate {
+                            "ENABLED (consent-gated at runtime)"
+                        } else {
+                            "disabled"
+                        }
                     );
-                    println!("memory_signals: reserved/no effect (post-GOLD)");
-                    println!("skill_signals: reserved/no effect (post-GOLD)");
+                    println!(
+                        "memory_signals: {} ({})",
+                        if cfg.memory_signals {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        },
+                        crate::analytics::babel::signals::SIGNAL_MAPPING_VERSION,
+                    );
+                    println!(
+                        "skill_signals: {} ({})",
+                        if cfg.skill_signals {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        },
+                        crate::analytics::babel::signals::SIGNAL_MAPPING_VERSION,
+                    );
+                    match cfg.k_d_embedding_model.as_deref() {
+                        Some(model) => println!(
+                            "K_d: embedding_v1, requested local model {model}, last posture {}",
+                            last_k_d_posture
+                                .as_ref()
+                                .map(serde_json::Value::to_string)
+                                .unwrap_or_else(|| "not recorded yet".to_string())
+                        ),
+                        None => println!("K_d: histogram_v0"),
+                    }
                     if total == 0 {
                         println!("no windows recorded yet");
                         return Ok(());
@@ -185,6 +279,7 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                         println!("  {secs:>5}s: {count} windows, last ts_end {last}");
                     }
                     println!("collapse-flagged windows: {collapses}");
+                    println!("negative-control windows: {negative_controls}");
                 }
             }
         }
@@ -192,7 +287,7 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
             let conn = open_views()?;
             let mut stmt = conn.prepare(
                 "SELECT id, window_secs, ts_start, ts_end, b_log, b_mult, b_bottleneck,
-                        collapse_5m, collapse_30m, collapse_kind
+                        collapse_5m, collapse_30m, collapse_kind, negative_control_type
                  FROM idx_babel_windows ORDER BY ts_end DESC LIMIT ?1",
             )?;
             #[allow(clippy::type_complexity)]
@@ -207,6 +302,7 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 Option<i64>,
                 Option<i64>,
                 Option<String>,
+                Option<String>,
             )> = stmt
                 .query_map(rusqlite::params![n as i64], |r| {
                     Ok((
@@ -220,6 +316,7 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                         r.get(7)?,
                         r.get(8)?,
                         r.get(9)?,
+                        r.get(10)?,
                     ))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -228,20 +325,36 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     let windows: Vec<serde_json::Value> = rows
                         .iter()
-                        .map(|(id, secs, ts_start, ts_end, b_log, b_mult, b_bot, c5, c30, kind)| {
-                            serde_json::json!({
-                                "id": id,
-                                "window_secs": secs,
-                                "ts_start": ts_start,
-                                "ts_end": ts_end,
-                                "b_log": b_log,
-                                "b_mult": b_mult,
-                                "b_bottleneck": b_bot,
-                                "collapse_5m": c5,
-                                "collapse_30m": c30,
-                                "collapse_kind": kind,
-                            })
-                        })
+                        .map(
+                            |(
+                                id,
+                                secs,
+                                ts_start,
+                                ts_end,
+                                b_log,
+                                b_mult,
+                                b_bot,
+                                c5,
+                                c30,
+                                kind,
+                                negative_control_type,
+                            )| {
+                                serde_json::json!({
+                                    "id": id,
+                                    "window_secs": secs,
+                                    "ts_start": ts_start,
+                                    "ts_end": ts_end,
+                                    "b_log": b_log,
+                                    "b_mult": b_mult,
+                                    "b_bottleneck": b_bot,
+                                    "collapse_5m": c5,
+                                    "collapse_30m": c30,
+                                    "collapse_kind": kind,
+                                    "negative_control": negative_control_type.is_some(),
+                                    "negative_control_type": negative_control_type,
+                                })
+                            },
+                        )
                         .collect();
                     println!("{}", serde_json::json!({"windows": windows}));
                 }
@@ -250,9 +363,23 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                         println!("no windows");
                         return Ok(());
                     }
-                    for (id, secs, ts_start, ts_end, b_log, b_mult, b_bot, c5, c30, kind) in &rows {
+                    for (
+                        id,
+                        secs,
+                        ts_start,
+                        ts_end,
+                        b_log,
+                        b_mult,
+                        b_bot,
+                        c5,
+                        c30,
+                        kind,
+                        negative_control_type,
+                    ) in &rows
+                    {
                         let fmt_opt = |v: Option<f64>| {
-                            v.map(|x| format!("{x:.4}")).unwrap_or_else(|| "-".to_string())
+                            v.map(|x| format!("{x:.4}"))
+                                .unwrap_or_else(|| "-".to_string())
                         };
                         let fmt_flag = |v: Option<i64>| match v {
                             Some(1) => "1",
@@ -260,13 +387,14 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                             None => "?",
                         };
                         println!(
-                            "{id}  {secs:>5}s  [{ts_start}..{ts_end}]  b_log={} b_mult={} b_bneck={:.4}  c5={} c30={} kind={}",
+                            "{id}  {secs:>5}s  [{ts_start}..{ts_end}]  b_log={} b_mult={} b_bneck={:.4}  c5={} c30={} kind={} negative_control={}",
                             fmt_opt(*b_log),
                             fmt_opt(*b_mult),
                             b_bot,
                             fmt_flag(*c5),
                             fmt_flag(*c30),
                             kind.as_deref().unwrap_or("-"),
+                            negative_control_type.as_deref().unwrap_or("-"),
                         );
                     }
                 }
@@ -284,7 +412,33 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 bail!("window `{window_id}` not found (`neoth babel windows` lists ids)");
             }
             persist_label(&conn, &window_id, parsed, true, crate::time::now_unix_i64())?;
-            println!("labeled {window_id} as {} (operator-confirmed)", parsed.as_str());
+            println!(
+                "labeled {window_id} as {} (operator-confirmed)",
+                parsed.as_str()
+            );
+        }
+        BabelAction::NegativeControl { action } => {
+            let conn = open_views()?;
+            let (window_id, control_type) = match action {
+                NegativeControlAction::Set {
+                    window_id,
+                    control_type,
+                } => (
+                    window_id,
+                    Some(NegativeControlType::from_str(&control_type)?),
+                ),
+                NegativeControlAction::Clear { window_id } => (window_id, None),
+            };
+            if !persist_negative_control(&conn, &window_id, control_type)? {
+                bail!("window `{window_id}` not found (`neoth babel windows` lists ids)");
+            }
+            match control_type {
+                Some(value) => println!(
+                    "tagged {window_id} as negative control ({})",
+                    value.as_str()
+                ),
+                None => println!("cleared negative-control tag from {window_id}"),
+            }
         }
         BabelAction::Enable => set_enabled(true)?,
         BabelAction::Disable => set_enabled(false)?,
@@ -295,11 +449,18 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
             if !enable && !disable {
                 println!(
                     "federation: {}",
-                    if fc.babel.federate { "ENABLED (consent-gated at runtime)" } else { "disabled" }
+                    if fc.babel.federate {
+                        "ENABLED (consent-gated at runtime)"
+                    } else {
+                        "disabled"
+                    }
                 );
                 println!(
                     "transport endpoint: {}",
-                    fc.babel.federation_endpoint.as_deref().unwrap_or("none (batches queue as pending files)")
+                    fc.babel
+                        .federation_endpoint
+                        .as_deref()
+                        .unwrap_or("none (batches queue as pending files)")
                 );
                 return Ok(());
             }
@@ -364,7 +525,15 @@ mod tests {
             "C": 0.5, "K": 0.4, "M": 0.3, "A": 0.5, "V": 0.2, "D": 1.0, "H": 1.0,
             "algo": {"c": "C_d_v0", "k": "K_d_v0", "m": "M_d_v0", "a": "A_d_v0",
                       "v": "V_d_v0", "d": "D_d_v0", "h": "H_d_v0"},
-            "schema": "neoth-babel-window/0.2.0",
+            "k_d_posture": {"mode": "histogram_v0", "requested_model": null,
+                "effective_model": null, "sample_count": 3, "failure_count": 0,
+                "failure_reasons": [], "degraded_reason": null},
+            "signal_posture": {"mapping_version": "BabelSignalMap_v1",
+                "memory_enabled": false, "skill_enabled": false,
+                "memory_contradictions": 0, "memory_recall_misses": 0,
+                "skill_mode": 0, "skill_keyword": 0, "skill_embedding": 0,
+                "skill_no_match": 0, "skill_suppressed": 0},
+            "schema": "neoth-babel-window/0.4.0",
         });
         conn.execute(
             "INSERT INTO idx_babel_windows
@@ -396,9 +565,9 @@ mod tests {
         assert_eq!(v["windows_by_granularity"][0]["count"], 42);
     }
 
-    /// Status JSON must include reserved signal annotation keys (B24).
+    /// Status JSON reports live source gates and mapping version (B24).
     #[test]
-    fn status_json_shape_includes_reserved_signal_keys() {
+    fn status_json_shape_includes_live_signal_keys() {
         let v = serde_json::json!({
             "enabled": true,
             "threshold": 1.5_f64,
@@ -409,11 +578,13 @@ mod tests {
             "windows_by_granularity": [
                 {"window_secs": 900_i64, "count": 42_i64, "last_ts_end": 1_700_000_000_i64}
             ],
-            "memory_signals_reserved": true,
-            "skill_signals_reserved": true,
+            "memory_signals": {"enabled": true, "mapping_version": "BabelSignalMap_v1"},
+            "skill_signals": {"enabled": false, "mapping_version": "BabelSignalMap_v1"},
+            "k_d": {"mode": "histogram_v0", "requested_model": null},
         });
-        assert_eq!(v["memory_signals_reserved"], true, "memory_signals_reserved key present and true");
-        assert_eq!(v["skill_signals_reserved"], true, "skill_signals_reserved key present and true");
+        assert_eq!(v["memory_signals"]["enabled"], true);
+        assert_eq!(v["skill_signals"]["enabled"], false);
+        assert_eq!(v["k_d"]["mode"], "histogram_v0");
     }
 
     /// JSON shape for `windows` must wrap rows under a `windows` array.
@@ -454,7 +625,10 @@ mod tests {
             msg.contains("unsupported babel export format"),
             "error must name the unsupported format; got: {msg}"
         );
-        assert!(!out.exists(), "target file must not exist after a format error");
+        assert!(
+            !out.exists(),
+            "target file must not exist after a format error"
+        );
     }
 
     /// export_format = "jsonl" from config (no CLI flag) must succeed and write
@@ -470,7 +644,10 @@ mod tests {
         let stats = export_batch(&conn, &out, &effective, 0)
             .expect("jsonl export via config format must succeed");
         assert!(stats.windows > 0, "at least one window must be exported");
-        assert!(out.exists(), "output file must exist after a successful export");
+        assert!(
+            out.exists(),
+            "output file must exist after a successful export"
+        );
     }
 
     /// CLI --format flag wins over babel.export_format in config (B24 truth-slice).
@@ -485,14 +662,23 @@ mod tests {
         let out_ok = dir.path().join("ok.jsonl");
         let effective_a = "jsonl".to_string(); // CLI --format jsonl overrides config csv
         let result_a = export_batch(&conn, &out_ok, &effective_a, 0);
-        assert!(result_a.is_ok(), "CLI --format jsonl must beat config csv and succeed");
+        assert!(
+            result_a.is_ok(),
+            "CLI --format jsonl must beat config csv and succeed"
+        );
         assert!(out_ok.exists(), "output file must exist on success");
 
         // Case B: CLI csv beats config jsonl → export must error.
         let out_bad = dir.path().join("bad.jsonl");
         let effective_b = "csv".to_string(); // CLI --format csv overrides config jsonl
         let result_b = export_batch(&conn, &out_bad, &effective_b, 0);
-        assert!(result_b.is_err(), "CLI --format csv must beat config jsonl and error");
-        assert!(!out_bad.exists(), "no file written when CLI format is unsupported");
+        assert!(
+            result_b.is_err(),
+            "CLI --format csv must beat config jsonl and error"
+        );
+        assert!(
+            !out_bad.exists(),
+            "no file written when CLI format is unsupported"
+        );
     }
 }

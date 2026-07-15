@@ -141,7 +141,10 @@ mod tests {
             let mut blob = prefix.to_vec();
             blob.extend_from_slice(ct);
             let got = decrypt_chrome_cbc_envelope(&key, &blob).expect("decrypt");
-            assert_eq!(got, plaintext, "shared CBC round-trip must recover plaintext");
+            assert_eq!(
+                got, plaintext,
+                "shared CBC round-trip must recover plaintext"
+            );
         }
     }
 
@@ -169,6 +172,9 @@ mod tests {
     #[test]
     fn derive_saltysalt_key_iter_count_changes_key() {
         // Linux (1) and macOS (1003) MUST diverge — drift guard.
-        assert_ne!(derive_saltysalt_key(b"peanuts", 1), derive_saltysalt_key(b"peanuts", 1003));
+        assert_ne!(
+            derive_saltysalt_key(b"peanuts", 1),
+            derive_saltysalt_key(b"peanuts", 1003)
+        );
     }
 }

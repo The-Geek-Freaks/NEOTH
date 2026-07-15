@@ -402,25 +402,10 @@ fn import_text(
     };
 
     let claims: Vec<crate::memory::bulk_text::Claim> = if raw {
-        // Operator promises this is already one-claim-per-line. We still
-        // dedup + cap so a stray bad row doesn't bloat the table.
-        let mut seen = std::collections::HashSet::<u64>::new();
-        body.lines()
-            .filter_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.chars().count() < crate::memory::bulk_text::MIN_CLAIM_CHARS {
-                    return None;
-                }
-                let fingerprint = xxhash_rust::xxh3::xxh3_64(trimmed.to_lowercase().as_bytes());
-                if !seen.insert(fingerprint) {
-                    return None;
-                }
-                Some(crate::memory::bulk_text::Claim {
-                    statement: trimmed.to_string(),
-                    fingerprint,
-                })
-            })
-            .collect()
+        // Operator promises this is already one-claim-per-line. Raw and
+        // heuristic paths still share the same cap, canonical normaliser,
+        // collision guard, and persistent import ledger.
+        crate::memory::bulk_text::extract_claims_raw(&body)
     } else {
         crate::memory::bulk_text::extract_claims_heuristic(&body)
     };
@@ -451,15 +436,17 @@ fn import_text(
 
     let now_ns = crate::time::now_unix_ns_i64();
     let mut inserted = 0usize;
+    let mut skipped = 0usize;
+    let mut tombstoned = 0usize;
     for c in &claims {
-        crate::memory::groundtruth::insert(
-            conn,
-            &c.statement,
-            &crate::memory::groundtruth::Source::BulkText,
-            scope,
-            now_ns,
-        )?;
-        inserted += 1;
+        match crate::memory::bulk_text::persist_claim(conn, c, scope, now_ns)? {
+            crate::memory::bulk_text::PersistClaimOutcome::Inserted { .. } => inserted += 1,
+            crate::memory::bulk_text::PersistClaimOutcome::SkippedActive { .. } => skipped += 1,
+            crate::memory::bulk_text::PersistClaimOutcome::SkippedTombstone { .. } => {
+                skipped += 1;
+                tombstoned += 1;
+            }
+        }
     }
 
     match output {
@@ -468,13 +455,19 @@ fn import_text(
                 "{}",
                 serde_json::json!({
                     "inserted": inserted,
+                    "skipped": skipped,
+                    "tombstoned": tombstoned,
                     "scope": scope,
                     "source": "bulk-text",
                 })
             );
         }
         OutputFormat::Table => {
-            println!("imported {inserted} ground-truth row(s) from {path} (scope={scope})");
+            println!(
+                "imported {inserted} ground-truth row(s) from {path}; \
+                 skipped {skipped} known claim(s), including {tombstoned} tombstone(s) \
+                 (scope={scope})"
+            );
         }
     }
     Ok(())
@@ -488,9 +481,8 @@ fn ask(db_path: &std::path::Path, lang: Option<&str>, output: OutputFormat) -> R
     let lang_owned: String = if let Some(l) = lang {
         l.to_string()
     } else {
-        crate::config::FreedomConfig::load_from_default_path()
-            .ok()
-            .and_then(|c| c.language_primary)
+        crate::config::FreedomConfig::load_from_default_path_or_default()?
+            .language_primary
             .unwrap_or_else(|| "en".to_string())
     };
     let answers = crate::cli::groundtruth_wizard::run_qa(&bank, &lang_owned)?;
@@ -553,7 +545,8 @@ fn list(
                     g.id, g.fact_state, g.source, g.scope, g.statement,
                 );
                 // GOLD-ADAPT-NN-MEM-03: show evidence provenance when present.
-                let ev_ids: Vec<i64> = serde_json::from_str(&g.evidence).unwrap_or_default();
+                let ev_ids: Vec<i64> = serde_json::from_str(&g.evidence)
+                    .with_context(|| format!("parse evidence for ground-truth row {}", g.id))?;
                 if !ev_ids.is_empty() {
                     println!(
                         "         maturity={} conf={:.2} confirmed={} evidence={:?}",
@@ -655,7 +648,8 @@ async fn contradictions(
         // Use semantic (embedding cosine) subject-similarity when an embed
         // provider is configured + loadable; the scan falls back to deterministic
         // Jaccard per-pair otherwise (same seam as cli/dream.rs).
-        let config = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+        let config = crate::config::FreedomConfig::load_from_default_path()
+            .context("load freedom.yaml for contradiction scan")?;
         let embed = crate::providers::embed_provider_from_config(&config).await;
         info!(semantic = embed.is_some(), "contradiction scan starting");
         crate::memory::contradiction::scan_contradictions(conn, now_ns, embed.as_deref()).await?
@@ -715,4 +709,42 @@ fn resolve_contradiction(conn: &rusqlite::Connection, id: i64, output: OutputFor
         OutputFormat::Table => println!("dismissed contradiction #{id}"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_text_dry_run_is_read_only_for_facts_and_fingerprints() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("claims.txt");
+        std::fs::write(
+            &input,
+            "The operator builds NEOTH on Windows.\nThe gateway stays on the private network.\n",
+        )
+        .unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        import_text(
+            &conn,
+            input.to_str().unwrap(),
+            "global",
+            false,
+            true,
+            OutputFormat::Table,
+        )
+        .unwrap();
+
+        let facts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0))
+            .unwrap();
+        let fingerprints: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ground_truth_fingerprints",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((facts, fingerprints), (0, 0));
+    }
 }

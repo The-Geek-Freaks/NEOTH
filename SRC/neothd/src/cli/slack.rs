@@ -1,9 +1,9 @@
 //! `neoth slack test` — Slack credential pre-flight (A-7).
 //!
 //! Validates `xoxb-` bot token + `xapp-` app token by calling
-//! `auth.test` + `apps.connections.open`. Returns the WSS URL Phase-2
-//! socket-mode loop will dial, proving the operator's app config is
-//! correct before the runtime loop lands.
+//! `auth.test` + `apps.connections.open`. Returns the WSS URL consumed by
+//! the live Socket Mode runtime, proving the operator's app config is
+//! correct before the daemon starts the channel loop.
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -26,8 +26,7 @@ pub enum SlackAction {
     /// Auth-test the configured Slack tokens. Reads
     /// `credentials.yaml::slack_bot_token` + `slack_app_token`, calls
     /// Slack's `auth.test` + `apps.connections.open`, and reports the
-    /// result. Phase-2 socket-mode loop will dial the WSS URL this
-    /// returns.
+    /// result. The live Socket Mode loop dials the WSS URL this returns.
     Test,
     /// Send a one-shot message to a Slack channel via `chat.postMessage`.
     /// Uses `credentials.yaml::slack_bot_token`. `channel` accepts an
@@ -114,7 +113,7 @@ async fn run_test(output: &OutputFormat) -> Result<()> {
             let body = serde_json::json!({
                 "auth_test": auth,
                 "socket_mode_open": socket,
-                "phase2_ready": auth.ok && socket.ok,
+                "socket_mode_ready": auth.ok && socket.ok,
             });
             println!("{}", serde_json::to_string_pretty(&body)?);
         }
@@ -136,7 +135,7 @@ async fn run_test(output: &OutputFormat) -> Result<()> {
             if socket.ok {
                 println!("  apps.connections.open: OK");
                 println!(
-                    "    WSS URL (Phase 2 loop will dial this): {}",
+                    "    WSS URL (live Socket Mode loop uses this): {}",
                     socket.url.as_deref().unwrap_or("?"),
                 );
             } else {
@@ -148,13 +147,13 @@ async fn run_test(output: &OutputFormat) -> Result<()> {
             println!();
             if auth.ok && socket.ok {
                 println!(
-                    "  Credentials valid. The Phase-2 socket-mode loop will \
+                    "  Credentials valid. The live Socket Mode loop will \
                      consume these tokens without re-prompting."
                 );
             } else {
                 println!(
-                    "  One or both calls failed — fix tokens in credentials.yaml \
-                     before Phase 2 ships, otherwise the loop won't start."
+                    "  One or both calls failed — fix tokens in credentials.yaml; \
+                     otherwise the Socket Mode loop won't start."
                 );
             }
         }

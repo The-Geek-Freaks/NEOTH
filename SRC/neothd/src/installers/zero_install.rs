@@ -56,6 +56,8 @@ pub const WINGET_PACKAGE_ID: &str = "TheGeekFreaks.NEOTH";
 pub enum TargetTriple {
     /// `x86_64-pc-windows-msvc`
     WindowsX86_64Msvc,
+    /// `aarch64-pc-windows-msvc`
+    WindowsArm64Msvc,
     /// `x86_64-unknown-linux-gnu`
     LinuxX86_64Gnu,
     /// `aarch64-unknown-linux-gnu`
@@ -70,6 +72,7 @@ impl TargetTriple {
     pub fn as_rust_triple(self) -> &'static str {
         match self {
             Self::WindowsX86_64Msvc => "x86_64-pc-windows-msvc",
+            Self::WindowsArm64Msvc => "aarch64-pc-windows-msvc",
             Self::LinuxX86_64Gnu => "x86_64-unknown-linux-gnu",
             Self::LinuxArm64Gnu => "aarch64-unknown-linux-gnu",
             Self::MacosX86_64 => "x86_64-apple-darwin",
@@ -77,16 +80,10 @@ impl TargetTriple {
         }
     }
 
-    /// Operator-facing short tag. Pinned for the URL slug shape
-    /// cargo-dist uses (`neothd-x86_64-linux.tar.gz`, …).
+    /// Release archive target slug. The hand-rolled workflow uses exact Rust
+    /// triples, so the URL generator and published assets cannot drift.
     pub fn artifact_slug(self) -> &'static str {
-        match self {
-            Self::WindowsX86_64Msvc => "x86_64-windows",
-            Self::LinuxX86_64Gnu => "x86_64-linux",
-            Self::LinuxArm64Gnu => "aarch64-linux",
-            Self::MacosX86_64 => "x86_64-macos",
-            Self::MacosArm64 => "aarch64-macos",
-        }
+        self.as_rust_triple()
     }
 
     /// Pick the target for the current host. Defaults to
@@ -96,6 +93,10 @@ impl TargetTriple {
         #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
         {
             Self::WindowsX86_64Msvc
+        }
+        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+        {
+            Self::WindowsArm64Msvc
         }
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
@@ -115,6 +116,7 @@ impl TargetTriple {
         }
         #[cfg(not(any(
             all(target_os = "windows", target_arch = "x86_64"),
+            all(target_os = "windows", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64"),
             all(target_os = "linux", target_arch = "aarch64"),
             all(target_os = "macos", target_arch = "x86_64"),
@@ -129,7 +131,7 @@ impl TargetTriple {
     /// Windows which gets .zip).
     pub fn artifact_extension(self) -> &'static str {
         match self {
-            Self::WindowsX86_64Msvc => "zip",
+            Self::WindowsX86_64Msvc | Self::WindowsArm64Msvc => "zip",
             _ => "tar.gz",
         }
     }
@@ -137,8 +139,9 @@ impl TargetTriple {
 
 /// Build the per-target artifact URL on GitHub Releases.
 pub fn artifact_url(version: &str, target: TargetTriple) -> String {
+    let version = version.strip_prefix('v').unwrap_or(version);
     format!(
-        "{base}/download/v{version}/neothd-{slug}.{ext}",
+        "{base}/download/v{version}/neoth-v{version}-{slug}.{ext}",
         base = RELEASES_BASE_URL,
         slug = target.artifact_slug(),
         ext = target.artifact_extension(),
@@ -161,8 +164,8 @@ pub fn one_liner_install_command_for_host() -> String {
 ///
 ///   1. Detects target triple.
 ///   2. Downloads the matching artifact from GitHub Releases.
-///   3. Extracts to `~/.local/bin/neothd` (or `/usr/local/bin`
-///      with sudo per operator config).
+///   3. Extracts `neoth` to `~/.local/bin` and installs a `neothd`
+///      compatibility executable.
 ///   4. Verifies the SHA-256 against a signed checksum file
 ///      published alongside the artifact.
 ///
@@ -181,15 +184,15 @@ RELEASES=\"{RELEASES_BASE_URL}\"
 
 # Detect target triple
 case \"$(uname -s)-$(uname -m)\" in
-  Linux-x86_64)   TARGET=\"x86_64-linux\" EXT=\"tar.gz\" ;;
-  Linux-aarch64)  TARGET=\"aarch64-linux\" EXT=\"tar.gz\" ;;
-  Darwin-x86_64)  TARGET=\"x86_64-macos\" EXT=\"tar.gz\" ;;
-  Darwin-arm64)   TARGET=\"aarch64-macos\" EXT=\"tar.gz\" ;;
+  Linux-x86_64)   TARGET=\"x86_64-unknown-linux-gnu\" EXT=\"tar.gz\" ;;
+  Linux-aarch64)  TARGET=\"aarch64-unknown-linux-gnu\" EXT=\"tar.gz\" ;;
+  Darwin-x86_64)  TARGET=\"x86_64-apple-darwin\" EXT=\"tar.gz\" ;;
+  Darwin-arm64)   TARGET=\"aarch64-apple-darwin\" EXT=\"tar.gz\" ;;
   *) echo \"unsupported host: $(uname -s)-$(uname -m)\" >&2 ; exit 1 ;;
 esac
 
 # Download artifact + matching checksum
-ART=\"neothd-${{TARGET}}.${{EXT}}\"
+ART=\"neoth-v${{VERSION}}-${{TARGET}}.${{EXT}}\"
 URL=\"${{RELEASES}}/download/v${{VERSION}}/${{ART}}\"
 CKSUM_URL=\"${{URL}}.sha256\"
 
@@ -199,14 +202,29 @@ trap 'rm -rf \"$TMP\"' EXIT
 curl -fsSL \"$URL\"        -o \"$TMP/$ART\"
 curl -fsSL \"$CKSUM_URL\"  -o \"$TMP/$ART.sha256\"
 
-# Verify checksum
-( cd \"$TMP\" && sha256sum -c \"$ART.sha256\" )
+# Verify checksum on Linux and macOS
+EXPECTED=\"$(awk '{{print $1}}' \"$TMP/$ART.sha256\")\"
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL=\"$(sha256sum \"$TMP/$ART\" | awk '{{print $1}}')\"
+else
+  ACTUAL=\"$(shasum -a 256 \"$TMP/$ART\" | awk '{{print $1}}')\"
+fi
+[ \"$EXPECTED\" = \"$ACTUAL\" ] || {{ echo \"checksum mismatch\" >&2; exit 1; }}
 
 # Extract
 mkdir -p \"$HOME/.local/bin\"
-tar -xzf \"$TMP/$ART\" -C \"$HOME/.local/bin\" neothd
+tar -xzf \"$TMP/$ART\" -C \"$TMP\"
+ARCHIVE_DIR=\"$TMP/neoth-v${{VERSION}}-${{TARGET}}\"
+[ -f \"$ARCHIVE_DIR/neoth\" ] || {{ echo \"archive missing neoth\" >&2; exit 1; }}
+[ -f \"$ARCHIVE_DIR/neothd\" ] || {{ echo \"archive missing neothd compatibility launcher\" >&2; exit 1; }}
+[ -f \"$ARCHIVE_DIR/freedom.yaml.example\" ] || {{ echo \"archive missing freedom.yaml.example\" >&2; exit 1; }}
+install -m 0755 \"$ARCHIVE_DIR/neoth\" \"$HOME/.local/bin/neoth\"
+install -m 0755 \"$ARCHIVE_DIR/neothd\" \"$HOME/.local/bin/neothd\"
+if [ ! -f \"$HOME/.local/bin/freedom.yaml.example\" ]; then
+  install -m 0644 \"$ARCHIVE_DIR/freedom.yaml.example\" \"$HOME/.local/bin/freedom.yaml.example\"
+fi
 
-echo \"NEOTH ${{VERSION}} installed to $HOME/.local/bin/neothd\"
+echo \"NEOTH ${{VERSION}} installed to $HOME/.local/bin/neoth\"
 echo \"Add ~/.local/bin to your PATH if it isn't already.\"
 echo \"Next: run 'neoth init' to start the wizard.\"
 ",
@@ -218,6 +236,7 @@ echo \"Next: run 'neoth init' to start the wizard.\"
 /// renderer here keep the manifest in sync with the
 /// `WINGET_PACKAGE_ID` constant.
 pub fn render_winget_manifest(version: &str, sha256: &str) -> String {
+    let installer_url = artifact_url(version, TargetTriple::WindowsX86_64Msvc);
     format!(
         "PackageIdentifier: {WINGET_PACKAGE_ID}
 PackageVersion: {version}
@@ -235,11 +254,11 @@ Tags:
 Installers:
 - Architecture: x64
   InstallerType: zip
-  InstallerUrl: {RELEASES_BASE_URL}/download/v{version}/neothd-x86_64-windows.zip
+  InstallerUrl: {installer_url}
   InstallerSha256: {sha256}
   NestedInstallerType: portable
   NestedInstallerFiles:
-  - RelativeFilePath: neothd.exe
+  - RelativeFilePath: neoth.exe
     PortableCommandAlias: neoth
 ManifestType: singleton
 ManifestVersion: 1.6.0
@@ -274,6 +293,10 @@ mod tests {
             "x86_64-pc-windows-msvc",
         );
         assert_eq!(
+            TargetTriple::WindowsArm64Msvc.as_rust_triple(),
+            "aarch64-pc-windows-msvc",
+        );
+        assert_eq!(
             TargetTriple::LinuxX86_64Gnu.as_rust_triple(),
             "x86_64-unknown-linux-gnu",
         );
@@ -295,12 +318,28 @@ mod tests {
     fn target_triple_artifact_slug_pinned() {
         assert_eq!(
             TargetTriple::WindowsX86_64Msvc.artifact_slug(),
-            "x86_64-windows"
+            "x86_64-pc-windows-msvc"
         );
-        assert_eq!(TargetTriple::LinuxX86_64Gnu.artifact_slug(), "x86_64-linux");
-        assert_eq!(TargetTriple::LinuxArm64Gnu.artifact_slug(), "aarch64-linux");
-        assert_eq!(TargetTriple::MacosX86_64.artifact_slug(), "x86_64-macos");
-        assert_eq!(TargetTriple::MacosArm64.artifact_slug(), "aarch64-macos");
+        assert_eq!(
+            TargetTriple::WindowsArm64Msvc.artifact_slug(),
+            "aarch64-pc-windows-msvc"
+        );
+        assert_eq!(
+            TargetTriple::LinuxX86_64Gnu.artifact_slug(),
+            "x86_64-unknown-linux-gnu"
+        );
+        assert_eq!(
+            TargetTriple::LinuxArm64Gnu.artifact_slug(),
+            "aarch64-unknown-linux-gnu"
+        );
+        assert_eq!(
+            TargetTriple::MacosX86_64.artifact_slug(),
+            "x86_64-apple-darwin"
+        );
+        assert_eq!(
+            TargetTriple::MacosArm64.artifact_slug(),
+            "aarch64-apple-darwin"
+        );
     }
 
     #[test]
@@ -333,26 +372,26 @@ mod tests {
         let url = artifact_url("0.3.0", TargetTriple::WindowsX86_64Msvc);
         assert!(url.starts_with(RELEASES_BASE_URL));
         assert!(url.contains("v0.3.0"));
-        assert!(url.ends_with("neothd-x86_64-windows.zip"));
+        assert!(url.ends_with("neoth-v0.3.0-x86_64-pc-windows-msvc.zip"));
     }
 
     #[test]
     fn artifact_url_linux_has_tar_gz_extension() {
         let url = artifact_url("0.3.0", TargetTriple::LinuxX86_64Gnu);
-        assert!(url.ends_with("neothd-x86_64-linux.tar.gz"));
+        assert!(url.ends_with("neoth-v0.3.0-x86_64-unknown-linux-gnu.tar.gz"));
     }
 
     #[test]
     fn artifact_url_arm64_linux() {
         let url = artifact_url("1.0.0", TargetTriple::LinuxArm64Gnu);
         assert!(url.contains("v1.0.0"));
-        assert!(url.ends_with("neothd-aarch64-linux.tar.gz"));
+        assert!(url.ends_with("neoth-v1.0.0-aarch64-unknown-linux-gnu.tar.gz"));
     }
 
     #[test]
     fn artifact_url_macos_arm() {
         let url = artifact_url("0.3.0", TargetTriple::MacosArm64);
-        assert!(url.ends_with("neothd-aarch64-macos.tar.gz"));
+        assert!(url.ends_with("neoth-v0.3.0-aarch64-apple-darwin.tar.gz"));
     }
 
     // ── for_host ──────────────────────────────────────────────────
@@ -418,13 +457,14 @@ mod tests {
     #[test]
     fn install_sh_verifies_checksum() {
         let script = render_install_sh("0.3.0");
-        assert!(script.contains("sha256sum -c"));
+        assert!(script.contains("sha256sum"));
+        assert!(script.contains("shasum -a 256"));
         // Drift guard — the curl line for the .sha256 file MUST
         // happen BEFORE the sha256sum verification.
         let dl_pos = script
             .find("CKSUM_URL")
             .expect("sha256 download line not found");
-        let verify_pos = script.find("sha256sum -c").unwrap();
+        let verify_pos = script.find("EXPECTED=").unwrap();
         assert!(
             dl_pos < verify_pos,
             "checksum download must precede verification"
@@ -436,6 +476,18 @@ mod tests {
         let script = render_install_sh("0.3.0");
         assert!(script.contains("HOME/.local/bin"));
         assert!(script.contains("tar -xzf"));
+    }
+
+    #[test]
+    fn install_sh_requires_and_installs_packaged_compat_launcher() {
+        let script = render_install_sh("0.3.0");
+        assert!(script.contains("archive missing neothd compatibility launcher"));
+        assert!(
+            script.contains("install -m 0755 \"$ARCHIVE_DIR/neothd\" \"$HOME/.local/bin/neothd\"")
+        );
+        assert!(
+            !script.contains("install -m 0755 \"$ARCHIVE_DIR/neoth\" \"$HOME/.local/bin/neothd\"")
+        );
     }
 
     #[test]

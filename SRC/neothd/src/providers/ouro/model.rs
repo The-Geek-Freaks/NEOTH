@@ -29,20 +29,15 @@ pub const MAX_TOTAL_UT_STEPS: usize = 8;
 /// ≈ 50% peak memory reduction at the cost of ~30-60 s extra
 /// cold-start.
 ///
-/// **v1 shipping note**: the config knob is plumbed + tested today
-/// (O-5a); the actual QTensor forward-pass swap lands in **O-5b**
-/// once the parallel quantized model code lands. Until then,
-/// `Q8` falls through to `None` with a `tracing::warn!` so
-/// operators who opt in see "Q8 deferred; running BF16 this boot"
-/// instead of silent disagreement between config + behaviour.
+/// `Q8` dispatches to the parallel quantized forward path; it never silently
+/// falls back to native precision.
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OuroQuantMode {
     /// Load weights at native precision (no quantisation).
     #[default]
     None,
-    /// 8-bit quantisation post-load. v1 falls back to None until
-    /// O-5b ships the QTensor forward-pass swap.
+    /// 8-bit quantisation post-load through `QuantizedOuroModel`.
     Q8,
 }
 
@@ -87,9 +82,9 @@ pub struct OuroConfig {
     /// shipped Ouro checkpoints train with `total_ut_steps = 4`.
     #[serde(default = "default_total_ut_steps")]
     pub total_ut_steps: usize,
-    /// Optional early-exit threshold — when hidden-state entropy
-    /// falls below this on loop N<total_ut_steps, stop early. None
-    /// = always run all loops (safe default; deterministic latency).
+    /// Legacy checkpoint field. Early exit is not an offered capability:
+    /// non-`None` values are rejected by [`Self::validate`] instead of being
+    /// silently ignored. `None` always runs every configured loop.
     #[serde(default)]
     pub early_exit_threshold: Option<f32>,
     /// `model_type` from HF — pinned to `"ouro"` for validation.
@@ -152,9 +147,10 @@ impl OuroConfig {
             clamped.total_ut_steps = MAX_TOTAL_UT_STEPS;
         }
         if let Some(t) = clamped.early_exit_threshold {
-            if !(0.0..=1.0).contains(&t) {
-                anyhow::bail!("Ouro config: early_exit_threshold must be in [0.0, 1.0], got {t}");
-            }
+            anyhow::bail!(
+                "Ouro config: early_exit_threshold={t} is unsupported; remove the field so all \
+                 total_ut_steps execute deterministically"
+            );
         }
         Ok(clamped)
     }
@@ -284,11 +280,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_early_exit_threshold_out_of_range() {
+    fn validate_rejects_any_unsupported_early_exit_threshold() {
         let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        cfg.early_exit_threshold = Some(0.5);
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("unsupported"));
         cfg.early_exit_threshold = Some(1.5);
-        assert!(cfg.validate().is_err());
-        cfg.early_exit_threshold = Some(-0.1);
         assert!(cfg.validate().is_err());
     }
 

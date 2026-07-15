@@ -189,13 +189,13 @@ fn evaluate_case(case: &EvalCase) -> (CaseOutcome, Option<String>) {
                 return (
                     CaseOutcome::Fail,
                     Some(format!("verify_command exited non-zero: {cmd}")),
-                )
+                );
             }
             Err(e) => {
                 return (
                     CaseOutcome::Error,
                     Some(format!("verify_command error ({cmd}): {e}")),
-                )
+                );
             }
         }
     }
@@ -221,7 +221,11 @@ fn run_verify_command(cmd: &str, timeout: std::time::Duration) -> Result<bool> {
     use std::process::Stdio;
 
     let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
-        .args(if cfg!(windows) { vec!["/C", cmd] } else { vec!["-c", cmd] })
+        .args(if cfg!(windows) {
+            vec!["/C", cmd]
+        } else {
+            vec!["-c", cmd]
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -247,9 +251,7 @@ fn run_verify_command(cmd: &str, timeout: std::time::Duration) -> Result<bool> {
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait(); // reap to avoid a zombie process
-            anyhow::bail!(
-                "verify_command timed out after {timeout:?} and was killed: {cmd}"
-            );
+            anyhow::bail!("verify_command timed out after {timeout:?} and was killed: {cmd}");
         }
         match child
             .try_wait()
@@ -290,9 +292,7 @@ pub fn run_suite(suite_path: &str, cases: &[EvalCase], max_steps: u32) -> EvalRe
                 id: case.id.clone(),
                 description: case.description.clone(),
                 outcome: CaseOutcome::Error,
-                failure_reason: Some(format!(
-                    "not executed: max_steps cap ({max_steps}) reached"
-                )),
+                failure_reason: Some(format!("not executed: max_steps cap ({max_steps}) reached")),
                 elapsed_secs: 0.0,
                 steps: 0,
             });
@@ -303,9 +303,18 @@ pub fn run_suite(suite_path: &str, cases: &[EvalCase], max_steps: u32) -> EvalRe
         results.push(r);
     }
 
-    let passed = results.iter().filter(|r| r.outcome == CaseOutcome::Pass).count();
-    let failed = results.iter().filter(|r| r.outcome == CaseOutcome::Fail).count();
-    let errored = results.iter().filter(|r| r.outcome == CaseOutcome::Error).count();
+    let passed = results
+        .iter()
+        .filter(|r| r.outcome == CaseOutcome::Pass)
+        .count();
+    let failed = results
+        .iter()
+        .filter(|r| r.outcome == CaseOutcome::Fail)
+        .count();
+    let errored = results
+        .iter()
+        .filter(|r| r.outcome == CaseOutcome::Error)
+        .count();
 
     EvalReport {
         suite_path: suite_path.to_owned(),
@@ -363,13 +372,21 @@ pub async fn run_eval_cmd(args: EvalArgs) -> Result<()> {
         return if report.all_passed() {
             Ok(())
         } else {
-            anyhow::bail!("{}/{} cases failed", report.failed + report.errored, report.total)
+            anyhow::bail!(
+                "{}/{} cases failed",
+                report.failed + report.errored,
+                report.total
+            )
         };
     }
 
     // ── Human-readable summary ─────────────────────────────────────────────
     println!();
-    println!("  neoth eval  ({} cases from {})", cases.len(), suite_path.display());
+    println!(
+        "  neoth eval  ({} cases from {})",
+        cases.len(),
+        suite_path.display()
+    );
     println!();
     println!("  total   : {}", report.total);
     println!("  passed  : {}", report.passed);

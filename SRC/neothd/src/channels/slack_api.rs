@@ -1,5 +1,4 @@
-//! Slack API auth-test surface — feeds the `slack` scaffold's
-//! Phase-2 socket-mode loop.
+//! Slack Web/API surface used by the live socket-mode adapter.
 //!
 //! Operator workflow today:
 //!   1. Configure `xoxb-` bot token + `xapp-` app-level token via
@@ -7,12 +6,11 @@
 //!   2. Run `neoth slack test` — calls Slack's `apps.connections.open`
 //!      with the app token; on success Slack returns a WSS URL that
 //!      proves the operator's app credentials are valid + scoped.
-//!   3. Phase 2: NEOTH opens the WSS URL via `tokio-tungstenite`,
-//!      decodes `events_api` envelopes, forwards to `PipelineHandler`.
+//!   3. `neoth serve` opens that WSS URL via `tokio-tungstenite`, decodes
+//!      `events_api` envelopes, and forwards them to `PipelineHandler`.
 //!
-//! This module only ships the auth-test pre-flight + the URL fetch —
-//! the WS event loop lives in `channels/slack.rs` once Phase 2 lands
-//! and the dep tree allows `tokio-tungstenite`.
+//! This module owns the HTTP calls (`auth.test`, socket URL, post/update);
+//! `slack_socket` owns the reconnecting WebSocket receive/ACK loop.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -61,10 +59,9 @@ pub struct SocketOpenResult {
 }
 
 /// Call `apps.connections.open` with the app-level token. Returns the
-/// WSS URL on success — that's the URL Phase 2's event loop will
-/// dial. Failing to fetch a URL today is the canary that ops will
-/// fail when the loop lands, so the operator sees the problem before
-/// it matters.
+/// WSS URL on success — that's the URL the live event loop dials.
+/// Failing to fetch a URL is an actionable pre-flight error before the
+/// daemon starts the Slack channel.
 pub async fn socket_mode_open(app_token: &SecretString) -> Result<SocketOpenResult> {
     let client = http_client::build_client()?;
     let resp = client

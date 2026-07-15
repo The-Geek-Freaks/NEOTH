@@ -4,8 +4,8 @@
 //! Design:
 //! - Each tick stages and validates a fresh file generation. Invalid rewrites
 //!   keep the last valid snapshot active and raise an operator-visible warning.
-//! - Runtime state is separate from the snapshot, so reload never resets
-//!   last-fired, completion, or running-job state.
+//! - Runtime state is separate from the snapshot. Reload preserves state for
+//!   surviving IDs, prunes deleted/re-added IDs, and keeps in-flight guards.
 //! - One "last fired" timestamp kept in memory per job_id to prevent double
 //!   firing inside the same minute when the tick interval (30 s) is shorter
 //!   than the cron resolution (1 min).
@@ -28,12 +28,24 @@ use tracing::{debug, info, warn};
 
 use crate::cron::runner::run_job;
 use crate::cron::schema::{Job, JobsFile};
-use crate::providers::Provider;
+use crate::permissions::AutonomyLevel;
+use crate::providers::cost_authorization::AuthorizedProvider;
 use crate::wal::writer::WalWriterHandle;
 
 /// Default tick = 30 s. Cron resolution is 1 min so this hits every cron
 /// boundary at most twice; the in-memory `last_fired` map deduplicates.
 pub const DEFAULT_TICK: Duration = Duration::from_secs(30);
+
+/// Cron is a standing unattended capability, so the non-linear Custom policy
+/// never enables it. Per-action overrides still govern explicit one-shot
+/// commands, but a daemon scheduler requires one of the three linear levels
+/// that intentionally opt into scheduled automation.
+pub(crate) fn autonomy_allows_scheduler(autonomy: AutonomyLevel) -> bool {
+    matches!(
+        autonomy,
+        AutonomyLevel::Standard | AutonomyLevel::Elevated | AutonomyLevel::Full
+    )
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum ReloadOutcome {
@@ -57,6 +69,9 @@ struct SchedulerState {
     last_fired: HashMap<String, DateTime<Utc>>,
     completed: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
     running: Arc<Mutex<HashSet<String>>>,
+    /// Deleted IDs whose old generation is still running. Their late result
+    /// must not repopulate `completed` after reload pruning.
+    retired_running: Arc<Mutex<HashSet<String>>>,
     last_reload_error: Option<String>,
 }
 
@@ -67,6 +82,7 @@ impl SchedulerState {
             last_fired: HashMap::new(),
             completed: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(Mutex::new(HashSet::new())),
+            retired_running: Arc::new(Mutex::new(HashSet::new())),
             last_reload_error: None,
         }
     }
@@ -93,6 +109,29 @@ impl SchedulerState {
                 } else {
                     let previous_jobs = self.jobs_file.jobs.len();
                     let current_jobs = next.jobs.len();
+                    let previous_ids: HashSet<&str> = self
+                        .jobs_file
+                        .jobs
+                        .iter()
+                        .map(|job| job.id.as_str())
+                        .collect();
+                    let current_ids: HashSet<&str> =
+                        next.jobs.iter().map(|job| job.id.as_str()).collect();
+                    let surviving_ids: HashSet<&str> =
+                        previous_ids.intersection(&current_ids).copied().collect();
+                    let running = self.running.lock().unwrap();
+                    let mut retired_running = self.retired_running.lock().unwrap();
+                    for deleted_id in previous_ids.difference(&current_ids) {
+                        if running.contains(*deleted_id) {
+                            retired_running.insert((*deleted_id).to_string());
+                        }
+                    }
+                    self.last_fired
+                        .retain(|id, _| surviving_ids.contains(id.as_str()));
+                    self.completed
+                        .lock()
+                        .unwrap()
+                        .retain(|id, _| surviving_ids.contains(id.as_str()));
                     self.jobs_file = next;
                     ReloadOutcome::Applied {
                         previous_jobs,
@@ -117,28 +156,66 @@ impl SchedulerState {
 struct RunningJobGuard {
     job_id: String,
     running: Arc<Mutex<HashSet<String>>>,
+    retired_running: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Drop for RunningJobGuard {
     fn drop(&mut self) {
-        self.running.lock().unwrap().remove(&self.job_id);
+        let mut running = self.running.lock().unwrap();
+        let mut retired_running = self.retired_running.lock().unwrap();
+        running.remove(&self.job_id);
+        retired_running.remove(&self.job_id);
     }
+}
+
+fn record_completion_if_current(
+    completed: &Mutex<HashMap<String, DateTime<Utc>>>,
+    retired_running: &Mutex<HashSet<String>>,
+    job_id: String,
+    completed_at: DateTime<Utc>,
+) -> bool {
+    let retired = retired_running.lock().unwrap();
+    if retired.contains(&job_id) {
+        return false;
+    }
+    completed.lock().unwrap().insert(job_id, completed_at);
+    true
 }
 
 /// Run the scheduler loop until the future is dropped.
 pub async fn run_scheduler(
     jobs_path: PathBuf,
     jobs_file: JobsFile,
-    provider: Arc<dyn Provider>,
+    provider: Arc<AuthorizedProvider>,
     writer: WalWriterHandle,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> Result<()> {
     let mut state = SchedulerState::new(jobs_file);
     let mut ticker = interval(DEFAULT_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut dispatch_enabled = true;
 
     info!(jobs = state.jobs_file.jobs.len(), path = %jobs_path.display(), "cron scheduler online");
     loop {
         ticker.tick().await;
+        let autonomy = reload_controller.latest().autonomy;
+        if !autonomy_allows_scheduler(autonomy) {
+            if dispatch_enabled {
+                info!(
+                    autonomy = autonomy.as_str(),
+                    "cron scheduler paused by reloaded autonomy policy; no new jobs will dispatch"
+                );
+            }
+            dispatch_enabled = false;
+            continue;
+        }
+        if !dispatch_enabled {
+            info!(
+                autonomy = autonomy.as_str(),
+                "cron scheduler resumed by reloaded autonomy policy"
+            );
+            dispatch_enabled = true;
+        }
         match state.reload(&jobs_path).await {
             ReloadOutcome::Applied {
                 previous_jobs,
@@ -215,20 +292,25 @@ pub async fn run_scheduler(
                 let job_for_task = job.clone();
                 let completed_for_task = state.completed.clone();
                 let running_for_task = state.running.clone();
+                let retired_for_task = state.retired_running.clone();
                 let job_id = job.id.clone();
                 tokio::spawn(async move {
                     let _running_guard = RunningJobGuard {
                         job_id: job_id.clone(),
                         running: running_for_task,
+                        retired_running: retired_for_task.clone(),
                     };
                     match run_job(&job_for_task, provider_for_task.as_ref(), &writer_for_task).await
                     {
                         Ok(_) => {
-                            // Record completion so dependents become ready.
-                            completed_for_task
-                                .lock()
-                                .unwrap()
-                                .insert(job_id, crate::time::utc_now());
+                            // Deleted generations may finish, but their result
+                            // must not satisfy dependencies of a re-added ID.
+                            record_completion_if_current(
+                                &completed_for_task,
+                                &retired_for_task,
+                                job_id,
+                                crate::time::utc_now(),
+                            );
                         }
                         Err(e) => {
                             warn!(job_id = %job_for_task.id, error = %e, "job dispatch error");
@@ -289,6 +371,19 @@ mod tests {
             timeout_seconds: 60,
             delivery: None,
             depends_on: vec![],
+        }
+    }
+
+    #[test]
+    fn scheduler_autonomy_rail_is_explicit_and_custom_fail_closed() {
+        assert!(!autonomy_allows_scheduler(AutonomyLevel::Strict));
+        assert!(!autonomy_allows_scheduler(AutonomyLevel::Custom));
+        for allowed in [
+            AutonomyLevel::Standard,
+            AutonomyLevel::Elevated,
+            AutonomyLevel::Full,
+        ] {
+            assert!(autonomy_allows_scheduler(allowed), "{allowed:?}");
         }
     }
 
@@ -459,13 +554,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_file_is_empty_generation_without_state_reset() {
+    async fn missing_file_is_empty_generation_and_prunes_deleted_state() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.yaml");
         let valid = snapshot(vec![job_at("* * * * *")]);
         let mut state = SchedulerState::new(valid);
         let fired_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
         state.last_fired.insert("j".into(), fired_at);
+        state.completed.lock().unwrap().insert("j".into(), fired_at);
+        state.running.lock().unwrap().insert("j".into());
         assert_eq!(
             state.reload(&path).await,
             ReloadOutcome::Applied {
@@ -475,6 +572,55 @@ mod tests {
             }
         );
         assert!(state.jobs_file.jobs.is_empty());
-        assert_eq!(state.last_fired["j"], fired_at);
+        assert!(state.last_fired.is_empty());
+        assert!(state.completed.lock().unwrap().is_empty());
+        assert!(
+            state.running.lock().unwrap().contains("j"),
+            "in-flight deletion guard must live until the task exits"
+        );
+        assert!(
+            state.retired_running.lock().unwrap().contains("j"),
+            "late completion from the deleted generation must be suppressed"
+        );
+        assert!(!record_completion_if_current(
+            &state.completed,
+            &state.retired_running,
+            "j".into(),
+            fired_at,
+        ));
+        assert!(state.completed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn readded_id_cannot_inherit_completion_written_after_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let valid = snapshot(vec![job_at("* * * * *")]);
+        let mut state = SchedulerState::new(valid);
+        let completed_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+
+        JobsFile::empty().save_to_path(&path).unwrap();
+        assert!(matches!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied { .. }
+        ));
+        // Simulate the deleted generation finishing after the delete reload.
+        state
+            .completed
+            .lock()
+            .unwrap()
+            .insert("j".into(), completed_at);
+
+        snapshot(vec![job_at("* * * * *")])
+            .save_to_path(&path)
+            .unwrap();
+        assert!(matches!(
+            state.reload(&path).await,
+            ReloadOutcome::Applied { .. }
+        ));
+        assert!(
+            state.completed.lock().unwrap().is_empty(),
+            "a re-added ID must start without the deleted generation's completion"
+        );
     }
 }

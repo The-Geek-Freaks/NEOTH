@@ -235,7 +235,7 @@ impl DoctorCronConfig {
 /// doctor report. Trait-object boxed in the spawn helper so the
 /// daemon can register the operator's preferred channel
 /// (`cli` → tracing logs, `sidecar` → JSON file the GUI polls,
-/// future `telegram` / `keet` → real channel push). The trait is
+/// future supported channels → real channel push). The trait is
 /// async so a future Telegram impl can `await` its HTTP send
 /// without blocking the cron loop.
 #[async_trait::async_trait]
@@ -260,12 +260,12 @@ impl DoctorNotificationSink for TracingNotificationSink {
 }
 
 /// Sidecar sink — writes the rendered notification body + the
-/// raw report JSON to `<dir>/doctor_<ts_unix>.json`. The GUI's
+/// raw report JSON to `<dir>/doctor_<ts_unix>_<uuid>.json`. The GUI's
 /// notifications panel + future channel push subscribers poll the
 /// directory + render entries to the operator. The file write is
-/// atomic via `.tmp` + rename (same pattern as the rest of NEOTH's
-/// on-disk persistence) so a partially-written file is never
-/// observed.
+/// canonical private atomic writer fsyncs the file and parent directory so a
+/// partially-written file is never observed. The UUID suffix prevents two
+/// reports in the same second from overwriting one another.
 pub struct SidecarNotificationSink {
     pub dir: std::path::PathBuf,
 }
@@ -276,29 +276,25 @@ impl SidecarNotificationSink {
     }
 
     fn record_path(&self, ts_unix: i64) -> std::path::PathBuf {
-        self.dir.join(format!("doctor_{ts_unix}.json"))
+        self.dir.join(format!(
+            "doctor_{ts_unix:020}_{}.json",
+            uuid::Uuid::now_v7().simple()
+        ))
     }
 }
 
 #[async_trait::async_trait]
 impl DoctorNotificationSink for SidecarNotificationSink {
     async fn notify(&self, body: String) -> Result<(), String> {
-        std::fs::create_dir_all(&self.dir).map_err(|e| format!("mkdir: {e}"))?;
         let ts_unix = crate::time::now_unix_i64();
         let final_path = self.record_path(ts_unix);
-        let tmp_path = final_path.with_extension("json.tmp");
         let payload = serde_json::json!({
             "ts_unix": ts_unix,
             "body": body,
         });
         let serialised = serde_json::to_vec_pretty(&payload).map_err(|e| format!("serde: {e}"))?;
-        std::fs::write(&tmp_path, &serialised).map_err(|e| format!("write tmp: {e}"))?;
-        // Windows-safe rename: remove the target first if it exists
-        // (Windows refuses rename-over-existing).
-        if final_path.exists() {
-            let _ = std::fs::remove_file(&final_path);
-        }
-        std::fs::rename(&tmp_path, &final_path).map_err(|e| format!("rename: {e}"))?;
+        crate::util::atomic_write::atomic_write_private(&final_path, &serialised)
+            .map_err(|e| format!("atomic write: {e}"))?;
         Ok(())
     }
 }
@@ -670,6 +666,19 @@ mod tests {
                 .to_string_lossy()
                 .ends_with(".tmp")),
         );
+    }
+
+    #[tokio::test]
+    async fn sidecar_sink_preserves_multiple_notifications() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = SidecarNotificationSink::new(dir.path());
+        sink.notify("first".to_string()).await.unwrap();
+        sink.notify("second".to_string()).await.unwrap();
+        let entries = std::fs::read_dir(dir.path())
+            .unwrap()
+            .collect::<std::io::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(entries.len(), 2);
     }
 
     #[tokio::test]

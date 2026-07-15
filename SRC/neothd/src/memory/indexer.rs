@@ -199,7 +199,9 @@ pub async fn tail(
                     }
                     let embedded = vectors.len();
                     for (event_id, model, vec) in vectors {
-                        crate::memory::embeddings::store_episode_vector(&conn, event_id, &model, &vec);
+                        crate::memory::embeddings::store_episode_vector(
+                            &conn, event_id, &model, &vec,
+                        );
                     }
                     if embedded > 0 {
                         debug!(embedded, "indexer auto-embedded new episodes (MEMGRAPH-01)");
@@ -574,11 +576,21 @@ mod tests {
         // Build a minimal WAL segment with one RAW_TEXT frame so the indexer
         // has something to replay (n > 0) on the first pass.
         let mut bytes = Vec::new();
-        let sh =
-            crate::wal::segment_header::SegmentHeader::new(0, 1, 0, 1_700_000_000_000_000_000, [0u8; 16]);
+        let sh = crate::wal::segment_header::SegmentHeader::new(
+            0,
+            1,
+            0,
+            1_700_000_000_000_000_000,
+            [0u8; 16],
+        );
         bytes.extend_from_slice(&sh.to_le_bytes());
         let p = b"trail02".to_vec();
-        let h = header_for(EVENT_TYPE_RAW_TEXT, p.len() as u32, 42, 1_700_000_042_000_000_000);
+        let h = header_for(
+            EVENT_TYPE_RAW_TEXT,
+            p.len() as u32,
+            42,
+            1_700_000_042_000_000_000,
+        );
         bytes.extend_from_slice(&encode_frame(&h, &p));
         write(&seg, &bytes).await.unwrap();
 
@@ -592,16 +604,15 @@ mod tests {
                 conn,
                 seg_clone,
                 std::time::Duration::from_millis(50),
-                None,  // no writer
-                None,  // no embed provider
+                None, // no writer
+                None, // no embed provider
                 Some(tx),
             )
             .await;
         });
 
         // The change-bus receiver must see at least one notification within 2s.
-        let changed =
-            tokio::time::timeout(std::time::Duration::from_secs(2), rx.changed()).await;
+        let changed = tokio::time::timeout(std::time::Duration::from_secs(2), rx.changed()).await;
         assert!(
             changed.is_ok(),
             "TRAIL-02: change_tx must fire after the indexer replays a WAL frame"
@@ -821,8 +832,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            cursor,
-            SEGMENT_HEADER_LEN as i64,
+            cursor, SEGMENT_HEADER_LEN as i64,
             "benign BufferTooShort must keep cursor at frame start for retry; \
              cursor advanced to {cursor}"
         );

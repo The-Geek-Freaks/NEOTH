@@ -17,9 +17,9 @@
 //!
 //! Operator-facing knobs (freedom.yaml):
 //!   - `cluster.mdns.enabled` (bool, default true via Q4 ratify) —
-//!     WIRED: `cli/serve` gates `spawn_announcer` on it (via
-//!     `policy::load_policy_from_freedom` + `gate_discover`, the same
-//!     path `neoth cluster discover` uses).
+//!     WIRED: `cli/serve` gates `spawn_announcer` on the validated
+//!     `FreedomConfig` snapshot + `policy::gate_discover`, the same policy
+//!     path `neoth cluster discover` uses.
 //!   - `cluster.mdns.service_name` / `cluster.mdns.interval_secs` —
 //!     NOT consumed: the service type is pinned to
 //!     [`DEFAULT_SERVICE_TYPE`] (both ends must agree anyway) and
@@ -209,9 +209,7 @@ pub fn derive_node_id(key: &ClusterKey, node_label: &str) -> [u8; 32] {
     let mut msg = Vec::with_capacity(NODE_ID_NS.len() + node_label.len());
     msg.extend_from_slice(NODE_ID_NS);
     msg.extend_from_slice(node_label.as_bytes());
-    let mut out = [0u8; 32];
-    crate::channels::keet_crypto::hmac_sha256(&key.0, &msg, &mut out);
-    out
+    crate::util::hmac::sha256(&key.0, &msg)
 }
 
 /// The operator-readable label this node announces as. Hostname when
@@ -467,7 +465,10 @@ mod tests {
             addr: std::net::SocketAddr::new(ip, id.listen_port),
             auth: id.auth,
         };
-        assert!(verify_with_cluster_key(&pkt, &key), "round-trip must verify");
+        assert!(
+            verify_with_cluster_key(&pkt, &key),
+            "round-trip must verify"
+        );
     }
 
     #[test]

@@ -53,37 +53,100 @@ struct AntonymPair {
 
 const ANTONYM_PAIRS: &[AntonymPair] = &[
     AntonymPair {
-        side_a: &["brief", "concise", "short", "terse", "succinct", "one sentence", "one-sentence", "summary", "tldr"],
-        side_b: &["every detail", "all details", "exhaustive", "comprehensive", "thorough", "in depth", "in-depth", "step by step", "step-by-step", "explain everything"],
+        side_a: &[
+            "brief",
+            "concise",
+            "short",
+            "terse",
+            "succinct",
+            "one sentence",
+            "one-sentence",
+            "summary",
+            "tldr",
+        ],
+        side_b: &[
+            "every detail",
+            "all details",
+            "exhaustive",
+            "comprehensive",
+            "thorough",
+            "in depth",
+            "in-depth",
+            "step by step",
+            "step-by-step",
+            "explain everything",
+        ],
         label: "brevity vs exhaustiveness",
     },
     AntonymPair {
         // "do X" vs "don't do X" / "do not do X" / "avoid X" — captured
         // by the presence of a negation modifier alongside a positive action.
         // Because the specific X varies, we key on the structural markers.
-        side_a: &["must", "always", "every time", "make sure", "ensure", "guarantee"],
+        side_a: &[
+            "must",
+            "always",
+            "every time",
+            "make sure",
+            "ensure",
+            "guarantee",
+        ],
         side_b: &["never", "do not", "don't", "avoid", "without", "except"],
         label: "mandatory vs prohibited",
     },
     AntonymPair {
         side_a: &["formal", "professional", "technical", "precise"],
-        side_b: &["casual", "informal", "simple", "layman", "plain language", "easy to understand", "non-technical"],
+        side_b: &[
+            "casual",
+            "informal",
+            "simple",
+            "layman",
+            "plain language",
+            "easy to understand",
+            "non-technical",
+        ],
         label: "formal vs informal register",
     },
     AntonymPair {
-        side_a: &["high level", "high-level", "overview", "abstract", "conceptual"],
-        side_b: &["low level", "low-level", "implementation detail", "line by line", "line-by-line", "code-level", "concrete"],
+        side_a: &[
+            "high level",
+            "high-level",
+            "overview",
+            "abstract",
+            "conceptual",
+        ],
+        side_b: &[
+            "low level",
+            "low-level",
+            "implementation detail",
+            "line by line",
+            "line-by-line",
+            "code-level",
+            "concrete",
+        ],
         label: "high-level vs low-level detail",
     },
     AntonymPair {
         // Quantity conflict: "one X" vs "all X" / "multiple X"
         side_a: &["one ", "single", "only one", "just one"],
-        side_b: &["all ", "every ", "multiple", "several", "all cases", "every case"],
+        side_b: &[
+            "all ",
+            "every ",
+            "multiple",
+            "several",
+            "all cases",
+            "every case",
+        ],
         label: "singular vs plural scope",
     },
     AntonymPair {
         side_a: &["quickly", "fast", "rapid", "immediately", "right now"],
-        side_b: &["carefully", "thoroughly", "slowly", "take your time", "no rush"],
+        side_b: &[
+            "carefully",
+            "thoroughly",
+            "slowly",
+            "take your time",
+            "no rush",
+        ],
         label: "speed vs thoroughness",
     },
 ];
@@ -94,13 +157,47 @@ const ANTONYM_PAIRS: &[AntonymPair] = &[
 // whitespace/punctuation is `Stated` when no contradictions fire.
 
 const IMPERATIVE_VERBS: &[&str] = &[
-    "summarize", "summarise", "explain", "describe", "list", "enumerate",
-    "write", "create", "generate", "produce", "build", "implement",
-    "translate", "convert", "refactor", "fix", "debug", "analyse", "analyze",
-    "compare", "contrast", "evaluate", "review", "check", "test",
-    "show", "display", "print", "output", "give", "provide", "find",
-    "search", "look up", "lookup", "calculate", "compute", "solve",
-    "format", "rewrite", "paraphrase",
+    "summarize",
+    "summarise",
+    "explain",
+    "describe",
+    "list",
+    "enumerate",
+    "write",
+    "create",
+    "generate",
+    "produce",
+    "build",
+    "implement",
+    "translate",
+    "convert",
+    "refactor",
+    "fix",
+    "debug",
+    "analyse",
+    "analyze",
+    "compare",
+    "contrast",
+    "evaluate",
+    "review",
+    "check",
+    "test",
+    "show",
+    "display",
+    "print",
+    "output",
+    "give",
+    "provide",
+    "find",
+    "search",
+    "look up",
+    "lookup",
+    "calculate",
+    "compute",
+    "solve",
+    "format",
+    "rewrite",
+    "paraphrase",
 ];
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -194,7 +291,8 @@ mod tests {
     #[test]
     fn conflicted_mandatory_vs_prohibited() {
         // "always" (mandatory) + "never" (prohibited) — cannot both hold.
-        let r = classify_motive("You must always include the full trace, but never exceed 5 lines.");
+        let r =
+            classify_motive("You must always include the full trace, but never exceed 5 lines.");
         assert_eq!(r.intent, MifIntent::Conflicted, "reason: {}", r.reason);
         assert!(r.blocks_debate());
     }

@@ -18,10 +18,10 @@
 //! `CopilotAdapter` holds an inner `OpenAiAdapter` and swaps in the fresh
 //! session token per call.
 //!
-//! **Cost model**: GitHub Copilot is a flat subscription — zero marginal
-//! per-token cost. `providers::cost::lookup_price("copilot_api", _)` returns
-//! `PriceRow::free()` so the autonomy gate never prompts with a non-zero
-//! EUR estimate for this provider.
+//! **Cost model**: Copilot billing depends on plan, model, remaining allowance
+//! and overage state. The adapter does not currently receive an authoritative
+//! billing-mode/allowance snapshot, so `lookup_price("copilot_api", _)` stays
+//! unknown and every dispatch uses `UnboundedPaidProviderCall`.
 //!
 //! **Consent gate**: Copilot sends operator text to `api.githubcopilot.com`
 //! (GitHub/Microsoft servers). `consent::is_cloud(ProviderKind::GitHubCopilot)`
@@ -39,7 +39,7 @@ use tokio::sync::Mutex;
 use tracing::debug;
 
 use super::openai_api::OpenAiAdapter;
-use super::{Completion, Provider, Request};
+use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
 /// Cached short-lived Copilot session token + the instant at which it expires
@@ -79,7 +79,7 @@ impl CopilotAdapter {
     /// `model` — model id to send to the Copilot completions endpoint
     ///           (defaults to `gpt-4o`; operator can override via `provider_model`).
     pub fn new(pat: SecretString, model: String) -> Result<Self> {
-        let http = crate::providers::http_client::build_client()?;
+        let http = crate::providers::http_client::build_client_no_redirect()?;
         Ok(Self {
             pat,
             model,
@@ -177,16 +177,40 @@ impl Provider for CopilotAdapter {
         "copilot_api"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
-        let token = self.fetch_or_refresh_token().await?;
-        let inner = self.make_inner(token)?;
-        inner.complete(req).await
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING
     }
 
-    async fn stream(&self, req: Request) -> Result<super::ChunkStream> {
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    }
+
+    fn streams_on_wire(&self) -> bool {
+        true
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         let token = self.fetch_or_refresh_token().await?;
         let inner = self.make_inner(token)?;
-        inner.stream(req).await
+        inner.complete_raw(req, permit).await
+    }
+
+    async fn stream_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<super::ChunkStream> {
+        let token = self.fetch_or_refresh_token().await?;
+        let inner = self.make_inner(token)?;
+        inner.stream_raw(req, permit).await
     }
 }
 
@@ -227,14 +251,8 @@ fn parse_expires_at(s: &str) -> Option<Instant> {
             if parts.len() != 2 {
                 return None;
             }
-            let date: Vec<u32> = parts[0]
-                .split('-')
-                .filter_map(|s| s.parse().ok())
-                .collect();
-            let time: Vec<u32> = parts[1]
-                .split(':')
-                .filter_map(|s| s.parse().ok())
-                .collect();
+            let date: Vec<u32> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+            let time: Vec<u32> = parts[1].split(':').filter_map(|s| s.parse().ok()).collect();
             if date.len() < 3 || time.len() < 3 {
                 return None;
             }
@@ -250,9 +268,7 @@ fn parse_expires_at(s: &str) -> Option<Instant> {
             let a = (14 - m) / 12;
             let y2 = y - a;
             let m2 = m + 12 * a - 3;
-            let jd = d + (153 * m2 + 2) / 5 + 365 * y2 + y2 / 4 - y2 / 100
-                + y2 / 400
-                - 32045;
+            let jd = d + (153 * m2 + 2) / 5 + 365 * y2 + y2 / 4 - y2 / 100 + y2 / 400 - 32045;
             let unix_days = jd - 2_440_588; // Julian Day of 1970-01-01
             let secs = unix_days * 86400 + h * 3600 + mn * 60 + sc;
             Some(secs)
@@ -278,20 +294,22 @@ mod tests {
     }
 
     #[test]
-    fn copilot_cost_is_free() {
-        // The cost table must return PriceRow::free() for copilot_api so the
-        // autonomy gate never prompts with a non-zero EUR estimate.
+    fn copilot_cost_is_unknown_without_live_billing_context() {
+        // Plan/model/allowance/overage state decides the marginal charge. A
+        // static free row would silently bypass the paid-call gate.
         let price = crate::providers::cost::lookup_price("copilot_api", "gpt-4o");
-        assert!(price.is_some(), "copilot_api must have a price row");
-        let p = price.unwrap();
-        assert_eq!(
-            p.input_eur_per_mtok, 0.0,
-            "copilot_api must be free (flat subscription)"
-        );
-        assert_eq!(
-            p.output_eur_per_mtok, 0.0,
-            "copilot_api must be free (flat subscription)"
-        );
+        assert!(price.is_none(), "copilot_api must remain unknown/unbounded");
+    }
+
+    #[test]
+    fn copilot_cost_ceiling_matches_the_openai_wire_cap() {
+        let adapter = CopilotAdapter::new(SecretString::from("ghp_test"), "gpt-5".to_string())
+            .expect("construct");
+        let req = Request {
+            thinking_budget: Some(16_384),
+            ..Request::default()
+        };
+        assert_eq!(adapter.output_token_ceiling(&req), Some(4096));
     }
 
     #[test]
@@ -343,7 +361,10 @@ mod tests {
         use crate::consent;
         let tmp = tempfile::TempDir::new().unwrap();
         // Copilot is cloud — consent must be required.
-        assert!(!consent::is_granted(tmp.path(), ProviderKind::GitHubCopilot));
+        assert!(!consent::is_granted(
+            tmp.path(),
+            ProviderKind::GitHubCopilot
+        ));
         consent::grant(tmp.path(), ProviderKind::GitHubCopilot).unwrap();
         assert!(consent::is_granted(tmp.path(), ProviderKind::GitHubCopilot));
         // slug round-trip.

@@ -1,9 +1,10 @@
 //! OpenAI REST adapter (`api.openai.com` and OpenAI-compatible endpoints).
 //!
 //! POST {endpoint}/chat/completions with a Bearer token. Supports both the
-//! upstream OpenAI service and any OpenAI-compatible endpoint
-//! (LM Studio, vLLM, Ollama /v1, Anthropic via OAI-shim, etc.) by overriding
-//! `endpoint`.
+//! upstream OpenAI service and OpenAI-compatible endpoints (LM Studio, vLLM,
+//! Ollama /v1, Anthropic via OAI-shim, etc.). A non-official endpoint supplied
+//! through the OpenAI constructor is deliberately reclassified as
+//! `openai_api_custom`: it cannot inherit the reviewed official price table.
 //!
 //! Streaming: `stream()` sends `stream: true` and reads the response body as
 //! Server-Sent Events (SSE), parsing each `data: {...}` line as an OpenAI
@@ -19,8 +20,25 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
-use super::{ChunkStream, Completion, CompletionChunk, Provider, Request};
+use super::{
+    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 use crate::secret::SecretString;
+
+fn is_official_openai_endpoint(endpoint: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("api.openai.com")
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.path().trim_end_matches('/') == "/v1"
+}
 
 /// Adapter for OpenAI REST + compatibles.
 pub struct OpenAiAdapter {
@@ -44,7 +62,12 @@ impl OpenAiAdapter {
         api_key: SecretString,
         default_model: String,
     ) -> Result<Self> {
-        Self::build(endpoint, api_key, default_model, "openai_api")
+        let name = if is_official_openai_endpoint(&endpoint) {
+            "openai_api"
+        } else {
+            "openai_api_custom"
+        };
+        Self::build(endpoint, api_key, default_model, name)
     }
 
     pub fn new_compat(
@@ -75,7 +98,7 @@ impl OpenAiAdapter {
         name: &'static str,
     ) -> Result<Self> {
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        let http = crate::providers::http_client::build_client()?;
+        let http = crate::providers::http_client::build_client_no_redirect()?;
         Ok(Self {
             endpoint,
             api_key,
@@ -83,6 +106,36 @@ impl OpenAiAdapter {
             http,
             name,
         })
+    }
+
+    fn chat_request(
+        &self,
+        model: String,
+        messages: Vec<ChatMessage>,
+        stream: bool,
+        req: &Request,
+    ) -> ChatRequest {
+        let (max_completion_tokens, max_tokens) =
+            if matches!(self.name, "openai_compat" | "openai_api_custom") {
+                // Generic OpenAI-compatible servers (vLLM, LM Studio, Ollama,
+                // OpenRouter) consistently implement the legacy `max_tokens`
+                // field, while `max_completion_tokens` is an OpenAI/Azure-era
+                // extension that several of them reject as unknown.
+                (None, Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING))
+            } else {
+                (Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING), None)
+            };
+        ChatRequest {
+            model,
+            messages,
+            stream,
+            max_completion_tokens,
+            max_tokens,
+            temperature: req.temperature,
+            top_p: req.top_p,
+            seed: req.sampling_seed,
+            stop: (!req.stop_sequences.is_empty()).then(|| req.stop_sequences.clone()),
+        }
     }
 }
 
@@ -92,7 +145,27 @@ impl Provider for OpenAiAdapter {
         self.name
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.default_model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    }
+
+    fn streams_on_wire(&self) -> bool {
+        true
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         // GR-04: wrap in circuit breaker so persistent provider
         // outages stop hammering the upstream + surface as a fast
         // local error after the failure threshold trips.
@@ -115,11 +188,7 @@ impl Provider for OpenAiAdapter {
                 content: req.prompt.clone(),
             });
 
-            let body = ChatRequest {
-                model: model.clone(),
-                messages,
-                stream: false,
-            };
+            let body = self.chat_request(model.clone(), messages, false, &req);
 
             let url = format!("{}/chat/completions", self.endpoint);
             let response = self
@@ -199,6 +268,7 @@ impl Provider for OpenAiAdapter {
 
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model,
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
@@ -216,7 +286,11 @@ impl Provider for OpenAiAdapter {
     ///
     /// Works with any OpenAI-compat endpoint that honours `stream: true`,
     /// including Ollama's `/v1/chat/completions` path and LM Studio.
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+    async fn stream_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
         crate::providers::circuit_breaker_stream::run_stream_with_breaker(self.name, async {
             let model = req
                 .model
@@ -235,11 +309,7 @@ impl Provider for OpenAiAdapter {
                 content: req.prompt.clone(),
             });
 
-            let body = ChatRequest {
-                model: model.clone(),
-                messages,
-                stream: true,
-            };
+            let body = self.chat_request(model.clone(), messages, true, &req);
 
             let url = format!("{}/chat/completions", self.endpoint);
             let response = self
@@ -305,9 +375,7 @@ impl Provider for OpenAiAdapter {
                             // SSE comment or blank separator — skip.
                             continue;
                         }
-                        let data = if let Some(d) = line.strip_prefix("data: ") {
-                            d
-                        } else {
+                        let Some(data) = sse_data(&line) else {
                             continue;
                         };
                         if data == "[DONE]" {
@@ -315,6 +383,7 @@ impl Provider for OpenAiAdapter {
                             yield CompletionChunk {
                                 delta: String::new(),
                                 done: true,
+                                identity: Default::default(),
                                 input_tokens,
                                 output_tokens,
                                 cache_creation_tokens: None,
@@ -352,6 +421,7 @@ impl Provider for OpenAiAdapter {
                             yield CompletionChunk {
                                 delta,
                                 done: false,
+                                identity: Default::default(),
                                 input_tokens: None,
                                 output_tokens: None,
                                 cache_creation_tokens: None,
@@ -365,10 +435,7 @@ impl Provider for OpenAiAdapter {
                 // a newline-less last delta or usage block isn't dropped before the
                 // terminator. `[DONE]`/empty just falls through to the terminator.
                 let tail = buf.trim();
-                if let Some(data) = tail
-                    .strip_prefix("data: ")
-                    .or_else(|| tail.strip_prefix("data:"))
-                {
+                if let Some(data) = sse_data(tail) {
                     let data = data.trim();
                     if !data.is_empty() && data != "[DONE]" {
                         if let Ok(parsed) = serde_json::from_str::<SseChunk>(data) {
@@ -386,6 +453,7 @@ impl Provider for OpenAiAdapter {
                                     yield CompletionChunk {
                                         delta,
                                         done: false,
+                                        identity: Default::default(),
                                         input_tokens: None,
                                         output_tokens: None,
                                         cache_creation_tokens: None,
@@ -401,6 +469,7 @@ impl Provider for OpenAiAdapter {
                 yield CompletionChunk {
                     delta: String::new(),
                     done: true,
+                    identity: Default::default(),
                     input_tokens,
                     output_tokens,
                     cache_creation_tokens: None,
@@ -425,6 +494,18 @@ struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -469,6 +550,14 @@ struct SseChunk {
     choices: Vec<SseChoice>,
     #[serde(default)]
     usage: Option<SseUsage>,
+}
+
+/// Return the payload of an SSE `data` field. The single space after `:` is
+/// optional per the wire format, so `data:{...}` and `data: {...}` must take
+/// the same parser path in both the line loop and the EOF residual handler.
+fn sse_data(line: &str) -> Option<&str> {
+    line.strip_prefix("data:")
+        .map(|data| data.strip_prefix(' ').unwrap_or(data))
 }
 
 #[derive(Deserialize)]
@@ -517,6 +606,169 @@ mod tests {
     }
 
     #[test]
+    fn custom_openai_endpoint_has_a_distinct_unknown_pricing_identity() {
+        let custom = OpenAiAdapter::new_openai(
+            "https://gateway.example.test/v1".to_string(),
+            SecretString::from("sk-test"),
+            "gpt-5".to_string(),
+        )
+        .unwrap();
+        assert_eq!(custom.name(), "openai_api_custom");
+        assert!(crate::providers::cost::lookup_price(custom.name(), "gpt-5").is_none());
+        let request = serde_json::to_value(custom.chat_request(
+            "gpt-5".into(),
+            vec![ChatMessage {
+                role: "user",
+                content: "ping".into(),
+            }],
+            false,
+            &Request::default(),
+        ))
+        .unwrap();
+        assert_eq!(request["max_tokens"], 4096);
+        assert!(request.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn only_the_exact_official_openai_origin_and_v1_path_keep_official_identity() {
+        for endpoint in [
+            "https://api.openai.com/v1",
+            "https://api.openai.com:443/v1/",
+        ] {
+            let adapter = OpenAiAdapter::new_openai(
+                endpoint.into(),
+                SecretString::from("sk-test"),
+                "gpt-5".into(),
+            )
+            .unwrap();
+            assert_eq!(adapter.name(), "openai_api", "endpoint={endpoint}");
+        }
+
+        for endpoint in [
+            "http://api.openai.com/v1",
+            "https://api.openai.com.evil.example/v1",
+            "https://api.openai.com/v1/extra",
+            "https://api.openai.com/v1?route=other",
+            "https://user@api.openai.com/v1",
+        ] {
+            let adapter = OpenAiAdapter::new_openai(
+                endpoint.into(),
+                SecretString::from("sk-test"),
+                "gpt-5".into(),
+            )
+            .unwrap();
+            assert_eq!(adapter.name(), "openai_api_custom", "endpoint={endpoint}");
+        }
+    }
+
+    #[test]
+    fn native_copilot_and_compat_requests_use_supported_output_cap_fields() {
+        let native = OpenAiAdapter::new_openai(
+            "https://api.openai.com/v1".to_string(),
+            SecretString::from("sk-test"),
+            "gpt-5".to_string(),
+        )
+        .unwrap();
+        let copilot = OpenAiAdapter::new_copilot(
+            "https://api.githubcopilot.com".to_string(),
+            SecretString::from("copilot-test"),
+            "gpt-5".to_string(),
+        )
+        .unwrap();
+        let compat = OpenAiAdapter::new_compat(
+            "http://localhost:8080/v1".to_string(),
+            SecretString::from(""),
+            "local-llama".to_string(),
+        )
+        .unwrap();
+        let message = || {
+            vec![ChatMessage {
+                role: "user",
+                content: "ping".into(),
+            }]
+        };
+
+        for streaming in [false, true] {
+            let native_json = serde_json::to_value(native.chat_request(
+                "gpt-5".into(),
+                message(),
+                streaming,
+                &Request::default(),
+            ))
+            .unwrap();
+            assert_eq!(native_json["stream"], streaming);
+            assert_eq!(native_json["max_completion_tokens"], 4096);
+            assert!(native_json.get("max_tokens").is_none());
+
+            let copilot_json = serde_json::to_value(copilot.chat_request(
+                "gpt-5".into(),
+                message(),
+                streaming,
+                &Request::default(),
+            ))
+            .unwrap();
+            assert_eq!(copilot_json["stream"], streaming);
+            assert_eq!(copilot_json["max_completion_tokens"], 4096);
+            assert!(copilot_json.get("max_tokens").is_none());
+
+            let compat_json = serde_json::to_value(compat.chat_request(
+                "local-llama".into(),
+                message(),
+                streaming,
+                &Request::default(),
+            ))
+            .unwrap();
+            assert_eq!(compat_json["stream"], streaming);
+            assert_eq!(compat_json["max_tokens"], 4096);
+            assert!(compat_json.get("max_completion_tokens").is_none());
+        }
+    }
+
+    #[test]
+    fn request_controls_are_serialized_and_absent_controls_are_omitted() {
+        let adapter = OpenAiAdapter::new_openai(
+            "https://api.openai.com/v1".to_string(),
+            SecretString::from("sk-test"),
+            "gpt-5".to_string(),
+        )
+        .unwrap();
+        let message = || {
+            vec![ChatMessage {
+                role: "user",
+                content: "ping".into(),
+            }]
+        };
+        let empty = serde_json::to_value(adapter.chat_request(
+            "gpt-5".into(),
+            message(),
+            false,
+            &Request::default(),
+        ))
+        .unwrap();
+        for field in ["temperature", "top_p", "seed", "stop"] {
+            assert!(empty.get(field).is_none(), "unexpected {field}: {empty}");
+        }
+
+        let controlled = serde_json::to_value(adapter.chat_request(
+            "gpt-5".into(),
+            message(),
+            false,
+            &Request {
+                temperature: Some(0.4),
+                top_p: Some(0.8),
+                sampling_seed: Some(42),
+                stop_sequences: vec!["END".into()],
+                ..Request::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(controlled["temperature"], 0.4);
+        assert_eq!(controlled["top_p"], 0.8);
+        assert_eq!(controlled["seed"], 42);
+        assert_eq!(controlled["stop"], serde_json::json!(["END"]));
+    }
+
+    #[test]
     fn trailing_slash_in_endpoint_is_stripped() {
         let a = OpenAiAdapter::new_openai(
             "https://api.openai.com/v1/".to_string(),
@@ -541,12 +793,22 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn build_adapter_against(server_uri: &str) -> OpenAiAdapter {
-        OpenAiAdapter::new_openai(
+        OpenAiAdapter::build(
             server_uri.to_string(),
             SecretString::from("sk-test-mock-key"),
             "gpt-4o-mock".to_string(),
+            "openai_api",
         )
         .expect("adapter constructs against mock URI")
+    }
+
+    fn build_compat_adapter_against(server_uri: &str) -> OpenAiAdapter {
+        OpenAiAdapter::new_compat(
+            server_uri.to_string(),
+            SecretString::from("compat-test-key"),
+            "local-llama".to_string(),
+        )
+        .expect("compat adapter constructs against mock URI")
     }
 
     #[tokio::test]
@@ -666,6 +928,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_endpoint_does_not_follow_cross_origin_redirects() {
+        let redirect_target = MockServer::start().await;
+        let source = MockServer::start().await;
+        let location = format!("{}/capture", redirect_target.uri());
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(307).insert_header("location", location))
+            .mount(&source)
+            .await;
+
+        let adapter =
+            OpenAiAdapter::new_openai(source.uri(), SecretString::from("sk-test"), "gpt-5".into())
+                .unwrap();
+        let error = adapter
+            .complete(Request {
+                prompt: "must stay on source origin".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("307 must surface instead of being followed");
+        assert!(error.to_string().contains("307"));
+        assert!(
+            redirect_target
+                .received_requests()
+                .await
+                .expect("request recording enabled")
+                .is_empty(),
+            "the redirected origin must receive no request"
+        );
+    }
+
+    #[tokio::test]
     async fn mock_200_with_no_choices_surfaces_cdx07_silent_fail_guard() {
         // CDX-07 silent-fail-to-empty: a 200 with no choices[] must
         // NOT return Ok(text=""). The provider explicitly errors so
@@ -747,6 +1041,7 @@ mod tests {
                     { "role": "user", "content": "ping" }
                 ],
                 "stream": false,
+                "max_completion_tokens": 4096,
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
@@ -771,17 +1066,45 @@ mod tests {
         assert_eq!(completion.model, "gpt-5.5-override");
     }
 
+    #[tokio::test]
+    async fn mock_compat_complete_uses_only_legacy_max_tokens() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "model": "local-llama",
+                "messages": [{ "role": "user", "content": "ping" }],
+                "stream": false,
+                "max_tokens": 4096,
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{
+                    "message": { "role": "assistant", "content": "pong" }
+                }]
+            })))
+            .mount(&mock)
+            .await;
+
+        let completion = build_compat_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "ping".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("compat complete body must use max_tokens");
+        assert_eq!(completion.text, "pong");
+    }
+
     // ── SSE streaming tests ────────────────────────────────────────────
 
-    /// Proves the SSE stream() override: mock server returns three SSE
-    /// lines + [DONE]; we must receive ≥2 non-done chunks and a done
-    /// chunk with the accumulated text matching "Hello world".
+    /// Proves the SSE stream() override accepts both legal `data:` forms:
+    /// with and without the optional space after the colon.
     #[tokio::test]
     async fn mock_sse_stream_delivers_progressive_chunks() {
         use futures_util::StreamExt;
 
         let sse_body = concat!(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+            "data:{\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
             "data: [DONE]\n\n",
         );
@@ -790,10 +1113,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(header("authorization", "Bearer sk-test-mock-key"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_raw(sse_body, "text/event-stream"),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
             .mount(&mock)
             .await;
 
@@ -846,11 +1166,9 @@ mod tests {
                 "model": "gpt-4o-mock",
                 "messages": [{"role": "user", "content": "ping"}],
                 "stream": true,
+                "max_completion_tokens": 4096,
             })))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_raw(sse_body, "text/event-stream"),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
             .mount(&mock)
             .await;
 
@@ -862,6 +1180,35 @@ mod tests {
 
         let mut stream = adapter.stream(req).await.expect("stream must start");
         // Drain — we only care that the mock matched (body_json assertion verifies stream:true).
+        while stream.next().await.is_some() {}
+    }
+
+    #[tokio::test]
+    async fn mock_compat_stream_uses_only_legacy_max_tokens() {
+        use futures_util::StreamExt;
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "model": "local-llama",
+                "messages": [{ "role": "user", "content": "ping" }],
+                "stream": true,
+                "max_tokens": 4096,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw("data: [DONE]\n\n", "text/event-stream"),
+            )
+            .mount(&mock)
+            .await;
+
+        let mut stream = build_compat_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "ping".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("compat stream body must use max_tokens");
         while stream.next().await.is_some() {}
     }
 }

@@ -1,14 +1,16 @@
 # RUNBOOK -- Phase 3 Cutover (Day 61-90)
 
-> Status: Build-ready. No TBDs. Supersedes 6-bullet Phase 3 stub in 00_DESIGN_v0.7_FINAL.md Section 10.
-> All WAL event codes, Rust types, command names match v0.7 wire format.
+> Status: historical Phase-3 cutover design plus a current runnable migration
+> slice. Commands outside the `neoth-migrate` sections below remain design
+> targets unless their owning CLI documentation says they are shipped.
 >
-> **v1.0 implementation status (GOLD-HON-01):** only the **dry-run / preview** path
-> (`neoth-migrate dry-run`) is implemented and shippable in v1.0. The **apply / import**
-> path (`neoth migrate import` / `neoth-migrate apply`, Day 62 onward below) is
-> **post-v1.0 — not yet implemented**: `neoth-migrate apply` today validates the
-> manifest then refuses, pointing the operator back to `dry-run`. Read the
-> apply/import steps below as the planned cutover design, not a shipped feature.
+> **v1.0 implementation status (2026-07-13):** `neoth-migrate detect`,
+> `dry-run`, consent-gated atomic `apply --confirm`, and `status` are shipped.
+> Complete OpenClaw, Hermes, OpenHuman, and Veronica homes are supported via
+> `assistant_home`; Markdown, JSON/JSONL, and SQLite memory artifacts are
+> imported as ground-truth candidates. Lance, Faiss, and Git readers remain
+> inventory-only and make `apply` fail closed. The normative runnable contract
+> is [`docs/import-format.md`](../docs/import-format.md).
 
 ---
 
@@ -35,84 +37,62 @@ Per query annotate:
 - expected_response_text: str -- reference answer (1-3 sentences)
 
 Output: eval/goldset.jsonl (100 lines).
-### Day 62 -- neothctl migrate-dry-run
+### Day 62 -- Detect and dry-run
 
-Read-only scan of all 12 Jarvis stores. No WAL writes. Output: stdout + eval/dry-run-report.json.
+```text
+neoth-migrate detect --output import-manifest.yaml
+neoth-migrate dry-run --manifest import-manifest.yaml > eval/dry-run-report.json
+```
 
-Stores (from 02_MEMORY_LAYER_MAPPING.md):
+`detect` adds one recursive `assistant_home` source for each present OpenClaw,
+Hermes, OpenHuman, or Veronica home. Review the generated YAML and add custom
+Markdown, JSON, or SQLite sources explicitly when they live elsewhere.
 
-| Store | Path | Expected |
-|-------|------|----------|
-| Obsidian Vault | /mnt/obsidian/Jarvis/**/*.md | ~1k files |
-| Smart-Connections | .smart-env/multi/*.ajson | 1014 files |
-| Hippocampus Core MD | ~/.openclaw/workspace/HIPPOCAMPUS_CORE.md | 1 file |
-| Hippocampus index.json | ~/.openclaw/workspace/memory/index.json | rows |
-| Hippo-Turbo vectors | ~/.openclaw/workspace/memory/hippo-turbo-vectors.json | JSON array |
-| LanceDB-Pro | ~/.openclaw/memory/lancedb-pro | Arrow table |
-| LanceDB-Pro Plugin | ~/.openclaw/plugins/memory-lancedb-pro | Arrow table |
-| qmd | ~/.config/qmd/ | FAISS-style + bun-bin |
-| OpenClaw Session-MD | ~/.openclaw/workspace/memory/*.md | session files |
-| context-mode FTS5 | ~/.context-mode/ | SQLite |
-| cq commons | ~/.cq/local.db | SQLite |
-| github-backup | ~/github-backup/ | git working tree |
+Dry-run is read-only: it does not open `views.db` or create the audit file.
+Each report row contains `name`, resolved `path`, `kind`, `status`,
+`row_count`, and a bounded `sample`. An error or missing path must be fixed or
+removed before apply. The source/target identity guard is active in preview as
+well as apply, including symlink/hard-link aliases of `views.db`.
 
-Report fields (dry-run-report.json):
-- store_counts: per-store record counts
-- dedup_pre_analysis: {estimated_unique, estimated_duplicates}
-- vector_dimension_inventory: 1536d/1024d/768d/no_vector per store with count
-- schema_drift_report: expected vs actual JSON keys per store
+Do not put `lance_arrow`, `faiss_flat`, or `git_tree` entries in an apply
+manifest. Those kinds provide inventory counts only and are rejected before
+mutation.
 
-Operator reviews schema_drift_report before Day 63.
+### Day 63 -- Atomic apply
 
-### Day 63 -- neoth migrate import
+```text
+neoth-migrate apply --manifest import-manifest.yaml --confirm
+neoth-migrate status --json
+neoth groundtruth list --limit 50
+```
 
-Language: Rust. Pure-Rust toolchain — no Python dependency.
-Implementation: `crates/neoth-migrate` (Day-23 feature-gated bin alongside `neothd`).
+Apply validates every source and parses every supported artifact before
+`BEGIN IMMEDIATE`. One malformed/unreadable source aborts the complete run.
+All candidate rows are then inserted into `idx_groundtruth` in one SQLite
+transaction; a database error rolls the transaction back. The unique
+`(statement, scope)` index makes a successful re-run idempotent via
+`INSERT OR IGNORE`.
 
-Per-store parsers (all crates.io-available):
-  - Markdown stores (Obsidian, Hippocampus, Session-MD)  -> pulldown-cmark
-  - JSON stores (Smart-Connections .ajson, index.json,
-    hippo-turbo-vectors.json)                            -> serde_json
-  - LanceDB-Pro / Plugin Arrow tables                     -> lance (v0.20+, Arrow IPC)
-  - qmd FAISS-style binary                                -> custom reader (~200 LOC)
-  - context-mode FTS5, cq commons (SQLite)                -> rusqlite (bundled feature)
-  - github-backup working tree                            -> git2
+Imported rows retain `import:*` provenance, start as `candidate` with
+confidence `0.5`, and require operator review/corroboration. OpenHuman profile
+facts keep subject/predicate/object together and use `subject:<subject>` scope.
+Credential/auth/cookie/key stores, cache/build/log trees, and the complete
+NEOTH target workspace are excluded from whole-home discovery.
 
-Output per store: migration-batch-N.jsonl (N = store index 1-12).
-Each line = normalized NEOTH WAL event in pre-write JSON. **Every line MUST
-carry `"_format_version": "internal-unstable"` as its first field** (Platform
-Engineer review, OPEN_DECISIONS.md D-006) so a future v1.0 reader can refuse
-files written against pre-1.0 schemas. Lines without the marker are rejected.
+The standalone migrator does not open the daemon WAL. It records a fsynced
+lifecycle in `~/.neoth/neoth-migrate-audit.jsonl`:
+`MIGRATION_STARTED`, committed per-source `MIGRATION_BATCH` events, then
+`MIGRATION_COMPLETE`, or `MIGRATION_FAILED` with a truthful rollback outcome.
+`neoth-migrate status` reads the latest operation.
 
-Fields:
-  _format_version:"internal-unstable" (REQUIRED, first field),
-  event_type:1 (RAW_TEXT), brain_region:1 (Hippocampus), importance:f32,
-  scope:0, source_mtime_ns:u64, content_hash:[u8;16], text_payload:String,
-  vector:Option<[f32;1024]>, embed_status:EMBED_PENDING
+Provider config and cron conversion are separate review-only commands:
 
-**Cross-platform text normalization (Platform Engineer review):** before any
-hash, embedding, or dedup-key computation, text payloads MUST be normalized to
-Unix line endings — `text = text.replace("\r\n", "\n").replace('\r', '\n')`.
-Without this, a Markdown file imported on Windows and re-imported on Linux
-produces different `content_hash` values for byte-identical content, breaking
-the cross-platform dedup_key invariant.
+```text
+neoth-migrate import-config --auth-profiles <path> --models-providers <path>
+neoth-migrate import-crons --timer <unit.timer> --crontab <file>
+```
 
-Idempotency: dedup_key = SHA-256(normalized_text_bytes || scope_le32 || source_origin_ascii).
-Check idx_dedup.bin. Hit -> emit REINFORCE (WAL 0x19), skip new event.
-Re-running is a no-op for already-migrated content.
-
-Importance reconciliation (from 02_MEMORY_LAYER_MAPPING.md):
-  importance_new = max(
-      importance_lance.unwrap_or(0.0),
-      importance_hippo.unwrap_or(0.0),
-      if in_smart_env { 0.5 } else { 0.0 },
-      if reinforced_count > 5 { 0.4 } else { 0.0 },
-      0.3,
-  )
-
-Concurrency: tokio multi-thread runtime, one task per store, bounded mpsc channel
-to single WAL writer task (preserves append-only invariant from SPEC_wal_lifecycle.md).
-Memory ceiling: 512 MiB resident; streams batches of 1024 events to disk before fsync.
+Neither command activates foreign credentials or automation implicitly.
 
 ### Day 64 -- Re-Embed Pipeline
 

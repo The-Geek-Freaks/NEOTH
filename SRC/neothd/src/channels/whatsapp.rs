@@ -25,8 +25,8 @@ use crate::secret::SecretString;
 
 pub struct WhatsAppChannel {
     /// Meta Cloud API access token (long-lived system-user token).
-    /// Consumed by `send_text` today via the Graph API; the Phase-2
-    /// webhook receiver will also use it.
+    /// Consumed by `send_text` via the Graph API. The daemon's shared webhook
+    /// listener receives its own clone from `credentials.yaml`.
     access_token: SecretString,
     /// Numeric phone-number id from the Meta console.
     phone_number_id: String,
@@ -51,8 +51,10 @@ impl WhatsAppChannel {
 
     /// Operator-visible hint surfaced by the wizard + `neoth doctor`.
     pub const SETUP_HINT: &'static str = "WhatsApp Business Cloud API: create an app at developers.facebook.com, \
-         attach a phone number, copy the access token + phone-number id into \
-         credentials.yaml. Webhook target lands in Phase 2.";
+         attach a phone number, and set the access token, phone-number id, \
+         verify token, and app secret in credentials.yaml. `neoth serve` binds \
+         the signed webhook listener on the configured loopback port; expose \
+         that port through your HTTPS reverse proxy or tunnel.";
 }
 
 #[async_trait]
@@ -63,19 +65,19 @@ impl Channel for WhatsAppChannel {
 
     async fn run(&self, _handler: PipelineHandler) -> Result<()> {
         anyhow::bail!(
-            "whatsapp channel: webhook receiver deferred to Phase 2 — needs an \
-             HTTPS endpoint operator-side. Credentials accepted + serialised \
-             so the next release can wire the receiver without re-pairing. \
-             Outbound `send_text` works today via the Graph API — operators \
-             can use NEOTH to push WhatsApp messages from cron jobs / \
-             proactive paths even before the receive loop lands."
+            "whatsapp Channel::run is not the inbound entry point. Start \
+             `neoth serve` with whatsapp_token, whatsapp_phone_id, \
+             whatsapp_verify_token, and whatsapp_app_secret configured; the \
+             daemon starts the signed Meta webhook listener on the configured \
+             loopback port. Front it with an operator-managed HTTPS reverse \
+             proxy or tunnel. Outbound `send_text` uses the Graph API."
         )
     }
 
     /// Send a plain-text WhatsApp message via the Cloud Graph API.
-    /// Outbound-only path that works without the Phase-2 webhook
-    /// receiver — proactive cron jobs + one-way notifications use it
-    /// today. `chat_id` is the recipient's phone number in E.164
+    /// This also works when inbound webhook credentials are incomplete, so
+    /// proactive cron jobs and one-way notifications can remain outbound-only.
+    /// `chat_id` is the recipient's phone number in E.164
     /// (e.g. `"+4915112345678"`); Meta normalises country prefixes
     /// server-side. Returns the WhatsApp wamid (`wamid....`) as the
     /// [`MessageId`] for future correlation with delivery webhooks.
@@ -137,7 +139,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_bails_with_actionable_message() {
+    async fn run_points_to_live_daemon_webhook_path() {
         let c = WhatsAppChannel::new(
             SecretString::from("token"),
             "12345".to_string(),
@@ -146,10 +148,12 @@ mod tests {
         let handler: PipelineHandler = Box::new(|_inbound| Box::pin(async move { Ok(None) }));
         let err = c.run(handler).await.unwrap_err();
         let msg = format!("{err}");
-        // Bail must say WHY (receive deferred) AND point at the
-        // current outbound capability so the operator knows what's
-        // usable today.
-        assert!(msg.contains("deferred"), "msg: {msg}");
+        // This adapter is send-oriented; the daemon owns the live webhook
+        // listener. The error must route operators to that path, not claim the
+        // already-shipped receive path is deferred.
+        assert!(msg.contains("not the inbound entry point"), "msg: {msg}");
+        assert!(msg.contains("neoth serve"), "msg: {msg}");
+        assert!(!msg.contains("deferred"), "stale phase claim: {msg}");
         assert!(
             msg.contains("send_text") || msg.contains("Graph API"),
             "bail must reference the outbound capability: {msg}"
@@ -179,6 +183,9 @@ mod tests {
     #[test]
     fn setup_hint_is_non_empty_and_single_paragraph() {
         assert!(!WhatsAppChannel::SETUP_HINT.is_empty());
+        assert!(WhatsAppChannel::SETUP_HINT.contains("app secret"));
+        assert!(WhatsAppChannel::SETUP_HINT.contains("neoth serve"));
+        assert!(!WhatsAppChannel::SETUP_HINT.contains("Phase 2"));
         // No mid-line newlines — wizard renders it as one block.
         let nl_count = WhatsAppChannel::SETUP_HINT.matches('\n').count();
         assert!(nl_count <= 1);

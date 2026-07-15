@@ -73,9 +73,10 @@ fn rel_or_dot(base: &Path, child: &Path) -> PathBuf {
 /// above it (self-edit needs a git repo for worktree isolation, Layer 4).
 pub fn neoth_source_root(cfg_root: &Option<PathBuf>) -> Result<SourceRoots> {
     let crate_dir = match cfg_root {
-        Some(root) => strip_verbatim(root.canonicalize().with_context(|| {
-            format!("canonicalize source_root override {}", root.display())
-        })?),
+        Some(root) => strip_verbatim(
+            root.canonicalize()
+                .with_context(|| format!("canonicalize source_root override {}", root.display()))?,
+        ),
         None => {
             // Auto-detect uses the COMPILE-TIME crate dir. This works for a
             // binary built from a local checkout, but a binary downloaded from
@@ -195,7 +196,9 @@ fn validate_diff_path(path: &str) -> Result<()> {
     }
     // Windows drive prefix, e.g. `C:` / `c:`.
     if path.as_bytes().get(1) == Some(&b':') {
-        anyhow::bail!("diff path '{path}' has a drive prefix — only repo-relative paths are allowed");
+        anyhow::bail!(
+            "diff path '{path}' has a drive prefix — only repo-relative paths are allowed"
+        );
     }
     // Any other colon: NTFS alternate data streams (`mod.rs:stream`) attach to
     // an EXISTING file under a colon-suffixed name, bypassing prefix denies.
@@ -207,7 +210,10 @@ fn validate_diff_path(path: &str) -> Result<()> {
     // `.` components survive the string-prefix deny check unchanged but the OS
     // resolves them away (`src/./wal/x` opens `src/wal/x`) — reject alongside
     // `..` so every gate layer sees the canonical spelling.
-    if path.split('/').any(|component| component == ".." || component == ".") {
+    if path
+        .split('/')
+        .any(|component| component == ".." || component == ".")
+    {
         anyhow::bail!("diff path '{path}' contains a '.' or '..' traversal component");
     }
     Ok(())
@@ -333,7 +339,8 @@ mod tests {
     fn diff_paths_rejects_empty_diff() {
         let err = diff_paths("").unwrap_err();
         assert!(
-            err.to_string().contains("no recognisable file path headers"),
+            err.to_string()
+                .contains("no recognisable file path headers"),
             "unexpected error: {err}"
         );
     }

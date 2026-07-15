@@ -71,10 +71,14 @@ pub enum WalCompression {
 /// Load the `wal:` sub-key from a `freedom.yaml` file.
 ///
 /// Reads only the `wal:` stanza — does NOT parse the full `FreedomConfig`.
-/// Returns `WalConfig::default()` (no compression) on any error so existing
-/// operator setups with no `wal:` key keep working without changes.
-pub fn load_wal_config(freedom_yaml_path: &Path) -> WalConfig {
-    load_wal_config_strict(freedom_yaml_path).unwrap_or_default()
+/// A missing file is the fresh-install default. Existing unreadable or malformed
+/// configuration is returned as an error so encryption/compression policy can
+/// never silently become `none`.
+pub fn load_wal_config(freedom_yaml_path: &Path) -> Result<WalConfig> {
+    if !freedom_yaml_path.exists() {
+        return Ok(WalConfig::default());
+    }
+    load_wal_config_strict(freedom_yaml_path)
 }
 
 /// Like `load_wal_config` but surfaces parse errors.
@@ -110,10 +114,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("freedom.yaml");
         std::fs::write(&path, "wal:\n  encryption: aes256_gcm_siv\n").unwrap();
-        assert_eq!(load_wal_config(&path).encryption, WalEncryption::Aes256GcmSiv);
+        assert_eq!(
+            load_wal_config(&path).unwrap().encryption,
+            WalEncryption::Aes256GcmSiv
+        );
         // Missing key → None (backward compatible).
         std::fs::write(&path, "wal:\n  compression: zstd_3\n").unwrap();
-        assert_eq!(load_wal_config(&path).encryption, WalEncryption::None);
+        assert_eq!(
+            load_wal_config(&path).unwrap().encryption,
+            WalEncryption::None
+        );
     }
 
     #[test]
@@ -127,7 +137,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("freedom.yaml");
         std::fs::write(&path, "wal:\n  compression: zstd_3\n").unwrap();
-        let cfg = load_wal_config(&path);
+        let cfg = load_wal_config(&path).unwrap();
         assert_eq!(cfg.compression, WalCompression::Zstd3);
     }
 
@@ -136,7 +146,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("freedom.yaml");
         std::fs::write(&path, "wal:\n  compression: none\n").unwrap();
-        let cfg = load_wal_config(&path);
+        let cfg = load_wal_config(&path).unwrap();
         assert_eq!(cfg.compression, WalCompression::None);
     }
 
@@ -145,14 +155,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("freedom.yaml");
         std::fs::write(&path, "operator_id: test\n").unwrap();
-        let cfg = load_wal_config(&path);
+        let cfg = load_wal_config(&path).unwrap();
         assert_eq!(cfg.compression, WalCompression::None);
     }
 
     #[test]
     fn load_wal_config_missing_file_defaults_none() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = load_wal_config(&dir.path().join("nonexistent.yaml"));
+        let cfg = load_wal_config(&dir.path().join("nonexistent.yaml")).unwrap();
         assert_eq!(cfg.compression, WalCompression::None);
+    }
+
+    #[test]
+    fn malformed_existing_file_never_disables_wal_policy_silently() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "wal: [not-a-map]").unwrap();
+        let error = load_wal_config(&path).unwrap_err();
+        assert!(error.to_string().contains("wal"), "got: {error:#}");
     }
 }

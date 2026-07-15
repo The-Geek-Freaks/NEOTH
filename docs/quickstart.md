@@ -3,28 +3,42 @@
 This guide is for someone who has never installed a local AI assistant before.
 Follow it in order. Do not edit YAML unless you choose the operator path.
 
-## The 3-command path
+## The current source path
 
 > The source tree is versioned for **NEOTH 1.0.0**. Tagged release artifacts and
-> the crates.io package are not published yet, so use the bootstrap installer
-> below (or the source build).
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
-neoth gui
-neoth doctor
-```
-
-On Windows (PowerShell): `irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex`.
-If you prefer a manual build, see **Source install** below.
-
-## Source install
+> the crates.io package are not published yet. Until the first signed release,
+> use the source checkout; the bootstrap installer has no stable archive to
+> download yet.
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH/SRC
-cargo install --path neothd
-cargo install --path neothd-gui
+cargo install --locked --path neothd --features release-desktop
+cargo install --locked --path neothd-gui
+cargo install --locked --path neoth-migrate
+cargo install --locked --path neoth-relay
+neoth gui
+neoth doctor
+```
+
+After `v1.0.0` is published, the signed-release shortcuts are:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH" # automatic profile wiring applies to new shells
+```
+
+Windows (PowerShell): `irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex`.
+
+## Rebuild or update from source
+
+```bash
+git clone https://github.com/The-Geek-Freaks/NEOTH
+cd NEOTH/SRC
+cargo install --locked --path neothd --features release-desktop
+cargo install --locked --path neothd-gui
+cargo install --locked --path neoth-migrate
+cargo install --locked --path neoth-relay
 neoth gui
 ```
 

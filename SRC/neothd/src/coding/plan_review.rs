@@ -176,10 +176,7 @@ fn parse_verdict(reply: &str) -> (&'static str, String) {
 ///
 /// * `llm`       — any provider implementing [`DecomposerLlm`]
 /// * `plan_text` — the plan text to review (markdown, free-form, etc.)
-pub async fn review_plan(
-    llm: &dyn DecomposerLlm,
-    plan_text: &str,
-) -> Result<ReviewOutcome> {
+pub async fn review_plan(llm: &dyn DecomposerLlm, plan_text: &str) -> Result<ReviewOutcome> {
     let mut log = PlanReviewLog::new();
     let mut critique_so_far = String::new();
     let mut unresolved: Vec<String> = Vec::new();
@@ -351,10 +348,16 @@ mod tests {
         assert_eq!(v, "REVISE", "negated approval must be REVISE");
 
         let (v2, _) = parse_verdict("APPROVED looks good");
-        assert_eq!(v2, "APPROVED", "a leading APPROVED token is the only accepted approval");
+        assert_eq!(
+            v2, "APPROVED",
+            "a leading APPROVED token is the only accepted approval"
+        );
 
         let (v3, _) = parse_verdict("honestly this looks approved to me");
-        assert_eq!(v3, "REVISE", "a non-leading 'approved' falls back to REVISE (fail-safe)");
+        assert_eq!(
+            v3, "REVISE",
+            "a non-leading 'approved' falls back to REVISE (fail-safe)"
+        );
 
         let (v4, c4) = parse_verdict("REVISE: race in the writer");
         assert_eq!(v4, "REVISE");
@@ -377,7 +380,10 @@ mod tests {
     fn parse_verdict_revise_colon_is_revise() {
         let (v, c) = parse_verdict("REVISE: split the task");
         assert_eq!(v, "REVISE");
-        assert!(c.contains("split the task"), "critique body must be captured");
+        assert!(
+            c.contains("split the task"),
+            "critique body must be captured"
+        );
     }
 
     /// "we should revise this" — "revise" appears as a standalone word

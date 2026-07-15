@@ -35,7 +35,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::config::FreedomConfig;
@@ -154,10 +154,11 @@ pub struct RestoreMasterKeyArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct BackupHmacKeyArgs {
-    /// Plaintext destination path. The file is written mode-0600
-    /// (Unix) so it's only readable by the operator account. Refused
-    /// if the path already exists unless `--force` is also passed
-    /// (defence against silent overwrite of an older backup).
+    /// Plaintext destination path outside the NEOTH home. The file is written
+    /// mode-0600 (Unix) / owner-DACL restricted (Windows). Refused
+    /// if the path resolves inside `~/.neoth`, or already exists unless
+    /// `--force` is also passed (defence against a false disaster-recovery copy
+    /// and silent overwrite of an older backup).
     #[arg(long, value_name = "PATH")]
     pub output: PathBuf,
     /// Overwrite `--output` if it already exists. Without this flag
@@ -429,20 +430,44 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
         },
     });
 
-    // OM-01 OMI ingest — passive transcript ingest is the most sensitive power
-    // surface (it can mirror everyday conversation), so it gets its own rail.
-    // Engaged (off) = nothing is ingested. Even ON, the SC-14 startup gate
-    // refuses any non-local endpoint.
+    // OMI ingest can carry everyday conversation and native media, so it gets
+    // its own rail. The detail must describe the selected trust boundary rather
+    // than repeating the old (and now false) blanket local-only claim.
     rails.push(Rail {
         name: "omi_ingest",
         engaged: !cfg.omi.enabled,
         detail: if cfg.omi.enabled {
-            format!(
-                "ENABLED — polling {} (LOCAL-only; SC-14 refuses a cloud endpoint at startup)",
-                cfg.omi.endpoint
-            )
+            match cfg.omi.mode {
+                crate::config::OmiIngestMode::DeveloperApi => format!(
+                    "ENABLED — Developer API {} ({})",
+                    cfg.omi.endpoint,
+                    if cfg.omi.allow_cloud_api {
+                        "public HTTPS explicitly allowed"
+                    } else {
+                        "local/private endpoint only"
+                    }
+                ),
+                crate::config::OmiIngestMode::NativeIngest => format!(
+                    "ENABLED — authenticated native listener {} (private bind)",
+                    cfg.omi.listen_addr
+                ),
+                crate::config::OmiIngestMode::Both => format!(
+                    "ENABLED — Developer API {} ({}) + authenticated native listener {}",
+                    cfg.omi.endpoint,
+                    if cfg.omi.allow_cloud_api {
+                        "public HTTPS explicitly allowed"
+                    } else {
+                        "local/private endpoint only"
+                    },
+                    cfg.omi.listen_addr
+                ),
+                crate::config::OmiIngestMode::LegacyMemories => format!(
+                    "ENABLED — legacy local/private /v1/memories feed {}",
+                    cfg.omi.endpoint
+                ),
+            }
         } else {
-            "off — no passive transcript ingest".to_string()
+            "off — no OMI conversation or native media ingest".to_string()
         },
     });
 
@@ -525,7 +550,12 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
         // cloud_stt_enabled=true can still egress on retryable failure → not safe.
         engaged: !cfg.media.cloud_stt_enabled
             || (cfg.media.stt.primary.is_local()
-                && !cfg.media.stt.fallback.map(|f| !f.is_local()).unwrap_or(false)),
+                && !cfg
+                    .media
+                    .stt
+                    .fallback
+                    .map(|f| !f.is_local())
+                    .unwrap_or(false)),
         detail: {
             let primary = cfg.media.stt.primary;
             let cloud_on = cfg.media.cloud_stt_enabled;
@@ -535,12 +565,7 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
                 .fallback
                 .map(|f| !f.is_local())
                 .unwrap_or(false);
-            if primary == crate::media::stt_dispatch::SttProvider::Vosk {
-                // (5) unsupported / Vosk deferred
-                "unsupported — Vosk is deferred (C-FFI, cmake+C++ build risk); \
-                 audio stays on-device via candle Whisper default"
-                    .to_string()
-            } else if primary.is_local() && !cloud_on && !has_fallback_cloud {
+            if primary.is_local() && !cloud_on && !has_fallback_cloud {
                 // (1) off — local primary, no cloud anywhere
                 format!(
                     "off — STT stays on-device ({} / faster-whisper); no audio leaves",
@@ -568,11 +593,7 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
                      enabled; audio sent to cloud ONLY on retryable primary failure; \
                      audited 0xCC STT_TRANSCRIBED (metadata only)",
                     primary.as_str(),
-                    cfg.media
-                        .stt
-                        .fallback
-                        .map(|f| f.as_str())
-                        .unwrap_or("none")
+                    cfg.media.stt.fallback.map(|f| f.as_str()).unwrap_or("none")
                 )
             } else {
                 "off — speech-to-text stays on-device; no audio leaves".to_string()
@@ -636,8 +657,8 @@ pub fn render_rails(rails: &[Rail]) -> String {
 
 fn run_safe_mode(args: &SafeModeArgs) -> Result<()> {
     let cfg = match &args.home {
-        Some(dir) => FreedomConfig::load_from_path(&dir.join("freedom.yaml")).unwrap_or_default(),
-        None => FreedomConfig::load_from_default_path().unwrap_or_default(),
+        Some(dir) => FreedomConfig::load_from_path_or_default(&dir.join("freedom.yaml"))?,
+        None => FreedomConfig::load_from_default_path_or_default()?,
     };
     let rails = collect_rails(&cfg);
     if args.json {
@@ -652,7 +673,8 @@ fn run_safe_mode(args: &SafeModeArgs) -> Result<()> {
         });
         println!(
             "{}",
-            serde_json::to_string_pretty(&body).unwrap_or_default()
+            serde_json::to_string_pretty(&body)
+                .expect("security rails report is infallible JSON")
         );
     } else {
         print!("{}", render_rails(&rails));
@@ -681,16 +703,10 @@ pub async fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("read key backup {}: {e}", args.source.display()))?;
 
     let key_path = home.join("wal").join("hmac.key");
-    let replaced = key_path.exists();
-
-    // compaction::rewrap_key validates the 16-byte floor + DPAPI-wraps
-    // (Windows) / writes mode-0600 (Unix), overwriting any existing key.
-    crate::wal::compaction::rewrap_key(&key_path, &raw)?;
-
-    // SC-09: record the rotation BOUNDARY so `neoth wal verify --since-rotation`
-    // can skip compaction markers signed with the old key. Best-effort, audit
-    // metadata only (SHA-256 of the new key — never the raw bytes).
-    emit_hmac_key_rotated(&home, &raw, replaced, "rewrap").await;
+    // Stage the machine-local wrapping first, durably append the signed 0xD9
+    // boundary, then atomically install it. A rerun recovers either side of an
+    // interrupted transaction before it can start another rotation.
+    let rotation = rotate_hmac_key_with_audit(&home, &key_path, &raw, "rewrap", None).await?;
 
     eprintln!();
     eprintln!("[neoth security] HMAC KEY RE-WRAPPED FOR THIS MACHINE");
@@ -699,33 +715,29 @@ pub async fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
     eprintln!(
         "[neoth security]   bytes:   {} ({})",
         raw.len(),
-        if replaced {
+        if rotation.replaced() {
             "replaced the existing key"
         } else {
             "installed (no prior key present)"
         }
     );
+    if rotation.recovered {
+        eprintln!("[neoth security]   state:   recovered interrupted audited rotation");
+    }
     eprintln!("[neoth security]");
     eprintln!("[neoth security] The key is now bound to the current user/machine (DPAPI on");
     eprintln!("[neoth security] Windows, mode-0600 on Unix). Run `neoth verify` to confirm the");
     eprintln!("[neoth security] compaction-marker audit chain verifies again.");
-    eprintln!("[neoth security] Delete the plaintext --source backup once verification passes.");
-    eprintln!("[neoth security] (If this command had failed mid-write, the key file could be");
-    eprintln!("[neoth security]  absent — just re-run with the same --source to restore it.)");
+    eprintln!("[neoth security] After verification, unmount/remove the working copy and return");
+    eprintln!("[neoth security] the recovery backup to its protected offline storage.");
+    eprintln!("[neoth security] Interrupted rotations are recovered transactionally on rerun.");
 
     println!("hmac key re-wrapped: {}", key_path.display());
     Ok(())
 }
 
-/// `0xD9 HMAC_KEY_ROTATED` audit — the rotation boundary for
-/// `wal verify --since-rotation`. When a daemon owns the WAL, FORWARD over
-/// audit-RPC; otherwise open a one-shot writer. Metadata only — the SHA-256 of
-/// the NEW key (never the raw bytes). Best-effort: an audit gap never fails the
-/// rewrap (the operator's recovery already succeeded).
-/// Canonical, deterministic bytes signed by [`emit_hmac_key_rotated`] and
-/// re-verified by `neoth verify`. Fixed `field|…` layout (NOT JSON, to avoid any
-/// serialiser field-order dependence) over the fields a verifier uses to treat a
-/// 0xD9 frame as a rotation boundary.
+/// Canonical bytes for legacy v1 rotation events. Kept so existing WAL history
+/// remains verifiable after the crash-safe v2 transaction shipped.
 pub(crate) fn rotation_authorisation_message(
     new_key_sha256: &str,
     replaced: bool,
@@ -735,88 +747,613 @@ pub(crate) fn rotation_authorisation_message(
     format!("hmac-key-rotated-v1|{new_key_sha256}|{replaced}|{reason}|{ts_unix}").into_bytes()
 }
 
-async fn emit_hmac_key_rotated(
-    home: &std::path::Path,
-    new_key: &[u8],
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HmacKeyRotatedPayload {
+    schema: u8,
+    rotation_id: String,
+    new_key_sha256: String,
+    previous_key_storage_sha256: Option<String>,
     replaced: bool,
-    reason: &str,
-) {
-    use sha2::{Digest, Sha256};
-    let new_key_sha256: String = Sha256::digest(new_key)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let now = crate::time::now_unix_secs();
-    // Sign the rotation boundary with the operator's ed25519 key (same key +
-    // 0600/DPAPI protection as redaction-marker signing, under <home>/wal).
-    // `neoth verify --since-rotation` only treats a 0xD9 frame as a boundary when
-    // its signature verifies against the operator's OWN key — so a forged
-    // CRC32c-only rotation frame (writable but not signable without the key) can
-    // no longer silence the pre-injection history. Best-effort: if the key can't
-    // load, emit unsigned — verify then IGNORES it and verifies the FULL history
-    // (fail SAFE: more verification, never less).
-    let (signer_pubkey, sig) = match crate::wal::signing::load_or_init_signing_key(
-        &home.join("wal").join("signing.key"),
-    ) {
-        Ok(key) => {
-            let msg = rotation_authorisation_message(&new_key_sha256, replaced, reason, now as i64);
-            (
-                crate::wal::signing::pubkey_b64(&key),
-                crate::wal::signing::sign_b64(&key, &msg),
-            )
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "security: signing key load failed; 0xD9 emitted UNSIGNED");
-            (String::new(), String::new())
-        }
-    };
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "new_key_sha256": new_key_sha256,
-        "replaced": replaced,
-        "reason": reason,
-        "ts_unix": now,
-        "signer_pubkey": signer_pubkey,
-        "sig": sig,
-    }))
-    .unwrap_or_default();
+    reason: String,
+    ts_unix: i64,
+    signer_pubkey: String,
+    sig: String,
+}
 
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
-        Ok(Some(_))
-    );
+impl HmacKeyRotatedPayload {
+    const SCHEMA: u8 = 2;
+
+    fn canonical_bytes(&self) -> Vec<u8> {
+        format!(
+            "hmac-key-rotated-v2|{}|{}|{}|{}|{}|{}",
+            self.rotation_id,
+            self.new_key_sha256,
+            self.previous_key_storage_sha256.as_deref().unwrap_or(""),
+            self.replaced,
+            self.reason,
+            self.ts_unix,
+        )
+        .into_bytes()
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.schema != Self::SCHEMA {
+            anyhow::bail!("unsupported HMAC-key rotation schema {}", self.schema);
+        }
+        let rotation_id =
+            uuid::Uuid::parse_str(&self.rotation_id).context("invalid HMAC-key rotation id")?;
+        let canonical_id = rotation_id.hyphenated().to_string();
+        if self.rotation_id != canonical_id
+            || canonical_id.as_bytes().get(14).copied() != Some(b'7')
+        {
+            anyhow::bail!("HMAC-key rotation id must be a canonical UUIDv7");
+        }
+        require_sha256_hex(&self.new_key_sha256, "new_key_sha256")?;
+        if let Some(previous) = &self.previous_key_storage_sha256 {
+            require_sha256_hex(previous, "previous_key_storage_sha256")?;
+        }
+        if self.replaced != self.previous_key_storage_sha256.is_some() {
+            anyhow::bail!("HMAC-key rotation replaced flag must match previous-key hash presence");
+        }
+        if !matches!(self.reason.as_str(), "rotate" | "rewrap") {
+            anyhow::bail!("unsupported HMAC-key rotation reason {:?}", self.reason);
+        }
+        if self.ts_unix <= 0 {
+            anyhow::bail!("HMAC-key rotation timestamp must be positive");
+        }
+        crate::wal::signing::verify_b64(&self.signer_pubkey, &self.sig, &self.canonical_bytes())
+            .context("HMAC-key rotation signature is invalid")
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingHmacKeyRotation {
+    schema: u8,
+    payload: HmacKeyRotatedPayload,
+    staged_file: String,
+    archive_file: Option<String>,
+}
+
+impl PendingHmacKeyRotation {
+    const SCHEMA: u8 = 1;
+
+    fn validate(&self) -> Result<()> {
+        if self.schema != Self::SCHEMA {
+            anyhow::bail!(
+                "unsupported pending HMAC-key rotation schema {}",
+                self.schema
+            );
+        }
+        self.payload.validate()?;
+        validate_private_sibling_name(&self.staged_file, "staged_file")?;
+        let expected_stage = format!("hmac.key.rotation-{}.next", self.payload.rotation_id);
+        if self.staged_file != expected_stage {
+            anyhow::bail!("pending HMAC-key rotation staged filename is inconsistent");
+        }
+        if let Some(archive) = &self.archive_file {
+            validate_private_sibling_name(archive, "archive_file")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HmacKeyRotationResult {
+    pub(crate) payload: HmacKeyRotatedPayload,
+    pub(crate) archive_path: Option<PathBuf>,
+    pub(crate) recovered: bool,
+}
+
+impl HmacKeyRotationResult {
+    pub(crate) fn ts_unix(&self) -> i64 {
+        self.payload.ts_unix
+    }
+
+    fn replaced(&self) -> bool {
+        self.payload.replaced
+    }
+}
+
+fn require_sha256_hex(value: &str, field: &str) -> Result<()> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        anyhow::bail!("HMAC-key rotation {field} must be 64 lowercase hex characters");
+    }
+    Ok(())
+}
+
+fn validate_private_sibling_name(value: &str, field: &str) -> Result<()> {
+    let path = Path::new(value);
+    if value.is_empty()
+        || path.is_absolute()
+        || path
+            .parent()
+            .is_some_and(|parent| !parent.as_os_str().is_empty())
+        || path.file_name().and_then(|name| name.to_str()) != Some(value)
+    {
+        anyhow::bail!("pending HMAC-key rotation {field} is not a safe sibling filename");
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn hmac_rotation_lock_path(key_path: &Path) -> PathBuf {
+    key_path.with_file_name(format!(
+        "{}.rotation.lock",
+        key_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("hmac.key")
+    ))
+}
+
+fn hmac_rotation_journal_path(key_path: &Path) -> PathBuf {
+    key_path.with_file_name(format!(
+        "{}.rotation.json",
+        key_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("hmac.key")
+    ))
+}
+
+fn current_key_storage_hash(key_path: &Path) -> Result<Option<String>> {
+    match std::fs::read(key_path) {
+        Ok(body) => Ok(Some(sha256_hex(&body))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("read HMAC key storage at {}", key_path.display()))
+        }
+    }
+}
+
+fn remove_rotation_file(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
+fn sync_rotation_parent(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)
+            .with_context(|| format!("open HMAC-key rotation parent {}", parent.display()))?
+            .sync_all()
+            .with_context(|| format!("fsync HMAC-key rotation parent {}", parent.display()))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+fn sorted_wal_segments(wal_dir: &Path) -> Vec<PathBuf> {
+    let mut segments = std::fs::read_dir(wal_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wal"))
+        .collect::<Vec<_>>();
+    segments.sort();
+    segments
+}
+
+/// Validate either a legacy v1 or crash-safe v2 HMAC rotation event against
+/// the operator proof-key trust chain. This is the single trust decision used
+/// by both transaction recovery and `verify --since-rotation`.
+pub(crate) fn hmac_rotation_payload_is_trusted(
+    payload: &[u8],
+    trusted_pubkeys: &std::collections::BTreeSet<String>,
+) -> bool {
+    if trusted_pubkeys.is_empty() {
+        return false;
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) else {
+        return false;
+    };
+    if value.get("schema").is_some() {
+        let Ok(v2) = serde_json::from_value::<HmacKeyRotatedPayload>(value) else {
+            return false;
+        };
+        return trusted_pubkeys.contains(&v2.signer_pubkey) && v2.validate().is_ok();
+    }
+    let new_key_sha256 = value["new_key_sha256"].as_str().unwrap_or("");
+    let replaced = value["replaced"].as_bool().unwrap_or(false);
+    let reason = value["reason"].as_str().unwrap_or("");
+    let ts_unix = value["ts_unix"].as_i64().unwrap_or(0);
+    let signer_pubkey = value["signer_pubkey"].as_str().unwrap_or("");
+    let sig = value["sig"].as_str().unwrap_or("");
+    let msg = rotation_authorisation_message(new_key_sha256, replaced, reason, ts_unix);
+    trusted_pubkeys.contains(signer_pubkey)
+        && crate::wal::signing::verify_b64(signer_pubkey, sig, &msg).is_ok()
+}
+
+fn hmac_rotation_event_is_durable(
+    home: &Path,
+    expected_payload: &[u8],
+    signing_key_path: &Path,
+) -> Result<bool> {
+    let wal_dir = home.join("wal");
+    let segments = sorted_wal_segments(&wal_dir);
+    let trusted = crate::wal::signing::trusted_signing_pubkeys(&segments, signing_key_path);
+    for segment in segments {
+        let raw = match std::fs::read(&segment) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let Ok((header_len, logical)) = crate::wal::compaction::logical_segment_bytes(&raw) else {
+            continue;
+        };
+        let mut cursor = header_len;
+        let mut found = false;
+        while cursor < logical.len() {
+            let Ok(frame) = crate::wal::frame::decode_frame(&logical[cursor..]) else {
+                break;
+            };
+            let total = frame.header.total_len as usize;
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED
+                && frame.payload == expected_payload
+                && hmac_rotation_payload_is_trusted(frame.payload, &trusted)
+            {
+                found = true;
+                break;
+            }
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        if !found {
+            continue;
+        }
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&segment)
+            .with_context(|| format!("open HMAC-key rotation segment {}", segment.display()))?
+            .sync_all()
+            .with_context(|| format!("fsync HMAC-key rotation segment {}", segment.display()))?;
+        sync_rotation_parent(&segment)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+async fn append_hmac_key_rotated(home: &Path, daemon_live: bool, payload: &[u8]) -> Result<()> {
     if daemon_live {
-        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+        crate::daemon::audit_rpc::try_post_audit_frame(
             home,
             crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED,
-            &payload,
+            payload,
         )
         .await
-        {
-            tracing::debug!(error = %e, "security: 0xD9 forward skipped (daemon listener unreachable)");
-        }
-        return;
+        .map_err(anyhow::Error::new)
+        .context("running daemon refused the required HMAC-key rotation audit")?;
+        return Ok(());
     }
-    let segment = home.join("wal").join("000001.wal");
-    if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
-    let (writer, join) = match crate::wal::writer::spawn(segment) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "security: WAL writer spawn failed; 0xD9 not recorded");
-            return;
-        }
-    };
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hmac-key-rotate");
+    let (writer, join) = crate::wal::writer::spawn(segment)
+        .context("spawn one-shot HMAC-key rotation WAL writer")?;
     let header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED, &payload)
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED, payload)
             .build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, "security: 0xD9 frame append failed (audit gap)");
-    }
-    // Drop the handle so the writer task drains + flushes, then await it — the
-    // rotation boundary must be durable before the command reports success.
+    let append = writer
+        .append(header, payload.to_vec())
+        .await
+        .context("append required HMAC-key rotation audit");
     drop(writer);
-    let _ = join.await;
+    join.await
+        .context("join one-shot HMAC-key rotation WAL writer")?;
+    append.map(|_| ())
+}
+
+fn load_pending_hmac_rotation(key_path: &Path) -> Result<Option<PendingHmacKeyRotation>> {
+    let journal_path = hmac_rotation_journal_path(key_path);
+    if !journal_path.exists() {
+        return Ok(None);
+    }
+    let body = std::fs::read(&journal_path)
+        .with_context(|| format!("read pending HMAC-key rotation {}", journal_path.display()))?;
+    let pending: PendingHmacKeyRotation = serde_json::from_slice(&body)
+        .with_context(|| format!("parse pending HMAC-key rotation {}", journal_path.display()))?;
+    pending.validate()?;
+    Ok(Some(pending))
+}
+
+fn pending_rotation_paths(
+    key_path: &Path,
+    pending: &PendingHmacKeyRotation,
+) -> Result<(PathBuf, Option<PathBuf>)> {
+    let parent = key_path
+        .parent()
+        .context("HMAC key path has no parent directory")?;
+    Ok((
+        parent.join(&pending.staged_file),
+        pending.archive_file.as_ref().map(|name| parent.join(name)),
+    ))
+}
+
+fn abort_pending_hmac_rotation(key_path: &Path, pending: &PendingHmacKeyRotation) -> Result<()> {
+    let (staged_path, _) = pending_rotation_paths(key_path, pending)?;
+    remove_rotation_file(&staged_path)?;
+    remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
+    sync_rotation_parent(key_path)
+}
+
+fn commit_pending_hmac_rotation(
+    key_path: &Path,
+    pending: PendingHmacKeyRotation,
+    recovered: bool,
+) -> Result<HmacKeyRotationResult> {
+    pending.validate()?;
+    let (staged_path, archive_path) = pending_rotation_paths(key_path, &pending)?;
+    let current_storage = current_key_storage_hash(key_path)?;
+    if key_path.exists() {
+        if let Ok(current) = crate::wal::compaction::load_or_init_key(key_path) {
+            if sha256_hex(&current) == pending.payload.new_key_sha256 {
+                if let Some(archive) = &archive_path {
+                    let expected = pending
+                        .payload
+                        .previous_key_storage_sha256
+                        .as_deref()
+                        .context("committed HMAC archive has no signed predecessor hash")?;
+                    let archived = std::fs::read(archive).with_context(|| {
+                        format!("read committed HMAC key archive {}", archive.display())
+                    })?;
+                    if sha256_hex(&archived) != expected {
+                        anyhow::bail!(
+                            "committed HMAC key archive {} does not match the signed predecessor",
+                            archive.display()
+                        );
+                    }
+                }
+                remove_rotation_file(&staged_path)?;
+                remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
+                sync_rotation_parent(key_path)?;
+                return Ok(HmacKeyRotationResult {
+                    payload: pending.payload,
+                    archive_path,
+                    recovered: true,
+                });
+            }
+        }
+    }
+    if current_storage != pending.payload.previous_key_storage_sha256 {
+        anyhow::bail!(
+            "pending HMAC-key rotation is stale: active key matches neither side of the signed transition"
+        );
+    }
+    if !staged_path.exists() {
+        anyhow::bail!(
+            "pending HMAC-key rotation is audited but staged key {} is missing",
+            staged_path.display()
+        );
+    }
+    let staged = crate::wal::compaction::load_or_init_key(&staged_path)
+        .context("load staged HMAC replacement key")?;
+    if sha256_hex(&staged) != pending.payload.new_key_sha256 {
+        anyhow::bail!("staged HMAC replacement key does not match the signed transition");
+    }
+    if let Some(archive) = &archive_path {
+        let previous_hash = pending
+            .payload
+            .previous_key_storage_sha256
+            .as_deref()
+            .context("HMAC archive requested without a previous key")?;
+        if archive.exists() {
+            let existing = std::fs::read(archive)
+                .with_context(|| format!("read HMAC key archive {}", archive.display()))?;
+            if sha256_hex(&existing) != previous_hash {
+                anyhow::bail!(
+                    "HMAC key archive {} exists with unexpected contents",
+                    archive.display()
+                );
+            }
+        } else {
+            let active = std::fs::read(key_path)
+                .with_context(|| format!("read retiring HMAC key {}", key_path.display()))?;
+            crate::util::atomic_write::atomic_write_private(archive, &active)
+                .with_context(|| format!("write HMAC key archive {}", archive.display()))?;
+            #[cfg(windows)]
+            crate::wal::win_acl::restrict_to_owner(archive)
+                .with_context(|| format!("restrict HMAC key archive ACL {}", archive.display()))?;
+        }
+    }
+    crate::wal::compaction::rewrap_key(key_path, &staged)
+        .context("atomically install audited HMAC replacement key")?;
+    let installed = crate::wal::compaction::load_or_init_key(key_path)
+        .context("verify installed HMAC replacement key")?;
+    if sha256_hex(&installed) != pending.payload.new_key_sha256 {
+        anyhow::bail!("installed HMAC replacement key does not match the signed transition");
+    }
+    remove_rotation_file(&staged_path)?;
+    remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
+    sync_rotation_parent(key_path)?;
+    Ok(HmacKeyRotationResult {
+        payload: pending.payload,
+        archive_path,
+        recovered,
+    })
+}
+
+fn recover_pending_hmac_rotation_locked(
+    home: &Path,
+    key_path: &Path,
+) -> Result<Option<HmacKeyRotationResult>> {
+    let Some(pending) = load_pending_hmac_rotation(key_path)? else {
+        return Ok(None);
+    };
+    let signing_key_path = home.join("wal").join("signing.key");
+    let payload = serde_json::to_vec(&pending.payload)
+        .context("serialize pending HMAC-key rotation payload")?;
+    if hmac_rotation_event_is_durable(home, &payload, &signing_key_path)? {
+        return commit_pending_hmac_rotation(key_path, pending, true).map(Some);
+    }
+    if key_path.exists()
+        && crate::wal::compaction::load_or_init_key(key_path)
+            .is_ok_and(|active| sha256_hex(&active) == pending.payload.new_key_sha256)
+    {
+        anyhow::bail!(
+            "active HMAC key matches a pending replacement whose signed 0xD9 boundary is missing — refusing to erase recovery state"
+        );
+    }
+    if current_key_storage_hash(key_path)? != pending.payload.previous_key_storage_sha256 {
+        anyhow::bail!(
+            "pending unaudited HMAC-key rotation is stale: active key no longer matches its signed predecessor"
+        );
+    }
+    abort_pending_hmac_rotation(key_path, &pending)?;
+    Ok(None)
+}
+
+/// Recover an interrupted HMAC rotation before a WAL writer loads the active
+/// key. This prevents a restarted daemon from emitting an old-key compaction
+/// marker after an already-durable 0xD9 boundary.
+pub(crate) fn recover_hmac_key_rotation(
+    home: &Path,
+    key_path: &Path,
+) -> Result<Option<HmacKeyRotationResult>> {
+    let _lock = crate::util::locked_file::lock_file_blocking(
+        &hmac_rotation_lock_path(key_path),
+        "HMAC-key rotation",
+    )?;
+    recover_pending_hmac_rotation_locked(home, key_path)
+}
+
+/// Crash-recoverable HMAC key rotation shared by `keys rotate` and
+/// `security rewrap-hmac-key`. The active key stays unchanged until the exact
+/// signed 0xD9 transition is durable; a rerun completes an audited pending swap
+/// or removes an unaudited stage before starting another rotation.
+pub(crate) async fn rotate_hmac_key_with_audit(
+    home: &Path,
+    key_path: &Path,
+    new_key: &[u8],
+    reason: &str,
+    archive_path: Option<PathBuf>,
+) -> Result<HmacKeyRotationResult> {
+    if new_key.len() < 16 {
+        anyhow::bail!(
+            "refusing to install HMAC key shorter than 16 bytes ({} given) — a weak key undermines WAL tamper-evidence",
+            new_key.len()
+        );
+    }
+    let _lock = crate::util::locked_file::lock_file_blocking(
+        &hmac_rotation_lock_path(key_path),
+        "HMAC-key rotation",
+    )?;
+    let daemon_live = match crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(error) => anyhow::bail!(
+            "cannot determine whether the daemon owns the WAL ({error}) — refusing HMAC-key rotation"
+        ),
+    };
+    if daemon_live {
+        anyhow::bail!(
+            "a running daemon holds the current HMAC key in memory — stop it before rotating so no old-key compaction marker can land after the 0xD9 boundary"
+        );
+    }
+    if let Some(recovered) = recover_pending_hmac_rotation_locked(home, key_path)? {
+        return Ok(recovered);
+    }
+    let signing_key_path = home.join("wal").join("signing.key");
+    let previous_key_storage_sha256 = current_key_storage_hash(key_path)?;
+    let replaced = previous_key_storage_sha256.is_some();
+    if archive_path.is_some() && !replaced {
+        anyhow::bail!("cannot archive an HMAC key that does not exist");
+    }
+    if let Some(archive) = &archive_path {
+        let parent = key_path
+            .parent()
+            .context("HMAC key path has no parent directory")?;
+        if archive.parent() != Some(parent) {
+            anyhow::bail!("HMAC key archive must be a sibling of the active key");
+        }
+        let name = archive
+            .file_name()
+            .and_then(|value| value.to_str())
+            .context("HMAC key archive path has no UTF-8 filename")?;
+        validate_private_sibling_name(name, "archive_file")?;
+        if archive.exists() {
+            anyhow::bail!("HMAC key archive already exists at {}", archive.display());
+        }
+    }
+    let signing_key = crate::wal::signing::load_or_init_signing_key(&signing_key_path)
+        .context("load operator signing key for HMAC-key rotation")?;
+    let mut payload = HmacKeyRotatedPayload {
+        schema: HmacKeyRotatedPayload::SCHEMA,
+        rotation_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+        new_key_sha256: sha256_hex(new_key),
+        previous_key_storage_sha256,
+        replaced,
+        reason: reason.to_owned(),
+        ts_unix: crate::time::now_unix_i64(),
+        signer_pubkey: crate::wal::signing::pubkey_b64(&signing_key),
+        sig: String::new(),
+    };
+    payload.sig = crate::wal::signing::sign_b64(&signing_key, &payload.canonical_bytes());
+    payload.validate()?;
+    let parent = key_path
+        .parent()
+        .context("HMAC key path has no parent directory")?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("create HMAC key parent {}", parent.display()))?;
+    let staged_file = format!("hmac.key.rotation-{}.next", payload.rotation_id);
+    let staged_path = parent.join(&staged_file);
+    let pending = PendingHmacKeyRotation {
+        schema: PendingHmacKeyRotation::SCHEMA,
+        payload,
+        staged_file,
+        archive_file: archive_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_owned),
+    };
+    pending.validate()?;
+    let journal_path = hmac_rotation_journal_path(key_path);
+    if staged_path.exists() || journal_path.exists() {
+        anyhow::bail!("HMAC-key rotation transaction paths already exist");
+    }
+    let journal =
+        serde_json::to_vec(&pending).context("serialize pending HMAC-key rotation journal")?;
+    crate::util::atomic_write::atomic_write_private(&journal_path, &journal)
+        .with_context(|| format!("write HMAC-key rotation journal {}", journal_path.display()))?;
+    if let Err(error) = crate::wal::compaction::write_key_securely(&staged_path, new_key)
+        .context("write staged HMAC replacement key")
+    {
+        let _ = remove_rotation_file(&journal_path);
+        return Err(error);
+    }
+    sync_rotation_parent(key_path)?;
+    let payload_bytes =
+        serde_json::to_vec(&pending.payload).context("serialize HMAC-key rotation audit")?;
+    if let Err(audit_error) = append_hmac_key_rotated(home, daemon_live, &payload_bytes).await {
+        if !hmac_rotation_event_is_durable(home, &payload_bytes, &signing_key_path)? {
+            abort_pending_hmac_rotation(key_path, &pending)?;
+            return Err(audit_error);
+        }
+    }
+    if !hmac_rotation_event_is_durable(home, &payload_bytes, &signing_key_path)? {
+        anyhow::bail!("HMAC-key rotation audit append returned success but is not durable");
+    }
+    commit_pending_hmac_rotation(key_path, pending, false)
 }
 
 /// SC-09 (Session 28) — write the operator's WAL HMAC compaction key
@@ -827,27 +1364,97 @@ async fn emit_hmac_key_rotated(
 /// **Operator-visible warnings are deliberate**: this path is the
 /// ONE place NEOTH legitimately emits a plaintext copy of the
 /// HMAC key. Every line of stderr is one the operator should read.
+pub(crate) fn resolve_hmac_backup_destination(home: &Path, output: &Path) -> Result<PathBuf> {
+    if output.as_os_str().is_empty() || output.file_name().is_none() {
+        anyhow::bail!("backup destination must name a file");
+    }
+    if output
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        anyhow::bail!(
+            "backup destination must not contain `..`; enter the normalized destination path"
+        );
+    }
+
+    let absolute = if output.is_absolute() {
+        output.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("resolve current directory for HMAC backup destination")?
+            .join(output)
+    };
+    let resolved_output = resolve_existing_path_prefix(&absolute)?;
+    let resolved_home = resolve_existing_path_prefix(home)?;
+
+    if resolved_output.starts_with(&resolved_home) {
+        anyhow::bail!(
+            "backup destination {} resolves inside NEOTH home {}; choose an offline/external path outside NEOTH home",
+            output.display(),
+            home.display()
+        );
+    }
+    if resolved_output.is_dir() {
+        anyhow::bail!(
+            "backup destination {} is a directory; enter a file path",
+            output.display()
+        );
+    }
+    Ok(resolved_output)
+}
+
+/// Resolve symlinks/junctions in the deepest existing prefix while preserving a
+/// not-yet-created filename or directory suffix. This lets destination checks
+/// fail closed before creating the operator-selected backup directory.
+fn resolve_existing_path_prefix(path: &Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("resolve current directory for path validation")?
+            .join(path)
+    };
+    let mut existing = absolute;
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        let name = existing.file_name().ok_or_else(|| {
+            anyhow::anyhow!("cannot resolve an existing ancestor for {}", path.display())
+        })?;
+        missing.push(name.to_os_string());
+        if !existing.pop() {
+            anyhow::bail!("cannot resolve an existing ancestor for {}", path.display());
+        }
+    }
+    let mut resolved = std::fs::canonicalize(&existing)
+        .with_context(|| format!("canonicalize path prefix {}", existing.display()))?;
+    for component in missing.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
 pub fn run_backup_hmac_key(args: &BackupHmacKeyArgs) -> Result<()> {
     let home = args
         .home
         .clone()
         .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
+    let output = resolve_hmac_backup_destination(&home, &args.output)?;
 
     // Refuse overwrite unless --force. Catches the muscle-memory
     // mistake of re-running the same command (which would silently
     // replace an older backup that referred to a different key
     // rotation epoch).
-    if args.output.exists() && !args.force {
+    if output.exists() && !args.force {
         anyhow::bail!(
             "refusing to overwrite existing backup at {}; pass --force to replace",
-            args.output.display()
+            output.display()
         );
     }
 
     let key_path = home.join("wal").join("hmac.key");
     if !key_path.exists() {
         anyhow::bail!(
-            "no HMAC key at {} — run `neothd init` first or wait for the first WAL frame to be written",
+            "no HMAC key at {} — run `neoth init` first or wait for the first WAL frame to be written",
             key_path.display()
         );
     }
@@ -855,23 +1462,23 @@ pub fn run_backup_hmac_key(args: &BackupHmacKeyArgs) -> Result<()> {
 
     // Ensure the parent dir exists so a fresh `--output ~/safe/key`
     // works without the operator pre-mkdiring.
-    if let Some(parent) = args.output.parent() {
+    if let Some(parent) = output.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| anyhow::anyhow!("create backup parent {}: {e}", parent.display()))?;
         }
     }
 
-    write_backup_file(&args.output, &key_bytes)?;
+    write_backup_file(&output, &key_bytes, args.force)?;
 
     // stderr-only warnings — stdout is reserved for the operator-
     // visible success line so scripts that capture stdout get a
     // clean confirmation.
     eprintln!();
     eprintln!("[neoth security] PLAINTEXT BACKUP WRITTEN");
-    eprintln!("[neoth security]   path:    {}", args.output.display());
+    eprintln!("[neoth security]   path:    {}", output.display());
     eprintln!(
-        "[neoth security]   bytes:   {} (mode-0600 on Unix)",
+        "[neoth security]   bytes:   {} (mode-0600 on Unix; owner DACL on Windows)",
         key_bytes.len()
     );
     eprintln!("[neoth security]");
@@ -884,7 +1491,7 @@ pub fn run_backup_hmac_key(args: &BackupHmacKeyArgs) -> Result<()> {
     eprintln!("[neoth security]   See PLAN/RUNBOOK_dpapi_hmac_recovery.md for the full recovery");
     eprintln!("[neoth security]   playbook (Tier 1 — re-wrap on new machine).");
 
-    println!("backup written: {}", args.output.display());
+    println!("backup written: {}", output.display());
     Ok(())
 }
 
@@ -930,38 +1537,47 @@ pub fn run_restore_master_key(args: &RestoreMasterKeyArgs) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("read master-key backup {}: {e}", args.source.display()))?;
     let dst = crate::wal::master_key::master_key_path(&home);
     crate::wal::master_key::restore_master_key(&raw, &dst)?;
-    eprintln!("[neoth security] master key restored + re-bound to this machine: {}", dst.display());
-    eprintln!("[neoth security] Restart the daemon — encrypted segments/credentials are readable again.");
+    eprintln!(
+        "[neoth security] master key restored + re-bound to this machine: {}",
+        dst.display()
+    );
+    eprintln!(
+        "[neoth security] Restart the daemon — encrypted segments/credentials are readable again."
+    );
     println!("master-key restored: {}", dst.display());
     Ok(())
 }
 
-/// Write the plaintext key bytes mode-0600 on Unix. Windows DACL
-/// tightening would mirror the SC-08 plan and is deferred — for
-/// now the operator gets the default ACL on the destination,
-/// which matches what they get for any other plaintext file
-/// they create. The stderr warning above tells them to move it.
-fn write_backup_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::io::Write;
+/// Write the plaintext key with the canonical private-file helper (mode 0600 on
+/// Unix; DACL-restricted temp on Windows). A zero-byte exclusive reservation
+/// closes the no-force check/write race without ever exposing secret bytes.
+fn write_backup_file(path: &Path, bytes: &[u8], force: bool) -> Result<()> {
+    let reserved = if force {
+        false
+    } else {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    anyhow::anyhow!(
+                        "refusing to overwrite existing backup at {}; pass --force to replace",
+                        path.display()
+                    )
+                } else {
+                    anyhow::anyhow!("reserve backup path {}: {e}", path.display())
+                }
+            })?;
+        true
+    };
 
-    // Open with write-only + create + truncate semantics. mode-0600
-    // applied via OpenOptions on Unix; the `mode()` call is a no-op
-    // on non-Unix targets but compiles via the cfg.
-    let mut open = std::fs::OpenOptions::new();
-    open.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        open.mode(0o600);
+    let result = crate::config::credentials::write_mode_0600(path, bytes)
+        .with_context(|| format!("write private HMAC backup {}", path.display()));
+    if result.is_err() && reserved {
+        let _ = std::fs::remove_file(path);
     }
-    let mut f = open
-        .open(path)
-        .map_err(|e| anyhow::anyhow!("open backup path {}: {e}", path.display()))?;
-    f.write_all(bytes)
-        .map_err(|e| anyhow::anyhow!("write backup bytes to {}: {e}", path.display()))?;
-    f.flush()
-        .map_err(|e| anyhow::anyhow!("flush backup file {}: {e}", path.display()))?;
-    Ok(())
+    result
 }
 
 /// Collect the audit report without printing — pure-fn variant so
@@ -1356,6 +1972,26 @@ mod tests {
                 "{name} ships open by default (visible, not hidden)"
             );
         }
+    }
+
+    #[test]
+    fn omi_rail_reports_the_selected_network_boundary_truthfully() {
+        let mut cfg = FreedomConfig::default();
+        cfg.omi.enabled = true;
+        cfg.omi.endpoint = "https://api.omi.me".to_string();
+        cfg.omi.allow_cloud_api = true;
+        let rails = collect_rails(&cfg);
+        let detail = &rail(&rails, "omi_ingest").detail;
+        assert!(detail.contains("Developer API https://api.omi.me"));
+        assert!(detail.contains("public HTTPS explicitly allowed"));
+        assert!(!detail.contains("LOCAL-only"));
+
+        cfg.omi.mode = crate::config::OmiIngestMode::NativeIngest;
+        cfg.omi.listen_addr = "127.0.0.1:8003".to_string();
+        let rails = collect_rails(&cfg);
+        let detail = &rail(&rails, "omi_ingest").detail;
+        assert!(detail.contains("authenticated native listener 127.0.0.1:8003"));
+        assert!(!detail.contains(&cfg.omi.endpoint));
     }
 
     #[test]
@@ -1774,7 +2410,7 @@ mod tests {
     fn backup_round_trip_matches_load_or_init_key() {
         // Backup bytes MUST equal what `load_or_init_key` returns —
         // proves an operator can later import the backup back via
-        // a future `rewrap-hmac-key` slice. Drift guard against any
+        // the shipped `rewrap-hmac-key` path. Drift guard against any
         // accidental transformation in write_backup_file (e.g.
         // line-ending munging).
         let home = TempDir::new().unwrap();
@@ -1921,22 +2557,28 @@ mod tests {
         };
         run_rewrap_hmac_key(&args).await.unwrap();
 
-        let seg = home.path().join("wal").join("000001.wal");
-        let bytes = std::fs::read(&seg).expect("0xD9 segment written");
-        let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
         let mut found = None;
-        while cur < bytes.len() {
-            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else {
-                break;
-            };
-            if f.header.event_type == crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED {
-                found = Some(serde_json::from_slice::<serde_json::Value>(f.payload).unwrap());
+        let wal_dir = home.path().join("wal");
+        let segments = sorted_wal_segments(&wal_dir);
+        let trusted =
+            crate::wal::signing::trusted_signing_pubkeys(&segments, &wal_dir.join("signing.key"));
+        for segment in &segments {
+            let bytes = std::fs::read(segment).expect("read 0xD9 segment");
+            let (mut cur, logical) = crate::wal::compaction::logical_segment_bytes(&bytes).unwrap();
+            while cur < logical.len() {
+                let Ok(f) = crate::wal::frame::decode_frame(&logical[cur..]) else {
+                    break;
+                };
+                if f.header.event_type == crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED {
+                    assert!(hmac_rotation_payload_is_trusted(f.payload, &trusted));
+                    found = Some(serde_json::from_slice::<serde_json::Value>(f.payload).unwrap());
+                }
+                let total = f.header.total_len as usize;
+                if total == 0 {
+                    break;
+                }
+                cur = cur.saturating_add(total);
             }
-            let total = f.header.total_len as usize;
-            if total == 0 {
-                break;
-            }
-            cur = cur.saturating_add(total);
         }
         let p = found.expect("a 0xD9 HMAC_KEY_ROTATED frame must be present");
         let expected: String = Sha256::digest(&raw)
@@ -1947,5 +2589,74 @@ mod tests {
         assert_eq!(p["reason"].as_str().unwrap(), "rewrap");
         // The raw key must NOT appear anywhere in the payload.
         assert!(!p.to_string().contains(&"07".repeat(8)));
+    }
+
+    #[tokio::test]
+    async fn audited_pending_hmac_rotation_recovers_without_rotating_twice() {
+        let home = TempDir::new().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+        crate::wal::compaction::rewrap_key(&key_path, &[0x31; 32]).unwrap();
+        let previous_key_storage_sha256 = current_key_storage_hash(&key_path).unwrap();
+        let replacement = [0x72; 32];
+        let signing_key =
+            crate::wal::signing::load_or_init_signing_key(&wal_dir.join("signing.key")).unwrap();
+        let mut payload = HmacKeyRotatedPayload {
+            schema: HmacKeyRotatedPayload::SCHEMA,
+            rotation_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+            new_key_sha256: sha256_hex(&replacement),
+            previous_key_storage_sha256,
+            replaced: true,
+            reason: "rotate".to_owned(),
+            ts_unix: crate::time::now_unix_i64(),
+            signer_pubkey: crate::wal::signing::pubkey_b64(&signing_key),
+            sig: String::new(),
+        };
+        payload.sig = crate::wal::signing::sign_b64(&signing_key, &payload.canonical_bytes());
+        let staged_file = format!("hmac.key.rotation-{}.next", payload.rotation_id);
+        let archive_file = "hmac.key.1700000000.archive".to_owned();
+        let pending = PendingHmacKeyRotation {
+            schema: PendingHmacKeyRotation::SCHEMA,
+            payload,
+            staged_file: staged_file.clone(),
+            archive_file: Some(archive_file.clone()),
+        };
+        let journal = serde_json::to_vec(&pending).unwrap();
+        crate::util::atomic_write::atomic_write_private(
+            &hmac_rotation_journal_path(&key_path),
+            &journal,
+        )
+        .unwrap();
+        crate::wal::compaction::write_key_securely(&wal_dir.join(&staged_file), &replacement)
+            .unwrap();
+        let event = serde_json::to_vec(&pending.payload).unwrap();
+        append_hmac_key_rotated(home.path(), false, &event)
+            .await
+            .unwrap();
+
+        let result = rotate_hmac_key_with_audit(
+            home.path(),
+            &key_path,
+            &[0x99; 32],
+            "rotate",
+            Some(wal_dir.join("unused.archive")),
+        )
+        .await
+        .unwrap();
+
+        assert!(result.recovered);
+        assert_eq!(
+            result.archive_path,
+            Some(wal_dir.join(archive_file)),
+            "recovery must use the archive bound in the pending transaction"
+        );
+        assert_eq!(
+            crate::wal::compaction::load_or_init_key(&key_path).unwrap(),
+            replacement,
+            "recovery installs the already-audited staged key, not the caller's fresh candidate"
+        );
+        assert!(!hmac_rotation_journal_path(&key_path).exists());
+        assert!(!wal_dir.join(staged_file).exists());
     }
 }

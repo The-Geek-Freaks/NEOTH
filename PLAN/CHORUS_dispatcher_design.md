@@ -133,7 +133,7 @@ code `EVENT_TYPE_KANBAN_TASK_PROGRESS = 0x77` (currently free in the
   NEOTH's 5-level autonomy ladder.
 
 **Recommendation pre-Chorus:** (C) autonomy-bound. Re-uses the
-existing `permissions::evaluate(action, level)` gate from R-23;
+existing `permissions::evaluate(action, &policy_snapshot)` gate from R-23;
 operator's choice on first-launch wizard step 5c determines REVIEW
 behaviour. Lowest-friction for trusting operators, safest for new
 ones.

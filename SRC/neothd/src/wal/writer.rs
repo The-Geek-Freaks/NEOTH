@@ -17,12 +17,29 @@ use super::error::WalError;
 use super::frame::encode_frame;
 use super::header::EventHeaderV2;
 use super::segment_header::{
-    ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_LEN,
-    SEGMENT_HEADER_V3_LEN, SegmentHeader, SegmentHeaderV3, parse_segment_header,
+    ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_LEN, SEGMENT_HEADER_V3_LEN,
+    SegmentHeader, SegmentHeaderV3, parse_segment_header,
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
+
+/// Allocate a collision-resistant segment namespace for a standalone writer.
+///
+/// The daemon owns the legacy numeric sequence (`000001.wal`, ...). CLI
+/// processes must not append to that same file: `OpenOptions::append` does not
+/// provide cross-process frame atomicity. UUIDv7 keeps names time-sortable;
+/// the trailing numeric component is preserved by rotation.
+pub(crate) fn unique_standalone_segment_path(wal_dir: &Path, surface: &str) -> PathBuf {
+    assert!(
+        !surface.is_empty()
+            && surface
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "standalone WAL surface must be a non-empty filesystem-safe identifier"
+    );
+    wal_dir.join(format!("{}-{surface}-000001.wal", uuid::Uuid::now_v7()))
+}
 
 /// Workstream F (CT-10/E-20/V1x-06) — per-writer compression policy.
 ///
@@ -129,9 +146,9 @@ pub struct WalWriterHandle {
 /// spin loop, so tokio worker threads are not busy-spinning during the
 /// (potentially slow) disk walk.
 ///
-/// Construction is cheap (no IO).  `reserved` is pre-armed at
-/// `remeasure_threshold` so the very first `try_admit` always triggers a disk
-/// walk — the guard never admits before at least one real measurement.
+/// Construction is cheap (no IO). `needs_measurement` makes the first
+/// `try_admit` trigger a disk walk without adding a synthetic byte reservation
+/// to the projected ceiling sum.
 ///
 /// Once breached the guard stays breached until `reset()` is called.
 #[derive(Debug)]
@@ -145,6 +162,9 @@ pub struct QuotaGuard {
     /// each disk walk it is reduced to only the bytes that arrived DURING the
     /// walk, preserving them for the next projected-sum check.
     reserved: std::sync::atomic::AtomicU64,
+    /// Separate first-measure/reset trigger. This is deliberately not encoded
+    /// in `reserved`: synthetic trigger bytes must never count against quota.
+    needs_measurement: std::sync::atomic::AtomicBool,
     last_measured: std::sync::atomic::AtomicU64,
     breached: std::sync::atomic::AtomicBool,
     /// Guards the re-measure critical section.  The `bool` is `true` while a
@@ -160,9 +180,8 @@ impl QuotaGuard {
             home,
             ceiling: ceiling_bytes,
             remeasure_threshold,
-            // Pre-arm at threshold so the very first try_admit triggers a disk
-            // walk — the guard never admits without at least one real measurement.
-            reserved: std::sync::atomic::AtomicU64::new(remeasure_threshold),
+            reserved: std::sync::atomic::AtomicU64::new(0),
+            needs_measurement: std::sync::atomic::AtomicBool::new(true),
             last_measured: std::sync::atomic::AtomicU64::new(0),
             breached: std::sync::atomic::AtomicBool::new(false),
             measure_mutex: std::sync::Mutex::new(false),
@@ -204,7 +223,10 @@ impl QuotaGuard {
                 .saturating_add(cur_reserved)
                 .saturating_add(payload_bytes);
             if projected > self.ceiling {
-                return Err(WalError::QuotaExceeded { used, ceiling: self.ceiling });
+                return Err(WalError::QuotaExceeded {
+                    used,
+                    ceiling: self.ceiling,
+                });
             }
             match self.reserved.compare_exchange_weak(
                 cur_reserved,
@@ -235,14 +257,13 @@ impl QuotaGuard {
         // updates `last_measured`.  Other threads wait on `measure_done`
         // (Condvar) so tokio worker threads are not busy-spinning during the
         // potentially slow walk.
-        if cur_reserved >= self.remeasure_threshold {
+        if self.needs_measurement.load(Ordering::Acquire)
+            || cur_reserved >= self.remeasure_threshold
+        {
             let mut is_measuring = self.measure_mutex.lock().unwrap();
             if *is_measuring {
                 // Loser: sleep until the winner publishes results.
-                is_measuring = self
-                    .measure_done
-                    .wait_while(is_measuring, |m| *m)
-                    .unwrap();
+                is_measuring = self.measure_done.wait_while(is_measuring, |m| *m).unwrap();
                 drop(is_measuring);
             } else {
                 // Winner: note how many bytes existed in `reserved` BEFORE the
@@ -250,6 +271,7 @@ impl QuotaGuard {
                 // yet be on disk and must be kept in `reserved` so they are
                 // counted in future projected-sum checks (not silently dropped).
                 *is_measuring = true;
+                let was_unmeasured = self.needs_measurement.load(Ordering::SeqCst);
                 let pre_walk_reserved = self.reserved.load(Ordering::SeqCst);
                 drop(is_measuring); // release while the disk walk runs
 
@@ -274,8 +296,16 @@ impl QuotaGuard {
                 let unflushed_pre_walk = old_measured
                     .saturating_add(pre_walk_reserved)
                     .saturating_sub(used);
-                let new_reserved = during_walk.saturating_add(unflushed_pre_walk);
+                // During the first/reset measurement no admitted caller has
+                // returned yet, so NONE of the reservations can be present on
+                // disk. Existing home usage must not cancel those pending bytes.
+                let new_reserved = if was_unmeasured {
+                    post_walk
+                } else {
+                    during_walk.saturating_add(unflushed_pre_walk)
+                };
                 self.last_measured.store(used, Ordering::SeqCst);
+                self.needs_measurement.store(false, Ordering::SeqCst);
                 let over = used.saturating_add(new_reserved) > self.ceiling;
                 // Set breach BEFORE resetting reserved: any thread that sees the
                 // post-reset (small) value of `reserved` via a concurrent CAS
@@ -290,7 +320,10 @@ impl QuotaGuard {
                 self.measure_done.notify_all();
 
                 if over {
-                    return Err(WalError::QuotaExceeded { used, ceiling: self.ceiling });
+                    return Err(WalError::QuotaExceeded {
+                        used,
+                        ceiling: self.ceiling,
+                    });
                 }
             }
         }
@@ -312,10 +345,14 @@ impl QuotaGuard {
     /// the operator manually freed disk space.
     pub fn reset(&self) {
         use std::sync::atomic::Ordering;
-        self.breached.store(false, Ordering::Release);
-        // Re-arm the first-measure trigger so the next try_admit walks the
-        // disk before admitting any bytes.
-        self.reserved.store(self.remeasure_threshold, Ordering::Release);
+        // Keep concurrent callers closed while replacing the measurement
+        // baseline. `breached=false` is published last, after the next-call
+        // measurement trigger and zero counters are visible.
+        self.breached.store(true, Ordering::SeqCst);
+        self.needs_measurement.store(true, Ordering::SeqCst);
+        self.reserved.store(0, Ordering::SeqCst);
+        self.last_measured.store(0, Ordering::SeqCst);
+        self.breached.store(false, Ordering::SeqCst);
     }
 
     /// Release a previously admitted reservation.  Called when `try_admit`
@@ -327,9 +364,11 @@ impl QuotaGuard {
     /// than wrapping to near-`u64::MAX`, which would permanently seal the guard.
     pub(crate) fn release_reserved(&self, bytes: u64) {
         use std::sync::atomic::Ordering;
-        let _ = self.reserved.fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
-            Some(cur.saturating_sub(bytes))
-        });
+        let _ = self
+            .reserved
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+                Some(cur.saturating_sub(bytes))
+            });
     }
 }
 
@@ -618,12 +657,17 @@ async fn open_segment(path: &Path) -> Result<OpenedSegment, WalError> {
     Ok(OpenedSegment { file, is_new })
 }
 
-/// Extract the segment sequence number from a filename of the form
-/// `NNNNNN.wal`. Defaults to 1 when the filename does not match the pattern.
+/// Extract the trailing segment sequence from either `NNNNNN.wal` or a
+/// namespaced standalone path such as `<uuid>-chat-NNNNNN.wal`.
 fn segment_seq_from_path(path: &Path) -> u64 {
     path.file_stem()
         .and_then(|s| s.to_str())
-        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|stem| {
+            stem.parse::<u64>().ok().or_else(|| {
+                stem.rsplit_once('-')
+                    .and_then(|(_, sequence)| sequence.parse::<u64>().ok())
+            })
+        })
         .unwrap_or(1)
 }
 
@@ -672,10 +716,21 @@ impl WriterState {
     }
 }
 
-/// Compute the path of the next segment by zero-padding `seq` to 6 digits
-/// inside the same parent directory. `000001.wal` → `000002.wal`.
+/// Compute the next segment path without crossing writer namespaces.
+/// `000001.wal` becomes `000002.wal`; `<uuid>-chat-000001.wal` becomes
+/// `<uuid>-chat-000002.wal`.
 fn next_segment_path(current: &Path, next_seq: u64) -> PathBuf {
     let parent = current.parent().unwrap_or_else(|| Path::new("."));
+    if let Some(namespace) = current
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| {
+            stem.rsplit_once('-')
+                .and_then(|(namespace, sequence)| sequence.parse::<u64>().ok().map(|_| namespace))
+        })
+    {
+        return parent.join(format!("{namespace}-{next_seq:06}.wal"));
+    }
     parent.join(format!("{:06}.wal", next_seq))
 }
 
@@ -723,8 +778,15 @@ async fn rotate(state: &mut WriterState, reason: RotationReason) -> Result<(), W
         CompressionPolicy::Zstd3 => {
             // GOLD-PROG-12: new rotated segments use V3 header with epoch=0
             // (fresh segment, no prior compaction).
-            let header =
-                SegmentHeaderV3::new(0, next_seq, 0, now_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED, 0);
+            let header = SegmentHeaderV3::new(
+                0,
+                next_seq,
+                0,
+                now_ns,
+                [0u8; 16],
+                SEGMENT_FLAG_COMPRESSED,
+                0,
+            );
             new_file.write_all(&header.to_le_bytes()).await?;
             SEGMENT_HEADER_V3_LEN
         }
@@ -747,7 +809,7 @@ async fn rotate(state: &mut WriterState, reason: RotationReason) -> Result<(), W
         "reason": reason.as_str(),
         "ts_ns": now_ns,
     }))
-    .unwrap_or_default();
+    .expect("segment rollover payload contains only infallible JSON values");
     let rollover_header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_SEGMENT_ROLLOVER, &payload)
             .flags(crate::wal::EventFlags::SYNTHETIC)
@@ -952,7 +1014,8 @@ async fn run_writer(
             "bytes_dropped": rec.bytes_dropped,
             "ts_unix": crate::time::now_unix_secs(),
         });
-        let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+        let payload_bytes = serde_json::to_vec(&payload)
+            .expect("recovery payload contains only infallible JSON values");
         let header = crate::wal::HeaderBuilder::new(
             crate::wal::events::EVENT_TYPE_RECOVERY_TRUNCATED,
             &payload_bytes,
@@ -975,15 +1038,29 @@ async fn run_writer(
     // the key can't be loaded (very unusual — disk full or perms), log
     // and fall back to per-frame writes WITHOUT compaction markers. The
     // operator audit trail still works, just without tamper-evidence.
-    let hmac_key: Option<Vec<u8>> =
-        match crate::wal::compaction::load_or_init_key(&crate::wal::compaction::default_key_path())
+    let hmac_home = crate::config::FreedomConfig::default_neoth_home();
+    let hmac_key_path = crate::wal::compaction::default_key_path();
+    let is_hmac_rotation_writer = state
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.contains("-hmac-key-rotate-"));
+    let hmac_key: Option<Vec<u8>> = if is_hmac_rotation_writer {
+        // The rotation command already holds the transaction lock while this
+        // one-shot writer persists 0xD9. It must neither recurse into recovery
+        // nor emit an old-key compaction marker after that boundary.
+        None
+    } else {
+        match crate::cli::security::recover_hmac_key_rotation(&hmac_home, &hmac_key_path)
+            .and_then(|_| crate::wal::compaction::load_or_init_key(&hmac_key_path))
         {
             Ok(k) => Some(k),
             Err(e) => {
-                tracing::warn!(error = %e, "HMAC compaction disabled — key load failed");
+                tracing::warn!(error = %e, "HMAC compaction disabled — key load/recovery failed");
                 None
             }
-        };
+        }
+    };
     let mut compaction_state = hmac_key
         .as_ref()
         .map(|k| crate::wal::compaction::CompactionState::new(k, state.offset));
@@ -1079,7 +1156,7 @@ async fn run_writer(
                             "compaction_epoch": state.compaction_epoch,
                             "ts_ns":            current_ns(),
                         }))
-                        .unwrap_or_default();
+                        .expect("compaction marker payload contains only infallible JSON values");
                         let marker_header = crate::wal::HeaderBuilder::new(
                             crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
                             &payload_bytes,
@@ -1218,7 +1295,9 @@ async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalE
     // header keeps SEGMENT_FLAG_COMPRESSED (the decrypted blob IS compressed),
     // so the reader chokepoint decrypts-then-decompresses. FAIL-CLOSED: a
     // configured-on operator never silently gets a plaintext segment.
-    let body: Vec<u8> = if crate::wal::master_key::wal_encryption_enabled() {
+    let encryption_enabled = crate::wal::master_key::wal_encryption_enabled()
+        .map_err(|error| std::io::Error::other(format!("WAL encryption policy: {error:#}")))?;
+    let body: Vec<u8> = if encryption_enabled {
         let key = crate::wal::master_key::writer_segment_key().ok_or_else(|| {
             std::io::Error::other("WAL encryption enabled but the master key could not be loaded")
         })?;
@@ -1261,9 +1340,9 @@ async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalE
         compressed_bytes = compressed_len,
         compaction_epoch = new_epoch,
         ratio = format!("{:.1}%", compressed_len as f64 / state.pending_frames.len().max(1) as f64 * 100.0),
-        encrypted = crate::wal::master_key::wal_encryption_enabled(),
+        encrypted = encryption_enabled,
         "WAL segment finalized (zstd-3{})",
-        if crate::wal::master_key::wal_encryption_enabled() { " + AES-256-GCM-SIV" } else { "" },
+        if encryption_enabled { " + AES-256-GCM-SIV" } else { "" },
     );
     state.pending_frames.clear();
     // GOLD-PROG-12: update in-memory epoch AFTER successful rename so
@@ -1745,6 +1824,25 @@ mod tests {
         assert_eq!(next.parent().unwrap(), std::path::Path::new("/tmp/wal"));
     }
 
+    #[test]
+    fn standalone_segment_namespaces_are_unique_and_rotation_safe() {
+        let dir = tempdir().unwrap();
+        let chat = unique_standalone_segment_path(dir.path(), "chat");
+        let loop_run = unique_standalone_segment_path(dir.path(), "loop");
+
+        assert_ne!(chat, loop_run);
+        assert_eq!(segment_seq_from_path(&chat), 1);
+        assert_eq!(segment_seq_from_path(&loop_run), 1);
+        let rotated = next_segment_path(&chat, 2);
+        assert_eq!(segment_seq_from_path(&rotated), 2);
+        let rotated_stem = rotated.file_stem().unwrap().to_string_lossy().into_owned();
+        let chat_stem = chat.file_stem().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            rotated_stem.strip_suffix("-000002"),
+            chat_stem.strip_suffix("-000001")
+        );
+    }
+
     /// BS-4: a writer with a quota guard refuses appends once the home
     /// directory's measured size crosses the configured ceiling. Test
     /// seeds the home dir with a >ceiling fixture file and verifies the
@@ -2005,11 +2103,8 @@ mod tests {
     }
 
     /// WAL-QUOTA-FAILCLOSED-01: all concurrent threads must be rejected when
-    /// the disk is over quota.  With the projected-sum CAS loop, every thread
-    /// reads the (pre-armed) `reserved = remeasure_threshold` and computes
-    /// `0 + 1 MiB + 64 > 1024 (ceiling)` — rejected immediately without
-    /// reaching the re-measure gate.  The breach flag is set on the first
-    /// re-measure that occurs (if any thread reaches it) and stays sticky.
+    /// the disk is over quota. The separate first-measure trigger forces one
+    /// disk walk; waiters then observe the sticky measured breach.
     #[test]
     fn concurrent_writers_all_rejected_when_quota_over_ceiling() {
         use std::sync::Arc;
@@ -2018,9 +2113,6 @@ mod tests {
         let dir = tempdir().unwrap();
         // Seed home dir well over the 1 KiB ceiling.
         std::fs::write(dir.path().join("seed.bin"), vec![0u8; 4096]).unwrap();
-        // QuotaGuard::new pre-arms reserved = remeasure_threshold (1 MiB).
-        // With ceiling = 1024 bytes, projected = 0 + 1 MiB + 64 > 1024 for
-        // every thread → all are rejected by the projected-sum check.
         let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), 1024));
 
         let admitted = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -2050,6 +2142,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn first_measure_trigger_does_not_count_as_reserved_quota() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        let guard = QuotaGuard::new(dir.path().to_path_buf(), 1024);
+
+        assert!(
+            guard.try_admit(64).is_ok(),
+            "an empty home with a 1 KiB ceiling must admit a 64-byte payload"
+        );
+        assert!(!guard.needs_measurement.load(Ordering::Acquire));
+        assert_eq!(
+            guard.reserved.load(Ordering::Acquire),
+            64,
+            "only the real payload may be reserved after the first measurement"
+        );
+    }
+
     /// WAL-QUOTA-FAILCLOSED-01 (projected-sum test): two concurrent payloads
     /// whose SUM exceeds the ceiling must not both be admitted, even when each
     /// individual payload is below the ceiling.  The CAS loop inside try_admit
@@ -2072,6 +2183,7 @@ mod tests {
         // directly rather than the measure gate.)
         guard.last_measured.store(0, Ordering::Release);
         guard.reserved.store(0, Ordering::Release);
+        guard.needs_measurement.store(false, Ordering::Release);
 
         let g1 = Arc::clone(&guard);
         let t1 = std::thread::spawn(move || g1.try_admit(payload));
@@ -2516,7 +2628,7 @@ mod tests {
     // Run on demand (never in the default sweep — the box BSODs under parallel
     // test load, so --test-threads=1 is mandatory):
     //
-    //   cargo test -p neothd --lib wal_sync_latency -- --ignored --nocapture --test-threads=1
+    //   cargo test -p neoth --lib wal_sync_latency -- --ignored --nocapture --test-threads=1
     //
     // ## FILE_FLAG_WRITE_THROUGH threshold (D008-WINDOWS-WAL-01)
     //
@@ -2543,7 +2655,7 @@ mod tests {
     // NVMe storage, and the existing sync_data path is the correct default.
 
     #[test]
-    #[ignore = "D008 latency bench — run with: cargo test -p neothd --lib wal_sync_latency -- --ignored --nocapture --test-threads=1"]
+    #[ignore = "D008 latency bench — run with: cargo test -p neoth --lib wal_sync_latency -- --ignored --nocapture --test-threads=1"]
     fn wal_sync_latency_measurement() {
         use std::io::Write;
         use std::time::Instant;
@@ -2635,9 +2747,10 @@ mod tests {
         let ceiling: u64 = 1024 * 1024;
         let dir = tempdir().unwrap();
         let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), ceiling));
-        // Bypass the initial-measure pre-arm so state is precisely known.
+        // Bypass the initial-measure trigger so state is precisely known.
         guard.reserved.store(0, Ordering::Release);
         guard.last_measured.store(0, Ordering::Release);
+        guard.needs_measurement.store(false, Ordering::Release);
 
         let handle = WalWriterHandle {
             tx,

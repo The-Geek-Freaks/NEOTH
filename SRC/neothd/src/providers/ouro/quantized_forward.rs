@@ -45,12 +45,6 @@ impl QuantizedOuroModel {
     /// quantizing them adds no meaningful saving.
     pub fn new(cfg: &OuroConfig, vb: VarBuilder) -> Result<Self> {
         let cfg = cfg.validate()?;
-        if cfg.early_exit_threshold.is_some() {
-            tracing::debug!(
-                threshold = ?cfg.early_exit_threshold,
-                "QuantizedOuroModel: early_exit_threshold set but O-5c ignores it (defer to O-5d)"
-            );
-        }
         let vb_m = vb.pp("model");
         let embed_tokens =
             candle_nn::embedding(cfg.vocab_size, cfg.hidden_size, vb_m.pp("embed_tokens"))

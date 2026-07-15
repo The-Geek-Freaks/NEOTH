@@ -40,11 +40,10 @@ use serde::{Deserialize, Serialize};
 
 /// One model entry in the OpenRouter / OpenAI `/v1/models` wire format.
 ///
-/// OpenRouter's full shape includes `context_length` and `pricing`; NEOTH's
-/// `ModelEntry` does not yet carry those fields, so they are emitted as stubs
-/// (`context_length: 0`, `pricing: null`). A follow-up schema extension to
-/// `ModelEntry` (adding `context_length_tokens: Option<u32>`) will populate
-/// them; for now Cline/Continue show `0` context — still fully functional.
+/// OpenRouter's extended shape includes `context_length` and `pricing`.
+/// NEOTH's catalog does not currently carry either value, so the fields are
+/// omitted instead of publishing fabricated zero/null metadata. They remain
+/// optional on the wire for forwards-compatible catalog enrichment.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OaiModelEntry {
     /// Model identifier — forwarded verbatim from `ModelEntry::id`.
@@ -54,11 +53,11 @@ pub struct OaiModelEntry {
     pub object: String,
     /// Provider name from the NEOTH catalog (e.g. `"anthropic_api"`).
     pub owned_by: String,
-    /// Context window token count. Stub `0` until `ModelEntry` carries the
-    /// field; downstream clients treat 0 as "unknown".
-    pub context_length: u32,
-    /// Pricing object — `null` until NEOTH's catalog sources return pricing
-    /// data. Clients that require this field show a dash / "unknown".
+    /// Context window token count when the catalog source supplied one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<u32>,
+    /// Pricing object when the catalog source supplied one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing: Option<serde_json::Value>,
 }
 
@@ -81,14 +80,15 @@ mod tests {
             id: "claude-opus-4-7".to_string(),
             object: "model".to_string(),
             owned_by: "anthropic_api".to_string(),
-            context_length: 0,
+            context_length: None,
             pricing: None,
         };
         let v: serde_json::Value = serde_json::to_value(&entry).unwrap();
         assert_eq!(v["object"], "model");
         assert_eq!(v["id"], "claude-opus-4-7");
         assert_eq!(v["owned_by"], "anthropic_api");
-        assert!(v["pricing"].is_null());
+        assert!(v.get("context_length").is_none());
+        assert!(v.get("pricing").is_none());
     }
 
     #[test]
@@ -99,7 +99,7 @@ mod tests {
                 id: "test-model".to_string(),
                 object: "model".to_string(),
                 owned_by: "test_provider".to_string(),
-                context_length: 0,
+                context_length: None,
                 pricing: None,
             }],
         };

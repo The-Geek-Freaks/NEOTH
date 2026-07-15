@@ -28,6 +28,7 @@ pub(crate) fn prompt_provider_key(
         let label = match kind {
             ProviderKind::OpenaiApi => "OpenAI API key (sk-...)",
             ProviderKind::GeminiApi => "Gemini API key",
+            ProviderKind::AzureOpenAi => "Azure OpenAI API key",
             ProviderKind::OpenaiCompat => "API key (or blank if endpoint is unauthenticated)",
             _ => "API key",
         };
@@ -100,7 +101,9 @@ fn ping_provider_key_blocking(key: &str, kind: ProviderKind, endpoint: Option<&s
     // endpoints are already skipped above; the built-in defaults are all https,
     // so a `None` endpoint is fine. Refuse to verify rather than leak the key.
     if endpoint.is_some_and(|e| !e.trim().to_ascii_lowercase().starts_with("https://")) {
-        println!("  API key not verified — endpoint is not https (won't send the key over plaintext).");
+        println!(
+            "  API key not verified — endpoint is not https (won't send the key over plaintext)."
+        );
         return;
     }
     // Skip for providers that use OAuth / CLI, not a raw API key.
@@ -132,7 +135,9 @@ fn ping_provider_key_blocking(key: &str, kind: ProviderKind, endpoint: Option<&s
     let result = do_ping(&client, key, kind, endpoint);
     match result {
         PingResult::Ok => println!("✓"),
-        PingResult::Unauthorized => println!("✗  (key rejected — double-check it; wizard continues)"),
+        PingResult::Unauthorized => {
+            println!("✗  (key rejected — double-check it; wizard continues)")
+        }
         PingResult::Skipped => println!("~  (offline or unreachable — skipped)"),
     }
 }
@@ -175,9 +180,7 @@ pub(crate) fn do_ping(
                     None => return PingResult::Skipped,
                 }
             } else {
-                endpoint
-                    .unwrap_or("https://api.openai.com/v1")
-                    .to_string()
+                endpoint.unwrap_or("https://api.openai.com/v1").to_string()
             };
             let url = format!("{base}/chat/completions", base = default_base);
             let req = client
@@ -790,19 +793,11 @@ pub(crate) fn parse_topology_mode_arg(
     }
 }
 
-/// K-4b (Session 21, 2026-05-23) — operator-facing Telegram prompt text.
-/// Defaults depend on whether `pear` is on PATH: when present, Keet is
-/// the recommended primary so Telegram is framed as the FALLBACK and
-/// the wizard defaults to No more strongly; without pear, Telegram is
-/// the only operator-private option so the prompt stays neutral.
-///
-/// Pure-fn so the K-4b restructure can be unit-tested without a TTY.
-pub(crate) fn k4b_telegram_prompt_text(pear_present: bool) -> &'static str {
-    if pear_present {
-        "[6/9] Set up Telegram as a FALLBACK channel? (Keet is preferred primary; default: no)"
-    } else {
-        "[6/9] Set up a Telegram bot now? (optional, can add later)"
-    }
+/// Operator-facing Telegram prompt text. The argument is retained for resume
+/// compatibility with older wizard call sites; Pear presence is irrelevant
+/// because Pear Runtime is not a Keet chat integration surface.
+pub(crate) fn k4b_telegram_prompt_text(_legacy_pear_present: bool) -> &'static str {
+    "[6/9] Set up a Telegram bot now? (optional, can add later)"
 }
 
 /// True when the configured inference topology touches LocalQwen
@@ -862,7 +857,10 @@ mod tests {
     fn is_express_false_for_custom() {
         let chosen: Option<String> = Some("custom".to_string());
         let is_express = chosen.as_deref().is_some_and(|n| n != "custom");
-        assert!(!is_express, "is_express must be false when operator chose custom");
+        assert!(
+            !is_express,
+            "is_express must be false when operator chose custom"
+        );
     }
 
     #[test]
@@ -965,7 +963,12 @@ mod tests {
                 .timeout(std::time::Duration::from_secs(5))
                 .build()
                 .unwrap();
-            do_ping(&client, "valid-key", ProviderKind::OpenaiCompat, Some(&base))
+            do_ping(
+                &client,
+                "valid-key",
+                ProviderKind::OpenaiCompat,
+                Some(&base),
+            )
         })
         .await
         .unwrap();
@@ -1021,16 +1024,29 @@ mod tests {
             classify_ping_status(401, ProviderKind::GeminiApi),
             PingResult::Unauthorized
         );
-        assert_eq!(classify_ping_status(200, ProviderKind::GeminiApi), PingResult::Ok);
-        assert_eq!(classify_ping_status(429, ProviderKind::OpenaiApi), PingResult::Ok);
-        assert_eq!(classify_ping_status(500, ProviderKind::OpenaiApi), PingResult::Skipped);
+        assert_eq!(
+            classify_ping_status(200, ProviderKind::GeminiApi),
+            PingResult::Ok
+        );
+        assert_eq!(
+            classify_ping_status(429, ProviderKind::OpenaiApi),
+            PingResult::Ok
+        );
+        assert_eq!(
+            classify_ping_status(500, ProviderKind::OpenaiApi),
+            PingResult::Skipped
+        );
     }
 
     #[test]
     fn do_ping_local_variants_skip() {
         // Local/CLI variants hit the `_ => PingResult::Skipped` arm.
         let client = reqwest::blocking::Client::new();
-        for kind in [ProviderKind::LocalQwen, ProviderKind::LocalOllama, ProviderKind::RecursiveMas] {
+        for kind in [
+            ProviderKind::LocalQwen,
+            ProviderKind::LocalOllama,
+            ProviderKind::RecursiveMas,
+        ] {
             let result = do_ping(&client, "irrelevant", kind, None);
             assert_eq!(result, PingResult::Skipped, "{kind:?} should skip");
         }

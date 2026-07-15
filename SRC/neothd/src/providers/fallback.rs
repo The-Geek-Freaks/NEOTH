@@ -31,16 +31,22 @@
 //!   rewound onto a second provider, so `stream()` delegates to the
 //!   primary only (documented follow-on).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use super::quota::{QuotaError, QuotaTracker};
-use super::{ChunkStream, Completion, Provider, Request};
+use super::{
+    ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+};
 
 /// Ordered primary + fallbacks. See module docs.
 pub struct FallbackProvider {
     /// `[0]` = primary; `[1..]` = ordered fallbacks. Non-empty.
     chain: Vec<Box<dyn Provider>>,
+    /// Configured model for each candidate. `Request.model`, when present,
+    /// belongs to the primary only; every fallback resolves its own configured
+    /// or adapter-default model before its separate leaf authorization.
+    configured_models: Vec<Option<String>>,
     /// Hard cap on fallback hops (does not count the primary attempt).
     max_hops: u8,
     /// SPEC-03b — optional WAL writer for the `0x25
@@ -73,6 +79,16 @@ impl FallbackProvider {
         max_hops: u8,
         wal_writer: Option<crate::wal::writer::WalWriterHandle>,
     ) -> Self {
+        let configured_models = vec![None; chain.len()];
+        Self::new_with_models(chain, configured_models, max_hops, wal_writer)
+    }
+
+    pub fn new_with_models(
+        chain: Vec<Box<dyn Provider>>,
+        configured_models: Vec<Option<String>>,
+        max_hops: u8,
+        wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    ) -> Self {
         // `assert!` (not `debug_assert!`) so the invariant holds in release
         // too — `stream()` does `.first().expect(..)` and would otherwise
         // hard-panic on an empty chain in a release binary.
@@ -80,8 +96,14 @@ impl FallbackProvider {
             !chain.is_empty(),
             "FallbackProvider chain must be non-empty (primary at [0])"
         );
+        assert_eq!(
+            chain.len(),
+            configured_models.len(),
+            "FallbackProvider model metadata must match the provider chain"
+        );
         Self {
             chain,
+            configured_models,
             max_hops,
             wal_writer,
         }
@@ -110,38 +132,59 @@ impl FallbackProvider {
     fn now_unix() -> u64 {
         crate::time::now_unix_secs()
     }
-}
 
-#[async_trait]
-impl Provider for FallbackProvider {
-    fn name(&self) -> &'static str {
-        self.chain.first().map(|p| p.name()).unwrap_or("fallback")
+    fn request_for_candidate(
+        &self,
+        index: usize,
+        candidate: &dyn Provider,
+        base: &Request,
+    ) -> Result<Request> {
+        let mut req = base.clone();
+        // An explicit caller model belongs to the primary request only. Every
+        // fallback slot has its own configured/default model and must never
+        // inherit a model id from a different provider.
+        req.model = if index == 0 {
+            base.model
+                .clone()
+                .or_else(|| self.configured_models[index].clone())
+                .or_else(|| candidate.default_model().map(str::to_owned))
+        } else {
+            self.configured_models[index]
+                .clone()
+                .or_else(|| candidate.default_model().map(str::to_owned))
+        };
+        if req.model.is_none() {
+            anyhow::bail!(
+                "fallback candidate `{}` has no configured or declared default model",
+                candidate.name()
+            );
+        }
+        Ok(req)
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    async fn complete_with_authorization(
+        &self,
+        req: Request,
+        authorization: Option<(
+            &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            &'static str,
+        )>,
+        raw_permit: Option<&ProviderDispatchPermit>,
+    ) -> Result<Completion> {
         let quota_path = crate::config::FreedomConfig::default_neoth_home().join("quota.json");
         let now = Self::now_unix();
-        // Lazy: the QuotaTracker is only read when we actually reach a
-        // fallback candidate, so the common primary-success path pays ZERO
-        // disk I/O. `load_from` degrades OPEN on an unreadable/corrupt file
-        // (empty tracker + its own `warn!`) — the storm guard becomes a
-        // no-op but a legitimate 429 failover still proceeds; we never
-        // block failover because the quota file could not be read.
         let mut tracker: Option<QuotaTracker> = None;
         let mut last_err: Option<anyhow::Error> = None;
         let mut hops = 0u8;
 
         for (i, candidate) in self.chain.iter().enumerate() {
             if i > 0 {
-                // Fallback hop. Load the tracker on first use (see above).
                 let tracker = tracker.get_or_insert_with(|| QuotaTracker::load_from(&quota_path));
                 let in_backoff = tracker
                     .backoff_remaining_for(candidate.name(), now)
                     .is_some();
                 match Self::decide_hop(in_backoff, hops, self.max_hops) {
                     HopAction::Skip => {
-                        // In a 429 backoff window — skip WITHOUT spending a
-                        // hop, so a healthy slot behind it stays reachable.
                         tracing::warn!(
                             provider = candidate.name(),
                             "fallback skipped: provider in quota backoff"
@@ -156,7 +199,6 @@ impl Provider for FallbackProvider {
                         break;
                     }
                     HopAction::Attempt => {
-                        // Only an actual attempt consumes a hop slot.
                         hops += 1;
                         tracing::warn!(
                             from = self.chain[0].name(),
@@ -164,19 +206,12 @@ impl Provider for FallbackProvider {
                             hop = hops,
                             "provider failover on 429"
                         );
-                        // SPEC-03b — durable audit of the hop (0x25). Emitted
-                        // only when a writer is wired (daemon path); the CLI
-                        // one-shot path passes None. Best-effort: an audit
-                        // append failure must NEVER block the failover.
                         if let Some(w) = &self.wal_writer {
                             let payload = serde_json::json!({
                                 "from_provider": self.chain[0].name(),
                                 "to_provider": candidate.name(),
                                 "reason": "quota_429",
                                 "hop": hops,
-                                // Same field + encoding (u64) as the
-                                // PROVIDER_REQUEST (0x20) frame, so an operator
-                                // can correlate the hop with the turn.
                                 "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
                                 "ts_unix": now,
                             });
@@ -187,33 +222,56 @@ impl Provider for FallbackProvider {
                                         &bytes,
                                     );
                                     if let Err(e) = w.append(header, bytes).await {
+                                        if authorization.is_some() {
+                                            return Err(e).context(
+                                                "fallback audit WAL append failed; candidate call blocked",
+                                            );
+                                        }
                                         tracing::warn!(
                                             error = %e,
-                                            "fallback audit frame (0x25) append failed; \
-                                             failover proceeds"
+                                            "fallback audit frame (0x25) append failed; failover proceeds"
                                         );
                                     }
                                 }
-                                Err(e) => tracing::warn!(
-                                    error = %e,
-                                    "fallback audit frame (0x25) serialize failed; \
-                                     failover proceeds"
-                                ),
+                                Err(e) => {
+                                    if authorization.is_some() {
+                                        return Err(e).context(
+                                            "fallback audit WAL serialization failed; candidate call blocked",
+                                        );
+                                    }
+                                    tracing::warn!(
+                                        error = %e,
+                                        "fallback audit frame (0x25) serialize failed; failover proceeds"
+                                    );
+                                }
                             }
                         }
                     }
                 }
             }
-            match candidate.complete(req.clone()).await {
-                Ok(c) => return Ok(c),
-                // 429 → try the next candidate.
-                Err(e) if Self::is_quota_error(&e) => {
-                    last_err = Some(e);
-                    continue;
+
+            let candidate_req = self.request_for_candidate(i, candidate.as_ref(), &req)?;
+            let result = match authorization {
+                Some((authorizer, call_scope)) => {
+                    candidate
+                        .complete_authorized(candidate_req, authorizer, call_scope)
+                        .await
                 }
-                // Non-quota error → propagate immediately (do not mask a
-                // real failure as failover; only 429 chains).
-                Err(e) => return Err(e),
+                None => {
+                    candidate
+                        .complete_raw(
+                            candidate_req,
+                            raw_permit.expect("raw fallback dispatch requires a permit"),
+                        )
+                        .await
+                }
+            };
+            match result {
+                Ok(completion) => return Ok(completion),
+                Err(error) if Self::is_quota_error(&error) => {
+                    last_err = Some(error);
+                }
+                Err(error) => return Err(error),
             }
         }
         Err(last_err.unwrap_or_else(|| {
@@ -222,17 +280,93 @@ impl Provider for FallbackProvider {
             )
         }))
     }
+}
 
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+#[async_trait]
+impl Provider for FallbackProvider {
+    fn name(&self) -> &'static str {
+        self.chain.first().map(|p| p.name()).unwrap_or("fallback")
+    }
+
+    fn request_controls(&self) -> ProviderRequestControls {
+        let Some(first) = self.chain.first() else {
+            return ProviderRequestControls::NONE;
+        };
+        self.chain
+            .iter()
+            .skip(1)
+            .fold(first.request_controls(), |controls, provider| {
+                controls.intersection(provider.request_controls())
+            })
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        self.configured_models
+            .first()
+            .and_then(Option::as_deref)
+            .or_else(|| self.chain.first().and_then(|p| p.default_model()))
+    }
+
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        self.chain
+            .first()
+            .and_then(|provider| provider.output_token_ceiling(req))
+    }
+
+    fn streams_on_wire(&self) -> bool {
+        self.chain
+            .first()
+            .is_some_and(|provider| provider.streams_on_wire())
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
+        self.complete_with_authorization(req, None, Some(permit))
+            .await
+    }
+
+    async fn complete_authorized(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        self.complete_with_authorization(req, Some((authorizer, call_scope)), None)
+            .await
+    }
+
+    async fn stream_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
         // No fallback on streams — a partially-consumed stream cannot be
         // rewound + re-issued against a second provider. The primary's 429
         // surfaces unchanged; the operator switches to non-stream or waits
         // out the backoff. Stream fallback is a documented follow-on.
-        self.chain
+        let primary = self
+            .chain
             .first()
-            .expect("FallbackProvider chain is non-empty")
-            .stream(req)
-            .await
+            .expect("FallbackProvider chain is non-empty");
+        let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        primary.stream_raw(req, permit).await
+    }
+
+    async fn stream_authorized(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<ChunkStream> {
+        let primary = self
+            .chain
+            .first()
+            .expect("FallbackProvider chain is non-empty");
+        let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        primary.stream_authorized(req, authorizer, call_scope).await
     }
 }
 
@@ -259,10 +393,14 @@ mod tests {
         fn name(&self) -> &'static str {
             self.name
         }
+        fn default_model(&self) -> Option<&str> {
+            Some(self.name)
+        }
         async fn complete(&self, _req: Request) -> Result<Completion> {
             match self.behavior {
                 Behavior::Ok => Ok(Completion {
                     text: format!("ok:{}", self.name),
+                    identity: Default::default(),
                     model: "mock".into(),
                     latency: Duration::from_millis(1),
                     input_tokens: None,
@@ -325,6 +463,197 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         None
+    }
+
+    fn cost_payloads(seg: &std::path::Path) -> Vec<serde_json::Value> {
+        let bytes = std::fs::read(seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut payloads = Vec::new();
+        while cursor < bytes.len() {
+            let dec = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN {
+                payloads.push(serde_json::from_slice(dec.payload).unwrap());
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        payloads
+    }
+
+    fn lifecycle_frames(seg: &std::path::Path) -> Vec<(u8, serde_json::Value)> {
+        let bytes = std::fs::read(seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut frames = Vec::new();
+        while cursor < bytes.len() {
+            let dec = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if matches!(
+                dec.header.event_type,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+            ) {
+                frames.push((
+                    dec.header.event_type,
+                    serde_json::from_slice(dec.payload).unwrap(),
+                ));
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        frames
+    }
+
+    struct RecordingProvider {
+        name: &'static str,
+        default_model: &'static str,
+        output_token_ceiling: u32,
+        behavior: Behavior,
+        requests: std::sync::Arc<std::sync::Mutex<Vec<Request>>>,
+    }
+
+    #[async_trait]
+    impl Provider for RecordingProvider {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some(self.default_model)
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(self.output_token_ceiling)
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.requests.lock().unwrap().push(req.clone());
+            match self.behavior {
+                Behavior::Ok => Ok(Completion {
+                    text: format!("ok:{}", self.name),
+                    model: req.model.unwrap(),
+                    latency: Duration::ZERO,
+                    ..Completion::default()
+                }),
+                Behavior::Quota => Err(anyhow::Error::new(QuotaError {
+                    provider: self.name,
+                    retry_after: None,
+                    body: String::new(),
+                })),
+                Behavior::Other => anyhow::bail!("non-quota failure from {}", self.name),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn authorized_fallback_binds_and_logs_each_candidates_actual_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("authorized-fallback.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fallback_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fallback = FallbackProvider::new_with_models(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "primary_cloud",
+                    default_model: "primary-default",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Quota,
+                    requests: primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "fallback_cloud",
+                    default_model: "fallback-default",
+                    output_token_ceiling: 10_000,
+                    behavior: Behavior::Ok,
+                    requests: fallback_requests.clone(),
+                }),
+            ],
+            vec![
+                Some("primary-config".into()),
+                Some("fallback-config".into()),
+            ],
+            1,
+            Some(writer.clone()),
+        );
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(fallback),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+            ),
+            None,
+            "fallback.test",
+        );
+
+        let completion = provider
+            .complete(Request {
+                prompt: "same prompt".into(),
+                system: Some("same system".into()),
+                model: Some("caller-primary-model".into()),
+                ..Request::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(completion.model, "fallback-config");
+        assert_eq!(completion.identity.provider, "fallback_cloud");
+        assert_eq!(completion.identity.wire_model, "fallback-config");
+        assert_eq!(
+            primary_requests.lock().unwrap()[0].model.as_deref(),
+            Some("caller-primary-model")
+        );
+        assert_eq!(
+            fallback_requests.lock().unwrap()[0].model.as_deref(),
+            Some("fallback-config"),
+            "a fallback must never inherit another provider's model"
+        );
+
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        let payloads = cost_payloads(&seg);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["provider"], "primary_cloud");
+        assert_eq!(payloads[0]["model"], "caller-primary-model");
+        assert_eq!(payloads[0]["output_tokens_est"], 4096);
+        assert_eq!(payloads[1]["provider"], "fallback_cloud");
+        assert_eq!(payloads[1]["model"], "fallback-config");
+        assert_eq!(payloads[1]["output_tokens_est"], 10_000);
+
+        let lifecycle = lifecycle_frames(&seg);
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+            ],
+            "each concrete fallback child hop needs its own paired lifecycle"
+        );
+        assert_eq!(lifecycle[0].1["provider"], "primary_cloud");
+        assert_eq!(lifecycle[0].1["wire_model"], "caller-primary-model");
+        assert_eq!(
+            lifecycle[1].1["invocation_id"],
+            lifecycle[0].1["invocation_id"]
+        );
+        assert_eq!(lifecycle[2].1["provider"], "fallback_cloud");
+        assert_eq!(lifecycle[2].1["wire_model"], "fallback-config");
+        assert_eq!(
+            lifecycle[3].1["invocation_id"],
+            lifecycle[2].1["invocation_id"]
+        );
+        assert_ne!(
+            lifecycle[0].1["invocation_id"],
+            lifecycle[2].1["invocation_id"]
+        );
     }
 
     #[tokio::test]

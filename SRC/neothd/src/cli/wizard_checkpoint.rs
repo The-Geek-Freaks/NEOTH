@@ -9,8 +9,9 @@
 //!
 //! ## Why not just include secrets
 //!
-//! `provider_key`, `telegram_token`, `keet_seed_phrase`, and
-//! `pears_bearer_token` are all wrapped in [`crate::secret::SecretString`]
+//! `provider_key`, `telegram_token`, `omi_developer_api_key`,
+//! `omi_ingest_token`, `keet_seed_phrase`, and `pears_bearer_token` are all
+//! wrapped in [`crate::secret::SecretString`]
 //! with `mlock` + `zeroize` for in-memory protection. Persisting them to
 //! `wizard_checkpoint.json` would defeat that — even with mode 0600 the
 //! file lives on disk in plaintext until the wizard completes. Operators
@@ -56,6 +57,10 @@ pub fn checkpoint_path(neoth_dir: &Path) -> PathBuf {
 /// fields land here when the wizard adds a new non-secret step.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WizardCheckpoint {
+    #[serde(default)]
+    pub experience_level: crate::wizard::recommend::ExperienceLevel,
+    #[serde(default)]
+    pub onboarding_mode: crate::cli::init::OnboardingMode,
     pub operator_id: Option<String>,
     pub language_primary: Option<String>,
     pub language_code: Option<String>,
@@ -65,10 +70,27 @@ pub struct WizardCheckpoint {
     pub provider_binary: Option<String>,
     pub provider_endpoint: Option<String>,
     pub provider_model: Option<String>,
+    #[serde(default)]
+    pub provider_region: Option<String>,
+    #[serde(default)]
+    pub provider_api_version: Option<String>,
     pub telegram_user_id: Option<u64>,
+    /// Optional for backward compatibility with checkpoints created before
+    /// terminal OMI onboarding. `None` preserves a pre-hydrated `--force`
+    /// configuration instead of silently resetting OMI to defaults.
+    #[serde(default)]
+    pub omi: Option<crate::config::OmiConfig>,
+    #[serde(default)]
+    pub secrets_backend: Option<crate::config::SecretsBackend>,
+    /// Optional keeps pre-AUDIT-RPC checkpoints from resetting the target
+    /// fresh-wizard default during resume.
+    #[serde(default)]
+    pub audit_rpc: Option<crate::config::AuditRpcConfig>,
     pub autonomy: crate::permissions::AutonomyLevel,
     pub inference: crate::config::inference::InferenceTopology,
     pub auto_update: crate::config::AutoUpdateConfig,
+    #[serde(default)]
+    pub supervisor: crate::config::SupervisorConfig,
     pub plugins: crate::config::PluginsConfig,
     pub download_qwen_weights: bool,
     pub install_obsidian: bool,
@@ -76,6 +98,14 @@ pub struct WizardCheckpoint {
     pub vault_path: Option<PathBuf>,
     pub install_n8n: bool,
     pub import_memory: Option<PathBuf>,
+    #[serde(default)]
+    pub hmac_backup_offered: bool,
+    #[serde(default)]
+    pub onboarding_complete: bool,
+    #[serde(default)]
+    pub chat_onboarding_completed: bool,
+    #[serde(default)]
+    pub companion: crate::config::CompanionConfig,
     pub steps_completed: Vec<u8>,
     /// ZF-01 — built-in preset chosen by `step_zero_friction`. Matches
     /// `WizardState::chosen_preset`; `None` means custom/skipped.
@@ -95,6 +125,8 @@ impl WizardCheckpoint {
     /// `state` itself (in mlocked SecretString) but never reach disk.
     pub fn from_state(state: &WizardState) -> Self {
         Self {
+            experience_level: state.experience_level,
+            onboarding_mode: state.onboarding_mode,
             operator_id: state.operator_id.clone(),
             language_primary: state.language_primary.clone(),
             language_code: state.language_code.clone(),
@@ -104,10 +136,16 @@ impl WizardCheckpoint {
             provider_binary: state.provider_binary.clone(),
             provider_endpoint: state.provider_endpoint.clone(),
             provider_model: state.provider_model.clone(),
+            provider_region: state.provider_region.clone(),
+            provider_api_version: state.provider_api_version.clone(),
             telegram_user_id: state.telegram_user_id,
+            omi: Some(state.omi.clone()),
+            secrets_backend: Some(state.secrets_backend),
+            audit_rpc: Some(state.audit_rpc.clone()),
             autonomy: state.autonomy,
             inference: state.inference.clone(),
             auto_update: state.auto_update.clone(),
+            supervisor: state.supervisor,
             plugins: state.plugins.clone(),
             download_qwen_weights: state.download_qwen_weights,
             install_obsidian: state.install_obsidian,
@@ -115,6 +153,10 @@ impl WizardCheckpoint {
             vault_path: state.vault_path.clone(),
             install_n8n: state.install_n8n,
             import_memory: state.import_memory.clone(),
+            hmac_backup_offered: state.hmac_backup_offered,
+            onboarding_complete: state.onboarding_complete,
+            chat_onboarding_completed: state.chat_onboarding_completed,
+            companion: state.companion.clone(),
             steps_completed: state.steps_completed.clone(),
             chosen_preset: state.chosen_preset.clone(),
             is_express: state.is_express,
@@ -125,6 +167,8 @@ impl WizardCheckpoint {
     /// Hydrate `state` from this checkpoint. Secrets fields on `state`
     /// remain `None` so the resume flow re-prompts for them.
     pub fn apply_to(self, state: &mut WizardState) {
+        state.experience_level = self.experience_level;
+        state.onboarding_mode = self.onboarding_mode;
         state.operator_id = self.operator_id;
         state.language_primary = self.language_primary;
         state.language_code = self.language_code;
@@ -134,10 +178,22 @@ impl WizardCheckpoint {
         state.provider_binary = self.provider_binary;
         state.provider_endpoint = self.provider_endpoint;
         state.provider_model = self.provider_model;
+        state.provider_region = self.provider_region;
+        state.provider_api_version = self.provider_api_version;
         state.telegram_user_id = self.telegram_user_id;
+        if let Some(omi) = self.omi {
+            state.omi = omi;
+        }
+        if let Some(backend) = self.secrets_backend {
+            state.secrets_backend = backend;
+        }
+        if let Some(audit_rpc) = self.audit_rpc {
+            state.audit_rpc = audit_rpc;
+        }
         state.autonomy = self.autonomy;
         state.inference = self.inference;
         state.auto_update = self.auto_update;
+        state.supervisor = self.supervisor;
         state.plugins = self.plugins;
         state.download_qwen_weights = self.download_qwen_weights;
         state.install_obsidian = self.install_obsidian;
@@ -145,6 +201,10 @@ impl WizardCheckpoint {
         state.vault_path = self.vault_path;
         state.install_n8n = self.install_n8n;
         state.import_memory = self.import_memory;
+        state.hmac_backup_offered = self.hmac_backup_offered;
+        state.onboarding_complete = self.onboarding_complete;
+        state.chat_onboarding_completed = self.chat_onboarding_completed;
+        state.companion = self.companion;
         state.steps_completed = self.steps_completed;
         state.chosen_preset = self.chosen_preset;
         state.is_express = self.is_express;
@@ -231,6 +291,17 @@ mod tests {
         state.steps_completed = vec![1, 2, 3];
         state.download_qwen_weights = true;
         state.install_n8n = true;
+        state.experience_level = crate::wizard::recommend::ExperienceLevel::Advanced;
+        state.onboarding_mode = crate::cli::init::OnboardingMode::Migration;
+        state.supervisor.enabled = true;
+        state.companion.enabled = true;
+        state.hmac_backup_offered = true;
+        state.onboarding_complete = true;
+        state.audit_rpc.enabled = true;
+        state.audit_rpc.required_for_oneshot_permission_events = true;
+        state.omi.enabled = true;
+        state.omi.mode = crate::config::OmiIngestMode::NativeIngest;
+        state.omi.retention_days = 7;
 
         save_checkpoint(dir.path(), &state).expect("save");
         let loaded = load_checkpoint(dir.path()).unwrap().expect("Some");
@@ -241,11 +312,32 @@ mod tests {
         assert_eq!(loaded.steps_completed, vec![1, 2, 3]);
         assert!(loaded.download_qwen_weights);
         assert!(loaded.install_n8n);
+        assert_eq!(
+            loaded.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Advanced
+        );
+        assert_eq!(
+            loaded.onboarding_mode,
+            crate::cli::init::OnboardingMode::Migration
+        );
+        assert!(loaded.supervisor.enabled);
+        assert!(loaded.companion.enabled);
+        assert!(loaded.hmac_backup_offered);
+        assert!(loaded.onboarding_complete);
+        let audit_rpc = loaded
+            .audit_rpc
+            .expect("new checkpoints carry audit-RPC config");
+        assert!(audit_rpc.enabled);
+        assert!(audit_rpc.required_for_oneshot_permission_events);
+        let omi = loaded.omi.expect("new checkpoints carry OMI config");
+        assert!(omi.enabled);
+        assert_eq!(omi.mode, crate::config::OmiIngestMode::NativeIngest);
+        assert_eq!(omi.retention_days, 7);
         assert!(loaded.checkpoint_written_at_unix > 0);
     }
 
     #[test]
-    fn save_strips_provider_key_and_telegram_token() {
+    fn save_strips_all_provider_channel_and_omi_secrets() {
         // Pin the privacy contract: a SecretString in WizardState must
         // not show up in the on-disk JSON. Catches accidental
         // serde-skip-bypass via a future field rename.
@@ -258,6 +350,12 @@ mod tests {
         state.telegram_token = Some(crate::secret::SecretString::new(
             "TELEGRAM-TOKEN-BADBADBAD".into(),
         ));
+        state.omi_developer_api_key = Some(crate::secret::SecretString::new(
+            "omi_dev_CHECKPOINT_SECRET".into(),
+        ));
+        state.omi_ingest_token = Some(crate::secret::SecretString::new(
+            "OMI-INGEST-CHECKPOINT-SECRET-123456".into(),
+        ));
 
         save_checkpoint(dir.path(), &state).expect("save");
         let raw = std::fs::read_to_string(checkpoint_path(dir.path())).unwrap();
@@ -268,6 +366,14 @@ mod tests {
         assert!(
             !raw.contains("TELEGRAM-TOKEN-BADBADBAD"),
             "telegram_token must not reach disk: {raw}",
+        );
+        assert!(
+            !raw.contains("omi_dev_CHECKPOINT_SECRET"),
+            "OMI Developer key must not reach disk: {raw}",
+        );
+        assert!(
+            !raw.contains("OMI-INGEST-CHECKPOINT-SECRET-123456"),
+            "OMI ingest token must not reach disk: {raw}",
         );
     }
 
@@ -284,6 +390,9 @@ mod tests {
         // Build a fresh state with a secret that must survive.
         let mut restored = WizardState::default();
         restored.provider_key = Some(crate::secret::SecretString::new("KEEP-IN-MEMORY".into()));
+        restored.omi_ingest_token = Some(crate::secret::SecretString::new(
+            "KEEP-OMI-IN-MEMORY-012345678901".into(),
+        ));
 
         let loaded = load_checkpoint(dir.path()).unwrap().expect("Some");
         loaded.apply_to(&mut restored);
@@ -296,6 +405,23 @@ mod tests {
         assert!(
             restored.provider_key.is_some(),
             "apply_to must leave secret fields on the target alone",
+        );
+        assert!(
+            restored.omi_ingest_token.is_some(),
+            "apply_to must leave OMI secret fields on the target alone",
+        );
+    }
+
+    #[test]
+    fn pre_audit_rpc_checkpoint_preserves_fresh_wizard_listener_default() {
+        let mut checkpoint = WizardCheckpoint::from_state(&WizardState::default());
+        checkpoint.audit_rpc = None;
+        let mut target = WizardState::default();
+        target.audit_rpc.enabled = true;
+        checkpoint.apply_to(&mut target);
+        assert!(
+            target.audit_rpc.enabled,
+            "old checkpoint must not turn off the fresh-wizard audit listener"
         );
     }
 

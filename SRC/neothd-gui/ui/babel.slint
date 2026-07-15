@@ -156,6 +156,9 @@ export component BabelView inherits Rectangle {
     in property <bool>   babel-federate: false;
     in property <int>    babel-total-windows: 0;
     in property <int>    babel-collapse-flagged: 0;
+    in property <string> babel-memory-signals: "";
+    in property <string> babel-skill-signals: "";
+    in property <string> babel-kd-extractor: "";
 
     // Granularity breakdown
     in property <[BabelGranRow]> babel-gran-rows: [];
@@ -238,6 +241,21 @@ export component BabelView inherits Rectangle {
                         if root.babel-epsilon != "": InfoRow {
                             label: "epsilon calibrated";
                             value: root.babel-epsilon;
+                            right-align: true;
+                        }
+                        if root.babel-memory-signals != "": InfoRow {
+                            label: "memory signals";
+                            value: root.babel-memory-signals;
+                            right-align: true;
+                        }
+                        if root.babel-skill-signals != "": InfoRow {
+                            label: "skill signals";
+                            value: root.babel-skill-signals;
+                            right-align: true;
+                        }
+                        if root.babel-kd-extractor != "": InfoRow {
+                            label: "K_d extractor";
+                            value: root.babel-kd-extractor;
                             right-align: true;
                         }
                         InfoRow {

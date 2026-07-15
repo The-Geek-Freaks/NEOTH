@@ -21,8 +21,7 @@
 //!       You are NEOTH's morning news agent. ...
 //!     timeout_seconds: 1800
 //!     delivery:
-//!       channel: telegram
-//!       recipient: "+49..."      # optional; omit to just log to WAL
+//!       channel: telegram         # destination comes from channel_routing.yaml
 //! ```
 //!
 //! Out of scope for v1 (deferred to 11c / later):

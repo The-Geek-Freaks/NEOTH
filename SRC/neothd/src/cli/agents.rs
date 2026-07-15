@@ -8,8 +8,15 @@
 //! - `neoth agents list` shows every loaded agent grouped by source
 //!   (`builtin` / `operator`) with one-line description + model preference
 //!   + tool allowlist count.
-//! - `neoth agents show <name>` dumps the full system prompt so the
-//!   operator sees exactly what behaviour they're invoking.
+//! - `neoth agents show <name>` dumps the full system prompt.
+//! - `neoth agents run --agent planner --agent critic "..."` executes a
+//!   bounded provider-only fan-out, validates every answer through structured
+//!   QA, and persists a private run record.
+//! - `neoth agents history [run-id]` lists or re-opens those records.
+
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -35,21 +42,310 @@ pub enum AgentsAction {
     /// system prompt. Useful for reviewing what a name actually does
     /// before typing `/agent <name>`.
     Show { name: String },
+    /// Run 2-8 independent provider-only agents concurrently. Every candidate
+    /// receives a typed QA verdict; --retry-failed permits one correction.
+    Run {
+        /// Agent name. Repeat once per independent perspective/task.
+        #[arg(long = "agent", required = true)]
+        agents: Vec<String>,
+        /// Operator task sent independently to every selected agent.
+        prompt: String,
+        /// Bound concurrent provider work. Hard-capped at 4.
+        #[arg(long, default_value_t = 4)]
+        max_concurrent: usize,
+        /// Per-agent wall-clock ceiling, including QA and optional retry.
+        #[arg(long, default_value_t = 120)]
+        timeout_secs: u64,
+        /// Permit exactly one corrected answer after a structured QA Fail.
+        #[arg(long)]
+        retry_failed: bool,
+    },
+    /// List private run records, or show one by id.
+    History {
+        run_id: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
 }
 
 pub async fn run_agents(args: AgentsArgs) -> Result<()> {
-    let agent_dir = FreedomConfig::default_neoth_home().join("agents");
-    let operator = crate::sub_agents::load_all(&agent_dir)
+    let home = FreedomConfig::default_neoth_home();
+    let agent_dir = home.join("agents");
+    match args.action {
+        action @ AgentsAction::List | action @ AgentsAction::Show { .. } => {
+            let operator = crate::sub_agents::load_operator_definitions(&agent_dir)
+                .await
+                .with_context(|| format!("load agents from {}", agent_dir.display()))?;
+            let built = builtins::built_in_agents();
+            let merged = merge_with_provenance(&built, &operator);
+            match action {
+                AgentsAction::List => render_list(&merged, &args.output),
+                AgentsAction::Show { name } => render_show(&name, &merged, &args.output),
+                _ => unreachable!(),
+            }
+        }
+        AgentsAction::Run {
+            agents,
+            prompt,
+            max_concurrent,
+            timeout_secs,
+            retry_failed,
+        } => {
+            run_fan_out(
+                &home,
+                &agent_dir,
+                agents,
+                prompt,
+                max_concurrent,
+                timeout_secs,
+                retry_failed,
+                &args.output,
+            )
+            .await
+        }
+        AgentsAction::History { run_id, limit } => {
+            render_history(&home, run_id.as_deref(), limit, &args.output)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_fan_out(
+    home: &std::path::Path,
+    agent_dir: &std::path::Path,
+    agent_names: Vec<String>,
+    prompt: String,
+    max_concurrent: usize,
+    timeout_secs: u64,
+    retry_failed: bool,
+    output: &OutputFormat,
+) -> Result<()> {
+    use crate::sub_agents::parallel::dispatch_parallel;
+    use crate::sub_agents::runtime::{
+        MAX_CONCURRENT, MAX_FAN_OUT, MAX_PROMPT_BYTES, ProviderSubAgentWorker, SubAgentRunRecord,
+    };
+    use crate::sub_agents::schema::{HandoffPriority, SubAgentRequest};
+
+    if !(2..=MAX_FAN_OUT).contains(&agent_names.len()) {
+        anyhow::bail!("fan-out requires 2..={MAX_FAN_OUT} --agent values");
+    }
+    if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT_BYTES {
+        anyhow::bail!("prompt must contain 1..={MAX_PROMPT_BYTES} bytes");
+    }
+    if max_concurrent == 0 || max_concurrent > MAX_CONCURRENT {
+        anyhow::bail!("--max-concurrent must be 1..={MAX_CONCURRENT}");
+    }
+    if !(1..=600).contains(&timeout_secs) {
+        anyhow::bail!("--timeout-secs must be 1..=600");
+    }
+    let unique: HashSet<&str> = agent_names.iter().map(String::as_str).collect();
+    if unique.len() != agent_names.len() {
+        anyhow::bail!("each --agent must be unique; duplicate work is not independent fan-out");
+    }
+
+    let loaded = crate::sub_agents::load_all(agent_dir)
         .await
         .with_context(|| format!("load agents from {}", agent_dir.display()))?;
-    let built = builtins::built_in_agents();
-    // Operator entries override built-ins of the same name. Build a merged
-    // view with provenance so `list` can render the source column.
-    let merged = merge_with_provenance(&built, &operator);
+    let selected: Vec<SubAgent> = agent_names
+        .iter()
+        .map(|name| {
+            loaded
+                .iter()
+                .find(|agent| agent.name == *name)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("no enabled sub-agent named `{name}`"))
+        })
+        .collect::<Result<_>>()?;
 
-    match args.action {
-        AgentsAction::List => render_list(&merged, &args.output),
-        AgentsAction::Show { name } => render_show(&name, &merged, &args.output),
+    let config = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml — run `neoth init` first")?;
+    let wal_dir = FreedomConfig::default_wal_dir();
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "sub-agents");
+    let (writer, writer_join) =
+        crate::wal::writer::spawn(segment).context("spawn sub-agent audit WAL writer")?;
+
+    let raw_provider = crate::providers::fallback_chain_from_config(&config, Some(writer.clone()))
+        .await
+        .context("build sub-agent provider")?;
+    let default_model = config
+        .inference
+        .slot_for(crate::config::inference::HemisphereRole::Left)
+        .model
+        .clone()
+        .or_else(|| config.provider_model.clone());
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        raw_provider,
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        ),
+        default_model,
+        "sub_agents.fan_out",
+    )
+    .into_arc();
+    let worker = Arc::new(ProviderSubAgentWorker::new(
+        provider,
+        selected,
+        retry_failed,
+        writer.clone(),
+    ));
+
+    let now_ns = crate::time::now_unix_ns();
+    let run_id = format!("run-{now_ns}-{}", std::process::id());
+    let requests = agent_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| SubAgentRequest {
+            from: "cli".into(),
+            to: name.clone(),
+            phase: "fan_out".into(),
+            task_id: format!("{run_id}-{index}"),
+            priority: HandoffPriority::Normal,
+            context: prompt.clone(),
+            deliverable: "A complete, self-contained answer within the named agent's role.".into(),
+            success_criteria: vec![
+                "Addresses the operator task without inventing tool or external-state evidence."
+                    .into(),
+                "States missing evidence explicitly instead of fabricating it.".into(),
+            ],
+            evidence_required: vec![],
+            ts_unix: crate::time::now_unix_i64(),
+        })
+        .collect();
+
+    let dispatch = dispatch_parallel(
+        worker,
+        requests,
+        Some(max_concurrent),
+        Some(Duration::from_secs(timeout_secs)),
+    )
+    .await;
+    let record_result = dispatch.and_then(|report| {
+        let record = SubAgentRunRecord {
+            schema_version: 1,
+            run_id: run_id.clone(),
+            ts_unix: crate::time::now_unix_i64(),
+            prompt_hash_xxh3: xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
+            results: report.results,
+        };
+        crate::sub_agents::runtime::persist_run(home, &record).map(|path| (record, path))
+    });
+    drop(writer);
+    let _ = writer_join.await;
+    let (record, path) = record_result?;
+    render_run(&record, &path, output)
+}
+
+fn render_run(
+    record: &crate::sub_agents::runtime::SubAgentRunRecord,
+    path: &std::path::Path,
+    output: &OutputFormat,
+) -> Result<()> {
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!("{}", serde_json::to_string_pretty(record)?);
+        return Ok(());
+    }
+    println!("# Sub-agent run {}", record.run_id);
+    for result in &record.results {
+        println!(
+            "\n## {} — {} ({} attempt{})",
+            result.from,
+            verdict_name(&result.verdict),
+            result.attempts,
+            if result.attempts == 1 { "" } else { "s" }
+        );
+        println!("{}", result.output);
+        match &result.verdict {
+            crate::council::qa_verdict::QaVerdict::Fail { failures } => {
+                for failure in failures {
+                    println!("  QA {}: {}", failure.kind, failure.message);
+                }
+            }
+            crate::council::qa_verdict::QaVerdict::Blocked { reason } => {
+                println!("  QA blocked: {reason}");
+            }
+            crate::council::qa_verdict::QaVerdict::Pass { .. } => {}
+        }
+        for call in &result.provider_calls {
+            println!(
+                "  {}#{}: {}/{}",
+                call.stage, call.attempt, call.provider, call.wire_model
+            );
+        }
+    }
+    println!("\nPrivate record: {}", path.display());
+    Ok(())
+}
+
+fn render_history(
+    home: &std::path::Path,
+    run_id: Option<&str>,
+    limit: usize,
+    output: &OutputFormat,
+) -> Result<()> {
+    if let Some(run_id) = run_id {
+        let record = crate::sub_agents::runtime::load_run(home, run_id)?;
+        let path = home.join("sub-agent-runs").join(format!("{run_id}.json"));
+        return render_run(&record, &path, output);
+    }
+    let records = crate::sub_agents::runtime::list_runs(home, limit)?;
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        let summaries: Vec<_> = records
+            .iter()
+            .map(|record| {
+                serde_json::json!({
+                    "run_id": record.run_id,
+                    "ts_unix": record.ts_unix,
+                    "prompt_hash_xxh3": record.prompt_hash_xxh3,
+                    "results": record.results.len(),
+                    "pass": record.results.iter().filter(|r| r.verdict.is_pass()).count(),
+                    "fail": record.results.iter().filter(|r| r.verdict.is_retriable()).count(),
+                    "blocked": record.results.iter().filter(|r| r.verdict.is_blocked()).count(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&summaries)?);
+        return Ok(());
+    }
+    if records.is_empty() {
+        println!("no sub-agent runs recorded");
+        return Ok(());
+    }
+    for record in records {
+        let pass = record
+            .results
+            .iter()
+            .filter(|r| r.verdict.is_pass())
+            .count();
+        let fail = record
+            .results
+            .iter()
+            .filter(|r| r.verdict.is_retriable())
+            .count();
+        let blocked = record
+            .results
+            .iter()
+            .filter(|r| r.verdict.is_blocked())
+            .count();
+        println!(
+            "{}  agents={} pass={} fail={} blocked={}",
+            record.run_id,
+            record.results.len(),
+            pass,
+            fail,
+            blocked
+        );
+    }
+    Ok(())
+}
+
+fn verdict_name(verdict: &crate::council::qa_verdict::QaVerdict) -> &'static str {
+    match verdict {
+        crate::council::qa_verdict::QaVerdict::Pass { .. } => "PASS",
+        crate::council::qa_verdict::QaVerdict::Fail { .. } => "FAIL",
+        crate::council::qa_verdict::QaVerdict::Blocked { .. } => "BLOCKED",
     }
 }
 

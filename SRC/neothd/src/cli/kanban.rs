@@ -1141,11 +1141,9 @@ mod tests {
         assert_eq!(status, "backlog");
         // A fresh operator_spec session was opened for it.
         let chan: String = conn
-            .query_row(
-                "SELECT source_channel FROM idx_kanban_session",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT source_channel FROM idx_kanban_session", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(chan, "operator_spec");
         // Empty title refuses.

@@ -22,10 +22,8 @@
 //! (KL-cache reset between loops avoids corrupting position-indexed
 //! RoPE lookups).
 //!
-//! Early-exit (when `cfg.early_exit_threshold` is `Some`) is deferred
-//! to O-1c — requires a real Ouro checkpoint to tune the threshold.
-//! Bite 2 always runs all loops + emits a `tracing::debug!` noting
-//! the deferral when the field is set.
+//! Early exit is not offered. `OuroConfig::validate` rejects legacy
+//! `early_exit_threshold` values, so every accepted config runs all loops.
 
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, IndexOp, Module, Tensor};
@@ -59,12 +57,6 @@ impl OuroModel {
     /// `model.norm.*`, `lm_head.*`.
     pub fn new(cfg: &OuroConfig, vb: VarBuilder) -> Result<Self> {
         let cfg = cfg.validate()?;
-        if cfg.early_exit_threshold.is_some() {
-            tracing::debug!(
-                threshold = ?cfg.early_exit_threshold,
-                "Ouro: early_exit_threshold set but O-1b ignores it (deferred to O-1c)"
-            );
-        }
         let vb_m = vb.pp("model");
         let embed_tokens =
             candle_nn::embedding(cfg.vocab_size, cfg.hidden_size, vb_m.pp("embed_tokens"))

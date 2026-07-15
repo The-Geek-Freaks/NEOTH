@@ -14,7 +14,7 @@
 //!    → else `evaluate()` returns Confirm at Elevated or Deny at lower levels.
 //! 4. `self_activation.skill_allowlist` must contain the skill id (case-
 //!    insensitive) → else Confirm is returned (operator must decide).
-//! 5. `permissions::evaluate(Action::SelfSkillToggle{..}, autonomy)` → Allow /
+//! 5. `permissions::evaluate(Action::SelfSkillToggle{..}, &policy_snapshot)` → Allow /
 //!    Confirm / Deny.  The `evaluate` layer knows nothing about FreedomConfig;
 //!    callers in steps 3-4 short-circuit before reaching it when sovereign
 //!    pre-conditions are not met.
@@ -27,14 +27,13 @@
 //! the daemon detects the change on its next poll cycle.
 //! This is identical to how `neoth autonomy` handles `sovereign_buddy`.
 //!
-//! ## jobs.yaml hot-reload gap
+//! ## jobs.yaml live reload
 //!
-//! `run_scheduler` reads `jobs.yaml` **once** at daemon startup via
-//! `crate::cron::jobs::load_jobs_yaml`.  `ReloadController` hot-reloads
-//! `freedom.yaml` but does NOT reload `jobs.yaml`.  Therefore cron
-//! registrations written here take effect only after a daemon restart.
-//! The CLI prints an explicit restart hint when `--action cron` is used.
-//! A live-reload polling loop is out of scope for this slice.
+//! `run_scheduler` stages and validates `jobs.yaml` on every scheduler tick,
+//! then swaps the complete in-memory generation. This command updates only an
+//! existing, fully specified job under the shared cross-process jobs lock; it
+//! never invents an incomplete schedule/prompt. The change therefore takes
+//! effect on the next tick without restarting the daemon.
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -42,7 +41,7 @@ use clap::{Args, Subcommand};
 use crate::{
     cli::OutputFormat,
     config::FreedomConfig,
-    permissions::{evaluate, Action, Decision},
+    permissions::{Action, Decision, evaluate},
 };
 
 // ── Args ──────────────────────────────────────────────────────────────────────
@@ -80,13 +79,13 @@ pub enum SelfActivateAction {
         #[arg(skip)]
         output: OutputFormat,
     },
-    /// Register (or toggle) a cron job entry.
+    /// Toggle an existing cron job entry.
     ///
-    /// Writes `~/.neoth/jobs.yaml`.  A daemon restart is required for
-    /// `run_scheduler` to pick up the change (hot-reload gap — see module doc).
-    /// `--confirm-cron` is mandatory to prevent accidental scheduling.
+    /// Writes `~/.neoth/jobs.yaml` transactionally; the scheduler live-reloads
+    /// the validated generation on its next tick. Create the full job first
+    /// with `neoth cron add`. `--confirm-cron` remains mandatory.
     Cron {
-        /// Cron job id to register / modify.
+        /// Existing cron job id to modify.
         job_id: String,
         /// Enable the cron job.
         #[arg(long, conflicts_with = "disable")]
@@ -94,7 +93,7 @@ pub enum SelfActivateAction {
         /// Disable the cron job.
         #[arg(long, conflicts_with = "enable")]
         disable: bool,
-        /// Required safety flag — cron registration is never auto-allowed at
+        /// Required safety flag — cron activation is never auto-allowed at
         /// any autonomy level.
         #[arg(long)]
         confirm_cron: bool,
@@ -171,7 +170,12 @@ fn run_skill_toggle(
     // the toggle would write `skills.enabled` but the loader would still see
     // it as disabled.  Bail loudly so the agent knows it must use the operator
     // `neoth skills --enable` path after explicit operator consent.
-    if cfg.skills.disabled.iter().any(|s| s.trim().to_lowercase() == id_lc) {
+    if cfg
+        .skills
+        .disabled
+        .iter()
+        .any(|s| s.trim().to_lowercase() == id_lc)
+    {
         anyhow::bail!(
             "skill '{id_lc}' is in `skills.disabled` — the disabled list \
              always wins and cannot be overridden by self-activate. \
@@ -190,7 +194,7 @@ fn run_skill_toggle(
         // Sovereign mode (sovereign_buddy AND Full autonomy) is the only
         // auto-allow path.  At Full-without-sovereign_buddy evaluate returns
         // Allow, but the sovereign gate is the outer firewall.
-        let decision = evaluate(&action, cfg.autonomy);
+        let decision = evaluate(&action, &cfg.autonomy_policy());
         match decision {
             Decision::Allow => {
                 // Full autonomy but sovereign_buddy = false.
@@ -219,7 +223,7 @@ fn run_skill_toggle(
     }
 
     // Gate 5 — permission system (Full+sovereign → Allow).
-    let decision = evaluate(&action, cfg.autonomy);
+    let decision = evaluate(&action, &cfg.autonomy_policy());
     match decision {
         Decision::Allow => {}
         Decision::Confirm(msg) => anyhow::bail!("confirm required: {msg}"),
@@ -229,8 +233,12 @@ fn run_skill_toggle(
     // Apply toggle — same mutation as `neoth skills --enable/--disable`.
     // ponytail: reuse apply_skill_toggle from skills.rs private fn via the
     // same mutation logic inline (private fn; duplication is 3 lines).
-    cfg.skills.enabled.retain(|s| s.trim().to_lowercase() != id_lc);
-    cfg.skills.disabled.retain(|s| s.trim().to_lowercase() != id_lc);
+    cfg.skills
+        .enabled
+        .retain(|s| s.trim().to_lowercase() != id_lc);
+    cfg.skills
+        .disabled
+        .retain(|s| s.trim().to_lowercase() != id_lc);
     if turn_on {
         cfg.skills.enabled.push(id_lc.clone());
     } else {
@@ -257,7 +265,9 @@ fn run_skill_toggle(
         }
         OutputFormat::Table => {
             println!("Self-activate: skill `{id_lc}` {state} (freedom.yaml::skills.{state}).");
-            println!("  WAL 0xD0 CONFIG_RELOADED will fire when the daemon next reloads freedom.yaml.");
+            println!(
+                "  WAL 0xD0 CONFIG_RELOADED will fire when the daemon next reloads freedom.yaml."
+            );
             println!("  Takes effect on next skill load (daemon reload or next CLI turn).");
         }
     }
@@ -279,7 +289,16 @@ fn run_cron_toggle(
     // permission Confirm below (three independent gates, all fail-closed).
     if !cfg.self_activation.allow_cron_registration {
         anyhow::bail!(
-            "cron self-registration is disabled — set              freedom.yaml::self_activation.allow_cron_registration: true first"
+            "cron self-registration is disabled — set \
+             freedom.yaml::self_activation.allow_cron_registration: true first"
+        );
+    }
+    // Custom is deliberately disabled for unattended scheduler mutation. A
+    // per-action override must never turn Custom into a cron-registration
+    // capability; use an explicit non-Custom level plus --confirm-cron.
+    if cfg.autonomy == crate::permissions::AutonomyLevel::Custom {
+        anyhow::bail!(
+            "cron self-registration is disabled under custom autonomy regardless of overrides"
         );
     }
     // Gate — cron always requires --confirm-cron, regardless of autonomy level.
@@ -288,7 +307,7 @@ fn run_cron_toggle(
     let action = Action::SelfCronRegister {
         job_id: job_id.to_string(),
     };
-    let decision = evaluate(&action, cfg.autonomy);
+    let decision = evaluate(&action, &cfg.autonomy_policy());
     match decision {
         Decision::Allow => {
             // evaluate_full returns Confirm for SelfCronRegister, not Allow.
@@ -298,9 +317,8 @@ fn run_cron_toggle(
             if !confirm_cron {
                 anyhow::bail!(
                     "cron registration always requires explicit operator confirmation. \
-                     Re-run with --confirm-cron to proceed. \
-                     NOTE: a daemon restart is required for the change to take effect \
-                     (jobs.yaml hot-reload is not implemented — see module doc)."
+                     Re-run with --confirm-cron to proceed. The scheduler applies a \
+                     valid jobs.yaml generation on its next live-reload tick."
                 );
             }
         }
@@ -319,80 +337,43 @@ fn run_cron_toggle(
                 serde_json::to_string(&serde_json::json!({
                     "job_id": job_id,
                     "state": state,
-                    "restart_required": true,
-                    "note": "jobs.yaml hot-reload not implemented; daemon restart required"
+                    "restart_required": false,
+                    "live_reload": true,
+                    "note": "scheduler applies the validated jobs.yaml generation on its next tick"
                 }))?
             );
         }
         OutputFormat::Table => {
             println!("Self-activate: cron job `{job_id}` {state} (jobs.yaml).");
-            println!("  ⚠  Daemon restart required — jobs.yaml is read once at startup.");
-            println!("     Run `neoth serve` (or restart the daemon) to apply.");
+            println!(
+                "  Scheduler live reload will apply it on the next tick; no restart required."
+            );
         }
     }
     Ok(())
 }
 
-/// Minimal jobs.yaml toggle: sets/adds `enabled: true/false` for the given
-/// job id.  Uses a line-oriented rewrite (no full YAML parse) to preserve
-/// comments and formatting.
-///
-/// If jobs.yaml does not exist, creates a minimal stub with the job entry.
-// ponytail: line-based rewrite; upgrade to serde_yaml if jobs.yaml structure
-// diverges beyond simple key: bool pairs.
+/// Toggle an existing job in the canonical [`crate::cron::JobsFile`] schema.
+/// The shared mutation helper reloads under an OS lock, validates the complete
+/// generation, and atomically commits it. Missing jobs fail closed: a job needs
+/// a real schedule, name, prompt, and timeout from `neoth cron add` before it
+/// can be self-activated.
 fn update_jobs_yaml(path: &std::path::Path, job_id: &str, turn_on: bool) -> Result<()> {
-    let state_str = if turn_on { "true" } else { "false" };
-
-    let content = if path.exists() {
-        std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("read jobs.yaml: {e}"))?
-    } else {
-        String::new()
-    };
-
-    // Check if job_id already appears as a YAML key.
-    let key_pattern = format!("{job_id}:");
-    let updated = if content.lines().any(|l| l.trim_start().starts_with(&key_pattern)) {
-        // Replace the `enabled:` line inside the job block.
-        // Simple heuristic: replace the first `enabled:` line AFTER the job_id line.
-        let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-        let mut in_block = false;
-        let mut replaced = false;
-        for line in &mut lines {
-            if line.trim_start().starts_with(&key_pattern) {
-                in_block = true;
-            } else if in_block && line.trim_start().starts_with("enabled:") && !replaced {
-                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-                *line = format!("{indent}enabled: {state_str}");
-                replaced = true;
-                in_block = false;
-            } else if in_block && !line.trim().is_empty() && !line.trim_start().starts_with(' ') {
-                // Hit a new top-level key — job block ended without finding `enabled`.
-                in_block = false;
-            }
-        }
-        if !replaced {
-            // Append enabled under the job block — find insertion point.
-            // ponytail: fallback append; full parse when structure gets complex.
-            let mut out = lines.join("\n");
-            out.push('\n');
-            out
-        } else {
-            lines.join("\n") + "\n"
-        }
-    } else {
-        // Job not present — append a minimal stub.
-        let mut out = content;
-        if !out.ends_with('\n') && !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&format!("{job_id}:\n  enabled: {state_str}\n"));
-        out
-    };
-
-    std::fs::write(path, updated)
-        .map_err(|e| anyhow::anyhow!("write jobs.yaml: {e}"))?;
-    Ok(())
+    crate::cron::JobsFile::modify_at_path(path, |jobs| {
+        let job = jobs
+            .jobs
+            .iter_mut()
+            .find(|job| job.id == job_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cron job `{job_id}` does not exist in {} — create its full \
+                     schedule first with `neoth cron add`",
+                    path.display()
+                )
+            })?;
+        job.enabled = turn_on;
+        Ok(())
+    })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -403,7 +384,7 @@ mod tests {
     use crate::permissions::AutonomyLevel;
     use crate::{
         config::{FreedomConfig, SelfActivationConfig},
-        permissions::{evaluate, Action},
+        permissions::{Action, evaluate},
     };
     use tempfile::TempDir;
 
@@ -431,7 +412,11 @@ mod tests {
     #[test]
     fn self_activate_blocked_below_full_autonomy() {
         // Strict, Standard, Elevated all deny or confirm — never Allow.
-        for level in [AutonomyLevel::Strict, AutonomyLevel::Standard, AutonomyLevel::Elevated] {
+        for level in [
+            AutonomyLevel::Strict,
+            AutonomyLevel::Standard,
+            AutonomyLevel::Elevated,
+        ] {
             let action = Action::SelfSkillToggle {
                 skill_id: "fact-check".to_string(),
                 enable: true,
@@ -478,7 +463,11 @@ mod tests {
 
         // Simulate the preflight check that run_skill_toggle performs.
         let id_lc = "fact-check";
-        let in_disabled = cfg.skills.disabled.iter().any(|s| s.trim().to_lowercase() == id_lc);
+        let in_disabled = cfg
+            .skills
+            .disabled
+            .iter()
+            .any(|s| s.trim().to_lowercase() == id_lc);
         assert!(
             in_disabled,
             "preflight should detect skill is in the disabled list"
@@ -514,17 +503,31 @@ mod tests {
         // Load, apply toggle, save.
         let mut loaded = FreedomConfig::load_from_path(&yaml_path).unwrap();
         let id_lc = "fact-check";
-        loaded.skills.enabled.retain(|s| s.trim().to_lowercase() != id_lc);
-        loaded.skills.disabled.retain(|s| s.trim().to_lowercase() != id_lc);
+        loaded
+            .skills
+            .enabled
+            .retain(|s| s.trim().to_lowercase() != id_lc);
+        loaded
+            .skills
+            .disabled
+            .retain(|s| s.trim().to_lowercase() != id_lc);
         loaded.skills.disabled.push(id_lc.to_string());
         // save_public_to_default_path writes to ~/.neoth/freedom.yaml.
         // We test the in-memory mutation only (path-save needs home setup).
         assert!(
-            loaded.skills.disabled.iter().any(|s| s.trim().to_lowercase() == id_lc),
+            loaded
+                .skills
+                .disabled
+                .iter()
+                .any(|s| s.trim().to_lowercase() == id_lc),
             "skill should appear in disabled list after toggle"
         );
         assert!(
-            !loaded.skills.enabled.iter().any(|s| s.trim().to_lowercase() == id_lc),
+            !loaded
+                .skills
+                .enabled
+                .iter()
+                .any(|s| s.trim().to_lowercase() == id_lc),
             "skill should NOT appear in enabled list after disable toggle"
         );
     }
@@ -553,29 +556,68 @@ mod tests {
         };
         let decision = evaluate(&action, AutonomyLevel::Full);
         let confirm_cron = false;
-        let would_bail = matches!(decision, crate::permissions::Decision::Confirm(_)) && !confirm_cron;
+        let would_bail =
+            matches!(decision, crate::permissions::Decision::Confirm(_)) && !confirm_cron;
         assert!(would_bail, "missing --confirm-cron should trigger bail");
+    }
+
+    #[test]
+    fn custom_autonomy_cannot_enable_cron_registration_via_override() {
+        let dir = TempDir::new().unwrap();
+        let mut cfg = make_cfg(AutonomyLevel::Custom, false);
+        cfg.self_activation.allow_cron_registration = true;
+        cfg.custom_autonomy.overrides.insert(
+            crate::permissions::ActionKind::SelfCronRegister,
+            crate::permissions::CustomDecision::Allow,
+        );
+
+        let error =
+            run_cron_toggle(cfg, dir.path(), "my-job", true, true, OutputFormat::Json).unwrap_err();
+        assert!(error.to_string().contains("disabled under custom autonomy"));
+        assert!(!dir.path().join("jobs.yaml").exists());
     }
 
     // ── jobs.yaml writer ──────────────────────────────────────────────────────
 
     #[test]
-    fn update_jobs_yaml_creates_stub_when_missing() {
+    fn update_jobs_yaml_rejects_missing_job_without_creating_partial_schema() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("jobs.yaml");
-        update_jobs_yaml(&path, "my-job", true).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("my-job:"), "stub should contain job id");
-        assert!(content.contains("enabled: true"), "stub should set enabled: true");
+        let error = update_jobs_yaml(&path, "my-job", true).unwrap_err();
+        assert!(
+            error.to_string().contains("neoth cron add"),
+            "missing jobs need an actionable full-schema command: {error:#}"
+        );
+        assert!(
+            !path.exists(),
+            "a missing job must not create a partial file"
+        );
     }
 
     #[test]
     fn update_jobs_yaml_disable_existing_job() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("jobs.yaml");
-        std::fs::write(&path, "my-job:\n  enabled: true\n  schedule: \"0 * * * *\"\n").unwrap();
+        std::fs::write(
+            &path,
+            "version: 1\njobs:\n  - id: my-job\n    name: My job\n    enabled: true\n    schedule:\n      cron: '0 * * * *'\n    prompt: Do the work\n    timeout_seconds: 60\n",
+        )
+        .unwrap();
         update_jobs_yaml(&path, "my-job", false).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("enabled: false"), "should flip enabled to false");
+        let jobs = crate::cron::JobsFile::from_yaml_str(&content).unwrap();
+        assert!(!jobs.jobs[0].enabled, "should flip enabled to false");
+    }
+
+    #[test]
+    fn update_jobs_yaml_unknown_id_leaves_valid_file_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let original = "version: 1\njobs:\n  - id: existing\n    name: Existing\n    enabled: true\n    schedule:\n      cron: '0 * * * *'\n    prompt: Do the work\n    timeout_seconds: 60\n";
+        std::fs::write(&path, original).unwrap();
+
+        let error = update_jobs_yaml(&path, "missing", false).unwrap_err();
+        assert!(error.to_string().contains("does not exist"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     }
 }

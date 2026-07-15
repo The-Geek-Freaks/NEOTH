@@ -289,7 +289,10 @@ pub(crate) fn is_non_public_endpoint(endpoint: &str) -> bool {
             // embedded IPv4 — otherwise `::ffff:192.168.1.1` or the mapped IMDS
             // `::ffff:169.254.169.254` would sail past the pure-IPv6 checks below.
             if let Some(v4) = ip.to_ipv4_mapped() {
-                return v4.is_private() || v4.is_link_local() || v4.is_loopback() || v4.is_unspecified();
+                return v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_loopback()
+                    || v4.is_unspecified();
             }
             let seg0 = ip.segments()[0];
             ip.is_loopback()
@@ -429,7 +432,8 @@ mod tests {
             assert!(
                 is_local_endpoint(e.endpoint),
                 "{} should be local (localhost/127.0.0.1/::1): {}",
-                e.provider_id, e.endpoint
+                e.provider_id,
+                e.endpoint
             );
         }
     }
@@ -442,28 +446,59 @@ mod tests {
             assert!(
                 !is_local_endpoint(e.endpoint),
                 "{} should be remote (not localhost/127.0.0.1/::1): {}",
-                e.provider_id, e.endpoint
+                e.provider_id,
+                e.endpoint
             );
         }
     }
 
     #[test]
     fn is_local_endpoint_matches_ipv6_loopback() {
-        assert!(is_local_endpoint("http://[::1]:11434/v1"), "[::1] bracketed form");
+        assert!(
+            is_local_endpoint("http://[::1]:11434/v1"),
+            "[::1] bracketed form"
+        );
         assert!(is_local_endpoint("http://::1:11434/v1"), "bare ::1 form");
         assert!(is_local_endpoint("http://localhost:11434/v1"), "localhost");
         assert!(is_local_endpoint("http://127.0.0.1:11434/v1"), "127.0.0.1");
-        assert!(is_local_endpoint("http://localhost/v1"), "localhost no port");
+        assert!(
+            is_local_endpoint("http://localhost/v1"),
+            "localhost no port"
+        );
         // Wave-10: full-form + IPv4-mapped IPv6 loopback must also be local.
-        assert!(is_local_endpoint("https://[0:0:0:0:0:0:0:1]:11434/v1"), "full-form ::1");
-        assert!(is_local_endpoint("https://[::ffff:127.0.0.1]:8080/v1"), "IPv4-mapped loopback");
-        assert!(!is_local_endpoint("https://api.openai.com/v1"), "cloud endpoint");
-        assert!(!is_local_endpoint("https://api.deepseek.com/v1"), "cloud endpoint 2");
+        assert!(
+            is_local_endpoint("https://[0:0:0:0:0:0:0:1]:11434/v1"),
+            "full-form ::1"
+        );
+        assert!(
+            is_local_endpoint("https://[::ffff:127.0.0.1]:8080/v1"),
+            "IPv4-mapped loopback"
+        );
+        assert!(
+            !is_local_endpoint("https://api.openai.com/v1"),
+            "cloud endpoint"
+        );
+        assert!(
+            !is_local_endpoint("https://api.deepseek.com/v1"),
+            "cloud endpoint 2"
+        );
         // Wave-8 regression: near-miss hosts a substring match wrongly flagged.
-        assert!(!is_local_endpoint("http://127.0.0.10/v1"), "127.0.0.10 is not loopback");
-        assert!(!is_local_endpoint("http://[::100]:8080/v1"), "[::100] is not loopback");
-        assert!(!is_local_endpoint("http://[::1a]:8080/v1"), "[::1a] is not loopback");
-        assert!(!is_local_endpoint("http://localhost.evil.com/v1"), "localhost.evil.com is remote");
+        assert!(
+            !is_local_endpoint("http://127.0.0.10/v1"),
+            "127.0.0.10 is not loopback"
+        );
+        assert!(
+            !is_local_endpoint("http://[::100]:8080/v1"),
+            "[::100] is not loopback"
+        );
+        assert!(
+            !is_local_endpoint("http://[::1a]:8080/v1"),
+            "[::1a] is not loopback"
+        );
+        assert!(
+            !is_local_endpoint("http://localhost.evil.com/v1"),
+            "localhost.evil.com is remote"
+        );
     }
 
     #[test]
@@ -477,8 +512,8 @@ mod tests {
             "https://172.16.4.2/v1",
             "https://169.254.169.254/latest/meta-data", // AWS IMDS
             "http://user:pass@10.1.2.3:9000/v1",
-            "https://[fc00::1]:8080/v1",   // ULA
-            "https://[fe80::1]:8080/v1",   // link-local
+            "https://[fc00::1]:8080/v1", // ULA
+            "https://[fe80::1]:8080/v1", // link-local
             // Wave-19: IPv4-mapped forms of private / IMDS addresses.
             "https://[::ffff:192.168.1.100]:8080/v1",
             "https://[::ffff:10.0.0.5]/v1",

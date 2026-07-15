@@ -117,8 +117,7 @@ pub fn builtin_full_auto() -> Preset {
 pub fn builtin_balanced() -> Preset {
     Preset {
         description: Some(
-            "Smart background features, no cost surprises. $10/day cap, standard autonomy."
-                .into(),
+            "Smart background features, no cost surprises. $10/day cap, standard autonomy.".into(),
         ),
         daily_usd_cap: Some(10.0),
         autonomy: Some("standard".into()),
@@ -258,7 +257,10 @@ mod tests {
         // Cost cap is set + surfaced in the consent diff.
         assert!(body.contains("daily_usd_cap: 25"));
         assert!(
-            report.warn_changes.iter().any(|(p, _, _)| p == "media.cloud_stt_enabled"),
+            report
+                .warn_changes
+                .iter()
+                .any(|(p, _, _)| p == "media.cloud_stt_enabled"),
             "cloud media must land in the consent diff: {:?}",
             report.warn_changes
         );

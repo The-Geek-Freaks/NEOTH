@@ -1,6 +1,6 @@
 //! Aider-style compact repo-map summary (GOLD-ADAPT-AWE-AIDER-01).
 //!
-//! Produces a bounded (~2 K-token) call-graph/symbol summary of the
+//! Produces a bounded (~2 K-token) symbol summary of the
 //! operator's repo suitable for prepending to coding-buddy prompts.
 //! Built entirely from the [`super::walker::RepoMap`] already held in
 //! memory — **no filesystem re-parse, no regex re-scan**.
@@ -34,13 +34,11 @@
 //! call-graph edges they can extend `RepoMapSummary` in a follow-up
 //! (Phase 2 of this item).
 //!
-//! ## Wiring note
+//! ## Wiring
 //!
-//! The coding-intent path (`coding/dispatcher.rs` 0x13
-//! CODING_INTENT) is hot (VSCode-active lane in the parallel worktree).
-//! The builder + its prompt-block accessor ship here as a standalone
-//! library; wiring into the dispatcher's `prompt_bundle` is a
-//! follow-up task (clean-lane write into `coding/dispatcher.rs`).
+//! `neoth code` loads the persisted map for the current working directory,
+//! builds this summary, and passes it to the coding decomposer as
+//! `project_context`. An absent/unreadable map is a best-effort no-op.
 
 use serde::{Deserialize, Serialize};
 
@@ -111,11 +109,7 @@ pub fn build_summary(map: &RepoMap, token_budget: usize) -> RepoMapSummary {
 
     // ── Per-file symbol table ─────────────────────────────────────────
     // Only files that have at least one symbol; ranked by symbol count.
-    let mut files_with_syms: Vec<_> = map
-        .files
-        .iter()
-        .filter(|f| !f.symbols.is_empty())
-        .collect();
+    let mut files_with_syms: Vec<_> = map.files.iter().filter(|f| !f.symbols.is_empty()).collect();
     // Descending symbol count, then ascending path for determinism.
     files_with_syms.sort_by(|a, b| {
         b.symbols
@@ -146,7 +140,12 @@ pub fn build_summary(map: &RepoMap, token_budget: usize) -> RepoMapSummary {
         // ~(1 + N) lines × ~40 chars average. If it clearly won't fit
         // we skip it (truncated), otherwise we write line-by-line.
         // This keeps the budget check O(symbols) not O(chars²).
-        let file_line = format!("{}  ({}  {}LOC)\n", file.path, file.language.label(), file.loc);
+        let file_line = format!(
+            "{}  ({}  {}LOC)\n",
+            file.path,
+            file.language.label(),
+            file.loc
+        );
         if buf.len() + file_line.len() >= char_budget {
             files_truncated += 1;
             continue;
@@ -459,11 +458,7 @@ mod tests {
         let map = fixture_map();
         let s = build_summary(&map, DEFAULT_TOKEN_BUDGET);
         // Rust:2 and markdown:1 should appear in langs= section.
-        assert!(
-            s.text.contains("rust:2"),
-            "rust count missing: {}",
-            s.text
-        );
+        assert!(s.text.contains("rust:2"), "rust count missing: {}", s.text);
         assert!(
             s.text.contains("markdown:1"),
             "markdown count missing: {}",

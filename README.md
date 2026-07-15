@@ -13,8 +13,9 @@
 <p>
   NEOTH is the personal AI system for people who want a real assistant, not a
   forgetful chatbot. It remembers what you approve, helps in daily life, codes
-  seriously, connects to your tools, runs on your own machine, and leaves proof
-  for every sensitive decision.
+  seriously, connects to your tools, runs on your own machine, and leaves typed
+  audit proof for its governed sensitive paths, with exceptions documented in
+  the threat model.
 </p>
 
 <p>
@@ -60,31 +61,49 @@
 
 ## Install
 
-> The source tree is versioned for **NEOTH 1.0.0**. Tagged release artifacts and
-> the crates.io package are not published yet, so install from source or the
-> bootstrap script; `cargo install neoth` remains unavailable until publication.
+> The source tree is versioned for **NEOTH 1.0.0**, but no `v1.0.0` release or
+> crates.io package exists yet. The current working install path is the source
+> checkout below. The bootstrap commands become valid only after the first
+> compatible signed release is published; `cargo install neoth --locked --features release-desktop`
+> becomes valid
+> only after the ordered SDK + core crates.io publication completes.
 
-One-command install (Linux/macOS):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
-neoth gui
-```
-
-Windows (PowerShell):
-
-```powershell
-irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
-neoth gui
-```
-
-From source:
+Current install (source checkout):
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH/SRC
-cargo install --path neothd
-cargo install --path neothd-gui
+cargo install --locked --path neothd --features release-desktop
+cargo install --locked --path neothd-gui
+cargo install --locked --path neoth-migrate
+cargo install --locked --path neoth-relay
+neoth gui
+```
+
+After the first signed release, one-command install (Linux/macOS):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH" # profile wiring applies automatically to new shells
+neoth gui
+```
+
+The binary installer always verifies SHA-256 plus release authenticity. It uses
+`minisign` with the [pinned public key](NEOTH_RELEASE_MINISIGN_PUBKEY.txt), or
+an installed `cosign` with the exact release-workflow identity. With neither
+verifier it refuses installation unless the operator explicitly selects the
+`NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` emergency path.
+
+Desktop archives contain `neoth`, the `neothd` compatibility launcher, the
+separate `neothd-gui` binary consumed by `neoth gui`, `neoth-migrate`, and
+`neoth-relay`. Only the explicitly headless musl server archive omits the GUI.
+The future crates.io package installs only the `neoth`/`neothd` core package;
+use a release archive or source checkout for the companion executables.
+
+After the first signed release, Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
 neoth gui
 ```
 
@@ -105,7 +124,7 @@ autonomy NEOTH gets. YAML is optional. The happy path is a GUI path.
 
 | First run | Memory proof |
 | :-- | :-- |
-| <img src=".github/assets/neoth-demo-install.svg" alt="NEOTH first-run: installs from the source bootstrap, launches the GUI, wizard asks plain setup questions" width="100%"> | <img src=".github/assets/neoth-demo-memory.svg" alt="NEOTH memory: 'remember I prefer Rust' is saved to profile with evidence across five tiers plus vault, and neoth verify confirms the WAL chain" width="100%"> |
+| <img src=".github/assets/neoth-demo-install.svg" alt="NEOTH first-run: installs from a source checkout, launches the GUI, wizard asks plain setup questions" width="100%"> | <img src=".github/assets/neoth-demo-memory.svg" alt="NEOTH memory: 'remember I prefer Rust' is saved to profile with evidence across five tiers plus vault, and neoth verify confirms the WAL chain" width="100%"> |
 
 | Coding buddy | Privacy audit |
 | :-- | :-- |
@@ -127,7 +146,7 @@ That means:
 | :-- | :-- |
 | **Your memory** | Profile facts, project context, decisions, and recall live in your NEOTH home. |
 | **Your consent** | Sensitive profile changes, provider routes, plugins, and external actions are inspectable. |
-| **Your tools** | CLI, GUI, chat channels, Obsidian, Paperless, email, calendar, n8n, local models, and private mesh. |
+| **Your tools** | CLI, GUI, chat channels, Obsidian, Paperless, CalDAV calendar, optional source-build IMAP email, n8n, local models, and private mesh. |
 | **Your proof** | WAL-backed audit, evidence-linked profile facts, plugin capability logs, and privacy commands. |
 | **Your upgrade path** | Starts simple, scales into a serious operator runtime without switching products. |
 
@@ -143,7 +162,7 @@ operator.
 | :-- | :-- |
 | Open the GUI and talk normally. | Use the CLI, local models, WAL, policies, plugins, and cluster commands. |
 | Say "remember this" and approve what matters. | Inspect exact evidence, confidence, provider destination, and redaction state. |
-| Connect Telegram, Slack, WhatsApp, Obsidian, Paperless, email, and calendar. | Script workflows, bind n8n, define hooks, use MCP, and review plugin capabilities. |
+| Connect Telegram, Slack, WhatsApp, Obsidian, Paperless, and CalDAV calendar; source builds can opt into IMAP triage. | Script workflows, bind n8n, define hooks, use MCP, and review plugin capabilities. |
 | Ask "what did we decide?" and get useful recall. | Run `neoth recall`, `neoth verify`, `neoth privacy audit`, `neoth plugin ledger`. |
 | Let NEOTH explain setup problems in plain language. | Pipe `neoth doctor --output json` into CI or fleet checks. |
 
@@ -156,23 +175,23 @@ operator.
 | **Buddy** | Keeps a durable personal profile, remembers approved facts, adapts to your style, and asks before crossing trust boundaries. |
 | **Brain** | Routes work through role-bound brain paths for fast answers, deeper reasoning, and verification. |
 | **Memory** | Uses five durable memory tiers — episode, profile, ground truth, consolidated, long-term — plus your external vault (Obsidian/Paperless) ingested into them. |
-| **Daily life** | Ingests Paperless documents, email, calendar, notes, files, images, audio, and video into reviewable memory. |
+| **Daily life** | Ingests Paperless documents, CalDAV calendar, notes, files, images, audio, and video into reviewable memory; IMAP inbox triage is a source-build opt-in and has no SMTP/send path. |
 | **Coding** | Plans work, tracks tasks on a canvas/Kanban board, runs checks, learns repo context, and promotes reviewed decisions into memory. |
 | **Self-diagnosis** | Scores its own event stream for collapse risk (Babel-Index): seven variables per rolling window, pre-registered failure labels, early warning before the agent loop — not after. |
 | **Self-reflection** | Looks back on its own work — weekly topic recap plus opt-in daily and yearly summaries archived and written to Obsidian as daily notes / yearly summaries — runs an opt-in weekly Hacker News tech-currency scan that flags trending topics your skills don't cover, and proposes review-gated SkillOpt improvements to its own skills (never auto-applied). |
 | **Self-evolution** | Dreams nightly (`neoth dream now`): clusters the week's episodes into themes and writes them to Obsidian. Proposes, council-reviews, and applies upgrades to its own skills with rollback (`neoth self-improve`). Notices its own behavioral patterns and proposes changes you approve or decline (`neoth self-dev`). Distills tool sequences you repeat into candidate skills (`neoth distill`). |
-| **Migration** | Brings your history with you: `neoth-migrate` imports Claude Code / Codex / Gemini sessions as searchable memory; `neoth transfer export` moves whole memories between machines as X25519-encrypted, Ed25519-signed bundles. |
-| **Autonomy** | Four operator-set levels (`neoth autonomy strict..full`) plus one-word `neoth sudomode`; the security floor never moves regardless of level; your own plain-YAML constitution is injected before every prompt (`neoth moral-core`). |
+| **Migration** | Brings your history with you: `neoth-migrate detect` discovers complete OpenClaw, Hermes, OpenHuman, and Veronica homes; dry-run previews them and consent-gated atomic apply imports their local memory as reviewable candidates. `neoth import session` covers Claude Code / Codex / Gemini transcripts, and `neoth transfer export` moves whole memories between machines as X25519-encrypted, Ed25519-signed bundles. |
+| **Autonomy** | Four built-in levels (`strict` through `full`) plus `custom`: a Standard baseline with exhaustive per-action `allow` / `confirm` / `deny` overrides in `freedom.yaml`; `neoth permissions show/check/set/clear` exposes and edits the active policy atomically. Custom cannot weaken Full's hard safety floor, and unattended cron/auto-update stay fail-closed; one-word `neoth sudomode`; your own plain-YAML constitution is injected before every prompt (`neoth moral-core`). |
 | **Gateway** | OpenAI-compatible endpoint (`/v1/chat/completions`): point Cursor, Aider, or Continue at NEOTH and every call gets your provider routing, council, and audit trail. |
 | **Loops** | `neoth loop run "<goal>" --until "<criterion>"` — bounded autonomous iteration with L1-L3 budget ladders, full history in `neoth loop history`. |
 | **Recon** | Authorized-engagement recon through gated `uncover` (exposed-host discovery) and `tlsx` (TLS/cert intel) shims — refused under Strict autonomy and audit-logged. |
-| **Automation** | Runs small local cron jobs and bigger localhost n8n workflows through the same policy and audit layer. |
-| **Channels** | Talks through GUI, CLI, Telegram, WhatsApp Business, Slack Socket Mode, Discord, and Keet-style private channels. |
+| **Automation** | Runs small local cron jobs and larger n8n workflows through a default-off, scoped localhost API with endpoint-specific consent and WAL auditing. |
+| **Channels** | Talks through GUI, CLI, Telegram, WhatsApp Business, the optional repository-owned WhatsApp Web/Baileys sidecar, Slack Socket Mode, and Discord. Keet is explicitly unavailable because it has no supported public chat API. |
 | **Private mesh** | Pairs nodes over LAN/mDNS, Tailscale, Hysteria, and consent-gated cluster discovery. |
 | **Plugins** | Loads skills and WASM plugins behind capability gates, signature checks, revocation, and hostcall audit. |
 | **Doctor** | Explains broken setup, missing keys, model cache problems, channel wiring, disk issues, plugin state, provider flapping, and cluster discovery. |
 
-<img src=".github/assets/neoth-readme-life-automation.svg" alt="NEOTH real-life automation — Paperless documents, email, calendar, workflows, and notes become useful only after memory, approval, and audit gates" width="100%">
+<img src=".github/assets/neoth-readme-life-automation.svg" alt="NEOTH real-life automation — Paperless documents, optional IMAP email triage, CalDAV calendar, workflows, and notes become useful only after memory, approval, and audit gates" width="100%">
 
 ## Privacy
 
@@ -221,18 +240,31 @@ Read the full privacy model in [docs/privacy.md](docs/privacy.md).
 
 The differentiators are mechanisms you can inspect, not slogans.
 
-<img src=".github/assets/neoth-readme-verifiable-loyalty.svg" alt="NEOTH verifiable loyalty — every action lands in an append-only, HMAC-chained WAL you can verify, filter, and audit" width="100%">
+<img src=".github/assets/neoth-readme-verifiable-loyalty.svg" alt="NEOTH verifiable loyalty — governed sensitive paths emit typed events into an append-only, HMAC-chained WAL you can verify, filter, and audit" width="100%">
 
-Every sensitive action lands in an append-only, HMAC-chained WAL — and you get
-the commands to prove what it did: `neoth verify` (chain integrity),
+Governed sensitive paths emit typed events into an append-only, HMAC-chained
+WAL — and you get the commands to prove what was recorded: `neoth verify`
+(chain integrity),
 `neoth wal show --type <event>` (every frame of one kind), `neoth privacy audit --last 30d`
-(what actually left the device).
+(recorded provider/channel/privacy activity). Audit coverage and explicit
+best-effort or log-only exceptions are listed in the
+[threat model](docs/security/threat-model.md); chain verification proves that
+recorded frames were not altered, not that every possible side effect emitted
+a frame.
 
 <img src=".github/assets/neoth-readme-capability-gate.svg" alt="NEOTH plugin capability gate — hostcalls are gated at runtime by the operator-granted level; over-level calls are refused and audited as a 0xC7 frame" width="100%">
 
-A WASM plugin can only use the hostcalls its manifest declared and you approved at
-`neoth plugin enable`; a call above that level is refused fail-closed at runtime and
-recorded as a `0xC7 PLUGIN_CAP_DENIED` audit frame — visible in
+A WASM plugin built against the versioned `neoth-plugin-sdk` guest ABI exports
+`neoth_abi_version() -> i32` plus `neoth_run() -> i32`; the daemon checks ABI v1
+before execution. It can only use the hostcalls its manifest declared and you
+approved at `neoth plugin enable`.
+That approval is bound to the exact permission, canonical
+manifest digest, and WASM digest: any later semantic manifest, capability, or binary
+change cannot load on the next daemon start until you explicitly re-enable it. The
+running daemon keeps only its already-validated immutable module, approval, and
+manifest-derived fuel/memory-limit snapshot. A call
+above the approved level is refused fail-closed at runtime and recorded as a
+`0xC7 PLUGIN_CAP_DENIED` audit frame — visible in
 `neoth wal show --type plugin_cap_denied`, never silent.
 
 <img src=".github/assets/neoth-readme-fail-closed.svg" alt="NEOTH fail-closed consent — boundary crossings are denied by default and proceed only on an explicit, persisted operator grant; both allow and deny are audited" width="100%">
@@ -326,6 +358,15 @@ neoth babel status      # threshold, calibration, latest scores
 neoth babel windows     # the actual measurements, window by window
 ```
 
+`K_d` uses the content-free `K_d_v0` response histogram by default. Operators
+can select a configured local embedding checkpoint with
+`babel.k_d_embedding_model`; the central provider-completion boundary covers
+streaming and non-streaming successes, while Incognito calls never enter the
+feed. Optional `memory_signals` and `skill_signals` add versioned,
+content-free posture counters for contradictions, true recall misses, and the
+final skill-routing outcome. They are off by default and never silently
+rewrite the seven score variables.
+
 There is a bigger bet underneath: the collapse model comes from
 [delta-kosmologie](https://github.com/The-Geek-Freaks/delta-kosmologie), an
 open framework asking whether one scalar family predicts collapse across
@@ -387,10 +428,10 @@ each with the command that proves it on your machine:
 | Collapse prediction on its own runtime (Babel-Index) | **Yes** | No | No | No |
 | Coding canvas + Kanban | **Yes** | Partial | Canvas-focused | Desktop cockpit + Kanban |
 | Obsidian/vault workflow | **Yes** | Yes | File-based | Context-file based |
-| Paperless/email/calendar as memory inputs | **Yes** | Integrations | Skills/tools | Tools/skills |
+| Paperless/CalDAV as inputs; source-build IMAP triage | **Yes** | Integrations | Skills/tools | Tools/skills |
 | n8n localhost automation | **Yes** | No | Partial | Cron/tools |
 | WASM plugin capability sandbox | **Yes** | No | Skills | Skills/tools |
-| Private mesh with Tailscale/Hysteria/Keet path | **Partial** | No | Gateway/nodes | Gateway/platforms |
+| Private mesh with Tailscale/Hysteria/peeroxide path (NEOTH protocol, not Keet interop) | **Partial** | No | Gateway/nodes | Gateway/platforms |
 | Built for DAUs and pros at the same time | **Goal** | DAU-heavy | Power-user-heavy | Operator-heavy |
 
 Competitor columns were re-verified against upstream releases on **2026-07-03**

@@ -4,23 +4,17 @@
 //! 30 s), then writes an `EXTENDED/LocalSnapshot` WAL frame whose payload is
 //! the JSON-serialized [`crate::cluster::swarm::NodeResourceSnapshot`].
 //!
-//! `neoth cluster swarm` reads these frames (and peer `EXTENDED/SwarmResourceSnapshot`
-//! frames if gossip replication is wired later) to build the dashboard view.
-//!
-//! # Gossip replication note (deferred — TODO DES-14)
-//! `wal_sync::classify_event` branches on the top-level `event_type` byte only.
-//! All `EVENT_TYPE_EXTENDED` (0x00) frames — regardless of subtype — are
-//! treated identically by the ACL. Replicating only `SwarmResourceSnapshot`
-//! (0x03) but not `LocalSnapshot` (0x04) requires a classify_event update
-//! that keys on `(event_type, event_subtype)`. That change touches hot files
-//! owned by a parallel session; leave gossip replication as a follow-up and
-//! document the limitation here so the shippable core is the WAL emit +
-//! `neoth cluster swarm` reading local frames.
+//! `neoth cluster swarm` reads these local frames plus peer
+//! `EXTENDED/SwarmResourceSnapshot` frames to build the dashboard view. The
+//! Hyperswarm heartbeat sends authenticated peer snapshots, and the receive
+//! path persists them locally. The subtype-aware WAL ACL keeps
+//! `LocalSnapshot` frames local while allowing `SwarmResourceSnapshot` frames.
 
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::cluster::swarm::{NodeResourceSnapshot, SwarmConfig};
+use crate::cluster::swarm::NodeResourceSnapshot;
+use crate::config::SwarmConfig;
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::types::EventFlags;
 use crate::wal::writer::WalWriterHandle;
@@ -37,16 +31,9 @@ use crate::wal::writer::WalWriterHandle;
 /// consumed by `neoth cluster swarm`.
 ///
 /// # Wiring
-/// Called from `cli/serve.rs` immediately after the cluster transport block:
-/// ```rust,ignore
-/// #[cfg(feature = "cluster")]
-/// let _ = crate::daemon::resource_snapshot_cron::spawn_resource_snapshot_cron(
-///     crate::cluster::swarm::SwarmConfig::default(),
-///     writer.clone(),
-/// );
-/// ```
-/// TODO(FEAT-06): pass `config.swarm` (a `SwarmConfig` field on `FreedomConfig`)
-/// once `config/mod.rs` is unfrozen.
+/// Managed by the daemon cron fleet as `CronKey::ResourceSnapshot`. Reloading
+/// a changed `swarm.interval_secs` stops the old sampler and starts one task
+/// with the new interval; `swarm.enabled = false` removes it from the fleet.
 pub fn spawn_resource_snapshot_cron(
     config: SwarmConfig,
     writer: WalWriterHandle,
@@ -262,5 +249,19 @@ mod tests {
         sys.refresh_cpu_all();
         sys.refresh_memory();
         // If we get here without panicking, the system initialised correctly.
+    }
+
+    #[tokio::test]
+    async fn disabled_config_does_not_spawn_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, writer_task) =
+            crate::wal::writer::spawn(dir.path().join("000001.wal")).unwrap();
+        let config = SwarmConfig {
+            enabled: false,
+            ..SwarmConfig::default()
+        };
+
+        assert!(spawn_resource_snapshot_cron(config, writer).is_none());
+        writer_task.await.unwrap();
     }
 }

@@ -323,10 +323,7 @@ pub fn persona_mode_path(home: &std::path::Path) -> std::path::PathBuf {
 /// `.txt.tmp` + rename. Mode 0600 on unix. Emits
 /// `EVENT_TYPE_LOYAL_BUDDY_ACTIVATED` (0xFE) WAL frame via the provided
 /// writer handle. Mirrors `record_active_preset`.
-pub fn record_persona_mode(
-    home: &std::path::Path,
-    mode: crate::config::PersonaMode,
-) -> Result<()> {
+pub fn record_persona_mode(home: &std::path::Path, mode: crate::config::PersonaMode) -> Result<()> {
     let path = persona_mode_path(home);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
@@ -412,11 +409,9 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             // LOWKEY, the recommended default the daemon falls back to.
             let active =
                 load_active_preset(&home).unwrap_or(crate::profile::presets::ProfilePreset::Lowkey);
-            // Autonomy is a freedom.yaml knob; default Standard when the
-            // config is unreadable (matches AutonomyLevel::default()).
-            let autonomy = FreedomConfig::load_from_default_path()
-                .map(|c| c.autonomy)
-                .unwrap_or_default();
+            // A genuinely missing config uses Standard; an existing malformed
+            // policy is surfaced rather than rendered as a fabricated default.
+            let autonomy = FreedomConfig::load_from_default_path_or_default()?.autonomy;
             let rows = knob_rows(active, autonomy);
             render_knobs(&rows, &args.output);
             Ok(())
@@ -904,7 +899,7 @@ async fn run_drift(db_path: &std::path::Path, sub: DriftSub, output: &OutputForm
                      `neoth profile seed-baseline` (the one-shot 0xB3 migration anchor)."
                 ),
             };
-            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = FreedomConfig::load_from_default_path_or_default()?;
             let threshold = cfg.drift_alert.threshold;
             let alerting = cfg.drift_alert.enabled;
             let over = report.is_over(threshold);
@@ -1536,6 +1531,20 @@ async fn run_pipeline_cli_batch(
     let segment = wal_dir.join(format!("profile-run-{}.wal", crate::time::now_unix_secs(),));
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer")?;
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        ),
+        config
+            .inference
+            .slot_for(crate::config::inference::HemisphereRole::Left)
+            .model
+            .clone()
+            .or_else(|| config.provider_model.clone()),
+        "profile.cli_batch",
+    );
 
     let mut conn = store::open(db_path).context("reopen views.db for pipeline")?;
     let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
@@ -1553,7 +1562,7 @@ async fn run_pipeline_cli_batch(
         let result = crate::profile::run_pipeline(
             crate::profile::PipelineConn::Owned(&mut conn),
             &writer,
-            provider.as_ref(),
+            &provider,
             trigger_event,
             turns_back,
             &guard,
@@ -1576,6 +1585,7 @@ async fn run_pipeline_cli_batch(
             }
         }
     }
+    drop(provider);
     drop(writer);
     let _ = writer_join.await;
 
@@ -1764,8 +1774,9 @@ fn load_summary(conn: &rusqlite::Connection) -> Result<Vec<ProfileRow>> {
 
 fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProfileRow> {
     let value_json_str: String = r.get(1)?;
-    let value: serde_json::Value =
-        serde_json::from_str(&value_json_str).unwrap_or(serde_json::Value::Null);
+    let value: serde_json::Value = serde_json::from_str(&value_json_str).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
     let superseded_at: Option<i64> = r.get(5)?;
     Ok(ProfileRow {
         field: r.get(0)?,
@@ -2146,7 +2157,8 @@ fn render_knobs(rows: &[KnobRow], output: &OutputFormat) {
                 .collect();
             println!(
                 "{}",
-                serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string())
+                serde_json::to_string_pretty(&arr)
+                    .expect("profile export array contains only serializable values")
             );
         }
         OutputFormat::Table => {
@@ -3091,7 +3103,7 @@ mod tests {
     fn persona_mode_none_produces_no_identity_anchor_in_enriched_output() {
         // When no persona mode is set, identity_anchor=None and identity_locked=false →
         // the enriched system prompt must not contain the loyal-buddy anchor text.
-        use crate::pipeline::{build_enriched_request, EnrichmentInputs};
+        use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let enriched = build_enriched_request(EnrichmentInputs {
             prompt: "hello",
             operator_context: None,
@@ -3119,7 +3131,7 @@ mod tests {
     fn identity_anchor_injected_at_position_1_when_locked() {
         // When identity_locked=true and identity_anchor is set, it must appear
         // BEFORE operator_context in the assembled system prompt.
-        use crate::pipeline::{build_enriched_request, EnrichmentInputs};
+        use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let anchor = "[ANCHOR] test anchor text";
         let op_ctx = "operator context";
         let enriched = build_enriched_request(EnrichmentInputs {
@@ -3137,9 +3149,13 @@ mod tests {
             identity_locked: true,
             current_goal: None,
         });
-        let sys = enriched.system.expect("system must be Some when layers present");
+        let sys = enriched
+            .system
+            .expect("system must be Some when layers present");
         let anchor_pos = sys.find(anchor).expect("anchor must be in system prompt");
-        let op_pos = sys.find(op_ctx).expect("operator_context must be in system prompt");
+        let op_pos = sys
+            .find(op_ctx)
+            .expect("operator_context must be in system prompt");
         assert!(
             anchor_pos < op_pos,
             "identity_anchor (pos {anchor_pos}) must appear before operator_context (pos {op_pos})"

@@ -24,7 +24,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -79,20 +79,40 @@ async fn run_now(
     output: OutputFormat,
 ) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    let config = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let config = FreedomConfig::load_from_default_path_or_default()?;
     let embed = crate::providers::embed_provider_from_config(&config).await;
     // SPEC-12 Phase 4b — LLM theme labels, gated behind
     // `dreaming.summarize_themes` (cost-safe default OFF: it spends one
     // chat-provider call per cluster, which on a metered cloud provider
     // would bill). Built only when the flag is on AND a provider is
     // configured; otherwise deterministic `cluster-N-seed-id` labels.
-    let chat: Option<Box<dyn crate::providers::Provider>> = if config.dreaming.summarize_themes {
+    let chat: Option<crate::providers::cost_authorization::AuthorizedProvider> = if config
+        .dreaming
+        .summarize_themes
+    {
         // GOLD-ADOPT-21 — theme labels are a low-stakes utility call; route them
         // to the fast/cheap `inference.utility_provider` when configured (else
         // this is identical to the main provider).
-        crate::providers::from_config_for_utility(&config)
-            .await
-            .ok()
+        match crate::providers::from_config_for_utility(&config).await {
+            Ok(provider) => Some(
+                crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                    provider,
+                    crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+                        config.autonomy_policy(),
+                    )
+                    .context("open cost-authorization WAL for dream theme summaries")?,
+                    crate::providers::utility_model_for_config(&config),
+                    "dream.now.theme_summary",
+                ),
+            ),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "dream: theme-summary provider unavailable; using deterministic labels"
+                );
+                None
+            }
+        }
     } else {
         None
     };
@@ -101,9 +121,10 @@ async fn run_now(
         .unwrap_or(DEFAULT_WINDOW);
     let max = max_events.unwrap_or(DEFAULT_MAX_EVENTS);
 
-    // One-shot CLI: writer = None — `emit_dream_composed` below handles the
-    // audit (skips when a daemon owns the writer, to avoid a segment race).
-    let report = run_one_pass(&home, embed.as_deref(), chat.as_deref(), window, max, None).await?;
+    // The pass-level writer remains None because `emit_dream_composed` below
+    // owns that event. Any theme-summary cloud leaf has its independent,
+    // collision-resistant cost/permission WAL through `chat` above.
+    let report = run_one_pass(&home, embed.as_deref(), chat.as_ref(), window, max, None).await?;
 
     // Best-effort DREAM_COMPOSED audit — only when this process wrote dreams
     // AND no daemon owns the writer (avoid racing the daemon's segment).
@@ -171,7 +192,11 @@ fn run_list(output: OutputFormat) -> Result<()> {
             let entries = std::fs::read_to_string(&p)
                 .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
                 .unwrap_or(0);
-            Some(DayEntry { day, entries, path: p })
+            Some(DayEntry {
+                day,
+                entries,
+                path: p,
+            })
         })
         .collect();
 
@@ -223,7 +248,10 @@ fn run_show(day: &str, output: OutputFormat) -> Result<()> {
     let path = dreams_dir.join(format!("{day}.jsonl"));
 
     if !path.exists() {
-        bail!("no dream file for day `{day}` (expected {})", path.display());
+        bail!(
+            "no dream file for day `{day}` (expected {})",
+            path.display()
+        );
     }
 
     let raw = std::fs::read_to_string(&path)
@@ -232,7 +260,9 @@ fn run_show(day: &str, output: OutputFormat) -> Result<()> {
     let dreams: Vec<serde_json::Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).unwrap_or_else(|_| serde_json::Value::String(l.to_owned())))
+        .map(|l| {
+            serde_json::from_str(l).unwrap_or_else(|_| serde_json::Value::String(l.to_owned()))
+        })
         .collect();
 
     render_show(day, &dreams, output);
@@ -260,7 +290,9 @@ fn render_show(day: &str, dreams: &[serde_json::Value], output: OutputFormat) {
                 // Pretty-print JSON if it's an object; fall back to raw string.
                 let line = match d {
                     serde_json::Value::String(s) => s.clone(),
-                    other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+                    other => {
+                        serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string())
+                    }
                 };
                 println!("[{}] {}", i + 1, line);
             }

@@ -5,11 +5,10 @@
 //! the **frame envelope + vector-clock ordering** the cross-peer
 //! WAL replication needs.
 //!
-//! v0.1 scope = **VectorClock + GossipFrame types + ordering
-//! primitives + tests**. The actual transport (Hysteria relay or
-//! direct peer connection) + the JSONL append-stream + the
-//! BudgetToken Raft consensus ship in multi-week follow-ups per
-//! `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
+//! These primitives are live: `cluster::wal_sync` applies the event ACL,
+//! replay budget, deduplication, persist-before-commit ordering, and foreign
+//! ledger; peeroxide and the optional iroh carrier both use the same acceptance
+//! stack. Consensus/task-budget semantics are separate from WAL gossip.
 //!
 //! ## Vector clocks — what + why
 //!
@@ -135,8 +134,9 @@ pub struct GossipFrame {
     /// Which peer emitted this frame. Stable identity tied to the
     /// cluster registry (`PairedPeer::pub_key_hex`).
     pub origin: PeerPubkey,
-    /// Origin's logical sequence — monotonic per-peer, used by the
-    /// dedup table to drop replays without re-applying the payload.
+    /// Stable origin event identity (first 64 bits of SHA-256 over the
+    /// canonical WAL frame). Retransmitting the same frame after a queue
+    /// failure or daemon restart therefore keeps the same dedup key.
     pub event_seq: u64,
     /// Unix-epoch seconds at emit. Used for the
     /// `cluster::gossip::ReplayBudget` window check.
@@ -159,7 +159,7 @@ impl GossipFrame {
     ///   1. Tag is replicable (defence — emitter should have dropped
     ///      DoNotGossip frames upstream)
     ///   2. Inside the operator's ReplayBudget window
-    ///   3. Not a duplicate (origin / event_seq already in dedup map)
+    ///   3. Not a duplicate (origin / stable event_seq already in dedup set)
     ///
     /// Returns the typed `GossipAcceptance` so the caller can log
     /// the specific reason a frame was dropped (operator-visible
@@ -168,7 +168,7 @@ impl GossipFrame {
         &self,
         budget: &super::gossip::ReplayBudget,
         now_ts_unix: i64,
-        last_seen_seq: Option<u64>,
+        already_seen: bool,
     ) -> GossipAcceptance {
         if !self.tag.is_replicable() {
             return GossipAcceptance::DroppedDoNotGossipTag;
@@ -176,12 +176,10 @@ impl GossipFrame {
         if !budget.is_within_budget(self.timestamp_unix, now_ts_unix) {
             return GossipAcceptance::DroppedOutsideReplayBudget;
         }
-        if let Some(last) = last_seen_seq {
-            if self.event_seq <= last {
-                return GossipAcceptance::DroppedDuplicate {
-                    last_seen_seq: last,
-                };
-            }
+        if already_seen {
+            return GossipAcceptance::DroppedDuplicate {
+                event_seq: self.event_seq,
+            };
         }
         GossipAcceptance::Accept
     }
@@ -200,7 +198,7 @@ pub enum GossipAcceptance {
     /// Receiver may ask the origin to re-pair fresh.
     DroppedOutsideReplayBudget,
     /// Already applied (event_seq ≤ last seen for this origin).
-    DroppedDuplicate { last_seen_seq: u64 },
+    DroppedDuplicate { event_seq: u64 },
 }
 
 #[cfg(test)]
@@ -319,7 +317,7 @@ mod tests {
         let now = 100_000_i64;
         let f = fixture_frame(5, now - 60, GossipTag::Replicate);
         assert_eq!(
-            f.evaluate_acceptance(&budget, now, None),
+            f.evaluate_acceptance(&budget, now, false),
             GossipAcceptance::Accept
         );
     }
@@ -331,7 +329,7 @@ mod tests {
         let now = 100_000_i64;
         let f = fixture_frame(5, now, GossipTag::DoNotGossip);
         assert_eq!(
-            f.evaluate_acceptance(&budget, now, None),
+            f.evaluate_acceptance(&budget, now, false),
             GossipAcceptance::DroppedDoNotGossipTag
         );
     }
@@ -344,7 +342,7 @@ mod tests {
         // 31 days ago — outside the 30-day default window.
         let f = fixture_frame(5, now - 32 * 86_400, GossipTag::Replicate);
         assert_eq!(
-            f.evaluate_acceptance(&budget, now, None),
+            f.evaluate_acceptance(&budget, now, false),
             GossipAcceptance::DroppedOutsideReplayBudget
         );
     }
@@ -355,28 +353,23 @@ mod tests {
         let budget = ReplayBudget::from_policy(&policy);
         let now = 100_000_i64;
         let f = fixture_frame(5, now, GossipTag::Replicate);
-        // Receiver has already applied event_seq 5 for this origin.
+        // Receiver has already applied this stable identity for this origin.
         assert_eq!(
-            f.evaluate_acceptance(&budget, now, Some(5)),
-            GossipAcceptance::DroppedDuplicate { last_seen_seq: 5 }
-        );
-        // event_seq < last → also duplicate (out-of-order replay).
-        let older = fixture_frame(3, now, GossipTag::Replicate);
-        assert_eq!(
-            older.evaluate_acceptance(&budget, now, Some(5)),
-            GossipAcceptance::DroppedDuplicate { last_seen_seq: 5 }
+            f.evaluate_acceptance(&budget, now, true),
+            GossipAcceptance::DroppedDuplicate { event_seq: 5 }
         );
     }
 
     #[test]
-    fn frame_accepts_next_seq_after_last_seen() {
+    fn frame_accepts_any_unseen_stable_identity() {
         let policy = GossipPolicy::default();
         let budget = ReplayBudget::from_policy(&policy);
         let now = 100_000_i64;
-        // Receiver has applied 5; this is 6 — fresh.
-        let f = fixture_frame(6, now, GossipTag::Replicate);
+        // Numeric ordering is irrelevant: stable identities are set-membership,
+        // so an unseen lower value is still a fresh event.
+        let f = fixture_frame(3, now, GossipTag::Replicate);
         assert_eq!(
-            f.evaluate_acceptance(&budget, now, Some(5)),
+            f.evaluate_acceptance(&budget, now, false),
             GossipAcceptance::Accept
         );
     }

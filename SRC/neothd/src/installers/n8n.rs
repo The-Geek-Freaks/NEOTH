@@ -118,8 +118,8 @@ pub enum N8nProbeOutcome {
     Reachable,
     /// TCP connect refused — n8n isn't running on the port.
     PortClosed,
-    /// TCP connect succeeded but the HTTP handshake timed out — port
-    /// is bound by some other process or n8n is mid-startup.
+    /// TCP connect succeeded but `/healthz` did not return a successful HTTP
+    /// response — the port belongs to another process or n8n is unhealthy.
     PortOpenNoHttp,
     /// Probe didn't complete inside the timeout window.
     Timeout,
@@ -141,20 +141,51 @@ impl N8nProbeOutcome {
 /// handshake so a port collision (some other service holding the
 /// port) is distinguishable from a real n8n.
 pub async fn probe_n8n_endpoint(port: u16) -> N8nProbeOutcome {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
+
     let addr = format!("127.0.0.1:{port}");
     let connect_timeout = Duration::from_secs(2);
     let connect = tokio::time::timeout(connect_timeout, TcpStream::connect(&addr)).await;
     match connect {
-        Ok(Ok(_stream)) => {
-            // Port is bound. v0.1: distinguishing "n8n vs other
-            // process" needs a real HTTP GET / response inspect;
-            // for the primitive we report Reachable on TCP open
-            // (n8n is the only thing operators bind 5678 to in
-            // their NEOTH workflow) + PortOpenNoHttp would require
-            // a follow-up commit that adds reqwest/hyper to the
-            // probe path. v0.1 keeps the probe TCP-only.
-            N8nProbeOutcome::Reachable
+        Ok(Ok(mut stream)) => {
+            let handshake = tokio::time::timeout(Duration::from_secs(2), async {
+                let request = format!(
+                    "GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+                );
+                stream.write_all(request.as_bytes()).await?;
+                let mut response = Vec::with_capacity(256);
+                let mut chunk = [0_u8; 256];
+                while response.len() < 1024 && !response.contains(&b'\n') {
+                    let read = stream.read(&mut chunk).await?;
+                    if read == 0 {
+                        break;
+                    }
+                    response.extend_from_slice(&chunk[..read]);
+                }
+                Ok::<_, std::io::Error>(response)
+            })
+            .await;
+
+            let Ok(Ok(response)) = handshake else {
+                return N8nProbeOutcome::PortOpenNoHttp;
+            };
+            let status = String::from_utf8_lossy(&response)
+                .lines()
+                .next()
+                .and_then(|line| {
+                    let mut parts = line.split_ascii_whitespace();
+                    let protocol = parts.next()?;
+                    if !protocol.starts_with("HTTP/") {
+                        return None;
+                    }
+                    parts.next()?.parse::<u16>().ok()
+                });
+            if status.is_some_and(|code| (200..300).contains(&code)) {
+                N8nProbeOutcome::Reachable
+            } else {
+                N8nProbeOutcome::PortOpenNoHttp
+            }
         }
         Ok(Err(_)) => N8nProbeOutcome::PortClosed,
         Err(_) => N8nProbeOutcome::Timeout,
@@ -264,12 +295,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn probe_returns_reachable_for_live_loopback_listener() {
+    async fn probe_returns_reachable_for_successful_health_endpoint() {
         use tokio::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 512];
+            let read = stream.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /healthz "));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+                .await
+                .unwrap();
+        });
         let outcome = probe_n8n_endpoint(port).await;
         assert_eq!(outcome, N8nProbeOutcome::Reachable);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn probe_rejects_open_port_without_http_health_response() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request).await;
+            stream.write_all(b"not http").await.unwrap();
+        });
+        let outcome = probe_n8n_endpoint(port).await;
+        assert_eq!(outcome, N8nProbeOutcome::PortOpenNoHttp);
+        server.await.unwrap();
     }
 
     #[tokio::test]

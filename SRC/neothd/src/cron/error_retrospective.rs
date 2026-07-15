@@ -97,7 +97,6 @@ const CHANNEL_DELIVERY_MARKERS: &[&str] = &[
     "could not deliver",
     "telegram",
     "discord",
-    "keet",
     "slack",
     "matrix",
 ];
@@ -206,15 +205,13 @@ fn recommendation_for(cause: &ErrorCause, consecutive_failures: u32) -> String {
                     .to_string()
             }
         }
-        ErrorCause::EmptyOutput => {
-            "Provider returned empty output. The prompt may be too vague \
+        ErrorCause::EmptyOutput => "Provider returned empty output. The prompt may be too vague \
              or the model may be over-constrained. Add explicit output \
              instructions to the job prompt."
-                .to_string()
-        }
+            .to_string(),
         ErrorCause::ChannelDeliveryFailed => {
             "Output was generated but channel delivery failed. Check \
-             channel credentials and recipient configuration in jobs.yaml."
+             channel credentials and the destination in channel_routing.yaml."
                 .to_string()
         }
         ErrorCause::Unknown => {
@@ -278,28 +275,49 @@ mod tests {
 
     #[test]
     fn classify_timeout_from_text() {
-        assert_eq!(classify_error("timeout after 1800s", ""), ErrorCause::Timeout);
+        assert_eq!(
+            classify_error("timeout after 1800s", ""),
+            ErrorCause::Timeout
+        );
         assert_eq!(classify_error("job timed out", ""), ErrorCause::Timeout);
         assert_eq!(classify_error("deadline exceeded", ""), ErrorCause::Timeout);
     }
 
     #[test]
     fn classify_timeout_from_exit_kind() {
-        assert_eq!(classify_error("something else entirely", "timeout"), ErrorCause::Timeout);
+        assert_eq!(
+            classify_error("something else entirely", "timeout"),
+            ErrorCause::Timeout
+        );
     }
 
     #[test]
     fn classify_provider_error() {
-        assert_eq!(classify_error("http status 429 rate limit", ""), ErrorCause::ProviderError);
-        assert_eq!(classify_error("authentication failed", ""), ErrorCause::ProviderError);
-        assert_eq!(classify_error("connection refused", ""), ErrorCause::ProviderError);
+        assert_eq!(
+            classify_error("http status 429 rate limit", ""),
+            ErrorCause::ProviderError
+        );
+        assert_eq!(
+            classify_error("authentication failed", ""),
+            ErrorCause::ProviderError
+        );
+        assert_eq!(
+            classify_error("connection refused", ""),
+            ErrorCause::ProviderError
+        );
     }
 
     #[test]
     fn classify_empty_output() {
         assert_eq!(classify_error("empty output", ""), ErrorCause::EmptyOutput);
-        assert_eq!(classify_error("0 bytes returned", ""), ErrorCause::EmptyOutput);
-        assert_eq!(classify_error("irrelevant text", "empty"), ErrorCause::EmptyOutput);
+        assert_eq!(
+            classify_error("0 bytes returned", ""),
+            ErrorCause::EmptyOutput
+        );
+        assert_eq!(
+            classify_error("irrelevant text", "empty"),
+            ErrorCause::EmptyOutput
+        );
     }
 
     #[test]
@@ -308,7 +326,10 @@ mod tests {
             classify_error("telegram send failed: bad token", ""),
             ErrorCause::ChannelDeliveryFailed
         );
-        assert_eq!(classify_error("irrelevant", "delivery"), ErrorCause::ChannelDeliveryFailed);
+        assert_eq!(
+            classify_error("irrelevant", "delivery"),
+            ErrorCause::ChannelDeliveryFailed
+        );
     }
 
     #[test]
@@ -343,7 +364,10 @@ mod tests {
     fn risk_score_unknown_lower_than_timeout() {
         let t = risk_score(&ErrorCause::Timeout, 0);
         let u = risk_score(&ErrorCause::Unknown, 0);
-        assert!(u < t, "Unknown should score lower than Timeout at the same failure count");
+        assert!(
+            u < t,
+            "Unknown should score lower than Timeout at the same failure count"
+        );
     }
 
     #[test]

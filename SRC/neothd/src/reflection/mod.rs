@@ -841,8 +841,7 @@ mod tests {
     #[test]
     fn oh08_build_reflection_observation_mirrors_build_reflection_item_for_same_topics() {
         let topics = vec!["rust".to_string(), "memory".to_string()];
-        let obs =
-            build_reflection_observation("2026-W25", &topics, 1_700_000_000).unwrap();
+        let obs = build_reflection_observation("2026-W25", &topics, 1_700_000_000).unwrap();
         let item = build_reflection_item("2026-W25", &topics, 1_700_000_000).unwrap();
         // Operator-visible body must be identical (same template, same topics).
         assert_eq!(obs.body, item.body);
@@ -863,8 +862,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let obs1 =
             build_reflection_observation("2026-W24", &["terraform".to_string()], 100).unwrap();
-        let obs2 =
-            build_reflection_observation("2026-W25", &["rust".to_string()], 200).unwrap();
+        let obs2 = build_reflection_observation("2026-W25", &["rust".to_string()], 200).unwrap();
         append_staged_observation(home.path(), &obs1).unwrap();
         append_staged_observation(home.path(), &obs2).unwrap();
         let loaded = load_staged_observations(home.path());
@@ -909,7 +907,9 @@ mod tests {
         let path = staged_observations_path(home.path());
         assert_eq!(
             path,
-            home.path().join("reflections").join("staged_observations.jsonl")
+            home.path()
+                .join("reflections")
+                .join("staged_observations.jsonl")
         );
     }
 
@@ -928,7 +928,10 @@ mod tests {
         // The constructor must always set surface_only regardless of topic set.
         let obs =
             build_reflection_observation("2026-W25", &["kubernetes".to_string()], 999).unwrap();
-        assert!(obs.surface_only, "surface_only must always be true from the constructor");
+        assert!(
+            obs.surface_only,
+            "surface_only must always be true from the constructor"
+        );
     }
 
     #[test]

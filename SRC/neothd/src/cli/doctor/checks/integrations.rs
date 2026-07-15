@@ -96,6 +96,168 @@ pub(crate) fn check_vector_index_snapshot(home: &Path) -> CheckOutcome {
     }
 }
 
+/// OMI-MULTIMODAL-01 — verify the full cross-file credential/config contract
+/// plus the durable ledger/halt posture without creating or mutating the DB.
+pub(crate) fn check_omi_runtime(home: &Path) -> CheckOutcome {
+    const NAME: &str = "OMI runtime";
+    let config_path = home.join("freedom.yaml");
+    let Ok(config) = crate::config::FreedomConfig::load_from_path(&config_path) else {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "freedom.yaml unreadable; config check owns the diagnostic".into(),
+        };
+    };
+    if !config.omi.enabled {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "disabled (opt-in)".into(),
+        };
+    }
+    let credentials_path = home.join("credentials.yaml");
+    let credentials = match crate::config::credentials::Credentials::load_effective(
+        &credentials_path,
+        config.secrets_backend,
+    ) {
+        Ok(credentials) => credentials,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("credential load failed: {error:#}"),
+            };
+        }
+    };
+    if let Err(error) = config.omi.validate_with_credentials(&credentials) {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Fail,
+            detail: format!("invalid configuration/credential contract: {error}"),
+        };
+    }
+
+    let db_path = home.join("views.db");
+    if !db_path.exists() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "configured correctly; views.db not initialized yet (start neoth serve)".into(),
+        };
+    }
+    let connection = match rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(connection) => connection,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("cannot open OMI ledger read-only: {error}"),
+            };
+        }
+    };
+    let status = match crate::memory::omi::status(&connection) {
+        Ok(status) => status,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!(
+                    "OMI schema/state unavailable: {error:#}; run `neoth migrate` or start the daemon"
+                ),
+            };
+        }
+    };
+    if status.sanitizer_halted {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Fail,
+            detail: "SC-18 sanitizer halted ingestion; review and run `neoth omi resume --review-note ...`"
+                .into(),
+        };
+    }
+    if let Some(error) = status.last_retention_error.as_deref() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Fail,
+            detail: format!("retention failed: {error}"),
+        };
+    }
+    let live_daemon_pid = match crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")) {
+        Ok(pid) => pid,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("cannot verify daemon PID state: {error:#}"),
+            };
+        }
+    };
+    let runtime_state =
+        crate::cli::omi::effective_omi_runtime_state(true, &status, live_daemon_pid);
+    if let Some((check_status, detail)) = omi_runtime_diagnostic(&status, &runtime_state) {
+        return CheckOutcome {
+            name: NAME,
+            status: check_status,
+            detail,
+        };
+    }
+    if let Some(error) = status.last_error.as_deref() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: format!("last runtime error: {error}"),
+        };
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Pass,
+        detail: format!(
+            "runtime=healthy; mode={:?}; conversations={}; media={}; tombstones={}; pending_audits=0",
+            config.omi.mode, status.conversations, status.media, status.tombstones
+        ),
+    }
+}
+
+fn omi_runtime_diagnostic(
+    status: &crate::memory::omi::OmiStatus,
+    runtime_state: &str,
+) -> Option<(CheckStatus, String)> {
+    match runtime_state {
+        "failed" | "degraded" => Some((
+            CheckStatus::Fail,
+            format!(
+                "runtime={runtime_state}: {}",
+                status
+                    .runtime_detail
+                    .as_deref()
+                    .unwrap_or("no detail recorded")
+            ),
+        )),
+        "healthy" if status.pending_audits > 0 => Some((
+            CheckStatus::Warn,
+            format!(
+                "runtime=healthy but {} projection audit intent(s) await crash reconciliation",
+                status.pending_audits
+            ),
+        )),
+        "healthy" => None,
+        _ => Some((
+            CheckStatus::Warn,
+            format!(
+                "runtime={runtime_state}; start/reload `neoth serve` and verify `neoth omi status`{}",
+                status
+                    .runtime_detail
+                    .as_deref()
+                    .map(|detail| format!(" ({detail})"))
+                    .unwrap_or_default()
+            ),
+        )),
+    }
+}
+
 pub(crate) fn check_hooks_dir(home: &Path) -> CheckOutcome {
     let dir = home.join("hooks");
     if !dir.is_dir() {
@@ -281,12 +443,49 @@ pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
     };
     let enabled = servers.enabled();
     if enabled.is_empty() {
+        let invalid_disabled: Vec<String> = servers
+            .servers
+            .iter()
+            .filter_map(|server| {
+                server
+                    .validate_launcher()
+                    .err()
+                    .map(|error| format!("{}: {error}", server.id))
+            })
+            .collect();
         return CheckOutcome {
             name: "mcp servers",
             status: CheckStatus::Warn,
+            detail: if invalid_disabled.is_empty() {
+                format!(
+                    "{} present but zero enabled servers (operator half-configured?)",
+                    path.display(),
+                )
+            } else {
+                format!(
+                    "{} present but zero enabled servers; invalid disabled launcher(s): {}",
+                    path.display(),
+                    invalid_disabled.join("; ")
+                )
+            },
+        };
+    }
+    let invalid_enabled: Vec<String> = enabled
+        .iter()
+        .filter_map(|server| {
+            server
+                .validate_launcher()
+                .err()
+                .map(|error| format!("{}: {error}", server.id))
+        })
+        .collect();
+    if !invalid_enabled.is_empty() {
+        return CheckOutcome {
+            name: "mcp servers",
+            status: CheckStatus::Fail,
             detail: format!(
-                "{} present but zero enabled servers (operator half-configured?)",
-                path.display(),
+                "enabled MCP launcher(s) fail the supply-chain contract and cannot spawn: {}",
+                invalid_enabled.join("; ")
             ),
         };
     }
@@ -317,9 +516,8 @@ pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
     // verifies the source before trusting it.
     let typosquats: Vec<String> = enabled
         .iter()
-        .filter(|s| s.command == "npx")
         .filter_map(|s| {
-            let pkg = s.args.iter().find(|a| !a.starts_with('-'))?;
+            let pkg = s.pinned_npx_package()?;
             crate::security::dep_health::typosquat_risk(pkg, "npm").map(|h| h.describe())
         })
         .collect();
@@ -378,9 +576,7 @@ pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
 /// - **LIVE**: tokens configured + adapter has live inbound + serve
 ///   spawns it. Telegram today.
 /// - **OUTBOUND-ONLY**: tokens configured + adapter can send_text but
-///   the inbound receive loop is deferred. WhatsApp + Keet adapters
-///   bail on `run()`. Slack adapter has socket_mode but serve does
-///   not spawn it yet.
+///   the inbound receive loop is deferred.
 /// - **CONFIGURED-NOT-STARTED**: tokens configured + adapter has full
 ///   inbound code BUT serve does not bootstrap it. Discord (gateway
 ///   loop ships) is the current example.
@@ -447,10 +643,13 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
             ));
         }
     }
-    // Discord + Keet have no credentials.yaml fields yet, so they only
-    // surface here when their config moves to credentials.yaml. Note
-    // the design intent so operators reading the diagnostic see why
-    // they aren't listed.
+    if creds.keet_seed_phrase.is_some() || creds.pears_bearer_token.is_some() {
+        rows.push((
+            "keet",
+            "UNAVAILABLE",
+            "legacy credentials are ignored; Keet exposes no supported public chat API",
+        ));
+    }
 
     if rows.is_empty() {
         return CheckOutcome {
@@ -492,6 +691,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_mcp_servers,
     check_channels_wiring,
     check_vector_index_snapshot,
+    check_omi_runtime,
 ];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
@@ -508,6 +708,12 @@ pub(crate) const DOCS: &[CheckDoc] = &[
         fix: "Run `neoth hooks list` for parse errors. `neoth hooks \
               validate` runs the schema + regex check standalone. Fix \
               the file or remove it.",
+    },
+    CheckDoc {
+        name: "OMI runtime",
+        purpose: "Validates the enabled OMI mode, its dedicated credentials, bounded endpoint/listener policy, and the durable conversation/retention state.",
+        common_failures: "Missing omi_dev_* key or native bearer token; unsafe endpoint/bind; inactive/degraded supervisor; pending crash-reconciliation intents; SC-18 halt; retention error; database not migrated.",
+        fix: "Run `neoth omi status` for exact persisted and effective runtime state. Correct freedom.yaml/credentials.yaml, start or reload `neoth serve`, or review a sanitizer halt and use `neoth omi resume --review-note ...`.",
     },
     CheckDoc {
         name: "agents/",
@@ -591,3 +797,37 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               daemon warm index is GOLD-WIRE-07b.)",
     },
 ];
+
+#[cfg(test)]
+mod omi_tests {
+    use super::*;
+
+    #[test]
+    fn pending_audits_warn_even_when_runtime_is_healthy() {
+        let status = crate::memory::omi::OmiStatus {
+            pending_audits: 2,
+            ..Default::default()
+        };
+        let (check, detail) = omi_runtime_diagnostic(&status, "healthy").unwrap();
+        assert_eq!(check, CheckStatus::Warn);
+        assert!(detail.contains("2 projection audit intent"));
+    }
+
+    #[test]
+    fn inactive_or_stale_runtime_warns_and_failed_runtime_fails() {
+        let status = crate::memory::omi::OmiStatus::default();
+        assert_eq!(
+            omi_runtime_diagnostic(&status, "inactive").unwrap().0,
+            CheckStatus::Warn
+        );
+        assert_eq!(
+            omi_runtime_diagnostic(&status, "unknown").unwrap().0,
+            CheckStatus::Warn
+        );
+        assert_eq!(
+            omi_runtime_diagnostic(&status, "failed").unwrap().0,
+            CheckStatus::Fail
+        );
+        assert!(omi_runtime_diagnostic(&status, "healthy").is_none());
+    }
+}

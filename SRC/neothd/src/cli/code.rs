@@ -198,6 +198,18 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     let provider = providers::from_config_for_role(&cfg, HemisphereRole::Cerebellum)
         .await
         .context("resolve cerebellum hemisphere provider")?;
+    let provider = providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+            cfg.autonomy_policy(),
+        )?,
+        cfg.inference
+            .slot_for(HemisphereRole::Cerebellum)
+            .model
+            .clone()
+            .or_else(|| cfg.provider_model.clone()),
+        "coding.decomposer",
+    );
     let llm = CerebellumDecomposer::new(provider);
     println!("cerebellum bound to: {}", llm.provider_name());
     println!("decomposing prompt …");
@@ -208,9 +220,16 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     if repo_ctx.is_some() {
         println!("injecting repo-map context (code_map summary) …");
     }
-    let result = decompose(&llm, &conn, session_id, &prompt, repo_ctx.as_deref(), now_ns)
-        .await
-        .context("decompose prompt via cerebellum")?;
+    let result = decompose(
+        &llm,
+        &conn,
+        session_id,
+        &prompt,
+        repo_ctx.as_deref(),
+        now_ns,
+    )
+    .await
+    .context("decompose prompt via cerebellum")?;
 
     if result.input_truncated {
         eprintln!("⚠  input was truncated to fit the 12k-token budget");
@@ -297,7 +316,10 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
 /// GOLD-ADAPT-GRILL-03 — persist the plan-review log produced by `review_plan`
 /// for a completed session. Best-effort: write/serialise errors are reported to
 /// stderr and never fail the command.
-fn write_plan_review_log(log: &crate::coding::plan_writer::PlanReviewLog, session_id: KanbanSessionId) {
+fn write_plan_review_log(
+    log: &crate::coding::plan_writer::PlanReviewLog,
+    session_id: KanbanSessionId,
+) {
     let log_path = FreedomConfig::default_neoth_home()
         .join(format!("plan_review_log_{}.json", session_id.raw()));
     write_plan_review_log_to(log, &log_path);
@@ -310,7 +332,10 @@ fn write_plan_review_log_to(
     match log.to_json() {
         Ok(json) => {
             if let Err(e) = std::fs::write(log_path, json.as_bytes()) {
-                eprintln!("⚠  plan review log write failed ({}): {e}", log_path.display());
+                eprintln!(
+                    "⚠  plan review log write failed ({}): {e}",
+                    log_path.display()
+                );
             }
         }
         Err(e) => {
@@ -483,26 +508,19 @@ fn intern_label(label: &str) -> &'static str {
 /// so the single-session dispatch path AND the `--run-pending` controller
 /// share one binding routine. Each role may legitimately fail (operator
 /// bound only one side) — the dispatcher blocks unassigned tasks cleanly.
-/// GR-069b — best-effort one-shot WAL writer for the standalone `neoth code`
-/// path so the autonomy-gate decision (0xA0/0xA1) + the dispatcher's progress/
-/// patch frames land in the operator's WAL. Returns `None` (gate still enforces,
-/// no frame) when a daemon is live — a second writer on the daemon's WAL segment
-/// would corrupt it — or when the spawn fails. The caller drains the returned
-/// join handle after dropping every writer clone so the frames flush.
+/// GR-069b — one-shot WAL writer for the standalone `neoth code` path so the
+/// autonomy decision (0xA0/0xA1), cost estimate, and dispatcher frames land in
+/// the operator's WAL. A timestamp-named segment is independent of the daemon's
+/// active segment, so both processes can audit without competing file handles.
+/// When opening the WAL fails, workers remain constructed but the central cloud
+/// boundary blocks dispatch because no audit writer is attached.
 fn coding_audit_writer() -> Option<(
     std::sync::Arc<crate::wal::writer::WalWriterHandle>,
     tokio::task::JoinHandle<()>,
 )> {
-    if crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return None; // daemon owns the WAL — never open a competing writer
-    }
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).ok()?;
-    let seg = wal_dir.join("000001.wal");
+    let seg = wal_dir.join(format!("{:020}.wal", crate::time::now_unix_ns()));
     match crate::wal::writer::spawn(seg) {
         Ok((w, j)) => Some((std::sync::Arc::new(w), j)),
         Err(e) => {
@@ -547,14 +565,17 @@ async fn build_worker_set(
                     .model
                     .clone()
                     .unwrap_or_default();
-                let mut worker =
-                    ProviderWorker::new(label, Arc::from(p), model_name, patch_root.clone())
-                        .with_autonomy(cfg.autonomy);
-                // GR-069b — audit the PaidProviderCall gate when a WAL writer is
-                // available (standalone CLI with no daemon owning the WAL).
-                if let Some(w) = wal_writer.as_ref() {
-                    worker = worker.with_wal_writer(Arc::clone(w));
-                }
+                let provider =
+                    Arc::new(providers::cost_authorization::AuthorizedProvider::from_box(
+                        p,
+                        providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                            cfg.autonomy_policy(),
+                            wal_writer.as_ref().map(|writer| writer.as_ref().clone()),
+                        ),
+                        (!model_name.is_empty()).then(|| model_name.clone()),
+                        "coding.worker",
+                    ));
+                let worker = ProviderWorker::new(label, provider, model_name, patch_root.clone());
                 workers.bind(hemi, Box::new(worker));
                 println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
             }
@@ -663,7 +684,10 @@ fn run_brainstorm_gate(
     initial: &str,
     interactive: bool,
     mut read_line: impl FnMut() -> Option<String>,
-) -> Result<(String, Option<Box<crate::coding::brainstorm::BrainstormSpec>>)> {
+) -> Result<(
+    String,
+    Option<Box<crate::coding::brainstorm::BrainstormSpec>>,
+)> {
     use crate::coding::brainstorm::{Decision, MAX_BRAINSTORM_ROUNDS, evaluate_with_rounds};
     let mut prompt = initial.to_string();
     let mut unresolved: Vec<String> = Vec::new();
@@ -724,9 +748,7 @@ fn run_brainstorm_gate(
                 }
             }
             Decision::Deadlock { unresolved } => {
-                eprintln!(
-                    "brainstorm DEADLOCK after {MAX_BRAINSTORM_ROUNDS} rounds — unresolved:"
-                );
+                eprintln!("brainstorm DEADLOCK after {MAX_BRAINSTORM_ROUNDS} rounds — unresolved:");
                 for u in &unresolved {
                     eprintln!("  • {u}");
                 }
@@ -741,7 +763,10 @@ fn run_brainstorm_gate(
     // ceiling round (review H-2). Kept as a hard deadlock so a future
     // MAX_BRAINSTORM_ROUNDS change can never silently fall through to the
     // decomposer.
-    debug_assert!(false, "evaluate_with_rounds must deadlock at the ceiling round");
+    debug_assert!(
+        false,
+        "evaluate_with_rounds must deadlock at the ceiling round"
+    );
     anyhow::bail!(
         "brainstorm deadlock after {MAX_BRAINSTORM_ROUNDS} rounds — unresolved: {}",
         unresolved.join("; ")
@@ -770,7 +795,11 @@ fn read_spec_block_stdin() -> Option<String> {
         buf.push('\n');
     }
     let trimmed = buf.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Render the reviewed plan as markdown: spec sections (when the gate
@@ -1047,7 +1076,9 @@ mod tests {
             session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
             input_truncated: false,
         };
-        auto_classify_and_assign(&conn, &result, None).await.expect("classify ok");
+        auto_classify_and_assign(&conn, &result, None)
+            .await
+            .expect("classify ok");
 
         let tasks = store::list_tasks_for_session(&conn, s).unwrap();
         let fetched = tasks.into_iter().find(|x| x.task_id == t).unwrap();
@@ -1074,7 +1105,9 @@ mod tests {
             session_complexity: crate::coding::decomposer::SessionComplexity::Deep,
             input_truncated: false,
         };
-        auto_classify_and_assign(&conn, &result, None).await.expect("classify ok");
+        auto_classify_and_assign(&conn, &result, None)
+            .await
+            .expect("classify ok");
 
         let tasks = store::list_tasks_for_session(&conn, s).unwrap();
         let fetched = tasks.into_iter().find(|x| x.task_id == t).unwrap();
@@ -1103,7 +1136,9 @@ mod tests {
             session_complexity: crate::coding::decomposer::SessionComplexity::Mixed,
             input_truncated: false,
         };
-        auto_classify_and_assign(&conn, &result, None).await.expect("classify ok");
+        auto_classify_and_assign(&conn, &result, None)
+            .await
+            .expect("classify ok");
 
         let tasks = store::list_tasks_for_session(&conn, s).unwrap();
         let fetched = tasks.into_iter().find(|x| x.task_id == t).unwrap();
@@ -1180,8 +1215,8 @@ mod tests {
 
     #[test]
     fn gate_accepts_pasted_spec_and_returns_it() {
-        let (_, spec) = run_brainstorm_gate(FULL_SPEC, true, || panic!("no stdin read"))
-            .expect("spec ready");
+        let (_, spec) =
+            run_brainstorm_gate(FULL_SPEC, true, || panic!("no stdin read")).expect("spec ready");
         let spec = spec.expect("spec extracted");
         assert_eq!(spec.user_stories.len(), 1);
     }
@@ -1192,7 +1227,10 @@ mod tests {
             run_brainstorm_gate("build a kanban board", false, || panic!("no stdin read"))
                 .expect("non-interactive degrade");
         assert_eq!(prompt, "build a kanban board");
-        assert!(spec.is_none(), "no spec — raw prompt proceeds with a warning");
+        assert!(
+            spec.is_none(),
+            "no spec — raw prompt proceeds with a warning"
+        );
     }
 
     #[test]
@@ -1227,8 +1265,8 @@ mod tests {
 
     #[test]
     fn gate_aborts_on_stdin_close_during_refinement() {
-        let err = run_brainstorm_gate("build a kanban board", true, || None)
-            .expect_err("EOF aborts");
+        let err =
+            run_brainstorm_gate("build a kanban board", true, || None).expect_err("EOF aborts");
         assert!(err.to_string().contains("stdin closed"), "{err}");
     }
 
@@ -1236,8 +1274,7 @@ mod tests {
     fn render_plan_text_carries_spec_and_tasks() {
         let (_dir, conn) = fresh_db();
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
-        let t = store::insert_task(&conn, s, 10, "Add board rendering", None, "ui", None)
-            .unwrap();
+        let t = store::insert_task(&conn, s, 10, "Add board rendering", None, "ui", None).unwrap();
         let result = DecompositionResult {
             task_ids: vec![t],
             clarifying_question: None,
@@ -1245,8 +1282,7 @@ mod tests {
             input_truncated: false,
         };
         let spec = crate::coding::brainstorm::parse_spec(FULL_SPEC).expect("spec parses");
-        let text =
-            render_plan_text(Some(&spec), "build a kanban board", &conn, &result).unwrap();
+        let text = render_plan_text(Some(&spec), "build a kanban board", &conn, &result).unwrap();
         assert!(text.contains("## Problem"));
         assert!(text.contains("Add board rendering"));
         assert!(text.contains("## Decomposed tasks"));

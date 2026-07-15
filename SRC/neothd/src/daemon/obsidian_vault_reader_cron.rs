@@ -22,13 +22,15 @@
 //!
 //! **Weekly synthesis** (Phase-1, WAL-free) — on the first tick that falls in
 //! a new ISO week, reads a window of `idx_groundtruth` rows and writes a
-//! brief summary note to `<vault>/NEOTH-Synthesis/<YYYY-WW>.md`, then inserts
-//! it as `Source::Synthesis` into `idx_groundtruth`.
+//! brief summary note to `<vault>/NEOTH-Synthesis/<YYYY-WW>.md`. It feeds the
+//! summary back into `idx_groundtruth` only when the source facts carry valid
+//! episode backlinks; presentation-only snapshots never become orphan wisdom.
 //!
 //! ## Design
 //!
-//! - **WAL-free**: `groundtruth::insert` is the durable audit record (all WAL
-//!   bands 0x00..=0xFF are assigned/reserved; no new event type is needed).
+//! - **WAL-free**: `groundtruth::insert_with_evidence` is the durable record
+//!   when episode provenance exists (all WAL bands 0x00..=0xFF are assigned /
+//!   reserved; no new event type is needed).
 //! - **spawn_blocking for DB writes**: `rusqlite::Connection` is `!Send`; every
 //!   DB access opens a new connection INSIDE `spawn_blocking` and never crosses
 //!   an `.await` boundary.
@@ -61,36 +63,36 @@ fn state_file_path(home: &Path) -> PathBuf {
 }
 
 /// Load the persisted SHA-256 map from disk.  Missing file → empty map.
-fn load_state(home: &Path) -> HashMap<PathBuf, [u8; 32]> {
+fn load_state(home: &Path) -> Result<HashMap<PathBuf, [u8; 32]>> {
     let path = state_file_path(home);
     if !path.exists() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
-    let body = match std::fs::read_to_string(&path) {
-        Ok(b) => b,
-        Err(e) => {
-            warn!(error = %e, "obsidian vault reader: failed to read state file; starting fresh");
-            return HashMap::new();
-        }
-    };
+    let body = std::fs::read_to_string(&path)
+        .with_context(|| format!("read vault reader state {}", path.display()))?;
     // State is stored as a JSON map of path-string → hex-encoded SHA-256.
-    let raw: HashMap<String, String> = serde_json::from_str(&body).unwrap_or_default();
+    let raw: HashMap<String, String> = serde_json::from_str(&body)
+        .with_context(|| format!("parse vault reader state {}", path.display()))?;
     raw.into_iter()
-        .filter_map(|(k, v)| {
+        .map(|(k, v)| -> Result<_> {
             let path = PathBuf::from(k);
-            let bytes = hex::decode(&v).ok()?;
-            if bytes.len() == 32 {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Some((path, arr))
-            } else {
-                None
+            let bytes = hex::decode(&v)
+                .with_context(|| format!("decode vault reader digest for {}", path.display()))?;
+            if bytes.len() != 32 {
+                anyhow::bail!(
+                    "vault reader digest for {} has {} bytes, expected 32",
+                    path.display(),
+                    bytes.len()
+                );
             }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            Ok((path, arr))
         })
         .collect()
 }
 
-/// Persist the SHA-256 map to disk atomically (tmp → rename).
+/// Persist the SHA-256 map to disk atomically and durably.
 fn save_state(home: &Path, state: &HashMap<PathBuf, [u8; 32]>) -> Result<()> {
     let raw: HashMap<String, String> = state
         .iter()
@@ -98,9 +100,8 @@ fn save_state(home: &Path, state: &HashMap<PathBuf, [u8; 32]>) -> Result<()> {
         .collect();
     let json = serde_json::to_string(&raw).context("serialize vault reader state")?;
     let dest = state_file_path(home);
-    let tmp = dest.with_extension("tmp");
-    std::fs::write(&tmp, &json).context("write vault reader state tmp")?;
-    std::fs::rename(&tmp, &dest).context("rename vault reader state")?;
+    crate::util::atomic_write::atomic_write_private(&dest, json.as_bytes())
+        .with_context(|| format!("atomically write vault reader state {}", dest.display()))?;
     Ok(())
 }
 
@@ -174,8 +175,7 @@ fn frontmatter_source(body: &str) -> Option<&str> {
 /// so the reader must skip them or it re-imports its own output as fresh
 /// `import:obsidian` groundtruth — an artificial provenance echo loop (P3).
 fn is_neoth_authored_source(body: &str) -> bool {
-    frontmatter_source(body)
-        .is_some_and(|s| s == "neoth-groundtruth" || s == "neoth-synthesis")
+    frontmatter_source(body).is_some_and(|s| s == "neoth-groundtruth" || s == "neoth-synthesis")
 }
 
 fn walk_vault_for_managed(
@@ -185,8 +185,8 @@ fn walk_vault_for_managed(
     state: &HashMap<PathBuf, [u8; 32]>,
     out: &mut Vec<ManagedNote>,
 ) -> Result<()> {
-    let entries = std::fs::read_dir(current)
-        .with_context(|| format!("read dir {}", current.display()))?;
+    let entries =
+        std::fs::read_dir(current).with_context(|| format!("read dir {}", current.display()))?;
     for entry in entries {
         let entry = match entry {
             Ok(e) => e,
@@ -290,11 +290,8 @@ fn walk_vault_for_managed(
 /// `arxiv_skill_scan_cron` pattern — `rusqlite::Connection` is `!Send`.
 ///
 /// Returns `(inserted, skipped)` counts.
-pub async fn run_one_reader_pass(
-    vault: &Path,
-    home: &Path,
-) -> Result<(usize, usize)> {
-    let mut state = load_state(home);
+pub async fn run_one_reader_pass(vault: &Path, home: &Path) -> Result<(usize, usize)> {
+    let mut state = load_state(home)?;
 
     let changed = match collect_changed_managed_notes(vault, &state) {
         Ok(v) => v,
@@ -317,14 +314,9 @@ pub async fn run_one_reader_pass(
         .map(|n| (n.statement, n.scope, n.path, n.digest))
         .collect();
 
-    let inserted_paths = tokio::task::spawn_blocking(move || -> Vec<(PathBuf, [u8; 32], bool)> {
-        let conn = match store::open(&db_path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "obsidian vault reader: failed to open views.db");
-                return vec![];
-            }
-        };
+    let inserted_paths = tokio::task::spawn_blocking(
+        move || -> Result<Vec<(PathBuf, [u8; 32], bool)>> {
+        let conn = store::open(&db_path).context("open views.db for Obsidian vault reader")?;
         let mut results = Vec::with_capacity(rows.len());
         for (statement, scope, path, digest) in rows {
             // Ingress gate — vault notes are EXTERNAL content (n8n sync,
@@ -356,10 +348,11 @@ pub async fn run_one_reader_pass(
                 }
             }
         }
-        results
-    })
+        Ok(results)
+    },
+    )
     .await
-    .unwrap_or_default();
+    .context("join Obsidian vault reader database task")??;
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -373,9 +366,7 @@ pub async fn run_one_reader_pass(
     }
 
     // Atomically persist the updated state map.
-    if let Err(e) = save_state(home, &state) {
-        warn!(error = %e, "obsidian vault reader: failed to persist state file (non-fatal)");
-    }
+    save_state(home, &state)?;
 
     Ok((inserted, skipped))
 }
@@ -437,14 +428,22 @@ fn format_date_from_ns(ns: i64) -> String {
     let mut y = 1970i64;
     let mut remaining_days = days_since_epoch;
     loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
         if remaining_days < days_in_year {
             break;
         }
         remaining_days -= days_in_year;
         y += 1;
     }
-    let feb = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 29i64 } else { 28i64 };
+    let feb = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+        29i64
+    } else {
+        28i64
+    };
     let month_days = [31i64, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut m = 1usize;
     for days in &month_days {
@@ -483,14 +482,18 @@ pub fn run_one_writer_pass(vault: &Path, db_path: &Path) -> Result<(usize, usize
 
     for row in &rows {
         // Sanitize scope for use as a directory name.
-        let safe_scope = row.scope.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+        let safe_scope = row
+            .scope
+            .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
         let note_dir = facts_dir.join(&safe_scope);
         let note_path = note_dir.join(format!("{}.md", row.id));
         let bytes = render_fact_note(row);
         coalescer.push(note_path, bytes);
     }
 
-    let (written, skipped) = coalescer.flush().context("WriteCoalescer flush (writer pass)")?;
+    let (written, skipped) = coalescer
+        .flush()
+        .context("WriteCoalescer flush (writer pass)")?;
     Ok((written, skipped))
 }
 
@@ -541,7 +544,7 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
 
         // Fetch up to 50 recent verified facts for the note body.
         let mut stmt = match conn.prepare(
-            "SELECT statement, scope, source \
+            "SELECT statement, scope, source, evidence \
              FROM idx_groundtruth \
              WHERE revoked_at IS NULL \
                AND fact_state = 'verified' \
@@ -553,8 +556,10 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
                 return false;
             }
         };
-        let mut rows: Vec<(String, String, String)> = Vec::new();
-        if let Ok(mapped) = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))) {
+        let mut rows: Vec<(String, String, String, String)> = Vec::new();
+        if let Ok(mapped) = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        }) {
             for row in mapped.flatten() {
                 rows.push(row);
             }
@@ -570,7 +575,7 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
             week_label, week_label
         );
         body.push_str("## Verified ground-truth snapshot\n\n");
-        for (statement, scope, source) in &rows {
+        for (statement, scope, source, _evidence) in &rows {
             body.push_str(&format!("- **[{scope}]** ({source}) {statement}\n"));
         }
 
@@ -597,8 +602,44 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
             count = rows.len()
         );
         let now_ns = crate::time::now_unix_ns_i64();
-        if let Err(e) = groundtruth::insert(&conn, &statement, &Source::Synthesis, "meta", now_ns) {
-            warn!(error = %e, "obsidian synthesis: groundtruth::insert failed (non-fatal)");
+        let mut evidence_ids = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (_, _, _, evidence) in &rows {
+            let parsed: Vec<i64> = match serde_json::from_str(evidence) {
+                Ok(ids) => ids,
+                Err(e) => {
+                    warn!(error = %e, "obsidian synthesis: malformed source evidence; groundtruth summary skipped");
+                    return false;
+                }
+            };
+            for id in parsed.into_iter().rev() {
+                if seen.insert(id) {
+                    evidence_ids.push(id);
+                    if evidence_ids.len() == groundtruth::MAX_EVIDENCE_BACKLINKS {
+                        break;
+                    }
+                }
+            }
+            if evidence_ids.len() == groundtruth::MAX_EVIDENCE_BACKLINKS {
+                break;
+            }
+        }
+        evidence_ids.reverse();
+
+        if evidence_ids.is_empty() {
+            debug!(
+                "obsidian synthesis: source facts have no episode backlinks; groundtruth summary skipped"
+            );
+        } else if let Err(e) = groundtruth::insert_with_evidence(
+            &conn,
+            &statement,
+            &Source::Synthesis,
+            "meta",
+            now_ns,
+            &evidence_ids,
+        ) {
+            warn!(error = %e, "obsidian synthesis: evidence-bound groundtruth insert failed (non-fatal)");
+            return false;
         }
 
         true
@@ -625,11 +666,7 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
 /// Returns a `JoinHandle` for abort-on-shutdown (WAL-free; abort is safe at any
 /// point — at worst one SHA-256 state map update is not persisted and the next
 /// boot re-reads the file).
-pub fn spawn(
-    vault: PathBuf,
-    home: PathBuf,
-    interval: Option<Duration>,
-) -> JoinHandle<Result<()>> {
+pub fn spawn(vault: PathBuf, home: PathBuf, interval: Option<Duration>) -> JoinHandle<Result<()>> {
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
     tokio::spawn(async move { run(vault, home, interval).await })
 }
@@ -655,12 +692,13 @@ async fn run_tick(vault: &Path, home: &Path) {
         Ok((inserted, skipped)) if inserted > 0 || skipped > 0 => {
             info!(
                 inserted,
-                skipped,
-                "obsidian vault reader: managed-note import pass complete"
+                skipped, "obsidian vault reader: managed-note import pass complete"
             );
         }
         Ok(_) => {}
-        Err(e) => warn!(error = %e, "obsidian vault reader: reader pass failed (will retry next tick)"),
+        Err(e) => {
+            warn!(error = %e, "obsidian vault reader: reader pass failed (will retry next tick)")
+        }
     }
 
     // Writer pass — `run_one_writer_pass` does a sync rusqlite open + SELECT
@@ -670,12 +708,13 @@ async fn run_tick(vault: &Path, home: &Path) {
     // is opened INSIDE the closure and never crosses an `.await`).
     let db_path = home.join("views.db");
     let writer_vault = vault.to_path_buf();
-    let writer_result = tokio::task::spawn_blocking(move || run_one_writer_pass(&writer_vault, &db_path))
-        .await
-        .unwrap_or_else(|e| {
-            warn!(error = %e, "obsidian vault writer: spawn_blocking join failed");
-            Ok((0, 0))
-        });
+    let writer_result =
+        tokio::task::spawn_blocking(move || run_one_writer_pass(&writer_vault, &db_path))
+            .await
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "obsidian vault writer: spawn_blocking join failed");
+                Ok((0, 0))
+            });
     match writer_result {
         Ok((written, skipped)) if written > 0 || skipped > 0 => {
             info!(
@@ -685,7 +724,9 @@ async fn run_tick(vault: &Path, home: &Path) {
             );
         }
         Ok(_) => {}
-        Err(e) => warn!(error = %e, "obsidian vault writer: writer pass failed (will retry next tick)"),
+        Err(e) => {
+            warn!(error = %e, "obsidian vault writer: writer pass failed (will retry next tick)")
+        }
     }
 
     // Weekly synthesis (Phase-1).
@@ -702,15 +743,16 @@ mod tests {
     use tempfile::tempdir;
 
     fn write_managed_note(dir: &Path, name: &str, source_tag: &str, body: &str) {
-        let content = format!(
-            "---\nsource: {source_tag}\ntitle: {name}\n---\n\n{body}\n"
-        );
+        let content = format!("---\nsource: {source_tag}\ntitle: {name}\n---\n\n{body}\n");
         std::fs::write(dir.join(format!("{name}.md")), content).unwrap();
     }
 
     fn write_manual_note(dir: &Path, name: &str, body: &str) {
-        std::fs::write(dir.join(format!("{name}.md")), format!("# {name}\n\n{body}\n"))
-            .unwrap();
+        std::fs::write(
+            dir.join(format!("{name}.md")),
+            format!("# {name}\n\n{body}\n"),
+        )
+        .unwrap();
     }
 
     fn count_groundtruth_rows(db_path: &Path, source_str: &str) -> usize {
@@ -739,18 +781,58 @@ mod tests {
             "The operator uses Rust for all backend work.",
         );
 
-        let (inserted, _skipped) =
-            run_one_reader_pass(vault_dir.path(), home_dir.path())
-                .await
-                .unwrap();
+        let (inserted, _skipped) = run_one_reader_pass(vault_dir.path(), home_dir.path())
+            .await
+            .unwrap();
 
-        assert!(inserted >= 1, "expected at least 1 inserted fact; got {inserted}");
-
-        let rows = count_groundtruth_rows(
-            &home_dir.path().join("views.db"),
-            "import:obsidian",
+        assert!(
+            inserted >= 1,
+            "expected at least 1 inserted fact; got {inserted}"
         );
-        assert!(rows >= 1, "expected groundtruth rows with source import:obsidian; got {rows}");
+
+        let rows = count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
+        assert!(
+            rows >= 1,
+            "expected groundtruth rows with source import:obsidian; got {rows}"
+        );
+    }
+
+    #[tokio::test]
+    async fn corrupt_reader_state_blocks_pass_without_overwriting_evidence() {
+        let vault_dir = tempdir().unwrap();
+        let home_dir = tempdir().unwrap();
+        let db_path = home_dir.path().join("views.db");
+        let _conn = store::open(&db_path).unwrap();
+
+        write_managed_note(
+            vault_dir.path(),
+            "new-note",
+            "openclaw-session",
+            "This must not be imported while reader state is corrupt.",
+        );
+
+        let state_path = state_file_path(home_dir.path());
+        let corrupt_state = b"{not-valid-json";
+        std::fs::write(&state_path, corrupt_state).unwrap();
+
+        let error = run_one_reader_pass(vault_dir.path(), home_dir.path())
+            .await
+            .expect_err("corrupt persisted state must fail closed");
+
+        assert!(
+            format!("{error:#}").contains("parse vault reader state"),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            corrupt_state,
+            "failed pass must preserve the corrupt state as forensic evidence"
+        );
+        assert_eq!(
+            count_groundtruth_rows(&db_path, "import:obsidian"),
+            0,
+            "failed pass must not partially import managed notes"
+        );
     }
 
     // TEST 2: reader skips unchanged file on second pass (SHA-256 dedup).
@@ -770,21 +852,22 @@ mod tests {
         );
 
         // First pass.
-        let (first_inserted, _) =
-            run_one_reader_pass(vault_dir.path(), home_dir.path())
-                .await
-                .unwrap();
+        let (first_inserted, _) = run_one_reader_pass(vault_dir.path(), home_dir.path())
+            .await
+            .unwrap();
         assert!(first_inserted >= 1, "first pass must insert");
 
         let rows_after_first =
             count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
 
         // Second pass — file unchanged.
-        let (second_inserted, _) =
-            run_one_reader_pass(vault_dir.path(), home_dir.path())
-                .await
-                .unwrap();
-        assert_eq!(second_inserted, 0, "second pass must not re-insert unchanged file");
+        let (second_inserted, _) = run_one_reader_pass(vault_dir.path(), home_dir.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            second_inserted, 0,
+            "second pass must not re-insert unchanged file"
+        );
 
         let rows_after_second =
             count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
@@ -803,14 +886,19 @@ mod tests {
 
         write_manual_note(vault_dir.path(), "manual", "This is a hand-written note.");
 
-        let (inserted, _) =
-            run_one_reader_pass(vault_dir.path(), home_dir.path())
-                .await
-                .unwrap();
-        assert_eq!(inserted, 0, "manual notes must not be imported by vault reader");
+        let (inserted, _) = run_one_reader_pass(vault_dir.path(), home_dir.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            inserted, 0,
+            "manual notes must not be imported by vault reader"
+        );
 
         let rows = count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
-        assert_eq!(rows, 0, "no groundtruth rows should be written for manual notes");
+        assert_eq!(
+            rows, 0,
+            "no groundtruth rows should be written for manual notes"
+        );
     }
 
     // TEST 4: spawn returns None for default config (no vault, reader disabled).
@@ -835,17 +923,33 @@ mod tests {
         // Simulate the writer pass + synthesis pass having dropped their own
         // notes into the vault (exactly what `render_fact_note` emits).
         write_managed_note(vault_dir.path(), "42", "neoth-groundtruth", "echoed fact");
-        write_managed_note(vault_dir.path(), "2026-W01", "neoth-synthesis", "weekly snapshot");
+        write_managed_note(
+            vault_dir.path(),
+            "2026-W01",
+            "neoth-synthesis",
+            "weekly snapshot",
+        );
         // A genuine external managed note alongside them — this one MUST import.
-        write_managed_note(vault_dir.path(), "real", "openclaw-session", "operator said X");
+        write_managed_note(
+            vault_dir.path(),
+            "real",
+            "openclaw-session",
+            "operator said X",
+        );
 
         let (inserted, _) = run_one_reader_pass(vault_dir.path(), home_dir.path())
             .await
             .unwrap();
-        assert_eq!(inserted, 1, "only the external note imports; the 2 echoes are skipped");
+        assert_eq!(
+            inserted, 1,
+            "only the external note imports; the 2 echoes are skipped"
+        );
 
         let rows = count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
-        assert_eq!(rows, 1, "exactly one import:obsidian row (no echo duplicates)");
+        assert_eq!(
+            rows, 1,
+            "exactly one import:obsidian row (no echo duplicates)"
+        );
     }
 
     // Unit-level proof of the echo predicate against the writer's real output.
@@ -858,14 +962,63 @@ mod tests {
             asserted_at: 0,
         };
         let body = String::from_utf8(render_fact_note(&row)).unwrap();
-        assert!(is_neoth_authored_source(&body), "writer note must be echo-guarded");
+        assert!(
+            is_neoth_authored_source(&body),
+            "writer note must be echo-guarded"
+        );
         assert!(is_neoth_authored_source(
             "---\nsource: neoth-synthesis\nweek: 2026-W01\n---\n\nbody\n"
         ));
         assert!(!is_neoth_authored_source(
             "---\nsource: openclaw-export\ntitle: t\n---\n\nbody\n"
         ));
-        assert!(!is_neoth_authored_source("---\nsource: neoth-note\n---\n\nb\n"));
+        assert!(!is_neoth_authored_source(
+            "---\nsource: neoth-note\n---\n\nb\n"
+        ));
+    }
+
+    #[tokio::test]
+    async fn weekly_synthesis_carries_source_episode_backlinks() {
+        let vault_dir = tempdir().unwrap();
+        let home_dir = tempdir().unwrap();
+        let db_path = home_dir.path().join("views.db");
+        let conn = store::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (501, 1, 1000, 'source episode', 'source-501', 0.8, 1000)",
+            [],
+        )
+        .unwrap();
+        groundtruth::insert_with_evidence(
+            &conn,
+            "episode-derived verified fact",
+            &Source::OperatorRuntime,
+            "global",
+            2_000,
+            &[501],
+        )
+        .unwrap();
+        drop(conn);
+
+        assert!(
+            run_synthesis_if_new_week(vault_dir.path(), home_dir.path()).await,
+            "first weekly pass must write the synthesis"
+        );
+
+        let conn = store::open(&db_path).unwrap();
+        let evidence: String = conn
+            .query_row(
+                "SELECT evidence FROM idx_groundtruth \
+                 WHERE statement LIKE '[NEOTH-Synthesis %' ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<i64>>(&evidence).unwrap(),
+            vec![501]
+        );
     }
 
     #[cfg(unix)]
@@ -888,7 +1041,12 @@ mod tests {
         let _conn = store::open(&home_dir.path().join("views.db")).unwrap();
 
         // A managed note OUTSIDE the vault, reachable only via a symlink.
-        write_managed_note(outside_dir.path(), "secret", "openclaw-export", "SECRET outside vault");
+        write_managed_note(
+            outside_dir.path(),
+            "secret",
+            "openclaw-export",
+            "SECRET outside vault",
+        );
         let link = vault_dir.path().join("escape-link");
         if try_symlink_dir(outside_dir.path(), &link).is_err() {
             return; // no symlink privilege (Windows) — skip
@@ -899,6 +1057,9 @@ mod tests {
             .unwrap();
         assert_eq!(inserted, 0, "the symlinked-out note must not be imported");
         let rows = count_groundtruth_rows(&home_dir.path().join("views.db"), "import:obsidian");
-        assert_eq!(rows, 0, "no foreign note imported across the vault boundary");
+        assert_eq!(
+            rows, 0,
+            "no foreign note imported across the vault boundary"
+        );
     }
 }

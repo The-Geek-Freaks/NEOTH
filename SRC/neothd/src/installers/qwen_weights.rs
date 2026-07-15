@@ -1,8 +1,8 @@
 //! NOOB-UX-6 — Qwen weights download installer primitive.
 //!
 //! `LocalQwen` is the privacy-positive default for profile extraction
-//! (operator-history never reaches a cloud vendor). The weights live
-//! at `~/.cache/huggingface/hub/models--<safe_id>/` — about 6 GB for
+//! (operator-history never reaches a cloud vendor). Runtime-ready weights live
+//! at `~/.neoth/models/<repo-flat>/` — about 6 GB for
 //! `Qwen/Qwen2.5-3B-Instruct`. First load can stall for minutes while
 //! `hf-hub` streams the safetensors shards, so the wizard surfaces a
 //! pre-download step so operators aren't surprised at chat time.
@@ -17,7 +17,7 @@
 //! prints the `huggingface-cli download <model_id>` command + asks for
 //! confirmation. Honours the "operator GO per command" rule.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Canonical Qwen model id used by `providers::local_qwen` (D14b).
 /// Pinned here so the wizard surface + the runtime stay aligned.
@@ -25,7 +25,7 @@ use std::path::PathBuf;
 /// *different* model than the operator pre-downloaded, doubling the
 /// disk hit. The matching test (`default_model_id_pinned_to_runtime`)
 /// catches that drift.
-pub const DEFAULT_QWEN_MODEL_ID: &str = "Qwen/Qwen2.5-3B-Instruct";
+pub const DEFAULT_QWEN_MODEL_ID: &str = crate::providers::local_qwen::DEFAULT_HF_REPO;
 
 /// Approximate on-disk footprint (GB) of the default Qwen model.
 /// Surfaced in the wizard prompt so the operator picks "yes" with
@@ -37,7 +37,7 @@ pub const DEFAULT_QWEN_DOWNLOAD_GB: u32 = 6;
 /// the wizard step renders + acts on this.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WeightsAction {
-    /// Weights already cached under `~/.cache/huggingface/hub/`. The
+    /// Runtime-loadable weights already exist under `~/.neoth/models/`. The
     /// wizard prints a one-liner + moves on without prompting.
     AlreadyCached,
     /// Weights missing AND the operator (interactive prompt or
@@ -77,36 +77,32 @@ pub fn recommend_action(cached: bool, opted_in: bool) -> WeightsAction {
 /// by Ctrl-C / network hiccup) resume instead of re-fetching the
 /// full ~6 GB.
 pub fn weights_download_command(model_id: &str) -> Vec<String> {
+    let cache_dir = cache_dir_for(model_id);
     vec![
         "huggingface-cli".into(),
         "download".into(),
         model_id.into(),
         "--resume-download".into(),
+        "--local-dir".into(),
+        cache_dir.to_string_lossy().into_owned(),
     ]
 }
 
-/// Compute the cache directory `hf-hub` writes Qwen weights into.
-/// HuggingFace's transformer is `<repo_id> → models--<owner>--<name>`
-/// — slashes become `--`. Pure-fn so the cache probe is testable.
-pub fn cache_dir_for(model_id: &str) -> Option<PathBuf> {
-    let home = if cfg!(target_os = "windows") {
-        std::env::var_os("USERPROFILE")?
-    } else {
-        std::env::var_os("HOME")?
-    };
-    let safe = model_id.replace('/', "--");
-    Some(
-        PathBuf::from(home)
-            .join(".cache")
-            .join("huggingface")
-            .join("hub")
-            .join(format!("models--{safe}")),
+/// Compute the exact NEOTH-owned cache directory opened by LocalQwen.
+pub fn cache_dir_for(model_id: &str) -> PathBuf {
+    cache_dir_for_at(
+        &crate::config::FreedomConfig::default_neoth_home(),
+        model_id,
     )
 }
 
-/// Probe whether the operator has the weights already cached. Cheap
-/// (~1ms file_exists) — the wizard runs this synchronously on every
-/// init flow that touches LocalQwen.
+pub(crate) fn cache_dir_for_at(neoth_home: &Path, model_id: &str) -> PathBuf {
+    crate::providers::local_qwen::cache_dir_at(neoth_home, model_id)
+}
+
+/// Probe whether the operator has runtime-loadable weights cached. The wizard
+/// runs this synchronously only on init flows that touch LocalQwen; it parses
+/// tokenizer/config metadata and the safetensors header, never model tensors.
 ///
 /// The cache dir alone isn't proof the download finished; HF marks
 /// in-progress fetches with a sibling `.incomplete` lock. The probe
@@ -114,13 +110,16 @@ pub fn cache_dir_for(model_id: &str) -> Option<PathBuf> {
 /// so an operator who Ctrl-C'd mid-download still gets the resume
 /// prompt instead of a false "already cached" status.
 pub fn check_weights_cached(model_id: &str) -> bool {
-    let Some(cache) = cache_dir_for(model_id) else {
-        return false;
-    };
-    if !cache.exists() {
-        return false;
-    }
+    check_weights_cached_at(
+        &crate::config::FreedomConfig::default_neoth_home(),
+        model_id,
+    )
+}
+
+pub(crate) fn check_weights_cached_at(neoth_home: &Path, model_id: &str) -> bool {
+    let cache = cache_dir_for_at(neoth_home, model_id);
     !has_incomplete_marker(&cache)
+        && crate::providers::local_qwen::validate_runtime_artifacts_at(&cache, false).is_ok()
 }
 
 fn has_incomplete_marker(dir: &std::path::Path) -> bool {
@@ -157,7 +156,10 @@ mod tests {
         // default repo id (e.g. Qwen3 release), bump both consts in
         // the same commit. This test fails loudly if only one half
         // moves.
-        assert_eq!(DEFAULT_QWEN_MODEL_ID, "Qwen/Qwen2.5-3B-Instruct");
+        assert_eq!(
+            DEFAULT_QWEN_MODEL_ID,
+            crate::providers::local_qwen::DEFAULT_HF_REPO
+        );
     }
 
     #[test]
@@ -169,6 +171,11 @@ mod tests {
         // Resume-friendly: partial download resumes instead of
         // re-fetching the full ~6 GB.
         assert!(cmd.iter().any(|a| a == "--resume-download"));
+        let local_dir = cmd.iter().position(|arg| arg == "--local-dir").unwrap();
+        assert_eq!(
+            PathBuf::from(&cmd[local_dir + 1]),
+            crate::providers::local_qwen::default_cache_dir(DEFAULT_QWEN_MODEL_ID)
+        );
     }
 
     #[test]
@@ -178,12 +185,15 @@ mod tests {
     }
 
     #[test]
-    fn cache_dir_translates_slashes_to_double_dash() {
-        // HuggingFace cache convention. Drift here = the probe
-        // looks in the wrong dir + always returns "not cached".
-        let dir = cache_dir_for("Qwen/Qwen2.5-3B-Instruct").unwrap();
-        let last = dir.file_name().unwrap().to_string_lossy().into_owned();
-        assert_eq!(last, "models--Qwen--Qwen2.5-3B-Instruct");
+    fn wizard_doctor_and_runtime_share_canonical_cache_path() {
+        let home = Path::new("/operator/.neoth");
+        let installer = cache_dir_for_at(home, DEFAULT_QWEN_MODEL_ID);
+        let runtime = crate::providers::local_qwen::cache_dir_at(home, DEFAULT_QWEN_MODEL_ID);
+        assert_eq!(installer, runtime);
+        assert_eq!(
+            installer,
+            home.join("models").join("Qwen-Qwen2.5-3B-Instruct")
+        );
     }
 
     #[test]
@@ -203,29 +213,8 @@ mod tests {
 
     #[test]
     fn check_weights_cached_returns_false_for_empty_cache_dir() {
-        // Synthetic env: point HOME / USERPROFILE at a tempdir + the
-        // expected cache dir doesn't exist → false.
-        let _env = crate::test_env::lock();
         let temp = tempfile::tempdir().unwrap();
-        let prev_home = std::env::var_os("HOME");
-        let prev_userprofile = std::env::var_os("USERPROFILE");
-        // SAFETY: tests run single-threaded for env mutation; restore
-        // both vars before returning so other tests aren't affected.
-        unsafe {
-            std::env::set_var("HOME", temp.path());
-            std::env::set_var("USERPROFILE", temp.path());
-        }
-        assert!(!check_weights_cached(DEFAULT_QWEN_MODEL_ID));
-        unsafe {
-            match prev_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match prev_userprofile {
-                Some(v) => std::env::set_var("USERPROFILE", v),
-                None => std::env::remove_var("USERPROFILE"),
-            }
-        }
+        assert!(!check_weights_cached_at(temp.path(), DEFAULT_QWEN_MODEL_ID));
     }
 
     #[test]
@@ -233,31 +222,65 @@ mod tests {
         // Synthetic cache dir with an `.incomplete` sibling — the
         // probe must NOT report "cached" because hf-hub treats that
         // as an interrupted download. Operator gets the resume prompt.
-        let _env = crate::test_env::lock();
         let temp = tempfile::tempdir().unwrap();
-        let cache_root = temp.path().join(".cache").join("huggingface").join("hub");
-        let model_dir = cache_root.join("models--Qwen--Qwen2.5-3B-Instruct");
+        let model_dir = cache_dir_for_at(temp.path(), DEFAULT_QWEN_MODEL_ID);
         let blobs = model_dir.join("blobs");
         std::fs::create_dir_all(&blobs).unwrap();
         std::fs::write(blobs.join("part-0001.incomplete"), b"partial").unwrap();
+        assert!(!check_weights_cached_at(temp.path(), DEFAULT_QWEN_MODEL_ID));
+    }
 
-        let prev_home = std::env::var_os("HOME");
-        let prev_userprofile = std::env::var_os("USERPROFILE");
-        unsafe {
-            std::env::set_var("HOME", temp.path());
-            std::env::set_var("USERPROFILE", temp.path());
-        }
-        assert!(!check_weights_cached(DEFAULT_QWEN_MODEL_ID));
-        unsafe {
-            match prev_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match prev_userprofile {
-                Some(v) => std::env::set_var("USERPROFILE", v),
-                None => std::env::remove_var("USERPROFILE"),
-            }
-        }
+    fn write_runtime_loadable_fixture(cache: &Path) {
+        std::fs::create_dir_all(cache).unwrap();
+        tokenizers::Tokenizer::new(tokenizers::models::bpe::BPE::default())
+            .save(
+                cache.join(crate::providers::local_qwen::TOKENIZER_FILE),
+                false,
+            )
+            .unwrap();
+        std::fs::write(
+            cache.join(crate::providers::local_qwen::CONFIG_FILE),
+            r#"{
+                "vocab_size": 1,
+                "hidden_size": 2,
+                "intermediate_size": 4,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 1,
+                "num_key_value_heads": 1,
+                "max_position_embeddings": 16,
+                "sliding_window": 16,
+                "max_window_layers": 1,
+                "tie_word_embeddings": false,
+                "rope_theta": 10000.0,
+                "rms_norm_eps": 0.000001,
+                "use_sliding_window": false,
+                "hidden_act": "silu"
+            }"#,
+        )
+        .unwrap();
+        let header = br#"{"tensor":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+        let mut weights = Vec::new();
+        weights.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        weights.extend_from_slice(header);
+        weights.extend_from_slice(&[0_u8; 4]);
+        std::fs::write(
+            cache.join(crate::providers::local_qwen::SAFETENSORS_FILE),
+            weights,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn ready_requires_exact_runtime_loadable_artifacts() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = cache_dir_for_at(temp.path(), DEFAULT_QWEN_MODEL_ID);
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("unrelated.bin"), b"not a model").unwrap();
+        assert!(!check_weights_cached_at(temp.path(), DEFAULT_QWEN_MODEL_ID));
+
+        write_runtime_loadable_fixture(&cache);
+        assert!(crate::providers::local_qwen::validate_runtime_artifacts_at(&cache, false).is_ok());
+        assert!(check_weights_cached_at(temp.path(), DEFAULT_QWEN_MODEL_ID));
     }
 
     #[test]

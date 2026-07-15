@@ -83,10 +83,7 @@ pub struct SseState {
 // ── Server ─────────────────────────────────────────────────────────────────
 
 /// Spawn the SSE server task.
-pub fn spawn_server(
-    state: Arc<SseState>,
-    shutdown: Arc<Notify>,
-) -> tokio::task::JoinHandle<()> {
+pub fn spawn_server(state: Arc<SseState>, shutdown: Arc<Notify>) -> tokio::task::JoinHandle<()> {
     let port = state.config.kanban_sse.port;
     tokio::spawn(async move {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
@@ -168,8 +165,7 @@ async fn sse_stream(state: Arc<SseState>) -> Response<SseBody> {
         let db_path = home.join("views.db");
         let conn = match rusqlite::Connection::open_with_flags(
             &db_path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         ) {
             Ok(c) => c,
             Err(e) => {
@@ -266,7 +262,10 @@ mod tests {
 
     #[test]
     fn auth_helper_rejects_wrong_token() {
-        assert!(!crate::n8n_api::constant_time_token_eq("wrong", "test-token"));
+        assert!(!crate::n8n_api::constant_time_token_eq(
+            "wrong",
+            "test-token"
+        ));
         assert!(!crate::n8n_api::constant_time_token_eq("", "test-token"));
         assert!(crate::n8n_api::constant_time_token_eq(
             "test-token",
@@ -426,7 +425,9 @@ mod tests {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                if !peer.ip().is_loopback() { continue; }
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
                 let s = Arc::clone(&state2);
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -499,7 +500,9 @@ mod tests {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                if !peer.ip().is_loopback() { continue; }
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
                 let s = Arc::clone(&state2);
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);

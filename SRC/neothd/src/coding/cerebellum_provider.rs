@@ -1,4 +1,4 @@
-//! Cerebellum LLM adapter — wraps a `providers::Provider` (the
+//! Cerebellum LLM adapter — wraps an authorized `providers::Provider` (the
 //! hemisphere-bound LLM resolved from `InferenceTopology`) so the
 //! decomposer can call it through its provider-agnostic
 //! [`DecomposerLlm`] trait.
@@ -21,16 +21,16 @@ use async_trait::async_trait;
 use super::decomposer::DecomposerLlm;
 use crate::providers::{Provider, Request};
 
-/// Adapter from `Box<dyn Provider>` to `DecomposerLlm`. Constructed
+/// Adapter from `AuthorizedProvider` to `DecomposerLlm`. Constructed
 /// per-`neoth code` invocation via `providers::from_config_for_role`.
 /// The wrapper owns the provider — Pick #5b's CLI entry hands it off
 /// to the decomposer for the lifetime of one decomposition call.
 pub struct CerebellumDecomposer {
-    provider: Box<dyn Provider>,
+    provider: crate::providers::cost_authorization::AuthorizedProvider,
 }
 
 impl CerebellumDecomposer {
-    pub fn new(provider: Box<dyn Provider>) -> Self {
+    pub fn new(provider: crate::providers::cost_authorization::AuthorizedProvider) -> Self {
         Self { provider }
     }
 
@@ -72,6 +72,19 @@ mod tests {
 
     use crate::providers::Completion;
 
+    fn authorized(
+        provider: impl Provider + 'static,
+    ) -> crate::providers::cost_authorization::AuthorizedProvider {
+        crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(provider),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            Some("test".to_string()),
+            "cerebellum.test",
+        )
+    }
+
     /// Scripted in-memory provider — returns a pre-baked text on every
     /// `complete` call. Used to verify the adapter forwards the
     /// prompt + relays the response without mutation.
@@ -88,6 +101,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
                 text: self.canned_response.clone(),
+                identity: Default::default(),
                 model: "test".to_string(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(0),
@@ -100,7 +114,7 @@ mod tests {
 
     #[tokio::test]
     async fn cerebellum_decomposer_forwards_completion_text() {
-        let provider = Box::new(ScriptedProvider {
+        let provider = authorized(ScriptedProvider {
             canned_response: r#"{"tasks":[],"clarifying_question":"need more detail"}"#.to_string(),
         });
         let llm = CerebellumDecomposer::new(provider);
@@ -113,7 +127,7 @@ mod tests {
 
     #[tokio::test]
     async fn cerebellum_decomposer_exposes_provider_name() {
-        let provider = Box::new(ScriptedProvider {
+        let provider = authorized(ScriptedProvider {
             canned_response: "{}".to_string(),
         });
         let llm = CerebellumDecomposer::new(provider);
@@ -136,7 +150,7 @@ mod tests {
             }
         }
 
-        let llm = CerebellumDecomposer::new(Box::new(FailingProvider));
+        let llm = CerebellumDecomposer::new(authorized(FailingProvider));
         let err = llm.complete("anything").await.unwrap_err();
         assert!(
             err.to_string().contains("cerebellum LLM complete")

@@ -476,7 +476,7 @@ pub fn build_identify_frame(bot_token: &SecretString, intents: u32) -> String {
             }
         }
     });
-    serde_json::to_string(&body).unwrap_or_default()
+    serde_json::to_string(&body).expect("Discord IDENTIFY frame is infallible JSON")
 }
 
 /// Build a RESUME frame. Same security shape as
@@ -497,7 +497,7 @@ pub fn build_resume_frame(bot_token: &SecretString, session_id: &str, seq: i64) 
             "seq": seq_value,
         }
     });
-    serde_json::to_string(&body).unwrap_or_default()
+    serde_json::to_string(&body).expect("Discord RESUME frame is infallible JSON")
 }
 
 /// Extract the `heartbeat_interval` from a HELLO `d` payload.

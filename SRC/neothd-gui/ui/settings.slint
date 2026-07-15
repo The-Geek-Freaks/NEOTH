@@ -125,7 +125,8 @@ export struct ProfilePresetRow {
 export struct PluginRow {
     id: string,
     name: string,
-    activation: string,  // "enabled" | "pending" | "disabled" | …
+    activation: string,  // "active" | "pending" | "disabled" | "reconsent_required"
+    requested-permission: string,
     // DES-12 — set when the plugin declares ui_surface in its manifest.
     has-ui-surface: bool,
     ui-title: string,     // ui_surface.title, or "" when absent
@@ -470,6 +471,44 @@ export component SettingsView inherits Rectangle {
     in property <[TrustRow]> trust-recovery: [];
     in property <[TrustRow]> trust-ledger: [];
 
+    // OMI-MULTIMODAL-01 — complete opt-in, consent, health, credential-presence,
+    // and privacy-operation surface. Secret drafts are write-only: Rust clears
+    // them after saving and never loads existing values into the GUI.
+    in-out property <bool> omi-enabled: false;
+    in-out property <string> omi-mode: "developer_api";
+    in-out property <string> omi-endpoint: "http://127.0.0.1:8002";
+    in-out property <string> omi-listen-addr: "127.0.0.1:8003";
+    in-out property <string> omi-retention-days: "30";
+    in-out property <bool> omi-retain-transcripts: false;
+    in-out property <bool> omi-audio-enabled: false;
+    in-out property <bool> omi-image-enabled: false;
+    in-out property <bool> omi-video-enabled: false;
+    in-out property <bool> omi-allow-cloud-api: false;
+    in-out property <bool> omi-allow-cloud-summary: false;
+    in-out property <bool> omi-create-actions: true;
+    in-out property <bool> omi-seed-groundtruth: true;
+    in-out property <bool> omi-summary-enabled: true;
+    in-out property <string> omi-developer-key-draft: "";
+    in-out property <string> omi-native-token-draft: "";
+    in property <bool> omi-developer-key-present: false;
+    in property <bool> omi-native-token-present: false;
+    in property <bool> omi-config-valid: false;
+    in property <string> omi-config-error: "";
+    in property <string> omi-runtime-state: "unknown";
+    in property <string> omi-runtime-detail: "";
+    in property <int> omi-pending-audits: 0;
+    in-out property <string> omi-review-note: "";
+    in-out property <string> omi-conversation-id: "";
+    in-out property <bool> omi-purge-confirm: false;
+    in-out property <bool> omi-reimport-confirm: false;
+    callback omi-refresh-clicked();
+    callback omi-probe-clicked();
+    callback omi-save-clicked(bool, string, string, string, string, bool, bool, bool, bool, bool, bool, bool, bool, bool, string, string);
+    callback omi-resume-clicked(string);
+    callback omi-retention-clicked();
+    callback omi-purge-clicked(string);
+    callback omi-reimport-clicked(string);
+
     // SL-03 — Local resources (Cluster tab), from `neoth hardware --output json`:
     // CPU / memory / accelerator / VRAM / disk headlines + cached-model rows.
     in property <string> hw-cpu: "";
@@ -677,7 +716,7 @@ export component SettingsView inherits Rectangle {
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: (channel_type, f1, f2, f3, f4) — fields mapped per-channel-type in Rust.
     /// telegram: f1=token; slack: f1=bot-token f2=app-token; whatsapp: f1=token f2=phone-id;
-    /// discord: f1=token; keet: f1=seed; signal: f1=url f2=phone; line: f1=token f2=password;
+    /// discord: f1=token; signal: f1=url f2=phone; line: f1=token f2=password;
     /// irc: f1=server f2=nick f3=password f4=channels-csv;
     /// imessage/bluebubbles: f1=url f2=password; mattermost: f1=url f2=token;
     /// gchat: f1=url f2=server.
@@ -1187,7 +1226,7 @@ export component SettingsView inherits Rectangle {
                                 vertical-alignment: center;
                             }
                             add-type-combo := NeothComboBox {
-                                model: ["telegram","slack","whatsapp","discord","keet","signal","line","irc","imessage","mattermost","gchat"];
+                                model: ["telegram","slack","whatsapp","discord","signal","line","irc","imessage","mattermost","gchat"];
                                 current-index <=> type-index;
                                 horizontal-stretch: 1;
                             }
@@ -1220,28 +1259,22 @@ export component SettingsView inherits Rectangle {
                             Text { text: "Discord bot token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
                         }
-                        // keet (4): seed
+                        // signal (4): url + phone
                         if type-index == 4: VerticalBox {
-                            spacing: Theme.space-tight;
-                            Text { text: "Keet identity seed (hex or mnemonic)"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
-                            NeothLineEdit { placeholder-text: "Seed (--seed)"; password: true; text <=> ch-f1; }
-                        }
-                        // signal (5): url + phone
-                        if type-index == 5: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "signal-cli REST URL + registered phone number"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://localhost:8080"; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Phone (--phone)  e.g. +4917…"; text <=> ch-f2; }
                         }
-                        // line (6): token + password (optional)
-                        if type-index == 6: VerticalBox {
+                        // line (5): token + password (optional)
+                        if type-index == 5: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "LINE Messaging API channel access token; password optional"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Password (--password, optional)"; password: true; text <=> ch-f2; }
                         }
-                        // irc (7): server + nick + password (opt) + channels-csv (opt)
-                        if type-index == 7: VerticalBox {
+                        // irc (6): server + nick + password (opt) + channels-csv (opt)
+                        if type-index == 6: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "IRC server host, nick, optional password + channel list (comma-separated)"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Server (--server)  e.g. irc.libera.chat"; text <=> ch-f1; }
@@ -1249,22 +1282,22 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit { placeholder-text: "Password (--password, optional)"; password: true; text <=> ch-f3; }
                             NeothLineEdit { placeholder-text: "Channels CSV (--channels-csv, optional)  e.g. #general,#dev"; text <=> ch-f4; }
                         }
-                        // imessage / bluebubbles (8): url + password
-                        if type-index == 8: VerticalBox {
+                        // imessage / bluebubbles (7): url + password
+                        if type-index == 7: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "BlueBubbles server URL + password"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://mac.local:1234"; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Password (--password)"; password: true; text <=> ch-f2; }
                         }
-                        // mattermost (9): url + token
-                        if type-index == 9: VerticalBox {
+                        // mattermost (8): url + token
+                        if type-index == 8: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "Mattermost server URL + personal access token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. https://chat.example.com"; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f2; }
                         }
-                        // gchat (10): url + server
-                        if type-index == 10: VerticalBox {
+                        // gchat (9): url + server
+                        if type-index == 9: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "Google Chat Pub/Sub subscription URL + project/server ID"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  subscription endpoint"; text <=> ch-f1; }
@@ -1739,7 +1772,7 @@ export component SettingsView inherits Rectangle {
                 spacing: Theme.space-base;
                 PanelHeader {
                     title: "Plugins";
-                    subtitle: "Sandboxed WebAssembly plugins. Install a directory containing plugin.toml + plugin.wasm; this lists the discovered set + activation state.";
+                    subtitle: "Sandboxed WebAssembly plugins. Any permission, manifest, or binary change is stopped until you review and enable it again.";
                     mirrors-slash: "/plugin list   |   neoth plugin install <dir>";
                 }
                 // ── Plugins action row ─────────────────────────────────────
@@ -1777,7 +1810,7 @@ export component SettingsView inherits Rectangle {
                             // Fires `neoth plugin enable/disable <id>`.
                             NeothCheckBox {
                                 width: 28px;
-                                checked: p.activation == "enabled";
+                                checked: p.activation == "active";
                                 toggled(v) => { root.plugin-toggle-clicked(p.id, v); }
                             }
                             Text {
@@ -1788,10 +1821,23 @@ export component SettingsView inherits Rectangle {
                                 horizontal-stretch: 1;
                             }
                             Text {
-                                text: p.activation;
+                                text: p.activation == "reconsent_required" ? "review again" : p.activation;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
-                                color: p.activation == "enabled" ? Theme.accent-green : Theme.text-muted;
+                                color: p.activation == "active"
+                                    ? Theme.accent-green
+                                    : p.activation == "reconsent_required"
+                                        ? Theme.accent-amber
+                                        : Theme.text-muted;
+                            }
+                            Text {
+                                text: "permission: " + p.requested-permission;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: p.requested-permission == "dangerous"
+                                    || p.requested-permission == "execute"
+                                    ? Theme.accent-amber
+                                    : Theme.text-muted;
                             }
                             // DES-12 — Activity button appears only for plugins with ui_surface.
                             if p.has-ui-surface: NeothButton {
@@ -2213,6 +2259,150 @@ export component SettingsView inherits Rectangle {
                     title: "Privacy";
                     subtitle: "Outbound-LLM consent state + autonomy level. Cloud providers only run after explicit consent (V03-08).";
                     mirrors-slash: "/consent list   |   /autonomy <level>";
+                }
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "OMI · CONVERSATIONS & MEDIA";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.accent-green;
+                            }
+                            Text {
+                                text: "runtime " + root.omi-runtime-state + " · pending " + root.omi-pending-audits;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: root.omi-runtime-state == "healthy" ? Theme.accent-green : Theme.accent-amber;
+                            }
+                        }
+                        Text {
+                            text: root.omi-config-valid
+                                ? (root.omi-runtime-detail == "" ? "Configuration valid" : root.omi-runtime-detail)
+                                : "Configuration invalid: " + root.omi-config-error;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: root.omi-config-valid ? Theme.text-muted : Theme.accent-pink;
+                            wrap: word-wrap;
+                        }
+                        NeothCheckBox {
+                            text: "Enable OMI ingestion (explicit opt-in)";
+                            checked <=> root.omi-enabled;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text { text: "Mode"; color: Theme.text-secondary; vertical-alignment: center; width: 130px; }
+                            NeothComboBox {
+                                model: ["developer_api", "native_ingest", "both", "legacy_memories"];
+                                current-index: root.omi-mode == "native_ingest" ? 1
+                                    : root.omi-mode == "both" ? 2
+                                    : root.omi-mode == "legacy_memories" ? 3 : 0;
+                                selected(i) => {
+                                    root.omi-mode = i == 1 ? "native_ingest"
+                                        : i == 2 ? "both"
+                                        : i == 3 ? "legacy_memories" : "developer_api";
+                                }
+                            }
+                        }
+                        if root.omi-mode == "both": Text {
+                            text: "Both imports OMI conversations and exports completed native transcripts to the configured Developer API endpoint.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
+                            wrap: word-wrap;
+                        }
+                        NeothLineEdit { placeholder-text: "Developer/local endpoint"; text <=> root.omi-endpoint; }
+                        NeothLineEdit { placeholder-text: "Native listener, e.g. 127.0.0.1:8003"; text <=> root.omi-listen-addr; }
+                        NeothLineEdit { placeholder-text: "Retention days"; text <=> root.omi-retention-days; }
+                        Text {
+                            text: "Developer key: " + (root.omi-developer-key-present ? "stored" : "missing")
+                                + " · Native token: " + (root.omi-native-token-present ? "stored" : "missing")
+                                + ". Existing secrets are never displayed.";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        NeothLineEdit { placeholder-text: "New omi_dev_* key (leave blank to keep)"; password: true; text <=> root.omi-developer-key-draft; }
+                        NeothLineEdit { placeholder-text: "New native bearer token, min. 32 bytes (leave blank to keep)"; password: true; text <=> root.omi-native-token-draft; }
+                        Text {
+                            text: "Independent data and effect consents";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-secondary;
+                        }
+                        NeothCheckBox { text: "Retain raw transcripts locally"; checked <=> root.omi-retain-transcripts; }
+                        NeothCheckBox { text: "Accept/process audio"; checked <=> root.omi-audio-enabled; }
+                        NeothCheckBox { text: "Accept/process images"; checked <=> root.omi-image-enabled; }
+                        NeothCheckBox { text: "Accept/process video"; checked <=> root.omi-video-enabled; }
+                        NeothCheckBox { text: "Allow public Developer API reads + both-mode transcript exports (HTTPS only)"; checked <=> root.omi-allow-cloud-api; }
+                        NeothCheckBox { text: "Create bounded summaries"; checked <=> root.omi-summary-enabled; }
+                        NeothCheckBox { text: "Allow cloud model for summaries"; checked <=> root.omi-allow-cloud-summary; }
+                        NeothCheckBox { text: "Promote action items into local tasks"; checked <=> root.omi-create-actions; }
+                        NeothCheckBox { text: "Seed corroborated statements into ground truth"; checked <=> root.omi-seed-groundtruth; }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            NeothButton {
+                                label: "Save & reload";
+                                clicked => {
+                                    root.omi-save-clicked(
+                                        root.omi-enabled, root.omi-mode, root.omi-endpoint,
+                                        root.omi-listen-addr, root.omi-retention-days,
+                                        root.omi-retain-transcripts, root.omi-audio-enabled,
+                                        root.omi-image-enabled, root.omi-video-enabled,
+                                        root.omi-allow-cloud-api, root.omi-allow-cloud-summary,
+                                        root.omi-create-actions, root.omi-seed-groundtruth,
+                                        root.omi-summary-enabled, root.omi-developer-key-draft,
+                                        root.omi-native-token-draft);
+                                }
+                            }
+                            NeothButton { label: "Refresh"; primary: false; clicked => { root.omi-refresh-clicked(); } }
+                            NeothButton { label: "Probe local"; primary: false; clicked => { root.omi-probe-clicked(); } }
+                            NeothButton { label: "Run retention"; primary: false; clicked => { root.omi-retention-clicked(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            NeothLineEdit { placeholder-text: "SC-18 review note"; text <=> root.omi-review-note; horizontal-stretch: 1; }
+                            NeothButton {
+                                label: "Resume sanitizer";
+                                primary: false;
+                                enabled: root.omi-review-note != "";
+                                clicked => { root.omi-resume-clicked(root.omi-review-note); }
+                            }
+                        }
+                        NeothLineEdit { placeholder-text: "Conversation id for purge / allow-reimport"; text <=> root.omi-conversation-id; }
+                        NeothCheckBox {
+                            text: "Confirm permanent purge + anti-reimport tombstone";
+                            checked <=> root.omi-purge-confirm;
+                        }
+                        NeothButton {
+                            label: "Permanently purge conversation";
+                            danger: true;
+                            enabled: root.omi-purge-confirm && root.omi-conversation-id != "";
+                            clicked => {
+                                root.omi-purge-clicked(root.omi-conversation-id);
+                                root.omi-purge-confirm = false;
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Confirm remote source may restore purged data";
+                            checked <=> root.omi-reimport-confirm;
+                        }
+                        NeothButton {
+                            label: "Allow re-import";
+                            danger: true;
+                            enabled: root.omi-reimport-confirm && root.omi-conversation-id != "";
+                            clicked => {
+                                root.omi-reimport-clicked(root.omi-conversation-id);
+                                root.omi-reimport-confirm = false;
+                            }
+                        }
+                    }
                 }
                 Card {
                     shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise

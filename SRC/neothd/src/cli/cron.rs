@@ -5,16 +5,18 @@
 //! - `add`          Append a new job to jobs.yaml (HERMES-01).
 //! - `edit <id>`    Update fields of an existing job by id (HERMES-01).
 //! - `remove <id>`  Delete a job by id (HERMES-01).
-//! - `list`         Print all jobs with role, schedule, and delivery (HERMES-01).
+//! - `list`         Print all jobs with role, schedule, and delivery channel (HERMES-01).
 //!
 //! All mutating commands call `Job::validate()` (JV-PRO-01) before saving and
 //! surface `preflight()` warnings (JV-PRO-04). `add` also surfaces collision
 //! warnings via `schedule_collides()` (JV-PRO-09). Both `add` and `edit` call
 //! `JobsFile::validate_waves()` (JV-PRO-03) to reject cyclic/unknown depends_on
-//! before saving. Saves are atomic (tmp+rename).
+//! before saving. Mutations use a process-local mutex plus an OS advisory lock
+//! and commit atomically, so concurrent CLI writers cannot lose updates.
 //!
 //! Refuses while `neoth serve` is live for `run` only — CRUD operations on
-//! jobs.yaml are safe at any time (the scheduler re-reads on restart).
+//! jobs.yaml are safe at any time (the scheduler validates and live-reloads a
+//! complete generation on its next tick).
 
 use std::path::PathBuf;
 
@@ -23,9 +25,7 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::cron::schema::{
-    classify_role, preflight, schedule_collides, Delivery, Job, JobsFile, Schedule,
-};
+use crate::cron::schema::{Job, JobsFile, Schedule, classify_role, preflight, schedule_collides};
 
 #[derive(Args, Debug, Clone)]
 pub struct CronArgs {
@@ -36,8 +36,9 @@ pub struct CronArgs {
 #[derive(Subcommand, Debug, Clone)]
 pub enum CronAction {
     /// Fire one job by id immediately, out of band of the scheduler. Makes a
-    /// real provider call and (if the job has a delivery channel) delivers the
-    /// result. Refused while `neoth serve` is running.
+    /// real provider call and (if the job has a delivery channel) queues the
+    /// result for the daemon's gated proactive dispatcher. Refused while
+    /// `neoth serve` is running.
     Run {
         /// The job `id` from jobs.yaml.
         id: String,
@@ -46,8 +47,8 @@ pub enum CronAction {
         file: Option<PathBuf>,
     },
 
-    /// Add a new job to jobs.yaml. Validates the schedule and surfaces delivery
-    /// warnings before saving. Rejects duplicate ids. HERMES-01 / JV-PRO-01/04/09.
+    /// Add a new job to jobs.yaml. Validates the schedule and delivery channel,
+    /// then surfaces advisory warnings. Rejects duplicate ids. HERMES-01 / JV-PRO-01/04/09.
     Add {
         /// Unique job id (slug, no spaces).
         #[arg(long)]
@@ -64,12 +65,10 @@ pub enum CronAction {
         /// IANA timezone, e.g. "Europe/Berlin". Defaults to UTC.
         #[arg(long)]
         tz: Option<String>,
-        /// Delivery channel name ("telegram", "slack", …).
+        /// Delivery channel name ("telegram", "slack", …). The destination is
+        /// read from the operator-owned channel routing configuration.
         #[arg(long)]
         channel: Option<String>,
-        /// Delivery recipient (chat_id, user_id, …).
-        #[arg(long)]
-        recipient: Option<String>,
         /// Timeout in seconds. Defaults to 600.
         #[arg(long)]
         timeout: Option<u32>,
@@ -95,12 +94,10 @@ pub enum CronAction {
         /// Replace the timezone (pass "UTC" to clear).
         #[arg(long)]
         tz: Option<String>,
-        /// Replace the delivery channel.
+        /// Replace the delivery channel. The destination is read from the
+        /// operator-owned channel routing configuration.
         #[arg(long)]
         channel: Option<String>,
-        /// Replace the delivery recipient.
-        #[arg(long)]
-        recipient: Option<String>,
         /// Replace the timeout in seconds.
         #[arg(long)]
         timeout: Option<u32>,
@@ -164,10 +161,9 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
             prompt,
             tz,
             channel,
-            recipient,
             timeout,
             file,
-        } => cron_add(id, name, cron, prompt, tz, channel, recipient, timeout, file),
+        } => cron_add(id, name, cron, prompt, tz, channel, timeout, file),
         CronAction::Edit {
             id,
             name,
@@ -175,11 +171,10 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
             prompt,
             tz,
             channel,
-            recipient,
             timeout,
             enabled,
             file,
-        } => cron_edit(id, name, cron, prompt, tz, channel, recipient, timeout, enabled, file),
+        } => cron_edit(id, name, cron, prompt, tz, channel, timeout, enabled, file),
         CronAction::Remove { id, file } => cron_remove(id, file),
         CronAction::List { file } => cron_list(file, output),
         CronAction::Status { by_role, file } => cron_status(by_role, file, output),
@@ -192,16 +187,11 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
 fn load_or_create(path: &std::path::Path) -> Result<JobsFile> {
     if path.exists() {
         // Use blocking read here (CLI context, not inside an async runtime).
-        let body = std::fs::read_to_string(path)
-            .with_context(|| format!("read {}", path.display()))?;
-        let parsed: JobsFile =
-            serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
-        Ok(parsed)
+        let body =
+            std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        JobsFile::from_yaml_str(&body).with_context(|| format!("load {}", path.display()))
     } else {
-        Ok(JobsFile {
-            version: 1,
-            jobs: Vec::new(),
-        })
+        Ok(JobsFile::empty())
     }
 }
 
@@ -214,7 +204,6 @@ fn print_warnings(warnings: &[String], label: &str) {
 }
 
 /// `neoth cron add` — append a new job. HERMES-01 + JV-PRO-01/04/09.
-#[allow(clippy::too_many_arguments)]
 fn cron_add(
     id: String,
     name: String,
@@ -222,22 +211,11 @@ fn cron_add(
     prompt: String,
     tz: Option<String>,
     channel: Option<String>,
-    recipient: Option<String>,
     timeout: Option<u32>,
     file: Option<PathBuf>,
 ) -> Result<()> {
     let path = jobs_path(file);
-    let mut jf = load_or_create(&path)?;
-
-    // JV-PRO-01: reject duplicate id before touching anything
-    if jf.jobs.iter().any(|j| j.id == id) {
-        anyhow::bail!("a job with id `{id}` already exists in {}", path.display());
-    }
-
-    let delivery = channel.map(|ch| Delivery {
-        channel: ch,
-        recipient,
-    });
+    let delivery = channel.map(crate::cron::schema::Delivery::new);
 
     let job = Job {
         id: id.clone(),
@@ -253,24 +231,23 @@ fn cron_add(
     // JV-PRO-01: validate before saving
     job.validate()?;
 
-    // JV-PRO-04: delivery pre-flight warnings (before pushing, job is still owned)
+    // JV-PRO-04: advisory pre-flight warnings.
     let pf = preflight(&job);
     print_warnings(&pf, "preflight");
 
-    // JV-PRO-09: collision warnings (existing jobs before the new one)
-    let collisions = schedule_collides(&job.schedule, &jf.jobs, 48);
-    print_warnings(&collisions, "collision");
+    JobsFile::modify_at_path(&path, |jf| {
+        // JV-PRO-01: reject duplicate id after reloading under the lock.
+        if jf.jobs.iter().any(|existing| existing.id == id) {
+            anyhow::bail!("a job with id `{id}` already exists in {}", path.display());
+        }
 
-    // JV-PRO-03: validate the depends_on DAG (cycle + unknown-dep check).
-    // Push speculatively; on error pop and propagate so the file is never written.
-    jf.jobs.push(job);
-    if let Err(e) = jf.validate_waves() {
-        jf.jobs.pop();
-        return Err(e);
-    }
-
-    jf.save_to_path(&path)
-        .with_context(|| format!("save {}", path.display()))?;
+        // JV-PRO-09: compare with the exact generation we will extend.
+        let collisions = schedule_collides(&job.schedule, &jf.jobs, 48);
+        print_warnings(&collisions, "collision");
+        jf.jobs.push(job);
+        Ok(())
+    })
+    .with_context(|| format!("update {}", path.display()))?;
     println!("added job `{id}` to {}", path.display());
     Ok(())
 }
@@ -284,64 +261,49 @@ fn cron_edit(
     prompt: Option<String>,
     tz: Option<String>,
     channel: Option<String>,
-    recipient: Option<String>,
     timeout: Option<u32>,
     enabled: Option<bool>,
     file: Option<PathBuf>,
 ) -> Result<()> {
     let path = jobs_path(file);
-    let mut jf = load_or_create(&path)?;
+    JobsFile::modify_at_path(&path, |jf| {
+        let job = jf
+            .jobs
+            .iter_mut()
+            .find(|job| job.id == id)
+            .with_context(|| format!("no job with id `{id}` in {}", path.display()))?;
 
-    let job = jf
-        .jobs
-        .iter_mut()
-        .find(|j| j.id == id)
-        .with_context(|| format!("no job with id `{id}` in {}", path.display()))?;
-
-    if let Some(n) = name {
-        job.name = n;
-    }
-    if let Some(c) = cron {
-        job.schedule.cron = c;
-    }
-    if let Some(t) = tz {
-        job.schedule.tz = if t.is_empty() { None } else { Some(t) };
-    }
-    if let Some(p) = prompt {
-        job.prompt = p;
-    }
-    if let Some(t) = timeout {
-        job.timeout_seconds = t;
-    }
-    if let Some(e) = enabled {
-        job.enabled = e;
-    }
-    // Channel/recipient: update delivery block
-    if channel.is_some() || recipient.is_some() {
-        let existing_delivery = job.delivery.get_or_insert_with(|| Delivery {
-            channel: String::new(),
-            recipient: None,
-        });
+        if let Some(n) = name {
+            job.name = n;
+        }
+        if let Some(c) = cron {
+            job.schedule.cron = c;
+        }
+        if let Some(t) = tz {
+            job.schedule.tz = if t.is_empty() { None } else { Some(t) };
+        }
+        if let Some(p) = prompt {
+            job.prompt = p;
+        }
+        if let Some(t) = timeout {
+            job.timeout_seconds = t;
+        }
+        if let Some(e) = enabled {
+            job.enabled = e;
+        }
         if let Some(ch) = channel {
-            existing_delivery.channel = ch;
+            job.delivery = if ch.is_empty() {
+                None
+            } else {
+                Some(crate::cron::schema::Delivery::new(ch))
+            };
         }
-        if let Some(r) = recipient {
-            existing_delivery.recipient = if r.is_empty() { None } else { Some(r) };
-        }
-    }
 
-    // JV-PRO-01: validate the mutated job
-    job.validate()?;
-
-    // JV-PRO-04: surface warnings (borrow job before the wave check drops it)
-    let pf = preflight(job);
-    print_warnings(&pf, "preflight");
-
-    // JV-PRO-03: validate the depends_on DAG across all jobs after the edit
-    jf.validate_waves()?;
-
-    jf.save_to_path(&path)
-        .with_context(|| format!("save {}", path.display()))?;
+        job.validate()?;
+        print_warnings(&preflight(job), "preflight");
+        Ok(())
+    })
+    .with_context(|| format!("update {}", path.display()))?;
     println!("updated job `{id}` in {}", path.display());
     Ok(())
 }
@@ -349,16 +311,15 @@ fn cron_edit(
 /// `neoth cron remove <id>` — delete a job by id. HERMES-01.
 fn cron_remove(id: String, file: Option<PathBuf>) -> Result<()> {
     let path = jobs_path(file);
-    let mut jf = load_or_create(&path)?;
-
-    let before = jf.jobs.len();
-    jf.jobs.retain(|j| j.id != id);
-    if jf.jobs.len() == before {
-        anyhow::bail!("no job with id `{id}` in {}", path.display());
-    }
-
-    jf.save_to_path(&path)
-        .with_context(|| format!("save {}", path.display()))?;
+    JobsFile::modify_at_path(&path, |jf| {
+        let before = jf.jobs.len();
+        jf.jobs.retain(|job| job.id != id);
+        if jf.jobs.len() == before {
+            anyhow::bail!("no job with id `{id}` in {}", path.display());
+        }
+        Ok(())
+    })
+    .with_context(|| format!("update {}", path.display()))?;
     println!("removed job `{id}` from {}", path.display());
     Ok(())
 }
@@ -389,7 +350,6 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
                         "role": classify_role(j).to_string(),
                         "timeout_seconds": j.timeout_seconds,
                         "channel": j.delivery.as_ref().map(|d| &d.channel),
-                        "recipient": j.delivery.as_ref().and_then(|d| d.recipient.as_deref()),
                     })
                 })
                 .collect();
@@ -403,13 +363,11 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
             println!("{}", "-".repeat(100));
             for j in &jf.jobs {
                 let role = classify_role(j);
-                let delivery = match &j.delivery {
-                    None => "-".to_string(),
-                    Some(d) => match &d.recipient {
-                        Some(r) => format!("{}:{}", d.channel, r),
-                        None => d.channel.clone(),
-                    },
-                };
+                let delivery = j
+                    .delivery
+                    .as_ref()
+                    .map(|d| d.channel.clone())
+                    .unwrap_or_else(|| "-".to_string());
                 println!(
                     "{:<20} {:<25} {:<16} {:<13} {:<12} {}",
                     j.id,
@@ -460,7 +418,16 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
     }
     let (writer, join) = crate::wal::spawn(segment).context("open a one-shot WAL writer")?;
 
-    let result = crate::cron::runner::run_job(&job, provider.as_ref(), &writer).await;
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        ),
+        config.provider_model.clone(),
+        "cron.manual_run",
+    );
+    let result = crate::cron::runner::run_job(&job, &provider, &writer).await;
     drop(writer);
     let _ = join.await;
     let outcome = result.context("run job")?;
@@ -473,16 +440,18 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
                 "success": outcome.success,
                 "duration_ms": outcome.duration.as_millis(),
                 "output_bytes": outcome.output_bytes,
+                "delivery_queued": outcome.delivery_queued,
                 "error": outcome.error,
             })
         ),
         OutputFormat::Table => {
             if outcome.success {
                 println!(
-                    "✓ job `{}` ran in {} ms ({} output bytes)",
+                    "✓ job `{}` ran in {} ms ({} output bytes, delivery queued: {})",
                     job.id,
                     outcome.duration.as_millis(),
-                    outcome.output_bytes
+                    outcome.output_bytes,
+                    outcome.delivery_queued,
                 );
             } else {
                 println!(
@@ -643,7 +612,6 @@ jobs:
             None,
             None,
             None,
-            None,
             Some(path.clone()),
         )
         .expect("add should succeed");
@@ -666,7 +634,6 @@ jobs:
             None,
             None,
             None,
-            None,
             Some(path.clone()),
         )
         .expect("first add ok");
@@ -676,7 +643,6 @@ jobs:
             "Dup Again".to_string(),
             "0 6 * * *".to_string(),
             "Do something useful here.".to_string(),
-            None,
             None,
             None,
             None,
@@ -726,7 +692,6 @@ jobs:
         cron_edit(
             "editable".to_string(),
             Some("New Name".to_string()),
-            None,
             None,
             None,
             None,

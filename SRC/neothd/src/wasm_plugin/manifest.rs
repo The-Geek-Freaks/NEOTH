@@ -18,9 +18,9 @@
 //!   - **`name`** — display name for `neoth plugins list`.
 //!   - **`version`** — semver, validated at load time.
 //!   - **`requested_permissions`** — the highest [`PermissionLevel`] the
-//!     plugin claims to need. NEOTH issues a token at most this level
-//!     after the operator's `FreedomGrant` lands; the plugin cannot
-//!     forge a higher one.
+//!     plugin claims to need. Activation binds the operator's approval to this
+//!     value plus the canonical manifest and WASM hashes. Dispatch derives the
+//!     runtime hostcall grant only from that unchanged binding.
 //!   - **`hook_stages`** — which pipeline stages the plugin wants to
 //!     observe. Loaded by the hook dispatcher; unknown stages reject
 //!     the manifest with an actionable error.
@@ -41,9 +41,18 @@ use serde::{Deserialize, Serialize};
 /// batch its work, not granted more fuel.
 pub const MAX_FUEL_BUDGET: u64 = 10_000_000;
 
+/// Smallest accepted explicit fuel budget. Zero can never execute even the
+/// required ABI-version probe; very small positive values deliberately trap
+/// quickly and remain an operator choice.
+pub const MIN_FUEL_BUDGET: u64 = 1;
+
 /// Maximum allowed `memory_limit_bytes` — 256 MiB. Hard cap so a
 /// manifest can't claim a gigabyte and DoS the daemon.
 pub const MAX_MEMORY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+
+/// WebAssembly memory grows in 64-KiB pages. A smaller explicit cap cannot
+/// admit even one page and is therefore rejected as a configuration error.
+pub const MIN_MEMORY_LIMIT_BYTES: usize = 64 * 1024;
 
 /// Maximum allowed `ui_surface.title` length in bytes (UTF-8). Keeps the
 /// GUI tab label sane and prevents the plugin directory (attacker-controlled)
@@ -194,8 +203,12 @@ pub enum ManifestError {
     InvalidVersion { got: String },
     #[error("fuel_budget_override {got} exceeds MAX_FUEL_BUDGET ({MAX_FUEL_BUDGET})")]
     FuelBudgetTooHigh { got: u64 },
+    #[error("fuel_budget_override {got} is below MIN_FUEL_BUDGET ({MIN_FUEL_BUDGET})")]
+    FuelBudgetTooLow { got: u64 },
     #[error("memory_limit_bytes {got} exceeds MAX_MEMORY_LIMIT_BYTES ({MAX_MEMORY_LIMIT_BYTES})")]
     MemoryLimitTooHigh { got: usize },
+    #[error("memory_limit_bytes {got} is below one WASM page ({MIN_MEMORY_LIMIT_BYTES} bytes)")]
+    MemoryLimitTooLow { got: usize },
     #[error(
         "ui_surface.title length {got} bytes exceeds MAX_UI_SURFACE_TITLE_LEN \
          ({MAX_UI_SURFACE_TITLE_LEN})"
@@ -231,11 +244,17 @@ pub fn validate_manifest(m: &PluginManifest) -> Result<(), ManifestError> {
         });
     }
     if let Some(fuel) = m.fuel_budget_override {
+        if fuel < MIN_FUEL_BUDGET {
+            return Err(ManifestError::FuelBudgetTooLow { got: fuel });
+        }
         if fuel > MAX_FUEL_BUDGET {
             return Err(ManifestError::FuelBudgetTooHigh { got: fuel });
         }
     }
     if let Some(mem) = m.memory_limit_bytes {
+        if mem < MIN_MEMORY_LIMIT_BYTES {
+            return Err(ManifestError::MemoryLimitTooLow { got: mem });
+        }
         if mem > MAX_MEMORY_LIMIT_BYTES {
             return Err(ManifestError::MemoryLimitTooHigh { got: mem });
         }
@@ -370,12 +389,32 @@ mod tests {
     }
 
     #[test]
+    fn zero_fuel_budget_rejected() {
+        let mut m = good_manifest();
+        m.fuel_budget_override = Some(0);
+        assert!(matches!(
+            validate_manifest(&m).unwrap_err(),
+            ManifestError::FuelBudgetTooLow { got: 0 }
+        ));
+    }
+
+    #[test]
     fn memory_limit_above_cap_rejected() {
         let mut m = good_manifest();
         m.memory_limit_bytes = Some(MAX_MEMORY_LIMIT_BYTES + 1);
         assert!(matches!(
             validate_manifest(&m).unwrap_err(),
             ManifestError::MemoryLimitTooHigh { .. }
+        ));
+    }
+
+    #[test]
+    fn sub_page_memory_limit_rejected() {
+        let mut m = good_manifest();
+        m.memory_limit_bytes = Some(MIN_MEMORY_LIMIT_BYTES - 1);
+        assert!(matches!(
+            validate_manifest(&m).unwrap_err(),
+            ManifestError::MemoryLimitTooLow { .. }
         ));
     }
 

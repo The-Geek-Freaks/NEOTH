@@ -101,7 +101,7 @@ Cons:
 ## Cross-cutting concerns
 
 1. **Permission gate**: every apply MUST pass through
-   `permissions::evaluate(action: WriteToRepo, level)`. Strict
+   `permissions::evaluate(action: WriteToRepo, &policy_snapshot)`. Strict
    autonomy denies; Standard prompts; Elevated+Full apply
    without ask.
 2. **Path safety**: the patch text MUST be validated against

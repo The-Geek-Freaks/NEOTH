@@ -65,6 +65,19 @@ pub async fn try_post_audit_frame(
     event_type: u8,
     payload: &[u8],
 ) -> std::result::Result<(), AuditRpcClientError> {
+    try_post_audit_frame_with_subtype(home, event_type, 0, payload).await
+}
+
+/// Subtype-aware audit forwarder. Existing callers keep using
+/// [`try_post_audit_frame`] (subtype zero); EXTENDED events must use this
+/// function with `(event_type=0x00, event_subtype!=0)`. The server validates
+/// the exact pair against its compile-time allowlist.
+pub async fn try_post_audit_frame_with_subtype(
+    home: &Path,
+    event_type: u8,
+    event_subtype: u8,
+    payload: &[u8],
+) -> std::result::Result<(), AuditRpcClientError> {
     let (port, pid) =
         read_sidecar(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
     // Anti-token-disclosure: a crashed daemon may have left a stale sidecar
@@ -80,8 +93,8 @@ pub async fn try_post_audit_frame(
         read_rpc_token(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
     let body = format!(
-        "{{\"event_type\":{event_type},\"payload_b64\":{:?}}}",
-        payload_b64
+        "{{\"event_type\":{event_type},\"event_subtype\":{event_subtype},\"payload_b64\":{:?}}}",
+        payload_b64,
     );
     let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
     let mut stream = TcpStream::connect(addr)

@@ -26,6 +26,9 @@
 use anyhow::{Context, Result};
 
 use crate::providers::http_client;
+use crate::tools::external_http::{
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+};
 
 /// Jina Reader base URL. Append the target URL directly.
 pub const JINA_READER_BASE: &str = "https://r.jina.ai/";
@@ -49,7 +52,9 @@ const JINA_UA: &str = "NEOTH-ingest/0.1 (+self-hosted; https://r.jina.ai)";
 /// Returns `Err` on non-2xx HTTP status, body exceeding [`JINA_MAX_BYTES`], or
 /// any network/parse error. The returned `String` is UTF-8 Markdown text.
 pub async fn fetch_via_jina(url: &str) -> Result<String> {
-    fetch_via_jina_at(JINA_READER_BASE, url).await
+    let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    let http = ExternalHttpAuthorizer::interactive(config.autonomy_policy())?;
+    fetch_via_jina_at_authorized(JINA_READER_BASE, url, &http).await
 }
 
 /// GR-067/151 — testable core of [`fetch_via_jina`]. `base` is the proxy
@@ -58,59 +63,77 @@ pub async fn fetch_via_jina(url: &str) -> Result<String> {
 /// no-redirect path is exercised end-to-end (the old tests only mirrored this
 /// function's body against a direct client, leaving the function itself
 /// untested).
+#[cfg(test)]
 async fn fetch_via_jina_at(base: &str, url: &str) -> Result<String> {
+    let http = ExternalHttpAuthorizer::test_allow();
+    fetch_via_jina_at_authorized(base, url, &http).await
+}
+
+async fn fetch_via_jina_at_authorized(
+    base: &str,
+    url: &str,
+    http: &ExternalHttpAuthorizer,
+) -> Result<String> {
     let jina_url = format!("{base}{url}");
-    // GR-065 — no-redirect client (the SX-01 norm web_fetch follows): r.jina.ai
-    // (a third-party proxy) must not be able to 30x-bounce the fetch to an
-    // arbitrary host the SSRF guard never saw.
-    let client =
-        http_client::build_client_no_redirect().context("jina_reader: build reqwest client")?;
-    let mut resp = client
-        .get(&jina_url)
-        .header("User-Agent", JINA_UA)
-        .header("Accept", "text/plain")
-        // X-Return-Format: markdown is the documented Jina hint that prefers
-        // a clean Markdown rendering over the default plain-text strip.
-        .header("X-Return-Format", "markdown")
-        .send()
-        .await
-        .with_context(|| format!("jina_reader: GET {jina_url}"))?;
+    let request = ExternalHttpRequest::get(&jina_url, ExternalHttpSurface::JinaReader);
+    let permitted_request = request.clone();
+    http.execute(request, move |permit| async move {
+        permit.require(&permitted_request)?;
+        // GR-065 — no-redirect client (the SX-01 norm web_fetch follows): r.jina.ai
+        // (a third-party proxy) must not be able to 30x-bounce the fetch to an
+        // arbitrary host the SSRF guard never saw.
+        let client =
+            http_client::build_client_no_redirect().context("jina_reader: build reqwest client")?;
+        let mut resp = client
+            .get(&jina_url)
+            .header("User-Agent", JINA_UA)
+            .header("Accept", "text/plain")
+            // X-Return-Format: markdown is the documented Jina hint that prefers
+            // a clean Markdown rendering over the default plain-text strip.
+            .header("X-Return-Format", "markdown")
+            .send()
+            .await
+            .with_context(|| format!("jina_reader: GET {jina_url}"))?;
 
-    let status = resp.status();
-    if !status.is_success() {
-        anyhow::bail!(
-            "jina_reader: Jina Reader returned HTTP {} for {url}",
-            status.as_u16()
-        );
-    }
-
-    // GR-017/095 — fast-path: refuse before reading a single body byte when the
-    // server honestly advertises an oversized payload.
-    if let Some(len) = resp.content_length() {
-        if len > JINA_MAX_BYTES as u64 {
+        let status = resp.status();
+        if !status.is_success() {
             anyhow::bail!(
-                "jina_reader: Content-Length {len} exceeds ceiling {JINA_MAX_BYTES} for {url}"
+                "jina_reader: Jina Reader returned HTTP {} for {url}",
+                status.as_u16()
             );
         }
-    }
 
-    // GR-017/095 — stream the body chunk-by-chunk and abort the instant the
-    // running total crosses the ceiling, so a giant (or Content-Length-lying)
-    // page can never buffer more than one chunk past JINA_MAX_BYTES into RAM.
-    let mut body: Vec<u8> = Vec::with_capacity(8 * 1024);
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .with_context(|| format!("jina_reader: read body for {url}"))?
-    {
-        if body.len() + chunk.len() > JINA_MAX_BYTES {
-            anyhow::bail!("jina_reader: response body exceeds ceiling {JINA_MAX_BYTES} for {url}");
+        // GR-017/095 — fast-path: refuse before reading a single body byte when the
+        // server honestly advertises an oversized payload.
+        if let Some(len) = resp.content_length() {
+            if len > JINA_MAX_BYTES as u64 {
+                anyhow::bail!(
+                    "jina_reader: Content-Length {len} exceeds ceiling {JINA_MAX_BYTES} for {url}"
+                );
+            }
         }
-        body.extend_from_slice(&chunk);
-    }
 
-    let text = String::from_utf8_lossy(&body).into_owned();
-    Ok(text)
+        // GR-017/095 — stream the body chunk-by-chunk and abort the instant the
+        // running total crosses the ceiling, so a giant (or Content-Length-lying)
+        // page can never buffer more than one chunk past JINA_MAX_BYTES into RAM.
+        let mut body: Vec<u8> = Vec::with_capacity(8 * 1024);
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .with_context(|| format!("jina_reader: read body for {url}"))?
+        {
+            if body.len() + chunk.len() > JINA_MAX_BYTES {
+                anyhow::bail!(
+                    "jina_reader: response body exceeds ceiling {JINA_MAX_BYTES} for {url}"
+                );
+            }
+            body.extend_from_slice(&chunk);
+        }
+
+        let text = String::from_utf8_lossy(&body).into_owned();
+        Ok(text)
+    })
+    .await
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

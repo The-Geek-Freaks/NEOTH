@@ -26,7 +26,7 @@ pub fn render_cli_reference(root: &Command) -> String {
         "> **Generated** from the clap command tree by `neoth completions --reference`.\n\
          > Do not edit by hand — it is the authoritative, drift-proof list of every\n\
          > command + flag. Regenerate with\n\
-         > `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neothd cli_commands_md_is_up_to_date`.\n\
+         > `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neoth cli_commands_md_is_up_to_date`.\n\
          > For the operator *guide* (with prose + workflows) see\n\
          > [cli-reference.md](cli-reference.md); for the journey see\n\
          > [operator-journey.md](operator-journey.md).\n\n",
@@ -241,7 +241,7 @@ mod tests {
     /// DOC-01 anti-drift guard. The committed `docs/cli-commands.md` MUST
     /// equal the freshly-rendered reference — so a new command / flag /
     /// alias / renamed subcommand fails CI until the doc is regenerated.
-    /// Regenerate with `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neothd
+    /// Regenerate with `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neoth
     /// cli_commands_md_is_up_to_date`.
     #[test]
     fn cli_commands_md_is_up_to_date() {
@@ -258,7 +258,7 @@ mod tests {
             norm(&committed),
             norm(&generated),
             "docs/cli-commands.md is STALE — the CLI changed but the generated reference \
-             was not regenerated. Run: NEOTH_REGEN_CLI_DOCS=1 cargo test -p neothd \
+             was not regenerated. Run: NEOTH_REGEN_CLI_DOCS=1 cargo test -p neoth \
              cli_commands_md_is_up_to_date"
         );
     }

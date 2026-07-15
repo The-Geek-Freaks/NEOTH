@@ -138,7 +138,11 @@ pub fn find_ollama_binary() -> Option<std::path::PathBuf> {
     }
 
     // 2. PATH scan — works if the shell already has the binary on PATH.
-    let bin_name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let bin_name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     if let Ok(path_var) = std::env::var("PATH") {
         let sep = if cfg!(windows) { ';' } else { ':' };
         for dir in path_var.split(sep) {
@@ -152,10 +156,7 @@ pub fn find_ollama_binary() -> Option<std::path::PathBuf> {
     // 3. Platform-specific known locations.
     #[cfg(target_os = "windows")]
     {
-        let known: &[&str] = &[
-            r"Programs\Ollama\ollama.exe",
-            r"Ollama\ollama.exe",
-        ];
+        let known: &[&str] = &[r"Programs\Ollama\ollama.exe", r"Ollama\ollama.exe"];
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             for rel in known {
                 let p = std::path::Path::new(&local).join(rel);
@@ -173,10 +174,7 @@ pub fn find_ollama_binary() -> Option<std::path::PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        let fixed: &[&str] = &[
-            "/usr/local/bin/ollama",
-            "/opt/homebrew/bin/ollama",
-        ];
+        let fixed: &[&str] = &["/usr/local/bin/ollama", "/opt/homebrew/bin/ollama"];
         for path in fixed {
             let p = std::path::Path::new(path);
             if p.is_file() {
@@ -186,7 +184,9 @@ pub fn find_ollama_binary() -> Option<std::path::PathBuf> {
         // App bundle paths — user ~/Applications first, then system.
         let bundle_rel = "Ollama.app/Contents/MacOS/ollama";
         if let Ok(home) = std::env::var("HOME") {
-            let p = std::path::Path::new(&home).join("Applications").join(bundle_rel);
+            let p = std::path::Path::new(&home)
+                .join("Applications")
+                .join(bundle_rel);
             if p.is_file() {
                 return Some(p);
             }
@@ -379,13 +379,7 @@ pub async fn run_command_at(binary: &std::path::Path, rest: &[String]) -> anyhow
         .stderr(std::process::Stdio::inherit())
         .status()
         .await
-        .with_context(|| {
-            format!(
-                "spawn `{} {}`",
-                binary.display(),
-                rest.join(" ")
-            )
-        })?;
+        .with_context(|| format!("spawn `{} {}`", binary.display(), rest.join(" ")))?;
     if !status.success() {
         anyhow::bail!(
             "`{} {}` failed (exit {:?})",
@@ -618,7 +612,10 @@ mod tests {
         let dir = std::env::temp_dir();
         let stub = dir.join("ollama_stub_oh05_test.exe");
         // Create a real (empty) file so is_file() returns true.
-        std::fs::File::create(&stub).unwrap().write_all(b"").unwrap();
+        std::fs::File::create(&stub)
+            .unwrap()
+            .write_all(b"")
+            .unwrap();
         // SAFETY: test-only env mutation — unique env key (OLLAMA_BIN with
         // distinctive stub name) minimises cross-test races in the test harness.
         unsafe {
@@ -664,9 +661,16 @@ mod tests {
         use std::io::Write;
         // Write a stub binary to a temp dir, prepend to PATH, assert probe finds it.
         let dir = tempfile::tempdir().expect("tempdir");
-        let bin_name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+        let bin_name = if cfg!(windows) {
+            "ollama.exe"
+        } else {
+            "ollama"
+        };
         let stub = dir.path().join(bin_name);
-        std::fs::File::create(&stub).unwrap().write_all(b"#!/bin/sh\n").unwrap();
+        std::fs::File::create(&stub)
+            .unwrap()
+            .write_all(b"#!/bin/sh\n")
+            .unwrap();
         // is_file() only checks existence, not executable bit — fine for our probe.
 
         let orig_path = std::env::var("PATH").unwrap_or_default();

@@ -23,7 +23,9 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 
 use crate::cli::OutputFormat;
-use crate::cli::obsidian_sync_util::{DirMtimeCache, WriteCoalescer, detect_sync_conflicts};
+use crate::cli::obsidian_sync_util::{
+    DirMtimeCache, WriteCoalescer, detect_sync_conflicts, obsidian_core_sync_enabled,
+};
 use crate::memory::archive;
 
 #[derive(Args, Debug, Clone)]
@@ -160,6 +162,9 @@ pub struct SyncStats {
     pub copied: usize,
     pub skipped_identical: usize,
     pub skipped_dry_run: usize,
+    pub blocked_sync_conflict: bool,
+    pub conflict_files: usize,
+    pub core_sync_enabled: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -202,10 +207,22 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
             subdir,
             dry_run,
         } => {
-            // GOLD-ADAPT-IGNIS-04: the interactive `neoth obsidian sync` has no
-            // daemon WAL writer in scope; conflict detection still gates the
-            // write (skip on conflict), it just emits no audit frame here.
-            let stats = sync_archive(&root, &vault, &subdir, dry_run, None).await?;
+            // GOLD-ADAPT-IGNIS-04: a standalone sync owns a collision-resistant
+            // one-shot segment. This keeps the conflict guard audited without
+            // racing a daemon that may own the primary segment.
+            let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+            std::fs::create_dir_all(&wal_dir)
+                .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
+            let sequence =
+                crate::time::now_unix_ns().saturating_add(u64::from(std::process::id()) << 12);
+            let segment = wal_dir.join(format!("{sequence:020}-obsidian-sync.wal"));
+            let (writer, join) = crate::wal::writer::spawn(segment)
+                .context("spawn one-shot Obsidian sync WAL writer")?;
+            let result = sync_archive(&root, &vault, &subdir, dry_run, Some(&writer)).await;
+            drop(writer);
+            join.await
+                .context("join one-shot Obsidian sync WAL writer")?;
+            let stats = result?;
             render_sync(stats, args.output);
         }
         ObsidianAction::Days => {
@@ -311,7 +328,10 @@ fn render_wiki_build(
                 "out_dir": out_dir.display().to_string(),
                 "pages": slugs,
             });
-            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&v).expect("wiki stats are infallible JSON")
+            );
         }
         OutputFormat::Table => {
             let plural = |n: usize| if n == 1 { "page" } else { "pages" };
@@ -666,6 +686,36 @@ pub(crate) fn validate_subdir(subdir: &Path) -> Result<()> {
     Ok(())
 }
 
+async fn append_obsidian_sync_gate_audit(
+    wal: Option<&crate::wal::writer::WalWriterHandle>,
+    conflict_count: Option<usize>,
+    core_sync_enabled: Option<bool>,
+    scan_complete: bool,
+    reason: &'static str,
+) -> Result<()> {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "conflict_count": conflict_count,
+        "core_sync_enabled": core_sync_enabled,
+        "scan_complete": scan_complete,
+        "reason": reason,
+        "ts_unix": ts_unix,
+    }))?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ObsidianSyncConflict as u8)
+        .build();
+    let writer =
+        wal.context("Obsidian sync conflict detected but no durable WAL writer was provided")?;
+    writer
+        .append(header, payload)
+        .await
+        .context("append Obsidian sync conflict audit frame")?;
+    Ok(())
+}
+
 pub async fn sync_archive(
     archive_root: &Path,
     vault: &Path,
@@ -680,36 +730,80 @@ pub async fn sync_archive(
         )
     })?;
 
-    // GOLD-ADAPT-IGNIS-04: detect cloud-sync conflict files before writing.
-    // On conflict, emit a WAL audit frame (when a writer is available) and
-    // SKIP the write pass to avoid stomping on in-progress cloud-sync merges.
-    // The operator resolves the conflicts; the next tick proceeds normally.
+    // GOLD-ADAPT-IGNIS-04: detect both file-level collision markers and the
+    // built-in Obsidian Sync plugin before writing. The audit append is part of
+    // the gate: an unaudited conflict never degrades into a silent skip.
     {
-        let conflict_report = detect_sync_conflicts(vault);
-        if !conflict_report.conflicts.is_empty() {
-            let conflict_count = conflict_report.conflicts.len();
+        let conflict_report = match detect_sync_conflicts(vault) {
+            Ok(report) => report,
+            Err(scan_error) => {
+                let audit =
+                    append_obsidian_sync_gate_audit(wal, None, None, false, "marker_scan_failed")
+                        .await;
+                return match audit {
+                    Ok(()) => Err(scan_error.context(
+                        "Obsidian sync blocked because the conflict-marker scan was incomplete",
+                    )),
+                    Err(audit_error) => Err(scan_error.context(format!(
+                        "Obsidian conflict-marker scan was incomplete and its audit failed: \
+                         {audit_error:#}"
+                    ))),
+                };
+            }
+        };
+        let conflict_files = conflict_report.conflicts.len();
+        let core_sync_enabled = match obsidian_core_sync_enabled(vault) {
+            Ok(enabled) => enabled,
+            Err(core_error) => {
+                let audit = append_obsidian_sync_gate_audit(
+                    wal,
+                    Some(conflict_files),
+                    None,
+                    true,
+                    "core_sync_state_unknown",
+                )
+                .await;
+                return match audit {
+                    Ok(()) => Err(core_error.context(format!(
+                        "inspect Obsidian core plugins in {}",
+                        vault.display()
+                    ))),
+                    Err(audit_error) => Err(core_error.context(format!(
+                        "Obsidian core-plugin state was unknown and its audit failed: \
+                         {audit_error:#}"
+                    ))),
+                };
+            }
+        };
+        if conflict_files > 0 || core_sync_enabled {
             if let Some(msg) = conflict_report.describe() {
-                tracing::warn!(conflict_count, "{}", msg);
+                tracing::warn!(conflict_files, "{}", msg);
             }
-            if let Some(w) = wal {
-                let ts_unix = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
-                    "conflict_count": conflict_count,
-                    "ts_unix": ts_unix,
-                })) {
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_EXTENDED,
-                        &payload,
-                    )
-                    .event_subtype(crate::wal::events::ExtendedSubtype::ObsidianSyncConflict as u8)
-                    .build();
-                    let _ = w.append(header, payload).await;
-                }
+            if core_sync_enabled {
+                tracing::warn!(
+                    "Obsidian's built-in Sync plugin is enabled; skipping NEOTH vault sync"
+                );
             }
-            return Ok(SyncStats::default());
+            let reason = match (conflict_files > 0, core_sync_enabled) {
+                (true, true) => "conflict_files_and_core_sync",
+                (true, false) => "conflict_files",
+                (false, true) => "core_sync_enabled",
+                (false, false) => unreachable!("guard only enters for a conflict"),
+            };
+            append_obsidian_sync_gate_audit(
+                wal,
+                Some(conflict_files),
+                Some(core_sync_enabled),
+                true,
+                reason,
+            )
+            .await?;
+            return Ok(SyncStats {
+                blocked_sync_conflict: true,
+                conflict_files,
+                core_sync_enabled,
+                ..SyncStats::default()
+            });
         }
     }
 
@@ -950,12 +1044,16 @@ fn default_preload_state_path() -> PathBuf {
 /// Pure function — no env reads, no I/O.  Stable across restarts for the
 /// same path; different paths always produce different names.
 pub(crate) fn preload_state_path_for(template: &Path) -> PathBuf {
+    preload_state_path_for_home(&crate::config::FreedomConfig::default_neoth_home(), template)
+}
+
+/// Instance-local variant used by `neoth serve --config <path>`.
+pub(crate) fn preload_state_path_for_home(home: &Path, template: &Path) -> PathBuf {
     use std::hash::Hash;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     template.hash(&mut h);
     let key = std::hash::Hasher::finish(&h);
-    crate::config::FreedomConfig::default_neoth_home()
-        .join(format!("obsidian_preload_state_{key:016x}.json"))
+    home.join(format!("obsidian_preload_state_{key:016x}.json"))
 }
 
 /// Gate result returned by [`preload_autorun_decision`].
@@ -1542,14 +1640,12 @@ fn drain_promotion_outbox(conn: &rusqlite::Connection, audit_path: &Path) -> Res
         writeln!(f, "{record}").with_context(|| {
             format!("write promotion audit record (outbox_id={})", row.outbox_id)
         })?;
-        f.flush().with_context(|| {
-            format!("flush audit log (outbox_id={})", row.outbox_id)
-        })?;
+        f.flush()
+            .with_context(|| format!("flush audit log (outbox_id={})", row.outbox_id))?;
         // fsync before marking done — the audit line must be on disk before
         // we lose the evidence of what to retry on next startup.
-        f.sync_data().with_context(|| {
-            format!("fsync audit log (outbox_id={})", row.outbox_id)
-        })?;
+        f.sync_data()
+            .with_context(|| format!("fsync audit log (outbox_id={})", row.outbox_id))?;
         crate::memory::groundtruth::mark_outbox_drained(conn, row.outbox_id, now_ns)
             .with_context(|| format!("mark outbox row {} drained", row.outbox_id))?;
     }
@@ -1567,8 +1663,12 @@ fn promote_cmd(
     audit_path: &Path,
     promoted_by: &str,
 ) -> Result<()> {
-    let conn = crate::memory::store::open(db_path)
-        .with_context(|| format!("open views.db for restricted promote ({})", db_path.display()))?;
+    let conn = crate::memory::store::open(db_path).with_context(|| {
+        format!(
+            "open views.db for restricted promote ({})",
+            db_path.display()
+        )
+    })?;
     // Replay any outbox rows left pending by a prior crash before doing new work.
     drain_promotion_outbox(&conn, audit_path)?;
     let now_ns = crate::time::now_unix_ns_i64();
@@ -1580,7 +1680,9 @@ fn promote_cmd(
             drain_promotion_outbox(&conn, audit_path)?;
             println!("promoted: restricted row {id} → groundtruth row {groundtruth_id}");
         }
-        crate::memory::groundtruth::PromoteOutcome::AlreadyPromoted { groundtruth_id_hint } => {
+        crate::memory::groundtruth::PromoteOutcome::AlreadyPromoted {
+            groundtruth_id_hint,
+        } => {
             println!(
                 "already-promoted: restricted row {id} (groundtruth hint: {groundtruth_id_hint:?})"
             );
@@ -1609,12 +1711,10 @@ fn promote_cmd(
 /// boundary check.  Fail-closed: mkdir failure and canonicalize failure both
 /// return `Err`.
 fn assert_target_within_vault(canonical_vault: &Path, parent: &Path) -> Result<()> {
-    std::fs::create_dir_all(parent).with_context(|| {
-        format!("create preload target dir {}", parent.display())
-    })?;
-    let real = std::fs::canonicalize(parent).with_context(|| {
-        format!("canonicalize preload target {}", parent.display())
-    })?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("create preload target dir {}", parent.display()))?;
+    let real = std::fs::canonicalize(parent)
+        .with_context(|| format!("canonicalize preload target {}", parent.display()))?;
     if !real.starts_with(canonical_vault) {
         anyhow::bail!(
             "preload write target resolves outside vault root \
@@ -1700,10 +1800,8 @@ pub async fn preload_template(
     // Ensure the structured provenance index exists and is consistent before
     // writing any new data.  Must run before the file loop.
     if let Some(conn) = conn.as_ref() {
-        ensure_preload_meta_table(conn)
-            .context("ensure idx_preload_meta on preload open")?;
-        reconcile_preload_meta(conn)
-            .context("reconcile idx_preload_meta on preload open")?;
+        ensure_preload_meta_table(conn).context("ensure idx_preload_meta on preload open")?;
+        reconcile_preload_meta(conn).context("reconcile idx_preload_meta on preload open")?;
     }
 
     for file in &files {
@@ -1769,18 +1867,12 @@ pub async fn preload_template(
                     conn.execute("SAVEPOINT preload_ingest", [])
                         .context("begin preload_ingest savepoint")?;
                     let ingest_result: Result<(usize, usize)> = (|| {
-                        let revoked =
-                            revoke_preload_meta(conn, &scope, &file.rel_key, now_ns)?;
+                        let revoked = revoke_preload_meta(conn, &scope, &file.rel_key, now_ns)?;
                         let mut inserted = 0usize;
                         for (heading, chunk) in &chunks {
                             let gt_id = crate::memory::groundtruth::insert(
                                 conn,
-                                &preload_statement(
-                                    &file.rel_key,
-                                    &file.policy,
-                                    heading,
-                                    chunk,
-                                ),
+                                &preload_statement(&file.rel_key, &file.policy, heading, chunk),
                                 &crate::memory::groundtruth::Source::ImportObsidian,
                                 &scope,
                                 now_ns,
@@ -1811,10 +1903,8 @@ pub async fn preload_template(
                         Err(e) => {
                             // Best-effort rollback — savepoint unwinds on
                             // connection close even if this fails.
-                            let _ = conn
-                                .execute("ROLLBACK TO SAVEPOINT preload_ingest", []);
-                            let _ =
-                                conn.execute("RELEASE SAVEPOINT preload_ingest", []);
+                            let _ = conn.execute("ROLLBACK TO SAVEPOINT preload_ingest", []);
+                            let _ = conn.execute("RELEASE SAVEPOINT preload_ingest", []);
                             return Err(e);
                         }
                     }
@@ -1865,7 +1955,8 @@ fn render_preload(stats: PreloadStats, output: OutputFormat) {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&stats).unwrap_or_default()
+                serde_json::to_string_pretty(&stats)
+                    .expect("Obsidian preload stats contain only serializable fields")
             );
         }
         OutputFormat::Table => {
@@ -1999,10 +2090,25 @@ fn render_sync(stats: SyncStats, output: OutputFormat) {
                 "copied": stats.copied,
                 "skipped_identical": stats.skipped_identical,
                 "skipped_dry_run": stats.skipped_dry_run,
+                "blocked_sync_conflict": stats.blocked_sync_conflict,
+                "conflict_files": stats.conflict_files,
+                "core_sync_enabled": stats.core_sync_enabled,
             });
             println!("{v}");
         }
         OutputFormat::Table => {
+            if stats.blocked_sync_conflict {
+                println!(
+                    "obsidian sync: blocked ({} conflict file(s), built-in Sync {})",
+                    stats.conflict_files,
+                    if stats.core_sync_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                );
+                return;
+            }
             println!(
                 "obsidian sync: {} considered, {} copied, {} unchanged, {} dry-run",
                 stats.considered, stats.copied, stats.skipped_identical, stats.skipped_dry_run,
@@ -2118,8 +2224,7 @@ type MirrorState = BTreeMap<String, MirrorSourceState>;
 /// This matches the SSRF hardening applied in commit a44b6a3a
 /// ("fix(security): block IPv4-mapped private IPs").
 pub(crate) fn validate_mirror_url(raw: &str) -> Result<url::Url> {
-    let url =
-        url::Url::parse(raw).with_context(|| format!("invalid mirror URL: {raw}"))?;
+    let url = url::Url::parse(raw).with_context(|| format!("invalid mirror URL: {raw}"))?;
     if url.scheme() != "https" {
         anyhow::bail!(
             "mirror URLs must use https (got scheme {:?}): {raw}",
@@ -2230,7 +2335,10 @@ async fn guard_resolved_host(url: &url::Url) -> Result<()> {
     }
     for sa in addrs {
         block_mirror_ip(sa.ip()).with_context(|| {
-            format!("SSRF guard rejected resolved IP {} for mirror host {host:?}", sa.ip())
+            format!(
+                "SSRF guard rejected resolved IP {} for mirror host {host:?}",
+                sa.ip()
+            )
         })?;
     }
     Ok(())
@@ -2240,8 +2348,7 @@ async fn guard_resolved_host(url: &url::Url) -> Result<()> {
 pub(crate) fn load_mirror_manifest(path: &Path) -> Result<MirrorManifest> {
     let body = std::fs::read_to_string(path)
         .with_context(|| format!("read mirror manifest {}", path.display()))?;
-    serde_yaml::from_str(&body)
-        .with_context(|| format!("parse mirror manifest {}", path.display()))
+    serde_yaml::from_str(&body).with_context(|| format!("parse mirror manifest {}", path.display()))
 }
 
 fn load_mirror_state(path: &Path) -> Result<MirrorState> {
@@ -2250,8 +2357,7 @@ fn load_mirror_state(path: &Path) -> Result<MirrorState> {
     }
     let body = std::fs::read_to_string(path)
         .with_context(|| format!("read mirror state {}", path.display()))?;
-    serde_yaml::from_str(&body)
-        .with_context(|| format!("parse mirror state {}", path.display()))
+    serde_yaml::from_str(&body).with_context(|| format!("parse mirror state {}", path.display()))
 }
 
 fn save_mirror_state(path: &Path, state: &MirrorState) -> Result<()> {
@@ -2486,9 +2592,7 @@ async fn fetch_and_write_source(
     // Content-Length pre-check: cooperative servers get an early rejection.
     if let Some(cl) = resp.content_length() {
         if cl > MIRROR_SIZE_CAP {
-            anyhow::bail!(
-                "Content-Length {cl} exceeds mirror size cap ({MIRROR_SIZE_CAP} bytes)"
-            );
+            anyhow::bail!("Content-Length {cl} exceeds mirror size cap ({MIRROR_SIZE_CAP} bytes)");
         }
     }
 
@@ -2573,9 +2677,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let archive = fake_archive(dir.path()).await;
         let vault = dir.path().join("vault");
-        let stats = sync_archive(&archive, &vault, &PathBuf::from("NEOTH-sessions"), false, None)
-            .await
-            .unwrap();
+        let stats = sync_archive(
+            &archive,
+            &vault,
+            &PathBuf::from("NEOTH-sessions"),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(stats.considered, 2);
         assert_eq!(stats.copied, 2);
         assert_eq!(stats.skipped_identical, 0);
@@ -2609,6 +2719,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn core_sync_plugin_blocks_copy_and_emits_durable_audit() {
+        let dir = tempdir().unwrap();
+        let archive = fake_archive(dir.path()).await;
+        let vault = dir.path().join("vault");
+        let obsidian = vault.join(".obsidian");
+        std::fs::create_dir_all(&obsidian).unwrap();
+        std::fs::write(obsidian.join("core-plugins.json"), br#"{"sync":true}"#).unwrap();
+
+        let segment = dir.path().join("obsidian-conflict.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let stats = sync_archive(
+            &archive,
+            &vault,
+            &PathBuf::from("NEOTH-sessions"),
+            false,
+            Some(&writer),
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        assert!(stats.blocked_sync_conflict);
+        assert!(stats.core_sync_enabled);
+        assert_eq!(stats.conflict_files, 0);
+        assert!(!vault.join("NEOTH-sessions").exists());
+
+        let bytes = std::fs::read(segment).unwrap();
+        let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let frame = crate::wal::frame::decode_frame(&bytes[segment_header.header_len()..]).unwrap();
+        assert_eq!(
+            frame.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::ObsidianSyncConflict as u8
+        );
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(payload["core_sync_enabled"], true);
+        assert_eq!(payload["reason"], "core_sync_enabled");
+    }
+
+    #[tokio::test]
+    async fn sync_conflict_without_wal_fails_closed() {
+        let dir = tempdir().unwrap();
+        let archive = fake_archive(dir.path()).await;
+        let vault = dir.path().join("vault");
+        let obsidian = vault.join(".obsidian");
+        std::fs::create_dir_all(&obsidian).unwrap();
+        std::fs::write(obsidian.join("core-plugins.json"), br#"["sync"]"#).unwrap();
+
+        let error = sync_archive(
+            &archive,
+            &vault,
+            &PathBuf::from("NEOTH-sessions"),
+            false,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("no durable WAL writer"));
+        assert!(!vault.join("NEOTH-sessions").exists());
+    }
+
+    #[tokio::test]
+    async fn incomplete_conflict_scan_fails_closed_and_is_audited() {
+        let dir = tempdir().unwrap();
+        let archive = fake_archive(dir.path()).await;
+        let vault_file = dir.path().join("not-a-vault-directory");
+        std::fs::write(&vault_file, b"file where a vault directory was expected").unwrap();
+        let segment = dir.path().join("obsidian-scan-failed.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+
+        let error = sync_archive(
+            &archive,
+            &vault_file,
+            &PathBuf::from("NEOTH-sessions"),
+            false,
+            Some(&writer),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("conflict-marker scan was incomplete")
+        );
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let frame = crate::wal::frame::decode_frame(&bytes[segment_header.header_len()..]).unwrap();
+        assert_eq!(
+            frame.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::ObsidianSyncConflict as u8
+        );
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(payload["reason"], "marker_scan_failed");
+        assert_eq!(payload["scan_complete"], false);
+        assert!(payload["conflict_count"].is_null());
+    }
+
+    #[tokio::test]
     async fn sync_recopies_when_source_changes() {
         let dir = tempdir().unwrap();
         let archive = fake_archive(dir.path()).await;
@@ -2636,7 +2847,9 @@ mod tests {
         let archive = fake_archive(dir.path()).await;
         let vault = dir.path().join("vault");
         let subdir = PathBuf::from("NEOTH-sessions");
-        let stats = sync_archive(&archive, &vault, &subdir, true, None).await.unwrap();
+        let stats = sync_archive(&archive, &vault, &subdir, true, None)
+            .await
+            .unwrap();
         assert_eq!(stats.considered, 2);
         assert_eq!(stats.skipped_dry_run, 2);
         assert_eq!(stats.copied, 0);
@@ -3101,10 +3314,7 @@ sections:
     fn preload_decision_warn_when_template_set_but_no_vault() {
         let mut cfg = crate::config::FreedomConfig::default();
         cfg.obsidian_preload_template_dir = Some("/tmp/template".to_string());
-        assert_eq!(
-            preload_autorun_decision(&cfg),
-            PreloadDecision::WarnNoVault,
-        );
+        assert_eq!(preload_autorun_decision(&cfg), PreloadDecision::WarnNoVault,);
     }
 
     #[test]
@@ -3120,7 +3330,11 @@ sections:
             } => {
                 assert_eq!(vault, PathBuf::from("/tmp/vault"));
                 assert_eq!(template_dir, PathBuf::from("/tmp/template"));
-                assert_eq!(subdir, PathBuf::new(), "unset subdir must be empty (manifest default)");
+                assert_eq!(
+                    subdir,
+                    PathBuf::new(),
+                    "unset subdir must be empty (manifest default)"
+                );
             }
             other => panic!("expected PreloadDecision::Run, got {other:?}"),
         }
@@ -3230,8 +3444,14 @@ sections:
             .expect("idx_preload_meta must have at least one row after ingest");
 
         assert_eq!(rel_key, "wiki/a.md", "rel_key stored as typed column");
-        assert_eq!(scope, "neoth-preload:l6-wiki", "scope stored as typed column");
-        assert!(!content_hash.is_empty(), "content_hash stored as typed column");
+        assert_eq!(
+            scope, "neoth-preload:l6-wiki",
+            "scope stored as typed column"
+        );
+        assert!(
+            !content_hash.is_empty(),
+            "content_hash stored as typed column"
+        );
         assert!(ingested_at > 0, "ingested_at stored as typed column");
         assert!(gt_id > 0, "groundtruth_id references a real row");
 
@@ -3273,7 +3493,10 @@ sections:
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(old_active, 0, "old chunk must be revoked after content change");
+        assert_eq!(
+            old_active, 0,
+            "old chunk must be revoked after content change"
+        );
 
         // Exactly one active chunk for the file after re-ingest (not double-indexed).
         let active_chunks: i64 = conn
@@ -3284,7 +3507,10 @@ sections:
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(active_chunks, 1, "exactly one active meta row after re-ingest");
+        assert_eq!(
+            active_chunks, 1,
+            "exactly one active meta row after re-ingest"
+        );
     }
 
     /// (b) Partial-write reconciliation: simulate a crash between SAVEPOINT
@@ -3341,7 +3567,10 @@ sections:
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(dangling, 1, "dangling meta row must exist before reconciliation");
+        assert_eq!(
+            dangling, 1,
+            "dangling meta row must exist before reconciliation"
+        );
 
         // Run reconciliation directly (as preload_template would on next startup).
         reconcile_preload_meta(&conn).unwrap();
@@ -3370,7 +3599,10 @@ sections:
         )
         .await
         .unwrap();
-        assert!(stats.ingested_chunks >= 1, "must re-ingest after reconciliation");
+        assert!(
+            stats.ingested_chunks >= 1,
+            "must re-ingest after reconciliation"
+        );
 
         let conn = crate::memory::store::open(&views_db).unwrap();
         let active: i64 = conn
@@ -3381,7 +3613,10 @@ sections:
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(active, 1, "exactly one active groundtruth row — not double-indexed");
+        assert_eq!(
+            active, 1,
+            "exactly one active groundtruth row — not double-indexed"
+        );
     }
 
     // ── PRELOAD-CONTAINMENT-CENTRAL-01 ───────────────────────────────────────
@@ -3476,14 +3711,16 @@ mod mirror_tests {
     fn ssrf_rejects_private_192_168_x() {
         let e = validate_mirror_url("https://192.168.1.100/readme.md").unwrap_err();
         let msg = format!("{e:#}");
-        assert!(msg.contains("private") || msg.contains("SSRF"), "got: {msg}");
+        assert!(
+            msg.contains("private") || msg.contains("SSRF"),
+            "got: {msg}"
+        );
     }
 
     #[test]
     fn ssrf_rejects_link_local_169_254() {
         // AWS/GCP metadata endpoint
-        let e =
-            validate_mirror_url("https://169.254.169.254/latest/meta-data/").unwrap_err();
+        let e = validate_mirror_url("https://169.254.169.254/latest/meta-data/").unwrap_err();
         let msg = format!("{e:#}");
         assert!(
             msg.contains("link-local") || msg.contains("SSRF"),
@@ -3546,9 +3783,8 @@ mod mirror_tests {
 
     #[test]
     fn ssrf_accepts_public_hostname() {
-        let result = validate_mirror_url(
-            "https://raw.githubusercontent.com/foo/bar/main/README.md",
-        );
+        let result =
+            validate_mirror_url("https://raw.githubusercontent.com/foo/bar/main/README.md");
         assert!(result.is_ok(), "public hostname must pass: {result:?}");
     }
 
@@ -3614,7 +3850,10 @@ mod mirror_tests {
         let m = load_mirror_manifest(&p).unwrap();
         assert_eq!(m.sources.len(), 1);
         assert_eq!(m.sources[0].name, "hacktricks");
-        assert_eq!(m.sources[0].url, "https://github.com/HackTricks-wiki/hacktricks");
+        assert_eq!(
+            m.sources[0].url,
+            "https://github.com/HackTricks-wiki/hacktricks"
+        );
         assert_eq!(m.sources[0].policy.as_deref(), Some("full-mirror-ok"));
     }
 
@@ -3641,8 +3880,7 @@ mod mirror_tests {
 
     #[test]
     fn manifest_policy_field_is_optional() {
-        let yaml =
-            "sources:\n  - name: no-policy\n    url: \"https://example.com/README.md\"\n";
+        let yaml = "sources:\n  - name: no-policy\n    url: \"https://example.com/README.md\"\n";
         let dir = tempdir().unwrap();
         let p = write_manifest(dir.path(), yaml);
         let m = load_mirror_manifest(&p).unwrap();
@@ -3676,7 +3914,10 @@ mod mirror_tests {
         let dest = dir.path().join("mirrored");
         // run_mirror returns Err when all sources are invalid — that's expected here
         let _ = run_mirror(&p, Some(&dest), true, true).await;
-        assert!(!dest.exists(), "dry-run must not create dest dir even with invalid URLs");
+        assert!(
+            !dest.exists(),
+            "dry-run must not create dest dir even with invalid URLs"
+        );
     }
 
     // ── per-source failure continues; nonzero exit only when ALL fail ─────────
@@ -3692,7 +3933,10 @@ mod mirror_tests {
         assert!(s.error.is_some(), "failed entry must carry error");
         assert!(s.sha256.is_none(), "failed entry must not have sha256");
         assert!(s.bytes.is_none(), "failed entry must not have bytes");
-        assert!(s.http_status.is_none(), "failed entry must not have http_status");
+        assert!(
+            s.http_status.is_none(),
+            "failed entry must not have http_status"
+        );
     }
 
     // ── SHA-256 correctness & determinism ─────────────────────────────────────
@@ -3704,7 +3948,11 @@ mod mirror_tests {
 
     #[test]
     fn sha256_hex_is_64_chars() {
-        assert_eq!(sha256_hex(b"anything").len(), 64, "sha256 hex must be 64 chars");
+        assert_eq!(
+            sha256_hex(b"anything").len(),
+            64,
+            "sha256 hex must be 64 chars"
+        );
     }
 
     #[test]
@@ -3741,12 +3989,18 @@ mod mirror_tests {
             1_720_000_000,
             "abc123def456",
         );
-        assert!(result.starts_with("---\n"), "must start with YAML frontmatter fence");
+        assert!(
+            result.starts_with("---\n"),
+            "must start with YAML frontmatter fence"
+        );
         assert!(result.contains("source_url: https://example.com/README.md"));
         assert!(result.contains("fetched_at: 1720000000"));
         assert!(result.contains("sha256: abc123def456"));
         assert!(result.contains("mirror_only: true"));
-        assert!(result.contains("# README content"), "original content must be preserved");
+        assert!(
+            result.contains("# README content"),
+            "original content must be preserved"
+        );
     }
 
     #[test]
@@ -3754,7 +4008,10 @@ mod mirror_tests {
         let body = "# Title\n\nSome text.";
         let result = with_provenance_frontmatter(body, "https://x.example/r.md", 0, "h");
         // Frontmatter block must be closed with ---
-        assert!(result.contains("---\n\n"), "frontmatter must be closed with ---");
+        assert!(
+            result.contains("---\n\n"),
+            "frontmatter must be closed with ---"
+        );
         assert!(result.ends_with("Some text."));
     }
 
@@ -3788,7 +4045,11 @@ mod mirror_tests {
 
     #[test]
     fn size_cap_is_8_mib() {
-        assert_eq!(MIRROR_SIZE_CAP, 8 * 1024 * 1024, "size cap must be exactly 8 MiB");
+        assert_eq!(
+            MIRROR_SIZE_CAP,
+            8 * 1024 * 1024,
+            "size cap must be exactly 8 MiB"
+        );
     }
 
     // ── mirror_state.yaml round-trip ──────────────────────────────────────────
@@ -3811,7 +4072,9 @@ mod mirror_tests {
         );
         save_mirror_state(&path, &state).unwrap();
         let loaded = load_mirror_state(&path).unwrap();
-        let entry = loaded.get("example").expect("entry must survive round-trip");
+        let entry = loaded
+            .get("example")
+            .expect("entry must survive round-trip");
         assert_eq!(entry.sha256.as_deref(), Some("abc123deadbeef"));
         assert_eq!(entry.bytes, Some(4096));
         assert_eq!(entry.http_status, Some(200));
@@ -3828,7 +4091,10 @@ mod mirror_tests {
         for name in ["zebra", "alpha", "middle"] {
             s.insert(
                 name.to_string(),
-                MirrorSourceState { url: "https://x.example".to_string(), ..Default::default() },
+                MirrorSourceState {
+                    url: "https://x.example".to_string(),
+                    ..Default::default()
+                },
             );
         }
         save_mirror_state(&path, &s).unwrap();
@@ -3836,8 +4102,14 @@ mod mirror_tests {
         let alpha_pos = yaml.find("alpha").unwrap();
         let middle_pos = yaml.find("middle").unwrap();
         let zebra_pos = yaml.find("zebra").unwrap();
-        assert!(alpha_pos < middle_pos, "BTreeMap must output alpha before middle");
-        assert!(middle_pos < zebra_pos, "BTreeMap must output middle before zebra");
+        assert!(
+            alpha_pos < middle_pos,
+            "BTreeMap must output alpha before middle"
+        );
+        assert!(
+            middle_pos < zebra_pos,
+            "BTreeMap must output middle before zebra"
+        );
     }
 
     // ── wiremock-style success: file written with correct sha256 ──────────────
@@ -3870,8 +4142,14 @@ mod mirror_tests {
 
         // File must start with frontmatter containing the sha256
         let written = std::fs::read_to_string(&out_path).unwrap();
-        assert!(written.contains(&sha256), "file must contain the sha256 of raw content");
-        assert!(written.contains("mirror_only: true"), "file must have mirror_only flag");
+        assert!(
+            written.contains(&sha256),
+            "file must contain the sha256 of raw content"
+        );
+        assert!(
+            written.contains("mirror_only: true"),
+            "file must have mirror_only flag"
+        );
 
         // State record must carry the same sha256
         let state_entry = MirrorSourceState {
@@ -3975,9 +4253,11 @@ sections:
         assert!(gt_rows[0].statement.contains("Curated body"));
 
         // Restricted NOT in idx_groundtruth.
-        let gt_all =
-            crate::memory::groundtruth::list_for_scope(&conn, "neoth-preload:offline-security-restricted")
-                .unwrap();
+        let gt_all = crate::memory::groundtruth::list_for_scope(
+            &conn,
+            "neoth-preload:offline-security-restricted",
+        )
+        .unwrap();
         assert!(
             gt_all.is_empty(),
             "restricted scope must not appear in idx_groundtruth"
@@ -3990,7 +4270,11 @@ sections:
         )
         .unwrap();
         assert_eq!(restricted_rows.len(), 1);
-        assert!(restricted_rows[0].statement.contains("Restricted payload details"));
+        assert!(
+            restricted_rows[0]
+                .statement
+                .contains("Restricted payload details")
+        );
         assert_eq!(restricted_rows[0].risk_tier, "dual-use-payloads");
         assert!(restricted_rows[0].promoted_at.is_none(), "not yet promoted");
     }
@@ -4058,7 +4342,14 @@ sections:
         drop(conn);
 
         // First promote — must succeed and write audit line.
-        promote_cmd(restricted_id, false, &views_db, &audit_path, "test-operator").unwrap();
+        promote_cmd(
+            restricted_id,
+            false,
+            &views_db,
+            &audit_path,
+            "test-operator",
+        )
+        .unwrap();
         assert!(audit_path.exists(), "audit file must be created");
         let audit_content = std::fs::read_to_string(&audit_path).unwrap();
         assert!(
@@ -4069,13 +4360,26 @@ sections:
             audit_content.contains(&restricted_id.to_string()),
             "audit must contain the restricted_id"
         );
-        assert!(audit_content.contains("test-operator"), "audit must record promoted_by");
+        assert!(
+            audit_content.contains("test-operator"),
+            "audit must record promoted_by"
+        );
 
         // Second promote — no-op (AlreadyPromoted), audit file unchanged length.
         let len_before = std::fs::metadata(&audit_path).unwrap().len();
-        promote_cmd(restricted_id, false, &views_db, &audit_path, "test-operator").unwrap();
+        promote_cmd(
+            restricted_id,
+            false,
+            &views_db,
+            &audit_path,
+            "test-operator",
+        )
+        .unwrap();
         let len_after = std::fs::metadata(&audit_path).unwrap().len();
-        assert_eq!(len_before, len_after, "second promote must not write to audit");
+        assert_eq!(
+            len_before, len_after,
+            "second promote must not write to audit"
+        );
 
         // Dry-run on a fresh restricted row — audit untouched.
         let conn2 = crate::memory::store::open(&views_db).unwrap();
@@ -4098,7 +4402,12 @@ sections:
         );
         // Verify the row was not actually promoted.
         let conn3 = crate::memory::store::open(&views_db).unwrap();
-        let chunk = crate::memory::groundtruth::get_restricted(&conn3, id2).unwrap().unwrap();
-        assert!(chunk.promoted_at.is_none(), "dry-run must not stamp promoted_at");
+        let chunk = crate::memory::groundtruth::get_restricted(&conn3, id2)
+            .unwrap()
+            .unwrap();
+        assert!(
+            chunk.promoted_at.is_none(),
+            "dry-run must not stamp promoted_at"
+        );
     }
 }

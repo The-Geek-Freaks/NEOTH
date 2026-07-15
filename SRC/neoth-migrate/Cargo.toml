@@ -1,11 +1,11 @@
 [package]
 name        = "neoth-migrate"
-version     = "0.1.0"
+version     = "1.0.0"
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 repository.workspace   = true
-description = "Prior-AI memory import tool — migrates operator-declared memory stores into the NEOTH WAL + tier views."
+description = "Prior-AI memory import tool — migrates operator-declared stores into NEOTH ground-truth candidates with durable audit."
 
 # V10-06 GA blocker. Ships as a SEPARATE binary from `neothd` so a
 # release of the daemon doesn't carry the migration-only deps
@@ -14,9 +14,10 @@ description = "Prior-AI memory import tool — migrates operator-declared memory
 #
 # Build/run (the operator declares their stores in import-manifest.yaml):
 #   cargo build -p neoth-migrate --release
-#   ./neoth-migrate dry-run --manifest import.yaml   # scan-only (shippable)
-#   ./neoth-migrate apply --manifest import.yaml --confirm   # POST-v1.0: not yet
-#       implemented — apply validates the manifest then refuses, pointing to dry-run.
+#   ./neoth-migrate detect --output import.yaml
+#   ./neoth-migrate dry-run --manifest import.yaml
+#   ./neoth-migrate apply --manifest import.yaml --confirm
+#   ./neoth-migrate status
 #
 # The source list is operator-supplied (see
 # `examples/import-manifest.example.yaml`); nothing is hardcoded to a
@@ -46,6 +47,11 @@ pulldown-cmark = { version = "0.12", default-features = false }
 # Same crate `neothd` already uses for K-Repo-Map, so the dep graph
 # stays tight.
 ignore = "0.4"
+
+# Cross-platform file-identity checks for the migration self-target guard.
+# Already present transitively through the workspace's walk stack; declaring
+# it directly lets us reject hard-link/symlink aliases of views.db as sources.
+same-file = "1"
 
 # V10-06 Pick #35 — Sqlite reader (cq_commons + context_mode_fts5).
 # Bundled feature so the migrator ships without a system sqlite dep,

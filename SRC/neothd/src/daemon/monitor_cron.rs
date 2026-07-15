@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::MonitorConfig;
 use crate::memory::scorecard::{
-    PipelineHistory, ScorecardHistory, compute_quality_scorecard, HEALTHY_THRESHOLD,
+    HEALTHY_THRESHOLD, PipelineHistory, ScorecardHistory, compute_quality_scorecard,
 };
 use crate::wal::{
     events::{
@@ -669,9 +669,10 @@ pub async fn run_pipeline_scorecard_tick(
             return;
         }
     };
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK, &payload)
-        .flags(crate::wal::EventFlags::SYNTHETIC)
-        .build();
+    let header =
+        crate::wal::HeaderBuilder::new(EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK, &payload)
+            .flags(crate::wal::EventFlags::SYNTHETIC)
+            .build();
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(
             error = %e,
@@ -682,14 +683,37 @@ pub async fn run_pipeline_scorecard_tick(
 
 /// GOLD-ADOPT-27 — at monitor start, probe every channel's config-completeness
 /// and `warn!` any that are actively misconfigured (e.g. one of a required
-/// token pair). Best-effort: a missing config/creds file → no warning. The full
-/// per-channel table lives in `neoth status`.
+/// token pair). A genuinely missing config means first-run/no configured
+/// channels; an existing unreadable or malformed config is reported and never
+/// collapsed into that state. The full per-channel table lives in `neoth status`.
 ///
 /// B17: an existing-but-corrupt credentials.yaml now emits an explicit warn
 /// instead of silently defaulting to empty (which could make every channel
 /// appear unconfigured and suppress the real misconfigured warnings).
 pub(crate) fn warn_misconfigured_channels(home: &Path) {
-    let cfg = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok();
+    let config_path = home.join("freedom.yaml");
+    let cfg = match config_path.try_exists() {
+        Ok(false) => None,
+        Ok(true) => match crate::config::FreedomConfig::load_from_path(&config_path) {
+            Ok(config) => Some(config),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    path = %config_path.display(),
+                    "freedom.yaml load failed — channel misconfiguration check skipped"
+                );
+                return;
+            }
+        },
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                path = %config_path.display(),
+                "freedom.yaml path inspection failed — channel misconfiguration check skipped"
+            );
+            return;
+        }
+    };
     let creds_path = home.join("credentials.yaml");
     let creds = match crate::config::credentials::Credentials::load_or_default(&creds_path) {
         Ok(c) => c,
@@ -1126,7 +1150,11 @@ mod tests {
         }
 
         // 6. Assert history received the entry.
-        assert_eq!(history.len(), 1, "history must hold one entry after the tick");
+        assert_eq!(
+            history.len(),
+            1,
+            "history must hold one entry after the tick"
+        );
         assert!(
             history.latest().unwrap().is_healthy,
             "empty store must produce a healthy scorecard"

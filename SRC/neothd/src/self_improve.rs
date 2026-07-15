@@ -65,8 +65,9 @@ impl SelfImproveConfig {
         let p = Self::path(home);
         match std::fs::read_to_string(&p) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(anyhow::Error::from(e)
-                .context(format!("could not read {}", p.display()))),
+            Err(e) => {
+                Err(anyhow::Error::from(e).context(format!("could not read {}", p.display())))
+            }
             Ok(s) => serde_yaml::from_str(&s)
                 .map(Some)
                 .map_err(|e| anyhow::anyhow!("{}: YAML parse error: {e}", p.display())),
@@ -180,8 +181,7 @@ fn load_ledger_strict(home: &Path) -> Result<Vec<ImproveRecord>> {
     let p = ledger_path(home);
     match std::fs::read_to_string(&p) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => Err(anyhow::Error::from(e)
-            .context(format!("ledger read: {}", p.display()))),
+        Err(e) => Err(anyhow::Error::from(e).context(format!("ledger read: {}", p.display()))),
         Ok(s) => serde_json::from_str(&s)
             .map_err(|e| anyhow::anyhow!("{}: JSON parse error: {e}", p.display())),
     }
@@ -279,7 +279,7 @@ pub struct Proposal {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ProposalSpec {
     /// Shell command (or test invocation) to run to verify the edit worked.
-    /// E.g. `"cargo test -p neothd -- self_improve"`. None = no gate.
+    /// E.g. `"cargo test -p neoth -- self_improve"`. None = no gate.
     #[serde(default)]
     pub verification_command: Option<String>,
     /// Human-readable criterion that defines "done" for this proposal.
@@ -322,8 +322,7 @@ fn load_proposals_strict(home: &Path) -> Result<Vec<Proposal>> {
     let p = proposals_path(home);
     match std::fs::read_to_string(&p) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => Err(anyhow::Error::from(e)
-            .context(format!("proposals read: {}", p.display()))),
+        Err(e) => Err(anyhow::Error::from(e).context(format!("proposals read: {}", p.display()))),
         Ok(s) => serde_json::from_str(&s)
             .map_err(|e| anyhow::anyhow!("{}: JSON parse error: {e}", p.display())),
     }
@@ -342,7 +341,9 @@ pub fn update_proposals<T>(
     home: &Path,
     f: impl FnOnce(&mut Vec<Proposal>) -> Result<T>,
 ) -> Result<T> {
-    let _guard = PROPOSALS_WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _guard = PROPOSALS_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     // B19 cross-process tier: the daemon nightly path and the `neoth self-improve`
     // CLI mutate proposals.json from separate processes — the process mutex above
     // only serialises threads. Hold the OS lock across the whole reload→mutate→write
@@ -411,9 +412,8 @@ pub fn recover_pending_journal(home: &Path) -> Result<()> {
         Err(e) => return Err(anyhow::Error::from(e).context("read accept journal")),
         Ok(s) => s,
     };
-    let journal: AcceptJournal = serde_json::from_str(&js).with_context(|| {
-        "accept journal is corrupt — delete self_improve_journal.json manually"
-    })?;
+    let journal: AcceptJournal = serde_json::from_str(&js)
+        .with_context(|| "accept journal is corrupt — delete self_improve_journal.json manually")?;
 
     // Determine whether the skill write landed. A failed read (missing or
     // unreadable skill) is an UNKNOWN state, not "empty" — defaulting to an
@@ -647,8 +647,10 @@ pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("read skill {} for rollback journal", path.display())));
+                return Err(anyhow::Error::from(e).context(format!(
+                    "read skill {} for rollback journal",
+                    path.display()
+                )));
             }
         };
         let journal = AcceptJournal {
@@ -1244,13 +1246,11 @@ pub fn run_nightly(
     run_nightly_with_engine(home, persona, skill_path, autonomy, run_skillopt_capped)
 }
 
-// ── IMPR-03: Execute variant — verification-gated proposal execution scaffold ─
+// ── IMPR-03: verification-gated proposal execution workflow ────────────────
 //
-// Runs a staged proposal through a verification + advisor-review loop. The
-// cheaper-executor subagent dispatch is left as a `// neoth:` hook — wiring it
-// requires the provider API which doesn't exist at this call site. The scaffold
-// provides: verification_command run → done_criteria check → advisor diff-review
-// loop (max 2 revises). Bounded and safe; never auto-accepts.
+// Runs a staged proposal through a verification + typed sub-agent QA loop:
+// verification_command run → done_criteria check → QaVerdict (max 2 revises).
+// Bounded and safe; never auto-accepts.
 
 /// Outcome of the advisor review pass in the execute variant (IMPR-03).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1262,6 +1262,18 @@ pub enum ExecutionVerdict {
     Revise { reason: String },
     /// Verification failed, a stop-condition triggered, or max revises reached.
     Blocked { reason: String },
+}
+
+/// Async QA boundary used by the real provider-backed execute path. Returning
+/// `QaVerdict` removes free-text APPROVE parsing from the production decision;
+/// transport/malformed-output errors propagate and fail closed.
+#[async_trait::async_trait]
+pub trait ProposalQaAdvisor: Send + Sync {
+    async fn review(
+        &self,
+        diff: &str,
+        verification_output: &str,
+    ) -> Result<crate::council::qa_verdict::QaVerdict>;
 }
 
 /// Parse an advisor review report string into an `ExecutionVerdict`.
@@ -1338,34 +1350,24 @@ pub fn review_execution_result(report: &str) -> ExecutionVerdict {
     }
 }
 
-/// Run a pending proposal through the verification-gated execute scaffold
+/// Run a pending proposal through the verification-gated execute workflow
 /// (IMPR-03). Steps:
 ///
 /// 1. Load the proposal by `id` (must be Pending).
 /// 2. Run `spec.verification_command` (if set); fail → `Blocked`.
 /// 3. Check `spec.stop_conditions` against the verification output; trigger → `Blocked`.
-/// 4. Call `advisor_fn` with the diff + verification output to get a review report.
-/// 5. Parse the report via `review_execution_result`; loop up to `max_revises`.
-///
-/// The `advisor_fn` closure is the cheaper-executor hook:
-/// ```text
-/// // neoth: wire a cheaper-executor subagent here when the provider API is
-/// // available at this call site — pass the ProposalSpec + diff as the prompt,
-/// // receive the advisor report string, return it from this closure.
-/// ```
+/// 4. Ask the provider-backed [`ProposalQaAdvisor`] for a validated `QaVerdict`.
+/// 5. Pass → approve, Fail → loop up to `max_revises`, Blocked/error → stop.
 ///
 /// Returns `(ExecutionVerdict, usize)` — the final verdict + number of revise
 /// rounds used. Never writes to a skill file (that stays gated behind `accept`).
-pub fn execute_proposal_with_verification<F>(
+pub async fn execute_proposal_with_verification(
     home: &Path,
     id: &str,
     max_revises: usize,
     autonomy: crate::permissions::AutonomyLevel,
-    advisor_fn: F,
-) -> Result<(ExecutionVerdict, usize)>
-where
-    F: Fn(&str, &str) -> String,
-{
+    advisor: &dyn ProposalQaAdvisor,
+) -> Result<(ExecutionVerdict, usize)> {
     let all = load_proposals(home);
     let p = all
         .iter()
@@ -1436,7 +1438,10 @@ where
     // Step 3: stop-conditions check.
     if let Some(spec) = &p.spec {
         for cond in &spec.stop_conditions {
-            if verification_output.lines().any(|l| l.starts_with(cond.as_str())) {
+            if verification_output
+                .lines()
+                .any(|l| l.starts_with(cond.as_str()))
+            {
                 return Ok((
                     ExecutionVerdict::Blocked {
                         reason: format!("stop condition triggered: `{cond}`"),
@@ -1450,11 +1455,36 @@ where
     // Steps 4–5: advisor review loop (max `max_revises` revise rounds).
     let mut revises = 0usize;
     loop {
-        // neoth: wire a cheaper-executor subagent here when the provider API is
-        // available at this call site — pass ProposalSpec + diff as the prompt,
-        // receive the advisor report string, return it from the closure.
-        let report = advisor_fn(&diff, &verification_output);
-        let verdict = review_execution_result(&report);
+        let qa_verdict = match advisor.review(&diff, &verification_output).await {
+            Ok(verdict) => {
+                verdict
+                    .validate()
+                    .map_err(|error| anyhow::anyhow!("invalid QA verdict: {error}"))?;
+                verdict
+            }
+            Err(error) => {
+                return Ok((
+                    ExecutionVerdict::Blocked {
+                        reason: format!("QA advisor failed: {error:#}"),
+                    },
+                    revises,
+                ));
+            }
+        };
+        let report = serde_json::to_string(&qa_verdict)?;
+        let verdict = match qa_verdict {
+            crate::council::qa_verdict::QaVerdict::Pass { .. } => ExecutionVerdict::Approved,
+            crate::council::qa_verdict::QaVerdict::Fail { failures } => ExecutionVerdict::Revise {
+                reason: failures
+                    .into_iter()
+                    .map(|failure| format!("{}: {}", failure.kind, failure.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            },
+            crate::council::qa_verdict::QaVerdict::Blocked { reason } => {
+                ExecutionVerdict::Blocked { reason }
+            }
+        };
         match verdict {
             ExecutionVerdict::Approved => {
                 // GOLD-ADAPT-KB-02 — independent stop-condition gate. An advisor
@@ -1555,7 +1585,8 @@ fn run_verification_in_sandbox(
     // IMPR-SANDBOX-01 — static denylist guard BEFORE any sandbox/spawn work.
     validate_verification_command(cmd)?;
     let sandbox = std::env::temp_dir().join(format!("neoth_si_sandbox_{}", sandbox_token()));
-    std::fs::create_dir_all(&sandbox).map_err(|e| SandboxVerificationError::Setup(e.to_string()))?;
+    std::fs::create_dir_all(&sandbox)
+        .map_err(|e| SandboxVerificationError::Setup(e.to_string()))?;
     // RAII: the sandbox dir is removed when this guard drops, on every path.
     let _guard = SandboxGuard(sandbox.clone());
 
@@ -1594,8 +1625,14 @@ fn run_verification_in_sandbox(
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", std::env::var("HOME").unwrap_or_default())
-        .env("USERPROFILE", std::env::var("USERPROFILE").unwrap_or_default())
-        .env("SystemRoot", std::env::var("SystemRoot").unwrap_or_default())
+        .env(
+            "USERPROFILE",
+            std::env::var("USERPROFILE").unwrap_or_default(),
+        )
+        .env(
+            "SystemRoot",
+            std::env::var("SystemRoot").unwrap_or_default(),
+        )
         .env("ComSpec", std::env::var("ComSpec").unwrap_or_default())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1723,7 +1760,10 @@ enum SandboxVerificationError {
     Rejected(String),
     Setup(String),
     SpawnFailed(String),
-    CommandFailed { exit: Option<i32>, stderr: String },
+    CommandFailed {
+        exit: Option<i32>,
+        stderr: String,
+    },
     /// The child process did not exit within the wall-clock timeout and was killed.
     Timeout,
 }
@@ -1736,7 +1776,10 @@ impl std::fmt::Display for SandboxVerificationError {
                 write!(f, "could not spawn verification_command in sandbox: {e}")
             }
             Self::CommandFailed { exit, stderr } => {
-                write!(f, "verification_command failed in sandbox (exit {exit:?}): {stderr}")
+                write!(
+                    f,
+                    "verification_command failed in sandbox (exit {exit:?}): {stderr}"
+                )
             }
             Self::Timeout => write!(
                 f,
@@ -1767,10 +1810,10 @@ fn assign_child_to_job(child: &std::process::Child) -> bool {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
     };
 
     // SAFETY: CreateJobObjectW with null attrs + null name is always valid;
@@ -1833,9 +1876,29 @@ fn assign_child_to_job(child: &std::process::Child) -> bool {
 /// none of them. Defense-in-depth, not the only control.
 fn validate_verification_command(cmd: &str) -> std::result::Result<(), SandboxVerificationError> {
     const DENIED: &[&str] = &[
-        "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp", "ftp", "rsync",
-        "powershell", "pwsh", "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "bitsadmin",
-        "certutil", "/dev/tcp", "/dev/udp", "mshta", "regsvr32",
+        "curl",
+        "wget",
+        "nc",
+        "ncat",
+        "netcat",
+        "telnet",
+        "ssh",
+        "scp",
+        "sftp",
+        "ftp",
+        "rsync",
+        "powershell",
+        "pwsh",
+        "invoke-webrequest",
+        "iwr",
+        "invoke-restmethod",
+        "irm",
+        "bitsadmin",
+        "certutil",
+        "/dev/tcp",
+        "/dev/udp",
+        "mshta",
+        "regsvr32",
     ];
     let lc = cmd.to_ascii_lowercase();
     for tok in DENIED {
@@ -1873,6 +1936,39 @@ fn command_contains_token(haystack: &str, tok: &str) -> bool {
 mod tests {
     use super::*;
 
+    struct FixedQaAdvisor(crate::council::qa_verdict::QaVerdict);
+
+    #[async_trait::async_trait]
+    impl ProposalQaAdvisor for FixedQaAdvisor {
+        async fn review(
+            &self,
+            _diff: &str,
+            _verification_output: &str,
+        ) -> Result<crate::council::qa_verdict::QaVerdict> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn passing_advisor() -> FixedQaAdvisor {
+        FixedQaAdvisor(crate::council::qa_verdict::QaVerdict::pass())
+    }
+
+    fn failing_advisor() -> FixedQaAdvisor {
+        FixedQaAdvisor(crate::council::qa_verdict::QaVerdict::fail(vec![
+            crate::council::qa_verdict::FailureItem {
+                kind: "needs_revision".into(),
+                message: "needs more work".into(),
+                citation: None,
+            },
+        ]))
+    }
+
+    fn blocked_advisor() -> FixedQaAdvisor {
+        FixedQaAdvisor(crate::council::qa_verdict::QaVerdict::blocked(
+            "unsafe change detected",
+        ))
+    }
+
     /// Test-only helper: bypass the execute step by writing `VerifiedApproved`
     /// directly into the proposals store. Use only in tests that focus on
     /// accept/rollback/PR behaviour rather than the execute gate itself.
@@ -1890,21 +1986,15 @@ mod tests {
     /// This is the hard proof the operator asked for ("kein harter Sandbox-/
     /// Demo-Beweis"): even an approved, exit-0 verification cannot escape to the
     /// live tree.
-    #[test]
-    fn sandbox_isolates_live_tree_from_destructive_verification_command() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_sandbox_isolation_{}",
-            std::process::id()
-        ));
+    #[tokio::test]
+    async fn sandbox_isolates_live_tree_from_destructive_verification_command() {
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_sandbox_isolation_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
 
         // Opt the sandbox into shell verification so the isolation proof can run.
-        std::fs::write(
-            SelfImproveConfig::path(&tmp),
-            "allow_shell_verify: true\n",
-        )
-        .unwrap();
+        std::fs::write(SelfImproveConfig::path(&tmp), "allow_shell_verify: true\n").unwrap();
 
         // A live skill file with a sentinel the test asserts stays intact.
         let live_skill = tmp.join("sentinel_skill.md");
@@ -1936,13 +2026,15 @@ mod tests {
         save_proposals(&tmp, &[prop]).unwrap();
 
         // Advisor always approves so the full pass-through path is exercised.
+        let advisor = passing_advisor();
         let (verdict, _revises) = execute_proposal_with_verification(
             &tmp,
             "psandbox",
             1,
             crate::permissions::AutonomyLevel::Standard,
-            |_diff, _vout| "APPROVE — sandbox isolation test".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         // The command exited 0 INSIDE the sandbox → Approved.
@@ -1966,12 +2058,10 @@ mod tests {
     /// SELF-IMPROVE-SAFETY-01 (a) — with the default config (no self_improve.yaml,
     /// allow_shell_verify = false) any proposal that carries a verification_command
     /// must be Blocked immediately; the advisor fn is never reached.
-    #[test]
-    fn shell_verify_gate_blocks_when_disabled_by_default() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_gate_default_{}",
-            std::process::id()
-        ));
+    #[tokio::test]
+    async fn shell_verify_gate_blocks_when_disabled_by_default() {
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_gate_default_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
         // Explicitly remove any leftover config so the default (false) applies.
@@ -2003,20 +2093,25 @@ mod tests {
 
         // Advisor unconditionally approves — if the gate fails open, we'd get
         // Approved; a Blocked result proves the gate fired before the advisor.
+        let advisor = passing_advisor();
         let (verdict, revises) = execute_proposal_with_verification(
             &tmp,
             "pgate",
             2,
             crate::permissions::AutonomyLevel::Elevated,
-            |_, _| "APPROVE — should never be reached".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         assert!(
             matches!(verdict, ExecutionVerdict::Blocked { .. }),
             "expected Blocked when allow_shell_verify=false (default), got {verdict:?}"
         );
-        assert_eq!(revises, 0, "no advisor rounds should run when the gate blocks");
+        assert_eq!(
+            revises, 0,
+            "no advisor rounds should run when the gate blocks"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -2028,10 +2123,7 @@ mod tests {
     /// see them.
     #[test]
     fn shell_verify_env_scrubbed_parent_vars_absent_in_child() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_env_scrub_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("neoth_si_env_scrub_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let skill = tmp.join("env_scrub_skill.md");
         std::fs::write(&skill, "content").unwrap();
@@ -2074,10 +2166,7 @@ mod tests {
     /// runs longer than the supplied timeout must be killed and return `Timeout`.
     #[test]
     fn shell_verify_timeout_kills_long_running_child() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_timeout_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("neoth_si_timeout_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let skill = tmp.join("timeout_skill.md");
         std::fs::write(&skill, "content").unwrap();
@@ -2120,7 +2209,7 @@ mod tests {
             );
         }
         for ok in [
-            "cargo test -p neothd -- self_improve",
+            "cargo test -p neoth -- self_improve",
             "cargo test --nocapture", // 'nc' inside 'nocapture' must NOT match
             "pytest -q",
             "go test ./...",
@@ -2488,7 +2577,10 @@ mod tests {
             "a reorder must surface a real change: {reorder}"
         );
         let dup = line_diff("x", "x\nx");
-        assert!(dup.contains("+ x"), "an added duplicate line must show: {dup}");
+        assert!(
+            dup.contains("+ x"),
+            "an added duplicate line must show: {dup}"
+        );
     }
 
     #[test]
@@ -2582,7 +2674,7 @@ mod tests {
             "heldout_eval_summary": "ok",
             "why_this_improves": "faster",
             "risk_notes": "none",
-            "verification_command": "cargo test -p neothd",
+            "verification_command": "cargo test -p neoth",
             "done_criteria": "all 42 tests pass",
             "stop_conditions": ["FAILED", "error["]
         }"#;
@@ -2591,7 +2683,10 @@ mod tests {
         assert!((quality.score_before - 0.3).abs() < 1e-9);
         assert!((quality.score_after - 0.7).abs() < 1e-9);
         let spec = spec.expect("spec must be present");
-        assert_eq!(spec.verification_command.as_deref(), Some("cargo test -p neothd"));
+        assert_eq!(
+            spec.verification_command.as_deref(),
+            Some("cargo test -p neoth")
+        );
         assert_eq!(spec.done_criteria.as_deref(), Some("all 42 tests pass"));
         assert_eq!(spec.stop_conditions, vec!["FAILED", "error["]);
         // drift_sha not in envelope — populated at stage time
@@ -2744,8 +2839,8 @@ mod tests {
         assert!(matches!(v, ExecutionVerdict::Blocked { .. }));
     }
 
-    #[test]
-    fn execute_proposal_with_verification_advisor_approve() {
+    #[tokio::test]
+    async fn execute_proposal_with_verification_advisor_approve() {
         let tmp = std::env::temp_dir().join("neoth_si_exec_approve_test");
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
@@ -2774,13 +2869,15 @@ mod tests {
         });
         save_proposals(&tmp, &all).unwrap();
 
+        let advisor = passing_advisor();
         let (verdict, revises) = execute_proposal_with_verification(
             &tmp,
             "pexec",
             2,
             crate::permissions::AutonomyLevel::Standard,
-            |_diff, _vout| "APPROVE — looks clean".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         assert_eq!(verdict, ExecutionVerdict::Approved);
@@ -2793,8 +2890,8 @@ mod tests {
         let _ = std::fs::remove_file(&skill);
     }
 
-    #[test]
-    fn execute_proposal_max_revises_blocks() {
+    #[tokio::test]
+    async fn execute_proposal_max_revises_blocks() {
         let tmp = std::env::temp_dir().join("neoth_si_exec_revise_test");
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
@@ -2818,13 +2915,15 @@ mod tests {
         save_proposals(&tmp, &all).unwrap();
 
         // advisor always says REVISE → must hit max_revises cap
+        let advisor = failing_advisor();
         let (verdict, revises) = execute_proposal_with_verification(
             &tmp,
             "previse",
             2,
             crate::permissions::AutonomyLevel::Standard,
-            |_diff, _vout| "REVISE: needs more work".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         assert!(matches!(verdict, ExecutionVerdict::Blocked { .. }));
@@ -2834,8 +2933,8 @@ mod tests {
         let _ = std::fs::remove_file(&skill);
     }
 
-    #[test]
-    fn execute_proposal_stop_condition_triggers_block() {
+    #[tokio::test]
+    async fn execute_proposal_stop_condition_triggers_block() {
         let tmp = std::env::temp_dir().join("neoth_si_exec_stop_test");
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
@@ -2869,13 +2968,15 @@ mod tests {
         });
         save_proposals(&tmp, &all).unwrap();
 
+        let advisor = passing_advisor();
         let (verdict, _revises) = execute_proposal_with_verification(
             &tmp,
             "pstop",
             2,
             crate::permissions::AutonomyLevel::Standard,
-            |_diff, _vout| "APPROVE".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         assert!(matches!(verdict, ExecutionVerdict::Blocked { .. }));
@@ -2888,8 +2989,8 @@ mod tests {
     /// verification evidence does NOT cover the declared `done_criteria`) is
     /// rejected by the independent stop gate; with the advisor stuck on APPROVE
     /// the loop exhausts `max_revises` and Blocks with a "stop gate" reason.
-    #[test]
-    fn kb02_premature_stop_blocked_at_full_autonomy() {
+    #[tokio::test]
+    async fn kb02_premature_stop_blocked_at_full_autonomy() {
         let tmp = std::env::temp_dir().join("neoth_si_kb02_premature");
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
@@ -2929,13 +3030,15 @@ mod tests {
         )
         .unwrap();
 
+        let advisor = passing_advisor();
         let (verdict, revises) = execute_proposal_with_verification(
             &tmp,
             "pkb02a",
             2,
             crate::permissions::AutonomyLevel::Full,
-            |_diff, _vout| "APPROVE".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         match verdict {
@@ -2954,8 +3057,8 @@ mod tests {
     /// GOLD-ADAPT-KB-02 — at Full autonomy a genuine APPROVE (verification
     /// evidence covers every `done_criterion`) passes the stop gate and is
     /// Approved immediately, with no extra revise rounds.
-    #[test]
-    fn kb02_genuine_stop_approved_at_full_autonomy() {
+    #[tokio::test]
+    async fn kb02_genuine_stop_approved_at_full_autonomy() {
         let tmp = std::env::temp_dir().join("neoth_si_kb02_genuine");
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
@@ -2994,13 +3097,15 @@ mod tests {
         )
         .unwrap();
 
+        let advisor = passing_advisor();
         let (verdict, revises) = execute_proposal_with_verification(
             &tmp,
             "pkb02b",
             2,
             crate::permissions::AutonomyLevel::Full,
-            |_diff, _vout| "APPROVE".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         assert_eq!(
@@ -3047,7 +3152,10 @@ mod tests {
         .unwrap();
 
         let err = accept_proposal(&tmp, &id);
-        assert!(err.is_err(), "accept must refuse a Pending proposal — got Ok");
+        assert!(
+            err.is_err(),
+            "accept must refuse a Pending proposal — got Ok"
+        );
         let msg = err.unwrap_err().to_string();
         assert!(
             msg.contains("verified_approved"),
@@ -3063,8 +3171,8 @@ mod tests {
 
     /// Residual 1b — `execute_proposal_with_verification` → Approved persists
     /// `VerifiedApproved` to disk, and `accept_proposal` then succeeds.
-    #[test]
-    fn execute_persists_verified_approved_and_accept_succeeds() {
+    #[tokio::test]
+    async fn execute_persists_verified_approved_and_accept_succeeds() {
         let tmp = std::env::temp_dir().join(format!(
             "neoth_si_safety01r1_persist_{}",
             std::process::id()
@@ -3098,13 +3206,15 @@ mod tests {
             "must refuse before execute"
         );
 
+        let advisor = passing_advisor();
         let (verdict, revises) = execute_proposal_with_verification(
             &tmp,
             &id,
             1,
             crate::permissions::AutonomyLevel::Standard,
-            |_diff, _vout| "APPROVE — residual-1 test".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
         assert_eq!(verdict, ExecutionVerdict::Approved);
         assert_eq!(revises, 0);
@@ -3128,12 +3238,10 @@ mod tests {
     /// Residual 1c — `VerifiedApproved` survives a reload (simulates restart):
     /// a `VerifiedApproved` proposal loaded from disk is accepted; a `Pending`
     /// proposal loaded from disk still refuses.
-    #[test]
-    fn verified_approved_survives_reload_pending_still_refused() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_safety01r1_reload_{}",
-            std::process::id()
-        ));
+    #[tokio::test]
+    async fn verified_approved_survives_reload_pending_still_refused() {
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_safety01r1_reload_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
 
@@ -3159,13 +3267,15 @@ mod tests {
             },
         )
         .unwrap();
+        let advisor = passing_advisor();
         execute_proposal_with_verification(
             &tmp,
             &id_va,
             1,
             crate::permissions::AutonomyLevel::Standard,
-            |_d, _v| "APPROVE".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
 
         // Stage a Pending proposal (no execute).
@@ -3221,8 +3331,8 @@ mod tests {
 
     /// Residual 1d — a `Blocked` verdict must NOT persist `VerifiedApproved`;
     /// `accept_proposal` must still refuse.
-    #[test]
-    fn blocked_verdict_does_not_persist_verified_approved() {
+    #[tokio::test]
+    async fn blocked_verdict_does_not_persist_verified_approved() {
         let tmp = std::env::temp_dir().join(format!(
             "neoth_si_safety01r1_blocked_{}",
             std::process::id()
@@ -3250,13 +3360,15 @@ mod tests {
         )
         .unwrap();
 
+        let advisor = blocked_advisor();
         let (verdict, _) = execute_proposal_with_verification(
             &tmp,
             &id,
             1,
             crate::permissions::AutonomyLevel::Standard,
-            |_d, _v| "BLOCK: unsafe change detected".to_string(),
+            &advisor,
         )
+        .await
         .unwrap();
         assert!(matches!(verdict, ExecutionVerdict::Blocked { .. }));
 
@@ -3285,10 +3397,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sandbox_unix_process_group_kill_terminates_child_tree() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_pgkill_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("neoth_si_pgkill_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let skill = tmp.join("skill_pgkill.md");
         std::fs::write(&skill, "content").unwrap();
@@ -3317,10 +3426,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn sandbox_windows_job_object_does_not_break_normal_verification() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_job_object_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("neoth_si_job_object_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let skill = tmp.join("skill_job_object.md");
         std::fs::write(&skill, "content").unwrap();
@@ -3368,10 +3474,8 @@ mod tests {
     /// Nightly skipped when config is default-off (enabled=false, auto=false).
     #[test]
     fn run_nightly_skipped_when_disabled_by_default() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_nightly_disabled_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_nightly_disabled_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(SelfImproveConfig::path(&tmp));
 
@@ -3392,10 +3496,8 @@ mod tests {
     /// Nightly skipped when enabled=true but auto=false.
     #[test]
     fn run_nightly_skipped_when_auto_off() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_nightly_autooff_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_nightly_autooff_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         SelfImproveConfig {
             enabled: true,
@@ -3424,10 +3526,8 @@ mod tests {
     /// propose — its documented convention for a "no change" run).
     #[test]
     fn run_nightly_no_improvement_on_engine_nonzero_exit() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_nightly_nzexit_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_nightly_nzexit_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         SelfImproveConfig {
             enabled: true,
@@ -3469,10 +3569,8 @@ mod tests {
     /// Engine returns content identical to the current file → NoImprovement.
     #[test]
     fn run_nightly_no_improvement_when_content_identical() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_nightly_noimpr_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_nightly_noimpr_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         SelfImproveConfig {
             enabled: true,
@@ -3505,10 +3603,8 @@ mod tests {
     /// skill file untouched (proposal is Pending, operator must accept).
     #[test]
     fn run_nightly_stages_proposal_and_appends_ledger() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_nightly_staged_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_nightly_staged_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
         let _ = std::fs::remove_file(ledger_path(&tmp));
@@ -3544,8 +3640,15 @@ mod tests {
             .iter()
             .find(|p| p.id == proposal_id)
             .expect("staged proposal must exist in the proposals store");
-        assert_eq!(p.status, ProposalStatus::Pending, "proposal must stay Pending");
-        assert_eq!(p.after, new_content, "after content must match engine output");
+        assert_eq!(
+            p.status,
+            ProposalStatus::Pending,
+            "proposal must stay Pending"
+        );
+        assert_eq!(
+            p.after, new_content,
+            "after content must match engine output"
+        );
         assert_eq!(p.skill, "test_persona");
 
         // Live skill file MUST be untouched — staging never writes production files.
@@ -3558,7 +3661,10 @@ mod tests {
         // Ledger entry appended with accepted=false (staged, not operator-adopted).
         let last = last_record(&tmp).expect("ledger entry must exist after nightly stage");
         assert_eq!(last.skill, "test_persona");
-        assert!(!last.accepted, "staged-only ledger entry must have accepted=false");
+        assert!(
+            !last.accepted,
+            "staged-only ledger entry must have accepted=false"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -3566,10 +3672,8 @@ mod tests {
     /// Structured JSON engine output → quality fields extracted into the proposal.
     #[test]
     fn run_nightly_extracts_quality_from_structured_json_output() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth_si_nightly_quality_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_si_nightly_quality_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
         SelfImproveConfig {
@@ -3628,8 +3732,7 @@ mod tests {
 
     #[test]
     fn b19_load_proposals_strict_empty_when_missing() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_pstrict_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_pstrict_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
         let result = load_proposals_strict(&tmp);
@@ -3640,8 +3743,7 @@ mod tests {
 
     #[test]
     fn b19_load_proposals_strict_errors_on_corrupt_json() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_pcorrupt_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_pcorrupt_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         std::fs::write(proposals_path(&tmp), b"not json {{{{").unwrap();
         let result = load_proposals_strict(&tmp);
@@ -3651,8 +3753,7 @@ mod tests {
 
     #[test]
     fn b19_config_load_strict_none_when_missing() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_cfg_miss_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_cfg_miss_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(SelfImproveConfig::path(&tmp));
         let result = SelfImproveConfig::load_strict(&tmp);
@@ -3663,8 +3764,7 @@ mod tests {
 
     #[test]
     fn b19_config_load_strict_errors_on_corrupt_yaml() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_cfg_corr_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_cfg_corr_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         std::fs::write(SelfImproveConfig::path(&tmp), b": : : not yaml").unwrap();
         let result = SelfImproveConfig::load_strict(&tmp);
@@ -3677,13 +3777,19 @@ mod tests {
         let cfg = effective_from_option(None, crate::permissions::AutonomyLevel::Full);
         assert!(cfg.enabled, "Full autonomy + no config must enable");
         assert!(cfg.auto, "Full autonomy + no config must set auto=true");
-        assert!(!cfg.allow_shell_verify, "allow_shell_verify must remain false");
+        assert!(
+            !cfg.allow_shell_verify,
+            "allow_shell_verify must remain false"
+        );
     }
 
     #[test]
     fn b19_effective_from_option_none_standard_default() {
         let cfg = effective_from_option(None, crate::permissions::AutonomyLevel::Standard);
-        assert!(!cfg.enabled, "Standard autonomy + no config must not enable");
+        assert!(
+            !cfg.enabled,
+            "Standard autonomy + no config must not enable"
+        );
         assert!(!cfg.allow_shell_verify);
     }
 
@@ -3695,8 +3801,10 @@ mod tests {
             asked: true,
             allow_shell_verify: false,
         };
-        let cfg =
-            effective_from_option(Some(stored.clone()), crate::permissions::AutonomyLevel::Full);
+        let cfg = effective_from_option(
+            Some(stored.clone()),
+            crate::permissions::AutonomyLevel::Full,
+        );
         assert_eq!(cfg.enabled, stored.enabled);
         assert_eq!(cfg.auto, stored.auto);
         assert_eq!(cfg.asked, stored.asked);
@@ -3704,8 +3812,7 @@ mod tests {
 
     #[test]
     fn b19_update_proposals_closure_err_does_not_write_file() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_txn_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_txn_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
         let result = update_proposals::<()>(&tmp, |_| anyhow::bail!("intentional failure"));
@@ -3719,8 +3826,7 @@ mod tests {
 
     #[test]
     fn b19_update_proposals_sequential_updates_accumulate() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_seq_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_seq_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(proposals_path(&tmp));
 
@@ -3754,7 +3860,11 @@ mod tests {
         .unwrap();
 
         let all = load_proposals_strict(&tmp).unwrap();
-        assert_eq!(all.len(), 2, "both proposals must persist across sequential updates");
+        assert_eq!(
+            all.len(),
+            2,
+            "both proposals must persist across sequential updates"
+        );
         assert_eq!(all[0].id, "a1");
         assert_eq!(all[1].id, "a2");
         let _ = std::fs::remove_dir_all(&tmp);
@@ -3762,8 +3872,7 @@ mod tests {
 
     #[test]
     fn b19_recover_pending_journal_noop_when_no_journal() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_rec_noop_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_rec_noop_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let _ = std::fs::remove_file(journal_path(&tmp));
         assert!(recover_pending_journal(&tmp).is_ok());
@@ -3774,8 +3883,8 @@ mod tests {
     fn b19_recover_pending_journal_cleans_up_when_skill_unchanged() {
         // Crash scenario: journal written but skill file write never happened.
         // base_hash == current_hash → just delete journal.
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_rec_nowrite_{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_b19_rec_nowrite_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
 
         let skill_content = "original content";
@@ -3789,8 +3898,11 @@ mod tests {
             intended_status: ProposalStatus::Accepted,
             base_hash: fnv1a_hash(skill_content),
         };
-        std::fs::write(journal_path(&tmp), serde_json::to_string_pretty(&journal).unwrap())
-            .unwrap();
+        std::fs::write(
+            journal_path(&tmp),
+            serde_json::to_string_pretty(&journal).unwrap(),
+        )
+        .unwrap();
 
         recover_pending_journal(&tmp).unwrap();
 
@@ -3808,8 +3920,8 @@ mod tests {
         // B19 fail-closed: a journal exists but the skill file is missing/unreadable
         // → the write-landed state is UNKNOWN. Recovery must NOT default the read to
         // empty and guess a transition; it must error and leave the journal on disk.
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_rec_unreadable_{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth_b19_rec_unreadable_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
 
         let skill_path = tmp.join("gone.md"); // deliberately never created
@@ -3820,8 +3932,11 @@ mod tests {
             intended_status: ProposalStatus::Accepted,
             base_hash: fnv1a_hash("original"),
         };
-        std::fs::write(journal_path(&tmp), serde_json::to_string_pretty(&journal).unwrap())
-            .unwrap();
+        std::fs::write(
+            journal_path(&tmp),
+            serde_json::to_string_pretty(&journal).unwrap(),
+        )
+        .unwrap();
 
         let r = recover_pending_journal(&tmp);
         assert!(r.is_err(), "unreadable skill must fail recovery, not guess");
@@ -3836,8 +3951,7 @@ mod tests {
     fn b19_update_proposals_creates_oslock_sibling() {
         // B19 cross-process tier: update_proposals must acquire the OS lock on the
         // `.json.lock` sibling and still round-trip the mutation.
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_oslock_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_oslock_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
 
         update_proposals(&tmp, |all| {
@@ -3866,15 +3980,18 @@ mod tests {
             proposals_path(&tmp).with_extension("json.lock").exists(),
             "OS lock sibling must be created"
         );
-        assert_eq!(load_proposals_strict(&tmp).unwrap().len(), 1, "mutation must persist");
+        assert_eq!(
+            load_proposals_strict(&tmp).unwrap().len(),
+            1,
+            "mutation must persist"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn b19_recover_pending_journal_commits_when_skill_written_proposals_not_saved() {
         // Crash scenario: skill written, proposals.json not yet updated.
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_rec_commit_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_rec_commit_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
 
         let original = "old content";
@@ -3911,13 +4028,19 @@ mod tests {
             intended_status: ProposalStatus::Accepted,
             base_hash: fnv1a_hash(original),
         };
-        std::fs::write(journal_path(&tmp), serde_json::to_string_pretty(&journal).unwrap())
-            .unwrap();
+        std::fs::write(
+            journal_path(&tmp),
+            serde_json::to_string_pretty(&journal).unwrap(),
+        )
+        .unwrap();
 
         // current_hash (new_content) != base_hash (original) → recovery commits.
         recover_pending_journal(&tmp).unwrap();
 
-        assert!(!journal_path(&tmp).exists(), "journal must be removed after recovery");
+        assert!(
+            !journal_path(&tmp).exists(),
+            "journal must be removed after recovery"
+        );
 
         let proposals = load_proposals_strict(&tmp).unwrap();
         let p = proposals.iter().find(|p| p.id == "p1").unwrap();
@@ -3937,8 +4060,7 @@ mod tests {
     #[test]
     fn b19_injected_save_failure_returns_err() {
         // Make proposals_path a DIRECTORY so atomic_write to it fails.
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_savefail_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_savefail_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let pp = proposals_path(&tmp);
         std::fs::create_dir_all(&pp).unwrap(); // proposals.json is now a dir
@@ -3949,8 +4071,7 @@ mod tests {
 
     #[test]
     fn b19_accept_proposal_journal_deleted_on_success() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_jp_clean_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_jp_clean_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
 
         let skill_path = tmp.join("skill.md");
@@ -3991,8 +4112,7 @@ mod tests {
 
     #[test]
     fn b19_rollback_proposal_journal_deleted_on_success() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_rb_jp_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_rb_jp_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
 
         let skill_path = tmp.join("skill.md");
@@ -4032,8 +4152,7 @@ mod tests {
 
     #[test]
     fn b19_nightly_errors_on_corrupt_config() {
-        let tmp = std::env::temp_dir()
-            .join(format!("neoth_b19_cfg_fail_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("neoth_b19_cfg_fail_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         std::fs::write(SelfImproveConfig::path(&tmp), b": : : not yaml").unwrap();
 

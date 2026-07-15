@@ -98,7 +98,7 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
             // EM-02b kill switch: when calendar writes are disabled the surface
             // refuses FAIL-CLOSED + audits the refusal (0xCB) so a disabled
             // surface is never silent. Checked before the autonomy gate.
-            let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+            let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
             if !cfg.calendar.writes_enabled {
                 emit_calendar_write_denied(
                     "caldav_calendar",

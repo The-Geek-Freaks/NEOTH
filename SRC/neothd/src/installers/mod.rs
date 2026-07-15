@@ -34,7 +34,9 @@ pub mod faccam_family;
 pub mod ffmpeg;
 pub mod fontconfig;
 pub mod gpu;
+pub mod hex_graph;
 pub mod hysteria2;
+pub mod mobile_mcp;
 pub mod n8n;
 pub mod n8n_starter_workflows;
 pub mod n8n_workflows;
@@ -48,13 +50,11 @@ pub mod ocr;
 pub mod ollama;
 pub mod omi;
 pub mod paperless;
-pub mod pears;
 pub mod probe;
 pub mod qwen_weights;
 pub mod tailscale;
 pub mod tmux;
 pub mod tmux_w02;
-pub mod mobile_mcp;
 pub mod tududi;
 pub mod zero_install;
 
@@ -241,11 +241,8 @@ async fn install_via_npm(
 /// - `Unknown` → FAIL OPEN (network blip must not brick an offline install).
 /// - `Clean` → proceed silently.
 ///
-/// `block_threshold` is passed by the caller so the config wire can be added
-/// without touching this function's signature.
-/// // neoth: wire `block_threshold` to `SecurityPolicy.dep_vuln_threshold` in
-/// // config/mod.rs (serde-default `High`). Until wired, callers pass
-/// // `SeverityLevel::High` as the default.
+/// `block_threshold` is supplied by the operator's live
+/// `SecurityPolicy.dep_vuln_threshold` at every production installer caller.
 ///
 /// Pure (modulo the warn log) so it is unit-tested without npm.
 fn npm_supply_chain_gate(

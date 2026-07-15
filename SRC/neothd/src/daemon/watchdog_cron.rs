@@ -113,7 +113,9 @@ impl WatchState {
         if self.restarts_in_window > 0 && base_backoff_secs > 0 {
             let shift = (self.restarts_in_window - 1).min(16);
             let exp = base_backoff_secs.saturating_mul(1u64 << shift);
-            let backoff = exp.min(max_backoff_secs.max(base_backoff_secs)).saturating_add(jitter_secs);
+            let backoff = exp
+                .min(max_backoff_secs.max(base_backoff_secs))
+                .saturating_add(jitter_secs);
             if now_secs.saturating_sub(self.last_restart_secs) < backoff {
                 return RestartDecision::BackingOff;
             }
@@ -332,9 +334,12 @@ fn obsidian_running() -> bool {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
     let mut sys = System::new();
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
-    sys.processes()
-        .values()
-        .any(|p| p.name().to_string_lossy().to_lowercase().contains("obsidian"))
+    sys.processes().values().any(|p| {
+        p.name()
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("obsidian")
+    })
 }
 
 /// A small random additive jitter (`0..=base/4` seconds) decorrelating the
@@ -536,9 +541,8 @@ mod tests {
         // base=30s, max=900s, budget effectively unlimited so backoff (not the
         // window budget) is what gates the second restart.
         let mut s = WatchState::default();
-        let knobs = |st: &mut WatchState, now: u64| {
-            st.observe(false, now, 1, 100, WINDOW, 30, 900, 0)
-        };
+        let knobs =
+            |st: &mut WatchState, now: u64| st.observe(false, now, 1, 100, WINDOW, 30, 900, 0);
         // First failure → first restart at t=0 (no prior restart → no backoff).
         assert_eq!(knobs(&mut s, 0), RestartDecision::Restart);
         assert_eq!(s.last_restart_secs, 0);
@@ -559,7 +563,8 @@ mod tests {
         // capped at 45s even though 30·2^n would be far larger. All within one
         // WINDOW (600s) so the budget window never rolls + restarts accumulate.
         let mut s = WatchState::default();
-        let step = |st: &mut WatchState, now: u64| st.observe(false, now, 1, 100, WINDOW, 30, 45, 0);
+        let step =
+            |st: &mut WatchState, now: u64| st.observe(false, now, 1, 100, WINDOW, 30, 45, 0);
         assert_eq!(step(&mut s, 0), RestartDecision::Restart); // #1 (no prior restart)
         assert_eq!(step(&mut s, 30), RestartDecision::Restart); // #2 (base 30s elapsed)
         assert_eq!(step(&mut s, 75), RestartDecision::Restart); // #3 (cap 45s elapsed)

@@ -21,6 +21,18 @@ use std::path::{Path, PathBuf};
 /// racing writers can still clobber each other's rename — see the `*_LOCK`
 /// patterns in `memory::channel_weights` / `cluster::registry` for that).
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    atomic_write_impl(path, bytes, false)
+}
+
+/// [`atomic_write`] for private operator data. On Unix the temporary file is
+/// created with mode `0600` *before* any bytes are written, so the atomic
+/// rename never exposes a wider-permission target even briefly. Windows has
+/// no POSIX mode bit; the file inherits the ACL of its parent directory.
+pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    atomic_write_impl(path, bytes, true)
+}
+
+fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
@@ -28,11 +40,27 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     let tmp = tmp_sibling(path);
     {
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            // `mode` applies only when this call creates the file. O_NOFOLLOW
+            // also prevents a predictable stale temp name from being replaced
+            // with a symlink to another operator file.
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        let mut f = options.open(&tmp)?;
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::PermissionsExt;
+            // A temp file can survive a crash and later be reused after PID
+            // reuse. Narrow an existing file before writing secrets; relying
+            // on OpenOptionsExt::mode alone would leave its old mode intact.
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
         f.write_all(bytes)?;
         f.flush()?;
         // Durability: the bytes must hit disk before the rename so a crash
@@ -108,5 +136,44 @@ mod tests {
         let target = dir.path().join("nested").join("deep").join("out.txt");
         atomic_write(&target, b"x").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"x");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_write_replaces_weak_target_with_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("private.json");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        atomic_write_private(&target, b"new").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_write_narrows_a_reused_weak_temp_before_rename() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("private.json");
+        let tmp = tmp_sibling(&target);
+        std::fs::write(&tmp, b"stale").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        atomic_write_private(&target, b"secret").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"secret");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

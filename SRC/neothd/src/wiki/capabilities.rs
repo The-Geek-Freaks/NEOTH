@@ -74,8 +74,7 @@ pub fn render_capability_pages() -> Vec<(String, String)> {
     pages.push((CAPABILITIES_INDEX_FILE.to_string(), index));
 
     for (kind, file, heading) in KINDS.iter() {
-        let entries: Vec<&CapabilityEntry> =
-            wiki.all().filter(|e| e.kind == *kind).collect();
+        let entries: Vec<&CapabilityEntry> = wiki.all().filter(|e| e.kind == *kind).collect();
         pages.push(((*file).to_string(), render_kind_page(heading, &entries)));
     }
     pages

@@ -77,10 +77,7 @@ pub const CATALOGUE_SERVER_TIMEOUT: Duration = Duration::from_secs(5);
 /// full-render path (identical to [`assemble_catalogue`]).
 ///
 /// Returns `None` when no enabled servers are configured.
-pub async fn assemble_catalogue_for_prompt(
-    servers: &McpServers,
-    prompt: &str,
-) -> Option<String> {
+pub async fn assemble_catalogue_for_prompt(servers: &McpServers, prompt: &str) -> Option<String> {
     if !servers.smart_loading {
         return assemble_catalogue(servers).await;
     }
@@ -128,12 +125,7 @@ pub async fn assemble_catalogue_for_prompt(
     let profiles: Vec<ServerProfile> = fetched
         .iter()
         .filter(|f| f.unavailable.is_none())
-        .map(|f| {
-            ServerProfile::new(
-                f.id.clone(),
-                f.tools.iter().map(|t| t.tool.name.clone()),
-            )
-        })
+        .map(|f| ServerProfile::new(f.id.clone(), f.tools.iter().map(|t| t.tool.name.clone())))
         .collect();
 
     let plan = plan_loader(prompt, &profiles);
@@ -266,8 +258,7 @@ pub(crate) fn render_catalogue_with_plan(
     plan: &LoadPlan,
     deferred_hint: Option<&str>,
 ) -> String {
-    let active_names: std::collections::HashSet<&str> =
-        plan.active_servers().into_iter().collect();
+    let active_names: std::collections::HashSet<&str> = plan.active_servers().into_iter().collect();
 
     let mut blocks: Vec<String> = Vec::with_capacity(fetched.len() + 1);
     for f in fetched {
@@ -278,7 +269,11 @@ pub(crate) fn render_catalogue_with_plan(
             continue;
         }
         if active_names.contains(f.id.as_str()) {
-            blocks.push(render_full_server_block(&f.id, f.description.as_deref(), &f.tools));
+            blocks.push(render_full_server_block(
+                &f.id,
+                f.description.as_deref(),
+                &f.tools,
+            ));
         }
         // Deferred servers with tools are summarised in deferred_hint below.
     }
@@ -308,7 +303,11 @@ fn join_blocks(blocks: &[String]) -> String {
 }
 
 /// Render the full markdown block for one server's tool list.
-fn render_full_server_block(id: &str, description: Option<&str>, tools: &[SanitizedTool]) -> String {
+fn render_full_server_block(
+    id: &str,
+    description: Option<&str>,
+    tools: &[SanitizedTool],
+) -> String {
     // Safety cap: a hostile server returning a huge tool list must not be able
     // to flood the system prompt regardless of which call path reaches this fn.
     let visible = if tools.len() > MAX_TOOLS_PER_SERVER {
@@ -322,8 +321,12 @@ fn render_full_server_block(id: &str, description: Option<&str>, tools: &[Saniti
     } else {
         tools
     };
-    let mut block =
-        String::with_capacity(64 + visible.iter().map(|t| t.tool.name.len() + 80).sum::<usize>());
+    let mut block = String::with_capacity(
+        64 + visible
+            .iter()
+            .map(|t| t.tool.name.len() + 80)
+            .sum::<usize>(),
+    );
     block.push_str(&format!("## Server `{id}`\n"));
     if let Some(desc) = description {
         block.push_str(&format!("{desc}\n\n"));
@@ -555,7 +558,10 @@ mod tests {
     #[test]
     fn active_server_gets_full_block() {
         let fetched = vec![make_fetched("fs", &["read_file", "list_dir"])];
-        let profiles = vec![ServerProfile::new("fs", ["read_file".to_string(), "list_dir".to_string()])];
+        let profiles = vec![ServerProfile::new(
+            "fs",
+            ["read_file".to_string(), "list_dir".to_string()],
+        )];
         let plan = plan_loader("read_file something", &profiles);
         let out = render_catalogue_with_plan(&fetched, &plan, None);
         assert!(out.contains("## Server `fs`"), "got: {out}");
@@ -570,7 +576,10 @@ mod tests {
         let plan = plan_loader("tell me a joke", &profiles);
         let hint = render_deferred_hint(&plan, &profiles);
         let out = render_catalogue_with_plan(&fetched, &plan, hint.as_deref());
-        assert!(!out.contains("## Server `github`"), "deferred server appeared in full blocks: {out}");
+        assert!(
+            !out.contains("## Server `github`"),
+            "deferred server appeared in full blocks: {out}"
+        );
         // Hint must be present so the model knows it can ask.
         assert!(out.contains("github"), "deferred hint absent: {out}");
     }
@@ -603,7 +612,10 @@ mod tests {
         // Active: full block.
         assert!(out.contains("## Server `fs`"), "fs block missing: {out}");
         // Deferred: no full block, but hint.
-        assert!(!out.contains("## Server `gh`"), "gh should be deferred: {out}");
+        assert!(
+            !out.contains("## Server `gh`"),
+            "gh should be deferred: {out}"
+        );
         assert!(out.contains("gh"), "deferred hint absent: {out}");
         // Unavailable: UNAVAILABLE line.
         assert!(out.contains("UNAVAILABLE"), "got: {out}");
@@ -689,10 +701,7 @@ mod tests {
             !s.contains('\n'),
             "newline must not survive sanitization: {s:?}"
         );
-        assert!(
-            !s.contains('\r'),
-            "CR must not survive sanitization: {s:?}"
-        );
+        assert!(!s.contains('\r'), "CR must not survive sanitization: {s:?}");
     }
 
     #[test]
@@ -828,7 +837,11 @@ mod tests {
     #[tokio::test]
     async fn assemble_catalogue_for_prompt_returns_none_when_no_servers_enabled() {
         let empty = McpServers::default();
-        assert!(assemble_catalogue_for_prompt(&empty, "read my files").await.is_none());
+        assert!(
+            assemble_catalogue_for_prompt(&empty, "read my files")
+                .await
+                .is_none()
+        );
     }
 
     #[test]

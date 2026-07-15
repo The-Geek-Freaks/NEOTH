@@ -306,7 +306,7 @@ Total: ~10 focused engineering days.
 - Profile apply with contradiction resolver: shipped
 - `TypedExtensionRegistry::BASE_CATEGORIES`: shipped (just need to add `"behavior"`)
 - `Tweaks::persona_override`: shipped
-- `Permissions::evaluate(action, level)`: shipped
+- `Permissions::evaluate(action, &policy_snapshot)`: shipped
 - Cron runner: shipped
 - WAL band 0x10-0x1F has space at 0x1B-0x1E
 

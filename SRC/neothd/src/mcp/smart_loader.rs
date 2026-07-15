@@ -35,6 +35,30 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
+const HEX_GRAPH_SEMANTIC_TRIGGERS: &[&str] = &[
+    "find symbol",
+    "find symbols",
+    "find reference",
+    "find references",
+    "who calls",
+    "who references",
+    "callers",
+    "call graph",
+    "blast radius",
+    "data flow",
+    "dataflow",
+    "architecture",
+    "dependency graph",
+    "api impact",
+    "implementation",
+    "code graph",
+    "unused export",
+    "cycle",
+    "coupling",
+    "hotspot",
+    "clone",
+];
+
 /// One known MCP server + its tool names. Operator-supplied
 /// (today via the existing `mcp::config` surface; this module
 /// only consumes the resolved view).
@@ -77,6 +101,9 @@ pub enum LoadReason {
     /// Prompt contains a substring matching one of the server's
     /// tool names.
     ToolNameMatch,
+    /// Prompt expresses a built-in server capability in natural language.
+    /// Today this closes the CCS-01 hex-graph adoption gap.
+    SemanticKeywordMatch,
     /// No trigger fired — server stays deferred + appears in the
     /// "available on demand" hint instead of the full catalogue.
     NoTrigger,
@@ -88,6 +115,7 @@ impl LoadReason {
         match self {
             LoadReason::ExplicitReference => "explicit_reference",
             LoadReason::ToolNameMatch => "tool_name_match",
+            LoadReason::SemanticKeywordMatch => "semantic_keyword_match",
             LoadReason::NoTrigger => "no_trigger",
         }
     }
@@ -172,6 +200,21 @@ pub fn plan_loader(prompt: &str, servers: &[ServerProfile]) -> LoadPlan {
             continue;
         }
 
+        // Canonical built-in semantic triggers. Keep this narrow and bound to
+        // the exact server id so generic words never wake unrelated MCPs.
+        if lower_name == "hex-graph"
+            && HEX_GRAPH_SEMANTIC_TRIGGERS
+                .iter()
+                .any(|keyword| lowered.contains(keyword))
+        {
+            decisions.push(LoadDecision {
+                server_name: server.name.clone(),
+                active: true,
+                reason: LoadReason::SemanticKeywordMatch,
+            });
+            continue;
+        }
+
         // No trigger — defer.
         decisions.push(LoadDecision {
             server_name: server.name.clone(),
@@ -231,6 +274,10 @@ mod tests {
     fn reason_as_str_pinned_for_audit() {
         assert_eq!(LoadReason::ExplicitReference.as_str(), "explicit_reference");
         assert_eq!(LoadReason::ToolNameMatch.as_str(), "tool_name_match");
+        assert_eq!(
+            LoadReason::SemanticKeywordMatch.as_str(),
+            "semantic_keyword_match"
+        );
         assert_eq!(LoadReason::NoTrigger.as_str(), "no_trigger");
     }
 
@@ -280,6 +327,40 @@ mod tests {
         let plan = plan_loader("READ_FILE the manifest", &[s]);
         assert!(plan.decisions[0].active);
         assert_eq!(plan.decisions[0].reason, LoadReason::ToolNameMatch);
+    }
+
+    #[test]
+    fn hex_graph_semantic_phrases_activate_the_server() {
+        let profile = server(
+            "hex-graph",
+            &["find_symbols", "find_references", "analyze_architecture"],
+        );
+        for prompt in [
+            "find symbols matching McpClient",
+            "who calls spawn_with_timeout?",
+            "show the blast radius of this change",
+            "trace the data flow into dispatch",
+            "map the architecture of this module",
+            "check API impact and coupling hotspots",
+        ] {
+            let plan = plan_loader(prompt, std::slice::from_ref(&profile));
+            assert!(plan.decisions[0].active, "semantic miss: {prompt}");
+            assert_eq!(
+                plan.decisions[0].reason,
+                LoadReason::SemanticKeywordMatch,
+                "wrong reason: {prompt}"
+            );
+        }
+    }
+
+    #[test]
+    fn hex_graph_semantic_phrases_do_not_wake_other_servers() {
+        let plan = plan_loader(
+            "show the architecture blast radius",
+            &[server("filesystem", &["read_file"])],
+        );
+        assert!(!plan.decisions[0].active);
+        assert_eq!(plan.decisions[0].reason, LoadReason::NoTrigger);
     }
 
     #[test]

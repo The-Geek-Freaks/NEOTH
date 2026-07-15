@@ -14,7 +14,8 @@
 # Every cargo step below uses --workspace explicitly so cross-crate breakage
 # (e.g. a neothd refactor that breaks the plugin SDK's stable surface) fails
 # CI rather than slipping through under cargo's default-package selection.
-# The workspace has three members today: neothd, neoth-plugin-sdk, neothd-gui.
+# The workspace has five members: neoth, neoth-plugin-sdk, neothd-gui,
+# neoth-migrate, and neoth-relay.
 # =============================================================================
 
 name: CI
@@ -76,7 +77,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Ubuntu legs: cap cargo parallelism at 2. With a WARM cargo cache the
     # dep tree is prebuilt, so clippy/build jump straight to the largest
-    # crate frontends (neothd + neothd-gui + relay + plugin-sdk) in parallel;
+    # crate frontends (neoth + neothd-gui + migrate + relay + plugin-sdk) in parallel;
     # at the default -j4 their combined rustc peak exceeds the 16 GB runner
     # and the OOM killer takes the runner AGENT itself — the job dies with
     # "The runner has received a shutdown signal" / SIGTERM 143 ~2-4 min in,
@@ -197,7 +198,7 @@ jobs:
       # (every leg died during the silent link phase before any test ran).
       # Debug test binaries link cheaply (no LTO, opt-level 0, cu=256) and
       # the tests are logic tests that pass identically in debug (verified
-      # locally: `cargo test -p neothd --lib` = 10344/0).  Release *compile*
+      # locally: `cargo test -p neoth --lib` = 10344/0).  Release *compile*
       # coverage is retained by the `cargo build --workspace --release` step
       # above; release.yml still ships the fully-optimized binary.
       # Unix runners: parallel test execution (default).
@@ -248,8 +249,8 @@ jobs:
           github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: neothd-linux-x86_64-ci
-          path: SRC/target/release/neothd
+          name: neoth-linux-x86_64-ci
+          path: SRC/target/release/neoth
           retention-days: 3
 
       - name: Upload binary artifact (macos)
@@ -259,8 +260,8 @@ jobs:
           github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: neothd-macos-arm64-ci
-          path: SRC/target/release/neothd
+          name: neoth-macos-arm64-ci
+          path: SRC/target/release/neoth
           retention-days: 3
 
       - name: Upload binary artifact (windows)
@@ -270,25 +271,23 @@ jobs:
           github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: neothd-windows-x86_64-ci
-          path: SRC/target/release/neothd.exe
+          name: neoth-windows-x86_64-ci
+          path: SRC/target/release/neoth.exe
           retention-days: 3
 
   # ──────────────────────────────────────────────────────────────────
   # Pick #34 wasm32 step (Session 19, 2026-05-21)
   #
-  # Closes the "missing only the wasm32-unknown-unknown CI step"
-  # gap from the post-v0.1 backlog. The example plugin in
-  # examples/wasm-plugin-hello/ MUST keep compiling against the
-  # current wasm_plugin manifest schema + the wasmtime version the
-  # daemon links against. Without this job a wasmtime bump (Session
-  # 19 went 26 → 36) could silently break operator-loadable plugins.
+  # Closes the wasm32 example-coverage gap from the post-v0.1 backlog.
+  # Every shipped example MUST keep compiling against the versioned
+  # neoth-plugin-sdk guest ABI. Without this job an SDK or hostcall change
+  # could silently leave operator-facing examples unbuildable.
   #
   # Linux-only because wasm32 target is host-agnostic — one job
   # covers all three host OSes.
   # ──────────────────────────────────────────────────────────────────
   wasm-plugin:
-    name: example WASM plugin builds
+    name: example WASM plugins build against ABI v1
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -305,28 +304,47 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             examples/wasm-plugin-hello/target
-          key: ${{ runner.os }}-wasm32-${{ hashFiles('examples/wasm-plugin-hello/Cargo.toml') }}
+            SRC/examples/wasm_plugins/echo/target
+            SRC/examples/wasm_plugins/recall_summariser/target
+            SRC/examples/wasm_plugins/hook_post_provider/target
+          key: ${{ runner.os }}-wasm32-${{ hashFiles('examples/wasm-plugin-hello/Cargo.toml', 'examples/wasm-plugin-hello/src/**/*.rs', 'SRC/examples/wasm_plugins/**/Cargo.toml', 'SRC/examples/wasm_plugins/**/src/**/*.rs', 'SRC/neoth-plugin-sdk/Cargo.toml', 'SRC/neoth-plugin-sdk/src/**/*.rs') }}
 
-      - name: cargo build --release --target wasm32-unknown-unknown
+      - name: Build all shipped guest examples
         run: |
-          cargo build \
-            --release \
-            --target wasm32-unknown-unknown \
-            --manifest-path examples/wasm-plugin-hello/Cargo.toml
+          for manifest in \
+            examples/wasm-plugin-hello/Cargo.toml \
+            SRC/examples/wasm_plugins/echo/Cargo.toml \
+            SRC/examples/wasm_plugins/recall_summariser/Cargo.toml \
+            SRC/examples/wasm_plugins/hook_post_provider/Cargo.toml
+          do
+            cargo build --release --target wasm32-unknown-unknown --manifest-path "$manifest"
+          done
 
-      - name: Verify wasm artefact exists + has the magic header
+      - name: Verify WASM artefacts + versioned NEOTH exports
         run: |
-          ARTEFACT=examples/wasm-plugin-hello/target/wasm32-unknown-unknown/release/wasm_plugin_hello.wasm
-          test -f "$ARTEFACT"
-          # Magic bytes `\0asm` + version 1 LE.
-          head -c 8 "$ARTEFACT" | od -An -tx1 | grep -q "00 61 73 6d 01 00 00 00"
+          for artefact in \
+            examples/wasm-plugin-hello/target/wasm32-unknown-unknown/release/wasm_plugin_hello.wasm \
+            SRC/examples/wasm_plugins/echo/target/wasm32-unknown-unknown/release/neoth_plugin_echo.wasm \
+            SRC/examples/wasm_plugins/recall_summariser/target/wasm32-unknown-unknown/release/neoth_plugin_recall_summariser.wasm \
+            SRC/examples/wasm_plugins/hook_post_provider/target/wasm32-unknown-unknown/release/neoth_plugin_hook_post_provider.wasm
+          do
+            test -f "$artefact"
+            # Magic bytes `\0asm` + version 1 LE.
+            head -c 8 "$artefact" | od -An -tx1 | grep -q "00 61 73 6d 01 00 00 00"
+            grep -a -q "neoth_abi_version" "$artefact"
+            grep -a -q "neoth_run" "$artefact"
+          done
 
       - name: Upload wasm artefact
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: example-wasm-plugin-hello
-          path: examples/wasm-plugin-hello/target/wasm32-unknown-unknown/release/wasm_plugin_hello.wasm
+          name: example-wasm-plugins
+          path: |
+            examples/wasm-plugin-hello/target/wasm32-unknown-unknown/release/wasm_plugin_hello.wasm
+            SRC/examples/wasm_plugins/echo/target/wasm32-unknown-unknown/release/neoth_plugin_echo.wasm
+            SRC/examples/wasm_plugins/recall_summariser/target/wasm32-unknown-unknown/release/neoth_plugin_recall_summariser.wasm
+            SRC/examples/wasm_plugins/hook_post_provider/target/wasm32-unknown-unknown/release/neoth_plugin_hook_post_provider.wasm
           retention-days: 3
 
   # ──────────────────────────────────────────────────────────────────
@@ -402,11 +420,11 @@ jobs:
       - name: cargo check --features ${{ matrix.feature }}
         if: matrix.feature != 'qwen-cuda' || hashFiles('/usr/local/cuda/bin/nvcc', '/usr/bin/nvcc') != ''
         working-directory: SRC
-        run: cargo check -p neothd --features ${{ matrix.feature }}
+        run: cargo check -p neoth --features ${{ matrix.feature }}
 
   # ──────────────────────────────────────────────────────────────────
   # HARNESS-05 — committed gold-smoke eval suite. Builds neothd and runs
-  # `neothd eval` over the deterministic, no-LLM, config-free smoke suite
+  # `neoth eval` over the deterministic, no-LLM, config-free smoke suite
   # (version/help/capabilities/fact-check + harness self-check). The suite
   # exits non-zero on any case failure → this job gates the build. The
   # report.json + report.md are uploaded as artifacts (even on failure) so
@@ -437,15 +455,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gold-smoke-cargo-
 
-      - name: Build neothd (release)
+      - name: Build neoth (release)
         working-directory: SRC
-        run: cargo build -p neothd --bin neothd --release
+        run: cargo build -p neoth --bin neoth --release
 
       - name: Run gold-smoke eval suite
         working-directory: SRC
         run: |
           export PATH="$PWD/target/release:$PATH"
-          neothd eval neothd/eval-suites/gold-smoke.json --out-dir "$GITHUB_WORKSPACE/eval-report"
+          neoth eval neothd/eval-suites/gold-smoke.json --out-dir "$GITHUB_WORKSPACE/eval-report"
 
       - name: Upload eval report (report.json + report.md)
         if: always()

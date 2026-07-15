@@ -25,4 +25,5 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-# no_std — wasm plugins are no_std + no allocator by default.
+[dependencies]
+neoth-plugin-sdk = { path = "../../../neoth-plugin-sdk", version = "=0.1.0-alpha.0" }

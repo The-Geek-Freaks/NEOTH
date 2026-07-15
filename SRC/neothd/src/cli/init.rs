@@ -15,6 +15,7 @@ mod steps_autonomy;
 mod steps_channel;
 mod steps_env;
 mod steps_identity;
+mod steps_omi;
 mod steps_provider;
 mod steps_topology;
 mod types;
@@ -26,6 +27,7 @@ pub(crate) use steps_autonomy::*;
 pub(crate) use steps_channel::*;
 pub(crate) use steps_env::*;
 pub(crate) use steps_identity::*;
+pub(crate) use steps_omi::*;
 pub(crate) use steps_provider::*;
 pub(crate) use steps_topology::*;
 pub use types::*;
@@ -52,7 +54,11 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         );
     }
 
-    let mut state = WizardState::default();
+    let mut state = fresh_wizard_state();
+    // `init --force` is a reconfiguration, not an OMI reset. Preserve the
+    // complete existing OMI block (including advanced bounds not surfaced by
+    // the wizard) and the credential backend before applying explicit answers.
+    hydrate_existing_init_state(&neoth_dir, &mut state)?;
 
     // R-04 (Session 24) — restore in-flight wizard state from
     // ~/.neoth/wizard_checkpoint.json when the operator confirms
@@ -106,11 +112,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     }
     let existing_security_policy = {
         let path = neoth_dir.join("freedom.yaml");
-        if path.exists() {
-            crate::config::FreedomConfig::load_from_path(&path)?.security
-        } else {
-            crate::config::SecurityPolicy::default()
-        }
+        crate::config::FreedomConfig::load_from_path_or_default(&path)?.security
     };
     step5_provider(&args, interactive, &mut state, &existing_security_policy).await?;
     save_checkpoint_best_effort(&neoth_dir, &state);
@@ -126,7 +128,11 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         // GOLD-ADAPT-CBM-02 — optional code-intelligence rail (terminal offer,
         // no resume marker needed; re-derived each run).
         step5e_cbm_offer(interactive).await?;
+        // GOLD-ADAPT-CCS-01 — exact-pinned semantic code-graph rail.
+        step5f_hex_graph_offer(interactive, args.dry_run).await?;
         step6_channel(&args, interactive, &mut state).await?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        step6_omi(&args, interactive, &neoth_dir, &mut state)?;
         save_checkpoint_best_effort(&neoth_dir, &state);
         step6b_keet_pairing(&args, interactive, &mut state).await?;
         save_checkpoint_best_effort(&neoth_dir, &state);
@@ -154,19 +160,27 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         save_checkpoint_best_effort(&neoth_dir, &state);
         step7d_supervisor(&args, interactive, &mut state)?;
         save_checkpoint_best_effort(&neoth_dir, &state);
-    } else if interactive {
-        // ZF-02 — post-setup tips for channels and optional rails.
-        println!(
-            "\n  Later you can enable additional features:\n\
-             \n    Channels:   neoth channel add telegram / discord / matrix …\
-             \n    Keet:       neoth keet pair          (P2P messenger)\
-             \n    Obsidian:   neoth obsidian connect   (knowledge vault)\
-             \n    n8n:        neoth n8n connect        (workflow automation)\
-             \n    Mobile:     neoth mobile-mcp setup   (iOS/Android control)\
-             \n    tududi:     neoth tududi setup        (task manager)\
-             \n    GUI tab:    start neothd-gui → Channels / Integrations tab\
-             \n"
-        );
+    } else {
+        // Express presets intentionally skip privacy prompts, but explicit OMI
+        // flags still have to work in CI and an existing enabled OMI block must
+        // still pass the same fail-closed credential validation.
+        step6_omi(&args, false, &neoth_dir, &mut state)?;
+        save_checkpoint_best_effort(&neoth_dir, &state);
+        if interactive {
+            // ZF-02 — post-setup tips for channels and optional rails.
+            println!(
+                "\n  Later you can enable additional features:\n\
+                 \n    Channels:   neoth channel add telegram / discord / matrix …\
+                 \n    OMI:        neoth omi status          (private conversation/media ingest)\
+                 \n    Code graph: neoth init --force         (optional pinned hex-graph MCP)\
+                 \n    Obsidian:   neoth obsidian connect   (knowledge vault)\
+                 \n    n8n:        neoth n8n connect        (workflow automation)\
+                 \n    Mobile:     neoth mobile-mcp setup   (iOS/Android control)\
+                 \n    tududi:     neoth tududi setup        (task manager)\
+                 \n    GUI tab:    start neothd-gui → Channels / Integrations tab\
+                 \n"
+            );
+        }
     }
     step8_summary(&args, &mut state)?;
 
@@ -819,6 +833,68 @@ mod tests {
         assert!(crate::consent::kind_from_slug(ProviderKind::Skip.as_provider_id()).is_none());
     }
 
+    #[tokio::test]
+    async fn step5_non_interactive_wires_aws_bedrock_runtime_fields() {
+        let mut state = fixture_state();
+        let args = InitArgs {
+            provider: Some(ProviderKind::AwsBedrock),
+            provider_region: Some("eu-central-1".to_string()),
+            provider_model: Some("anthropic.claude-sonnet-4-6-v1:0".to_string()),
+            ..Default::default()
+        };
+        step5_provider(
+            &args,
+            false,
+            &mut state,
+            &crate::config::SecurityPolicy::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(state.provider_kind, Some(ProviderKind::AwsBedrock));
+        assert_eq!(state.provider_region.as_deref(), Some("eu-central-1"));
+        assert_eq!(
+            state.provider_model.as_deref(),
+            Some("anthropic.claude-sonnet-4-6-v1:0")
+        );
+    }
+
+    #[tokio::test]
+    async fn step5_non_interactive_wires_complete_azure_openai_contract() {
+        let mut state = fixture_state();
+        let args = InitArgs {
+            provider: Some(ProviderKind::AzureOpenAi),
+            provider_endpoint: Some("https://prod.openai.azure.com".to_string()),
+            provider_model: Some("gpt-prod".to_string()),
+            provider_api_version: Some("2025-04-01-preview".to_string()),
+            provider_key: Some("azure-secret".to_string()),
+            ..Default::default()
+        };
+        step5_provider(
+            &args,
+            false,
+            &mut state,
+            &crate::config::SecurityPolicy::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(state.provider_kind, Some(ProviderKind::AzureOpenAi));
+        assert_eq!(
+            state.provider_endpoint.as_deref(),
+            Some("https://prod.openai.azure.com")
+        );
+        assert_eq!(state.provider_model.as_deref(), Some("gpt-prod"));
+        assert_eq!(
+            state.provider_api_version.as_deref(),
+            Some("2025-04-01-preview")
+        );
+        assert_eq!(
+            state.provider_key.as_ref().map(|key| key.expose()),
+            Some("azure-secret")
+        );
+    }
+
     #[test]
     fn provider_kind_display_forwards_to_as_str() {
         assert_eq!(format!("{}", ProviderKind::LocalOuro), "local_ouro");
@@ -995,11 +1071,22 @@ mod tests {
             provider_key: None,
             provider_endpoint: None,
             provider_model: Some("claude-opus-4-7".to_string()),
+            provider_region: None,
+            provider_api_version: None,
             telegram_token: Some(crate::secret::SecretString::from(
                 "12345678:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             )),
             telegram_user_id: Some(987654321),
+            secrets_backend: crate::config::SecretsBackend::File,
+            omi: crate::config::OmiConfig::default(),
+            audit_rpc: crate::config::AuditRpcConfig {
+                enabled: true,
+                required_for_oneshot_permission_events: false,
+            },
+            omi_developer_api_key: None,
+            omi_ingest_token: None,
             autonomy: crate::permissions::AutonomyLevel::Standard,
+            custom_autonomy: crate::permissions::CustomAutonomyConfig::default(),
             inference: crate::config::inference::InferenceTopology::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
             supervisor: crate::config::SupervisorConfig::default(),
@@ -1022,6 +1109,20 @@ mod tests {
             companion: crate::config::CompanionConfig::default(),
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
+    }
+
+    #[test]
+    fn fresh_and_express_wizard_enable_audit_rpc_without_forcing_compliance_mode() {
+        let fresh = fresh_wizard_state();
+        assert!(fresh.audit_rpc.enabled);
+        assert!(!fresh.audit_rpc.required_for_oneshot_permission_events);
+
+        let mut express = fresh_wizard_state();
+        express.is_express = true;
+        assert!(
+            express.audit_rpc.enabled,
+            "express presets skip detail prompts but must retain the fresh-wizard audit listener"
+        );
     }
 
     #[tokio::test]
@@ -1067,6 +1168,194 @@ mod tests {
         assert!(
             body.contains("enabled: false"),
             "auto_update default must serialize enabled: false"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_config_losslessly_merges_unknown_top_level_and_nested_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_dir).unwrap();
+        std::fs::write(
+            neoth_dir.join("freedom.yaml"),
+            r#"operator_id: old
+future_top_level:
+  keep_me: 41
+omi:
+  enabled: false
+  future_omi_limit: 9001
+inference:
+  future_router_policy: preserve
+  default_slot:
+    future_slot_field: preserve-too
+audit_rpc:
+  enabled: false
+  future_transport_field: preserve-audit-extension
+security:
+  trusted_roots:
+    - /operator/custom
+"#,
+        )
+        .unwrap();
+
+        let mut state = fixture_state();
+        state.operator_id = Some("new".to_string());
+        state.omi.retention_days = 7;
+        write_config(&neoth_dir, &state).await.expect("merge write");
+
+        let raw = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
+        let merged: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+        assert_eq!(merged["operator_id"].as_str(), Some("new"));
+        assert_eq!(merged["future_top_level"]["keep_me"].as_i64(), Some(41));
+        assert_eq!(merged["omi"]["future_omi_limit"].as_i64(), Some(9001));
+        assert_eq!(merged["omi"]["retention_days"].as_i64(), Some(7));
+        assert_eq!(
+            merged["inference"]["future_router_policy"].as_str(),
+            Some("preserve")
+        );
+        assert_eq!(
+            merged["inference"]["default_slot"]["future_slot_field"].as_str(),
+            Some("preserve-too")
+        );
+        assert_eq!(merged["audit_rpc"]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            merged["audit_rpc"]["future_transport_field"].as_str(),
+            Some("preserve-audit-extension")
+        );
+        assert_eq!(
+            merged["security"]["trusted_roots"][0].as_str(),
+            Some("/operator/custom")
+        );
+    }
+
+    #[test]
+    fn force_hydration_preserves_advanced_owned_values_without_importing_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_dir).unwrap();
+        std::fs::write(
+            neoth_dir.join("freedom.yaml"),
+            r#"operator_id: existing-operator
+inference:
+  mode: custom
+  left:
+    region: eu-central-1
+omi:
+  enabled: false
+  max_connections: 17
+  allowed_uids:
+    - trusted-device
+audit_rpc:
+  enabled: false
+  required_for_oneshot_permission_events: false
+"#,
+        )
+        .unwrap();
+        let mut credentials = crate::config::credentials::Credentials::default();
+        credentials.inference_left_key = Some(crate::secret::SecretString::from(
+            "SECRET-MUST-STAY-IN-CREDENTIAL-STORE",
+        ));
+        credentials
+            .write(&neoth_dir.join("credentials.yaml"))
+            .unwrap();
+
+        let mut state = WizardState::default();
+        hydrate_existing_init_state(&neoth_dir, &mut state).unwrap();
+        assert_eq!(state.operator_id.as_deref(), Some("existing-operator"));
+        assert_eq!(state.omi.max_connections, 17);
+        assert_eq!(state.omi.allowed_uids, vec!["trusted-device"]);
+        assert_eq!(state.inference.left.region.as_deref(), Some("eu-central-1"));
+        assert!(!state.audit_rpc.enabled);
+        assert!(!state.audit_rpc.required_for_oneshot_permission_events);
+        assert!(
+            state.inference.left.key.is_none(),
+            "effective keychain/file secrets must never be hydrated into public wizard state"
+        );
+    }
+
+    #[test]
+    fn force_hydration_treats_corrupt_config_as_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_dir).unwrap();
+        std::fs::write(neoth_dir.join("freedom.yaml"), b"not: [valid yaml").unwrap();
+
+        let mut state = fresh_wizard_state();
+        hydrate_existing_init_state(&neoth_dir, &mut state)
+            .expect("--force recovery must not be bricked by corrupt public config");
+        assert!(
+            state.audit_rpc.enabled,
+            "failed hydration must leave safe fresh-wizard defaults intact"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_config_persists_omi_credentials_first_and_preserves_unrelated_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_dir).unwrap();
+        let cred_path = neoth_dir.join("credentials.yaml");
+        let mut existing = crate::config::credentials::Credentials::default();
+        existing.whatsapp_phone_id = Some("operator-phone-id".to_string());
+        existing.write(&cred_path).unwrap();
+
+        let mut state = fixture_state();
+        state.omi.enabled = true;
+        state.omi.mode = crate::config::OmiIngestMode::Both;
+        state.omi.audio_enabled = true;
+        state.omi.visual_enabled = true;
+        state.omi.video_enabled = true;
+        state.omi_developer_api_key = Some(crate::secret::SecretString::from(
+            "omi_dev_init_persist_test",
+        ));
+        state.omi_ingest_token = Some(crate::secret::SecretString::from(
+            "0123456789abcdef0123456789abcdef",
+        ));
+
+        write_config(&neoth_dir, &state).await.expect("OMI write");
+        let freedom = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
+        assert!(!freedom.contains("omi_dev_init_persist_test"));
+        assert!(!freedom.contains("0123456789abcdef0123456789abcdef"));
+
+        let credentials =
+            crate::config::credentials::Credentials::load_or_default(&cred_path).unwrap();
+        assert_eq!(
+            credentials.whatsapp_phone_id.as_deref(),
+            Some("operator-phone-id")
+        );
+        assert_eq!(
+            credentials.omi_developer_api_key.as_ref().unwrap().expose(),
+            "omi_dev_init_persist_test"
+        );
+        assert_eq!(
+            credentials.omi_ingest_token.as_ref().unwrap().expose(),
+            "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_existing_yaml_fails_before_any_credential_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_dir).unwrap();
+        let freedom_path = neoth_dir.join("freedom.yaml");
+        std::fs::write(&freedom_path, b"operator_id: [unterminated\n").unwrap();
+        let cred_path = neoth_dir.join("credentials.yaml");
+        let mut existing = crate::config::credentials::Credentials::default();
+        existing.whatsapp_phone_id = Some("must-survive".to_string());
+        existing.write(&cred_path).unwrap();
+        let before = std::fs::read(&cred_path).unwrap();
+
+        let result = write_config(&neoth_dir, &fixture_state()).await;
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read(&cred_path).unwrap(),
+            before,
+            "config parse failure must happen before the credentials-first commit phase"
+        );
+        assert_eq!(
+            std::fs::read(&freedom_path).unwrap(),
+            b"operator_id: [unterminated\n".to_vec()
         );
     }
 
@@ -1122,6 +1411,34 @@ mod tests {
                 .steps_completed
                 .contains(&(WizardStep::AutoUpdate as u8))
         );
+    }
+
+    #[test]
+    fn step7b_non_interactive_flags_apply_complete_policy() {
+        let mut state = fixture_state();
+        let check_only = InitArgs {
+            auto_update: true,
+            ..Default::default()
+        };
+        step7b_auto_update(&check_only, false, &mut state).unwrap();
+        assert!(state.auto_update.enabled);
+        assert!(!state.auto_update.auto_apply);
+
+        let apply = InitArgs {
+            auto_update_apply: true,
+            ..Default::default()
+        };
+        step7b_auto_update(&apply, false, &mut state).unwrap();
+        assert!(state.auto_update.enabled);
+        assert!(state.auto_update.auto_apply);
+
+        let disable = InitArgs {
+            no_auto_update: true,
+            ..Default::default()
+        };
+        step7b_auto_update(&disable, false, &mut state).unwrap();
+        assert!(!state.auto_update.enabled);
+        assert!(!state.auto_update.auto_apply);
     }
 
     #[test]
@@ -1316,19 +1633,20 @@ mod tests {
         write_config(&neoth_dir, &original).await.expect("write");
 
         let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
-        let restored: WizardState = serde_yaml::from_str(&body).expect("deserialize");
+        let restored =
+            crate::config::FreedomConfig::load_from_path(&neoth_dir.join("freedom.yaml"))
+                .expect("deserialize public config + credentials");
 
         assert_eq!(restored.operator_id, original.operator_id);
         assert_eq!(restored.role, original.role);
         assert_eq!(restored.provider_kind, original.provider_kind);
-        assert_eq!(restored.steps_completed, original.steps_completed);
         // Secrets MUST be absent from freedom.yaml.
         assert!(
-            restored.telegram_token.is_none(),
+            !body.contains("12345678:AAAAAAAAA"),
             "telegram_token must NOT live in freedom.yaml after the split",
         );
         assert!(
-            restored.provider_key.is_none(),
+            !body.contains("provider_key: /"),
             "provider_key must NOT live in freedom.yaml after the split",
         );
         // But they DO live in the sibling credentials.yaml.
@@ -1550,7 +1868,12 @@ mod tests {
         let mut state = fixture_state();
         step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
         assert_eq!(
-            state.plugins.wasm.activations.get("indexer_v1").copied(),
+            state
+                .plugins
+                .wasm
+                .activations
+                .get("indexer_v1")
+                .map(|record| record.state),
             Some(crate::wasm_plugin::discovery::PluginActivation::Active),
             "indexer_v1 must be Active after --enable-plugin",
         );
@@ -1643,7 +1966,7 @@ mod tests {
         );
         assert_eq!(
             WizardStep::ALL.len(),
-            22,
+            23,
             "WizardStep variant count drifted"
         );
     }
@@ -1685,11 +2008,9 @@ mod tests {
     }
 
     #[test]
-    fn keet_credentials_round_trip_through_credentials_yaml() {
-        // K-3.5 wire-format pin: WizardState.keet_seed_phrase +
-        // pears_bearer_token MUST land in credentials.yaml, NOT
-        // freedom.yaml. The Credentials struct now carries both
-        // fields — verify they round-trip the YAML cleanly.
+    fn legacy_keet_credentials_remain_parseable_for_cleanup() {
+        // Backward compatibility only: older files must remain readable so
+        // `neoth channel remove keet` can erase both fields.
         let cred = crate::config::credentials::Credentials {
             keet_seed_phrase: Some(crate::secret::SecretString::from("alpha bravo charlie")),
             pears_bearer_token: Some(crate::secret::SecretString::from("deadbeef".repeat(8))),
@@ -1716,15 +2037,12 @@ mod tests {
     // ── K-4b telegram-prompt text tests (Session 21) ────────────────
 
     #[test]
-    fn k4b_prompt_demotes_telegram_when_pear_present() {
-        // K-4b: when `pear` is on PATH, Keet is the preferred primary.
-        // The Telegram prompt must reframe Telegram as a FALLBACK so
-        // operators don't accidentally pick it as primary out of habit.
+    fn telegram_prompt_ignores_unrelated_pear_runtime_presence() {
         let s = k4b_telegram_prompt_text(true);
-        assert!(s.contains("FALLBACK"), "msg: {s}");
-        assert!(s.contains("Keet"), "msg: {s}");
-        assert!(s.contains("preferred primary"), "msg: {s}");
-        assert!(s.contains("default: no"), "msg: {s}");
+        assert!(!s.contains("FALLBACK"), "msg: {s}");
+        assert!(!s.contains("Keet"), "msg: {s}");
+        assert!(s.contains("Telegram"), "msg: {s}");
+        assert_eq!(s, k4b_telegram_prompt_text(false));
     }
 
     #[test]
@@ -1752,36 +2070,28 @@ mod tests {
     // ── K-4 channel-ordering tests (Session 21) ─────────────────────
 
     #[test]
-    fn k4_configured_channels_lists_keet_first_when_both_paired() {
-        // K-4 contract pin: when operator paired BOTH Keet + Telegram
-        // during the wizard, Keet appears FIRST in the configured list.
-        // First entry = primary; downstream (status display, .initialized
-        // marker, post-init summary) reads this ordering.
+    fn configured_channels_ignores_legacy_keet_seed() {
         let mut s = fixture_state();
-        // fixture_state sets Telegram already; add Keet.
         s.keet_seed_phrase = Some(crate::secret::SecretString::from(
             "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
              kilo lima mike november oscar papa quebec romeo sierra tango \
              uniform victor whiskey xray",
         ));
         let chans = configured_channels(&s);
-        assert_eq!(chans, vec!["keet".to_string(), "telegram".to_string()]);
+        assert_eq!(chans, vec!["telegram".to_string()]);
     }
 
     #[test]
-    fn k4_configured_channels_keet_only_when_no_telegram() {
+    fn legacy_keet_seed_does_not_complete_onboarding() {
         let mut s = fixture_state();
         s.telegram_token = None;
         s.keet_seed_phrase = Some(crate::secret::SecretString::from("seed".to_string()));
         let chans = configured_channels(&s);
-        assert_eq!(chans, vec!["keet".to_string()]);
+        assert!(chans.is_empty());
     }
 
     #[test]
-    fn k4_configured_channels_telegram_only_when_no_keet() {
-        // Backward-compat pin: a wizard run that skipped Keet pairing
-        // still lists Telegram as the configured channel — K-4 must
-        // not regress the pre-Keet operators.
+    fn configured_channels_lists_telegram() {
         let s = fixture_state(); // has Telegram, no Keet
         let chans = configured_channels(&s);
         assert_eq!(chans, vec!["telegram".to_string()]);
@@ -1823,24 +2133,39 @@ mod tests {
     #[test]
     fn wizard_state_plugins_field_round_trips_through_yaml() {
         // D-102 wire-format pin: WizardState.plugins serialises into
-        // the same `plugins:\n  wasm:\n    activations:\n      <id>: active`
-        // shape FreedomConfig deserialises from. A drift here would
+        // the same bound activation-record shape FreedomConfig deserialises
+        // from. A drift here would
         // mean the operator's wizard picks don't reach the daemon.
         let mut state = fixture_state();
         state.plugins.wasm.activations.insert(
             "indexer_v1".to_string(),
-            crate::wasm_plugin::discovery::PluginActivation::Active,
+            crate::wasm_plugin::discovery::PluginActivationRecord {
+                state: crate::wasm_plugin::discovery::PluginActivation::Active,
+                approval: Some(crate::wasm_plugin::discovery::PluginApproval {
+                    approved_permission:
+                        crate::wasm_plugin::manifest::RequestedPermission::ReadOnly,
+                    manifest_sha256: "manifest-hash".to_string(),
+                    wasm_sha256: "wasm-hash".to_string(),
+                }),
+            },
         );
         state.plugins.wasm.activations.insert(
             "recall_rerank".to_string(),
-            crate::wasm_plugin::discovery::PluginActivation::Disabled,
+            crate::wasm_plugin::discovery::PluginActivationRecord::from_state(
+                crate::wasm_plugin::discovery::PluginActivation::Disabled,
+            ),
         );
         let yaml = serde_yaml::to_string(&state).expect("serialize");
         assert!(yaml.contains("plugins:"));
         assert!(yaml.contains("wasm:"));
         assert!(yaml.contains("activations:"));
-        assert!(yaml.contains("indexer_v1: active"));
-        assert!(yaml.contains("recall_rerank: disabled"));
+        assert!(yaml.contains("indexer_v1:"));
+        assert!(yaml.contains("state: active"));
+        assert!(yaml.contains("approved_permission: read_only"));
+        assert!(yaml.contains("manifest_sha256: manifest-hash"));
+        assert!(yaml.contains("wasm_sha256: wasm-hash"));
+        assert!(yaml.contains("recall_rerank:"));
+        assert!(yaml.contains("state: disabled"));
     }
 
     // ── Workstream B (Session 22) — 5 wizard step regressions ─────────────
@@ -2200,9 +2525,10 @@ mod tests {
         };
         let path = write_credential_import_sidecar(home.path(), 1_700_000_000, &payload).unwrap();
         assert!(path.exists());
-        assert_eq!(
-            path.file_name().and_then(|s| s.to_str()),
-            Some("credentials_import_1700000000.json"),
+        assert!(
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|name| name.starts_with("credentials_import_00000000001700000000_"))
         );
         let body = std::fs::read_to_string(&path).unwrap();
         // SC-17 keys present; no secret-bearing keys leaked.
@@ -2214,10 +2540,7 @@ mod tests {
     }
 
     #[test]
-    fn credential_import_sidecar_overwrites_existing_atomically() {
-        // Re-running the wizard at the same ts_unix should overwrite,
-        // not leave a `.tmp` companion + not error out on
-        // Windows-style rename-over-existing.
+    fn credential_import_sidecar_preserves_same_second_events_atomically() {
         use crate::security::credential_redact::{ImportSource, RedactedCredentialImportPayload};
         let home = tempfile::tempdir().unwrap();
         let payload = RedactedCredentialImportPayload {
@@ -2231,10 +2554,16 @@ mod tests {
         };
         let first = write_credential_import_sidecar(home.path(), 100, &payload).unwrap();
         let second = write_credential_import_sidecar(home.path(), 100, &payload).unwrap();
-        assert_eq!(first, second);
-        // No `.tmp` companion leaked.
-        let tmp = home.path().join("credentials_import_100.json.tmp");
-        assert!(!tmp.exists());
+        assert_ne!(first, second);
+        assert!(first.exists());
+        assert!(second.exists());
+        assert!(!std::fs::read_dir(home.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
     }
 
     // ── Session 27: NOOB-UX experience-level gates for step5c/5d/6e/7 ──
@@ -2356,7 +2685,10 @@ mod tests {
         // Strip both wizard-path channels.
         state.telegram_token = None;
         state.keet_seed_phrase = None;
-        // write_config recomputes the flag from configured_channels(state).
+        state.onboarding_complete = false;
+        // Fresh state with no channel remains incomplete. A force-reconfigure
+        // state that was already complete is intentionally preserved because
+        // lossless credential RMW also preserves its existing channel token.
         write_config(&neoth_dir, &state)
             .await
             .expect("write_config");

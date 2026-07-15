@@ -85,7 +85,7 @@ pub fn write_sidecar(
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let dur = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+        .context("system clock is before the Unix epoch")?;
     let now = dur.as_secs() as i64;
     // Nano-precision timestamp in the filename so close-spaced
     // writes (operator typing fast, scripted confirm via for-
@@ -93,7 +93,13 @@ pub fn write_sidecar(
     // under lexicographic sort. `as_nanos()` returns u128 — pad
     // to 38 digits so every filename sorts correctly.
     let nanos = dur.as_nanos();
-    let name = format!("cluster_{}_{}_{:038}.json", kind.as_str(), now, nanos);
+    let name = format!(
+        "cluster_{}_{}_{:038}_{}.json",
+        kind.as_str(),
+        now,
+        nanos,
+        uuid::Uuid::now_v7().simple()
+    );
     let path = dir.join(&name);
     let body = ClusterAuditSidecar {
         kind,
@@ -101,11 +107,9 @@ pub fn write_sidecar(
         payload,
         created_ts_unix: now,
     };
-    let tmp = path.with_extension("json.tmp");
     let body_bytes = serde_json::to_vec(&body).context("serialise sidecar")?;
-    fs::write(&tmp, &body_bytes).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, &path)
-        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    crate::util::atomic_write::atomic_write_private(&path, &body_bytes)
+        .with_context(|| format!("atomically write {}", path.display()))?;
     Ok(path)
 }
 
@@ -118,9 +122,12 @@ pub fn list_pending(home: &Path) -> Result<Vec<(PathBuf, ClusterAuditSidecar)>> 
     if !dir.exists() {
         return Ok(Vec::new());
     }
-    let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
+    let entries = fs::read_dir(&dir)
         .with_context(|| format!("read {}", dir.display()))?
-        .filter_map(|r| r.ok())
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("enumerate {}", dir.display()))?;
+    let mut entries: Vec<PathBuf> = entries
+        .into_iter()
         .map(|e| e.path())
         .filter(|p| {
             p.extension().and_then(|x| x.to_str()) == Some("json")
@@ -133,14 +140,10 @@ pub fn list_pending(home: &Path) -> Result<Vec<(PathBuf, ClusterAuditSidecar)>> 
     entries.sort();
     let mut out = Vec::with_capacity(entries.len());
     for path in entries {
-        let body = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let parsed = match serde_json::from_str::<ClusterAuditSidecar>(&body) {
-            Ok(v) => v,
-            Err(_) => continue, // Malformed → leave in place, ingester skips
-        };
+        let body = fs::read_to_string(&path)
+            .with_context(|| format!("read cluster audit sidecar {}", path.display()))?;
+        let parsed = serde_json::from_str::<ClusterAuditSidecar>(&body)
+            .with_context(|| format!("parse cluster audit sidecar {}", path.display()))?;
         out.push((path, parsed));
     }
     Ok(out)
@@ -165,7 +168,8 @@ pub fn build_wal_frame_body(sidecar: &ClusterAuditSidecar) -> Vec<u8> {
         "payload": sidecar.payload,
         "ts_unix": sidecar.created_ts_unix,
     });
-    serde_json::to_vec(&frame).unwrap_or_default()
+    serde_json::to_vec(&frame)
+        .expect("cluster audit sidecar frame contains only infallible JSON values")
 }
 
 #[cfg(test)]
@@ -243,11 +247,12 @@ mod tests {
     }
 
     #[test]
-    fn list_pending_skips_malformed_json() {
+    fn list_pending_rejects_malformed_json_without_dropping_later_evidence() {
         let dir = tempdir().unwrap();
         let sdir = sidecar_dir(dir.path());
         fs::create_dir_all(&sdir).unwrap();
-        fs::write(sdir.join("cluster_peer_confirmed_1_aaaa.json"), "{not json").unwrap();
+        let malformed = sdir.join("cluster_peer_confirmed_1_aaaa.json");
+        fs::write(&malformed, "{not json").unwrap();
         // Plus one valid file.
         write_sidecar(
             dir.path(),
@@ -256,8 +261,18 @@ mod tests {
             serde_json::json!({"label": "ok"}),
         )
         .unwrap();
-        let listed = list_pending(dir.path()).unwrap();
-        assert_eq!(listed.len(), 1, "malformed json must be skipped");
+        let valid = list_pending(dir.path()).unwrap_err();
+        assert!(valid.to_string().contains("cluster_peer_confirmed_1_aaaa.json"));
+        assert!(malformed.exists());
+        assert_eq!(
+            fs::read_dir(&sdir)
+                .unwrap()
+                .collect::<std::io::Result<Vec<_>>>()
+                .unwrap()
+                .len(),
+            2,
+            "both malformed and later valid evidence must remain pending"
+        );
     }
 
     #[test]

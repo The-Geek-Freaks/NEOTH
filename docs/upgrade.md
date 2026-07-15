@@ -1,8 +1,9 @@
 # Upgrading NEOTH
 
-NEOTH is a single self-contained daemon binary with an append-only WAL +
-SQLite views DB under `~/.neoth/`. Upgrades are designed to be safe and
-in-place: your memory, config, and audit log survive across versions.
+The `neoth` core is self-contained; desktop release archives also ship the
+`neothd` compatibility launcher, `neothd-gui`, `neoth-migrate`, and
+`neoth-relay`. State lives under `~/.neoth/`. Upgrades are designed to be safe
+and in-place: your memory, config, and audit log survive across versions.
 
 > New install instead? See [install.md](install.md) /
 > [getting-started.md](getting-started.md).
@@ -10,7 +11,7 @@ in-place: your memory, config, and audit log survive across versions.
 ## TL;DR
 
 ```bash
-# Built-in self-update (verifies a signed release, atomic swap + rollback):
+# Built-in self-update (verifies one signed release bundle + rollback):
 neoth update --self --apply
 
 # Then confirm health:
@@ -21,23 +22,37 @@ neoth doctor
 
 `neoth update --self --apply` runs the audited update path:
 
-1. **Check** the configured release channel (`freedom.yaml::auto_update.repo`,
-   default the official repo) for a newer version.
-2. **Download** the matching artifact for your platform + its SHA-256 companion.
-3. **Verify** — the SHA-256 must match, AND (once a release-signing key is
-   provisioned) a **minisign signature** is required by default. Pass
-   `--allow-unsigned` only on a trusted network if no key is pinned yet.
-4. **Atomic swap** — the running binary is renamed to `*.bak.<timestamp>` and
-   the new binary moved into place, so a failed swap rolls back cleanly.
+1. **Check** the configured feed and ring
+   (`freedom.yaml::auto_update.{repo,channel}`) for a newer SemVer release.
+   `stable` accepts final tags, `rc` adds RC tags, and `nightly` adds
+   nightly-tagged releases; alpha/beta and malformed tags fail closed.
+2. **Download** the matching platform archive plus its SHA-256 and signature
+   companions. Response and extraction sizes are bounded.
+3. **Verify** — the SHA-256 must match, AND a **minisign signature** is required
+   by default. Official releases pin the key at build time and publish the
+   signature companion. Pass `--allow-unsigned` only as an explicit recovery
+   action for a trusted non-release build.
+4. **Bundle preflight** — every companion currently installed beside `neoth`
+   must exist in the same verified archive before any executable is touched.
+   Source-only core installations remain core-only.
+5. **Transactional replace** — companions are backed up and replaced first;
+   `neoth` is the commit point and moves last. A partial failure restores prior
+   executables in reverse order. Backups use `*.bak.<timestamp>` names.
 
-Unattended auto-apply is **off by default** and only ever runs at autonomy
-`Elevated`/`Full` (`freedom.yaml::auto_update.auto_apply`). At lower autonomy
-the daemon notifies but never self-replaces without you.
+Background self-update is **off by default**. When `auto_update.enabled` is on,
+the daemon checks at `check_interval_secs`; setting that interval to `0`
+disables the task. `auto_apply: true` at `Elevated`/`Full` permits only verified
+**staging** plus notification. The daemon never replaces its own executable:
+the commit step remains `neoth update --self --apply`. Manual check/apply uses
+the same repo, release ring, and optional validated `target_triple`; changing
+any of them invalidates a previously staged artifact and forces a fresh fetch.
 
 ## Manual upgrade (download yourself)
 
 1. Stop the daemon (`neoth serve` → Ctrl-C, or your service manager).
-2. Replace the `neoth` binary with the new release for your platform.
+2. Prefer the current binary installer, which verifies and replaces the whole
+   installed bundle. If replacing manually, update `neoth` and every installed
+   companion from the **same** platform archive; never mix release versions.
 3. Start the daemon. The indexer replays any WAL segments written since the
    last run; the views DB schema is migrated forward automatically.
 
@@ -76,7 +91,7 @@ If you turned on WAL/config encryption, the master key lives at
 ## Downgrade
 
 Downgrading is best-effort: an older binary may not understand a newer views-DB
-schema. Keep the `*.bak.<timestamp>` the self-updater left, or restore the
-binary you upgraded from, and run `neoth doctor`. The WAL itself is
+schema. Keep the `*.bak.<timestamp>` files the self-updater left, or restore the
+complete prior binary bundle, and run `neoth doctor`. The WAL itself is
 forward-and-backward readable (legacy plaintext + newer segment formats both
 parse).

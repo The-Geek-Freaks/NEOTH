@@ -308,9 +308,10 @@ pub(crate) fn step1c_experience_level(
 /// the identity step (step 2) so a migrating operator is told up front that
 /// NEOTH can import a prior assistant's memory. The actual manifest is
 /// collected later (step 6f); this is only the early signpost. Honest about
-/// scope: v1.0 ships the preview/dry-run import path — the apply/import is
-/// post-v1.0 (see GOLD-HON-01 / `neoth-migrate`). Non-interactive runs infer
-/// the mode from `--import-memory` (a declared manifest ⇒ Migration).
+/// scope: the wizard records intent and never mutates memory; the operator
+/// previews and explicitly consents through `neoth-migrate apply --confirm`.
+/// Non-interactive runs infer the mode from `--import-memory` (a declared
+/// manifest ⇒ Migration).
 pub(crate) fn step1d_onboarding_mode(
     args: &InitArgs,
     interactive: bool,
@@ -365,8 +366,8 @@ pub(crate) fn step1d_onboarding_mode(
             println!(
                 "  [1d/9] Migration mode — the wizard collects your prior-assistant import \
                  manifest later (step 6f). Preview it any time with `neoth-migrate dry-run \
-                 --manifest <path>`. Note: v1.0 ships the preview/dry-run path only; the \
-                 apply/import step is post-v1.0, so the wizard records your intent and never \
+                 --manifest <path>`, then explicitly import with `neoth-migrate apply \
+                 --manifest <path> --confirm`. The wizard records your intent and never \
                  auto-applies."
             );
         }

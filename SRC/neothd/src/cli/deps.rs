@@ -22,7 +22,8 @@ pub struct DepsScanArgs {
 
 pub async fn run_deps_scan(args: DepsScanArgs) -> Result<()> {
     let findings =
-        crate::security::dep_health::scan_manifest(&args.manifest, crate::time::now_unix_i64()).await;
+        crate::security::dep_health::scan_manifest(&args.manifest, crate::time::now_unix_i64())
+            .await;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&findings)?);

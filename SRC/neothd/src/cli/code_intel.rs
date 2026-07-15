@@ -12,19 +12,12 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::code_map::{
-    co_change,
-    graph::CallGraph,
-    ownership,
-    persist,
-    risk,
-};
+use crate::code_map::{co_change, graph::CallGraph, ownership, persist, risk};
 
 /// Source-file extensions to include in the analysis pass.
 /// Mirrors the set that NEOTH's code-map walker classifies as code.
 const CODE_EXTENSIONS: &[&str] = &[
-    "rs", "py", "js", "ts", "go", "java", "c", "cpp", "h", "hpp",
-    "cs", "rb", "kt", "swift", "php",
+    "rs", "py", "js", "ts", "go", "java", "c", "cpp", "h", "hpp", "cs", "rb", "kt", "swift", "php",
 ];
 
 /// Upper bound on files processed in one pass. Protects against monorepos
@@ -70,8 +63,7 @@ pub async fn run_code_intel(args: CodeIntelArgs) -> Result<()> {
     let files = &files[..capped];
 
     // ── 2. Ownership + churn per file ────────────────────────────────────────
-    let mut triples: Vec<(String, ownership::FileOwnership, u32)> =
-        Vec::with_capacity(files.len());
+    let mut triples: Vec<(String, ownership::FileOwnership, u32)> = Vec::with_capacity(files.len());
     for f in files {
         match ownership::file_ownership(&repo, f) {
             Ok(ow) => {
@@ -152,12 +144,12 @@ pub async fn run_code_intel(args: CodeIntelArgs) -> Result<()> {
             Ok(pairs) => {
                 let show = pairs.len().min(20);
                 println!();
-                println!("  Top {} hidden coupling pairs (co-changed ≥3 times, no call edge):", show);
-                println!();
                 println!(
-                    "  {:<50}  {:<50}  {:>10}",
-                    "File A", "File B", "Co-changes"
+                    "  Top {} hidden coupling pairs (co-changed ≥3 times, no call edge):",
+                    show
                 );
+                println!();
+                println!("  {:<50}  {:<50}  {:>10}", "File A", "File B", "Co-changes");
                 println!("  {}", "-".repeat(115));
                 for p in pairs.iter().take(show) {
                     println!(

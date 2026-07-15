@@ -1,17 +1,16 @@
 [package]
 name        = "neoth-plugin-sdk"
 version     = "0.1.0-alpha.0"
-description = "Public SDK for writing NEOTH skill plugins — sealed PermissionToken<T> typestate, Hook trait, FreedomGrant authorisation."
+description = "NEOTH plugin SDK — versioned WASM guest ABI, safe hostcalls, typed permission markers, and native Hook traits."
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 repository.workspace   = true
 
 # Publish metadata — V10-03 GA blocker. Filled per the crates.io
-# recommended-field checklist. The crate is still pre-1.0
-# (`0.1.0-alpha.0`) so the surface is allowed to shift; once the WASM
-# plugin host (V10-04) ships and there's >1 external plugin author,
-# this graduates to `0.1.0` proper.
+# recommended-field checklist. The SDK remains pre-1.0 while external plugin
+# authors validate the API; the Wasmtime host already ships in the NEOTH 1.0
+# source tree.
 readme        = "README.md"
 homepage      = "https://github.com/The-Geek-Freaks/NEOTH"
 documentation = "https://docs.rs/neoth-plugin-sdk"
@@ -24,14 +23,15 @@ exclude = ["benches/*", "tests/*", ".gitignore"]
 
 # Notes for plugin authors:
 #   - This is the ONLY crate plugins should depend on.
-#   - The `_host` feature is private to the NEOTH daemon. Plugin authors
-#     MUST NOT enable it. Doing so exposes `PermissionToken::mint()`, which
-#     lets a plugin forge any permission level — defeating the whole point.
+#   - `_host` exposes integration constructors used by the NEOTH daemon. Cargo
+#     features are consumer-selectable, so this is API-surface hygiene, NOT an
+#     access-control or security boundary. Plugin crates should not enable it.
 
 [features]
 default = []
-# Internal feature, enabled only by `neothd`. Exposes PermissionToken::mint().
-# Do not enable from a plugin crate.
+# Host-integration feature used by `neothd`. It exposes token/grant constructors
+# and is intentionally absent from defaults, but consumers can enable it; the
+# Wasmtime hostcall policy remains the runtime security boundary.
 _host = []
 
 [dependencies]

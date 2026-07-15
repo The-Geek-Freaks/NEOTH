@@ -276,7 +276,10 @@ mod tests {
     fn size_ladder_includes_27b() {
         // F36 — the selector must offer 27.0 so the curated Qwen3.6-27B tier
         // (G-03) is reachable; without it the curated row was dead code.
-        assert!(SIZE_LADDER_B.contains(&27.0), "27.0 missing from SIZE_LADDER_B");
+        assert!(
+            SIZE_LADDER_B.contains(&27.0),
+            "27.0 missing from SIZE_LADDER_B"
+        );
     }
 
     #[test]

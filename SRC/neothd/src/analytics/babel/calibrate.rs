@@ -128,7 +128,9 @@ mod tests {
         let conn = db();
         seed(&conn, "w1", T, 0.9, 0);
         seed(&conn, "w2", T + 900, 0.9, 0);
-        let r = calibrate_round(&conn, 0.8, 0).expect("query").expect("rows");
+        let r = calibrate_round(&conn, 0.8, 0)
+            .expect("query")
+            .expect("rows");
         assert_eq!(r.false_positives, 2);
         assert_eq!(r.false_negatives, 0);
         assert!((r.new_threshold - 0.82).abs() < 1e-9, "0.8 + 2 steps up");
@@ -138,7 +140,9 @@ mod tests {
         let conn = db();
         seed(&conn, "w1", T, 0.2, 1);
         seed(&conn, "w2", T + 900, 0.2, 1);
-        let r = calibrate_round(&conn, 0.8, 0).expect("query").expect("rows");
+        let r = calibrate_round(&conn, 0.8, 0)
+            .expect("query")
+            .expect("rows");
         assert_eq!(r.false_negatives, 2);
         assert!((r.new_threshold - 0.78).abs() < 1e-9, "0.8 - 2 steps down");
     }
@@ -148,7 +152,9 @@ mod tests {
         let conn = db();
         seed(&conn, "hit", T, 0.9, 1); // predicted + collapsed
         seed(&conn, "pass", T + 900, 0.1, 0); // not predicted + clean
-        let r = calibrate_round(&conn, 0.8, 0).expect("query").expect("rows");
+        let r = calibrate_round(&conn, 0.8, 0)
+            .expect("query")
+            .expect("rows");
         assert_eq!(r.false_positives, 0);
         assert_eq!(r.false_negatives, 0);
         assert!((r.new_threshold - 0.8).abs() < 1e-9, "no movement");
@@ -159,7 +165,10 @@ mod tests {
     #[test]
     fn round_is_none_without_new_stamped_windows_and_clamps_hold() {
         let conn = db();
-        assert!(calibrate_round(&conn, 0.8, 0).expect("query").is_none(), "empty db");
+        assert!(
+            calibrate_round(&conn, 0.8, 0).expect("query").is_none(),
+            "empty db"
+        );
         seed(&conn, "w1", T, 0.9, 0);
         assert!(
             calibrate_round(&conn, 0.8, T).expect("query").is_none(),
@@ -170,7 +179,9 @@ mod tests {
         for i in 0..10i64 {
             seed(&conn, &format!("w{i}"), T + i * 900, 0.99, 0);
         }
-        let r = calibrate_round(&conn, 0.94, 0).expect("query").expect("rows");
+        let r = calibrate_round(&conn, 0.94, 0)
+            .expect("query")
+            .expect("rows");
         assert!(r.new_threshold <= THRESHOLD_MAX + 1e-12);
     }
 }

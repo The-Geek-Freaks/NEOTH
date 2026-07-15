@@ -147,7 +147,8 @@ async fn run_one_tick(
         "ground_truth_revoked": 0_u64,
         "ts_unix": now_ns / 1_000_000_000,
     });
-    let body = serde_json::to_vec(&payload).unwrap_or_default();
+    let body = serde_json::to_vec(&payload)
+        .expect("wiki rebuild payload contains only infallible JSON values");
     let header = HeaderBuilder::new(EVENT_TYPE_OBSIDIAN_WIKI_REBUILD_COMPLETE, &body).build();
     if let Err(e) = writer.append(header, body).await {
         warn!(error = %e, "obsidian wiki-rebuild: WAL append failed (non-fatal)");
@@ -160,8 +161,8 @@ async fn run_one_tick(
     // thread that could race with other concurrent tests.
     let db_path = views_db.unwrap_or_else(crate::memory::store::default_path);
     let ingest_result = tokio::task::spawn_blocking(move || {
-        let conn = crate::memory::store::open(&db_path)
-            .context("obsidian wiki-rebuild: open views.db")?;
+        let conn =
+            crate::memory::store::open(&db_path).context("obsidian wiki-rebuild: open views.db")?;
         crate::wiki::ingest_sources(&conn, &sources, now_ns)
             .context("obsidian wiki-rebuild: ingest_sources failed")
     })
@@ -258,10 +259,7 @@ mod tests {
             .path()
             .join("NEOTH-Wiki")
             .join("NEOTH-Wiki-Index.md");
-        assert!(
-            wiki_index.exists(),
-            "index page must exist after cron tick"
-        );
+        assert!(wiki_index.exists(), "index page must exist after cron tick");
         assert!(
             vault_dir
                 .path()

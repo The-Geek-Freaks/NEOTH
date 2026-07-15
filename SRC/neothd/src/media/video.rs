@@ -24,12 +24,17 @@ use super::{Asset, AssetKind, Extraction, ExtractionError, MediaExtractor, audio
 
 pub struct VideoExtractor;
 
-#[async_trait::async_trait]
-impl MediaExtractor for VideoExtractor {
-    fn name(&self) -> &'static str {
-        "video"
-    }
-    async fn extract(&self, asset: &Asset) -> Result<Extraction, ExtractionError> {
+impl VideoExtractor {
+    /// Writer- and policy-aware video extraction. The extracted audio track
+    /// must retain the caller's effective STT/download policy and WAL sink.
+    pub(crate) async fn extract_with_context(
+        &self,
+        asset: &Asset,
+        media_cfg: &crate::config::MediaConfig,
+        updater_cfg: &crate::config::UpdaterConfig,
+        neoth_home: &std::path::Path,
+        wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    ) -> Result<Extraction, ExtractionError> {
         if asset.kind() != AssetKind::Video {
             return Err(ExtractionError::Unsupported {
                 backend: "video",
@@ -45,7 +50,9 @@ impl MediaExtractor for VideoExtractor {
             mime: "audio/wav".into(),
             data: wav_bytes,
         };
-        let audio_out = audio::AudioExtractor.extract(&audio_asset).await?;
+        let audio_out = audio::AudioExtractor
+            .extract_with_context(&audio_asset, media_cfg, updater_cfg, neoth_home, wal_writer)
+            .await?;
         // Re-tag the metadata so operators can tell the extraction came
         // through the video pipeline (not a bare audio file).
         let mut metadata = audio_out.metadata;
@@ -97,6 +104,36 @@ impl MediaExtractor for VideoExtractor {
             text: audio_out.text,
             metadata,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl MediaExtractor for VideoExtractor {
+    fn name(&self) -> &'static str {
+        "video"
+    }
+
+    async fn extract(&self, asset: &Asset) -> Result<Extraction, ExtractionError> {
+        if asset.kind() != AssetKind::Video {
+            return Err(ExtractionError::Unsupported {
+                backend: "video",
+                got: asset.kind(),
+            });
+        }
+        let config = crate::config::FreedomConfig::load_from_default_path().map_err(|error| {
+            ExtractionError::Backend {
+                backend: "video",
+                reason: format!("load effective STT config: {error}"),
+            }
+        })?;
+        self.extract_with_context(
+            asset,
+            &config.media,
+            &config.updater,
+            &crate::config::FreedomConfig::default_neoth_home(),
+            None,
+        )
+        .await
     }
 }
 

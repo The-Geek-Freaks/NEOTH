@@ -1,128 +1,153 @@
 # Local Models
 
-Local models let NEOTH learn, recall, transcribe, embed, and reason without sending private context to a cloud provider by default.
+Local models let NEOTH learn, transcribe, embed, and reason without sending the
+input to a cloud model. The model families do not share one installer: Qwen is
+selected through onboarding, Ouro has its own catalogue and fetch command, and
+the `models` command manages the CLIP and Whisper media caches.
 
 ## Model roles
 
 | Model | Role | Why it exists |
 | :-- | :-- | :-- |
-| **Qwen** | Local profile extraction and lightweight reasoning. | Keeps continuous learning private and cheap. |
-| **Ouro** | Local thinking/reasoning provider. | Gives NEOTH an operator-owned reasoning path. |
-| **CLIP** | Image embeddings. | Enables image recall and visual file search. |
-| **Whisper** | Audio/video transcription. | Voice notes, meetings, videos, calls, and audio attachments. |
-| **Llama/Unsloth-family models** | Optional local answer providers when hardware allows. | Lets operators trade cloud quality for local control. |
+| **Qwen** | Local profile extraction, embeddings, and an optional local chat provider. | Keeps sensitive learning and inference on the operator's machine. |
+| **Ouro** | Optional local thinking/reasoning provider. | Provides an operator-owned LoopLM reasoning path. |
+| **CLIP** | Image and text embeddings. | Enables image recall and visual file search. |
+| **Whisper** | Audio/video transcription. | Handles voice notes, meetings, videos, calls, and audio attachments. |
+| **Ollama/GGUF models** | Optional local answer providers selected for the available hardware. | Lets operators trade cloud quality for local control. |
 
-## Install models
+## Install and inspect
 
-```bash
-neoth model list
-neoth model fetch qwen
-neoth model fetch ouro
-neoth model fetch clip
-neoth model fetch whisper
-```
-
-Inspect:
+Managed media models:
 
 ```bash
 neoth models list
+neoth models pull clip
+neoth models pull whisper
+```
+
+`whisper` follows the effective `media.stt` configuration. Use
+`whisper-candle` or `whisper-faster` when you deliberately want one backend:
+
+```bash
+neoth models pull whisper-candle
+neoth models pull whisper-faster
+```
+
+Qwen is intentionally not a `neoth models pull` target because onboarding
+sizes the local-inference topology before choosing the repository. Configure it
+through the wizard or explicitly re-run onboarding:
+
+```bash
+neoth init --force --provider local_qwen \
+  --provider-model Qwen/Qwen2.5-3B-Instruct
 neoth doctor
 ```
 
-## Hardware guidance
+When the selected Qwen artifacts are not present, the provider downloads them
+on first construction subject to `updater.allow_huggingface_downloads` and the
+model-download audit gate. For an offline machine, populate the exact cache path
+reported by the error on a connected machine first.
 
-| Hardware | Good for |
-| :-- | :-- |
-| CPU-only | Recall, WAL, profile browsing, small local tasks, slower transcription. |
-| 4-8 GB VRAM | Small Qwen/Ouro profile learning, CLIP, Whisper smaller modes. |
-| 12-24 GB VRAM | Stronger local reasoning, larger Whisper, richer multimodal work. |
-| 24+ GB VRAM | Larger local models and cluster/resource sharing. |
+Ouro has a separate, pinned checkpoint catalogue:
 
-The wizard should recommend models based on detected RAM, VRAM, GPU family, disk, and operator goals.
+```bash
+neoth ouro list
+neoth ouro fetch --checkpoint ByteDance/Ouro-1.4B-Thinking
+neoth init --force --provider local_ouro \
+  --provider-model ByteDance/Ouro-1.4B-Thinking
+neoth ouro status
+```
+
+For Ollama/GGUF choices, ask the hardware-aware selector instead of guessing a
+model that may not fit:
+
+```bash
+neoth models recommend
+neoth models fit
+```
 
 ## Configuration
 
-Typical `~/.neoth/inference.toml`:
+Model configuration lives in `~/.neoth/freedom.yaml`; there is no separate
+`inference.toml`. A local-Qwen main provider with local, fail-closed profile
+learning looks like this:
 
-```toml
-[inference]
-allow_cloud_fallback = false
+```yaml
+provider_kind: local_qwen
+provider_model: Qwen/Qwen2.5-3B-Instruct
 
-[models.qwen]
-enabled = true
-path = "~/.neoth/models/qwen"
+profile:
+  learn_enabled: true
+  learn_provider: local_qwen
+  allow_cloud_fallback: false
 
-[models.ouro]
-enabled = true
-path = "~/.neoth/models/ouro"
-
-[models.clip]
-enabled = true
-path = "~/.neoth/models/clip"
-
-[models.whisper]
-enabled = true
-path = "~/.neoth/models/whisper"
+inference:
+  mode: single
+  accelerator_override: cuda  # optional; omit for auto-detection
+  max_new_tokens: 256
 ```
 
-## Privacy posture
+The main chat provider can remain cloud-backed while profile extraction stays
+local:
 
-| Setting | Meaning |
-| :-- | :-- |
-| `allow_cloud_fallback = false` | If local extraction fails, skip learning instead of sending private context to cloud. |
-| `allow_cloud_fallback = true` | Cloud fallback is allowed and should be visible in privacy audit. |
-| Local model missing | NEOTH should surface the missing model and show the fetch command. |
-| Model cache verified | NEOTH can use the model without re-downloading. |
+```yaml
+provider_kind: openai_api
 
-Audit:
+profile:
+  learn_enabled: true
+  learn_provider: local_qwen
+  allow_cloud_fallback: false
+```
+
+With `allow_cloud_fallback: false`, a missing or unusable local learn provider
+skips that learning pass instead of silently sending the conversation window to
+the main cloud provider. Set it to `true` only when that egress is intended.
+
+## Cache contract
+
+Qwen and Ouro runtime artifacts are copied into repository-derived directories
+under `~/.neoth/models/` (for example
+`Qwen-Qwen2.5-3B-Instruct/` or
+`ByteDance-Ouro-1.4B-Thinking/`). CLIP, Whisper, and Piper use their canonical
+media cache layouts under the same root. Do not depend on guessed folder names:
+`neoth models list`, `neoth ouro status`, `neoth tts status`, and `neoth doctor`
+report the relevant configured paths and readiness.
+
+Model downloads are explicit or first-use operations, subject to the updater
+policy. A verified, complete cache is reused; pending or incomplete downloads
+must not be treated as ready.
+
+## Privacy and audit
 
 ```bash
 neoth privacy audit --last 30d
+neoth wal show --type model_download_start
 neoth doctor
 ```
 
-## Cache layout
-
-```text
-~/.neoth/models/
-  qwen/
-  ouro/
-  clip/
-  whisper/
-```
-
-NEOTH should treat model downloads as explicit operator actions, log them, and avoid repeated downloads when a verified cache exists.
+`privacy audit` reports configured posture and the sensitive event categories
+recorded in the selected window. It does not prove that every possible outbound
+surface emits a WAL frame; see the documented audit exceptions in
+[the threat model](security/threat-model.md).
 
 ## OOM and performance
-
-If local models are slow or failing:
 
 ```bash
 neoth doctor
 neoth status
 neoth hardware
+neoth models fit
 ```
-
-Common fixes:
 
 | Symptom | Fix |
 | :-- | :-- |
-| GPU OOM | Pick a smaller quant, reduce context, unload another model. |
-| CPU too slow | Use cloud for response generation but keep profile extraction local. |
-| Whisper slow | Use a smaller Whisper profile or GPU acceleration. |
-| Model missing | `neoth model fetch <name>`. |
-| Privacy fallback warning | Keep fallback disabled or explicitly accept the tradeoff. |
+| GPU OOM | Pick a smaller checkpoint/quant, reduce context, or unload another model. |
+| CPU too slow | Keep profile extraction local and use a configured cloud provider for responses. |
+| Whisper slow | Select a smaller `media.stt.model_size` or use the configured accelerated backend. |
+| CLIP/Whisper missing | Run the matching `neoth models pull <name>` command. |
+| Qwen missing | Re-run onboarding/check policy, then let the selected provider populate its exact cache. |
+| Ouro missing | Run `neoth ouro fetch [--checkpoint <HF_ID>]`. |
+| Privacy fallback warning | Keep fallback disabled or explicitly accept the cloud-egress tradeoff. |
 
-## Local provider selection
-
-NEOTH can use local models for:
-
-- profile extraction
-- embeddings
-- recall enrichment
-- transcription
-- visual search
-- coding support
-- reasoning when hardware is sufficient
-
-Cloud providers remain useful for high-end reasoning. The point is operator choice and visible routing, not pretending every laptop can run every model well.
+Cloud providers remain useful for high-end reasoning. The contract is operator
+choice plus visible routing, not a claim that every laptop can run every model.

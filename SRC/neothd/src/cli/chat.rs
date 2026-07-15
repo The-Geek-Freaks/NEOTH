@@ -1,12 +1,9 @@
-//! `neoth chat <msg>` — one-shot LLM round trip.
+//! `neoth chat <msg>` — one-shot or streaming LLM round trip.
 //!
 //! Loads `freedom.yaml`, picks the configured provider, sends the prompt,
-//! prints the response. Both the outbound request and the inbound response
-//! are persisted as WAL events (`EVENT_TYPE_PROVIDER_REQUEST` /
-//! `EVENT_TYPE_PROVIDER_RESPONSE`) before the daemon returns.
-//!
-//! No streaming yet — Day-5b will add `--stream`. No interactive REPL —
-//! Day-5c. For now: pipe in a prompt, get an answer, durably logged.
+//! and prints the response. The mandatory provider leaf boundary persists a
+//! content-free request/response-or-error audit pair before dispatch settles.
+//! Prompt content is journaled separately only when incognito mode is off.
 
 use std::path::PathBuf;
 
@@ -15,7 +12,7 @@ use clap::Args;
 use tracing::{info, warn};
 
 use crate::config::FreedomConfig;
-use crate::providers::{self, CompletionChunk, Request};
+use crate::providers::{self, CompletionChunk, Provider, Request};
 use crate::wal::events::{
     EVENT_TYPE_AUTO_SKILL_EXTRACTED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN,
     EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
@@ -82,21 +79,20 @@ pub struct ChatArgs {
     #[arg(skip)]
     pub stream: bool,
 
-    /// Sampling temperature for backends that honour it (local_qwen today).
-    /// Greedy / argmax when ≤ 0.0. Range [0.0, 2.0]. Cloud providers set
-    /// their own default; the flag is silently ignored when the dispatcher
-    /// has no path to forward it.
+    /// Sampling temperature for providers that support it. Range [0.0, 2.0];
+    /// Cohere, Bedrock, and legacy Anthropic cap it at 1.0; Anthropic models
+    /// after Opus 4.6 accept only 1.0. Unsupported controls fail before
+    /// transport.
     #[arg(long, value_name = "T")]
     pub temperature: Option<f32>,
 
-    /// Top-p (nucleus) sampling cutoff for local_qwen. `1.0` keeps every
-    /// token; `0.9` is a common balance. Ignored when `--temperature` is
-    /// `0`/unset (greedy mode short-circuits before top-p applies).
+    /// Top-p (nucleus) sampling cutoff. Range (0.0, 1.0]; `1.0` keeps every
+    /// token. An unsupported selected provider fails before transport.
     #[arg(long = "top-p", value_name = "P")]
     pub top_p: Option<f32>,
 
     /// Optional RNG seed for reproducible sampling. Pair with `--temperature
-    /// > 0` to make a non-greedy call replayable. Unused on cloud providers.
+    /// > 0` for a replayable non-greedy call. Unsupported providers fail.
     #[arg(long, value_name = "SEED")]
     pub sampling_seed: Option<u64>,
 
@@ -108,18 +104,18 @@ pub struct ChatArgs {
     /// prints a one-line resume banner ("resuming session X / phase Y
     /// / provider Z"), and prepends a typed RESUME-CONTEXT block to
     /// the chat's system prompt so the assistant knows the prior
-    /// pipeline shape. Full pipeline-state rehydration (re-scoping
-    /// MCP servers, restoring council hemisphere routing) lands as
-    /// a follow-up — this surface unblocks the operator-facing
-    /// `chat resume from <hash>` workflow today.
+    /// pipeline shape. The current MCP registry is then restricted to
+    /// the checkpoint's exact recorded server IDs: newly enabled servers
+    /// are excluded, while missing/disabled IDs and legacy checkpoints
+    /// without an exact scope fail closed before provider dispatch.
     #[arg(long = "resume-from", value_name = "HASH")]
     pub resume_from: Option<String>,
 
-    /// ODY-09 — ephemeral/incognito turn: skip memory injection (Block::D recall)
-    /// and suppress the RAW_TEXT, PROVIDER_REQUEST, and PROVIDER_RESPONSE WAL
-    /// frames for this turn. The reply is still rendered to stdout. A single
-    /// `INCOGNITO_TURN` (0xF7) WAL frame records that the mode was active, without
-    /// storing any prompt content.
+    /// ODY-09 — ephemeral/incognito turn: skip memory injection (Block::D
+    /// recall), RAW_TEXT journaling, and every post-turn memory surface. The
+    /// mandatory provider request/terminal lifecycle remains auditable with
+    /// hashes and typed metadata only (`incognito: true`), never prompt or
+    /// response plaintext. `INCOGNITO_TURN` (0xF7) records the privacy mode.
     #[arg(long)]
     pub incognito: bool,
 
@@ -146,6 +142,7 @@ pub struct ChatArgs {
 }
 
 pub async fn run_chat(args: ChatArgs) -> Result<()> {
+    let neoth_home = chat_neoth_home(args.config.as_deref());
     let config = match &args.config {
         Some(p) => FreedomConfig::load_from_path(p)?,
         None => FreedomConfig::load_from_default_path()?,
@@ -159,8 +156,7 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // operator never sees a half-spun adapter. Bypass via
     // `NEOTH_CONSENT_BYPASS=1` for CI / scripted reruns.
     {
-        let home = FreedomConfig::default_neoth_home();
-        crate::consent::ensure_all_granted_or_prompt(&home, &config)?;
+        crate::consent::ensure_all_granted_or_prompt(&neoth_home, &config)?;
     }
     // CH-04: chat dispatch routes through the Left hemisphere (analytic /
     // structured reasoning). In Single mode `from_config_for_role` falls
@@ -181,7 +177,13 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // the same identity for callers — only the prompt is modified in-place.
     let provider: Box<dyn providers::Provider> = if config.tokens.history_compaction_enabled {
         let utility = providers::from_config_for_utility(&config).await.ok();
-        providers::compactor::CompactingProvider::from_config(provider, utility, &config.tokens, None)
+        providers::compactor::CompactingProvider::from_config(
+            provider,
+            utility,
+            providers::utility_model_for_config(&config),
+            &config.tokens,
+            None,
+        )
     } else {
         provider
     };
@@ -223,6 +225,59 @@ struct PromptBundle {
     /// default (10 000 tokens). Threaded to `dispatch_provider` which maps
     /// it to `req.thinking_budget` before the provider spawn.
     resolved_effort: Option<crate::providers::effort_override::EffortBudget>,
+}
+
+/// Stable, sorted MCP server ids that define this turn's configured scope.
+/// `McpServers::enabled` owns ordering/filter semantics; checkpoint callers use
+/// this helper so session-start and pre-compaction snapshots cannot drift.
+fn enabled_mcp_scope(servers: &crate::mcp::McpServers) -> Vec<String> {
+    servers
+        .enabled()
+        .into_iter()
+        .map(|server| server.id.clone())
+        .collect()
+}
+
+/// Rebuild the exact MCP scope recorded in a checkpoint using the operator's
+/// current server definitions. The checkpoint binds IDs; commands, environment
+/// and allowlists remain governed by today's `mcp_servers.yaml`. Restoring old
+/// executable/config bytes would override current security policy.
+fn restrict_mcp_servers_to_checkpoint(
+    mut current: crate::mcp::McpServers,
+    scoped_ids: &[String],
+) -> Result<crate::mcp::McpServers, String> {
+    let requested: std::collections::BTreeSet<&str> =
+        scoped_ids.iter().map(String::as_str).collect();
+    if requested.len() != scoped_ids.len() || requested.iter().any(|id| id.trim().is_empty()) {
+        return Err("checkpoint MCP scope contains an empty or duplicate server id".to_string());
+    }
+
+    for id in &requested {
+        let mut matches = current
+            .servers
+            .iter()
+            .filter(|server| server.id.as_str() == *id);
+        let Some(server) = matches.next() else {
+            return Err(format!(
+                "checkpoint MCP server `{id}` is no longer configured; refusing partial resume"
+            ));
+        };
+        if matches.next().is_some() {
+            return Err(format!(
+                "current MCP registry contains duplicate id `{id}`; refusing ambiguous resume"
+            ));
+        }
+        if !server.enabled {
+            return Err(format!(
+                "checkpoint MCP server `{id}` is currently disabled; refusing to override current operator policy"
+            ));
+        }
+    }
+
+    current
+        .servers
+        .retain(|server| server.enabled && requested.contains(server.id.as_str()));
+    Ok(current)
 }
 
 /// GOLD-ADAPT-OH-13 — raw enrichment layer strings, threaded from
@@ -271,6 +326,7 @@ async fn build_prompt_bundle(
     prompt_bundle_hash: &str,
     home: std::path::PathBuf,
     writer: &crate::wal::writer::WalWriterHandle,
+    mcp_servers: &crate::mcp::McpServers,
     // GOLD-CCPARITY-SKILLVIS-01 — lowercased skill id when the turn was
     // initiated by an explicit `/skill-id` slash invocation; `None` on
     // every normal (non-slash) turn. Used by the visibility pre-filter
@@ -291,11 +347,7 @@ async fn build_prompt_bundle(
         .iter()
         .map(|s| {
             let p = std::path::PathBuf::from(s);
-            if p.is_absolute() {
-                p
-            } else {
-                cwd.join(s)
-            }
+            if p.is_absolute() { p } else { cwd.join(s) }
         })
         .collect();
     let skills_dir = home.join("skills");
@@ -309,8 +361,7 @@ async fn build_prompt_bundle(
     // registry build (no watcher, no shared state).
     let (blocks_res, registry_res) = match crate::skills::registry::global() {
         Some(reg) => {
-            let blocks =
-                crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs).await;
+            let blocks = crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs).await;
             (blocks, Ok::<_, anyhow::Error>(reg))
         }
         None => {
@@ -497,12 +548,9 @@ async fn build_prompt_bundle(
     // pure — it never needs to know about visibility; filtering happens before
     // it is called (same architecture as the path-gate filter for PATHS-01).
     let installed_skills: std::sync::Arc<Vec<crate::skills::schema::Skill>> = {
-        let needs_filter = installed_skills.iter().any(|s| {
-            !matches!(
-                s.manifest.visibility,
-                crate::config::SkillVisibility::On
-            )
-        });
+        let needs_filter = installed_skills
+            .iter()
+            .any(|s| !matches!(s.manifest.visibility, crate::config::SkillVisibility::On));
         if needs_filter && !eval_suppress {
             let slash_name = slash_skill_name.as_deref();
             let mut skipped_vis: Vec<String> = Vec::new();
@@ -513,8 +561,7 @@ async fn build_prompt_bundle(
                     crate::config::SkillVisibility::NameOnly
                     | crate::config::SkillVisibility::UserInvocableOnly => {
                         // Eligible only when the operator typed /skill-id
-                        let eligible =
-                            slash_name.is_some_and(|n| n == s.id());
+                        let eligible = slash_name.is_some_and(|n| n == s.id());
                         if !eligible {
                             skipped_vis.push(s.id().to_string());
                         }
@@ -553,8 +600,7 @@ async fn build_prompt_bundle(
                     "ts_unix": crate::time::now_unix_secs(),
                 }))
                 .unwrap_or_default();
-                let header =
-                    crate::wal::make_header(EVENT_TYPE_SKILL_INJECT_SKIPPED, &payload);
+                let header = crate::wal::make_header(EVENT_TYPE_SKILL_INJECT_SKIPPED, &payload);
                 if let Err(e) = writer.append(header, payload).await {
                     warn!(
                         skill = %skipped_id,
@@ -608,6 +654,9 @@ async fn build_prompt_bundle(
         Option<String>,
         Option<crate::providers::effort_override::EffortBudget>,
     ) = if eval_suppress {
+        crate::analytics::babel::signals::emit(
+            crate::analytics::babel::signals::SignalKind::SkillSuppressed,
+        );
         (None, None, None, None, None)
     } else if let Some(resolved) = mode_hit {
         let parent = installed_skills
@@ -631,6 +680,9 @@ async fn build_prompt_bundle(
         // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
         // when a mode is active — mode inherits parent effort setting.
         let effort = parent.and_then(|s| s.manifest.effort);
+        crate::analytics::babel::signals::emit(
+            crate::analytics::babel::signals::SignalKind::SkillMode,
+        );
         // Mode activation is its own audit path — review-gate
         // dispatching via /agent is the explicit operator path,
         // so no used_skill_id surfaces here (mirrors the prior
@@ -697,6 +749,13 @@ async fn build_prompt_bundle(
                 );
             }
         }
+        crate::analytics::babel::signals::emit(match &skill_match {
+            Some(m) if m.embedding_score.is_some() => {
+                crate::analytics::babel::signals::SignalKind::SkillEmbedding
+            }
+            Some(_) => crate::analytics::babel::signals::SignalKind::SkillKeyword,
+            None => crate::analytics::babel::signals::SignalKind::SkillNoMatch,
+        });
         let layer = skill_match
             .as_ref()
             .map(|m| m.skill.system_prompt().to_string());
@@ -710,9 +769,7 @@ async fn build_prompt_bundle(
             .as_ref()
             .and_then(|m| m.skill.manifest.model.clone());
         // GOLD-CCPARITY-EFFORT-03: capture per-skill effort/reasoning-budget.
-        let effort = skill_match
-            .as_ref()
-            .and_then(|m| m.skill.manifest.effort);
+        let effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
         // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
         skill_tool_allowlist = skill_match
             .as_ref()
@@ -749,17 +806,9 @@ async fn build_prompt_bundle(
     };
 
     // ── MCP tool catalogue (Step 1 of autonomous routing) ─────────────────
-    // No-op when `~/.neoth/mcp_servers.yaml` is missing/empty. Pick #34
-    // (Session 14, silent-failure audit-fix): surface YAML parse errors
-    // at warn level instead of silently disabling MCP tools.
-    let mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
-        warn!(
-            error = %e,
-            "mcp_servers.yaml load failed — proceeding without MCP tools; \
-             fix the YAML or remove the file to silence this warning"
-        );
-        Default::default()
-    });
+    // `mcp_servers` is the fail-loud, turn-scoped snapshot loaded by
+    // `run_chat_with`; prompt injection, dispatch and checkpoints all consume
+    // this exact value so a mid-turn file edit cannot create split-brain scope.
     let mcp_catalogue: Option<String> = if mcp_servers.enabled().is_empty() {
         None
     } else {
@@ -785,8 +834,7 @@ async fn build_prompt_bundle(
     // Augments the static tweaks.toml persona_override with a per-turn
     // tone directive derived from prompt intensity. Kill-switch default OFF.
     let persona_override = if config.tone_modifier.enabled {
-        let intensity =
-            crate::council::mds_tone::classify_intensity(&prompt);
+        let intensity = crate::council::mds_tone::classify_intensity(&prompt);
         if intensity >= config.tone_modifier.min_intensity {
             let augmented = crate::council::mds_tone::modifier_for_intensity(
                 intensity,
@@ -823,7 +871,23 @@ async fn build_prompt_bundle(
 
     // ── K-Repo-Map Phase 3c — pre-compute the auto-context block ─────────
     // Best-effort: any failure silently skips injection.
-    let repo_context_block = maybe_repo_context_block(&config, &prompt);
+    let mut repo_context_block = maybe_repo_context_block(&config, &prompt);
+    if let Some(findings) = maybe_architecture_findings_for_skill(used_skill_id.as_deref(), &cwd) {
+        info!(
+            roots_scanned = findings.roots_scanned,
+            edges_scanned = findings.edges_scanned,
+            cycles_injected = findings.cycles_injected,
+            truncated = findings.truncated,
+            "GRAPH-02: automatic architecture cycle findings injected"
+        );
+        eprintln!(
+            "[neoth:code-map] architecture workflow: {} call cycle(s) injected \
+             ({} edges across {} root(s))",
+            findings.cycles_injected, findings.edges_scanned, findings.roots_scanned
+        );
+        emit_architecture_findings_audit(writer, &findings, "cli").await;
+        repo_context_block = append_architecture_findings(repo_context_block, &findings);
+    }
 
     // ── GOLD-WIRE Block::D + GOLD-ADAPT-MEM-09 — auto-recall injection ────
     // Fold the operator's most-relevant stored episodes into the system
@@ -902,10 +966,15 @@ async fn build_prompt_bundle(
     let deep_link_block = args
         .stream
         .then(|| crate::cli::deep_links::DEEP_LINK_PROMPT.to_string());
-    let combined_system = [enriched.system, guidance_block, recall_block, deep_link_block]
-        .into_iter()
-        .flatten()
-        .reduce(|acc, next| format!("{acc}\n\n{next}"));
+    let combined_system = [
+        enriched.system,
+        guidance_block,
+        recall_block,
+        deep_link_block,
+    ]
+    .into_iter()
+    .flatten()
+    .reduce(|acc, next| format!("{acc}\n\n{next}"));
     // used_skill_id is plumbed through for any downstream audit
     // consumers; the existing chat path consumes `combined_system`
     // the same way it did before the helper extraction.
@@ -946,8 +1015,8 @@ async fn build_prompt_bundle(
     )
 }
 
-/// GOLD-ARCH-02 phase 2 — pre-flight gates for one chat turn: cost preview +
-/// PaidProviderCall autonomy gate, provider-quota 429 backoff, sub-agent +
+/// GOLD-ARCH-02 phase 2 — pre-flight gates for one chat turn: provider-quota
+/// 429 backoff, sub-agent +
 /// slash-command dispatch, and the PrePipeline/PreProviderCall TOML hooks.
 /// Owns the WAL writer + its join handle so every abort path can drain them
 /// exactly as before; on success it threads them back to the caller. A typed
@@ -967,11 +1036,11 @@ enum PreflightOutcome {
         prompt: String,
         quota_path: std::path::PathBuf,
         hooks: Vec<crate::hooks::schema::HookDef>,
-        /// GOLD-CCPARITY-MODEL-02 — agent-level model override extracted from
-        /// `Dispatch.model` in the sub-agent dispatch branch. `None` on
-        /// non-agent turns; the skill-level model is carried separately via
-        /// `PromptBundle::resolved_model` and merged at the call site.
-        resolved_model: Option<String>,
+        /// B22 — exact model bound to the cost authorization and later copied
+        /// unchanged into `Request.model`.
+        effective_model: Option<String>,
+        /// Priority layer that selected `effective_model`.
+        model_source: &'static str,
         /// GOLD-CCPARITY-SA-DENY-01 — agent allow-list extracted from
         /// `Dispatch.allowed_tools` before `d` is moved. Empty vec when no
         /// sub-agent fired this turn; overrides the skill allow-list in the
@@ -987,6 +1056,18 @@ enum PreflightOutcome {
         /// re-injects original content before WAL write + recall.
         pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
     },
+}
+
+fn resolve_provider_call_model(
+    dispatch: Option<&str>,
+    skill: Option<&str>,
+    cli: Option<&str>,
+    tweaks: Option<&str>,
+    freedom: Option<&str>,
+) -> (Option<String>, &'static str) {
+    let (model, source) =
+        crate::tweaks::resolve_effective_model(dispatch, skill, cli, tweaks, freedom);
+    (model.map(str::to_string), source.as_str())
 }
 
 // GOLD-ADAPT-PWF-01 adds `plan_attest_hash` as a 9th parameter;
@@ -1007,10 +1088,12 @@ async fn enforce_preflight(
     plan_attest_hash: Option<String>,
     // GOLD-ADAPT-OH-13: raw enrichment layers for selective agent rebuild.
     agent_raw_layers: AgentRawLayers,
+    // B22 — skill model is already resolved by build_prompt_bundle. It must be
+    // present before PaidProviderCall authorization, not merged afterwards.
+    skill_model_for_cost: Option<String>,
     // B22-TWEAKS-MODEL-01 — tweaks.model_default propagated from the chat
-    // boundary (already loaded fail-loud there). Feeds model_for_estimate so
-    // the cost predictor and COST_ESTIMATE_SHOWN WAL frame reflect the tweaks
-    // tier rather than silently falling back to the freedom.yaml default.
+    // boundary (already loaded fail-loud there) into the full authorization
+    // precedence chain.
     tweaks_model_for_cost: Option<String>,
     // GOLD-CCPARITY-ONCE: session-scoped set of once=true hook names that have
     // already fired. Passed by &mut ref so PrePipeline + PreProviderCall share
@@ -1018,91 +1101,62 @@ async fn enforce_preflight(
     // PreProviderCall within the same session.
     session_fired_once: &mut std::collections::HashSet<String>,
 ) -> Result<PreflightOutcome> {
-    // ── Permission gate (Phase 28b AU-4) + C-14 cost preview ───────────────
-    // Real `eur_estimate` from the cost predictor — feeds both the
-    // `PaidProviderCall` autonomy gate (Confirm at standard above
-    // €0.50, at elevated above €5.00) AND a `COST_ESTIMATE_SHOWN`
-    // WAL frame so operators can audit what was projected vs what
-    // actually billed (PROVIDER_RESPONSE event reports actual usage
-    // post-call).
-    // B22 — cost preflight uses the best-known model at this gate site: cli >
-    // tweaks > freedom (3-tier).  Dispatch/skill model resolution happens
-    // later inside this function (agent_dispatch check, preflight_resolved_model)
-    // and in build_prompt_bundle (skill_model in the caller) — neither is in
-    // scope here without a deep restructure of the preflight flow.
-    // Practical risk: if a skill/dispatch selects a pricier model the gate
-    // may approve on a lower estimate.  The authoritative model and
-    // model_source are recorded in the PROVIDER_REQUEST WAL frame emitted by
-    // run_chat_with AFTER the 6-tier resolution (post this function).
-    // No silent divergence: COST_ESTIMATE_SHOWN tags `"model_source":
-    // "pre_dispatch_estimate"` so WAL consumers can identify pre-dispatch
-    // estimates vs the authoritative PROVIDER_REQUEST record.
-    // Operators who care about tight cost gates should set
-    // `freedom.yaml::tokens.max_per_request` conservatively.
-    let predicted_cost = {
-        let meter = crate::providers::meter::Meter::with_default_window();
-        // Assemble the same string the provider sees: system prefix
-        // (operator-md + persona) + the user prompt. The predictor's
-        // 4-chars/token heuristic is conservative-high, which is the
-        // safer direction for a billing preview.
-        let assembled = format!("{}\n\n{}", combined_system.as_deref().unwrap_or(""), prompt);
-        crate::providers::cost::predict(
-            provider.name(),
-            &model_for_estimate(args, config, tweaks_model_for_cost.as_deref()),
-            &assembled,
-            &meter,
-        )
-    };
-    let est_payload = serde_json::to_vec(&serde_json::json!({
-        "provider": provider.name(),
-        "model": model_for_estimate(args, config, tweaks_model_for_cost.as_deref()),
-        // B22: model here is the pre-dispatch best-effort (cli > tweaks > freedom).
-        // Dispatch/skill resolution is not yet available at this gate site.
-        // The authoritative model is in the PROVIDER_REQUEST WAL frame emitted
-        // after the 6-tier resolution in run_chat_with (post enforce_preflight).
-        "model_source": "pre_dispatch_estimate",
-        "input_tokens": predicted_cost.input_tokens,
-        "output_tokens_est": predicted_cost.output_tokens_est,
-        "total_eur": predicted_cost.total_eur,
-        "ts_unix": crate::time::now_unix_secs(),
-    }))
-    .unwrap_or_default();
-    if !est_payload.is_empty() {
-        let header = crate::wal::HeaderBuilder::new(
-            crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
-            &est_payload,
-        )
-        .build();
-        if let Err(e) = writer.append(header, est_payload).await {
-            tracing::warn!(error = %e, "WAL append COST_ESTIMATE_SHOWN failed (best-effort)");
-        }
-    }
-    info!(
-        provider = provider.name(),
-        eur = predicted_cost.total_eur,
-        in_tokens = predicted_cost.input_tokens,
-        out_tokens_est = predicted_cost.output_tokens_est,
-        "cost preview"
+    // Resolve sub-agent dispatch once and reuse it for prompt + model routing.
+    // The PaidProviderCall decision now happens at each real provider leaf,
+    // after all prompt/model mutations and immediately before that exact call.
+    let agent_dir = home.join("agents");
+    let agents = crate::sub_agents::load_all(&agent_dir)
+        .await
+        .unwrap_or_default();
+    let agent_dispatch =
+        crate::sub_agents::parse_agent_invocation(&prompt, &agents).or_else(|| {
+            agent_raw_layers
+                .skill_delegate_to
+                .as_deref()
+                .and_then(|name| agents.iter().find(|a| a.name == name))
+                .map(|agent| crate::sub_agents::Dispatch {
+                    agent_name: agent.name.clone(),
+                    system: agent.system.clone(),
+                    model: agent.model.clone(),
+                    allowed_tools: agent.tools.clone(),
+                    disallowed_tools: agent.disallowed_tools.clone(),
+                    prompt: prompt.clone(),
+                    omit_flags: agent.to_omit_flags(),
+                })
+        });
+    let (effective_model, model_source) = resolve_provider_call_model(
+        agent_dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.model.as_deref()),
+        skill_model_for_cost.as_deref(),
+        args.model.as_deref(),
+        tweaks_model_for_cost.as_deref(),
+        config.provider_model.as_deref(),
     );
-    {
-        use crate::permissions::{Action, Gate};
-        let action = Action::PaidProviderCall {
-            eur_estimate: predicted_cost.total_eur,
-        };
-        let gate = Gate::for_level(config.autonomy).with_confirm(Gate::auto_confirm());
-        if let Err(e) = gate.check(&action, Some(&writer)).await {
-            warn!(error = %e, eur = predicted_cost.total_eur, "provider call blocked by autonomy gate");
-            drop(writer);
-            let _ = writer_join.await;
-            anyhow::bail!("permission denied: {e}");
-        }
-    }
+    let call_authorizer =
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        )
+        .with_audit_context(
+            crate::providers::cost_authorization::ProviderCallAuditContext {
+                source: Some("chat"),
+                call_type: Some("chat_preflight_round"),
+                operator_id: config.operator_id.clone(),
+                target: Some(
+                    crate::profile::runner::extract_target_label(provider.name()).to_owned(),
+                ),
+                model_source: Some(model_source),
+                cost_estimate_model: effective_model.clone(),
+                ..Default::default()
+            },
+        );
 
     // ── Provider quota pre-flight (H5 cascade) ─────────────────────────────
     // If a previous turn recorded a 429 and the backoff window is still
     // active, refuse the call HERE rather than paying the round-trip just
     // to be rate-limited again. Local providers are never tracked.
-    let quota_path = crate::config::FreedomConfig::default_neoth_home().join("quota.json");
+    let quota_path = home.join("quota.json");
     let provider_name = provider.name();
     if !crate::providers::is_local_provider(provider_name) {
         let tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
@@ -1126,29 +1180,6 @@ async fn enforce_preflight(
     // `/agent <name> <body>` swaps system+model+tools for the named agent.
     // GOLD-ADAPT-OH-13 Part B: a matched skill with `delegate_to: <name>`
     // auto-synthesises a Dispatch so the same enrichment-rebuild path fires.
-    let agent_dir = home.join("agents");
-    let agents = crate::sub_agents::load_all(&agent_dir)
-        .await
-        .unwrap_or_default();
-    // Explicit /agent invocation takes priority; fall back to skill delegate_to.
-    let agent_dispatch =
-        crate::sub_agents::parse_agent_invocation(&prompt, &agents).or_else(|| {
-            // Part B: if a skill matched and declares delegate_to, synthesise
-            // a Dispatch using that agent + the original prompt as the body.
-            agent_raw_layers
-                .skill_delegate_to
-                .as_deref()
-                .and_then(|name| agents.iter().find(|a| a.name == name))
-                .map(|agent| crate::sub_agents::Dispatch {
-                    agent_name: agent.name.clone(),
-                    system: agent.system.clone(),
-                    model: agent.model.clone(),
-                    allowed_tools: agent.tools.clone(),
-                    disallowed_tools: agent.disallowed_tools.clone(),
-                    prompt: prompt.clone(),
-                    omit_flags: agent.to_omit_flags(),
-                })
-        });
     // Capture the original prompt + name BEFORE the dispatch consumes the
     // values — needed for the two-stage review gate after the reply lands.
     let review_context: Option<(String, String)> = agent_dispatch
@@ -1163,7 +1194,7 @@ async fn enforce_preflight(
     // then folds guidance_block + recall_block in above that (same order as
     // the main combined_system fold).  Returns `(agent_prompt, agent_system)`.
     let build_agent_system = |d: &crate::sub_agents::Dispatch| -> Option<String> {
-        use crate::pipeline::{build_enriched_request, EnrichmentInputs};
+        use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let f = &d.omit_flags;
         let enriched = build_enriched_request(EnrichmentInputs {
             prompt: &d.prompt,
@@ -1218,21 +1249,16 @@ async fn enforce_preflight(
         };
         // The agent's own system prompt is always the base.
         let agent_base = Some(d.system.as_str());
-        [
-            agent_base,
-            enriched.system.as_deref(),
-            guidance,
-            recall,
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|s| !s.is_empty())
-        .fold(None::<String>, |acc, layer| {
-            Some(match acc {
-                None => layer.to_string(),
-                Some(a) => format!("{a}\n\n{layer}"),
+        [agent_base, enriched.system.as_deref(), guidance, recall]
+            .into_iter()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .fold(None::<String>, |acc, layer| {
+                Some(match acc {
+                    None => layer.to_string(),
+                    Some(a) => format!("{a}\n\n{layer}"),
+                })
             })
-        })
     };
 
     // ── Slash command dispatch (Phase 28 R-17 SC-2) ────────────────────────
@@ -1240,12 +1266,6 @@ async fn enforce_preflight(
     // in the merged registry (built-ins + `~/.neoth/commands/*.toml`).
     // Matched commands replace the system prompt; the args become the
     // user-facing prompt body. Non-commands pass through untouched.
-    // GOLD-CCPARITY-MODEL-02 — agent-level model override extracted from
-    // Dispatch.model before the dispatch is consumed by the prompt/system build.
-    // This is set to Some(...) only on the agent dispatch path; non-agent
-    // turns carry None here and use skill_model (from PromptBundle) as the
-    // next fallback in the priority chain.
-    let mut preflight_resolved_model: Option<String> = None;
     // GOLD-CCPARITY-SA-DENY-01 — capture agent tool lists BEFORE d is moved,
     // mirroring the GOLD-CCPARITY-MODEL-02 precedent for d.model. These flow
     // into the use_loop branch below to:
@@ -1256,15 +1276,15 @@ async fn enforce_preflight(
     let mut agent_disallowed_tools: Vec<String> = vec![];
     let (final_prompt, final_system) = if let Some(d) = agent_dispatch {
         info!(agent = %d.agent_name, "sub-agent dispatch");
-        // GOLD-CCPARITY-MODEL-02: capture agent model BEFORE d is moved.
-        preflight_resolved_model = d.model.clone();
         // GOLD-CCPARITY-SA-DENY-01: capture tool lists BEFORE d is moved.
         agent_allowed_tools = d.allowed_tools.clone();
         agent_disallowed_tools = d.disallowed_tools.clone();
         // GOLD-ADAPT-OH-13: emit WAL 0xFC AGENT_DISPATCHED with omit-flags mask.
         {
             let f = &d.omit_flags;
-            let auto_delegated = agent_raw_layers.skill_delegate_to.as_deref()
+            let auto_delegated = agent_raw_layers
+                .skill_delegate_to
+                .as_deref()
                 .map(|s| s.to_string());
             let payload = serde_json::to_vec(&serde_json::json!({
                 "agent_name": d.agent_name,
@@ -1310,22 +1330,38 @@ async fn enforce_preflight(
                         println!("Usage: /research <topic>");
                         return Ok(PreflightOutcome::Done);
                     }
-                    let search_provider =
-                        crate::tools::deep_research::resolve_search_provider();
+                    let search_provider = crate::tools::deep_research::resolve_search_provider();
                     match crate::tools::deep_research::resolve_search_key(search_provider) {
                         Err(e) => {
                             eprintln!("deep-research: {e}");
                             return Ok(PreflightOutcome::Done);
                         }
                         Ok(search_key) => {
-                            info!(topic = topic, "slash /research: starting deep-research engine");
+                            info!(
+                                topic = topic,
+                                "slash /research: starting deep-research engine"
+                            );
+                            let research_provider =
+                                crate::providers::cost_authorization::CostAuthorizingProvider::new(
+                                    provider,
+                                    call_authorizer.clone(),
+                                    effective_model.clone(),
+                                    "deep_research_round",
+                                );
+                            let http =
+                                crate::tools::external_http::ExternalHttpAuthorizer::with_writer(
+                                    config.autonomy_policy(),
+                                    crate::permissions::Gate::auto_confirm(),
+                                    writer.clone(),
+                                );
                             match crate::tools::deep_research::run_deep_research(
                                 topic,
-                                provider,
+                                &research_provider,
                                 &search_key,
                                 search_provider,
                                 &config.deep_research,
                                 &writer,
+                                &http,
                             )
                             .await
                             {
@@ -1359,18 +1395,22 @@ async fn enforce_preflight(
                     } else {
                         match crate::providers::fallback_chain_from_config(config, None).await {
                             Ok(bg_provider) => {
-                                crate::cli::bg_session::spawn_background_session(
+                                match crate::cli::bg_session::spawn_background_session(
                                     &name,
                                     prompt_body,
                                     config.clone(),
                                     bg_provider.into(),
                                     Some(&writer),
+                                    call_authorizer.clone(),
                                 )
-                                .await;
-                                println!(
-                                    "[neoth] /{name}: background session queued — \
-                                     result at next idle"
-                                );
+                                .await
+                                {
+                                    Ok(_) => println!(
+                                        "[neoth] /{name}: background session queued — \
+                                         result at next idle"
+                                    ),
+                                    Err(e) => eprintln!("/{name}: authorization failed: {e:#}"),
+                                }
                             }
                             Err(e) => {
                                 eprintln!("/{name}: failed to build provider: {e:#}");
@@ -1383,7 +1423,24 @@ async fn enforce_preflight(
                 }
 
                 let slash_dir = home.join("commands");
-                let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
+                let commands = match crate::slash::load_all(&slash_dir).await {
+                    Ok(commands) => commands,
+                    Err(error) => {
+                        drop(writer);
+                        if let Err(join_error) = writer_join.await {
+                            warn!(
+                                error = %join_error,
+                                "WAL writer join failed while refusing an invalid slash-command set"
+                            );
+                        }
+                        return Err(error).with_context(|| {
+                            format!(
+                                "operator slash commands at {} are invalid; refusing partial dispatch",
+                                slash_dir.display()
+                            )
+                        });
+                    }
+                };
                 if let Some(cmd) = commands.iter().find(|c| c.name == name) {
                     // Pick #31 — action-based slash short-circuit.
                     // When the command carries a typed action, dispatch
@@ -1397,7 +1454,8 @@ async fn enforce_preflight(
                             &cmd_args,
                             config,
                             crate::slash::CommandSource::Cli,
-                        );
+                        )
+                        .await;
                         println!("{}", outcome.text());
                         if outcome.should_exit() {
                             return Ok(PreflightOutcome::Done);
@@ -1460,17 +1518,52 @@ async fn enforce_preflight(
     }
 
     let hook_dir = home.join("hooks");
-    // Pick #34 (Session 14, silent-failure audit-fix): surface hook
-    // load failures at warn level — prior `unwrap_or_default()` silently
-    // disabled ALL hooks on a single bad TOML file.
-    let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
-        warn!(
-            error = %e,
-            dir = %hook_dir.display(),
-            "hook load failed — proceeding with empty hook set"
-        );
-        Default::default()
-    });
+    // Operator hooks are policy, not optional decoration. A malformed or
+    // unreadable configured hook must never turn into an empty policy set and
+    // let the provider call continue.
+    let hooks = match crate::hooks::load_all_strict(&hook_dir).await {
+        Ok(hooks) => hooks,
+        Err(error) => {
+            let reason = format!("operator hook set could not be loaded: {error:#}");
+            match serde_json::to_vec(&serde_json::json!({
+                "name": "hook-loader",
+                "stage": "pre_pipeline",
+                "reason": reason,
+                "ts_unix": crate::time::now_unix_secs(),
+            })) {
+                Ok(payload) => {
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(audit_error) = writer.append(header, payload).await {
+                        warn!(
+                            error = %audit_error,
+                            "WAL append HOOK_BLOCKED for invalid hook set failed"
+                        );
+                    }
+                }
+                Err(audit_error) => warn!(
+                    error = %audit_error,
+                    "serialize HOOK_BLOCKED for invalid hook set failed"
+                ),
+            }
+            drop(writer);
+            if let Err(join_error) = writer_join.await {
+                warn!(
+                    error = %join_error,
+                    "WAL writer join failed while refusing an invalid hook set"
+                );
+            }
+            return Err(error).with_context(|| {
+                format!(
+                    "operator hooks at {} are invalid; provider dispatch refused",
+                    hook_dir.display()
+                )
+            });
+        }
+    };
     let final_prompt = match run_hook_stage(
         crate::hooks::HookStage::PrePipeline,
         &final_prompt,
@@ -1538,6 +1631,24 @@ async fn enforce_preflight(
         }
     };
 
+    // Council-trigger heuristic only. This is deliberately not an
+    // authorization: the real cost gate runs per provider round below. Use the
+    // fully hook-mutated request so even this advisory estimate is not stale.
+    let predicted_cost = {
+        let meter = crate::providers::meter::Meter::with_default_window();
+        let assembled = format!(
+            "{}\n\n{}",
+            final_system.as_deref().unwrap_or(""),
+            final_prompt
+        );
+        crate::providers::cost::predict(
+            provider.name(),
+            effective_model.as_deref().unwrap_or("provider_default"),
+            &assembled,
+            &meter,
+        )
+    };
+
     Ok(PreflightOutcome::Continue {
         writer,
         writer_join,
@@ -1548,7 +1659,8 @@ async fn enforce_preflight(
         prompt,
         quota_path,
         hooks,
-        resolved_model: preflight_resolved_model,
+        effective_model,
+        model_source,
         agent_allowed_tools,
         agent_disallowed_tools,
         pending_block_restorations,
@@ -1566,6 +1678,7 @@ struct DispatchOutput {
     response_text: String,
     final_input_tokens: Option<u32>,
     final_output_tokens: Option<u32>,
+    provider_used: String,
     model_used: String,
     total_latency: std::time::Duration,
     writer: crate::wal::writer::WalWriterHandle,
@@ -1595,27 +1708,27 @@ async fn dispatch_provider(
     args: &ChatArgs,
     provider: &dyn crate::providers::Provider,
     config: &FreedomConfig,
+    home: &std::path::Path,
     writer: crate::wal::writer::WalWriterHandle,
     writer_join: tokio::task::JoinHandle<()>,
     quota_path: std::path::PathBuf,
     prompt: &str,
     predicted_cost: &crate::providers::cost::CostEstimate,
+    mcp_servers: &crate::mcp::McpServers,
     skill_tool_allowlist: Option<Vec<String>>,
     turn_id: &str,
-    // GOLD-CCPARITY-MODEL-02 — effective model after the priority chain:
-    // Dispatch.model > skill.manifest.model > args.model.
-    // `None` means no override was resolved; falls back to `args.model`.
-    override_model: Option<String>,
+    // B22 — exact model already bound to PaidProviderCall authorization.
+    // This value is copied into Request.model without another precedence fold.
+    effective_model: Option<String>,
     // GOLD-CCPARITY-EFFORT-03 — per-skill reasoning-budget. `None` = provider
     // default. Mapped to `req.thinking_budget` before provider spawn.
     override_effort: Option<crate::providers::effort_override::EffortBudget>,
-    // B22-TWEAKS-MODEL-01 — tweaks.model_default for the full effective_model
-    // chain: dispatch/skill (override_model) > cli (args.model) > tweaks >
-    // freedom (config.provider_model) > provider default.
-    tweaks_model_default: Option<String>,
     // B22-TWEAKS-MODEL-01 — which priority layer resolved the model for this
     // turn. Embedded in WAL diagnostics; never contains secrets.
     model_source: &'static str,
+    // Per-turn metadata copied into every concrete provider-leaf lifecycle
+    // frame. Exact provider/model/request hashes are added centrally.
+    provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
     // GOLD-CCPARITY-SA-DENY-01 — sub-agent allow-list and denylist. Both
     // propagated from enforce_preflight via PreflightOutcome::Continue.
     // `agent_allowed_tools`: when non-empty, overrides skill_tool_allowlist
@@ -1628,20 +1741,23 @@ async fn dispatch_provider(
     let provider_name = provider.name();
     // GOLD-ADAPT-ODY-27 — wrap the user prompt with the active output-format
     // preset's inject_prefix/suffix (per-message, NOT a system-prompt layer, so
-    // it enforces an output shape without polluting the system block). Best-
-    // effort + a no-op when no preset is active or its inject fields are empty
-    // (`wrap_user_prompt` returns the input unchanged). Reads the per-turn
-    // active preset so a `neoth preset use <name>` takes effect on the next turn.
+    // it enforces an output shape without polluting the system block). A missing
+    // registry is an empty/no-op registry; an existing malformed or unreadable
+    // registry aborts before dispatch so an active output contract cannot
+    // disappear silently. Reads the per-turn active preset so a
+    // `neoth preset use <name>` takes effect on the next turn.
     let final_prompt = {
-        let home = FreedomConfig::default_neoth_home();
-        match crate::config::presets::load(&home) {
-            Ok(pf) => match pf.active.as_ref().and_then(|n| pf.presets.get(n)) {
-                Some(preset) => {
-                    crate::config::presets::wrap_user_prompt(&final_prompt, preset).into_owned()
-                }
-                None => final_prompt,
-            },
-            Err(_) => final_prompt,
+        let presets = crate::config::presets::load(home)
+            .context("load active output-format preset before provider dispatch")?;
+        match presets
+            .active
+            .as_ref()
+            .and_then(|name| presets.presets.get(name))
+        {
+            Some(preset) => {
+                crate::config::presets::wrap_user_prompt(&final_prompt, preset).into_owned()
+            }
+            None => final_prompt,
         }
     };
     // ── Provider call (sync OR stream) ────────────────────────────────────
@@ -1660,27 +1776,24 @@ async fn dispatch_provider(
     let merged_system = Some(crate::cli::clarify_chat::augment_system(
         crate::providers::context_guards::apply_code_discipline_preamble(final_system.as_deref()),
     ));
-    // B22 — full priority chain routed through the single tested source of truth.
-    // `override_model` carries the pre-folded dispatch+skill winner passed in from
-    // run_chat_with (both tiers are collapsed by the caller); there is no separate
-    // skill slot at this level.  Passing it as the `dispatch` param to
-    // resolve_effective_model preserves the correct priority (wins over cli/tweaks/
-    // freedom).  The returned ModelSource is discarded here — `model_source` (the
-    // &'static str computed in run_chat_with) is already threaded in as a param and
-    // is the authoritative audit label; we only need the resolved model string.
-    let (resolved_em, _) = crate::tweaks::resolve_effective_model(
-        override_model.as_deref(),
-        None, // dispatch + skill are pre-folded into override_model by the caller
-        args.model.as_deref(),
-        tweaks_model_default.as_deref(),
-        config.provider_model.as_deref(),
-    );
-    let effective_model = resolved_em.map(str::to_string);
-    // GOLD-CCPARITY-EFFORT-03: map the per-skill effort variant to a
-    // concrete token count and store it on the Request so the provider
-    // (claude_cli) can inject MAX_THINKING_TOKENS before spawning.
-    let thinking_budget =
+    // GOLD-CCPARITY-EFFORT-03: map effort only when the effective provider
+    // declares a real thinking-budget wire. Other leaves keep their native
+    // default and emit an explicit warning instead of receiving an unsupported
+    // field that would now (correctly) fail the strict leaf-control gate.
+    let requested_thinking_budget =
         override_effort.map(crate::providers::effort_override::effort_to_tokens);
+    let thinking_budget = match requested_thinking_budget {
+        Some(budget) if provider.request_controls().supports_thinking_budget() => Some(budget),
+        Some(budget) => {
+            tracing::warn!(
+                provider = provider_name,
+                budget_tokens = budget,
+                "skill effort override skipped: provider has no thinking-budget control"
+            );
+            None
+        }
+        None => None,
+    };
     // Best-effort WAL audit before the provider spawn — emit SKILL_EFFORT_APPLIED
     // (0x7A) when an effort override is active so the operator can audit which
     // skill drove the reasoning-budget change. Non-fatal: WAL errors are
@@ -1688,9 +1801,7 @@ async fn dispatch_provider(
     if let Some(budget_tokens) = thinking_budget {
         use crate::wal::events::EVENT_TYPE_SKILL_EFFORT_APPLIED;
         let ts = crate::time::now_unix_i64();
-        let effort_str = override_effort
-            .map(|e| e.as_str())
-            .unwrap_or("none");
+        let effort_str = override_effort.map(|e| e.as_str()).unwrap_or("none");
         let payload = serde_json::to_vec(&serde_json::json!({
             "effort": effort_str,
             "budget_tokens": budget_tokens,
@@ -1711,6 +1822,22 @@ async fn dispatch_provider(
         // GOLD-CCPARITY-EFFORT-03: per-call thinking-budget override.
         thinking_budget,
     };
+    // B22: every provider invocation below (direct, stream, MCP iteration,
+    // loop round, refusal retry) crosses this boundary. Decorators recurse with
+    // the authorizer and gate each exact final leaf immediately before dispatch.
+    let call_authorizer =
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        )
+        .with_audit_context(provider_audit_context);
+    let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+        provider,
+        call_authorizer.clone(),
+        effective_model.clone(),
+        "chat_provider_round",
+    );
+    let provider: &dyn crate::providers::Provider = &authorized_provider;
 
     let started = std::time::Instant::now();
 
@@ -1802,763 +1929,894 @@ async fn dispatch_provider(
     // MCP-dispatch branch from `outcome.tool_call_records`; empty otherwise.
     let mut mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord> = Vec::new();
 
-    let (response_text, final_input_tokens, final_output_tokens, model_used) = if args.stream {
-        // B-1 follow-up (Session 13) — streaming-branch audit gap.
-        // Council never fans out on the streaming path (council needs
-        // sync semantics + dissent scoring across full responses).
-        // Emit a COUNCIL_SKIP audit anyway so the operator's WAL trace
-        // shows every chat turn was reasoned about WRT council, even
-        // when streaming mode forces the light path. Reason is
-        // operator-greppable: `streaming_mode_disables_council`.
-        {
-            let prompt_hash_stream = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-            let _ = emit_council_skip(
-                &writer,
-                prompt_hash_stream,
-                "streaming_mode_disables_council",
-            )
-            .await;
-        }
-        // QM-10 Phase 2.5: streaming path also consults the breaker.
-        // Acquire BEFORE provider.stream so an Open breaker rejects
-        // the call without opening a stream we'd have to drain.
-        let stream_permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
-            Ok(p) => Some(p),
-            Err(berr) => {
-                drop(writer);
-                let _ = writer_join.await;
-                return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
-            }
-        };
-        let stream_call_started = std::time::Instant::now();
-        // Streaming path: print each delta as it arrives, accumulate the
-        // full response for the WAL PROVIDER_RESPONSE frame.
-        let mut stream = match provider.stream(req).await {
-            Ok(s) => s,
-            Err(e) => {
-                if let Some(p) = stream_permit {
-                    p.record_failure();
-                }
-                if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                    record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
-                }
-                warn!(error = %e, "provider stream open failed");
-                drop(writer);
-                let _ = writer_join.await;
-                return Err(e);
-            }
-        };
-        let mut acc = String::new();
-        let mut chunk_count: u32 = 0;
-        let mut input_tokens: Option<u32> = None;
-        let mut output_tokens: Option<u32> = None;
-        let mut cache_creation_tokens: Option<u32> = None;
-        let mut cache_read_tokens: Option<u32> = None;
-        // B22: seed model_used from the 6-tier effective_model (dispatch > skill > cli >
-        // tweaks > freedom > provider_default) so the streaming PROVIDER_RESPONSE WAL
-        // frame, usage_log, sentinel_cap, and DispatchOutput.model_used all record the
-        // model that was actually requested — not the stale 2-tier (cli → freedom)
-        // fallback that dropped dispatch and skill overrides.
-        let model_used = effective_model
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-
-        use futures_util::stream::StreamExt;
-        use std::io::Write as _;
-        // GOLD-ADOPT-24 — safe-flush markdown buffer: print only the prefix that
-        // doesn't split an open construct (code fence, table, inline span). `acc`
-        // + the per-chunk WAL frame still see the RAW delta; only the terminal
-        // print is buffered, so the output text is identical, just fence-safe.
-        let mut md_buf = crate::cli::streaming_buffer::MarkdownBuffer::new();
-        // GOLD-ADAPT-HERMES-09b — measure decode throughput over the live stream
-        // window; emitted as a 0x69 TOKEN_TPS_SAMPLE WAL frame after the stream
-        // completes (best-effort, never blocks the turn).
-        let mut tps_meter = crate::daemon::metering::TpsMeter::start();
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(chunk) => {
-                    if !chunk.delta.is_empty() {
-                        if let Some(safe) = md_buf.push(&chunk.delta) {
-                            print!("{safe}");
-                            let _ = std::io::stdout().flush();
-                        }
-                        acc.push_str(&chunk.delta);
-                        chunk_count += 1;
-                        // HERMES-09b — ~4 chars/token estimate per streamed delta.
-                        tps_meter.observe((chunk.delta.len() as u64).div_ceil(4));
-                        // F4/D21 — journal the partial chunk so a mid-stream crash
-                        // leaves a recoverable partial answer (best-effort).
-                        if let Some(j) = journal.as_mut() {
-                            let _ = j.append(
-                                &crate::recovery::turn_journal::TurnEvent::ProviderChunk {
-                                    ts_unix: crate::time::now_unix_i64(),
-                                    text: chunk.delta.clone(),
-                                },
-                            );
-                        }
-                        emit_stream_chunk(&writer, provider.name(), &chunk, chunk_count).await?;
-                    }
-                    if chunk.done {
-                        // Release any construct still held at stream end.
-                        let rest = md_buf.flush();
-                        if !rest.is_empty() {
-                            print!("{rest}");
-                            let _ = std::io::stdout().flush();
-                        }
-                        input_tokens = chunk.input_tokens;
-                        output_tokens = chunk.output_tokens;
-                        cache_creation_tokens = chunk.cache_creation_tokens;
-                        cache_read_tokens = chunk.cache_read_tokens;
-                        break;
-                    }
-                }
-                Err(e) => {
-                    if let Some(p) = stream_permit {
-                        p.record_failure();
-                    }
-                    warn!(error = %e, "stream chunk error");
-                    // GR-091: release any markdown tail still buffered so the
-                    // already-streamed partial output isn't swallowed on error.
-                    let tail = md_buf.flush();
-                    if !tail.is_empty() {
-                        print!("{tail}");
-                        let _ = std::io::stdout().flush();
-                    }
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
-                }
-            }
-        }
-        // Loop only reaches here on clean exit — every Err arm
-        // returns above so success path is implicit.
-        // GOLD-ADOPT-24 — defensive: if the stream ended without a `done` chunk,
-        // release any markdown tail still buffered (the done-arm flush didn't run).
-        {
-            let rest = md_buf.flush();
-            if !rest.is_empty() {
-                use std::io::Write as _;
-                print!("{rest}");
-                let _ = std::io::stdout().flush();
-            }
-        }
-        if let Some(p) = stream_permit {
-            p.record_success();
-        }
-        // GOLD-ADAPT-HERMES-09b — emit the stream's tokens/sec sample (0x69
-        // TOKEN_TPS_SAMPLE). Best-effort; a WAL hiccup never fails the turn.
-        {
-            let tps = tps_meter.finish();
-            if tps.has_data() {
-                if let Err(e) = crate::daemon::metering::emit_tps_sample(&tps, &writer).await {
-                    tracing::debug!(error = %e, "tps-sample WAL emit failed (non-fatal)");
-                }
-            }
-        }
-        {
-            // QM-9 Phase 1.5 / GR-15: persist a usage event for the
-            // streaming chat path via the shared best-effort helper.
-            let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
-            crate::daemon::usage_log::record_provider_call_best_effort(
-                provider_name,
-                &model_used,
-                input_tokens,
-                output_tokens,
-                elapsed_ms,
-                true,
-                cache_creation_tokens,
-                cache_read_tokens,
-                false, // VIEW-06: direct operator CLI turn → human
-            );
-            publish_provider_responded(
-                provider_name,
-                &model_used,
-                input_tokens,
-                output_tokens,
-                elapsed_ms,
-            );
-        }
-        // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
-        // truncated streams. GOLD-ADAPT-ODY-02/05 — the sentinel also carries
-        // the turn's token usage + the model-agnostic context cap (same
-        // `effective_cap` the non-stream context bar uses) + wall time, so
-        // GUI consumers can render context/metrics chips without re-probing.
-        // Fields are additive: older consumers `rfind` the prefix and ignore
-        // unknown keys.
-        let sentinel_cap = crate::tokens::budget::effective_cap(
-            provider_name,
-            &model_used,
-            config.tokens.max_per_request,
-        );
-        println!();
-        println!(
-            "{}",
-            serde_json::json!({
-                "neoth_stream": "done",
-                "count": chunk_count,
-                "used_tokens": input_tokens
-                    .unwrap_or(0)
-                    .saturating_add(output_tokens.unwrap_or(0)),
-                "limit_tokens": sentinel_cap,
-                "input_tokens": input_tokens.unwrap_or(0),
-                "output_tokens": output_tokens.unwrap_or(0),
-                "elapsed_ms": stream_call_started.elapsed().as_millis() as u64,
-                // ODY-12/14 — additive field; old consumers ignore it.
-                "links": crate::cli::deep_links::extract_deep_links(&acc),
-            })
-        );
-        (acc, input_tokens, output_tokens, model_used)
-    } else {
-        // Non-streaming: existing behavior. START frame already emitted
-        // above the branch; END frame fires after both arms converge.
-        //
-        // CH-02 council wedge — smart-trigger default (Codex feedback
-        // 2026-05-16): the chat dispatch now consults CH-14's
-        // `should_convene` BY DEFAULT on every call. Tri-state env:
-        //   - `NEOTH_COUNCIL_DISABLE=1`  → never (operator opt-out wins)
-        //   - `NEOTH_COUNCIL_ENABLE=1`   → always (force-convene every
-        //                                  call, bypasses the gates;
-        //                                  expensive — operator's choice)
-        //   - unset / anything else      → AUTO via `should_convene`
-        //                                  (dissent marker + complexity
-        //                                  + rate + budget gates).
-        //                                  `NEOTH_COUNCIL_AUTO=1` is
-        //                                  accepted for backward compat
-        //                                  but no longer required —
-        //                                  the gate fires automatically.
-        //
-        // Takes priority over MCP autoroute when both apply (they're
-        // mutually exclusive — council debates many providers;
-        // autoroute wraps one). Smart-trigger's default-Skip semantic
-        // (no dissent marker → Skip) means casual prompts like "what's
-        // the time" don't convene; "should I use Rust or Go?" does.
-        let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let council_disable_env = std::env::var("NEOTH_COUNCIL_DISABLE")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        // SPEC-03 suppress: the persistent `freedom.yaml::council.disabled`
-        // flag (set via `neoth council suppress`) is the durable twin of
-        // the env override — either one forces the single-hemisphere path.
-        // `config` is fresh per CLI invocation so the flag is always current.
-        // GOLD-ADAPT-G-01: council.mode=single is a named alternative to
-        // council.disabled=true; both force the single-provider path.
-        // They are orthogonal knobs — `disabled` is toggled by
-        // `neoth council suppress`; `mode` is a persistent topology choice.
-        let council_mode_single = config.council.mode.is_single();
-        let council_disable_cfg =
-            config.council.disabled.unwrap_or(false) || council_mode_single;
-        let council_disable = council_disable_env || council_disable_cfg;
-        // Trigger decision is computed even when not used so the WAL
-        // audit (next iteration) can record "council was triggerable
-        // but skipped because operator opted out".
-        let trigger_decision = if council_disable {
-            crate::council::TriggerDecision::Skip {
-                // Record BOTH sources when co-active so the audit trail
-                // doesn't hide the persistent suppress behind the env var
-                // (clearing the env later would otherwise leave no WAL hint
-                // that `council.disabled=true` is still in effect).
-                // Priority: env > mode=single > disabled=true.
-                reason: match (council_disable_env, council_mode_single, config.council.disabled.unwrap_or(false)) {
-                    (true, _, true) => {
-                        "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
-                    }
-                    (true, _, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
-                    (false, true, _) => "freedom.yaml::council.mode=single".into(),
-                    (false, false, _) => "freedom.yaml::council.disabled=true".into(),
-                },
-            }
-        } else if council_force {
-            crate::council::TriggerDecision::Convene {
-                reason: "NEOTH_COUNCIL_ENABLE=1 (force)".into(),
-            }
-        } else {
-            // B-3 (Session 13) — feed real `seconds_since_last_council`
-            // from `~/.neoth/council_last.json` so Gate 2 (rate cooldown)
-            // is honoured. Missing / malformed file → `u64::MAX` (gate
-            // open), matching prior behaviour for fresh installs.
-            let home_b3 = FreedomConfig::default_neoth_home();
-            let now_unix_b3 = crate::council::last_ts::now_unix();
-            let secs_since = crate::council::last_ts::seconds_since_last(&home_b3, now_unix_b3);
-            let ctx = crate::council::TriggerContext {
-                seconds_since_last_council: secs_since,
-                remaining_budget_eur: None,
-                estimated_single_call_eur: predicted_cost.total_eur.max(0.01),
-            };
-            // SPEC-03b: operator-tunable thresholds from
-            // `freedom.yaml::council.trigger` (defaults reproduce the prior
-            // hardcoded policy exactly).
-            crate::council::should_convene(prompt, &ctx, &config.council.trigger.to_policy())
-        };
-        // GOLD-SEC-32 / B-19: hard rolling-24h convene cap, enforced before
-        // convening and independent of the EUR budget gate (which is None on
-        // the local/free path). Operator-forced council bypasses it.
-        let council_home = FreedomConfig::default_neoth_home();
-        let council_now = crate::council::last_ts::now_unix() as i64;
-        // B-25: atomic OS-locked admission — fail-closed on any I/O error.
-        // Operator-forced council (council_force=true) bypasses cap entirely.
-        let (council_enable, council_cap_hit, council_deny_reason) = if council_force {
-            (trigger_decision.should_convene(), false, None::<&'static str>)
-        } else if trigger_decision.should_convene() {
-            use crate::council::day_counter::AdmitResult;
-            match crate::council::day_counter::try_admit_convene(&council_home, council_now) {
-                AdmitResult::Admitted => (true, false, None),
-                AdmitResult::Capped => {
-                    tracing::warn!(
-                        cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
-                        "council daily convene cap reached — single-provider for this turn"
-                    );
-                    (false, true, None)
-                }
-                AdmitResult::StateInvalid => {
-                    tracing::warn!(
-                        "council day-counter state invalid — fail-closed for this turn"
-                    );
-                    (false, true, Some("council day-counter state invalid — fail-closed"))
-                }
-            }
-        } else {
-            (false, false, None)
-        };
-        if !council_force && !council_disable {
-            info!(
-                decision = ?trigger_decision,
-                will_convene = council_enable,
-                "council smart-trigger evaluated"
-            );
-        }
-        // B-1 (Session 13) — emit COUNCIL_SKIP audit when the trigger
-        // resolved to Skip so the operator's WAL audit distinguishes
-        // "light path: single hemisphere answered because trigger said
-        // skip" from "council fired but everyone agreed silently".
-        // Reason carries the exact gate (env override, complexity,
-        // rate, budget) so an operator can grep refusal causes per
-        // gate over time.
-        if !council_enable {
-            let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-            let reason = if let Some(r) = council_deny_reason {
-                r
-            } else if council_cap_hit {
-                "daily convene cap (rolling 24h) reached"
-            } else {
-                trigger_decision.reason()
-            };
-            let _ = emit_council_skip(&writer, prompt_hash_skip, reason).await;
-        }
-        // A8 / Konsens-decision #8 — MCP autoroute is now AUTO by default
-        // when `mcp_servers.yaml` has ≥1 enabled server. Tri-state:
-        //   - NEOTH_MCP_AUTOROUTE=1 / true / on / yes → forced ON
-        //   - NEOTH_MCP_AUTOROUTE=0 / false / off / no → forced OFF
-        //   - unset / empty / other → AUTO (on when servers present)
-        // Decision threaded via `McpServers::autoroute_decision` so the
-        // chat dispatch can log *why* the loop is on/off (operator
-        // opt-in vs auto-derive vs zero-server-default-off).
-        // Council always wins when explicitly enabled — the two paths
-        // are mutually exclusive (council debates many providers,
-        // autoroute wraps one).
-        let mcp_servers_for_loop = if !council_enable {
-            crate::mcp::McpServers::load().unwrap_or_else(|e| {
-                warn!(error = %e, "mcp_servers.yaml load failed in autoroute path — proceeding without MCP tools");
-                Default::default()
-            })
-        } else {
-            crate::mcp::McpServers::default()
-        };
-        let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
-        let autoroute_decision = mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
-        let use_loop = !council_enable && autoroute_decision.is_on();
-        if council_enable {
-            info!(
-                trigger = ?trigger_decision,
-                "council convened — running 3-hemisphere debate"
-            );
-            // COR-17: the full debate → recovery → winner-selection →
-            // self-reflect → partial-refusal-prefix pipeline lives in the
-            // shared `dispatch_council_with_recovery` (also driven by the
-            // channel path in serve.rs), so the CLI and daemon paths can
-            // never drift. CLI-specific bits stay here: the convened log
-            // above, the WAL-writer shutdown on failure, stdout print, and
-            // the cost-estimate tuple below.
-            let response_text = match dispatch_council_with_recovery(&req, config, &writer).await {
-                Ok(text) => text,
-                Err(e) => {
-                    // CLI returns the error to the caller (after a clean
-                    // WAL-writer shutdown) rather than falling back to a
-                    // single provider the way the channel path does.
-                    warn!(error = %e, "council debate failed; returning error");
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
-                }
-            };
-            println!("{response_text}");
-            // B22: use the 6-tier effective_model (already resolved by the caller)
-            // rather than the stale 3-tier model_for_estimate so usage accounting
-            // reflects the model the council request was actually built with.
-            (response_text, None, None, effective_model.clone().unwrap_or_else(|| "unknown".to_string()))
-        } else if use_loop {
-            info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
-            // SC-11 — scope the MCP gate to the matched skill's
-            // tool_allowlist (empty/None ⇒ no skill-level restriction).
-            // GOLD-CCPARITY-SA-DENY-01: when a sub-agent is active and
-            // declares its own allow-list, that list OVERRIDES the skill
-            // allow-list (the agent's scope is narrower; secure-by-default).
-            // An empty agent allow-list means "no tool restriction" — do NOT
-            // replace a non-empty skill allowlist with an empty agent one.
-            let effective_skill_allowlist: Option<Vec<String>> = if !agent_allowed_tools.is_empty() {
-                Some(agent_allowed_tools.clone())
-            } else {
-                skill_tool_allowlist.clone()
-            };
-            let skill_allowlist = effective_skill_allowlist.as_deref();
-            // GOLD-CCPARITY-SA-DENY-01: denylist slice — None when empty so
-            // the gate fn fast-paths on the None branch (no iteration).
-            let agent_disallowed_slice: Option<&[String]> = if agent_disallowed_tools.is_empty() {
-                None
-            } else {
-                Some(&agent_disallowed_tools)
-            };
-            // GOLD-ADAPT-MEM-05 — snapshot session state BEFORE the dispatch loop
-            // (which compacts tool-results/context via the CompressionRuntime
-            // below) so `compaction_guard::restore_latest` / `neoth recover` can
-            // pull the pre-compaction context back (anti-dementia). Gated on
-            // compaction.enabled; best-effort (a backup-write failure never blocks
-            // the turn — pre_compact returns and we ignore the path).
-            if config.compaction.enabled {
-                let mut snap_ctx = std::collections::BTreeMap::new();
-                snap_ctx.insert("source".to_string(), serde_json::json!("mcp_dispatch_loop"));
-                snap_ctx.insert("prompt_chars".to_string(), serde_json::json!(req.prompt.len()));
-                snap_ctx.insert("max_turns".to_string(), serde_json::json!(config.goal.max_turns));
-                let _ = crate::memory::compaction_guard::pre_compact(
-                    &FreedomConfig::default_neoth_home(),
-                    crate::time::now_unix_i64(),
-                    snap_ctx,
-                    Some(req.prompt.chars().take(2000).collect::<String>()),
-                );
-                // PWF-02: PreCompact MODE_CHECKPOINT (0x9A). Emit a second
-                // checkpoint AFTER the compaction snapshot so a resume after
-                // crash inside the dispatch loop lands at the pre-compact
-                // boundary rather than at the session-start boundary. Best-
-                // effort: never blocks the dispatch loop.
-                {
-                    use crate::recall::reconstruct::ModeCheckpoint;
-                    use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
-                    // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
-                    let council_mode_str = if config.council.mode.is_single() {
-                        "single".to_string()
-                    } else if config.council.disabled.unwrap_or(false) {
-                        "off".to_string()
-                    } else {
-                        "enabled".to_string()
-                    };
-                    let mut cp = ModeCheckpoint {
-                        checkpoint_hash: String::new(),
-                        session_id: turn_id.to_string(),
-                        mode: "chat".to_string(),
-                        provider_target: provider.name().to_string(),
-                        council_mode: council_mode_str,
-                        scoped_mcp_servers: Vec::new(),
-                        phase: "chat:pre-compact".to_string(),
-                        ts_unix: crate::time::now_unix_i64(),
-                    };
-                    cp.stamp_hash();
-                    if let Ok(payload) = serde_json::to_vec(&cp) {
-                        let hdr = crate::wal::make_header(EVENT_TYPE_MODE_CHECKPOINT, &payload);
-                        let _ = writer.append(hdr, payload).await;
-                    }
-                }
-            }
-            // GOLD-LOOP-01: when `--loop` is set (or loop_config.enabled with
-            // max_rounds > 1 on CLI), route through the loop engine instead of
-            // a bare single dispatch. The loop engine internally calls
-            // `run_mcp_dispatch_loop` per round and handles WAL + record write.
-            let loop_engage = args.loop_mode
-                || (config.loop_config.enabled && config.loop_config.max_rounds > 1);
-            let outcome = if loop_engage {
-                let loop_cfg = crate::loop_engine::engine::LoopConfig {
-                    max_rounds: args.iterations.unwrap_or(config.loop_config.max_rounds),
-                    until: if !args.until.is_empty() {
-                        args.until.clone()
-                    } else {
-                        vec![]
-                    },
-                    tool_call_budget: config.loop_config.tool_call_budget,
-                    autonomy: config.autonomy,
-                    refine_enabled: config.loop_config.refine_enabled,
-                    neoth_home: FreedomConfig::default_neoth_home(),
-                };
-                info!(
-                    max_rounds = loop_cfg.max_rounds,
-                    has_until = !loop_cfg.until.is_empty(),
-                    "GOLD-LOOP-01: loop mode active — routing to loop engine"
-                );
-                match crate::loop_engine::engine::run_loop(
-                    &loop_cfg,
-                    provider,
-                    req.clone(),
-                    &mcp_servers_for_loop,
+    let (response_text, final_input_tokens, final_output_tokens, provider_used, model_used) =
+        if args.stream {
+            // B-1 follow-up (Session 13) — streaming-branch audit gap.
+            // Council never fans out on the streaming path (council needs
+            // sync semantics + dissent scoring across full responses).
+            // Emit a COUNCIL_SKIP audit anyway so the operator's WAL trace
+            // shows every chat turn was reasoned about WRT council, even
+            // when streaming mode forces the light path. Reason is
+            // operator-greppable: `streaming_mode_disables_council`.
+            {
+                let prompt_hash_stream = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+                let _ = emit_council_skip(
                     &writer,
-                    config,
-                    // P4 — elicitation is live in loop mode too on the interactive
-                    // TTY (same gate as the single-dispatch path below).
-                    if config.elicitation.enabled {
-                        &crate::cli::elicitation::ElicitationHandler::Cli
-                    } else {
-                        &crate::cli::elicitation::ElicitationHandler::Disabled
-                    },
+                    prompt_hash_stream,
+                    "streaming_mode_disables_council",
                 )
-                .await
-                {
-                    Ok(record) => {
-                        // Convert LoopRunRecord into a LoopOutcome-compatible
-                        // surface so the code below (println, mcp_tool_calls)
-                        // works unchanged.
-                        crate::mcp::dispatch_loop::LoopOutcome {
-                            final_text: record.final_text,
-                            iterations: record.rounds_run,
-                            hit_cap: matches!(
-                                record.stop_reason,
-                                crate::loop_engine::engine::StopReason::CapHit
-                                    | crate::loop_engine::engine::StopReason::BudgetExceeded
-                            ),
-                            successful_calls: record
-                                .per_round
-                                .iter()
-                                .map(|r| r.successful_calls)
-                                .sum(),
-                            failed_calls: record.per_round.iter().map(|r| r.failed_calls).sum(),
-                            tool_call_records: vec![],
-                            // GOLD-TASK-05 — loop_engine path has no goal judge;
-                            // goal_outcome is always None here.
-                            goal_outcome: crate::mcp::dispatch_loop::GoalOutcome::None,
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                            record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
-                        }
-                        warn!(error = %e, "GOLD-LOOP-01: loop engine failed");
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Err(e);
-                    }
-                }
-            } else {
-            match run_mcp_dispatch_loop(
-                provider,
-                req.clone(),
-                &mcp_servers_for_loop,
-                config.autonomy,
-                &writer,
-                Some(&config.rollback),
-                skill_allowlist,
-                config.goal.max_turns,
-                &config.security,
-                // GOLD-CCPARITY-SA-DENY-01 — active sub-agent denylist (None
-                // when no sub-agent fired this turn or agent has no denylist).
-                agent_disallowed_slice,
-                crate::mcp::goal_tracker::GoalContext {
-                    goal: config.goal.goal.clone(),
-                    grind: config.goal.grind.clone(),
-                },
-                config.hints.enabled,
-                crate::context::compaction::CompactionPolicy::from_config(
-                    config.compaction.enabled,
-                    config.compaction.progressive,
-                    config.tokens.max_per_request,
-                    config.compaction.threshold_fraction,
-                ),
-                // GOLD-HR-08/10 — tool-result compression (None when disabled).
-                // Persistent store so `neoth ctx retrieve` can pull dropped
-                // blocks back + savings are metered.
-                crate::context::compress::CompressionRuntime::persistent(
-                    config.compression.gate(),
-                    config.compression.thresholds(),
-                    crate::context::compress::default_ccr_dir(),
-                ),
-                // HERMES-04 — pass the provider as judge when judge_enabled AND a
-                // goal is set. Uses the same provider instance (no extra config).
-                if config.goal.judge_enabled && config.goal.goal.is_some() {
-                    Some(provider)
-                } else {
-                    None
-                },
-                // GOLD-ADOPT-17 — enable CLI elicitation on the TTY path when
-                // the operator has not disabled it in freedom.yaml.
-                if config.elicitation.enabled {
-                    &crate::cli::elicitation::ElicitationHandler::Cli
-                } else {
-                    &crate::cli::elicitation::ElicitationHandler::Disabled
-                },
-                // GOLD-ADAPT-AWE-CODE-01 — interactive CLI path: no inbound
-                // sender identity available, so no lease upgrade possible.
-                None,
-                // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
-                &config.tools.harness,
-            )
-            .await
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                        record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
-                    }
-                    warn!(error = %e, "MCP dispatch loop failed");
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
-                }
+                .await;
             }
-            }; // end loop_engage else branch
-            info!(
-                iterations = outcome.iterations,
-                successful_calls = outcome.successful_calls,
-                failed_calls = outcome.failed_calls,
-                hit_cap = outcome.hit_cap,
-                "MCP dispatch loop complete"
-            );
-            // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for budget_exhausted
-            // outcomes (the "met" frame is already emitted inside judge_goal_met).
+            // QM-10 Phase 2.5: streaming path also consults the breaker.
+            // Acquire BEFORE provider.stream so an Open breaker rejects
+            // the call without opening a stream we'd have to drain.
+            let stream_permit = match crate::providers::circuit_breaker::acquire_for(provider_name)
             {
-                use crate::mcp::dispatch_loop::GoalOutcome;
-                if matches!(outcome.goal_outcome, GoalOutcome::BudgetExhausted) {
-                    let goal_hash = config
-                        .goal
-                        .goal
-                        .as_deref()
-                        .map(|g| format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes())))
-                        .unwrap_or_default();
-                    crate::mcp::goal_judge::emit_goal_judged_wal(
-                        Some(&writer),
-                        &goal_hash,
-                        "budget_exhausted",
-                    )
-                    .await;
-                }
-            }
-            // GOLD-ADAPT-ODY-20 — capture for auto-skill extraction gate.
-            mcp_tool_calls = outcome.successful_calls;
-            // REVFIX-EXCERPTS-01 — capture structured call records for digest.
-            mcp_tool_records = outcome.tool_call_records;
-            println!("{}", outcome.final_text);
-            // B22: use the 6-tier effective_model (pre-resolved by the caller)
-            // so usage accounting reflects the model the dispatch request used.
-            (
-                outcome.final_text,
-                None,
-                None,
-                effective_model.clone().unwrap_or_else(|| "unknown".to_string()),
-            )
-        } else {
-            // QM-10 Phase 2: consult the circuit breaker for this
-            // provider before dispatching. Open breakers reject
-            // immediately with operator-readable retry_after.
-            let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
                 Ok(p) => Some(p),
                 Err(berr) => {
-                    warn!(
-                        provider = provider_name,
-                        breaker_err = %berr,
-                        "circuit breaker rejected call"
-                    );
                     drop(writer);
                     let _ = writer_join.await;
                     return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
                 }
             };
-            let call_started = std::time::Instant::now();
-            let result = provider.complete(req).await;
-            let elapsed_ms = call_started.elapsed().as_millis() as u64;
-            match result {
-                Ok(completion) => {
-                    // QM-10 Phase 2: settle the permit on success.
-                    if let Some(p) = permit {
-                        p.record_success();
-                    }
-                    // QM-9 Phase 1.5 / GR-15: persist a usage event for
-                    // the non-streaming chat path via the shared helper.
-                    crate::daemon::usage_log::record_provider_call_best_effort(
-                        provider_name,
-                        &completion.model,
-                        completion.input_tokens,
-                        completion.output_tokens,
-                        elapsed_ms,
-                        true,
-                        completion.cache_creation_tokens,
-                        completion.cache_read_tokens,
-                        false, // VIEW-06: direct operator CLI turn → human
-                    );
-                    publish_provider_responded(
-                        provider_name,
-                        &completion.model,
-                        completion.input_tokens,
-                        completion.output_tokens,
-                        elapsed_ms,
-                    );
-                    // GOLD-ADAPT-HERMES-03 — mid-run clarification (opt-in,
-                    // TTY-only). If the reply carries an ambiguity marker the
-                    // gate parks, asks the operator, and re-issues with the
-                    // answer. `None` (default / non-ambiguous / non-TTY) prints
-                    // the reply unchanged.
-                    let final_text = match crate::cli::clarify_chat::maybe_clarify(
-                        provider,
-                        &final_prompt,
-                        merged_system.as_deref(),
-                        &completion.text,
-                    )
-                    .await
-                    {
-                        Some(resolved) => {
-                            println!("{resolved}");
-                            resolved
-                        }
-                        None => {
-                            println!("{}", completion.text);
-                            completion.text
-                        }
-                    };
-                    (
-                        final_text,
-                        completion.input_tokens,
-                        completion.output_tokens,
-                        completion.model,
-                    )
-                }
+            let stream_call_started = std::time::Instant::now();
+            // Streaming path: print each delta as it arrives, accumulate the
+            // full response for the WAL PROVIDER_RESPONSE frame.
+            let mut stream = match provider.stream(req).await {
+                Ok(s) => s,
                 Err(e) => {
-                    // QM-10 Phase 2: settle the permit on failure.
-                    if let Some(p) = permit {
+                    if let Some(p) = stream_permit {
                         p.record_failure();
                     }
-                    // Record the failure too so the rollup distinguishes
-                    // ok-vs-err for the same provider (GR-15 helper).
-                    // B22: use effective_model (6-tier chain resolved above) so the
-                    // failure analytics record the model that was actually attempted —
-                    // not the 3-tier (cli > tweaks > freedom) fallback that dropped
-                    // any dispatch/skill override.
-                    let model = effective_model.as_deref().unwrap_or("unknown").to_string();
-                    crate::daemon::usage_log::record_provider_call_best_effort(
-                        provider_name,
-                        &model,
-                        None,
-                        None,
-                        elapsed_ms,
-                        false,
-                        None,
-                        None,
-                        false, // VIEW-06: direct operator CLI turn → human
-                    );
                     if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
                         record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
                     }
-                    warn!(error = %e, "provider call failed");
+                    warn!(error = %e, "provider stream open failed");
                     drop(writer);
                     let _ = writer_join.await;
                     return Err(e);
                 }
+            };
+            let mut acc = String::new();
+            let mut chunk_count: u32 = 0;
+            let mut input_tokens: Option<u32> = None;
+            let mut output_tokens: Option<u32> = None;
+            let mut cache_creation_tokens: Option<u32> = None;
+            let mut cache_read_tokens: Option<u32> = None;
+            let mut response_identity: Option<crate::providers::CompletionIdentity> = None;
+            let mut saw_done_chunk = false;
+
+            use futures_util::stream::StreamExt;
+            use std::io::Write as _;
+            // GOLD-ADOPT-24 — safe-flush markdown buffer: print only the prefix that
+            // doesn't split an open construct (code fence, table, inline span). `acc`
+            // + the per-chunk WAL frame still see the RAW delta; only the terminal
+            // print is buffered, so the output text is identical, just fence-safe.
+            let mut md_buf = crate::cli::streaming_buffer::MarkdownBuffer::new();
+            // GOLD-ADAPT-HERMES-09b — measure decode throughput over the live stream
+            // window; emitted as a 0x69 TOKEN_TPS_SAMPLE WAL frame after the stream
+            // completes (best-effort, never blocks the turn).
+            let mut tps_meter = crate::daemon::metering::TpsMeter::start();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(chunk) => {
+                        if !chunk.identity.is_bound() {
+                            if let Some(p) = stream_permit {
+                                p.record_failure();
+                            }
+                            drop(writer);
+                            let _ = writer_join.await;
+                            anyhow::bail!(
+                                "provider `{provider_name}` emitted a stream chunk without an authenticated response identity"
+                            );
+                        }
+                        if let Some(bound) = &response_identity {
+                            if bound != &chunk.identity {
+                                if let Some(p) = stream_permit {
+                                    p.record_failure();
+                                }
+                                drop(writer);
+                                let _ = writer_join.await;
+                                anyhow::bail!(
+                                    "provider `{provider_name}` changed response identity within one stream"
+                                );
+                            }
+                        } else {
+                            response_identity = Some(chunk.identity.clone());
+                        }
+                        if !chunk.delta.is_empty() {
+                            if let Some(safe) = md_buf.push(&chunk.delta) {
+                                print!("{safe}");
+                                let _ = std::io::stdout().flush();
+                            }
+                            acc.push_str(&chunk.delta);
+                            chunk_count += 1;
+                            // HERMES-09b — ~4 chars/token estimate per streamed delta.
+                            tps_meter.observe((chunk.delta.len() as u64).div_ceil(4));
+                            // F4/D21 — journal the partial chunk so a mid-stream crash
+                            // leaves a recoverable partial answer (best-effort).
+                            if let Some(j) = journal.as_mut() {
+                                let _ = j.append(
+                                    &crate::recovery::turn_journal::TurnEvent::ProviderChunk {
+                                        ts_unix: crate::time::now_unix_i64(),
+                                        text: chunk.delta.clone(),
+                                    },
+                                );
+                            }
+                            emit_stream_chunk(
+                                &writer,
+                                &chunk.identity.provider,
+                                &chunk,
+                                chunk_count,
+                            )
+                            .await?;
+                        }
+                        if chunk.done {
+                            saw_done_chunk = true;
+                            // Release any construct still held at stream end.
+                            let rest = md_buf.flush();
+                            if !rest.is_empty() {
+                                print!("{rest}");
+                                let _ = std::io::stdout().flush();
+                            }
+                            input_tokens = chunk.input_tokens;
+                            output_tokens = chunk.output_tokens;
+                            cache_creation_tokens = chunk.cache_creation_tokens;
+                            cache_read_tokens = chunk.cache_read_tokens;
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(p) = stream_permit {
+                            p.record_failure();
+                        }
+                        warn!(error = %e, "stream chunk error");
+                        // GR-091: release any markdown tail still buffered so the
+                        // already-streamed partial output isn't swallowed on error.
+                        let tail = md_buf.flush();
+                        if !tail.is_empty() {
+                            print!("{tail}");
+                            let _ = std::io::stdout().flush();
+                        }
+                        drop(writer);
+                        let _ = writer_join.await;
+                        return Err(e);
+                    }
+                }
             }
-        }
-    };
+            // Loop only reaches here on clean exit — every Err arm
+            // returns above so success path is implicit.
+            // GOLD-ADOPT-24 — defensive: if the stream ended without a `done` chunk,
+            // release any markdown tail still buffered (the done-arm flush didn't run).
+            {
+                let rest = md_buf.flush();
+                if !rest.is_empty() {
+                    use std::io::Write as _;
+                    print!("{rest}");
+                    let _ = std::io::stdout().flush();
+                }
+            }
+            if !saw_done_chunk {
+                if let Some(p) = stream_permit {
+                    p.record_failure();
+                }
+                drop(writer);
+                let _ = writer_join.await;
+                anyhow::bail!("provider `{provider_name}` stream ended without a final done chunk");
+            }
+            let response_identity = response_identity.ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider `{provider_name}` stream ended without an authenticated response identity"
+            )
+        })?;
+            if let Some(p) = stream_permit {
+                p.record_success();
+            }
+            let provider_used = response_identity.provider;
+            let model_used = response_identity.wire_model;
+            // GOLD-ADAPT-HERMES-09b — emit the stream's tokens/sec sample (0x69
+            // TOKEN_TPS_SAMPLE). Best-effort; a WAL hiccup never fails the turn.
+            {
+                let tps = tps_meter.finish();
+                if tps.has_data() {
+                    if let Err(e) = crate::daemon::metering::emit_tps_sample(&tps, &writer).await {
+                        tracing::debug!(error = %e, "tps-sample WAL emit failed (non-fatal)");
+                    }
+                }
+            }
+            {
+                // QM-9 Phase 1.5 / GR-15: persist a usage event for the
+                // streaming chat path via the shared best-effort helper.
+                let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
+                crate::daemon::usage_log::record_provider_call_best_effort(
+                    &provider_used,
+                    &model_used,
+                    input_tokens,
+                    output_tokens,
+                    elapsed_ms,
+                    true,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                    false, // VIEW-06: direct operator CLI turn → human
+                );
+                publish_provider_responded(
+                    &provider_used,
+                    &model_used,
+                    input_tokens,
+                    output_tokens,
+                    elapsed_ms,
+                );
+            }
+            // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
+            // truncated streams. GOLD-ADAPT-ODY-02/05 — the sentinel also carries
+            // the turn's token usage + the model-agnostic context cap (same
+            // `effective_cap` the non-stream context bar uses) + wall time, so
+            // GUI consumers can render context/metrics chips without re-probing.
+            // Fields are additive: older consumers `rfind` the prefix and ignore
+            // unknown keys.
+            let sentinel_cap = crate::tokens::budget::effective_cap(
+                &provider_used,
+                &model_used,
+                config.tokens.max_per_request,
+            );
+            println!();
+            println!(
+                "{}",
+                serde_json::json!({
+                    "neoth_stream": "done",
+                    "count": chunk_count,
+                    "used_tokens": input_tokens
+                        .unwrap_or(0)
+                        .saturating_add(output_tokens.unwrap_or(0)),
+                    "limit_tokens": sentinel_cap,
+                    "input_tokens": input_tokens.unwrap_or(0),
+                "output_tokens": output_tokens.unwrap_or(0),
+                "elapsed_ms": stream_call_started.elapsed().as_millis() as u64,
+                // Exact effective leaf identity (including fallback) for the
+                // GUI's optional per-response model badge.
+                "model": &model_used,
+                // ODY-12/14 — additive field; old consumers ignore it.
+                    "links": crate::cli::deep_links::extract_deep_links(&acc),
+                })
+            );
+            (acc, input_tokens, output_tokens, provider_used, model_used)
+        } else {
+            // Non-streaming: existing behavior. START frame already emitted
+            // above the branch; END frame fires after both arms converge.
+            //
+            // CH-02 council wedge — smart-trigger default (Codex feedback
+            // 2026-05-16): the chat dispatch now consults CH-14's
+            // `should_convene` BY DEFAULT on every call. Tri-state env:
+            //   - `NEOTH_COUNCIL_DISABLE=1`  → never (operator opt-out wins)
+            //   - `NEOTH_COUNCIL_ENABLE=1`   → always (force-convene every
+            //                                  call, bypasses the gates;
+            //                                  expensive — operator's choice)
+            //   - unset / anything else      → AUTO via `should_convene`
+            //                                  (dissent marker + complexity
+            //                                  + rate + budget gates).
+            //                                  `NEOTH_COUNCIL_AUTO=1` is
+            //                                  accepted for backward compat
+            //                                  but no longer required —
+            //                                  the gate fires automatically.
+            //
+            // Takes priority over MCP autoroute when both apply (they're
+            // mutually exclusive — council debates many providers;
+            // autoroute wraps one). Smart-trigger's default-Skip semantic
+            // (no dissent marker → Skip) means casual prompts like "what's
+            // the time" don't convene; "should I use Rust or Go?" does.
+            let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            let council_disable_env = std::env::var("NEOTH_COUNCIL_DISABLE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            // SPEC-03 suppress: the persistent `freedom.yaml::council.disabled`
+            // flag (set via `neoth council suppress`) is the durable twin of
+            // the env override — either one forces the single-hemisphere path.
+            // `config` is fresh per CLI invocation so the flag is always current.
+            // GOLD-ADAPT-G-01: council.mode=single is a named alternative to
+            // council.disabled=true; both force the single-provider path.
+            // They are orthogonal knobs — `disabled` is toggled by
+            // `neoth council suppress`; `mode` is a persistent topology choice.
+            let council_mode_single = config.council.mode.is_single();
+            let council_disable_cfg =
+                config.council.disabled.unwrap_or(false) || council_mode_single;
+            let council_disable = council_disable_env || council_disable_cfg;
+            // Trigger decision is computed even when not used so the WAL
+            // audit (next iteration) can record "council was triggerable
+            // but skipped because operator opted out".
+            let trigger_decision = if council_disable {
+                crate::council::TriggerDecision::Skip {
+                    // Record BOTH sources when co-active so the audit trail
+                    // doesn't hide the persistent suppress behind the env var
+                    // (clearing the env later would otherwise leave no WAL hint
+                    // that `council.disabled=true` is still in effect).
+                    // Priority: env > mode=single > disabled=true.
+                    reason: match (
+                        council_disable_env,
+                        council_mode_single,
+                        config.council.disabled.unwrap_or(false),
+                    ) {
+                        (true, _, true) => {
+                            "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
+                        }
+                        (true, _, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
+                        (false, true, _) => "freedom.yaml::council.mode=single".into(),
+                        (false, false, _) => "freedom.yaml::council.disabled=true".into(),
+                    },
+                }
+            } else if council_force {
+                crate::council::TriggerDecision::Convene {
+                    reason: "NEOTH_COUNCIL_ENABLE=1 (force)".into(),
+                }
+            } else {
+                // B-3 (Session 13) — feed real `seconds_since_last_council`
+                // from `~/.neoth/council_last.json` so Gate 2 (rate cooldown)
+                // is honoured. Missing / malformed file → `u64::MAX` (gate
+                // open), matching prior behaviour for fresh installs.
+                let home_b3 = FreedomConfig::default_neoth_home();
+                let now_unix_b3 = crate::council::last_ts::now_unix();
+                let secs_since = crate::council::last_ts::seconds_since_last(&home_b3, now_unix_b3);
+                let ctx = crate::council::TriggerContext {
+                    seconds_since_last_council: secs_since,
+                    remaining_budget_eur: None,
+                    estimated_single_call_eur: predicted_cost.total_eur.max(0.01),
+                };
+                // SPEC-03b: operator-tunable thresholds from
+                // `freedom.yaml::council.trigger` (defaults reproduce the prior
+                // hardcoded policy exactly).
+                crate::council::should_convene(prompt, &ctx, &config.council.trigger.to_policy())
+            };
+            // GOLD-SEC-32 / B-19: hard rolling-24h convene cap, enforced before
+            // convening and independent of the EUR budget gate (which is None on
+            // the local/free path). Operator-forced council bypasses it.
+            let council_home = FreedomConfig::default_neoth_home();
+            let council_now = crate::council::last_ts::now_unix() as i64;
+            // B-25: atomic OS-locked admission — fail-closed on any I/O error.
+            // Operator-forced council (council_force=true) bypasses cap entirely.
+            let (council_enable, council_cap_hit, council_deny_reason) = if council_force {
+                (
+                    trigger_decision.should_convene(),
+                    false,
+                    None::<&'static str>,
+                )
+            } else if trigger_decision.should_convene() {
+                use crate::council::day_counter::AdmitResult;
+                match crate::council::day_counter::try_admit_convene(&council_home, council_now) {
+                    AdmitResult::Admitted => (true, false, None),
+                    AdmitResult::Capped => {
+                        tracing::warn!(
+                            cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                            "council daily convene cap reached — single-provider for this turn"
+                        );
+                        (false, true, None)
+                    }
+                    AdmitResult::StateInvalid => {
+                        tracing::warn!(
+                            "council day-counter state invalid — fail-closed for this turn"
+                        );
+                        (
+                            false,
+                            true,
+                            Some("council day-counter state invalid — fail-closed"),
+                        )
+                    }
+                }
+            } else {
+                (false, false, None)
+            };
+            if !council_force && !council_disable {
+                info!(
+                    decision = ?trigger_decision,
+                    will_convene = council_enable,
+                    "council smart-trigger evaluated"
+                );
+            }
+            // B-1 (Session 13) — emit COUNCIL_SKIP audit when the trigger
+            // resolved to Skip so the operator's WAL audit distinguishes
+            // "light path: single hemisphere answered because trigger said
+            // skip" from "council fired but everyone agreed silently".
+            // Reason carries the exact gate (env override, complexity,
+            // rate, budget) so an operator can grep refusal causes per
+            // gate over time.
+            if !council_enable {
+                let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+                let reason = if let Some(r) = council_deny_reason {
+                    r
+                } else if council_cap_hit {
+                    "daily convene cap (rolling 24h) reached"
+                } else {
+                    trigger_decision.reason()
+                };
+                let _ = emit_council_skip(&writer, prompt_hash_skip, reason).await;
+            }
+            // A8 / Konsens-decision #8 — MCP autoroute is now AUTO by default
+            // when `mcp_servers.yaml` has ≥1 enabled server. Tri-state:
+            //   - NEOTH_MCP_AUTOROUTE=1 / true / on / yes → forced ON
+            //   - NEOTH_MCP_AUTOROUTE=0 / false / off / no → forced OFF
+            //   - unset / empty / other → AUTO (on when servers present)
+            // Decision threaded via `McpServers::autoroute_decision` so the
+            // chat dispatch can log *why* the loop is on/off (operator
+            // opt-in vs auto-derive vs zero-server-default-off).
+            // Council always wins when explicitly enabled — the two paths
+            // are mutually exclusive (council debates many providers,
+            // autoroute wraps one).
+            let mcp_servers_for_loop = if !council_enable {
+                mcp_servers.clone()
+            } else {
+                crate::mcp::McpServers::default()
+            };
+            let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
+            let autoroute_decision =
+                mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
+            let use_loop = !council_enable && autoroute_decision.is_on();
+            if council_enable {
+                info!(
+                    trigger = ?trigger_decision,
+                    "council convened — running 3-hemisphere debate"
+                );
+                // COR-17: the full debate → recovery → winner-selection →
+                // self-reflect → partial-refusal-prefix pipeline lives in the
+                // shared `dispatch_council_with_recovery` (also driven by the
+                // channel path in serve.rs), so the CLI and daemon paths can
+                // never drift. CLI-specific bits stay here: the convened log
+                // above, the WAL-writer shutdown on failure, stdout print, and
+                // the cost-estimate tuple below.
+                let response_text = match dispatch_council_with_recovery(
+                    &req,
+                    config,
+                    home,
+                    &writer,
+                    call_authorizer.clone(),
+                )
+                .await
+                {
+                    Ok(text) => text,
+                    Err(e) => {
+                        // CLI returns the error to the caller (after a clean
+                        // WAL-writer shutdown) rather than falling back to a
+                        // single provider the way the channel path does.
+                        warn!(error = %e, "council debate failed; returning error");
+                        drop(writer);
+                        let _ = writer_join.await;
+                        return Err(e);
+                    }
+                };
+                println!("{response_text}");
+                (
+                    response_text,
+                    None,
+                    None,
+                    "council".to_string(),
+                    "multi-provider".to_string(),
+                )
+            } else if use_loop {
+                info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
+                // SC-11 — scope the MCP gate to the matched skill's
+                // tool_allowlist (empty/None ⇒ no skill-level restriction).
+                // GOLD-CCPARITY-SA-DENY-01: when a sub-agent is active and
+                // declares its own allow-list, that list OVERRIDES the skill
+                // allow-list (the agent's scope is narrower; secure-by-default).
+                // An empty agent allow-list means "no tool restriction" — do NOT
+                // replace a non-empty skill allowlist with an empty agent one.
+                let effective_skill_allowlist: Option<Vec<String>> =
+                    if !agent_allowed_tools.is_empty() {
+                        Some(agent_allowed_tools.clone())
+                    } else {
+                        skill_tool_allowlist.clone()
+                    };
+                let skill_allowlist = effective_skill_allowlist.as_deref();
+                // GOLD-CCPARITY-SA-DENY-01: denylist slice — None when empty so
+                // the gate fn fast-paths on the None branch (no iteration).
+                let agent_disallowed_slice: Option<&[String]> = if agent_disallowed_tools.is_empty()
+                {
+                    None
+                } else {
+                    Some(&agent_disallowed_tools)
+                };
+                // GOLD-ADAPT-MEM-05 — snapshot session state BEFORE the dispatch loop
+                // (which compacts tool-results/context via the CompressionRuntime
+                // below) so `compaction_guard::restore_latest` / `neoth recover` can
+                // pull the pre-compaction context back (anti-dementia). Gated on
+                // compaction.enabled; best-effort (a backup-write failure never blocks
+                // the turn — pre_compact returns and we ignore the path).
+                if config.compaction.enabled {
+                    let mut snap_ctx = std::collections::BTreeMap::new();
+                    snap_ctx.insert("source".to_string(), serde_json::json!("mcp_dispatch_loop"));
+                    snap_ctx.insert(
+                        "prompt_chars".to_string(),
+                        serde_json::json!(req.prompt.len()),
+                    );
+                    snap_ctx.insert(
+                        "max_turns".to_string(),
+                        serde_json::json!(config.goal.max_turns),
+                    );
+                    let _ = crate::memory::compaction_guard::pre_compact(
+                        &FreedomConfig::default_neoth_home(),
+                        crate::time::now_unix_i64(),
+                        snap_ctx,
+                        Some(req.prompt.chars().take(2000).collect::<String>()),
+                    );
+                    // PWF-02: PreCompact MODE_CHECKPOINT (0x9A). Emit a second
+                    // checkpoint AFTER the compaction snapshot so a resume after
+                    // crash inside the dispatch loop lands at the pre-compact
+                    // boundary rather than at the session-start boundary. Best-
+                    // effort: never blocks the dispatch loop.
+                    {
+                        use crate::recall::reconstruct::ModeCheckpoint;
+                        use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
+                        // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
+                        let council_mode_str = if config.council.mode.is_single() {
+                            "single".to_string()
+                        } else if config.council.disabled.unwrap_or(false) {
+                            "off".to_string()
+                        } else {
+                            "enabled".to_string()
+                        };
+                        let mut cp = ModeCheckpoint {
+                            checkpoint_hash: String::new(),
+                            session_id: turn_id.to_string(),
+                            mode: "chat".to_string(),
+                            provider_target: provider.name().to_string(),
+                            council_mode: council_mode_str,
+                            scoped_mcp_servers: enabled_mcp_scope(&mcp_servers_for_loop),
+                            mcp_scope_recorded: true,
+                            phase: "chat:pre-compact".to_string(),
+                            ts_unix: crate::time::now_unix_i64(),
+                        };
+                        cp.stamp_hash();
+                        if let Ok(payload) = serde_json::to_vec(&cp) {
+                            let hdr = crate::wal::make_header(EVENT_TYPE_MODE_CHECKPOINT, &payload);
+                            let _ = writer.append(hdr, payload).await;
+                        }
+                    }
+                }
+                // GOLD-LOOP-01: when `--loop` is set (or loop_config.enabled with
+                // max_rounds > 1 on CLI), route through the loop engine instead of
+                // a bare single dispatch. The loop engine internally calls
+                // `run_mcp_dispatch_loop` per round and handles WAL + record write.
+                let loop_engage = args.loop_mode
+                    || (config.loop_config.enabled && config.loop_config.max_rounds > 1);
+                let outcome = if loop_engage {
+                    let loop_cfg = crate::loop_engine::engine::LoopConfig {
+                        max_rounds: args.iterations.unwrap_or(config.loop_config.max_rounds),
+                        until: if !args.until.is_empty() {
+                            args.until.clone()
+                        } else {
+                            vec![]
+                        },
+                        tool_call_budget: config.loop_config.tool_call_budget,
+                        autonomy: config.autonomy,
+                        refine_enabled: config.loop_config.refine_enabled,
+                        neoth_home: FreedomConfig::default_neoth_home(),
+                    };
+                    info!(
+                        max_rounds = loop_cfg.max_rounds,
+                        has_until = !loop_cfg.until.is_empty(),
+                        "GOLD-LOOP-01: loop mode active — routing to loop engine"
+                    );
+                    match crate::loop_engine::engine::run_loop(
+                        &loop_cfg,
+                        provider,
+                        req.clone(),
+                        &mcp_servers_for_loop,
+                        &writer,
+                        config,
+                        call_authorizer.clone(),
+                        // P4 — elicitation is live in loop mode too on the interactive
+                        // TTY (same gate as the single-dispatch path below).
+                        if config.elicitation.enabled {
+                            &crate::cli::elicitation::ElicitationHandler::Cli
+                        } else {
+                            &crate::cli::elicitation::ElicitationHandler::Disabled
+                        },
+                    )
+                    .await
+                    {
+                        Ok(record) => {
+                            // Convert LoopRunRecord into a LoopOutcome-compatible
+                            // surface so the code below (println, mcp_tool_calls)
+                            // works unchanged.
+                            crate::mcp::dispatch_loop::LoopOutcome {
+                                final_text: record.final_text,
+                                iterations: record.rounds_run,
+                                hit_cap: matches!(
+                                    record.stop_reason,
+                                    crate::loop_engine::engine::StopReason::CapHit
+                                        | crate::loop_engine::engine::StopReason::BudgetExceeded
+                                ),
+                                successful_calls: record
+                                    .per_round
+                                    .iter()
+                                    .map(|r| r.successful_calls)
+                                    .sum(),
+                                failed_calls: record.per_round.iter().map(|r| r.failed_calls).sum(),
+                                tool_call_records: vec![],
+                                // GOLD-TASK-05 — loop_engine path has no goal judge;
+                                // goal_outcome is always None here.
+                                goal_outcome: crate::mcp::dispatch_loop::GoalOutcome::None,
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(qe) =
+                                e.downcast_ref::<crate::providers::quota::QuotaError>()
+                            {
+                                record_quota_exceeded(provider_name, qe, &quota_path, &writer)
+                                    .await;
+                            }
+                            warn!(error = %e, "GOLD-LOOP-01: loop engine failed");
+                            drop(writer);
+                            let _ = writer_join.await;
+                            return Err(e);
+                        }
+                    }
+                } else {
+                    match run_mcp_dispatch_loop(
+                        provider,
+                        req.clone(),
+                        &mcp_servers_for_loop,
+                        &config.autonomy_policy(),
+                        &writer,
+                        Some(&config.rollback),
+                        skill_allowlist,
+                        config.goal.max_turns,
+                        &config.security,
+                        // GOLD-CCPARITY-SA-DENY-01 — active sub-agent denylist (None
+                        // when no sub-agent fired this turn or agent has no denylist).
+                        agent_disallowed_slice,
+                        crate::mcp::goal_tracker::GoalContext {
+                            goal: config.goal.goal.clone(),
+                            grind: config.goal.grind.clone(),
+                        },
+                        config.hints.enabled,
+                        crate::context::compaction::CompactionPolicy::from_config(
+                            config.compaction.enabled,
+                            config.compaction.progressive,
+                            config.tokens.max_per_request,
+                            config.compaction.threshold_fraction,
+                        ),
+                        // GOLD-HR-08/10 — tool-result compression (None when disabled).
+                        // Persistent store so `neoth ctx retrieve` can pull dropped
+                        // blocks back + savings are metered.
+                        crate::context::compress::CompressionRuntime::persistent(
+                            config.compression.gate(),
+                            config.compression.thresholds(),
+                            crate::context::compress::default_ccr_dir(),
+                        ),
+                        // HERMES-04 — pass the provider as judge when judge_enabled AND a
+                        // goal is set. Uses the same provider instance (no extra config).
+                        if config.goal.judge_enabled && config.goal.goal.is_some() {
+                            Some(provider)
+                        } else {
+                            None
+                        },
+                        // GOLD-ADOPT-17 — enable CLI elicitation on the TTY path when
+                        // the operator has not disabled it in freedom.yaml.
+                        if config.elicitation.enabled {
+                            &crate::cli::elicitation::ElicitationHandler::Cli
+                        } else {
+                            &crate::cli::elicitation::ElicitationHandler::Disabled
+                        },
+                        // GOLD-ADAPT-AWE-CODE-01 — interactive CLI path: no inbound
+                        // sender identity available, so no lease upgrade possible.
+                        None,
+                        // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
+                        &config.tools.harness,
+                    )
+                    .await
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            if let Some(qe) =
+                                e.downcast_ref::<crate::providers::quota::QuotaError>()
+                            {
+                                record_quota_exceeded(provider_name, qe, &quota_path, &writer)
+                                    .await;
+                            }
+                            warn!(error = %e, "MCP dispatch loop failed");
+                            drop(writer);
+                            let _ = writer_join.await;
+                            return Err(e);
+                        }
+                    }
+                }; // end loop_engage else branch
+                info!(
+                    iterations = outcome.iterations,
+                    successful_calls = outcome.successful_calls,
+                    failed_calls = outcome.failed_calls,
+                    hit_cap = outcome.hit_cap,
+                    "MCP dispatch loop complete"
+                );
+                // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for budget_exhausted
+                // outcomes (the "met" frame is already emitted inside judge_goal_met).
+                {
+                    use crate::mcp::dispatch_loop::GoalOutcome;
+                    if matches!(outcome.goal_outcome, GoalOutcome::BudgetExhausted) {
+                        let goal_hash = config
+                            .goal
+                            .goal
+                            .as_deref()
+                            .map(|g| format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes())))
+                            .unwrap_or_default();
+                        crate::mcp::goal_judge::emit_goal_judged_wal(
+                            Some(&writer),
+                            &goal_hash,
+                            "budget_exhausted",
+                        )
+                        .await;
+                    }
+                }
+                // GOLD-ADAPT-ODY-20 — capture for auto-skill extraction gate.
+                mcp_tool_calls = outcome.successful_calls;
+                // REVFIX-EXCERPTS-01 — capture structured call records for digest.
+                mcp_tool_records = outcome.tool_call_records;
+                println!("{}", outcome.final_text);
+                // A multi-round/tool response may span several providers and wire
+                // models. Keep the envelope identity explicit instead of falsely
+                // attributing the composed result to the configured primary.
+                (
+                    outcome.final_text,
+                    None,
+                    None,
+                    if loop_engage {
+                        "loop_engine".to_string()
+                    } else {
+                        "mcp_dispatch_loop".to_string()
+                    },
+                    "multi-hop".to_string(),
+                )
+            } else {
+                // QM-10 Phase 2: consult the circuit breaker for this
+                // provider before dispatching. Open breakers reject
+                // immediately with operator-readable retry_after.
+                let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+                    Ok(p) => Some(p),
+                    Err(berr) => {
+                        warn!(
+                            provider = provider_name,
+                            breaker_err = %berr,
+                            "circuit breaker rejected call"
+                        );
+                        drop(writer);
+                        let _ = writer_join.await;
+                        return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
+                    }
+                };
+                let call_started = std::time::Instant::now();
+                let result = provider.complete(req).await;
+                let elapsed_ms = call_started.elapsed().as_millis() as u64;
+                match result {
+                    Ok(completion) => {
+                        if !completion.identity.is_bound() {
+                            if let Some(p) = permit {
+                                p.record_failure();
+                            }
+                            drop(writer);
+                            let _ = writer_join.await;
+                            anyhow::bail!(
+                                "provider `{provider_name}` returned no authenticated response identity"
+                            );
+                        }
+                        // QM-10 Phase 2: settle the permit on success.
+                        if let Some(p) = permit {
+                            p.record_success();
+                        }
+                        // QM-9 Phase 1.5 / GR-15: persist a usage event for
+                        // the non-streaming chat path via the shared helper.
+                        crate::daemon::usage_log::record_provider_call_best_effort(
+                            &completion.identity.provider,
+                            &completion.identity.wire_model,
+                            completion.input_tokens,
+                            completion.output_tokens,
+                            elapsed_ms,
+                            true,
+                            completion.cache_creation_tokens,
+                            completion.cache_read_tokens,
+                            false, // VIEW-06: direct operator CLI turn → human
+                        );
+                        publish_provider_responded(
+                            &completion.identity.provider,
+                            &completion.identity.wire_model,
+                            completion.input_tokens,
+                            completion.output_tokens,
+                            elapsed_ms,
+                        );
+                        // GOLD-ADAPT-HERMES-03 — mid-run clarification (opt-in,
+                        // TTY-only). If the reply carries an ambiguity marker the
+                        // gate parks, asks the operator, and re-issues with the
+                        // answer. `None` (default / non-ambiguous / non-TTY) prints
+                        // the reply unchanged.
+                        let clarified = crate::cli::clarify_chat::maybe_clarify(
+                            provider,
+                            &final_prompt,
+                            merged_system.as_deref(),
+                            &completion.text,
+                        )
+                        .await;
+                        match clarified {
+                            Some(resolved) if resolved.identity.is_bound() => {
+                                let resolved_elapsed_ms =
+                                    resolved.latency.as_millis().min(u128::from(u64::MAX)) as u64;
+                                crate::daemon::usage_log::record_provider_call_best_effort(
+                                    &resolved.identity.provider,
+                                    &resolved.identity.wire_model,
+                                    resolved.input_tokens,
+                                    resolved.output_tokens,
+                                    resolved_elapsed_ms,
+                                    true,
+                                    resolved.cache_creation_tokens,
+                                    resolved.cache_read_tokens,
+                                    false,
+                                );
+                                publish_provider_responded(
+                                    &resolved.identity.provider,
+                                    &resolved.identity.wire_model,
+                                    resolved.input_tokens,
+                                    resolved.output_tokens,
+                                    resolved_elapsed_ms,
+                                );
+                                println!("{}", resolved.text);
+                                (
+                                    resolved.text,
+                                    resolved.input_tokens,
+                                    resolved.output_tokens,
+                                    resolved.identity.provider,
+                                    resolved.identity.wire_model,
+                                )
+                            }
+                            Some(_) => {
+                                drop(writer);
+                                let _ = writer_join.await;
+                                anyhow::bail!(
+                                    "provider `{provider_name}` returned no authenticated response identity for the clarification round"
+                                );
+                            }
+                            None => {
+                                println!("{}", completion.text);
+                                (
+                                    completion.text,
+                                    completion.input_tokens,
+                                    completion.output_tokens,
+                                    completion.identity.provider,
+                                    completion.identity.wire_model,
+                                )
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // QM-10 Phase 2: settle the permit on failure.
+                        if let Some(p) = permit {
+                            p.record_failure();
+                        }
+                        // Record the failure too so the rollup distinguishes
+                        // ok-vs-err for the same provider (GR-15 helper).
+                        // B22: use effective_model (6-tier chain resolved above) so the
+                        // failure analytics record the model that was actually attempted —
+                        // not the 3-tier (cli > tweaks > freedom) fallback that dropped
+                        // any dispatch/skill override.
+                        let model = effective_model.as_deref().unwrap_or("unknown").to_string();
+                        crate::daemon::usage_log::record_provider_call_best_effort(
+                            provider_name,
+                            &model,
+                            None,
+                            None,
+                            elapsed_ms,
+                            false,
+                            None,
+                            None,
+                            false, // VIEW-06: direct operator CLI turn → human
+                        );
+                        if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
+                            record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
+                        }
+                        warn!(error = %e, "provider call failed");
+                        drop(writer);
+                        let _ = writer_join.await;
+                        return Err(e);
+                    }
+                }
+            }
+        };
 
     // SL-00(1c): the provider work is done — release the in-flight slot and
     // feed the cluster local-load gauge the REAL measured throughput so our
@@ -2601,9 +2859,9 @@ async fn dispatch_provider(
     // Successful remote call → bump the per-provider daily counter for the
     // quota tracker so `neoth quota status` reflects actual usage. Local
     // providers are not tracked.
-    if !crate::providers::is_local_provider(provider_name) {
+    if !crate::providers::is_local_provider(&provider_used) {
         let mut tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
-        tracker.record_success(provider_name, crate::providers::quota::now_unix());
+        tracker.record_success(&provider_used, crate::providers::quota::now_unix());
         if let Err(e) = tracker.save() {
             tracing::warn!(error = %e, "quota.json save after success failed (best-effort)");
         }
@@ -2618,6 +2876,7 @@ async fn dispatch_provider(
         response_text,
         final_input_tokens,
         final_output_tokens,
+        provider_used,
         model_used,
         total_latency,
         writer,
@@ -2653,6 +2912,7 @@ async fn run_post_reply_pipelines(
     prompt: String,
     final_prompt: String,
     final_system: Option<String>,
+    provider_used: String,
     model_used: String,
     final_input_tokens: Option<u32>,
     final_output_tokens: Option<u32>,
@@ -2680,6 +2940,10 @@ async fn run_post_reply_pipelines(
     // B22-TWEAKS-MODEL-01 — tweaks.model_default propagated from run_chat_with
     // for model_for_estimate calls in token-cap and usage-log accounting.
     tweaks_model: Option<String>,
+    // THEME-TWEAKS-GOLD — the same fail-loud, once-per-turn Tweaks snapshot
+    // supplies the terminal statusline. Passing the full value keeps this
+    // sink consistent with every earlier model/persona consumer.
+    tweaks: &crate::tweaks::Tweaks,
     // GOLD-ADAPT-SKILL-09 — FilteredBlocks from BlockFilter hooks at
     // PreProviderCall. Restored into response_text after the PostProviderCall
     // hook stage so WAL/recall never see placeholder text.
@@ -2700,11 +2964,46 @@ async fn run_post_reply_pipelines(
             model_used.clone()
         };
         crate::tokens::budget::effective_cap(
-            provider.name(),
+            &provider_used,
             &model_name_for_cap,
             config.tokens.max_per_request,
         )
     };
+    let post_call_model = if model_used.is_empty()
+        || model_used == "unknown"
+        || model_used == "multi-provider"
+        || model_used == "multi-hop"
+    {
+        config.provider_model.clone()
+    } else {
+        Some(model_used.clone())
+    };
+    let call_authorizer =
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        )
+        .with_audit_context(
+            crate::providers::cost_authorization::ProviderCallAuditContext {
+                source: Some("chat"),
+                call_type: Some("chat_post_reply_round"),
+                request_id: Some(format!("{raw_event_id:016x}")),
+                operator_id: config.operator_id.clone(),
+                session_id: Some(current_session_id.clone()),
+                target: Some(
+                    crate::profile::runner::extract_target_label(provider.name()).to_owned(),
+                ),
+                ..Default::default()
+            },
+        );
+    let authorized_post_provider =
+        crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            provider,
+            call_authorizer.clone(),
+            post_call_model,
+            "chat_post_reply_round",
+        );
+    let provider: &dyn crate::providers::Provider = &authorized_post_provider;
     // ── TOML hooks: PostProviderCall (Phase 29 R-15) ─────────────────────
     // Last chance to mutate or block the model's reply before it lands in
     // the WAL + reaches the operator. Already-printed streaming output
@@ -2735,66 +3034,21 @@ async fn run_post_reply_pipelines(
     // Restore any redacted ignore-regions. `restore_blocks` is a no-op when
     // `pending_block_restorations` is empty (no BlockFilter hook fired this turn).
     if !pending_block_restorations.is_empty() {
-        response_text = crate::hooks::block_filter::restore_blocks(
-            &response_text,
-            &pending_block_restorations,
-        );
+        response_text =
+            crate::hooks::block_filter::restore_blocks(&response_text, &pending_block_restorations);
     }
 
-    // GOLD-DELTA-16 — content-free K_d histogram for the Babel observer
-    // (try_send, never blocks). Skipped on incognito turns: the histogram is
-    // content-free but content-DERIVED, so it honours the same privacy
-    // contract as PROVIDER_RESPONSE below.
-    if !args.incognito {
-        crate::analytics::babel::khist::submit_response_text(
-            crate::time::now_unix_i64(),
-            &response_text,
-        );
-    }
-
-    // ── PROVIDER_RESPONSE ─────────────────────────────────────────────────
-    // ODY-09: incognito turns skip PROVIDER_RESPONSE — no response hash/metadata in WAL.
-    if !args.incognito {
-        let resp_payload = serde_json::to_vec(&serde_json::json!({
-            "operator_id": config.operator_id,
-            // GOLD-ADAPT-VIEW-01 — stamp the session so `neoth cost top-sessions`
-            // can attribute this turn's token spend. Additive JSON field: older WAL
-            // readers ignore it; pre-VIEW-01 frames bucket as "(unattributed)".
-            "session_id": current_session_id,
-            "provider": provider.name(),
-            "model": model_used,
-            "response_hash_xxh3": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
-            "response_bytes": response_text.len(),
-            "latency_ns": u64::try_from(total_latency.as_nanos()).unwrap_or(u64::MAX),
-            "input_tokens": final_input_tokens,
-            // ARCH-04: name the real prompt-token count so it pairs with
-            // `prompt_token_estimate` on PROVIDER_REQUEST — operators can
-            // diff estimate-vs-actual per turn from the audit chain. Same
-            // value as `input_tokens` (kept for back-compat with existing
-            // WAL readers); the named field closes the estimate/actual pair.
-            "prompt_token_actual": final_input_tokens,
-            "output_tokens": final_output_tokens,
-            "streamed": args.stream,
-        }))?;
-        let resp_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_RESPONSE, &resp_payload);
-        writer
-            .append(resp_header, resp_payload)
-            .await
-            .context("write PROVIDER_RESPONSE WAL frame")?;
-    }
-
-    // F4/D21 — the PROVIDER_RESPONSE frame is now durably recorded, which closes
-    // the turn-journal's durability window (module contract: open until the
-    // provider_response frame is written). Record the final response in the
-    // sidecar, emit the 0x06 CLOSED anchor, then delete it. A crash before this
-    // point left the journal on disk for `neoth recover`.
+    // Each concrete leaf response was durably recorded at the provider
+    // boundary before control returned here. Close the turn journal only after
+    // post-provider hooks also completed, so a crash in that pipeline remains
+    // recoverable even though its provider call already has a terminal frame.
     if let Some(mut j) = turn_journal {
         use crate::recovery::turn_journal::{TurnEvent, closed_payload};
         let turn_id = format!("{raw_event_id:016x}");
         let ts = crate::time::now_unix_i64();
         let _ = j.append(&TurnEvent::ProviderResponse {
             ts_unix: ts,
-            provider: provider.name().to_string(),
+            provider: provider_used.clone(),
             model: model_used.clone(),
             input_tokens: final_input_tokens.unwrap_or(0),
             output_tokens: final_output_tokens.unwrap_or(0),
@@ -2829,7 +3083,7 @@ async fn run_post_reply_pipelines(
             let cause = crate::security::refusal_cause::classify_cause(&response_text);
             let payload = serde_json::to_vec(&serde_json::json!({
                 "operator_id": config.operator_id,
-                "provider": provider.name(),
+                "provider": provider_used,
                 "model": model_used,
                 "refusal_class": report.class.as_str(),
                 "confidence": report.confidence,
@@ -3081,15 +3335,16 @@ async fn run_post_reply_pipelines(
     // on corrected turns so the teacher's writing style is not learned as the
     // operator's own. Best-effort; never fails a turn.
     if !hard_blocked
-        && crate::providers::is_local_provider(provider.name())
+        && crate::providers::is_local_provider(&provider_used)
         && config.refusal_recovery.teacher_escalation_enabled
     {
         match crate::skills::teacher::try_teacher_escalation(
             &response_text,
             &final_prompt,
             final_system.as_deref(),
-            provider.name(),
+            &provider_used,
             &config,
+            &call_authorizer,
             Some(&writer),
             now_unix() as i64,
         )
@@ -3218,6 +3473,16 @@ async fn run_post_reply_pipelines(
                  allow_cloud_fallback=false (operator chose privacy over learn)"
             );
         } else if let Some(learn_provider_ref) = learn_dispatch {
+            let authorized_learn_provider =
+                crate::providers::cost_authorization::CostAuthorizingProvider::new(
+                    learn_provider_ref,
+                    crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                        config.autonomy_policy(),
+                        Some(writer.clone()),
+                    ),
+                    None,
+                    "profile_learning_round",
+                );
             // ADV-10c (Session 28g+): pre-flight QuotaTracker check on
             // the learn_provider. Without this, a persistently rate-
             // limited learn_provider pays a full LLM round-trip EVERY
@@ -3284,7 +3549,7 @@ async fn run_post_reply_pipelines(
                             match crate::profile::run_pipeline(
                                 crate::profile::PipelineConn::Owned(&mut conn),
                                 &writer,
-                                learn_provider_ref,
+                                &authorized_learn_provider,
                                 raw_event_id,
                                 2,
                                 &guard,
@@ -3477,10 +3742,20 @@ async fn run_post_reply_pipelines(
         let used = final_input_tokens
             .unwrap_or(prompt_token_estimate)
             .saturating_add(final_output_tokens.unwrap_or(0));
-        if let Some(bar) =
-            crate::cli::chat_display::render_context_bar(used, resolved_cap)
-        {
+        if let Some(bar) = crate::cli::chat_display::render_context_bar(used, resolved_cap) {
             eprintln!("{bar}");
+        }
+        // THEME-TWEAKS-GOLD — configured statusline is a real terminal sink.
+        // It stays on STDERR so the assistant response on STDOUT remains pipe-safe.
+        if tweaks.statusline.is_some() {
+            eprintln!(
+                "{}",
+                tweaks.render_statusline(
+                    config.operator_id.as_deref(),
+                    Some(&model_used),
+                    Some(config.autonomy.as_str()),
+                )
+            );
         }
         // GOLD-ADAPT-LOWKEY-05 — ONTOLOGY adversarial self-challenge: flag any
         // speculative/unsupported claims in the final answer (STDERR, never
@@ -3518,10 +3793,7 @@ async fn run_post_reply_pipelines(
                     "tool_call_count": mcp_tool_calls,
                     "ts_unix": crate::time::now_unix_i64(),
                 })) {
-                    let hdr = crate::wal::make_header(
-                        EVENT_TYPE_AUTO_SKILL_EXTRACTED,
-                        &payload,
-                    );
+                    let hdr = crate::wal::make_header(EVENT_TYPE_AUTO_SKILL_EXTRACTED, &payload);
                     let _ = writer.append(hdr, payload).await;
                 }
                 // Stage + enqueue in the proactive review queue (dedup via proposal id).
@@ -3533,14 +3805,24 @@ async fn run_post_reply_pipelines(
                 let _ = crate::proactive::ProactiveQueue::modify(&queue_path, |q| {
                     // Persist only when stage_and_enqueue succeeds — same condition
                     // as the old `if let Ok(...) { let _ = q.save_to(...) }`.
-                    let staged = crate::proactive::action_staging::stage_and_enqueue(
-                        &home, proposal, q,
-                    )
-                    .is_ok();
+                    let staged =
+                        crate::proactive::action_staging::stage_and_enqueue(&home, proposal, q)
+                            .is_ok();
                     (staged, staged)
                 });
             }
         }
+    } else if tweaks.statusline.is_some() {
+        // Streaming keeps the done-sentinel on STDOUT; the human statusline
+        // remains an independent STDERR surface (GUI consumers discard it).
+        eprintln!(
+            "{}",
+            tweaks.render_statusline(
+                config.operator_id.as_deref(),
+                Some(&model_used),
+                Some(config.autonomy.as_str()),
+            )
+        );
     }
 
     // GOLD-ADAPT-OH-11: flip chat_onboarding_completed = true on first successful
@@ -3566,13 +3848,13 @@ pub async fn run_chat_with(
     provider: &dyn crate::providers::Provider,
 ) -> Result<()> {
     info!(provider = provider.name(), "neoth chat");
+    let first_tour_home = chat_neoth_home(args.config.as_deref());
 
     // R-05 (Session 24) — surface the first-tour greeting at most
     // once per wizard run. `consume_first_tour_marker` reads + deletes
     // the marker so subsequent chat invocations don't repeat it. Best-
     // effort: a missing or unreadable marker means "operator past the
     // onboarding moment", which is the safe default.
-    let first_tour_home = crate::config::FreedomConfig::default_neoth_home();
     if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
         println!("[neoth] {greeting}");
     }
@@ -3603,30 +3885,44 @@ pub async fn run_chat_with(
     // Round-3 v0.4 QU-11 / ARS-6 — if `--resume-from <hash>` is set,
     // hydrate the prior session's `MODE_CHECKPOINT` snapshot from
     // views.db + prepend a RESUME-CONTEXT block to the system prompt
-    // so the assistant knows the prior pipeline shape. Failures
-    // (missing checkpoint, unreadable views.db, hash mismatch) print
-    // a one-line warning + proceed without the context — the operator
-    // still gets a chat turn, just without the resume hydration.
+    // so the assistant knows the prior pipeline shape. Resume is authoritative:
+    // a bad/missing checkpoint or an unrecorded legacy MCP scope fails closed
+    // instead of silently running a normal turn with a different tool surface.
+    let mut resumed_mcp_scope: Option<Vec<String>> = None;
     if let Some(hash_prefix) = args.resume_from.clone() {
-        match hydrate_resume_context(&hash_prefix, args.system.as_deref()) {
-            Ok((banner, combined_system, catchup)) => {
-                println!("{banner}");
-                // PWF-02: print catchup line when something happened since the checkpoint.
-                if !catchup.is_empty() {
-                    println!(
-                        "[neoth] catchup: {} provider turns, {} tool calls, {} compactions since checkpoint",
-                        catchup.provider_turns, catchup.tool_calls, catchup.compactions,
-                    );
-                }
-                args.system = Some(combined_system);
-            }
-            Err(why) => {
-                println!("[neoth] resume-from `{hash_prefix}` failed: {why}");
-            }
+        let hydration = hydrate_resume_context(&hash_prefix, args.system.as_deref())
+            .map_err(|why| anyhow::anyhow!("resume-from `{hash_prefix}` failed: {why}"))?;
+        println!("{}", hydration.banner);
+        // PWF-02: print catchup line when something happened since the checkpoint.
+        if !hydration.catchup.is_empty() {
+            println!(
+                "[neoth] catchup: {} provider turns, {} tool calls, {} compactions since checkpoint",
+                hydration.catchup.provider_turns,
+                hydration.catchup.tool_calls,
+                hydration.catchup.compactions,
+            );
         }
+        args.system = Some(hydration.combined_system);
+        resumed_mcp_scope = Some(hydration.scoped_mcp_servers);
     }
 
-    let prompt = resolve_prompt(&args).await?;
+    let prompt = resolve_prompt(&args, &config, &first_tour_home).await?;
+
+    // One immutable MCP configuration snapshot per chat turn. Bad YAML is an
+    // operator error and fails loud instead of silently removing tools. This
+    // exact snapshot drives prompt injection, autoroute and resume metadata.
+    let current_mcp_servers = crate::mcp::McpServers::load().with_context(|| {
+        format!(
+            "load MCP server configuration at {}",
+            crate::mcp::McpServers::default_path().display()
+        )
+    })?;
+    let mcp_servers = match resumed_mcp_scope.as_deref() {
+        Some(scope) => restrict_mcp_servers_to_checkpoint(current_mcp_servers, scope)
+            .map_err(|why| anyhow::anyhow!("resume MCP scope validation failed: {why}"))?,
+        None => current_mcp_servers,
+    };
+    let scoped_mcp_servers = enabled_mcp_scope(&mcp_servers);
 
     // G-03 self-correction signal. If this turn reads as a CORRECTION of the
     // preceding reply (rule-based follow-up-tone scorer crosses the negative
@@ -3634,8 +3930,8 @@ pub async fn run_chat_with(
     // operator can audit where NEOTH underperformed
     // (`neoth wal show --type operator_feedback`). Fire-and-forget +
     // best-effort: it never blocks or fails the chat turn, and stores only a
-    // prompt_hash (no message-content leak). The adaptation consumer (profile
-    // cron biasing self-dev proposals on this signal) is a follow-on slice.
+    // prompt_hash (no message-content leak). The profile-adapt cron consumes
+    // sustained correction pressure and queues a reviewable self-dev proposal.
     let _ = crate::feedback::record_operator_correction(
         &crate::config::FreedomConfig::default_neoth_home(),
         &prompt,
@@ -3750,7 +4046,7 @@ pub async fn run_chat_with(
     let segment_path = args
         .wal_segment
         .clone()
-        .unwrap_or_else(|| wal_dir.join("000001.wal"));
+        .unwrap_or_else(|| crate::wal::writer::unique_standalone_segment_path(&wal_dir, "chat"));
     if let Some(parent) = segment_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
@@ -3767,9 +4063,6 @@ pub async fn run_chat_with(
     // Provider name at this point: the live Provider hasn't been
     // constructed yet (it's passed in via the `provider` argument) but
     // its name() is available from the &dyn Provider reference.
-    // MCP scope is empty at session-start — a follow-on checkpoint
-    // emitted inside run_mcp_dispatch_loop (after scope resolution) could
-    // add it, but that is a future slice.
     {
         use crate::recall::reconstruct::ModeCheckpoint;
         use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
@@ -3787,7 +4080,8 @@ pub async fn run_chat_with(
             mode: "chat".to_string(),
             provider_target: provider.name().to_string(),
             council_mode: council_mode_str,
-            scoped_mcp_servers: Vec::new(), // populated post-MCP-resolve; empty here
+            scoped_mcp_servers: scoped_mcp_servers.clone(),
+            mcp_scope_recorded: true,
             phase: "chat:session-start".to_string(),
             ts_unix: chat_ts_unix,
         };
@@ -3810,8 +4104,8 @@ pub async fn run_chat_with(
     let raw_event_id = if args.incognito {
         // ODY-09: no prompt stored; raw_event_id=0 signals "no anchor" to the
         // profile-learning pipeline (extract_window gates on valid non-zero ids).
-        let payload = serde_json::to_vec(&serde_json::json!({"ts_unix": now_unix()}))
-            .unwrap_or_default();
+        let payload =
+            serde_json::to_vec(&serde_json::json!({"ts_unix": now_unix()})).unwrap_or_default();
         let hdr = crate::wal::make_header(EVENT_TYPE_INCOGNITO_TURN, &payload);
         let _ = writer.append(hdr, payload).await;
         0i64
@@ -3909,7 +4203,8 @@ pub async fn run_chat_with(
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
     // Declared here so enforce_budget below uses it.
     let resolved_cap: u32 = {
-        let model_name_for_cap = model_for_estimate(&args, &config, tweaks.model_default.as_deref());
+        let model_name_for_cap =
+            model_for_estimate(&args, &config, tweaks.model_default.as_deref());
         crate::tokens::budget::effective_cap(
             provider.name(),
             &model_name_for_cap,
@@ -4035,6 +4330,7 @@ pub async fn run_chat_with(
         &prompt_bundle_hash,
         home,
         &writer,
+        &mcp_servers,
         slash_skill_name,
         // B22-TWEAKS-MODEL-01 — persona_override pre-loaded fail-loud at the chat boundary.
         tweaks.persona_override.clone(),
@@ -4048,7 +4344,8 @@ pub async fn run_chat_with(
     // batch sessions if run_chat_with is called in a loop). For the CLI path
     // this function is called once per invocation, so the set lives exactly
     // as long as the session.
-    let mut session_fired_once: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut session_fired_once: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     let (
         writer,
@@ -4060,7 +4357,8 @@ pub async fn run_chat_with(
         prompt,
         quota_path,
         hooks,
-        agent_model,
+        effective_model,
+        model_source,
         agent_allowed_tools,
         agent_disallowed_tools,
         pending_block_restorations,
@@ -4075,6 +4373,7 @@ pub async fn run_chat_with(
         &home,
         plan_attest_hash,
         agent_raw_layers,
+        skill_model,
         // B22-TWEAKS-MODEL-01 — tweaks loaded fail-loud above; propagate here.
         tweaks.model_default.clone(),
         &mut session_fired_once,
@@ -4092,7 +4391,8 @@ pub async fn run_chat_with(
             prompt,
             quota_path,
             hooks,
-            resolved_model,
+            effective_model,
+            model_source,
             agent_allowed_tools,
             agent_disallowed_tools,
             pending_block_restorations,
@@ -4106,89 +4406,41 @@ pub async fn run_chat_with(
             prompt,
             quota_path,
             hooks,
-            resolved_model,
+            effective_model,
+            model_source,
             agent_allowed_tools,
             agent_disallowed_tools,
             pending_block_restorations,
         ),
     };
-    // GOLD-CCPARITY-MODEL-02 / B22-TWEAKS-MODEL-01 — full priority chain:
-    //   dispatch > skill > CLI (args.model) > tweaks.model_default > freedom.yaml > provider default.
-    // model_source drives the WAL + retry/fallback diagnostics in dispatch_provider.
-    let agent_won = agent_model.is_some();
-    let skill_won = !agent_won && skill_model.is_some();
-    let tweaks_model_default = tweaks.model_default.clone();
-    let model_source: &'static str = if agent_won { "dispatch" }
-        else if skill_won { "skill" }
-        else if args.model.is_some() { "cli" }
-        else if tweaks_model_default.is_some() { "tweaks" }
-        else if config.provider_model.is_some() { "freedom" }
-        else { "provider_default" };
-    let effective_model = agent_model.or(skill_model);
-
-    // B22 fix — PROVIDER_REQUEST WAL now emitted here, after the full
-    // 6-tier model resolution (dispatch > skill > cli > tweaks > freedom >
-    // provider_default), so `model` and `model_source` exactly match the
-    // Request.model that dispatch_provider will send.  Frame ordering:
-    //   RAW_TEXT → [BUDGET_EXCEEDED when the token cap fires]
-    //   → COST_ESTIMATE_SHOWN → PERMISSION_GRANTED
-    //   → PROVIDER_REQUEST  (here, post-resolution, pre-network-call)
-    //   → TURN_JOURNAL_OPENED → COUNCIL_SKIP → PROVIDER_RESPONSE
-    // ODY-09: incognito turns skip PROVIDER_REQUEST.
-    // SEMANTIC (B22, intentional): a turn blocked in enforce_preflight
-    // (permission denied / quota / slash-handled / hook-blocked) emits NO
-    // PROVIDER_REQUEST — the frame records only requests that actually go to
-    // the wire. Blocked turns are still audited via COST_ESTIMATE_SHOWN +
-    // PERMISSION_DENIED. Pre-B22 a frame was written even for blocked turns.
-    if !args.incognito {
-        // Mirror the fold dispatch_provider performs via resolve_effective_model
-        // so the logged model is guaranteed to equal req.model on the wire.
-        let req_model: Option<String> = effective_model
-            .as_deref()
-            .or(args.model.as_deref())
-            .or(tweaks_model_default.as_deref())
-            .or(config.provider_model.as_deref())
-            .map(str::to_string);
-        // Cross-link to the 3-tier preflight estimate (COST_ESTIMATE_SHOWN is
-        // emitted before dispatch/skill resolution exists). When the two tiers
-        // diverge the WAL carries BOTH values in this one frame, and we warn so
-        // the operator can see the estimate ran on a different model.
-        let cost_estimate_model =
-            model_for_estimate(&args, &config, tweaks_model_default.as_deref());
-        if req_model.as_deref().is_some_and(|m| m != cost_estimate_model) {
-            tracing::warn!(
-                estimate_model = %cost_estimate_model,
-                effective_model = req_model.as_deref().unwrap_or("provider_default"),
-                model_source,
-                "B22: preflight cost estimate ran on a different model than the \
-                 dispatched request (dispatch/skill override resolved after the \
-                 cost gate)"
-            );
-        }
-        let req_payload = serde_json::to_vec(&serde_json::json!({
-            "operator_id": config.operator_id,
-            "provider": provider.name(),
-            "target": crate::profile::runner::extract_target_label(provider.name()),
-            "model": req_model,
-            "model_source": model_source,
-            "cost_estimate_model": cost_estimate_model,
-            "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
-            "prompt_bytes": prompt.len(),
-            "prompt_bundle_hash": prompt_bundle_hash,
-            "prompt_token_estimate": prompt_token_estimate,
-            "ts_unix": now_unix(),
-        }))?;
-        let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
-        writer
-            .append(req_header, req_payload)
-            .await
-            .context("write PROVIDER_REQUEST WAL frame")?;
-    }
+    // The actual 0x20 intent is emitted centrally for every concrete leaf,
+    // after cost/permission approval and immediately before transport dispatch.
+    // Carry the old turn-level business fields into those request-bound frames.
+    let turn_id = format!("{raw_event_id:016x}");
+    let provider_audit_context = crate::providers::cost_authorization::ProviderCallAuditContext {
+        source: Some("chat"),
+        call_type: Some("chat_provider_round"),
+        request_id: Some(turn_id.clone()),
+        operator_id: config.operator_id.clone(),
+        session_id: Some(current_session_id.clone()),
+        target: Some(crate::profile::runner::extract_target_label(provider.name()).to_owned()),
+        model_source: Some(model_source),
+        cost_estimate_model: Some(
+            effective_model
+                .clone()
+                .unwrap_or_else(|| "provider_default".to_owned()),
+        ),
+        prompt_bundle_hash: Some(prompt_bundle_hash.clone()),
+        prompt_token_estimate: Some(prompt_token_estimate),
+        incognito: args.incognito,
+        ..Default::default()
+    };
 
     let DispatchOutput {
         response_text,
         final_input_tokens,
         final_output_tokens,
+        provider_used,
         model_used,
         total_latency,
         writer,
@@ -4204,20 +4456,21 @@ pub async fn run_chat_with(
         &args,
         provider,
         &config,
+        home,
         writer,
         writer_join,
         quota_path,
         &prompt,
         &predicted_cost,
+        &mcp_servers,
         skill_tool_allowlist,
         // F4/D21 — turn id = the WAL event id, hex; filesystem-safe + unique/turn.
-        &format!("{raw_event_id:016x}"),
+        &turn_id,
         effective_model,
         // GOLD-CCPARITY-EFFORT-03: per-skill reasoning-budget (None = provider default).
         skill_effort,
-        // B22-TWEAKS-MODEL-01: tweaks.model_default + resolved source for cost/WAL.
-        tweaks_model_default,
         model_source,
+        provider_audit_context,
         // GOLD-CCPARITY-SA-DENY-01: agent tool lists from enforce_preflight.
         agent_allowed_tools,
         agent_disallowed_tools,
@@ -4234,6 +4487,7 @@ pub async fn run_chat_with(
         prompt,
         final_prompt,
         final_system,
+        provider_used,
         model_used,
         final_input_tokens,
         final_output_tokens,
@@ -4254,6 +4508,8 @@ pub async fn run_chat_with(
         mcp_tool_records,
         // B22-TWEAKS-MODEL-01 — thread tweaks model for ODY-16 token cap inside pipelines.
         tweaks.model_default.clone(),
+        // THEME-TWEAKS-GOLD — render from the same once-loaded snapshot.
+        &tweaks,
         // GOLD-ADAPT-SKILL-09 — blocks redacted at PreProviderCall by BlockFilter
         // hooks; restored inside run_post_reply_pipelines after PostProviderCall
         // hook stage so WAL/recall never see placeholders.
@@ -4282,65 +4538,47 @@ async fn name_session_best_effort(
             return;
         }
     };
-    // GR-122: the utility (session-naming) call is a real provider round-trip,
-    // so it must clear the same PaidProviderCall autonomy gate as the main path
-    // — otherwise a Strict operator who blocked paid calls still has naming fire
-    // silently. eur_estimate 0.0 (utility provider is locally-routed/cheap by
-    // design); Strict (Deny) blocks the action class, others auto-confirm.
-    {
-        use crate::permissions::{Action, Gate};
-        let action = Action::PaidProviderCall { eur_estimate: 0.0 };
-        let gate = Gate::for_level(config.autonomy).with_confirm(Gate::auto_confirm());
-        if gate.check(&action, Some(writer)).await.is_err() {
-            tracing::debug!("session-naming: blocked by autonomy gate");
-            return;
-        }
-    }
     let req = crate::providers::Request {
         prompt: format!(
             "Give a terse 3-6 word title for a conversation that began with the message below. \
              Reply with ONLY the title — no quotes, no trailing punctuation.\n\nMessage: {}",
             opening.chars().take(500).collect::<String>()
         ),
+        model: crate::providers::utility_model_for_config(config),
         ..Default::default()
     };
-    // GR-036: this is a real provider round-trip, so it must leave the same
-    // PROVIDER_REQUEST/RESPONSE audit trail as every other call. Hashed
-    // metadata only (same posture as the main path); `call_type` lets WAL
-    // consumers separate naming calls from chat turns. Best-effort like the
-    // rest of this fn — a WAL hiccup never blocks naming.
-    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
-        "operator_id": config.operator_id,
-        "provider": provider.name(),
-        "call_type": "session_naming",
-        // B22 parity: the naming call sends Request.model = None, so the wire
-        // model is freedom's provider_model (or the provider's builtin default
-        // when unset — logged as null). No dispatch/skill/CLI tiers run here.
-        "model": config.provider_model,
-        "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
-        "prompt_bytes": req.prompt.len(),
-        "ts_unix": now_unix(),
-    })) {
-        let header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &payload);
-        if let Err(e) = writer.append(header, payload).await {
-            tracing::debug!(error = %e, "session-naming: PROVIDER_REQUEST frame failed");
-        }
-    }
-    let completion =
-        tokio::time::timeout(std::time::Duration::from_secs(12), provider.complete(req)).await;
-    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
-        "provider": provider.name(),
-        "call_type": "session_naming",
-        "ok": matches!(&completion, Ok(Ok(_))),
-        "ts_unix": now_unix(),
-    })) {
-        let header = crate::wal::make_header(EVENT_TYPE_PROVIDER_RESPONSE, &payload);
-        if let Err(e) = writer.append(header, payload).await {
-            tracing::debug!(error = %e, "session-naming: PROVIDER_RESPONSE frame failed");
-        }
-    }
+    let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+        provider.as_ref(),
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+        )
+        .with_audit_context(
+            crate::providers::cost_authorization::ProviderCallAuditContext {
+                source: Some("chat"),
+                call_type: Some("session_naming"),
+                session_id: Some(session_id.to_owned()),
+                operator_id: config.operator_id.clone(),
+                target: Some(
+                    crate::profile::runner::extract_target_label(provider.name()).to_owned(),
+                ),
+                ..Default::default()
+            },
+        ),
+        crate::providers::utility_model_for_config(config),
+        "session_naming",
+    );
+    let completion = tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        authorized_provider.complete(req),
+    )
+    .await;
     let title = match completion {
-        Ok(Ok(c)) => sanitize_session_title(&c.text),
+        Ok(Ok(c)) if c.identity.is_bound() => sanitize_session_title(&c.text),
+        Ok(Ok(_)) => {
+            tracing::debug!("session-naming: provider returned no authenticated identity");
+            return;
+        }
         Ok(Err(e)) => {
             tracing::debug!(error = %e, "session-naming: completion failed");
             return;
@@ -4439,7 +4677,11 @@ async fn run_hook_stage(
     let active_hooks: Vec<crate::hooks::schema::HookDef> = hooks
         .iter()
         .filter(|h| {
-            if h.once() && h.stage == stage && h.is_enabled() && session_fired_once.contains(&h.name) {
+            if h.once()
+                && h.stage == stage
+                && h.is_enabled()
+                && session_fired_once.contains(&h.name)
+            {
                 skipped_once_names.push(h.name.clone());
                 false // suppress: exclude from dispatcher
             } else {
@@ -4467,7 +4709,11 @@ async fn run_hook_stage(
     // The blocks are passed back to the caller via HookOutcome::Continue.
     let (outcome, filtered_blocks) =
         crate::hooks::dispatcher::run_stage_with_config_returning_blocks(
-            stage, body, &active_hooks, crate::hooks::dispatcher::current_global_invoker().map(|a| a.as_ref()), false,
+            stage,
+            body,
+            &active_hooks,
+            crate::hooks::dispatcher::current_global_invoker().map(|a| a.as_ref()),
+            false,
         )?;
     match outcome {
         crate::hooks::StageOutcome::Continue { body: after, hits } => {
@@ -4593,18 +4839,15 @@ async fn record_quota_exceeded(
     );
 }
 
-/// Resolve the best-known model string for cost estimation at call sites where
-/// the full 6-tier dispatch/skill resolution is not yet available.
+/// Resolve the best-known model string for secondary accounting call sites
+/// where dispatch/skill resolution is not available.
 ///
 /// Priority: CLI `--model` > `tweaks.model_default` > `freedom.yaml::provider_model`
-/// > `"unknown"` (causes the pricing lookup to return `None` so the estimate
-/// defaults to zero rather than panicking on an unrecognised model name).
+/// > `"unknown"` (causes the pricing lookup to use the conservative cloud
+/// fallback rather than silently treating an unrecognised paid model as free).
 ///
-/// This is an intentional 3-tier (cli > tweaks > freedom) best-effort used
-/// inside `enforce_preflight` where dispatch/skill models are not yet resolved.
-/// The authoritative 6-tier model (`dispatch > skill > cli > tweaks > freedom >
-/// provider_default`) is computed in `run_chat_with` after `enforce_preflight`
-/// returns and is recorded in the PROVIDER_REQUEST WAL frame.
+/// The PaidProviderCall preflight does not use this helper: it resolves and
+/// binds the full dispatch > skill > CLI > tweaks > freedom chain first.
 ///
 /// Pass `None` for `tweaks_model` at call sites where tweaks are not in scope.
 fn model_for_estimate(
@@ -4654,13 +4897,25 @@ async fn emit_stream_chunk(
     Ok(())
 }
 
-async fn resolve_prompt(args: &ChatArgs) -> Result<String> {
+fn chat_neoth_home(config_path: Option<&std::path::Path>) -> PathBuf {
+    config_path
+        .and_then(std::path::Path::parent)
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(FreedomConfig::default_neoth_home)
+}
+
+async fn resolve_prompt(
+    args: &ChatArgs,
+    config: &FreedomConfig,
+    neoth_home: &std::path::Path,
+) -> Result<String> {
     let base = resolve_prompt_base(args).await?;
     // GOLD-ADAPT-ODY-03 — prepend extracted attachment blocks.
     if args.attach.is_empty() {
         return Ok(base);
     }
-    let block = render_attachments_block(&args.attach).await;
+    let block = render_attachments_block(&args.attach, config, neoth_home).await;
     if block.is_empty() {
         Ok(base)
     } else {
@@ -4675,9 +4930,37 @@ const ATTACH_TEXT_CAP: usize = 8_000;
 /// Extract each attached file into a labelled prompt block. Best-effort
 /// per file — an unreadable attachment becomes an inline error note, never
 /// a turn abort (the operator sees exactly what the model saw).
-async fn render_attachments_block(paths: &[PathBuf]) -> String {
+async fn render_attachments_block(
+    paths: &[PathBuf],
+    config: &FreedomConfig,
+    neoth_home: &std::path::Path,
+) -> String {
     let backends = crate::cli::ingest::default_backends();
     let mut out = String::new();
+    let needs_audio = paths.iter().any(|path| {
+        matches!(
+            crate::cli::ingest::detect_kind(path),
+            Some(crate::media::AssetKind::Audio | crate::media::AssetKind::Video)
+        )
+    });
+    let stt_audit = if needs_audio {
+        let wal_dir = neoth_home.join("wal");
+        let opened = (|| -> anyhow::Result<_> {
+            std::fs::create_dir_all(&wal_dir)?;
+            Ok(crate::wal::writer::spawn(
+                wal_dir.join(format!("{:020}.wal", crate::time::now_unix_ns())),
+            )?)
+        })();
+        match opened {
+            Ok(pair) => Some(pair),
+            Err(error) => {
+                tracing::warn!(%error, "chat attachment: STT audit writer unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
     for p in paths {
         let name = p
             .file_name()
@@ -4690,7 +4973,33 @@ async fn render_attachments_block(paths: &[PathBuf]) -> String {
                     mime: crate::cli::ingest::mime_hint(kind, p),
                     path: p.clone(),
                 };
-                match crate::media::route_to_first_match(&backends, &asset).await {
+                let writer = stt_audit.as_ref().map(|(writer, _)| writer.clone());
+                let extraction = match kind {
+                    crate::media::AssetKind::Audio => {
+                        crate::media::audio::AudioExtractor
+                            .extract_with_context(
+                                &asset,
+                                &config.media,
+                                &config.updater,
+                                neoth_home,
+                                writer,
+                            )
+                            .await
+                    }
+                    crate::media::AssetKind::Video => {
+                        crate::media::video::VideoExtractor
+                            .extract_with_context(
+                                &asset,
+                                &config.media,
+                                &config.updater,
+                                neoth_home,
+                                writer,
+                            )
+                            .await
+                    }
+                    _ => crate::media::route_to_first_match(&backends, &asset).await,
+                };
+                match extraction {
                     Ok(ex) if !ex.text.is_empty() => attachment_block(name, &ex.text),
                     Ok(_) => format!("[Attachment {name}: no text extracted]\n"),
                     Err(e) => format!("[Attachment {name}: extraction failed — {e}]\n"),
@@ -4702,12 +5011,16 @@ async fn render_attachments_block(paths: &[PathBuf]) -> String {
             None => match std::fs::read_to_string(p) {
                 Ok(text) if !text.trim().is_empty() => attachment_block(name, &text),
                 Ok(_) => format!("[Attachment {name}: empty file]\n"),
-                Err(e) => format!(
-                    "[Attachment {name}: unsupported or unreadable — {e}]\n"
-                ),
+                Err(e) => format!("[Attachment {name}: unsupported or unreadable — {e}]\n"),
             },
         };
         out.push_str(&rendered);
+    }
+    if let Some((writer, join)) = stt_audit {
+        drop(writer);
+        if let Err(error) = join.await {
+            tracing::warn!(%error, "chat attachment: STT audit writer task panicked");
+        }
     }
     out
 }
@@ -4783,6 +5096,9 @@ fn sum_council_tokens(
 struct ProviderHemisphere {
     provider: Box<dyn crate::providers::Provider>,
     base_req: crate::providers::Request,
+    /// B22 — exact per-leaf paid-call authorization, cloned through every
+    /// recursive sub-council and one-shot recovery/refine wrapper.
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     /// E-2 Phase 2 (Session 13) — operator config kept around so this
     /// hemisphere's `ask_with_depth` can recurse: when `depth > 1` it
     /// builds three sub-hemispheres for Left/Right/Cerebellum from
@@ -4836,21 +5152,40 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         // applied here (not in base_req) so recursion's sub-hemispheres,
         // built from base_req, stay voice-free until they apply their own.
         req.system = compose_voice_system(req.system, self.voice);
+        if req.model.is_none() {
+            req.model = self.provider.default_model().map(str::to_owned);
+        }
+        if req.model.is_none() {
+            return Err(format!(
+                "provider `{provider_name}` has no explicit request model or declared default"
+            ));
+        }
         // QM-9 Phase 1.5 follow-on: council debate path now also
         // persists usage events. Each hemisphere call counts —
         // operators on a Pick #8 council see the per-hemisphere
         // burn instead of one aggregate "council ran" row.
         let call_started = std::time::Instant::now();
-        let raw = self.provider.complete(req).await;
+        let raw = self
+            .provider
+            .complete_authorized(req, &self.authorizer, "council_leaf")
+            .await;
         let elapsed_ms = call_started.elapsed().as_millis() as u64;
         match raw {
             Ok(c) => {
+                if !c.identity.is_bound() {
+                    if let Some(p) = permit {
+                        p.record_failure();
+                    }
+                    return Err(format!(
+                        "provider `{provider_name}` returned no authenticated response identity"
+                    ));
+                }
                 if let Some(p) = permit {
                     p.record_success();
                 }
                 crate::daemon::usage_log::record_provider_call_best_effort(
-                    provider_name,
-                    &c.model,
+                    &c.identity.provider,
+                    &c.identity.wire_model,
                     c.input_tokens,
                     c.output_tokens,
                     elapsed_ms,
@@ -4871,8 +5206,8 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 // token budget. `latency_ms` is clamped (a call can't take 49d).
                 crate::domain_events::publish(
                     crate::domain_events::DomainEvent::ProviderResponded {
-                        provider: provider_name.to_string(),
-                        model: c.model.clone(),
+                        provider: c.identity.provider.clone(),
+                        model: c.identity.wire_model.clone(),
                         input_tokens: c.input_tokens.unwrap_or(0),
                         output_tokens: c.output_tokens.unwrap_or(0),
                         latency_ms: elapsed_ms.min(u64::from(u32::MAX)) as u32,
@@ -4975,6 +5310,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     outer,
                     HemisphereRole::Left,
                     &self.base_req,
+                    self.authorizer.clone(),
                 )
                 .await;
                 let r = build_sub_hemisphere_with_config(
@@ -4982,6 +5318,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     outer,
                     HemisphereRole::Right,
                     &self.base_req,
+                    self.authorizer.clone(),
                 )
                 .await;
                 let c = build_sub_hemisphere_with_config(
@@ -4989,6 +5326,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     outer,
                     HemisphereRole::Cerebellum,
                     &self.base_req,
+                    self.authorizer.clone(),
                 )
                 .await;
                 let unwrap = |res: Result<ProviderHemisphere>, name: &str| match res {
@@ -5006,18 +5344,21 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     std::sync::Arc::clone(config),
                     HemisphereRole::Left,
                     &self.base_req,
+                    self.authorizer.clone(),
                 )
                 .await;
                 let r = build_hemisphere_with_config(
                     std::sync::Arc::clone(config),
                     HemisphereRole::Right,
                     &self.base_req,
+                    self.authorizer.clone(),
                 )
                 .await;
                 let c = build_hemisphere_with_config(
                     std::sync::Arc::clone(config),
                     HemisphereRole::Cerebellum,
                     &self.base_req,
+                    self.authorizer.clone(),
                 )
                 .await;
                 let unwrap = |res: Result<ProviderHemisphere>, name: &str| match res {
@@ -5041,7 +5382,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
             &sub_right,
             &sub_cere,
             None, // inner council uses the cheap Jaccard dissent
-            &[], // inner council: no groundtruth re-injection (outer already tagged)
+            &[],  // inner council: no groundtruth re-injection (outer already tagged)
         )
         .await;
         // Aggregation: winning_text on Consensus → use it.
@@ -5198,11 +5539,22 @@ async fn build_hemisphere(
     config: &FreedomConfig,
     role: crate::config::inference::HemisphereRole,
     req: &crate::providers::Request,
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<ProviderHemisphere> {
     let provider = crate::providers::from_config_for_role(config, role).await?;
+    let mut base_req = req.clone();
+    if base_req.model.is_none() {
+        base_req.model = config
+            .inference
+            .slot_for(role)
+            .model
+            .clone()
+            .or_else(|| provider.default_model().map(str::to_owned));
+    }
     Ok(ProviderHemisphere {
         provider,
-        base_req: req.clone(),
+        base_req,
+        authorizer,
         config: None,
         outer_role: None,
         // GOLD-WIRE-04: this role's specialist voice, applied at leaf `ask`.
@@ -5218,8 +5570,9 @@ pub(crate) async fn build_hemisphere_for_loop(
     config: &FreedomConfig,
     role: crate::config::inference::HemisphereRole,
     req: &crate::providers::Request,
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<Box<dyn crate::council::orchestrator::HemisphereProvider>> {
-    let h = build_hemisphere(config, role, req).await?;
+    let h = build_hemisphere(config, role, req, authorizer).await?;
     Ok(Box::new(h))
 }
 
@@ -5236,6 +5589,7 @@ async fn build_hemisphere_with_config(
     config: std::sync::Arc<FreedomConfig>,
     role: crate::config::inference::HemisphereRole,
     req: &crate::providers::Request,
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<ProviderHemisphere> {
     let provider = crate::providers::from_config_for_role(config.as_ref(), role).await?;
     // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
@@ -5248,6 +5602,14 @@ async fn build_hemisphere_with_config(
     // `outer_role: None` and skip this, so recursion doesn't double-inject.
     // Best-effort → leaves base_req untouched on empty recall.
     let mut base_req = req.clone();
+    if base_req.model.is_none() {
+        base_req.model = config
+            .inference
+            .slot_for(role)
+            .model
+            .clone()
+            .or_else(|| provider.default_model().map(str::to_owned));
+    }
     if let Some(frag) = hemisphere_recall_fragment(role, &req.prompt).await {
         base_req.system = match base_req.system.take() {
             Some(s) if !s.trim().is_empty() => Some(format!("{s}\n\n{frag}")),
@@ -5257,6 +5619,7 @@ async fn build_hemisphere_with_config(
     Ok(ProviderHemisphere {
         provider,
         base_req,
+        authorizer,
         config: Some(config),
         outer_role: Some(role),
         voice,
@@ -5279,6 +5642,7 @@ async fn build_sub_hemisphere_with_config(
     outer_role: crate::config::inference::HemisphereRole,
     inner_role: crate::config::inference::HemisphereRole,
     req: &crate::providers::Request,
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<ProviderHemisphere> {
     let provider =
         crate::providers::from_config_for_sub_role(config.as_ref(), outer_role, inner_role).await?;
@@ -5288,9 +5652,19 @@ async fn build_sub_hemisphere_with_config(
     // the recursion tier; otherwise it falls back to the inner role's own
     // outer-level slot voice (never the parent hemisphere's — no leak).
     let voice = config.inference.slot_for_sub(outer_role, inner_role).voice;
+    let mut base_req = req.clone();
+    if base_req.model.is_none() {
+        base_req.model = config
+            .inference
+            .slot_for_sub(outer_role, inner_role)
+            .model
+            .clone()
+            .or_else(|| provider.default_model().map(str::to_owned));
+    }
     Ok(ProviderHemisphere {
         provider,
-        base_req: req.clone(),
+        base_req,
+        authorizer,
         config: Some(config),
         outer_role: None,
         voice,
@@ -5317,11 +5691,24 @@ async fn build_sub_hemisphere_with_config(
 /// `profile_block_for_callosum` is the async wrapper that callers
 /// await. Tests cover the sync helper directly so they don't need a
 /// tokio runtime spawn-blocking pool.
-async fn profile_block_for_callosum() -> Option<String> {
-    tokio::task::spawn_blocking(profile_block_for_callosum_sync)
-        .await
-        .ok()
-        .flatten()
+async fn profile_block_for_callosum(
+    db_path: PathBuf,
+    disabled_categories: Vec<String>,
+) -> Option<String> {
+    match tokio::task::spawn_blocking(move || {
+        profile_block_for_callosum_sync(&db_path, &disabled_categories)
+    })
+    .await
+    {
+        Ok(block) => block,
+        Err(error) => {
+            warn!(
+                error = %error,
+                "callosum profile lookup worker failed; continuing without profile injection"
+            );
+            None
+        }
+    }
 }
 
 /// Synchronous core of [`profile_block_for_callosum`] — pure
@@ -5336,24 +5723,40 @@ async fn profile_block_for_callosum() -> Option<String> {
 /// drift-guard on the primitive's tests now covers this call site
 /// too. `MAX_CLAIMS` stays a chat-callosum-local constant since it's
 /// tunable independently of the gate floor.
-fn profile_block_for_callosum_sync() -> Option<String> {
+fn profile_block_for_callosum_sync(
+    db_path: &std::path::Path,
+    disabled_categories: &[String],
+) -> Option<String> {
     const MAX_CLAIMS: usize = 8;
-    let db_path = crate::memory::store::default_path();
-    let conn = crate::memory::store::open(&db_path).ok()?;
-    // ADV-05 (Session 28): load the operator's freedom.yaml so the PII
-    // gate honours `profile.pii_categories_disabled`. Fall back to an
-    // empty slice when config can't load — the gate is opt-in, so the
-    // safe default is "no filter" (matches v1.0 behaviour pre-ADV-05).
-    let disabled_categories = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.profile.pii_categories_disabled)
-        .unwrap_or_default();
-    let claims = crate::profile::lookup::top_claims_for_chat_with_pii_gate(
+    let conn = match crate::memory::store::open(db_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            warn!(
+                error = %error,
+                path = %db_path.display(),
+                "callosum profile database unavailable; continuing without profile injection"
+            );
+            return None;
+        }
+    };
+    // ADV-05: consume the already-validated active turn config. Reloading the
+    // process-default freedom.yaml here both hid parse failures and ignored a
+    // custom `--config` home, which could bypass the operator's PII exclusions.
+    let claims = match crate::profile::lookup::top_claims_for_chat_with_pii_gate(
         &conn,
         crate::profile::injection::DEFAULT_INJECTION_FLOOR,
         MAX_CLAIMS,
-        &disabled_categories,
-    )
-    .ok()?;
+        disabled_categories,
+    ) {
+        Ok(claims) => claims,
+        Err(error) => {
+            warn!(
+                error = %error,
+                "callosum profile query failed; continuing without profile injection"
+            );
+            return None;
+        }
+    };
     if claims.is_empty() {
         return None;
     }
@@ -5473,6 +5876,147 @@ pub(crate) fn maybe_repo_context_block_at(
     Some(block)
 }
 
+/// GOLD-ADAPT-GRAPH-02 — load the persisted CallGraph findings consumed by
+/// the real `improve_codebase_architecture` skill path. Unlike general
+/// repo-context, this is skill-scoped rather than gated by
+/// `auto_context_max_files`: activating the architecture workflow is the
+/// explicit request to run its bounded local analysis.
+pub(crate) fn maybe_architecture_findings_for_skill(
+    skill_id: Option<&str>,
+    current_path: &std::path::Path,
+) -> Option<crate::code_map::recall::ArchitectureFindings> {
+    let db_path = crate::code_map::persist::default_path();
+    maybe_architecture_findings_for_skill_at(skill_id, &db_path, current_path)
+}
+
+fn maybe_architecture_findings_for_skill_at(
+    skill_id: Option<&str>,
+    db_path: &std::path::Path,
+    current_path: &std::path::Path,
+) -> Option<crate::code_map::recall::ArchitectureFindings> {
+    if skill_id != Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID) || !db_path.exists() {
+        return None;
+    }
+    let conn = match crate::code_map::persist::open(db_path) {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %db_path.display(),
+                "GRAPH-02: architecture code-map open failed; no cycle context injected"
+            );
+            return None;
+        }
+    };
+    let canonical_path = match std::fs::canonicalize(current_path) {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                current_path = %current_path.display(),
+                "GRAPH-02: current repository path could not be canonicalized; refusing fallback"
+            );
+            return None;
+        }
+    };
+    let mut roots = match conn.prepare("SELECT root FROM code_map_roots ORDER BY root ASC") {
+        Ok(statement) => statement,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "GRAPH-02: persisted root lookup failed; no cycle context injected"
+            );
+            return None;
+        }
+    };
+    let persisted_root = match roots.query_map([], |row| row.get::<_, String>(0)) {
+        Ok(rows) => rows
+            .filter_map(|row| row.ok())
+            .filter(|root| canonical_path.starts_with(std::path::Path::new(root)))
+            .max_by_key(|root| std::path::Path::new(root).components().count()),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "GRAPH-02: persisted root rows could not be read; no cycle context injected"
+            );
+            return None;
+        }
+    };
+    let Some(persisted_root) = persisted_root else {
+        tracing::debug!(
+            current_path = %canonical_path.display(),
+            "GRAPH-02: current path has no persisted code-map root; refusing cross-repo fallback"
+        );
+        return None;
+    };
+    match crate::code_map::recall::architecture_findings_for_skill(
+        &conn,
+        skill_id,
+        &persisted_root,
+        crate::code_map::recall::ARCHITECTURE_CYCLE_LIMIT,
+    ) {
+        Ok(findings) => findings,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "GRAPH-02: persisted cycle scan failed; no cycle context injected"
+            );
+            None
+        }
+    }
+}
+
+/// Append GRAPH-02 findings after ordinary relevant-file context. Keeping this
+/// as one seam prevents CLI and channel assembly from drifting on delimiters.
+pub(crate) fn append_architecture_findings(
+    repo_context: Option<String>,
+    findings: &crate::code_map::recall::ArchitectureFindings,
+) -> Option<String> {
+    Some(match repo_context {
+        Some(mut context) => {
+            if !context.ends_with('\n') {
+                context.push('\n');
+            }
+            context.push('\n');
+            context.push_str(&findings.block);
+            context
+        }
+        None => findings.block.clone(),
+    })
+}
+
+/// Durable metadata-only proof that the automatic cycle evidence reached a
+/// prompt. Exact symbols/paths remain local; `context_hash_xxh3` binds the WAL
+/// row to the injected block without copying repository structure into audit.
+pub(crate) async fn emit_architecture_findings_audit(
+    writer: &crate::wal::writer::WalWriterHandle,
+    findings: &crate::code_map::recall::ArchitectureFindings,
+    surface: &'static str,
+) {
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "skill_id": crate::code_map::recall::ARCHITECTURE_SKILL_ID,
+        "surface": surface,
+        "roots_scanned": findings.roots_scanned,
+        "edges_scanned": findings.edges_scanned,
+        "cycles_injected": findings.cycles_injected,
+        "truncated": findings.truncated,
+        "context_hash_xxh3": xxhash_rust::xxh3::xxh3_64(findings.block.as_bytes()),
+        "ts_unix": crate::time::now_unix_i64(),
+    })) {
+        Ok(payload) => payload,
+        Err(e) => {
+            tracing::warn!(error = %e, "GRAPH-02: architecture audit payload failed");
+            return;
+        }
+    };
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ArchitectureCyclesInjected as u8)
+        .build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "GRAPH-02: architecture audit WAL append failed");
+    }
+}
+
 /// GOLD-ADAPT-MEM-12 — assemble a per-session "guidance" context block from the
 /// operator's own recent activity: the last few session hindsight cards (NEOTH's
 /// "lessons-7d" equivalent — there is no separate lessons store; the hindsight
@@ -5557,11 +6101,7 @@ fn render_guidance_block(
             > 0
     });
 
-    if recent_cards.is_empty()
-        && pending_contradictions == 0
-        && !has_unhealthy
-        && !has_signals
-    {
+    if recent_cards.is_empty() && pending_contradictions == 0 && !has_unhealthy && !has_signals {
         return None;
     }
     let mut s = String::from(
@@ -5596,16 +6136,10 @@ fn render_guidance_block(
         if total_signals > 0 {
             s.push_str("### 24h system signals\n");
             if snap.cron_errors_24h > 0 {
-                s.push_str(&format!(
-                    "- {} cron job failure(s)\n",
-                    snap.cron_errors_24h
-                ));
+                s.push_str(&format!("- {} cron job failure(s)\n", snap.cron_errors_24h));
             }
             if snap.crash_alerts_24h > 0 {
-                s.push_str(&format!(
-                    "- {} crash alert(s)\n",
-                    snap.crash_alerts_24h
-                ));
+                s.push_str(&format!("- {} crash alert(s)\n", snap.crash_alerts_24h));
             }
             if snap.token_anomaly_24h > 0 {
                 s.push_str(&format!(
@@ -5656,7 +6190,8 @@ async fn maybe_recall_block(prompt: &str) -> Option<String> {
 async fn maybe_recall_block_at(prompt: &str, db_path: &std::path::Path) -> Option<String> {
     use crate::memory::recall_gate::{RecallTier, classify_recall_need};
     // MEM-09 gate: a status/identity/greeting turn needs no memory recall.
-    if classify_recall_need(prompt) == RecallTier::Skip {
+    let recall_tier = classify_recall_need(prompt);
+    if recall_tier == RecallTier::Skip {
         return None;
     }
     if !db_path.exists() {
@@ -5666,11 +6201,14 @@ async fn maybe_recall_block_at(prompt: &str, db_path: &std::path::Path) -> Optio
     // mirroring `answer_conversational_recall`. A JoinError degrades to None.
     let prompt_owned = prompt.to_string();
     let db_owned = db_path.to_path_buf();
-    let output =
-        tokio::task::spawn_blocking(move || recall_lanes_for_block(&db_owned, &prompt_owned))
-            .await
-            .ok()
-            .flatten()?;
+    let output = match tokio::task::spawn_blocking(move || {
+        recall_lanes_for_block(&db_owned, &prompt_owned, recall_tier == RecallTier::Multi)
+    })
+    .await
+    {
+        Ok(Ok(Some(output))) => output,
+        Ok(Ok(None)) | Ok(Err(_)) | Err(_) => return None,
+    };
     Some(render_recall_block_layered(&output))
 }
 
@@ -5683,22 +6221,28 @@ async fn maybe_recall_block_at(prompt: &str, db_path: &std::path::Path) -> Optio
 fn recall_lanes_for_block(
     db_path: &std::path::Path,
     prompt: &str,
-) -> Option<crate::cli::recall::RecallOutput> {
+    count_true_miss: bool,
+) -> anyhow::Result<Option<crate::cli::recall::RecallOutput>> {
     // Per-lane cap so a large store can't bloat the prompt. The budget-aware
     // Block::D degradation is a separate later refinement; length-bounded
     // snippets keep the block comfortably under the cap.
     const RECALL_BLOCK_LIMIT: usize = 5;
-    let conn = crate::memory::store::open(db_path).ok()?;
+    let conn = crate::memory::store::open(db_path)?;
     let plan = crate::memory::region_router::route_query(prompt);
     let mut output =
-        crate::cli::recall::query_three_lanes(&conn, &plan, prompt, RECALL_BLOCK_LIMIT);
+        crate::cli::recall::query_three_lanes_checked(&conn, &plan, prompt, RECALL_BLOCK_LIMIT)?;
     // GOLD-FEAT-12 D-block dedup: drop episodes whose text already appears as a
     // canonical fact (or an earlier episode) before the block is rendered.
     dedup_recall_lanes(&mut output);
     if output.is_empty() {
-        None
+        if count_true_miss {
+            crate::analytics::babel::signals::emit(
+                crate::analytics::babel::signals::SignalKind::MemoryRecallMiss,
+            );
+        }
+        Ok(None)
     } else {
-        Some(output)
+        Ok(Some(output))
     }
 }
 
@@ -6038,11 +6582,7 @@ pub(crate) fn select_winner_role_agnostic(
     // so winner choice and surfaced score stay consistent.
     let mut scores = scores;
     if let Some(cfg) = council_cfg {
-        crate::council::quality_score::apply_locality_weights(
-            &mut scores,
-            &outcome.responses,
-            cfg,
-        );
+        crate::council::quality_score::apply_locality_weights(&mut scores, &outcome.responses, cfg);
     }
 
     // ConsensusOrBest: prefer the Verdict's winning_text when
@@ -6388,7 +6928,9 @@ fn mif_disambiguation(config: &FreedomConfig, prompt: &str) -> Option<String> {
 pub(crate) async fn dispatch_council_with_recovery(
     req: &crate::providers::Request,
     config: &FreedomConfig,
+    neoth_home: &std::path::Path,
     writer: &crate::wal::writer::WalWriterHandle,
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<String> {
     // Pick #8 F8 (Session 14 Pick #20) — channel-path pre-flight
     // diversity audit. Mirrors the CLI-path emission in `run_chat_with`
@@ -6406,7 +6948,7 @@ pub(crate) async fn dispatch_council_with_recovery(
         tracing::info!("MIF: conflicted intent — council skipped, disambiguation surfaced");
         return Ok(message);
     }
-    let outcome = run_council_debate(config, req).await?;
+    let outcome = run_council_debate(config, req, &authorizer).await?;
     // KF-01 (COR-17): persist verbatim hemisphere transcripts (opt-in) so
     // `neoth council replay` can show the actual prose. No-op unless
     // freedom.yaml::council.persist_transcripts = true. Emitted here so BOTH
@@ -6509,8 +7051,9 @@ pub(crate) async fn dispatch_council_with_recovery(
         .await;
         // SP-5 (Session 14) — self-reflect refinement pass.
         // Threshold + kill-switch gated; fail-safe on any error.
-        let mut final_text = if crate::council::self_reflect::should_refine(config, winner.score, 0) {
-            match build_hemisphere(config, winner.role, req).await {
+        let mut final_text = if crate::council::self_reflect::should_refine(config, winner.score, 0)
+        {
+            match build_hemisphere(config, winner.role, req, authorizer.clone()).await {
                 Ok(reflect_hemisphere) => {
                     let refined = crate::council::self_reflect::refine(
                         &req.prompt,
@@ -6552,7 +7095,7 @@ pub(crate) async fn dispatch_council_with_recovery(
                     && crate::council::self_reflect::should_gate(config, &self_score)
                 {
                     redos += 1;
-                    match build_hemisphere(config, winner.role, req).await {
+                    match build_hemisphere(config, winner.role, req, authorizer.clone()).await {
                         Ok(h) => {
                             let cand =
                                 crate::council::self_reflect::refine(&req.prompt, &final_text, &h)
@@ -6642,6 +7185,7 @@ pub(crate) async fn dispatch_council_with_recovery(
             let loop_cfg = crate::loop_engine::engine::LoopConfig::for_dissent_invoke(
                 config.autonomy,
                 FreedomConfig::default_neoth_home(),
+                config.loop_config.tool_call_budget,
             );
             tracing::info!(
                 dissent = outcome.dissent.0,
@@ -6674,6 +7218,7 @@ pub(crate) async fn dispatch_council_with_recovery(
                 &crate::mcp::McpServers::default(),
                 writer,
                 config,
+                authorizer.clone(),
                 // P4 — interactive chat session: honour the elicitation gate.
                 if config.elicitation.enabled {
                     &crate::cli::elicitation::ElicitationHandler::Cli
@@ -6748,7 +7293,12 @@ pub(crate) async fn dispatch_council_with_recovery(
                             .unwrap_or("")
                     });
                 let prompt_hash = prompt_hash_outer;
-                let profile_block = profile_block_for_callosum().await.unwrap_or_default();
+                let profile_block = profile_block_for_callosum(
+                    neoth_home.join("views.db"),
+                    config.profile.pii_categories_disabled.clone(),
+                )
+                .await
+                .unwrap_or_default();
                 let profile_opt = if profile_block.is_empty() {
                     None
                 } else {
@@ -6758,6 +7308,7 @@ pub(crate) async fn dispatch_council_with_recovery(
                     config,
                     crate::config::inference::HemisphereRole::Cerebellum,
                     req,
+                    authorizer.clone(),
                 )
                 .await
                 {
@@ -6883,14 +7434,18 @@ fn fetch_council_assertions(limit: usize) -> Vec<crate::council::factual_check::
     let Ok(conn) = crate::memory::store::open(&path) else {
         static OPEN_WARN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         OPEN_WARN.get_or_init(|| {
-            warn!("council: groundtruth injection enabled but views.db unreadable — assertions empty");
+            warn!(
+                "council: groundtruth injection enabled but views.db unreadable — assertions empty"
+            );
         });
         return Vec::new();
     };
     let Ok(rows) = crate::memory::groundtruth::surface_for_recall(&conn, limit, false) else {
         static QUERY_WARN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         QUERY_WARN.get_or_init(|| {
-            warn!("council: groundtruth injection enabled but views.db unreadable — assertions empty");
+            warn!(
+                "council: groundtruth injection enabled but views.db unreadable — assertions empty"
+            );
         });
         return Vec::new();
     };
@@ -6918,6 +7473,7 @@ fn fetch_council_assertions(limit: usize) -> Vec<crate::council::factual_check::
 async fn run_council_debate(
     config: &FreedomConfig,
     req: &crate::providers::Request,
+    authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<crate::council::CouncilDebate> {
     use crate::config::inference::HemisphereRole;
     // Finding 2: once-per-process advisory when council topology
@@ -6929,10 +7485,27 @@ async fn run_council_debate(
     // `hemisphere_council_depth > 1`. The Arc is shared across all
     // three so freedom.yaml is parsed exactly once per debate.
     let config_arc = std::sync::Arc::new(config.clone());
-    let left = build_hemisphere_with_config(config_arc.clone(), HemisphereRole::Left, req).await?;
-    let right =
-        build_hemisphere_with_config(config_arc.clone(), HemisphereRole::Right, req).await?;
-    let cere = build_hemisphere_with_config(config_arc, HemisphereRole::Cerebellum, req).await?;
+    let left = build_hemisphere_with_config(
+        config_arc.clone(),
+        HemisphereRole::Left,
+        req,
+        authorizer.clone(),
+    )
+    .await?;
+    let right = build_hemisphere_with_config(
+        config_arc.clone(),
+        HemisphereRole::Right,
+        req,
+        authorizer.clone(),
+    )
+    .await?;
+    let cere = build_hemisphere_with_config(
+        config_arc,
+        HemisphereRole::Cerebellum,
+        req,
+        authorizer.clone(),
+    )
+    .await?;
     let prompt_hash = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
     // E-2 Phase 1 (Session 13) — thread the operator-configured
     // `hemisphere_council_depth` through the orchestrator so recursive
@@ -6998,7 +7571,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     provider: &dyn crate::providers::Provider,
     base_req: crate::providers::Request,
     servers: &crate::mcp::McpServers,
-    autonomy: crate::permissions::AutonomyLevel,
+    autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
     writer: &crate::wal::writer::WalWriterHandle,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     // SC-11 — the active skill's tool_allowlist (None when no skill
@@ -7076,12 +7649,20 @@ pub(crate) async fn run_mcp_dispatch_loop(
                 let elapsed_ms = call_started.elapsed().as_millis() as u64;
                 match result {
                     Ok(c) => {
+                        if !c.identity.is_bound() {
+                            if let Some(p) = permit {
+                                p.record_failure();
+                            }
+                            return Err(anyhow::anyhow!(
+                                "provider `{provider_name}` returned no authenticated response identity"
+                            ));
+                        }
                         if let Some(p) = permit {
                             p.record_success();
                         }
                         crate::daemon::usage_log::record_provider_call_best_effort(
-                            provider_name,
-                            &c.model,
+                            &c.identity.provider,
+                            &c.identity.wire_model,
                             c.input_tokens,
                             c.output_tokens,
                             elapsed_ms,
@@ -7091,8 +7672,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
                             true, // VIEW-06: MCP agentic-loop hop → automated
                         );
                         publish_provider_responded(
-                            provider_name,
-                            &c.model,
+                            &c.identity.provider,
+                            &c.identity.wire_model,
                             c.input_tokens,
                             c.output_tokens,
                             elapsed_ms,
@@ -7129,7 +7710,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         &mut driver,
         initial_prompt,
         servers,
-        autonomy,
+        autonomy_policy,
         Some(writer),
         rollback_policy,
         skill_allowlist,
@@ -7233,28 +7814,39 @@ fn maybe_skill_catalog_block(skills: &[crate::skills::schema::Skill]) -> Option<
 /// section so the assistant knows the prior pipeline shape; it gets
 /// prepended to any operator-supplied `--system` text.
 ///
-/// Best-effort: any failure mode (missing views.db, no matching
-/// checkpoint, hash-mismatch, parse error) surfaces as
-/// `Err(String)` so the caller can print a single warning + proceed
-/// without the resume hydration. The operator still gets a chat
-/// turn — just without the prior context.
-/// PWF-02: hydrate a prior `MODE_CHECKPOINT` from views.db by hash prefix.
-/// Returns `(banner, combined_system, catchup_summary)` on success so the
-/// caller can print the banner, optionally the catchup line, and inject the
-/// RESUME-CONTEXT block into the system prompt.
+/// Any failure mode (missing views.db, no matching checkpoint, hash mismatch,
+/// parse error or legacy-unrecorded scope) surfaces as `Err(String)` and the
+/// caller aborts the requested resume before provider/tool dispatch.
+/// PWF-02: authoritative resume state reconstructed from one checkpoint.
+struct ResumeHydration {
+    banner: String,
+    combined_system: String,
+    catchup: crate::recall::reconstruct::CatchupSummary,
+    scoped_mcp_servers: Vec<String>,
+}
+
+/// Hydrate a prior `MODE_CHECKPOINT` from views.db by hash prefix. Alongside
+/// the visible context this returns the exact MCP IDs that the caller must
+/// enforce against the current registry before any provider/tool dispatch.
 fn hydrate_resume_context(
     hash_prefix: &str,
     existing_system: Option<&str>,
-) -> Result<(String, String, crate::recall::reconstruct::CatchupSummary), String> {
+) -> Result<ResumeHydration, String> {
     let views_path = crate::memory::store::default_path();
     let conn = crate::memory::store::open(&views_path)
         .map_err(|e| format!("views.db open failed: {e}"))?;
     let cp = crate::recall::reconstruct::reconstruct_from_checkpoint(&conn, hash_prefix)
         .map_err(|e| format!("checkpoint lookup failed: {e}"))?;
+    if !cp.mcp_scope_recorded {
+        return Err(
+            "checkpoint predates exact MCP-scope recording; start a new session and resume from its checkpoint"
+                .to_string(),
+        );
+    }
     // PWF-02: count activity since the checkpoint timestamp.
     let catchup = crate::recall::reconstruct::catchup_summary(&conn, cp.ts_unix);
     let mcp_scope = if cp.scoped_mcp_servers.is_empty() {
-        "(default scope)".to_string()
+        "(no MCP servers)".to_string()
     } else {
         cp.scoped_mcp_servers.join(", ")
     };
@@ -7283,7 +7875,12 @@ fn hydrate_resume_context(
         Some(s) if !s.trim().is_empty() => format!("{resume_block}\n{s}"),
         _ => resume_block,
     };
-    Ok((banner, combined, catchup))
+    Ok(ResumeHydration {
+        banner,
+        combined_system: combined,
+        catchup,
+        scoped_mcp_servers: cp.scoped_mcp_servers,
+    })
 }
 
 #[cfg(test)]
@@ -7295,6 +7892,82 @@ mod tests {
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     use async_trait::async_trait;
     use std::time::Duration;
+
+    fn test_mcp_server(id: &str, enabled: bool) -> crate::mcp::config::McpServerConfig {
+        crate::mcp::config::McpServerConfig {
+            id: id.to_string(),
+            description: None,
+            command: "server-bin".to_string(),
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            enabled,
+            allow_tools: Some(vec!["read".to_string()]),
+            trust_all_tools: false,
+            smart_approve: false,
+            autonomy_gate: None,
+        }
+    }
+
+    #[test]
+    fn enabled_mcp_scope_is_sorted_and_excludes_disabled_servers() {
+        let servers = crate::mcp::McpServers {
+            servers: vec![
+                test_mcp_server("zeta", true),
+                test_mcp_server("hidden", false),
+                test_mcp_server("alpha", true),
+            ],
+            smart_loading: true,
+        };
+        assert_eq!(enabled_mcp_scope(&servers), vec!["alpha", "zeta"]);
+    }
+
+    #[test]
+    fn resume_mcp_scope_excludes_newly_enabled_servers() {
+        let current = crate::mcp::McpServers {
+            servers: vec![
+                test_mcp_server("prior", true),
+                test_mcp_server("newly-enabled", true),
+            ],
+            smart_loading: true,
+        };
+        let restricted =
+            restrict_mcp_servers_to_checkpoint(current, &["prior".to_string()]).unwrap();
+        assert_eq!(enabled_mcp_scope(&restricted), vec!["prior"]);
+    }
+
+    #[test]
+    fn resume_mcp_scope_fails_on_missing_disabled_or_duplicate_ids() {
+        let missing = crate::mcp::McpServers {
+            servers: vec![test_mcp_server("other", true)],
+            smart_loading: true,
+        };
+        assert!(restrict_mcp_servers_to_checkpoint(missing, &["prior".to_string()]).is_err());
+
+        let disabled = crate::mcp::McpServers {
+            servers: vec![test_mcp_server("prior", false)],
+            smart_loading: true,
+        };
+        assert!(restrict_mcp_servers_to_checkpoint(disabled, &["prior".to_string()]).is_err());
+
+        let duplicate = crate::mcp::McpServers {
+            servers: vec![
+                test_mcp_server("prior", true),
+                test_mcp_server("prior", true),
+            ],
+            smart_loading: true,
+        };
+        assert!(restrict_mcp_servers_to_checkpoint(duplicate, &["prior".to_string()]).is_err());
+    }
+
+    #[test]
+    fn resume_mcp_scope_can_restore_an_exact_empty_scope() {
+        let current = crate::mcp::McpServers {
+            servers: vec![test_mcp_server("current", true)],
+            smart_loading: true,
+        };
+        let restricted = restrict_mcp_servers_to_checkpoint(current, &[]).unwrap();
+        assert!(restricted.enabled().is_empty());
+    }
 
     // ── GOLD-ADOPT-21 session-title sanitizer ───────────────────────────
     #[test]
@@ -7392,7 +8065,10 @@ mod tests {
         };
         let policy = cfg.trigger.to_policy();
         // is_single() must be true.
-        assert!(cfg.mode.is_single(), "CouncilMode::Single.is_single() must be true");
+        assert!(
+            cfg.mode.is_single(),
+            "CouncilMode::Single.is_single() must be true"
+        );
         // The caller passes `disabled || mode.is_single()` — simulate that.
         let disabled_combined = cfg.disabled.unwrap_or(false) || cfg.mode.is_single();
         let decision = evaluate_council_trigger(
@@ -7436,7 +8112,10 @@ mod tests {
         // (Trigger may still Skip on a trivially-short prompt — that's fine.
         //  The invariant is: mode=council does not itself force a Skip.)
         let disabled_combined = cfg.disabled.unwrap_or(false) || cfg.mode.is_single();
-        assert!(!disabled_combined, "mode=council must not set the disable flag");
+        assert!(
+            !disabled_combined,
+            "mode=council must not set the disable flag"
+        );
     }
 
     #[test]
@@ -7518,9 +8197,8 @@ mod tests {
     fn profile_block_for_callosum_sync_returns_none_on_missing_db() {
         // When `views.db` doesn't exist (fresh install / test env),
         // the sync helper must return None gracefully — no panic,
-        // no error bubble. The async wrapper inherits this contract
-        // via spawn_blocking's `Result<Option<String>, JoinError>`
-        // then `.ok().flatten()` collapse.
+        // no error bubble. The async wrapper logs a blocking-worker failure
+        // and keeps the same privacy-safe no-injection outcome.
         //
         // Test runs in a process where the default-path views.db
         // does NOT exist (or, if it does, the operator's actual
@@ -7528,7 +8206,7 @@ mod tests {
         // sensitive but the only safe outcome is None either way).
         // Either branch — missing db OR empty db — satisfies the
         // "returns Option, never panics" contract.
-        let _ = profile_block_for_callosum_sync();
+        let _ = profile_block_for_callosum_sync(&crate::memory::store::default_path(), &[]);
         // No assertion on the value; the point is that the call
         // returned at all without panicking.
     }
@@ -7562,7 +8240,10 @@ mod tests {
         // `tokio::time::sleep(0)` MUST make progress (= the worker
         // pool isn't stalled). Smoke check that the spawn_blocking
         // path actually fires.
-        let pipeline_task = tokio::spawn(profile_block_for_callosum());
+        let pipeline_task = tokio::spawn(profile_block_for_callosum(
+            crate::memory::store::default_path(),
+            Vec::new(),
+        ));
         // Yield + immediately await — the runtime should schedule
         // other work even while spawn_blocking runs.
         tokio::task::yield_now().await;
@@ -7583,6 +8264,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "mock-1".to_string(),
                 latency: Duration::from_millis(7),
                 input_tokens: Some(12),
@@ -7610,6 +8292,7 @@ mod tests {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Completion {
                 text: "SHOULD NOT BE CALLED".into(),
+                identity: Default::default(),
                 model: "x".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(0),
@@ -7770,9 +8453,8 @@ mod tests {
             .await
             .expect("chat run_with succeeds");
 
-        // B22 fix — WAL order: SegmentHeader, MODE_CHECKPOINT (PWF-02), RAW_TEXT,
-        // COST_ESTIMATE_SHOWN, PERMISSION_GRANTED (both inside enforce_preflight),
-        // PROVIDER_REQUEST (post 6-tier model resolution), then dispatch frames.
+        // B22 — the turn intent precedes the final-boundary authorization; the
+        // cost preview and gate must be adjacent to the real provider call.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
 
@@ -7789,45 +8471,10 @@ mod tests {
         assert_eq!(dec0.header.event_type, EVENT_TYPE_RAW_TEXT);
         assert_eq!(dec0.payload, b"hi");
 
-        // C-14: COST_ESTIMATE_SHOWN now lands between RAW_TEXT and the
-        // permission gate (emitted inside enforce_preflight before PROVIDER_REQUEST).
+        // Turn journal + council decision are prepared before the exact leaf
+        // cost gate. The 0x20 intent itself is emitted only after approval,
+        // immediately before transport dispatch.
         let rest = &frames[dec0.header.total_len as usize..];
-        let cost = decode_frame(rest).expect("decode cost estimate frame");
-        assert_eq!(
-            cost.header.event_type,
-            crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
-        );
-        let cost_payload: serde_json::Value = serde_json::from_slice(cost.payload).unwrap();
-        assert!(cost_payload["total_eur"].is_number());
-        assert!(cost_payload["input_tokens"].is_number());
-        // B22: cost estimate tags its model as pre-dispatch to be honest about
-        // the 3-tier vs 6-tier resolution limitation.
-        assert_eq!(cost_payload["model_source"], "pre_dispatch_estimate");
-
-        // Phase 28b: PERMISSION_GRANTED sits between cost preview and
-        // PROVIDER_REQUEST (gate audit at standard level for the paid-provider call).
-        let rest = &rest[cost.header.total_len as usize..];
-        let perm = decode_frame(rest).expect("decode permission frame");
-        assert_eq!(
-            perm.header.event_type,
-            crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED,
-        );
-
-        // B22 fix — PROVIDER_REQUEST now follows the permission gate, carrying the
-        // authoritative 6-tier model and model_source (post dispatch-resolution).
-        let rest = &rest[perm.header.total_len as usize..];
-        let dec1 = decode_frame(rest).expect("decode PROVIDER_REQUEST frame");
-        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
-        let req_payload: serde_json::Value = serde_json::from_slice(dec1.payload).unwrap();
-        assert_eq!(req_payload["provider"], "mock");
-        assert_eq!(req_payload["operator_id"], "alice");
-        // model_source reflects the freedom tier (config.provider_model set, no
-        // skill/agent/cli override in this test).
-        assert_eq!(req_payload["model_source"], "freedom");
-
-        // F4/D21: the turn-journal OPENED (0x05) anchor is emitted at the start of
-        // provider dispatch — between PROVIDER_REQUEST and the council-skip frame.
-        let rest = &rest[dec1.header.total_len as usize..];
         let opened = decode_frame(rest).expect("decode TURN_JOURNAL_OPENED frame");
         assert_eq!(
             opened.header.event_type,
@@ -7846,11 +8493,41 @@ mod tests {
         assert!(council_skip_payload["reason"].is_string());
 
         let rest = &rest[council_skip.header.total_len as usize..];
+        let cost = decode_frame(rest).expect("decode cost estimate frame");
+        assert_eq!(
+            cost.header.event_type,
+            crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
+        );
+        let cost_payload: serde_json::Value = serde_json::from_slice(cost.payload).unwrap();
+        assert_eq!(cost_payload["call_scope"], "chat_provider_round");
+        assert_eq!(cost_payload["authorization_binding"], "actual_leaf_request");
+        assert_eq!(cost_payload["provider"], "mock");
+        assert_eq!(cost_payload["model"], "claude-opus-4-7");
+        assert_eq!(cost_payload["streaming"], false);
+
+        let rest = &rest[cost.header.total_len as usize..];
+        let perm = decode_frame(rest).expect("decode permission frame");
+        assert_eq!(
+            perm.header.event_type,
+            crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED,
+        );
+
+        let rest = &rest[perm.header.total_len as usize..];
+        let dec1 = decode_frame(rest).expect("decode PROVIDER_REQUEST frame");
+        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
+        let req_payload: serde_json::Value = serde_json::from_slice(dec1.payload).unwrap();
+        assert_eq!(req_payload["provider"], "mock");
+        assert_eq!(req_payload["operator_id"], "alice");
+        assert_eq!(req_payload["model_source"], "freedom");
+        assert_eq!(req_payload["wire_model"], "claude-opus-4-7");
+
+        let rest = &rest[dec1.header.total_len as usize..];
         let dec2 = decode_frame(rest).expect("decode response frame");
         assert_eq!(dec2.header.event_type, EVENT_TYPE_PROVIDER_RESPONSE);
         let resp_payload: serde_json::Value = serde_json::from_slice(dec2.payload).unwrap();
         assert_eq!(resp_payload["provider"], "mock");
-        assert_eq!(resp_payload["model"], "mock-1");
+        assert_eq!(resp_payload["model"], "claude-opus-4-7");
+        assert_eq!(resp_payload["invocation_id"], req_payload["invocation_id"]);
         assert_eq!(resp_payload["input_tokens"], 12);
         assert_eq!(resp_payload["output_tokens"], 8);
 
@@ -7989,6 +8666,7 @@ mod tests {
             async fn complete(&self, _req: Request) -> Result<Completion> {
                 Ok(Completion {
                     text: "PARIS".into(),
+                    identity: Default::default(),
                     model: "Qwen/Qwen2.5-3B-Instruct".into(),
                     latency: Duration::from_millis(11),
                     input_tokens: Some(5),
@@ -8119,6 +8797,7 @@ mod tests {
                     Ok(CompletionChunk {
                         delta: "hello ".into(),
                         done: false,
+                        identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
                         cache_creation_tokens: None,
@@ -8127,6 +8806,7 @@ mod tests {
                     Ok(CompletionChunk {
                         delta: "world".into(),
                         done: false,
+                        identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
                         cache_creation_tokens: None,
@@ -8135,6 +8815,7 @@ mod tests {
                     Ok(CompletionChunk {
                         delta: String::new(),
                         done: true,
+                        identity: Default::default(),
                         input_tokens: Some(5),
                         output_tokens: Some(3),
                         cache_creation_tokens: None,
@@ -8216,9 +8897,8 @@ mod tests {
             .await
             .expect("streaming run");
 
-        // B22 fix — WAL layout: SegmentHeader, MODE_CHECKPOINT (PWF-02), RAW_TEXT,
-        // COST_ESTIMATE_SHOWN, PERMISSION_GRANTED (enforce_preflight),
-        // PROVIDER_REQUEST (post 6-tier resolution), then dispatch frames + CHUNKs.
+        // B22 — the streaming call is authorized from its final request at the
+        // provider boundary, immediately before the stream is opened.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
 
@@ -8235,81 +8915,63 @@ mod tests {
         assert_eq!(dec0.header.event_type, EVENT_TYPE_RAW_TEXT);
         let frames = &frames[dec0.header.total_len as usize..];
 
-        // C-14: COST_ESTIMATE_SHOWN lands before the permission gate
-        // (emitted inside enforce_preflight before PROVIDER_REQUEST).
-        let cost = decode_frame(frames).expect("COST_ESTIMATE_SHOWN");
-        assert_eq!(
-            cost.header.event_type,
-            crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
-        );
-        let rest = &frames[cost.header.total_len as usize..];
-
-        // Phase 28b: PERMISSION_GRANTED audit frame between cost preview and
-        // PROVIDER_REQUEST (emitted inside enforce_preflight).
-        let perm = decode_frame(rest).expect("PERMISSION_GRANTED");
-        assert_eq!(
-            perm.header.event_type,
-            crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED,
-        );
-        let rest = &rest[perm.header.total_len as usize..];
-
-        // B22 fix — PROVIDER_REQUEST now follows the permission gate, carrying
-        // the authoritative 6-tier model and model_source.
-        let dec1 = decode_frame(rest).expect("PROVIDER_REQUEST");
-        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
-        let rest = &rest[dec1.header.total_len as usize..];
-
-        // F4/D21: turn-journal OPENED (0x05) anchor at provider-dispatch start.
-        let opened = decode_frame(rest).expect("TURN_JOURNAL_OPENED (streaming)");
-        assert_eq!(
-            opened.header.event_type,
-            crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED,
-        );
-        let rest = &rest[opened.header.total_len as usize..];
-
-        // B-1 follow-up (Session 13): streaming branch now emits a
-        // COUNCIL_SKIP frame with reason `streaming_mode_disables_council`
-        // so the audit covers stream + non-stream symmetrically.
-        let council_skip = decode_frame(rest).expect("COUNCIL_SKIP (streaming)");
-        assert_eq!(
-            council_skip.header.event_type,
-            crate::wal::events::EVENT_TYPE_COUNCIL_SKIP,
-        );
-        let skip_payload: serde_json::Value = serde_json::from_slice(council_skip.payload).unwrap();
-        assert_eq!(skip_payload["reason"], "streaming_mode_disables_council");
-        let rest = &rest[council_skip.header.total_len as usize..];
-
-        let dec2 = decode_frame(rest).expect("CHUNK 1");
-        assert_eq!(
-            dec2.header.event_type,
-            crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK
-        );
-        let rest = &rest[dec2.header.total_len as usize..];
-
-        let dec3 = decode_frame(rest).expect("CHUNK 2");
-        assert_eq!(
-            dec3.header.event_type,
-            crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK
-        );
-        let mut rest = &rest[dec3.header.total_len as usize..];
-
-        // Skip any instrumentation frames (e.g. TOKEN_TPS_SAMPLE 0x69) that
-        // may be emitted between the last chunk and PROVIDER_RESPONSE — these
-        // are non-deterministic telemetry and not part of the test's contract.
-        loop {
-            let frame = decode_frame(rest).expect("frame after CHUNK 2");
-            if frame.header.event_type == EVENT_TYPE_PROVIDER_RESPONSE {
-                let resp_payload: serde_json::Value =
-                    serde_json::from_slice(frame.payload).unwrap();
-                assert_eq!(resp_payload["streamed"], true);
-                assert_eq!(resp_payload["input_tokens"], 5);
-                assert_eq!(resp_payload["output_tokens"], 3);
-                assert_eq!(resp_payload["model"], "mock-stream-1");
-                break;
+        let mut cursor = frames;
+        let mut index = 0usize;
+        let mut opened_index = None;
+        let mut council_index = None;
+        let mut cost_index = None;
+        let mut permission_index = None;
+        let mut request_index = None;
+        let mut response_index = None;
+        let mut chunk_count = 0usize;
+        let mut request_payload = None;
+        let mut response_payload = None;
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode streaming audit frame");
+            match frame.header.event_type {
+                crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED => opened_index = Some(index),
+                crate::wal::events::EVENT_TYPE_COUNCIL_SKIP => {
+                    council_index = Some(index);
+                    let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                    assert_eq!(payload["reason"], "streaming_mode_disables_council");
+                }
+                crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN => {
+                    cost_index = Some(index);
+                    let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                    assert_eq!(payload["call_scope"], "chat_provider_round");
+                    assert_eq!(payload["provider"], "mock_stream");
+                    assert_eq!(payload["model"], "mock-stream-1");
+                }
+                crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED => permission_index = Some(index),
+                EVENT_TYPE_PROVIDER_REQUEST => {
+                    request_index = Some(index);
+                    request_payload = Some(serde_json::from_slice(frame.payload).unwrap());
+                }
+                EVENT_TYPE_PROVIDER_RESPONSE => {
+                    response_index = Some(index);
+                    response_payload = Some(serde_json::from_slice(frame.payload).unwrap());
+                }
+                crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK => chunk_count += 1,
+                _ => {}
             }
-            rest = &rest[frame.header.total_len as usize..];
+            cursor = &cursor[frame.header.total_len as usize..];
+            index += 1;
         }
-        // (response assertions handled in the loop above)
+        assert!(opened_index.unwrap() < council_index.unwrap());
+        assert_eq!(permission_index.unwrap(), cost_index.unwrap() + 1);
+        assert_eq!(request_index.unwrap(), permission_index.unwrap() + 1);
+        assert!(request_index.unwrap() < response_index.unwrap());
+        assert_eq!(chunk_count, 2);
+        let request_payload = request_payload.unwrap();
+        let response_payload = response_payload.unwrap();
+        assert_eq!(response_payload["streamed"], true);
+        assert_eq!(response_payload["input_tokens"], 5);
+        assert_eq!(response_payload["output_tokens"], 3);
+        assert_eq!(response_payload["model"], "mock-stream-1");
+        assert_eq!(
+            response_payload["invocation_id"],
+            request_payload["invocation_id"]
+        );
     }
 
     #[tokio::test]
@@ -8395,10 +9057,8 @@ mod tests {
         let result = run_chat_with(args, config, &FailingProvider).await;
         assert!(result.is_err());
 
-        // B22 fix — PROVIDER_REQUEST is now emitted AFTER enforce_preflight
-        // (which writes COST_ESTIMATE_SHOWN + PERMISSION_GRANTED), but still
-        // before the network call inside dispatch_provider.  The sequence on
-        // disk for a failing provider must include all four frames.
+        // B22 — a failed wire call must still have its final request estimate
+        // and permission decision immediately before dispatch.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
 
@@ -8414,19 +9074,31 @@ mod tests {
         let dec0 = decode_frame(frames).expect("RAW_TEXT");
         assert_eq!(dec0.header.event_type, EVENT_TYPE_RAW_TEXT);
 
-        // Scan forward past COST_ESTIMATE_SHOWN + PERMISSION_GRANTED (both written
-        // inside enforce_preflight) to reach PROVIDER_REQUEST.
         let mut cursor = &frames[dec0.header.total_len as usize..];
-        let mut found_req = false;
+        let mut index = 0usize;
+        let mut request_index = None;
+        let mut cost_index = None;
+        let mut permission_index = None;
         while !cursor.is_empty() {
             let frame = decode_frame(cursor).expect("decode frame on error path");
             if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST {
-                found_req = true;
-                break;
+                request_index = Some(index);
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN
+            {
+                cost_index = Some(index);
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED {
+                permission_index = Some(index);
             }
             cursor = &cursor[frame.header.total_len as usize..];
+            index += 1;
         }
-        assert!(found_req, "PROVIDER_REQUEST frame must be present even on provider failure");
+        let request_index = request_index.expect("PROVIDER_REQUEST on failure");
+        let cost_index = cost_index.expect("COST_ESTIMATE_SHOWN on failure");
+        let permission_index = permission_index.expect("PERMISSION_GRANTED on failure");
+        assert!(
+            permission_index == cost_index + 1 && request_index == permission_index + 1,
+            "cost + permission must precede the durable leaf intent and failed provider call"
+        );
     }
 
     /// B22 fix — PROVIDER_REQUEST WAL `model` and `model_source` must exactly
@@ -8448,9 +9120,13 @@ mod tests {
             }
             async fn complete(&self, req: Request) -> Result<Completion> {
                 *self.received_model.lock().unwrap() = Some(req.model.clone());
-                let model_echo = req.model.clone().unwrap_or_else(|| "mock-capture-1".to_string());
+                let model_echo = req
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "mock-capture-1".to_string());
                 Ok(Completion {
                     text: self.reply.clone(),
+                    identity: Default::default(),
                     model: model_echo,
                     latency: Duration::from_millis(1),
                     input_tokens: Some(4),
@@ -8564,9 +9240,7 @@ mod tests {
         let req_payload = req_payload_opt.expect("PROVIDER_REQUEST frame must be present");
 
         // (c) model in WAL must equal model sent to the provider.
-        let wal_model: Option<String> = req_payload["model"]
-            .as_str()
-            .map(str::to_string);
+        let wal_model: Option<String> = req_payload["model"].as_str().map(str::to_string);
         assert_eq!(
             wal_model, dispatch_model,
             "PROVIDER_REQUEST WAL `model` must match Request.model sent to dispatch"
@@ -8578,17 +9252,25 @@ mod tests {
             "model_source must be 'freedom' when only config.provider_model is set"
         );
 
-        // (e) PROVIDER_REQUEST must appear AFTER PERMISSION_GRANTED in the WAL
-        //     (enforces the post-6-tier-resolution ordering invariant).
+        // (e) Turn intent precedes the exact-request boundary gate. COST and
+        //     PERMISSION remain adjacent immediately before the provider call.
         let mut cursor2 = &bytes[SEGMENT_HEADER_LEN..];
         let mut perm_idx: Option<usize> = None;
         let mut req_idx: Option<usize> = None;
+        let mut cost_idx: Option<usize> = None;
+        let mut cost_model: Option<String> = None;
         let mut idx = 0usize;
         while !cursor2.is_empty() {
             let frame = decode_frame(cursor2).expect("decode frame for ordering check");
             match frame.header.event_type {
                 t if t == crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED => {
                     perm_idx = Some(idx);
+                }
+                t if t == crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN => {
+                    cost_idx = Some(idx);
+                    let payload: serde_json::Value =
+                        serde_json::from_slice(frame.payload).expect("parse cost payload");
+                    cost_model = payload["model"].as_str().map(str::to_owned);
                 }
                 t if t == EVENT_TYPE_PROVIDER_REQUEST => {
                     req_idx = Some(idx);
@@ -8600,9 +9282,15 @@ mod tests {
         }
         let perm_pos = perm_idx.expect("PERMISSION_GRANTED must be present");
         let req_pos = req_idx.expect("PROVIDER_REQUEST must be present");
+        let cost_pos = cost_idx.expect("COST_ESTIMATE_SHOWN must be present");
         assert!(
-            req_pos > perm_pos,
-            "PROVIDER_REQUEST (idx {req_pos}) must follow PERMISSION_GRANTED (idx {perm_pos})"
+            perm_pos == cost_pos + 1 && req_pos == perm_pos + 1,
+            "expected COST_ESTIMATE_SHOWN -> PERMISSION_GRANTED -> PROVIDER_REQUEST; \
+             got req={req_pos}, cost={cost_pos}, perm={perm_pos}"
+        );
+        assert_eq!(
+            cost_model, dispatch_model,
+            "authorized model must hit the wire"
         );
     }
 
@@ -8621,11 +9309,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "counting-mock"
         }
+        fn default_model(&self) -> Option<&str> {
+            Some("counting-mock-1")
+        }
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.counter
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "counting-mock-1".to_string(),
                 latency: Duration::from_millis(1),
                 input_tokens: None,
@@ -8646,6 +9338,9 @@ mod tests {
                 reply: "ok".into(),
             }),
             base_req: Request::default(),
+            authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             config: None,
             outer_role: None,
             voice: None,
@@ -8666,6 +9361,9 @@ mod tests {
                 reply: "ok".into(),
             }),
             base_req: Request::default(),
+            authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             config: None,
             outer_role: None,
             voice: None,
@@ -8691,6 +9389,9 @@ mod tests {
                 reply: "no-recurse".into(),
             }),
             base_req: Request::default(),
+            authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             config: None,
             outer_role: None,
             voice: None,
@@ -8719,6 +9420,9 @@ mod tests {
                 reply: "outer".into(),
             }),
             base_req: Request::default(),
+            authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(crate::config::inference::HemisphereRole::Left),
             voice: None,
@@ -8818,7 +9522,8 @@ mod tests {
                 "claude says",
             )],
         );
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::LegacyMajority, None, 0, None);
+        let winner =
+            select_winner_role_agnostic(&outcome, SelectionMode::LegacyMajority, None, 0, None);
         assert!(winner.is_none());
     }
 
@@ -8834,8 +9539,9 @@ mod tests {
                 mk_resp_picksel(HemisphereRole::Right, "claude_cli", "claude text"),
             ],
         );
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None)
-            .expect("BestAlways picks a winner");
+        let winner =
+            select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None)
+                .expect("BestAlways picks a winner");
         assert_eq!(winner.role, HemisphereRole::Right);
         assert_eq!(winner.provider, "claude_cli");
     }
@@ -8850,8 +9556,9 @@ mod tests {
                 mk_resp_picksel(HemisphereRole::Right, "local_qwen", "qwen text"),
             ],
         );
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0, None)
-            .expect("ConsensusOrBest picks a winner");
+        let winner =
+            select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0, None)
+                .expect("ConsensusOrBest picks a winner");
         // winning_text = "claude text" → matches the claude_cli response.
         assert_eq!(winner.text, "claude text");
         assert_eq!(winner.provider, "claude_cli");
@@ -8939,8 +9646,9 @@ mod tests {
             mk_resp_picksel(HemisphereRole::Left, "local_qwen", "qwen says A"),
             mk_resp_picksel(HemisphereRole::Right, "claude_cli", "claude says B"),
         ]);
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0, None)
-            .expect("falls back to best_response");
+        let winner =
+            select_winner_role_agnostic(&outcome, SelectionMode::ConsensusOrBest, None, 0, None)
+                .expect("falls back to best_response");
         // winning_text is None on Split → falls back to best_response,
         // which picks the higher-tier claude_cli.
         assert_eq!(winner.role, HemisphereRole::Right);
@@ -8955,8 +9663,9 @@ mod tests {
             "claude_cli",
             "thoughtful answer with structure\n```rust\nfn x() {}\n```\n- list",
         )]);
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None)
-            .expect("BestAlways winner");
+        let winner =
+            select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None)
+                .expect("BestAlways winner");
         // claude_cli tier 1.0 + non-zero dynamic + 0.5 memory + 0 diversity
         // total ≥ 0.40 (tier component alone) + memory component
         assert!(
@@ -8980,7 +9689,8 @@ mod tests {
             refusal: None,
         };
         let outcome = mk_outcome_split(vec![errored]);
-        let winner = select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None);
+        let winner =
+            select_winner_role_agnostic(&outcome, SelectionMode::BestAlways, None, 0, None);
         assert!(winner.is_none(), "no usable responses → fall through");
     }
 
@@ -9050,6 +9760,9 @@ mod tests {
                 reply: "outer-left".into(),
             }),
             base_req: Request::default(),
+            authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(HemisphereRole::Left),
             voice: None,
@@ -9091,6 +9804,9 @@ mod tests {
                 reply: "outer".into(),
             }),
             base_req: Request::default(),
+            authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: None,
             voice: None,
@@ -9162,9 +9878,16 @@ mod tests {
             system: Some("OPERATOR SYSTEM".into()),
             ..Default::default()
         };
-        let ph = super::build_hemisphere(&cfg, HemisphereRole::Left, &req)
-            .await
-            .expect("openai_compat hemisphere builds without network");
+        let ph = super::build_hemisphere(
+            &cfg,
+            HemisphereRole::Left,
+            &req,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+        )
+        .await
+        .expect("openai_compat hemisphere builds without network");
 
         assert_eq!(
             ph.voice,
@@ -9195,6 +9918,7 @@ mod tests {
             *self.seen_system.lock().unwrap() = req.system.clone();
             Ok(Completion {
                 text: "ok".into(),
+                identity: Default::default(),
                 model: "cap-1".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
@@ -9222,6 +9946,9 @@ mod tests {
                 system: Some("OPERATOR SYSTEM".into()),
                 ..Default::default()
             },
+            authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             config: None,
             outer_role: None,
             voice: Some(CouncilVoice::SecurityEngineer),
@@ -9411,6 +10138,74 @@ mod tests {
         assert!(
             block.contains("auth_middleware"),
             "block must include the matched symbol; got: {block}"
+        );
+    }
+
+    #[test]
+    fn architecture_skill_appends_automatic_cycle_findings_without_repo_context_gate() {
+        use crate::code_map::graph::{CodeEdge, EdgeKind};
+        use crate::code_map::persist::{open, persist_edges, persist_map};
+        use crate::code_map::walker::{RepoMap, ScanReport};
+
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let mut conn = open(&db).unwrap();
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: "/repo/test".into(),
+                files: vec![],
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+        persist_edges(
+            &mut conn,
+            "/repo/test",
+            &[
+                CodeEdge {
+                    from_file: "src/a.rs".into(),
+                    from_symbol: "a".into(),
+                    to_name: "b".into(),
+                    kind: EdgeKind::Calls,
+                },
+                CodeEdge {
+                    from_file: "src/b.rs".into(),
+                    from_symbol: "b".into(),
+                    to_name: "a".into(),
+                    kind: EdgeKind::Calls,
+                },
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        assert!(
+            maybe_architecture_findings_for_skill_at(
+                Some("unrelated_skill"),
+                &db,
+                std::path::Path::new("/repo/test"),
+            )
+            .is_none()
+        );
+        let findings = maybe_architecture_findings_for_skill_at(
+            Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
+            &db,
+            std::path::Path::new("/repo/test"),
+        )
+        .expect("active architecture workflow must consume persisted cycles");
+        let combined = append_architecture_findings(None, &findings).unwrap();
+
+        assert_eq!(findings.cycles_injected, 1);
+        assert!(combined.contains("a -> b -> a"));
+        assert!(
+            maybe_architecture_findings_for_skill_at(
+                Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
+                &db,
+                std::path::Path::new("/repo/other"),
+            )
+            .is_none(),
+            "an unrelated cwd must not receive cycles from the only persisted repo"
         );
     }
 
@@ -9680,8 +10475,7 @@ mod tests {
             session_degraded_24h: 0,
             cron_errors_24h: 2,
         };
-        let snap_path =
-            crate::daemon::guidance_cron::guidance_snapshot_path(dir.path());
+        let snap_path = crate::daemon::guidance_cron::guidance_snapshot_path(dir.path());
         std::fs::create_dir_all(snap_path.parent().unwrap()).unwrap();
         std::fs::write(&snap_path, serde_json::to_vec(&snap).unwrap()).unwrap();
 
@@ -9722,7 +10516,10 @@ mod tests {
             .expect("unhealthy freshness alone should yield a block");
         assert!(out.contains("Memory quality"), "{out}");
         assert!(out.contains("55%") || out.contains("grade E"), "{out}");
-        assert!(!out.contains("24h system"), "no signals → no signals lane: {out}");
+        assert!(
+            !out.contains("24h system"),
+            "no signals → no signals lane: {out}"
+        );
     }
 
     /// JV-MEM-16: verify that a healthy snapshot with no signals and no cards
@@ -9900,6 +10697,29 @@ mod tests {
 
     // ── GOLD-CCPARITY-MODEL-02: dispatch_provider model-override tests ───────
 
+    #[test]
+    fn cost_authorization_binds_dispatch_then_skill_model() {
+        let (dispatch_model, dispatch_source) = resolve_provider_call_model(
+            Some("claude-opus-4-7"),
+            Some("claude-haiku-4-5"),
+            Some("claude-sonnet-4-6"),
+            None,
+            None,
+        );
+        assert_eq!(dispatch_model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(dispatch_source, "dispatch");
+
+        let (skill_model, skill_source) = resolve_provider_call_model(
+            None,
+            Some("claude-opus-4-7"),
+            Some("claude-haiku-4-5"),
+            Some("claude-haiku-4-5"),
+            None,
+        );
+        assert_eq!(skill_model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(skill_source, "skill");
+    }
+
     /// Provider that captures the `model` field of the last Request it received.
     /// Distinct from `SystemCapturingProvider` (captures system) — we need model.
     struct ModelCapturingProvider {
@@ -9915,6 +10735,7 @@ mod tests {
             *self.seen_model.lock().unwrap() = Some(req.model.clone());
             Ok(Completion {
                 text: "model-captured".into(),
+                identity: Default::default(),
                 model: req.model.clone().unwrap_or_else(|| "default".into()),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
@@ -9969,27 +10790,38 @@ mod tests {
             total_eur: 0.0,
         };
 
+        let (authorized_model, authorized_source) = {
+            let (model, source) = crate::tweaks::resolve_effective_model(
+                override_model.as_deref(),
+                None,
+                args.model.as_deref(),
+                None,
+                config.provider_model.as_deref(),
+            );
+            (model.map(str::to_string), source.as_str())
+        };
         let (writer, writer_join) = wal_spawn(seg).expect("wal_spawn");
+        let mcp_servers = crate::mcp::McpServers::default();
         let result = dispatch_provider(
             "test prompt".to_string(),
             None,
             &args,
             &provider,
             &config,
+            dir.path(),
             writer,
             writer_join,
             quota_path,
             "test prompt",
             &cost,
+            &mcp_servers,
             None,
             "0000000000000001",
-            override_model,
+            authorized_model,
             // GOLD-CCPARITY-EFFORT-03: no effort override in model-capture tests.
             None,
-            // B22-TWEAKS-MODEL-01: no tweaks default; source is the dispatch
-            // override_model layer these capture tests exercise.
-            None,
-            "dispatch",
+            authorized_source,
+            crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
             vec![],
             vec![],
@@ -10014,11 +10846,7 @@ mod tests {
     async fn model_override_skill_wins_over_none_args_model() {
         // skill.manifest.model = Some("claude-haiku-4-5"), args.model = None
         // → Request.model == Some("claude-haiku-4-5")
-        let seen = run_dispatch_capture_model(
-            Some("claude-haiku-4-5".to_string()),
-            None,
-        )
-        .await;
+        let seen = run_dispatch_capture_model(Some("claude-haiku-4-5".to_string()), None).await;
         assert_eq!(
             seen.as_deref(),
             Some("claude-haiku-4-5"),
@@ -10030,11 +10858,7 @@ mod tests {
     async fn model_override_args_model_wins_when_no_override() {
         // override_model = None, args.model = Some("claude-opus-4-7")
         // → Request.model == Some("claude-opus-4-7")
-        let seen = run_dispatch_capture_model(
-            None,
-            Some("claude-opus-4-7".to_string()),
-        )
-        .await;
+        let seen = run_dispatch_capture_model(None, Some("claude-opus-4-7".to_string())).await;
         assert_eq!(
             seen.as_deref(),
             Some("claude-opus-4-7"),
@@ -10082,10 +10906,14 @@ mod tests {
         fn name(&self) -> &'static str {
             "effort-capture"
         }
+        fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+            crate::providers::ProviderRequestControls::THINKING_BUDGET
+        }
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.seen_budget.lock().unwrap() = Some(req.thinking_budget);
             Ok(Completion {
                 text: "effort-captured".into(),
+                identity: Default::default(),
                 model: "effort-capture".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(1),
@@ -10140,24 +10968,26 @@ mod tests {
         };
 
         let (writer, writer_join) = wal_spawn(seg).expect("wal_spawn");
+        let mcp_servers = crate::mcp::McpServers::default();
         let result = dispatch_provider(
             "effort test".to_string(),
             None,
             &args,
             &provider,
             &config,
+            dir.path(),
             writer,
             writer_join,
             quota_path,
             "effort test",
             &cost,
+            &mcp_servers,
             None,
             "0000000000000002",
-            None, // override_model
+            None, // effective model authorization binding
             override_effort,
-            // B22-TWEAKS-MODEL-01: no tweaks default; provider-default source.
-            None,
             "provider_default",
+            crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
             vec![],
             vec![],
@@ -10424,9 +11254,7 @@ mod tests {
 
     // ── GOLD-ADAPT-SKILL-10: skill-catalog banner unit tests ─────────────
 
-    fn make_test_skill(id: &str, keywords: &[&str], enabled: bool)
-        -> crate::skills::schema::Skill
-    {
+    fn make_test_skill(id: &str, keywords: &[&str], enabled: bool) -> crate::skills::schema::Skill {
         use crate::skills::schema::{Skill, SkillManifest};
         Skill {
             manifest: SkillManifest {
@@ -10466,7 +11294,10 @@ mod tests {
         ];
 
         let result = maybe_skill_catalog_block(&skills);
-        assert!(result.is_some(), "should return Some when enabled skills exist");
+        assert!(
+            result.is_some(),
+            "should return Some when enabled skills exist"
+        );
 
         let table = result.unwrap();
         assert!(
@@ -10583,7 +11414,8 @@ mod attach_tests {
         let txt = dir.path().join("ctx.md");
         std::fs::write(&txt, "# heading\nbody line").unwrap();
         let missing = dir.path().join("nope.bin");
-        let block = render_attachments_block(&[txt, missing]).await;
+        let block =
+            render_attachments_block(&[txt, missing], &FreedomConfig::default(), dir.path()).await;
         assert!(block.contains("[Attachment: ctx.md]"));
         assert!(block.contains("# heading"));
         assert!(block.contains("[Attachment nope.bin: unsupported or unreadable"));
@@ -10599,7 +11431,9 @@ mod attach_tests {
             attach: vec![txt],
             ..test_chat_args_default()
         };
-        let prompt = resolve_prompt(&args).await.unwrap();
+        let prompt = resolve_prompt(&args, &FreedomConfig::default(), dir.path())
+            .await
+            .unwrap();
         assert!(prompt.starts_with("[Attachment: a.txt]"));
         assert!(prompt.ends_with("the question"));
         assert!(prompt.contains("attached context"));

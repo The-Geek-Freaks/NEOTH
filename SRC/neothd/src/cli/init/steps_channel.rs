@@ -1,5 +1,5 @@
 //! Wizard channel + integration steps (GOLD-ARCH-05): step6 channel,
-//! step6b keet pairing, step6c/6d obsidian, step6e n8n, step6f memory
+//! step6b legacy Keet migration marker, step6c/6d obsidian, step6e n8n, step6f memory
 //! import, step6g credential import, step6h recommended installs.
 //! Split out of `cli/init.rs`.
 
@@ -18,16 +18,6 @@ pub(crate) async fn step6_channel(
 ) -> Result<()> {
     debug!("wizard step 6: channel");
 
-    // K-4b (Session 21): probe `pear` once so the prompt copy reflects
-    // whether Keet is reachable as the preferred primary. The probe is
-    // cheap (single subprocess spawn with 5s timeout) and only runs in
-    // interactive mode where the prompt actually surfaces.
-    let pear_present = if interactive {
-        crate::installers::pears::check_pears().await.is_some()
-    } else {
-        false
-    };
-
     // Resolve token from args or interactive prompt.
     let token = if let Some(t) = args.telegram_token.clone() {
         Some(t)
@@ -38,7 +28,7 @@ pub(crate) async fn step6_channel(
         {
             let set_up =
                 dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt(k4b_telegram_prompt_text(pear_present))
+                    .with_prompt(k4b_telegram_prompt_text(false))
                     .default(false)
                     .interact()
                     .context("telegram channel prompt")?;
@@ -66,7 +56,7 @@ pub(crate) async fn step6_channel(
     } else if interactive {
         println!(
             "  [6/9] Telegram skipped. Add any channel later: `neoth channel add \
-             telegram|slack|whatsapp|keet|discord|signal|line|irc|imessage|mattermost|gchat`"
+             telegram|slack|whatsapp|discord|signal|line|irc|imessage|mattermost|gchat`"
         );
     }
 
@@ -74,129 +64,23 @@ pub(crate) async fn step6_channel(
     Ok(())
 }
 
-/// K-3.5 (Session 21, 2026-05-23) — interactive Keet pairing prompt.
-///
-/// Runs AFTER step6_channel (Telegram) so an operator who set both
-/// Telegram + Keet has both configured. Skipped silently in non-
-/// interactive mode + when `pear` is not on PATH (the operator-facing
-/// install command surfaces so they know what to install if they want
-/// the K-2b outbound path).
-///
-/// Flow:
-///   1. Probe `pear --version` via `installers::pears::check_pears`.
-///   2. If missing → print install command + skip the rest of the step
-///      (don't bail — Telegram already covers the operator's channel).
-///   3. Ask "Set up Keet pairing now?"  default No.
-///   4. If yes → prompt for 24-word seed (Password input — pasted seed
-///      shouldn't end up in scrollback).
-///   5. Call `channels::keet_pairing::prepare_pairing(seed, port)`.
-///      Validation failure → print error + offer to re-try; capped
-///      at 3 attempts so an operator who pasted the wrong thing 3x
-///      doesn't get stuck.
-///   6. Render the pairing-anchor hex + freedom.yaml snippet + the
-///      PAIRING_INSTRUCTIONS list. Bearer token value is NOT printed
-///      (Debug-redacted in the module); it lands in credentials.yaml.
-///   7. Stash seed + bearer in WizardState so `write_config` persists
-///      both into credentials.yaml on the next step.
+/// Legacy wizard-step marker retained so interrupted wizard state remains
+/// readable. Keet does not expose a supported public room/message API and Pear
+/// Runtime communicates with embedded apps over IPC, so NEOTH must not solicit
+/// or persist Keet credentials. The old guessed HTTP/DHT adapters were removed.
 pub(crate) async fn step6b_keet_pairing(
     _args: &InitArgs,
     interactive: bool,
     state: &mut WizardState,
 ) -> Result<()> {
-    debug!("wizard step 6b: keet pairing");
-
-    if !interactive {
-        // CI / cloud-init operators configure Keet by editing
-        // ~/.neoth/credentials.yaml directly + running `neoth serve`.
-        // No prompt available, no flag yet — K-3.5 deferred non-
-        // interactive surface.
-        state.steps_completed.push(WizardStep::KeetPairing as u8); // 6b marker
-        return Ok(());
+    debug!("wizard step 6b: unsupported Keet migration marker");
+    state.keet_seed_phrase = None;
+    state.pears_bearer_token = None;
+    if interactive {
+        println!(
+            "[6b/9] Keet integration unavailable: Keet has no supported public chat API; no credentials were requested or stored."
+        );
     }
-
-    #[cfg(feature = "wizard")]
-    {
-        let pear_present = crate::installers::pears::check_pears().await.is_some();
-        if !pear_present {
-            // Operator can still skip Keet entirely (Telegram is
-            // already wired in step 6). Surface the install path so
-            // they know how to come back to this.
-            println!();
-            println!("[6b/9] Keet pairing skipped — `pear` runtime not on PATH.");
-            let path = crate::installers::pears::recommend_install_path(false);
-            let cmd = crate::installers::pears::install_command(path);
-            if !cmd.is_empty() {
-                println!("       To enable Keet later, install Pears + re-run `neoth init`:");
-                println!("       $ {}", cmd.join(" "));
-            }
-            state.steps_completed.push(WizardStep::KeetPairing as u8);
-            return Ok(());
-        }
-
-        let set_up = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("[6b/9] `pear` runtime detected. Pair Keet now? (optional)")
-            .default(false)
-            .interact()
-            .context("keet pairing confirm")?;
-        if !set_up {
-            state.steps_completed.push(WizardStep::KeetPairing as u8);
-            return Ok(());
-        }
-
-        const MAX_ATTEMPTS: usize = 3;
-        for attempt in 1..=MAX_ATTEMPTS {
-            let seed: String = dialoguer::Password::with_theme(
-                &dialoguer::theme::ColorfulTheme::default(),
-            )
-            .with_prompt(
-                "  Paste the 24-word Keet seed phrase your phone showed (single-spaced, lowercase)",
-            )
-            .interact()
-            .context("keet seed input")?;
-
-            match crate::channels::keet_pairing::prepare_pairing(
-                &seed,
-                crate::channels::pears_bridge::DEFAULT_BRIDGE_PORT,
-            ) {
-                Ok(info) => {
-                    println!();
-                    println!("  ✔ Pairing prepared.");
-                    println!("    Anchor (compare with phone): {}", info.pairing_anchor);
-                    println!();
-                    println!("    Operator steps:");
-                    for line in crate::channels::keet_pairing::PAIRING_INSTRUCTIONS {
-                        println!("      {line}");
-                    }
-                    println!();
-                    println!("    freedom.yaml snippet (auto-written; shown for reference):");
-                    for line in info.freedom_yaml_snippet.lines() {
-                        println!("      {line}");
-                    }
-                    state.keet_seed_phrase =
-                        Some(crate::secret::SecretString::from(seed.trim().to_string()));
-                    state.pears_bearer_token = Some(crate::secret::SecretString::from(
-                        info.bearer_token.expose().to_string(),
-                    ));
-                    break;
-                }
-                Err(e) => {
-                    println!("  ✗ {e}");
-                    if attempt == MAX_ATTEMPTS {
-                        println!(
-                            "  Maximum attempts reached. Skipping Keet pairing — re-run `neoth init` later."
-                        );
-                        break;
-                    }
-                    println!(
-                        "  Re-paste the phrase (attempt {}/{}).",
-                        attempt + 1,
-                        MAX_ATTEMPTS
-                    );
-                }
-            }
-        }
-    }
-
     state.steps_completed.push(WizardStep::KeetPairing as u8);
     Ok(())
 }

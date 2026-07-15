@@ -85,12 +85,47 @@ provider_kind: claude_cli
 #              inside ~/.neoth/. Default + recommended for most operators.
 #   elevated — allows shell execs without confirm; still confirms channel
 #              sends + destructive ops (rm -rf, force-push).
-#   full     — no confirms; trust everything. Use only on isolated VMs.
-#   custom   — per-action override table (see permissions/custom.yaml).
+#   full     — broad autonomy; irreducible dangerous/self-modifying actions
+#              still confirm. Use only on isolated VMs.
+#   custom   — Standard baseline plus the per-action table below. Missing
+#              entries inherit Standard exactly; Full confirm/deny decisions
+#              cannot be weakened. Cron and auto-update remain fail-closed.
 autonomy: standard
 
+# Used only when `autonomy: custom`. Stable action names are listed by
+# `neoth permissions show`; edit atomically with:
+#   neoth permissions set external_http_request confirm
+#   neoth permissions clear external_http_request
+custom_autonomy:
+  overrides: {}
+# Example:
+#   overrides:
+#     exec_arbitrary: deny
+#     external_http_request: confirm
+#     channel_send: allow
 
-# ── 5. Inference topology ────────────────────────────────────────────────────
+
+# ── 5. Cluster transport + LAN privacy ──────────────────────────────────────
+
+# The cluster master switch is OFF by default. A public `name`, a shared
+# `cluster_passphrase` in credentials.yaml, and `enabled: true` are all required
+# before the daemon joins a transport. mDNS discovery defaults on, but the
+# privacy policy below announces only on explicitly trusted SSIDs; an empty
+# list therefore stays silent. `listen_port` is shared by mDNS and Tailscale.
+cluster:
+  # name: home-lab
+  enabled: false
+  transport: peeroxide       # peeroxide | iroh (iroh needs cluster-iroh build)
+  peers: []                  # iroh endpoint ids for first outbound contact
+  mdns:
+    enabled: true
+  policy:
+    announce_on_untrusted_wifi: false
+    trusted_ssids: []        # e.g. [home-wifi, home-wifi-5g]
+  listen_port: 49737
+
+
+# ── 6. Inference topology ────────────────────────────────────────────────────
 
 # Per-hemisphere provider selection (R-22 Council). Three modes:
 #   single  — one provider for all roles. Default. Mirrors the legacy
@@ -181,15 +216,33 @@ inference:
 #     --key sk-or-v1-...
 
 
-# ── 6. Observability listener (optional) ─────────────────────────────────────
+# ── 7. Babel-Index observer (local by default) ───────────────────────────────
 
-# When set, `neothd serve` exposes /healthz + /metrics on this address.
+# The observer and K_d_v0 histogram are enabled by default. Optional memory /
+# skill posture signals are content-free and off by default. Selecting a K_d
+# embedding model requires a configured local EmbedProvider; failures degrade
+# explicitly to K=0 and never fall back under a false algorithm label.
+# Incognito provider calls never enter either K_d feed.
+# babel:
+#   enabled: true
+#   tick_interval_secs: 60
+#   threshold: 0.8
+#   v_max_default: 150.0
+#   memory_signals: false
+#   skill_signals: false
+#   k_d_embedding_model: null  # e.g. a locally configured embedding checkpoint
+#   export_format: jsonl
+#   federate: false            # separate explicit egress opt-in; fail-closed
+
+# ── 8. Observability listener (optional) ─────────────────────────────────────
+
+# When set, `neoth serve` exposes /healthz + /metrics on this address.
 # Bind to 127.0.0.1 unless you have a real reason — these endpoints
 # expose runtime state.
 # observability_listen: 127.0.0.1:43117
 
 
-# ── 7. Two-stage sub-agent review (off by default) ───────────────────────────
+# ── 9. Two-stage sub-agent review (off by default) ───────────────────────────
 
 # obra/superpowers port #2. When true, every `/agent <name> ...` call
 # chains two extra provider passes (spec compliance + code quality)
@@ -198,7 +251,7 @@ inference:
 review_gate_enabled: false
 
 
-# ── 8. Obsidian vault sync (optional) ────────────────────────────────────────
+# ── 10. Obsidian vault sync (optional) ───────────────────────────────────────
 
 # When set, the daemon mirrors `~/.neoth/archive/sessions/<day>/<file>.md`
 # into the operator's Obsidian vault on a schedule.
@@ -211,9 +264,9 @@ review_gate_enabled: false
 #   - /home/user/agenter/L6_Vault_Template
 
 
-# ── 9. Hysteria transport (optional, R-3) ────────────────────────────────────
+# ── 11. Hysteria transport (optional, R-3) ───────────────────────────────────
 
-# Encrypted egress for provider HTTP traffic. When configured, `neothd serve`
+# Encrypted egress for provider HTTP traffic. When configured, `neoth serve`
 # spawns the Hysteria subprocess at startup + routes provider HTTP via the
 # resulting SOCKS5 proxy. Operator supplies server + auth; binary is
 # auto-found in $PATH or ~/.neoth/bin/hysteria.
@@ -223,7 +276,7 @@ review_gate_enabled: false
 #   socks_port: 1080
 
 
-# ── 10. Cloud archive mirror (optional, R-8) ─────────────────────────────────
+# ── 12. Cloud archive mirror (optional, R-8) ─────────────────────────────────
 
 # Local folder that the operator's cloud client (Dropbox, GDrive, OneDrive,
 # iCloud, SMB mount, …) ALREADY syncs upstream. Daemon mirrors
@@ -235,7 +288,7 @@ review_gate_enabled: false
 # cloud_archive_auto_sync_secs: 3600
 
 
-# ── 11. B-Rollback snapshot policy (CDX-02) ──────────────────────────────────
+# ── 13. B-Rollback snapshot policy (CDX-02) ──────────────────────────────────
 
 # Which effect-adapter mutations should NEOTH snapshot before they
 # happen? Snapshots live in `~/.neoth/wal/*-snapshot-*.wal` and the
@@ -259,7 +312,7 @@ rollback:
   max_snapshot_bytes: 65536
 
 
-# ── 12. Claude CLI provider tuning (B-6) ─────────────────────────────────────
+# ── 14. Claude CLI provider tuning (B-6) ─────────────────────────────────────
 
 # Only consumed when `provider_kind: claude_cli`. Switches the adapter
 # between the cold-start `claude --print` subprocess path and the warm
@@ -300,7 +353,7 @@ claude_cli:
     hard_timeout_secs: 300
 
 
-# ── 13. Profile learning (off by default) ────────────────────────────────────
+# ── 15. Profile learning (off by default) ────────────────────────────────────
 
 # When `learn_enabled: true`, NEOTH runs the 6-stage profile pipeline
 # after every `neoth chat` reply. The pipeline reads the conversation
@@ -328,7 +381,7 @@ profile:
   learn_enabled: false
   timeout_secs: 15
 
-# ── 14. Council local-first weighting (COUNCIL-WEIGHTING-01) ────────────────
+# ── 16. Council local-first weighting (COUNCIL-WEIGHTING-01) ────────────────
 #
 # Prevents cloud models from winning a council debate purely by TIER_TABLE
 # score when actual response quality is equivalent to a local provider.
@@ -347,11 +400,120 @@ profile:
 # "Local" providers: local_qwen, local_ouro, local_ollama, recursive_mas.
 # cloud_cli is NOT local (inference runs on Anthropic's servers).
 #
-# Applied via CouncilDebate::best_response_with_locality (council/types.rs).
-# Wire-up: cli/chat.rs::select_winner_role_agnostic needs a 1-line update
-# to call best_response_with_locality instead of best_response.
+# Applied by the live CLI and channel council winner-selection paths.
 #
 #council:
 #  locality_tie_break: true
 #  locality_tie_epsilon: 0.05
 #  local_score_bonus: 0.0
+
+# ── 17. OMI conversation + native media ingest (off by default) ─────────────
+#
+# Modes:
+#   developer_api  — official OMI list/detail import. Public HTTPS requires
+#                    allow_cloud_api=true + omi_developer_api_key (`omi_dev_*`).
+#   native_ingest  — authenticated private listener for PCM/captions/frames.
+#   both           — both surfaces; native completions export to official OMI.
+#   legacy_memories — old local/private GET /v1/memories compatibility feed.
+#
+# Put the relevant secrets in ~/.neoth/credentials.yaml or the keychain:
+#   omi_developer_api_key: omi_dev_...
+#   omi_ingest_token: <at least 32 random bytes>
+#
+# Audio, images, video-call frames, verbatim transcript retention, derived
+# summaries, tasks, ground-truth, cloud API use, and cloud summaries are
+# independent opt-ins. Raw media bytes are never persisted. SC-18 quarantine
+# halts every downstream effect until `neoth omi resume --review-note ...`.
+#
+# omi:
+#   enabled: false
+#   mode: developer_api
+#   endpoint: http://127.0.0.1:8002
+#   allow_cloud_api: false
+#   poll_interval_secs: 30
+#   confidence_threshold: 0.75
+#   listen_addr: 127.0.0.1:8003
+#   initial_lookback_secs: 86400
+#   max_conversations_per_poll: 100
+#   retain_transcripts: false
+#   audio_enabled: false
+#   visual_enabled: false
+#   video_enabled: false
+#   create_actions: true
+#   seed_groundtruth: true
+#   summary_enabled: true
+#   allow_cloud_summary: false
+#   retention_days: 30
+#   max_audio_bytes_per_stream: 67108864
+#   max_image_bytes: 16777216
+#   max_connections: 4
+#   max_active_calls: 64
+#   idle_timeout_secs: 120
+#   allowed_uids: []
+
+# ── 18. WASM plugin approvals (managed by the CLI) ──────────────────────────
+#
+# Newly discovered plugins stay Pending until `neoth plugin enable <id>`.
+# Enable/re-enable writes an approval-bound record containing the exact
+# requested permission plus canonical plugin.toml and plugin.wasm SHA-256
+# digests. Do not manufacture these values by hand: any permission, semantic
+# manifest, or WASM change is refused on the next load and appears as
+# `reconsent_required` in `neoth plugin list`; review it and run the enable
+# command again. A running daemon uses only its immutable validated snapshot.
+#
+# Historical scalar entries such as `example: active` remain parseable, but
+# deliberately do not run until explicitly re-enabled.
+#
+# plugins:
+#   wasm:
+#     enabled: true
+#     activations:
+#       example:
+#         state: active
+#         approval:
+#           approved_permission: read_only
+#           manifest_sha256: <written-by-neoth-plugin-enable>
+#           wasm_sha256: <written-by-neoth-plugin-enable>
+#     pinned_hashes:
+#       example: <trusted-plugin-wasm-sha256>
+#     require_all_pinned: false
+#     require_signature: false
+#     revoked_ids: []
+
+# ── 19. Signed release-bundle self-update (off by default) ──────────────────
+#
+# `enabled` permits the daemon's periodic GitHub release check. With
+# `auto_apply: true`, Elevated/Full autonomy may also download, verify, and
+# stage the selected bundle; replacement still requires the explicit
+# `neoth update --self --apply` command.
+#
+# Channels are strict release rings:
+#   stable  — final SemVer releases only
+#   rc      — final + rc-tagged SemVer releases
+#   nightly — final + rc + nightly-tagged SemVer releases
+# Alpha/beta tags are rejected by every ring. `check_interval_secs: 0`
+# disables background checks/staging while preserving manual update commands.
+# `repo` must be a GitHub owner/repo slug. `target_triple` is normally omitted
+# for host detection; an override must exist in the release build matrix.
+#
+# auto_update:
+#   enabled: false
+#   auto_apply: false
+#   channel: stable
+#   check_interval_secs: 86400
+#   repo: The-Geek-Freaks/NEOTH
+#   # target_triple: x86_64-unknown-linux-musl
+
+# ── 20. Cluster resource snapshots + swarm dashboard ────────────────────────
+#
+# With the cluster feature compiled in, the daemon records local CPU/RAM/VRAM
+# snapshots at this cadence. `neoth cluster swarm` reads local and replicated
+# peer snapshots from the WAL and drops rows older than `stale_after_secs`.
+# Both time values must be greater than zero; invalid config fails startup.
+# Set `enabled: false` to stop the sampling task. An explicit dashboard
+# `--stale-secs` overrides only the display threshold for that invocation.
+#
+# swarm:
+#   enabled: true
+#   interval_secs: 30
+#   stale_after_secs: 300

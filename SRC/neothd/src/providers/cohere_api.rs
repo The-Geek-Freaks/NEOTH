@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
-use super::{Completion, Provider, Request};
+use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
 /// Output-token cap sent as `max_tokens` (Cohere makes it optional, but a
@@ -83,7 +83,23 @@ impl Provider for CohereAdapter {
         "cohere_api"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING_MAX_ONE
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.default_model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(self.max_tokens)
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         crate::providers::circuit_breaker::run_with_breaker("cohere_api", async {
             let started = Instant::now();
             let model = req
@@ -110,6 +126,11 @@ impl Provider for CohereAdapter {
                 model: model.clone(),
                 messages,
                 max_tokens: Some(self.max_tokens),
+                temperature: req.temperature,
+                p: req.top_p,
+                seed: req.sampling_seed,
+                stop_sequences: (!req.stop_sequences.is_empty())
+                    .then(|| req.stop_sequences.clone()),
             };
 
             let url = format!("{}/chat", self.endpoint);
@@ -194,6 +215,7 @@ impl Provider for CohereAdapter {
 
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model,
                 latency,
                 input_tokens,
@@ -215,6 +237,14 @@ struct CohereRequest {
     messages: Vec<CohereMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_sequences: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -275,6 +305,40 @@ mod tests {
         .expect("construct");
         assert_eq!(a.name(), "cohere_api");
         assert_eq!(a.endpoint, "https://api.cohere.com/v2");
+    }
+
+    #[test]
+    fn request_controls_use_cohere_v2_wire_names_and_omit_absent_values() {
+        let base = || CohereRequest {
+            stream: false,
+            model: "command-a".into(),
+            messages: vec![CohereMessage {
+                role: "user",
+                content: "ping".into(),
+            }],
+            max_tokens: Some(4096),
+            temperature: None,
+            p: None,
+            seed: None,
+            stop_sequences: None,
+        };
+        let empty = serde_json::to_value(base()).unwrap();
+        for field in ["temperature", "p", "seed", "stop_sequences"] {
+            assert!(empty.get(field).is_none());
+        }
+
+        let controlled = serde_json::to_value(CohereRequest {
+            temperature: Some(0.5),
+            p: Some(0.85),
+            seed: Some(11),
+            stop_sequences: Some(vec!["END".into()]),
+            ..base()
+        })
+        .unwrap();
+        assert_eq!(controlled["temperature"], 0.5);
+        assert_eq!(controlled["p"], 0.85);
+        assert_eq!(controlled["seed"], 11);
+        assert_eq!(controlled["stop_sequences"], serde_json::json!(["END"]));
     }
 
     fn build_adapter_against(server_uri: &str) -> CohereAdapter {

@@ -1,36 +1,19 @@
-//! K-Repo-Map (Session 14 Pick #13) — repository code-map for the
-//! agent context.
+//! Live repository code-map and repo-context subsystem.
 //!
-//! NEOTH's biggest competitive gap vs Aider / Cursor / Plandex is a
-//! structured map of the codebase the operator is working in. Without
-//! it, every prompt has to re-discover file structure + symbol
-//! positions by stuffing the prompt with raw file dumps. With a
-//! pre-computed map, the dispatcher can synthesise a tight
-//! "operator's repo: 412 files, 89k LOC, key symbols X/Y/Z in module
-//! M" context block + steer the LLM to the relevant files in advance.
+//! The ignore-aware, bounded walker records file metadata and optionally
+//! extracts declarations with language-specific regexes. A heuristic call
+//! graph, git ownership/co-change/risk analysis, and an atomic SQLite snapshot
+//! at `~/.neoth/code_map.db` build on that map.
 //!
-//! ## Phase 1 (this pick) — file walker
+//! Production consumers are operator-visible: `neoth code-map` scans,
+//! persists, loads, searches, and ranks relevant files; `neoth chat` can
+//! inject a bounded `<repo-context>` block; `neoth code` supplies a compact
+//! symbol map to the decomposer; and the in-process codegraph MCP server reads
+//! the same persisted data.
 //!
-//! - Walk the operator's project root respecting `.gitignore` /
-//!   `.ignore` / `.neothignore` semantics
-//! - Classify each file by language (extension-based + shebang fallback)
-//! - Count LOC + bytes per file
-//! - Emit a structured `RepoMap` the daemon can serialise into JSON
-//!   for the operator + ingest into recall for the agent context
-//!
-//! ## Phase 2 (follow-up) — tree-sitter symbol extraction
-//!
-//! - Parse each file with a language-specific tree-sitter grammar
-//! - Extract function/class/module/method/trait declarations + spans
-//! - Resolve cross-file `import` / `use` / `from` references
-//! - Build a directed graph (`Symbol → Caller`) for jump-to-definition
-//!
-//! ## Phase 3 (follow-up) — semantic recall integration
-//!
-//! - Persist the graph into `~/.neoth/code_map.db` (separate SQLite)
-//! - Embed symbol-context blocks into the existing `memory::tiers`
-//!   recall path so the LLM auto-pulls relevant files
-//! - Incremental refresh on PreEgress / PostProviderCall hooks
+//! Current symbol and call-edge extraction is deliberately heuristic, not a
+//! tree-sitter AST or a fully resolved cross-language graph. Callers must treat
+//! missing edges as unknown, never as proof that no relationship exists.
 
 pub mod co_change;
 pub mod graph;

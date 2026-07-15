@@ -5,7 +5,7 @@
 //!
 //! ## What it does
 //!
-//! Every tick the collector scans three data sources inside `spawn_blocking`:
+//! Every tick the collector scans four data sources inside `spawn_blocking`:
 //!
 //! 1. **`idx_episode`** — most-recent `window_days` of raw-text events
 //!    (`event_type = 0x01`). [`crate::reflection::topic_counts`] tokenises
@@ -20,6 +20,11 @@
 //! 3. **`self_improve_log.json`** — the SkillOpt ledger; consulted to detect
 //!    skills that were applied but scored badly (→ `PatchSkill`) or have not
 //!    yet had their artifact verified on disk (→ `Escalate`).
+//!
+//! 4. **`trajectories/*.jsonl`** — HARNESS-02 session traces. Tool-call
+//!    sequences supported by more than three independent sessions with
+//!    confidence above 0.8 become pending skill proposals (when
+//!    `propose_skills` is enabled) and emit `SKILL_DISTILL_CANDIDATE`.
 //!
 //! ## Output
 //!
@@ -46,14 +51,15 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use crate::config::automation::SelfImprovementCollectorConfig;
 use crate::wal::{
     EventFlags, HeaderBuilder,
     events::{
-        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE,
-        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED,
+        EVENT_TYPE_EXTENDED, EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_DONE,
+        EVENT_TYPE_SELF_IMPROVEMENT_COLLECTOR_STARTED, ExtendedSubtype,
     },
     writer::WalWriterHandle,
 };
@@ -132,6 +138,12 @@ pub struct CollectorReport {
     pub ledger_records_checked: usize,
     /// Number of skill artifacts checked for on-disk deployment.
     pub deployed_artifacts_checked: usize,
+    /// GOLD-ADAPT-KB-03 candidates that passed the independent-session gate.
+    #[serde(default)]
+    pub distill_candidates: usize,
+    /// Candidate proposals available in the operator review queue this tick.
+    #[serde(default)]
+    pub distill_proposals_staged: usize,
     /// Unix seconds when the report was written.
     pub ts_unix: i64,
 }
@@ -188,8 +200,7 @@ fn stage_prompt_edit_proposals(home: &Path, report: &CollectorReport, tick_ts_un
                 // YAML draft — skip them here.
                 _ => continue,
             };
-            let Some(proposal) =
-                build_proposal_from_collector_signal(target, reason, tick_ts_unix)
+            let Some(proposal) = build_proposal_from_collector_signal(target, reason, tick_ts_unix)
             else {
                 tracing::debug!(
                     topic = target,
@@ -222,6 +233,124 @@ fn stage_prompt_edit_proposals(home: &Path, report: &CollectorReport, tick_ts_un
             error = %e,
             "self_improvement_collector: queue load/save failed, staging pass skipped"
         ),
+    }
+}
+
+// ── GOLD-ADAPT-KB-03: trajectory distill → reviewed skill proposal ──────────
+
+const DISTILL_MIN_SESSIONS: usize = 4;
+const DISTILL_MIN_SEQUENCE_LEN: usize = 2;
+const DISTILL_MIN_CONFIDENCE: f64 = 0.8;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DistillPassReport {
+    candidates: usize,
+    proposals_staged: usize,
+}
+
+fn distill_sequence_hash(sequence: &[String]) -> String {
+    let mut hasher = Sha256::new();
+    for tool in sequence {
+        hasher.update((tool.len() as u64).to_le_bytes());
+        hasher.update(tool.as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
+
+async fn run_distill_pass(
+    home: &Path,
+    propose_skills: bool,
+    writer: &WalWriterHandle,
+    ts_unix: i64,
+) -> DistillPassReport {
+    let trajectory_dir = home.join("trajectories");
+    let candidates = match tokio::task::spawn_blocking(move || {
+        let sessions = crate::cli::distill::read_trajectory_sessions(&trajectory_dir);
+        crate::cli::distill::find_distill_candidates(
+            &sessions,
+            DISTILL_MIN_SESSIONS,
+            DISTILL_MIN_SEQUENCE_LEN,
+            DISTILL_MIN_CONFIDENCE,
+        )
+    })
+    .await
+    {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            warn!(error = %error, "KB-03 trajectory distill worker panicked");
+            return DistillPassReport::default();
+        }
+    };
+
+    let mut proposal_available = vec![false; candidates.len()];
+    if propose_skills && !candidates.is_empty() {
+        use crate::daemon::skill_forge::build_proposal_from_distill_pattern;
+        use crate::proactive::ProactiveQueue;
+        use crate::proactive::action_staging::stage_and_enqueue;
+
+        let queue_path = home.join("proactive_queue.json");
+        let result = ProactiveQueue::modify(&queue_path, |queue| {
+            let mut newly_staged = 0usize;
+            for (index, candidate) in candidates.iter().enumerate() {
+                let Some(proposal) = build_proposal_from_distill_pattern(
+                    &candidate.sequence,
+                    candidate.occurrences,
+                    candidate.supporting_sessions,
+                    candidate.eligible_sessions,
+                    candidate.confidence,
+                    ts_unix,
+                ) else {
+                    continue;
+                };
+                match stage_and_enqueue(home, proposal, queue) {
+                    Ok((_, is_new)) => {
+                        proposal_available[index] = true;
+                        newly_staged += is_new as usize;
+                    }
+                    Err(error) => warn!(
+                        error = %error,
+                        sequence_hash_sha256 = %distill_sequence_hash(&candidate.sequence),
+                        "KB-03 distill proposal staging failed"
+                    ),
+                }
+            }
+            (newly_staged > 0, newly_staged)
+        });
+        if let Err(error) = result {
+            warn!(error = %error, "KB-03 proactive queue update failed");
+        }
+    }
+
+    for (index, candidate) in candidates.iter().enumerate() {
+        let payload = serde_json::json!({
+            "sequence_hash_sha256": distill_sequence_hash(&candidate.sequence),
+            "sequence_len": candidate.sequence.len(),
+            "occurrences": candidate.occurrences,
+            "supporting_sessions": candidate.supporting_sessions,
+            "eligible_sessions": candidate.eligible_sessions,
+            "confidence_milli": (candidate.confidence * 1000.0).round() as u16,
+            "proposal_staged": proposal_available[index],
+            "ts_unix": ts_unix,
+        });
+        match serde_json::to_vec(&payload) {
+            Ok(payload) => {
+                let header = HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(ExtendedSubtype::SkillDistillCandidate as u8)
+                    .build();
+                if let Err(error) = writer.append(header, payload).await {
+                    warn!(error = %error, "KB-03 SKILL_DISTILL_CANDIDATE WAL append failed");
+                }
+            }
+            Err(error) => warn!(error = %error, "KB-03 candidate audit serialization failed"),
+        }
+    }
+
+    DistillPassReport {
+        candidates: candidates.len(),
+        proposals_staged: proposal_available
+            .into_iter()
+            .filter(|available| *available)
+            .count(),
     }
 }
 
@@ -273,7 +402,10 @@ fn tick_inner(
         Ok(c) => c,
         Err(e) => {
             warn!(error = %e, "self_improvement_collector: open db failed");
-            return CollectorReport { ts_unix, ..Default::default() };
+            return CollectorReport {
+                ts_unix,
+                ..Default::default()
+            };
         }
     };
 
@@ -293,7 +425,10 @@ fn tick_inner(
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "self_improvement_collector: prepare episode query failed");
-                return CollectorReport { ts_unix, ..Default::default() };
+                return CollectorReport {
+                    ts_unix,
+                    ..Default::default()
+                };
             }
         };
         match stmt.query_map(rusqlite::params![window_cutoff_ns], |row| {
@@ -302,7 +437,10 @@ fn tick_inner(
             Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
             Err(e) => {
                 warn!(error = %e, "self_improvement_collector: episode query failed");
-                return CollectorReport { ts_unix, ..Default::default() };
+                return CollectorReport {
+                    ts_unix,
+                    ..Default::default()
+                };
             }
         }
     };
@@ -352,8 +490,10 @@ fn tick_inner(
     let mut deployed_artifacts_checked: usize = 0;
 
     // Build a quick lookup: skill_id → ledger records for that skill.
-    let mut skill_ledger: std::collections::HashMap<String, Vec<&crate::self_improve::ImproveRecord>> =
-        std::collections::HashMap::new();
+    let mut skill_ledger: std::collections::HashMap<
+        String,
+        Vec<&crate::self_improve::ImproveRecord>,
+    > = std::collections::HashMap::new();
     for rec in &ledger {
         skill_ledger.entry(rec.skill.clone()).or_default().push(rec);
     }
@@ -472,6 +612,7 @@ fn tick_inner(
         ledger_records_checked,
         deployed_artifacts_checked,
         ts_unix,
+        ..Default::default()
     }
 }
 
@@ -492,7 +633,7 @@ fn babel_fitness_notes(
     ledger: &[crate::self_improve::ImproveRecord],
     now: i64,
 ) -> (Vec<BabelFitnessNote>, Vec<CollectorSignal>) {
-    use crate::analytics::babel::store::{babel_fitness, FitnessVerdict};
+    use crate::analytics::babel::store::{FitnessVerdict, babel_fitness};
     let mut notes = Vec::new();
     let mut signals = Vec::new();
     for rec in ledger {
@@ -570,12 +711,19 @@ pub async fn run_self_improvement_collector_tick(
     let db = db_path.to_path_buf();
     let home_buf = home.to_path_buf();
 
-    let report = tokio::task::spawn_blocking(move || tick_inner(&db, &home_buf, cfg, ts_unix))
+    let mut report = tokio::task::spawn_blocking(move || tick_inner(&db, &home_buf, cfg, ts_unix))
         .await
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "self_improvement_collector: spawn_blocking panicked");
-            CollectorReport { ts_unix, ..Default::default() }
+            CollectorReport {
+                ts_unix,
+                ..Default::default()
+            }
         });
+
+    let distill = run_distill_pass(home, cfg.propose_skills, writer, ts_unix).await;
+    report.distill_candidates = distill.candidates;
+    report.distill_proposals_staged = distill.proposals_staged;
 
     // Write the sidecar atomically so HERMES-06 can poll it.
     let sidecar_path = home.join("self_improvement_signals.json");
@@ -612,6 +760,8 @@ pub async fn run_self_improvement_collector_tick(
             "lessons_read": report.lessons_read,
             "ledger_records_checked": report.ledger_records_checked,
             "deployed_artifacts_checked": report.deployed_artifacts_checked,
+            "distill_candidates": report.distill_candidates,
+            "distill_proposals_staged": report.distill_proposals_staged,
             "ts_unix": ts_unix_done,
         }),
         "SELF_IMPROVEMENT_COLLECTOR_DONE",
@@ -684,7 +834,11 @@ mod tests {
 
     // ── GOLD-DELTA-13 — babel fitness notes ──────────────────────────────────
 
-    fn improve_record(skill: &str, at_unix: i64, accepted: bool) -> crate::self_improve::ImproveRecord {
+    fn improve_record(
+        skill: &str,
+        at_unix: i64,
+        accepted: bool,
+    ) -> crate::self_improve::ImproveRecord {
         crate::self_improve::ImproveRecord {
             skill: skill.to_string(),
             accepted,
@@ -748,8 +902,8 @@ mod tests {
         let ripe = now - BABEL_FITNESS_HORIZON_SECS - 100;
         let conn = babel_fitness_db(ripe, 1.0, 0.5);
         let ledger = vec![
-            improve_record("rejected", ripe, false),          // not accepted
-            improve_record("too-fresh", now - 60, true),      // horizon not observable
+            improve_record("rejected", ripe, false),     // not accepted
+            improve_record("too-fresh", now - 60, true), // horizon not observable
             improve_record("ancient", now - 30 * 86_400, true), // aged out
         ];
         let (notes, signals) = babel_fitness_notes(&conn, &ledger, now);
@@ -790,7 +944,10 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_returns_none_when_disabled() {
-        let cfg = SelfImprovementCollectorConfig { enabled: false, ..Default::default() };
+        let cfg = SelfImprovementCollectorConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let seg_dir = tempfile::tempdir().unwrap();
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
@@ -841,6 +998,75 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn nightly_tick_distills_cross_session_pattern_and_audits_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        drop(store::open(&db_path).unwrap());
+        let trajectories = dir.path().join("trajectories");
+        std::fs::create_dir_all(&trajectories).unwrap();
+        for index in 0..5 {
+            let record = crate::mcp::harness::TurnRecord {
+                turn: 1,
+                prompt_hash: format!("session-{index}"),
+                prompt_len: 10,
+                tool_calls: vec!["filesystem/read".into(), "editor/apply".into()],
+                verdict: "tool_calls".into(),
+                ts_unix: 1_700_000_000 + index,
+            };
+            std::fs::write(
+                trajectories.join(format!("session-{index}.jsonl")),
+                format!("{}\n", serde_json::to_string(&record).unwrap()),
+            )
+            .unwrap();
+        }
+
+        let segment = dir.path().join("distill.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let cfg = SelfImprovementCollectorConfig {
+            propose_skills: true,
+            ..Default::default()
+        };
+        let report = run_self_improvement_collector_tick(&db_path, dir.path(), cfg, &writer).await;
+        assert_eq!(report.distill_candidates, 1);
+        assert_eq!(report.distill_proposals_staged, 1);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("proposals"))
+                .unwrap()
+                .count(),
+            1
+        );
+
+        drop(writer);
+        join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = segment_header.header_len();
+        let mut candidate_payload = None;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_type == EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype == ExtendedSubtype::SkillDistillCandidate as u8
+            {
+                candidate_payload =
+                    Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        let payload = candidate_payload.expect("candidate WAL frame must be present");
+        assert_eq!(payload["supporting_sessions"], 5);
+        assert_eq!(payload["eligible_sessions"], 5);
+        assert_eq!(payload["confidence_milli"], 1000);
+        assert_eq!(payload["proposal_staged"], true);
+        assert_eq!(
+            payload["sequence_hash_sha256"]
+                .as_str()
+                .expect("hash string")
+                .len(),
+            64
+        );
+    }
+
     // ── spawn enabled → Some, aborts cleanly ────────────────────────────────
 
     #[tokio::test]
@@ -870,7 +1096,10 @@ mod tests {
 
     #[test]
     fn is_verified_deployed_missing_path_returns_false() {
-        assert!(!is_verified_deployed(Path::new("/nonexistent/skill.yaml"), 0));
+        assert!(!is_verified_deployed(
+            Path::new("/nonexistent/skill.yaml"),
+            0
+        ));
     }
 
     #[test]

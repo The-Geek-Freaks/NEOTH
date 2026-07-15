@@ -3,9 +3,10 @@
 //!
 //! v0.1 surface: takes an existing Provider trait object, renders a
 //! deterministic system prompt instructing the LLM to output strict
-//! `ProfileDelta` JSON, parses the response. Temperature 0 + a hash-
-//! derived seed mean the same window always produces the same delta
-//! (G.1 conformance).
+//! `ProfileDelta` JSON, parses the response. Providers that support sampling
+//! controls additionally receive temperature 0 + a hash-derived seed; other
+//! providers retain deterministic prompt construction and log the omitted
+//! quality hints.
 //!
 //! What this stage does NOT do — they live downstream:
 //!   - Schema validation (stage 4).
@@ -332,13 +333,24 @@ pub async fn extract(
         });
     }
 
+    let temperature = crate::providers::internal_temperature(provider, 0.0, "profile.extract");
+    let sampling_seed = if provider.request_controls().supports_sampling_seed() {
+        Some(seed_from_window(window))
+    } else {
+        tracing::warn!(
+            provider = provider.name(),
+            call_scope = "profile.extract",
+            "internal sampling seed omitted because the selected provider cannot wire it"
+        );
+        None
+    };
     let req = Request {
         prompt: render_user_prompt(window, max_window_chars),
         system: Some(build_system_prompt()),
         model: None,
-        temperature: Some(0.0),
+        temperature,
         top_p: None,
-        sampling_seed: Some(seed_from_window(window)),
+        sampling_seed,
         stop_sequences: vec![],
         thinking_budget: None,
     };
@@ -419,7 +431,7 @@ mod tests {
     use crate::profile::types::{
         AttributedSegment, Attribution, ConversationSegment, SegmentOrigin,
     };
-    use crate::providers::{Completion, Provider, Request};
+    use crate::providers::{Completion, Provider, ProviderRequestControls, Request};
     use async_trait::async_trait;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -445,10 +457,16 @@ mod tests {
         fn name(&self) -> &'static str {
             "mock"
         }
+
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::SAMPLING
+        }
+
         async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
             *self.last_request.lock().unwrap() = Some(req);
             Ok(Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "mock-1".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: Some(10),
@@ -530,7 +548,7 @@ mod tests {
         assert_eq!(delta.extraction_id, "ext-abc");
         assert_eq!(delta.claims.len(), 1);
         assert_eq!(delta.claims[0].field, "identity.location");
-        // Request used temperature 0 + a deterministic seed.
+        // The sampling-capable provider received temperature 0 + a deterministic seed.
         let req = provider.last_request.lock().unwrap().clone().unwrap();
         assert_eq!(req.temperature, Some(0.0));
         assert!(req.sampling_seed.is_some());
@@ -699,7 +717,7 @@ mod tests {
     #[test]
     fn render_nonce_is_stable_for_identical_windows() {
         // G.1 determinism: same operator content → same nonce → same
-        // prompt → reproducible LLM output (with temp 0 + seed).
+        // prompt → reproducible LLM output when the leaf supports temp 0 + seed.
         let w1 = user_speech_window();
         let w2 = user_speech_window();
         assert_eq!(render_nonce(&w1), render_nonce(&w2));
@@ -837,7 +855,10 @@ mod tests {
         };
         let p = render_user_prompt(&w, 250);
         // Only event_id=3 and event_id=4 (the two newest) should appear.
-        assert!(p.contains("event_id=3"), "newest-1 segment must be included");
+        assert!(
+            p.contains("event_id=3"),
+            "newest-1 segment must be included"
+        );
         assert!(p.contains("event_id=4"), "newest segment must be included");
         for excluded in 0..3 {
             assert!(
@@ -969,9 +990,8 @@ mod tests {
         };
 
         // Use in-process MockProvider to capture the request cheaply.
-        let provider = MockProvider::new(
-            r#"{"extraction_id":"x","conversation_hash":"y","claims":[]}"#,
-        );
+        let provider =
+            MockProvider::new(r#"{"extraction_id":"x","conversation_hash":"y","claims":[]}"#);
         let _ = extract(&provider, &w, SMALL_BUDGET).await.unwrap();
 
         let req = provider.last_request.lock().unwrap().clone().unwrap();
@@ -1014,8 +1034,7 @@ mod tests {
         let cfg: crate::config::ops::ProfileConfig =
             serde_yaml::from_str("{}").expect("empty YAML must deserialize ProfileConfig");
         assert_eq!(
-            cfg.extract_window_chars,
-            DEFAULT_WINDOW_CHARS,
+            cfg.extract_window_chars, DEFAULT_WINDOW_CHARS,
             "serde default for extract_window_chars must equal DEFAULT_WINDOW_CHARS constant"
         );
     }
@@ -1059,7 +1078,9 @@ mod tests {
         // happy + the assertion focuses on "provider was invoked".
         let provider = MockProvider::new(VALID_JSON_REPLY);
         let window = user_speech_window();
-        let _ = extract(&provider, &window, DEFAULT_WINDOW_CHARS).await.unwrap();
+        let _ = extract(&provider, &window, DEFAULT_WINDOW_CHARS)
+            .await
+            .unwrap();
         // Provider WAS invoked — no skip-extraction short-circuit fired.
         assert!(
             provider.last_request.lock().unwrap().is_some(),

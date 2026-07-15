@@ -1,0 +1,7 @@
+id = "echo"
+name = "Echo ABI v1 Example"
+version = "0.1.0"
+description = "Logs one diagnostic line through the versioned NEOTH guest ABI."
+requested_permissions = "none"
+hook_stages = ["pre_provider_call"]
+

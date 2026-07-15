@@ -25,21 +25,19 @@ pub struct BabelConfig {
     /// Operator-tunable; 0.8 is a pre-calibration placebo default and is
     /// expected to be revisited once `epsilon_calibrated` freezes.
     pub threshold: f64,
-    /// Cold-start `V_MAX` (tokens/sec p99 stand-in) used until the norm
-    /// table has real p99 data. Mirrors `feature.rs` cold-start default.
+    /// Operator-configured `V_MAX` denominator for `V_d` (tokens/sec).
+    /// Defaults to 150.0 tps and is independent of b_raw calibration.
     pub v_max_default: f64,
     /// Frozen epsilon for the multiplicative form, written back exactly once
     /// by `norm::compute_calibration_epsilon` (pre-hoc rule:
     /// `0.01 x median((D/A) x (H/V))` over the first 10% of windows).
     /// `None` = not yet calibrated.
     pub epsilon_calibrated: Option<f64>,
-    /// Reserved: no runtime effect in v1.0; wired only after pre-hoc
-    /// feature/collapse mapping is complete (post-GOLD). Kept for
-    /// forward-compat deserialization of existing freedom.yaml files.
+    /// Emit content-free contradiction + true recall-miss posture at the
+    /// source. Does not alter the seven Babel score variables.
     pub memory_signals: bool,
-    /// Reserved: no runtime effect in v1.0; wired only after pre-hoc
-    /// feature/collapse mapping is complete (post-GOLD). Kept for
-    /// forward-compat deserialization of existing freedom.yaml files.
+    /// Emit content-free final skill-routing outcome posture at the source.
+    /// Does not alter the seven Babel score variables.
     pub skill_signals: bool,
     /// Federation opt-in. Default FALSE — sharing anonymized window records
     /// with other NEOTH instances only happens when the operator explicitly
@@ -56,10 +54,9 @@ pub struct BabelConfig {
     /// GOLD-DELTA panel decision Q1 (2026-07-02, unanimous): optional named
     /// sentence-embedding checkpoint for K_d. The NAME lives here in config
     /// (model-version-agnostic rule — never in code). `None` = the shipped
-    /// K_d_v0 token-frequency histogram (khist feed). NOTE: the embedding
-    /// implementation is a post-GOLD item; v1.0 reads but does not yet act
-    /// on this field, and `algorithm_versions.k` stratifies the two methods
-    /// per-row so mixed-method pools stay analyzable.
+    /// K_d_v0 token-frequency histogram when absent. When set, a dedicated
+    /// configured local `EmbedProvider` computes bounded response embeddings;
+    /// per-row algorithm/model/degradation posture prevents mixed-method pools.
     pub k_d_embedding_model: Option<String>,
     /// Export serialization for `neoth babel export`. Currently `jsonl`.
     pub export_format: String,
@@ -121,27 +118,30 @@ mod tests {
         assert_eq!(c, back);
     }
 
-    /// Reserved signal flags must default to false in v1.0 (no-op, post-GOLD).
+    /// Optional signal sources remain consent-off by default.
     #[test]
     fn signal_flags_default_false() {
         let c = BabelConfig::default();
-        assert!(!c.memory_signals, "memory_signals must default to false (reserved/no-op in v1.0)");
-        assert!(!c.skill_signals, "skill_signals must default to false (reserved/no-op in v1.0)");
+        assert!(!c.memory_signals, "memory signals must be explicit opt-in");
+        assert!(!c.skill_signals, "skill signals must be explicit opt-in");
     }
 
-    /// Fields stay in the struct for forward-compat: existing freedom.yaml
-    /// files with `memory_signals: true` must parse cleanly and round-trip
-    /// without loss even though the default changed to false.
+    /// Enabled source gates must round-trip without loss.
     #[test]
     fn signal_flags_parse_and_roundtrip_when_set_true() {
-        let c: BabelConfig =
-            serde_yaml::from_str("memory_signals: true\nskill_signals: true\n")
-                .expect("parses with signals set true");
+        let c: BabelConfig = serde_yaml::from_str("memory_signals: true\nskill_signals: true\n")
+            .expect("parses with signals set true");
         assert!(c.memory_signals, "parses memory_signals: true");
         assert!(c.skill_signals, "parses skill_signals: true");
         let yaml = serde_yaml::to_string(&c).expect("serializes");
         let back: BabelConfig = serde_yaml::from_str(&yaml).expect("parses back");
-        assert!(back.memory_signals, "roundtrip preserves memory_signals = true");
-        assert!(back.skill_signals, "roundtrip preserves skill_signals = true");
+        assert!(
+            back.memory_signals,
+            "roundtrip preserves memory_signals = true"
+        );
+        assert!(
+            back.skill_signals,
+            "roundtrip preserves skill_signals = true"
+        );
     }
 }

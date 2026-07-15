@@ -123,7 +123,7 @@ pub(crate) fn check_local_qwen_weights(home: &Path) -> CheckOutcome {
         };
     }
     let model = crate::installers::qwen_weights::DEFAULT_QWEN_MODEL_ID;
-    if crate::installers::qwen_weights::check_weights_cached(model) {
+    if crate::installers::qwen_weights::check_weights_cached_at(home, model) {
         CheckOutcome {
             name,
             status: CheckStatus::Pass,

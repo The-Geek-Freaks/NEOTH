@@ -1,5 +1,13 @@
 # Cluster Live-Transport — Design Gremium (Session 32, 2026-06-01)
 
+> **Historical design snapshot — API superseded (2026-07-14).** The snippets
+> below preserve the design reasoning from Session 32 and are not current
+> copy/paste API. Production permission decisions now require an immutable
+> `AutonomyPolicySnapshot`: obtain it from `FreedomConfig::autonomy_policy()` or
+> `ReloadController::autonomy_policy()`, evaluate with
+> `permissions::evaluate(&action, &policy)`, and construct gates with
+> `Gate::for_policy(policy)`. `Gate::for_level` is test-only.
+>
 > 4-lens senior-dev gremium, verified against the real cluster code. The build
 > order to make SL-01/SL-01b real (NOT deferred). Operator directive: FINISH.
 

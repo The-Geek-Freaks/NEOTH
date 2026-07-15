@@ -122,9 +122,7 @@ pub fn default_eval_suite() -> Vec<EvalCase> {
         },
         // Case 4 — German-language episode (MEM-GATE-DE coverage).
         EvalCase {
-            episodes: vec![
-                "Der Operator bevorzugt lokale Modelle ohne API-Kosten.".into(),
-            ],
+            episodes: vec!["Der Operator bevorzugt lokale Modelle ohne API-Kosten.".into()],
             query: "lokale Modelle".into(),
             expect_substr: "lokale".into(),
         },
@@ -446,9 +444,10 @@ pub fn run_memory_eval(conn: &mut Connection, seed_cases: &[EvalCase]) -> Result
 
     for case in seed_cases {
         let found = recall_any_tier(conn, &case.query, 50)?;
-        let hit = found
-            .iter()
-            .any(|row| row.to_lowercase().contains(&case.expect_substr.to_lowercase()));
+        let hit = found.iter().any(|row| {
+            row.to_lowercase()
+                .contains(&case.expect_substr.to_lowercase())
+        });
         if hit {
             hits += 1;
         } else {

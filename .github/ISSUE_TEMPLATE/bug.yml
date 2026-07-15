@@ -1,5 +1,5 @@
 name: Bug Report
-description: File a bug report for neothd
+description: File a bug report for NEOTH
 title: "[Bug]: "
 labels: ["bug", "triage"]
 body:
@@ -12,9 +12,9 @@ body:
   - type: input
     id: neoth-version
     attributes:
-      label: neothd version
-      description: Output of `neothd --version`
-      placeholder: "neothd 0.1.0"
+      label: neoth version
+      description: Output of `neoth --version`
+      placeholder: "neoth 1.0.0"
     validations:
       required: true
 
@@ -66,7 +66,7 @@ body:
       label: Steps to reproduce
       description: Minimal steps that trigger the bug
       placeholder: |
-        1. Start neothd with config ...
+        1. Start neoth with config ...
         2. Send message ...
         3. Observe ...
     validations:
@@ -92,7 +92,7 @@ body:
       label: Relevant logs
       description: |
         Paste truncated logs here. **IMPORTANT: remove all secrets, API keys,
-        OAuth tokens, and personal data before pasting. neothd logs may contain
+        OAuth tokens, and personal data before pasting. NEOTH logs may contain
         message content from your channels.**
       render: text
     validations:

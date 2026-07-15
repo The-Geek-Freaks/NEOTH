@@ -42,13 +42,18 @@ impl SlackChannel {
     /// Operator-visible hint surfaced by the wizard + `neoth doctor`.
     pub const SETUP_HINT: &'static str = "Slack socket mode: create an app at api.slack.com/apps, enable Socket Mode, \
          copy the xoxb- bot token + xapp- app token into credentials.yaml. \
-         Real receive/send wiring lands in Phase 2.";
+         `neoth serve` opens the outbound WebSocket, receives events, ACKs \
+         envelopes, and sends replies through chat.postMessage.";
 }
 
 #[async_trait]
 impl Channel for SlackChannel {
     fn name(&self) -> &'static str {
         "slack"
+    }
+
+    fn supports_message_edits(&self) -> bool {
+        true
     }
 
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
@@ -60,8 +65,8 @@ impl Channel for SlackChannel {
     }
 
     /// Send a plain-text message to a Slack channel via `chat.postMessage`.
-    /// Outbound-only path that works without the Phase-2 socket-mode loop —
-    /// proactive cron jobs and one-way notifications use this today.
+    /// The live socket-mode receive loop and proactive jobs both use this
+    /// outbound API path.
     ///
     /// `chat_id` accepts Slack's channel ids (`C…` / `D…` / `G…`) or
     /// `#channel-name` (Slack resolves server-side). Returns the
@@ -191,6 +196,8 @@ mod tests {
         let h = SlackChannel::SETUP_HINT;
         assert!(h.contains("xoxb"));
         assert!(h.contains("xapp"));
+        assert!(h.contains("neoth serve"));
+        assert!(!h.contains("Phase 2"));
     }
 
     /// SPEC-11 pin: edit_message routes through chat.update. A bogus token

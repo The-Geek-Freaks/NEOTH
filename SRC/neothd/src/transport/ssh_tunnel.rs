@@ -53,11 +53,11 @@ impl client::Handler for SshHandler {
         let repr = server_public_key
             .to_openssh()
             .map_err(|e| anyhow!("encode server host key: {e}"))?;
-        let outcome = self
-            .tofu
-            .lock()
-            .await
-            .check_and_update(&self.host_key, &algo, repr.as_bytes())?;
+        let outcome =
+            self.tofu
+                .lock()
+                .await
+                .check_and_update(&self.host_key, &algo, repr.as_bytes())?;
         let allow = tofu_allows(&outcome);
         if !allow {
             tracing::error!(
@@ -161,27 +161,31 @@ async fn run_forward(
 ) {
     let mut attempt = 0u32;
     loop {
-        let handle =
-            match super::ssh_jump::connect_via_jumps(&cfg.jump_hosts, &cfg.endpoint, tofu.clone(), config.clone())
-                .await
-            {
-                Ok(h) => {
-                    attempt = 0;
-                    tracing::info!(host = %cfg.endpoint.host_key(), local_port = local_port_of(&listener), "ssh tunnel connected");
-                    Arc::new(h)
+        let handle = match super::ssh_jump::connect_via_jumps(
+            &cfg.jump_hosts,
+            &cfg.endpoint,
+            tofu.clone(),
+            config.clone(),
+        )
+        .await
+        {
+            Ok(h) => {
+                attempt = 0;
+                tracing::info!(host = %cfg.endpoint.host_key(), local_port = local_port_of(&listener), "ssh tunnel connected");
+                Arc::new(h)
+            }
+            Err(e) => {
+                if attempt >= cfg.max_retries {
+                    tracing::error!(error = %e, host = %cfg.endpoint.host_key(), "ssh tunnel: max retries reached — giving up");
+                    return;
                 }
-                Err(e) => {
-                    if attempt >= cfg.max_retries {
-                        tracing::error!(error = %e, host = %cfg.endpoint.host_key(), "ssh tunnel: max retries reached — giving up");
-                        return;
-                    }
-                    let delay = reconnect_delay(cfg.retry_delay, attempt);
-                    tracing::warn!(error = %e, attempt, retry_in_secs = delay.as_secs(), "ssh tunnel connect failed — retrying");
-                    attempt += 1;
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-            };
+                let delay = reconnect_delay(cfg.retry_delay, attempt);
+                tracing::warn!(error = %e, attempt, retry_in_secs = delay.as_secs(), "ssh tunnel connect failed — retrying");
+                attempt += 1;
+                tokio::time::sleep(delay).await;
+                continue;
+            }
+        };
         // Accept loop: forward each local connection over its own direct-tcpip
         // channel. Breaks (→ reconnect) on a listener error.
         loop {

@@ -134,8 +134,8 @@ impl Snapshot {
     }
 
     /// Render as JSON for `--output json` and the future `/healthz` body.
-    pub fn render_json(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".into())
+    pub fn render_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
     }
 
     /// Render as Prometheus-style line protocol for the future `/metrics`
@@ -505,7 +505,7 @@ mod tests {
             clock_floor_ns: 0,
             provider_meter: None,
         };
-        let j: serde_json::Value = serde_json::from_str(&snap.render_json()).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&snap.render_json().unwrap()).unwrap();
         assert_eq!(j["daemon_version"], "0.1.0");
         assert!(j.get("idx_episode_rows").is_some());
     }

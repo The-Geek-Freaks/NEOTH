@@ -78,8 +78,7 @@ pub fn is_rmas_consent_acknowledged(home: &Path) -> bool {
 /// Returns an error only if the home directory cannot be created or the
 /// marker file cannot be written.
 pub fn write_rmas_consent_marker(home: &Path) -> Result<()> {
-    fs::create_dir_all(home)
-        .with_context(|| format!("create neoth home {}", home.display()))?;
+    fs::create_dir_all(home).with_context(|| format!("create neoth home {}", home.display()))?;
     let marker = rmas_marker_path(home);
     // Store a human-readable UTC timestamp so operators can audit when they
     // acknowledged by hand (`cat ~/.neoth/rmas_consent_acknowledged`).
@@ -167,15 +166,17 @@ fn run_consent(home: &Path, acknowledge: bool) -> Result<()> {
              License: {}\n\
              \n\
              {}",
-            if already { "ACKNOWLEDGED" } else { "NOT acknowledged" },
+            if already {
+                "ACKNOWLEDGED"
+            } else {
+                "NOT acknowledged"
+            },
             marker.display(),
             RMAS_LICENSE_NAME,
             RMAS_LICENSE_NOTICE,
         );
         if !already {
-            println!(
-                "\nTo acknowledge, run:\n  neoth rmas consent --acknowledge"
-            );
+            println!("\nTo acknowledge, run:\n  neoth rmas consent --acknowledge");
         }
     }
     Ok(())
@@ -231,17 +232,20 @@ mod tests {
         // The written marker must land at exactly the path the adapter probes.
         let dir = TempDir::new().unwrap();
         write_rmas_consent_marker(dir.path()).unwrap();
-        let adapter_probe =
-            dir.path().join(crate::providers::recursive_mas::CONSENT_MARKER);
-        assert!(adapter_probe.exists(), "adapter would still see consent missing");
+        let adapter_probe = dir
+            .path()
+            .join(crate::providers::recursive_mas::CONSENT_MARKER);
+        assert!(
+            adapter_probe.exists(),
+            "adapter would still see consent missing"
+        );
     }
 
     #[test]
     fn write_marker_stores_non_empty_content() {
         let dir = TempDir::new().unwrap();
         write_rmas_consent_marker(dir.path()).unwrap();
-        let content =
-            std::fs::read_to_string(rmas_marker_path(dir.path())).unwrap();
+        let content = std::fs::read_to_string(rmas_marker_path(dir.path())).unwrap();
         assert!(!content.is_empty(), "marker must contain timestamp");
     }
 

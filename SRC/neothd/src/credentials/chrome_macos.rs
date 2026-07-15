@@ -117,9 +117,11 @@ pub fn decrypt_chrome_password_macos(
     // GOLD-ARCH-08 — shared CBC loop lives in `chrome_common`; macOS maps the
     // generic error onto its own per-source diagnostic enum.
     use crate::credentials::chrome_common::ChromeCbcError;
-    crate::credentials::chrome_common::decrypt_chrome_cbc_envelope(aes_key, blob).map_err(|e| match e {
-        ChromeCbcError::UnrecognizedBlob => ChromeMacosError::UnrecognizedBlob,
-        ChromeCbcError::AesCbcDecrypt => ChromeMacosError::AesCbcDecrypt,
+    crate::credentials::chrome_common::decrypt_chrome_cbc_envelope(aes_key, blob).map_err(|e| {
+        match e {
+            ChromeCbcError::UnrecognizedBlob => ChromeMacosError::UnrecognizedBlob,
+            ChromeCbcError::AesCbcDecrypt => ChromeMacosError::AesCbcDecrypt,
+        }
     })
 }
 

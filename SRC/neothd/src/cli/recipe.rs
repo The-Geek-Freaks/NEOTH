@@ -255,8 +255,8 @@ async fn run_one(
         wal_segment: None,
         stream: matches!(output, OutputFormat::Jsonl),
         temperature: rendered.settings.temperature,
-        top_p: None,
-        sampling_seed: None,
+        top_p: rendered.settings.top_p,
+        sampling_seed: rendered.settings.sampling_seed,
         resume_from: None,
         // Recipes are operator-authored automation — never incognito.
         incognito: false,

@@ -56,10 +56,11 @@ pub struct PassReport {
 pub fn spawn(
     home: PathBuf,
     topics: Vec<String>,
-    provider: Option<Arc<dyn Provider>>,
+    provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
     interval: Option<Duration>,
     max_per_topic: Option<usize>,
     source_category: Option<String>,
+    http: Arc<crate::tools::external_http::ExternalHttpAuthorizer>,
 ) -> JoinHandle<Result<()>> {
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
     let max_per_topic = max_per_topic.unwrap_or(DEFAULT_MAX_PER_TOPIC);
@@ -72,6 +73,7 @@ pub fn spawn(
             interval,
             max_per_topic,
             source_category,
+            http,
         )
         .await
     })
@@ -80,10 +82,11 @@ pub fn spawn(
 async fn run(
     home: PathBuf,
     topics: Vec<String>,
-    provider: Option<Arc<dyn Provider>>,
+    provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
     interval: Duration,
     max_per_topic: usize,
     source_category: String,
+    http: Arc<crate::tools::external_http::ExternalHttpAuthorizer>,
 ) -> Result<()> {
     info!(
         interval_secs = interval.as_secs(),
@@ -98,13 +101,14 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        match run_one_pass_against(
+        match run_one_pass_against_authorized(
             ARXIV_API_URL,
             &home,
             &topics,
             provider.as_deref(),
             max_per_topic,
             &source_category,
+            http.as_ref(),
         )
         .await
         {
@@ -131,13 +135,14 @@ async fn run(
 /// A topic whose fetch fails is logged + skipped (the other topics still
 /// run). A paper whose index write fails is logged + counted in
 /// `papers_skipped`. Summarisation failure folds to the raw abstract.
-pub async fn run_one_pass_against(
+pub async fn run_one_pass_against_authorized(
     endpoint: &str,
     home: &Path,
     topics: &[String],
-    provider: Option<&dyn Provider>,
+    provider: Option<&crate::providers::cost_authorization::AuthorizedProvider>,
     max_per_topic: usize,
     source_category: &str,
+    http: &crate::tools::external_http::ExternalHttpAuthorizer,
 ) -> Result<PassReport> {
     let db_path = home.join("views.db");
     let mut conn = store::open(&db_path)?;
@@ -145,13 +150,14 @@ pub async fn run_one_pass_against(
     let mut skipped = 0usize;
 
     for topic in topics {
-        let papers = match arxiv::search_against(endpoint, topic, max_per_topic).await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!(error = %e, topic, "arxiv topic fetch failed; skipping topic");
-                continue;
-            }
-        };
+        let papers =
+            match arxiv::search_against_authorized(endpoint, topic, max_per_topic, http).await {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(error = %e, topic, "arxiv topic fetch failed; skipping topic");
+                    continue;
+                }
+            };
         for paper in papers {
             let summary = match provider {
                 Some(p) => summarise_abstract(p, &paper.title, &paper.abstract_text)
@@ -191,6 +197,28 @@ pub async fn run_one_pass_against(
         papers_indexed: indexed,
         papers_skipped: skipped,
     })
+}
+
+#[cfg(test)]
+pub async fn run_one_pass_against(
+    endpoint: &str,
+    home: &Path,
+    topics: &[String],
+    provider: Option<&crate::providers::cost_authorization::AuthorizedProvider>,
+    max_per_topic: usize,
+    source_category: &str,
+) -> Result<PassReport> {
+    let http = crate::tools::external_http::ExternalHttpAuthorizer::test_allow();
+    run_one_pass_against_authorized(
+        endpoint,
+        home,
+        topics,
+        provider,
+        max_per_topic,
+        source_category,
+        &http,
+    )
+    .await
 }
 
 /// LLM-summarise a single abstract for the knowledge base. Errors
@@ -286,6 +314,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
                 text: self.0.to_string(),
+                identity: Default::default(),
                 model: "mock".to_string(),
                 latency: StdDuration::from_millis(0),
                 input_tokens: None,
@@ -306,6 +335,19 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             anyhow::bail!("provider unavailable")
         }
+    }
+
+    fn authorized(
+        provider: impl Provider + 'static,
+    ) -> crate::providers::cost_authorization::AuthorizedProvider {
+        crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(provider),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            Some("mock".to_string()),
+            "arxiv.test",
+        )
     }
 
     #[tokio::test]
@@ -346,7 +388,7 @@ mod tests {
     async fn uses_provider_summary_when_available() {
         let dir = tempdir().unwrap();
         let mock = mock_arxiv(ONE_PAPER_ATOM, 200).await;
-        let provider = FixedSummaryProvider("LLM-CONDENSED-SUMMARY.");
+        let provider = authorized(FixedSummaryProvider("LLM-CONDENSED-SUMMARY."));
         run_one_pass_against(
             &mock.uri(),
             dir.path(),
@@ -367,7 +409,7 @@ mod tests {
     async fn falls_back_to_raw_abstract_when_provider_fails() {
         let dir = tempdir().unwrap();
         let mock = mock_arxiv(ONE_PAPER_ATOM, 200).await;
-        let provider = FailingProvider;
+        let provider = authorized(FailingProvider);
         run_one_pass_against(
             &mock.uri(),
             dir.path(),

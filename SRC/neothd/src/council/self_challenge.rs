@@ -134,7 +134,10 @@ pub fn challenge_answer(answer: &str) -> SelfChallenge {
 pub fn scan_information_voids(answer: &str) -> Vec<String> {
     let lower = answer.to_lowercase();
     // Any evidence anchor in the whole answer ⇒ the claim is supported.
-    if EVIDENCE_ANCHORS.iter().any(|a| contains_word(&lower, a.trim())) {
+    if EVIDENCE_ANCHORS
+        .iter()
+        .any(|a| contains_word(&lower, a.trim()))
+    {
         return Vec::new();
     }
     SUCCESS_CLAIMS

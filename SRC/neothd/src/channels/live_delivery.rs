@@ -17,10 +17,24 @@
 //! already exists + is wired.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::{Channel, ChannelError, ChannelKind, MessageId};
 use crate::config::LiveDeliveryConfig;
+use crate::providers::{ChunkStream, Completion, CompletionIdentity};
 use crate::wal::writer::WalWriterHandle;
+
+/// Absolute memory ceiling for one progressively delivered provider reply.
+/// The caller normally derives a tighter cap from `tokens.max_per_request`.
+pub const MAX_LIVE_RESPONSE_BYTES: usize = 1024 * 1024;
+
+/// A visible unfinished marker is deliberately part of every preview. If the
+/// handler future is cancelled (daemon shutdown, channel reconnect), dropping
+/// the inline stream cancels provider reads and no detached sender survives;
+/// the marker makes the last already-delivered preview honestly incomplete.
+const LIVE_PREVIEW_SUFFIX: &str = "\n\n…";
+const LIVE_STREAM_INTERRUPTED_NOTICE: &str =
+    "[NEOTH] Live response interrupted before completion. Please retry.";
 
 /// What one `send_or_edit` did. `Coalesced` = the edit was DROPPED by the
 /// rate limiter (too soon after the last edit, or past the per-message cap) —
@@ -53,6 +67,49 @@ pub struct LiveDelivery {
     last_edit_ms: Option<u64>,
     /// Edits that have hit the wire for this message (the per-message cap).
     edit_count: u32,
+    /// Set after an adapter unexpectedly returns `NotSupported` despite being
+    /// selected for live delivery. Intermediate updates then stop immediately;
+    /// the final result is sent once as a fresh message.
+    edit_unavailable: bool,
+}
+
+/// Coarse, metadata-only reason for terminating a provider stream. The raw
+/// transport error and response text never enter the WAL payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveStreamInterruption {
+    ProviderError,
+    MissingDone,
+    MissingIdentity,
+    IdentityChanged,
+    ResponseTooLarge,
+}
+
+impl LiveStreamInterruption {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderError => "provider_error",
+            Self::MissingDone => "missing_done",
+            Self::MissingIdentity => "missing_identity",
+            Self::IdentityChanged => "identity_changed",
+            Self::ResponseTooLarge => "response_too_large",
+        }
+    }
+}
+
+/// Successful stream collection plus the still-live delivery handle. The
+/// caller may run final reply transformations and then pass `delivery` to the
+/// shared egress tail for the mandatory final edit.
+pub struct LiveStreamCompletion {
+    pub completion: Completion,
+    pub delivery: LiveDelivery,
+}
+
+/// Provider-stream outcome. An interrupted stream has already replaced any
+/// visible preview with a fixed operator notice and emitted a metadata-only
+/// `CHANNEL_ERROR`; callers must return `Ok(None)` rather than send a duplicate.
+pub enum LiveStreamResult {
+    Complete(LiveStreamCompletion),
+    Interrupted(LiveStreamInterruption),
 }
 
 /// SPEC-11 rate-limit decision — PURE so it is unit-testable with an explicit
@@ -99,12 +156,32 @@ impl LiveDelivery {
             sent_message_id: None,
             last_edit_ms: None,
             edit_count: 0,
+            edit_unavailable: false,
         }
     }
 
     /// `true` once the first send has landed (a `MessageId` is held).
     pub fn has_sent(&self) -> bool {
         self.sent_message_id.is_some()
+    }
+
+    /// Whether an intermediate preview would currently hit the wire. This
+    /// lets the stream accumulator avoid rebuilding an ever-growing preview
+    /// string for chunks that the edit-rate limiter would immediately drop.
+    pub fn preview_due(&self) -> bool {
+        if self.edit_unavailable || !self.config.edits_enabled {
+            return false;
+        }
+        if self.sent_message_id.is_none() {
+            return true;
+        }
+        should_send_edit(
+            &self.config,
+            now_ms(),
+            self.last_edit_ms,
+            self.edit_count,
+            false,
+        )
     }
 
     /// Send (first call) or edit-in-place (subsequent calls), wall-clock-bounded.
@@ -138,7 +215,7 @@ impl LiveDelivery {
     ) -> std::result::Result<SendOutcome, ChannelError> {
         match self.sent_message_id.clone() {
             None => {
-                let id = self.channel.send_text(&self.chat_id, text).await?;
+                let id = self.send_new(writer, text).await?;
                 self.sent_message_id = Some(id.clone());
                 self.last_edit_ms = Some(now_ms);
                 Ok(SendOutcome::Sent(id))
@@ -155,9 +232,14 @@ impl LiveDelivery {
                 ) {
                     return Ok(SendOutcome::Coalesced);
                 }
-                // Edits disabled → send-only: a fresh message instead of editing.
-                if !self.config.edits_enabled {
-                    let id = self.channel.send_text(&self.chat_id, text).await?;
+                // Edit-less adapters are final-only. Never turn a token stream
+                // into message spam; only the completed reply may fall back to
+                // one fresh send.
+                if !self.config.edits_enabled || self.edit_unavailable {
+                    if !is_final {
+                        return Ok(SendOutcome::Coalesced);
+                    }
+                    let id = self.send_new(writer, text).await?;
                     self.sent_message_id = Some(id.clone());
                     self.last_edit_ms = Some(now_ms);
                     return Ok(SendOutcome::Sent(id));
@@ -174,7 +256,11 @@ impl LiveDelivery {
                         Ok(SendOutcome::Edited(existing))
                     }
                     Err(ChannelError::NotSupported { .. }) => {
-                        let id = self.channel.send_text(&self.chat_id, text).await?;
+                        self.edit_unavailable = true;
+                        if !is_final {
+                            return Ok(SendOutcome::Coalesced);
+                        }
+                        let id = self.send_new(writer, text).await?;
                         self.sent_message_id = Some(id.clone());
                         self.last_edit_ms = Some(now_ms);
                         Ok(SendOutcome::Sent(id))
@@ -185,10 +271,82 @@ impl LiveDelivery {
         }
     }
 
-    /// Finalize the live delivery. No-op today — a placeholder for streaming
-    /// finalize semantics (e.g. stripping a "typing…" marker on the last edit).
-    pub async fn finalize(&self) -> std::result::Result<(), ChannelError> {
-        Ok(())
+    async fn send_new(
+        &self,
+        writer: &WalWriterHandle,
+        text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        match self.channel.send_text(&self.chat_id, text).await {
+            Ok(id) => {
+                let payload = crate::channels::send_gate::channel_egress_payload(
+                    self.kind.as_str(),
+                    &self.chat_id,
+                    text,
+                    Some(&id.0),
+                    false,
+                    false,
+                    crate::time::now_unix_secs(),
+                );
+                let header =
+                    crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_SEND, &payload);
+                if let Err(error) = writer.append(header, payload).await {
+                    tracing::warn!(
+                        error = %error,
+                        "WAL append live CHANNEL_SEND failed after delivery"
+                    );
+                }
+                Ok(id)
+            }
+            Err(error) => {
+                let error_kind = match &error {
+                    ChannelError::Transport(_) => "transport",
+                    ChannelError::NotSupported { .. } => "not_supported",
+                    ChannelError::RateLimited { .. } => "rate_limited",
+                    ChannelError::Auth(_) => "auth",
+                };
+                let payload = crate::channels::send_gate::channel_egress_failed_payload(
+                    self.kind.as_str(),
+                    &self.chat_id,
+                    error_kind,
+                    crate::time::now_unix_secs(),
+                );
+                let header =
+                    crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_SEND, &payload);
+                if let Err(audit_error) = writer.append(header, payload).await {
+                    tracing::warn!(
+                        error = %audit_error,
+                        "WAL append failed live CHANNEL_SEND audit failed"
+                    );
+                }
+                Err(error)
+            }
+        }
+    }
+
+    async fn emit_stream_interrupted(
+        &self,
+        writer: &WalWriterHandle,
+        reason: LiveStreamInterruption,
+        partial: &str,
+    ) {
+        let payload = match serde_json::to_vec(&serde_json::json!({
+            "channel": self.kind.as_str(),
+            "reason": reason.as_str(),
+            "partial_hash_xxh3": xxhash_rust::xxh3::xxh3_64(partial.as_bytes()),
+            "partial_bytes": partial.len(),
+            "ts_unix": crate::time::now_unix_i64(),
+        })) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::warn!(error = %error, "serialize live CHANNEL_ERROR failed");
+                return;
+            }
+        };
+        let header =
+            crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_ERROR, &payload);
+        if let Err(error) = writer.append(header, payload).await {
+            tracing::warn!(error = %error, "WAL append live CHANNEL_ERROR failed");
+        }
     }
 
     /// Emit the outbound `0x38 CHANNEL_EDIT` audit frame. Best-effort: a WAL
@@ -216,6 +374,143 @@ impl LiveDelivery {
             tracing::warn!(error = %e, "WAL append outbound CHANNEL_EDIT (0x38) failed (non-fatal)");
         }
     }
+}
+
+/// Poll a provider stream inline, accumulate the canonical final response, and
+/// expose bounded progressive previews through one mutable [`LiveDelivery`].
+///
+/// There is no spawned forwarding task: awaiting each real send/edit provides
+/// backpressure, rate-limited chunks are coalesced in-process, and dropping the
+/// handler future drops the provider stream immediately. `max_response_bytes`
+/// is additionally clamped to [`MAX_LIVE_RESPONSE_BYTES`].
+pub async fn collect_provider_stream(
+    mut stream: ChunkStream,
+    mut delivery: LiveDelivery,
+    writer: &WalWriterHandle,
+    max_response_bytes: usize,
+) -> std::result::Result<LiveStreamResult, ChannelError> {
+    use futures_util::StreamExt;
+
+    let started = Instant::now();
+    let max_response_bytes = max_response_bytes.clamp(1, MAX_LIVE_RESPONSE_BYTES);
+    let mut text = String::new();
+    let mut identity: Option<CompletionIdentity> = None;
+    let mut input_tokens = None;
+    let mut output_tokens = None;
+    let mut cache_creation_tokens = None;
+    let mut cache_read_tokens = None;
+    let mut saw_done = false;
+
+    while let Some(item) = stream.next().await {
+        let chunk = match item {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                tracing::warn!(error = %error, "live provider stream item failed");
+                return interrupt_stream(
+                    delivery,
+                    writer,
+                    LiveStreamInterruption::ProviderError,
+                    &text,
+                )
+                .await;
+            }
+        };
+
+        if !chunk.identity.is_bound() {
+            return interrupt_stream(
+                delivery,
+                writer,
+                LiveStreamInterruption::MissingIdentity,
+                &text,
+            )
+            .await;
+        }
+        if let Some(bound) = &identity {
+            if bound != &chunk.identity {
+                return interrupt_stream(
+                    delivery,
+                    writer,
+                    LiveStreamInterruption::IdentityChanged,
+                    &text,
+                )
+                .await;
+            }
+        } else {
+            identity = Some(chunk.identity.clone());
+        }
+
+        if text.len().saturating_add(chunk.delta.len()) > max_response_bytes {
+            return interrupt_stream(
+                delivery,
+                writer,
+                LiveStreamInterruption::ResponseTooLarge,
+                &text,
+            )
+            .await;
+        }
+        text.push_str(&chunk.delta);
+
+        if !chunk.delta.is_empty() && delivery.preview_due() {
+            let mut preview = String::with_capacity(text.len() + LIVE_PREVIEW_SUFFIX.len());
+            preview.push_str(&text);
+            preview.push_str(LIVE_PREVIEW_SUFFIX);
+            delivery.send_or_edit(writer, &preview, false).await?;
+        }
+
+        if chunk.done {
+            saw_done = true;
+            input_tokens = chunk.input_tokens;
+            output_tokens = chunk.output_tokens;
+            cache_creation_tokens = chunk.cache_creation_tokens;
+            cache_read_tokens = chunk.cache_read_tokens;
+            break;
+        }
+    }
+
+    if !saw_done {
+        return interrupt_stream(delivery, writer, LiveStreamInterruption::MissingDone, &text)
+            .await;
+    }
+    let identity = match identity {
+        Some(identity) => identity,
+        None => {
+            return interrupt_stream(
+                delivery,
+                writer,
+                LiveStreamInterruption::MissingIdentity,
+                &text,
+            )
+            .await;
+        }
+    };
+    Ok(LiveStreamResult::Complete(LiveStreamCompletion {
+        completion: Completion {
+            text,
+            model: identity.wire_model.clone(),
+            identity,
+            latency: started.elapsed(),
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+        },
+        delivery,
+    }))
+}
+
+async fn interrupt_stream(
+    mut delivery: LiveDelivery,
+    writer: &WalWriterHandle,
+    reason: LiveStreamInterruption,
+    partial: &str,
+) -> std::result::Result<LiveStreamResult, ChannelError> {
+    delivery
+        .emit_stream_interrupted(writer, reason, partial)
+        .await;
+    delivery
+        .send_or_edit(writer, LIVE_STREAM_INTERRUPTED_NOTICE, true)
+        .await?;
+    Ok(LiveStreamResult::Interrupted(reason))
 }
 
 #[cfg(test)]
@@ -375,7 +670,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn degrades_to_send_when_edit_not_supported() {
+    async fn unsupported_edit_stops_previews_and_sends_final_once() {
         let ch = Arc::new(MockChannel::new(true)); // edit → NotSupported
         let mut live =
             LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Discord, fast_config());
@@ -384,13 +679,16 @@ mod tests {
 
         let first = live.send_or_edit(&writer, "one", false).await.unwrap();
         let second = live.send_or_edit(&writer, "two", false).await.unwrap();
-        // Degrade path = a fresh send with a NEW id, no panic.
+        let final_send = live.send_or_edit(&writer, "final", true).await.unwrap();
+        // The failed intermediate edit must not turn streaming into message
+        // spam. Once support is disproved, only one fresh final message lands.
         assert_eq!(first, SendOutcome::Sent(MessageId("msg-0".into())));
-        assert_eq!(second, SendOutcome::Sent(MessageId("msg-1".into())));
+        assert_eq!(second, SendOutcome::Coalesced);
+        assert_eq!(final_send, SendOutcome::Sent(MessageId("msg-1".into())));
         assert_eq!(
             ch.sends.load(Ordering::SeqCst),
             2,
-            "edit degraded to a 2nd send"
+            "one preview + one final send"
         );
 
         drop(writer);
@@ -400,17 +698,6 @@ mod tests {
             0,
             "a degraded fresh-send is NOT an edit — no 0x38 frame"
         );
-    }
-
-    #[tokio::test]
-    async fn finalize_is_noop() {
-        let ch = Arc::new(MockChannel::new(false));
-        let mut live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Telegram, fast_config());
-        let (writer, join, _dir) = test_writer();
-        let _ = live.send_or_edit(&writer, "x", false).await.unwrap();
-        assert!(live.finalize().await.is_ok());
-        drop(writer);
-        let _ = join.await;
     }
 
     // ── SPEC-11 rate limiting (P1) ──────────────────────────────────────────
@@ -497,7 +784,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn edits_disabled_sends_fresh_each_time() {
+    async fn edits_disabled_is_final_only_after_first_send() {
         let ch = Arc::new(MockChannel::new(false));
         let cfg = LiveDeliveryConfig {
             edits_enabled: false,
@@ -509,12 +796,10 @@ mod tests {
 
         let a = live.send_or_edit_at(&writer, 0, "a", false).await.unwrap();
         let b = live.send_or_edit_at(&writer, 1, "b", false).await.unwrap();
+        let c = live.send_or_edit_at(&writer, 2, "c", true).await.unwrap();
         assert_eq!(a, SendOutcome::Sent(MessageId("msg-0".into())));
-        assert_eq!(
-            b,
-            SendOutcome::Sent(MessageId("msg-1".into())),
-            "send-only: never edits"
-        );
+        assert_eq!(b, SendOutcome::Coalesced, "intermediate update suppressed");
+        assert_eq!(c, SendOutcome::Sent(MessageId("msg-1".into())));
         assert_eq!(
             ch.edits.load(Ordering::SeqCst),
             0,
@@ -569,5 +854,135 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         assert!(checked, "expected a 0x38 frame to inspect");
+    }
+
+    fn chunk(delta: &str, done: bool) -> crate::providers::CompletionChunk {
+        crate::providers::CompletionChunk {
+            delta: delta.to_string(),
+            done,
+            identity: CompletionIdentity {
+                provider: "mock_provider".into(),
+                wire_model: "mock_model".into(),
+            },
+            input_tokens: done.then_some(3),
+            output_tokens: done.then_some(2),
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_stream_accumulates_previews_and_finalizes_clean_text() {
+        let ch = Arc::new(MockChannel::new(false));
+        let live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, fast_config());
+        let stream: ChunkStream = Box::pin(futures_util::stream::iter(vec![
+            Ok(chunk("hel", false)),
+            Ok(chunk("lo", true)),
+        ]));
+        let (writer, join, _dir) = test_writer();
+
+        let result = collect_provider_stream(stream, live, &writer, 1024)
+            .await
+            .unwrap();
+        let LiveStreamResult::Complete(mut completed) = result else {
+            panic!("stream must complete")
+        };
+        assert_eq!(completed.completion.text, "hello");
+        assert_eq!(completed.completion.identity.provider, "mock_provider");
+        assert_eq!(completed.completion.input_tokens, Some(3));
+        assert_eq!(completed.completion.output_tokens, Some(2));
+        completed
+            .delivery
+            .send_or_edit(&writer, &completed.completion.text, true)
+            .await
+            .unwrap();
+        assert_eq!(ch.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(ch.edits.load(Ordering::SeqCst), 2);
+        assert_eq!(ch.last_edit_text.lock().unwrap().as_deref(), Some("hello"));
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn provider_stream_error_replaces_preview_and_wal_stays_metadata_only() {
+        let ch = Arc::new(MockChannel::new(false));
+        let live = LiveDelivery::new(
+            ch.clone(),
+            "private-chat-id".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+        );
+        let stream: ChunkStream = Box::pin(futures_util::stream::iter(vec![
+            Ok(chunk("partial secret", false)),
+            Err(anyhow::anyhow!("upstream exposed detail")),
+        ]));
+        let (writer, join, dir) = test_writer();
+        let seg = dir.path().join("ld.wal");
+
+        let result = collect_provider_stream(stream, live, &writer, 1024)
+            .await
+            .unwrap();
+        assert!(matches!(
+            result,
+            LiveStreamResult::Interrupted(LiveStreamInterruption::ProviderError)
+        ));
+        assert_eq!(ch.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(ch.edits.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            ch.last_edit_text.lock().unwrap().as_deref(),
+            Some(LIVE_STREAM_INTERRUPTED_NOTICE)
+        );
+
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut saw_interruption = false;
+        while cursor < bytes.len() {
+            let decoded = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(decoded) => decoded,
+                Err(_) => break,
+            };
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_ERROR {
+                let payload: serde_json::Value = serde_json::from_slice(decoded.payload).unwrap();
+                assert_eq!(payload["reason"], "provider_error");
+                assert_eq!(payload["partial_bytes"], 14);
+                assert!(payload.get("partial_hash_xxh3").is_some());
+                let encoded = String::from_utf8_lossy(decoded.payload);
+                assert!(!encoded.contains("partial secret"));
+                assert!(!encoded.contains("private-chat-id"));
+                assert!(!encoded.contains("upstream exposed detail"));
+                saw_interruption = true;
+            }
+            cursor = cursor.saturating_add(decoded.header.total_len as usize);
+        }
+        assert!(saw_interruption);
+    }
+
+    #[tokio::test]
+    async fn response_limit_cancels_before_unbounded_accumulation() {
+        let ch = Arc::new(MockChannel::new(false));
+        let live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, fast_config());
+        let stream: ChunkStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(chunk("12345", false))]));
+        let (writer, join, _dir) = test_writer();
+
+        let result = collect_provider_stream(stream, live, &writer, 4)
+            .await
+            .unwrap();
+        assert!(matches!(
+            result,
+            LiveStreamResult::Interrupted(LiveStreamInterruption::ResponseTooLarge)
+        ));
+        assert_eq!(
+            ch.sends.load(Ordering::SeqCst),
+            1,
+            "only the fixed interruption notice is sent"
+        );
+
+        drop(writer);
+        let _ = join.await;
     }
 }

@@ -156,10 +156,7 @@ pub async fn maybe_elicit(
     .await;
 
     // Render header.
-    let title = req
-        .title
-        .as_deref()
-        .unwrap_or("Operator input requested");
+    let title = req.title.as_deref().unwrap_or("Operator input requested");
     eprintln!("\n\x1b[1;36m[NEOTH] {title}\x1b[0m");
     if let Some(desc) = &req.description {
         eprintln!("  {desc}");
@@ -217,6 +214,7 @@ pub async fn maybe_elicit(
 
 /// Present a single property to the operator via dialoguer.
 /// Returns the collected string value, or `None` if the user aborted.
+#[cfg(feature = "wizard")]
 fn prompt_for_property(name: &str, schema: &PropertySchema) -> Option<String> {
     let label = match &schema.description {
         Some(d) => format!("{name} — {d}"),
@@ -247,14 +245,23 @@ fn prompt_for_property(name: &str, schema: &PropertySchema) -> Option<String> {
     }
 
     // Default → free-text Input
-    let val = dialoguer::Input::<String>::with_theme(
-        &dialoguer::theme::ColorfulTheme::default(),
-    )
-    .with_prompt(&label)
-    .allow_empty(true)
-    .interact_text()
-    .ok()?;
+    let val = dialoguer::Input::<String>::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt(&label)
+        .allow_empty(true)
+        .interact_text()
+        .ok()?;
     Some(val)
+}
+
+/// Slim daemon builds intentionally omit dialoguer with the `wizard` feature.
+/// If such a binary reaches an interactive elicitation request, fail closed:
+/// inject no fabricated answer and make the missing capability visible.
+#[cfg(not(feature = "wizard"))]
+fn prompt_for_property(_name: &str, _schema: &PropertySchema) -> Option<String> {
+    tracing::warn!(
+        "interactive MCP elicitation requires a build with the `wizard` feature; request left unanswered"
+    );
+    None
 }
 
 // ── WAL helper ───────────────────────────────────────────────────────────────
@@ -282,7 +289,8 @@ async fn emit_elicitation_wal(
         payload["answered_fields"] = serde_json::json!(answered);
         payload["answered_count"] = serde_json::json!(answered.len());
     }
-    let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    let payload_bytes = serde_json::to_vec(&payload)
+        .expect("elicitation audit payload contains only infallible JSON values");
     let header = crate::wal::HeaderBuilder::new(event_type, &payload_bytes).build();
     // ponytail: fire-and-forget WAL write; loss on crash is acceptable
     // (batchable frames, operator re-asked on restart).
@@ -309,9 +317,15 @@ mod tests {
                 }
             }
         }"#;
-        let result = maybe_elicit(rendered, "test_server", "test_tool", &ElicitationHandler::Disabled, None)
-            .await
-            .unwrap();
+        let result = maybe_elicit(
+            rendered,
+            "test_server",
+            "test_tool",
+            &ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(result.is_none(), "Disabled handler must return None");
     }
 
@@ -319,9 +333,15 @@ mod tests {
     async fn fast_path_no_keyword() {
         // Non-JSON tool output without the sentinel substring: instant None.
         let rendered = "The file has been written successfully.";
-        let result = maybe_elicit(rendered, "fs", "write_file", &ElicitationHandler::Disabled, None)
-            .await
-            .unwrap();
+        let result = maybe_elicit(
+            rendered,
+            "fs",
+            "write_file",
+            &ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(result.is_none());
     }
 

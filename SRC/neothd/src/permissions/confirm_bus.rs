@@ -219,7 +219,11 @@ mod tests {
 
         // The gate caller unblocks with Some(true).
         let result = wait_task.await.expect("task panicked");
-        assert_eq!(result, Some(true), "approved response must unblock the waiter");
+        assert_eq!(
+            result,
+            Some(true),
+            "approved response must unblock the waiter"
+        );
     }
 
     #[tokio::test]
@@ -227,11 +231,7 @@ mod tests {
         let (bus, _rx) = ConfirmBus::new();
         // Drop rx immediately — no one will drain or respond.
         let result = bus
-            .request_and_wait(
-                "test",
-                serde_json::json!({}),
-                Duration::from_millis(50),
-            )
+            .request_and_wait("test", serde_json::json!({}), Duration::from_millis(50))
             .await;
         assert_eq!(result, None, "must return None on timeout");
     }
@@ -276,7 +276,11 @@ mod tests {
         bus.submit_response(req.uuid, false);
 
         let result = wait_task.await.expect("task panicked");
-        assert_eq!(result, Some(false), "deny reply must surface as Some(false)");
+        assert_eq!(
+            result,
+            Some(false),
+            "deny reply must surface as Some(false)"
+        );
     }
 
     /// Integration test: BusAsker → Gate::check → ConfirmStrategy::Channel arm
@@ -298,9 +302,8 @@ mod tests {
             .with_channel_timeout(Duration::from_secs(5));
 
         // Run the gate concurrently with a simulated operator approval.
-        let gate_task = tokio::spawn(async move {
-            gate.check(&Action::WriteOutsideHome, None).await
-        });
+        let gate_task =
+            tokio::spawn(async move { gate.check(&Action::WriteOutsideHome, None).await });
 
         // Drain + approve.
         let req = tokio::time::timeout(Duration::from_secs(1), rx.recv())

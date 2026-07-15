@@ -56,8 +56,8 @@ pub(crate) fn step5b_inference_topology(
         model: state.provider_model.clone(),
         key: state.provider_key.clone(),
         endpoint: state.provider_endpoint.clone(),
-        region: None,
-        api_version: None,
+        region: state.provider_region.clone(),
+        api_version: state.provider_api_version.clone(),
         // GOLD-WIRE-04: the single-mode default slot carries no council voice.
         voice: None,
     };
@@ -483,7 +483,7 @@ pub(crate) async fn step5b2_ollama_provision(
 
     #[cfg(feature = "wizard")]
     {
-        use crate::cli::device_profile::{detect_device_profile, recommend_tier, LocalAiTier};
+        use crate::cli::device_profile::{LocalAiTier, detect_device_profile, recommend_tier};
         use crate::installers::ollama;
 
         // OH-04 tier gate — suppress the Ollama install offer on machines where
@@ -668,6 +668,74 @@ pub(crate) async fn step5e_cbm_offer(interactive: bool) -> Result<()> {
     Ok(())
 }
 
+/// GOLD-ADAPT-CCS-01 — optional semantic code-graph MCP registration.
+///
+/// Registration is default-NO and writes only the canonical exact-pin entry.
+/// The first live spawn may download the package through npx; that network and
+/// transitive npm trust boundary are disclosed before consent.
+pub(crate) async fn step5f_hex_graph_offer(interactive: bool, dry_run: bool) -> Result<()> {
+    use crate::mcp::config::HEX_GRAPH_NPM_SPEC;
+
+    if !interactive || dry_run {
+        println!(
+            "  Code graph (optional): register with `neoth init --force` or add \
+             `npx -y {HEX_GRAPH_NPM_SPEC}` to ~/.neoth/mcp_servers.yaml. \
+             Requires Node >=20.19.0; first use may download from npm."
+        );
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        use crate::installers::hex_graph::{self, RegisterOutcome};
+        use crate::mcp::config::HEX_GRAPH_NPM_VERSION;
+
+        println!(
+            "\n  Optional code graph (hex-graph-mcp {HEX_GRAPH_NPM_VERSION})\n\
+             \n  • Exact launcher: npx -y {HEX_GRAPH_NPM_SPEC}\
+             \n  • Requires Node >=20.19.0 and npx\
+             \n  • First use may fetch from npm; transitive packages remain npm/upstream trust\
+             \n  • Builds a rebuildable local cache at .hex-skills/codegraph/index.db\
+             \n  • Enables 12 query/diagnostic tools plus required index_project\
+             \n  • Excludes provider installation and SCIP import/export tools\n"
+        );
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Register the pinned hex-graph MCP server?")
+            .default(false)
+            .interact()
+            .context("hex-graph offer confirm")?;
+        if !want {
+            println!("  → skipped (run `neoth init --force` later)");
+            return Ok(());
+        }
+
+        let neoth_home = crate::cli::init::dirs_home().join(".neoth");
+        match hex_graph::auto_register(&neoth_home).await? {
+            RegisterOutcome::Registered => {
+                println!("  ✓ hex-graph registered with exact package pin {HEX_GRAPH_NPM_SPEC}")
+            }
+            RegisterOutcome::MissingNode => println!(
+                "  ⚠ hex-graph not registered: Node >=20.19.0 is missing; install Node and rerun `neoth init --force`"
+            ),
+            RegisterOutcome::NodeTooOld { found } => println!(
+                "  ⚠ hex-graph not registered: Node {found} is below 20.19.0; upgrade and rerun `neoth init --force`"
+            ),
+            RegisterOutcome::MissingNpx => println!(
+                "  ⚠ hex-graph not registered: npx is missing; install npm/npx and rerun `neoth init --force`"
+            ),
+        }
+    }
+
+    #[cfg(not(feature = "wizard"))]
+    {
+        println!(
+            "  hex-graph registration requires the `wizard` feature; add the exact entry manually: npx -y {HEX_GRAPH_NPM_SPEC}"
+        );
+    }
+
+    Ok(())
+}
+
 /// Step 6i — GOLD-ADAPT-TUDU-01: optional tududi self-hosted task manager MCP rail.
 ///
 /// tududi is a self-hosted Node.js task manager
@@ -699,16 +767,12 @@ pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
              self-hosted tududi instance."
         );
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt(
-                "Do you self-host tududi and want to register its MCP server now?",
-            )
+            .with_prompt("Do you self-host tududi and want to register its MCP server now?")
             .default(false)
             .interact()
             .context("tududi offer confirm")?;
         if !want {
-            println!(
-                "  → skipped (register later: https://github.com/chrisvel/tududi)"
-            );
+            println!("  → skipped (register later: https://github.com/chrisvel/tududi)");
             return Ok(());
         }
 
@@ -717,19 +781,18 @@ pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
             "  Enter the absolute path to tududi's MCP server script.\n  \
              Example: /home/op/tududi/backend/modules/mcp/server.js"
         );
-        let server_js: String = dialoguer::Input::with_theme(
-            &dialoguer::theme::ColorfulTheme::default(),
-        )
-        .with_prompt("Path to server.js")
-        .validate_with(|s: &String| {
-            if s.trim().is_empty() {
-                Err("path cannot be empty")
-            } else {
-                Ok(())
-            }
-        })
-        .interact_text()
-        .context("tududi server.js path input")?;
+        let server_js: String =
+            dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("Path to server.js")
+                .validate_with(|s: &String| {
+                    if s.trim().is_empty() {
+                        Err("path cannot be empty")
+                    } else {
+                        Ok(())
+                    }
+                })
+                .interact_text()
+                .context("tududi server.js path input")?;
         let server_js = server_js.trim().to_string();
 
         // Validate the file exists before asking for the token.
@@ -743,19 +806,18 @@ pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
         }
 
         // Collect the API token (masked input).
-        let api_token: String = dialoguer::Password::with_theme(
-            &dialoguer::theme::ColorfulTheme::default(),
-        )
-        .with_prompt("tududi API token")
-        .validate_with(|s: &String| {
-            if s.trim().is_empty() {
-                Err("API token cannot be empty")
-            } else {
-                Ok(())
-            }
-        })
-        .interact()
-        .context("tududi API token input")?;
+        let api_token: String =
+            dialoguer::Password::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("tududi API token")
+                .validate_with(|s: &String| {
+                    if s.trim().is_empty() {
+                        Err("API token cannot be empty")
+                    } else {
+                        Ok(())
+                    }
+                })
+                .interact()
+                .context("tududi API token input")?;
         let api_token = api_token.trim().to_string();
 
         let neoth_home = crate::cli::init::dirs_home().join(".neoth");
@@ -791,7 +853,7 @@ pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
 /// mobile-mcp (`@mobilenext/mobile-mcp`) is an MCP server that drives real iOS
 /// and Android devices (and iOS Simulator) via WebDriverAgent + ADB. It exposes
 /// 24 local-device tools (`mobile_take_screenshot`, `mobile_click`,
-/// `mobile_type_text`, etc.) and is launched via `npx -y @mobilenext/mobile-mcp@latest`
+/// `mobile_type_text`, etc.) and is launched via `npx -y @mobilenext/mobile-mcp@0.0.62`
 /// — no global install step required.
 ///
 /// Prerequisites (NEOTH cannot install these; operator-supplied):
@@ -846,9 +908,7 @@ pub(crate) async fn step6j_mobile_mcp_offer(interactive: bool) -> Result<()> {
             .interact()
             .context("mobile-mcp offer confirm")?;
         if !want {
-            println!(
-                "  → skipped (register later: https://github.com/mobile-next/mobile-mcp)"
-            );
+            println!("  → skipped (register later: https://github.com/mobile-next/mobile-mcp)");
             return Ok(());
         }
 
@@ -960,7 +1020,10 @@ pub(crate) async fn step5c_qwen_weights(
     {
         println!();
         if cached {
-            println!("[5c/9] Qwen weights already cached (~/.cache/huggingface/hub/). Skipping.");
+            println!(
+                "[5c/9] Qwen weights already cached ({}). Skipping.",
+                qwen_weights::cache_dir_for(qwen_weights::DEFAULT_QWEN_MODEL_ID).display()
+            );
             state.steps_completed.push(WizardStep::QwenWeights as u8);
             return Ok(());
         }
@@ -1170,11 +1233,9 @@ mod tests {
         let slot = HemisphereSlot {
             provider: Some(InferenceProvider::OpenAiCompat),
             model: Some("hf.co/unsloth/Qwen2.5-7B-Instruct-GGUF:Q4_K_M".to_string()),
-            endpoint: Some(
-                crate::installers::ollama::openai_compat_endpoint(
-                    crate::installers::ollama::DEFAULT_OLLAMA_PORT,
-                )
-            ),
+            endpoint: Some(crate::installers::ollama::openai_compat_endpoint(
+                crate::installers::ollama::DEFAULT_OLLAMA_PORT,
+            )),
             key: None,
             region: None,
             api_version: None,
@@ -1186,7 +1247,10 @@ mod tests {
         // collect_ollama_model_refs sees the slot; the non-interactive branch
         // prints the pull command to stdout and returns without touching Ollama.
         let result = step5b2_ollama_provision(false, &mut state).await;
-        assert!(result.is_ok(), "step5b2_ollama_provision non-interactive must be Ok: {result:?}");
+        assert!(
+            result.is_ok(),
+            "step5b2_ollama_provision non-interactive must be Ok: {result:?}"
+        );
     }
 
     /// OH-05 — step5b2 with an empty topology returns Ok(()) immediately
@@ -1196,6 +1260,9 @@ mod tests {
         let mut state = WizardState::default();
         // Default topology has no OpenAiCompat Ollama slots.
         let result = step5b2_ollama_provision(false, &mut state).await;
-        assert!(result.is_ok(), "step5b2 must be Ok with empty topology: {result:?}");
+        assert!(
+            result.is_ok(),
+            "step5b2 must be Ok with empty topology: {result:?}"
+        );
     }
 }

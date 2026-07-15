@@ -279,10 +279,7 @@ mod tests {
             &[now - WINDOW_SECS - 5, now - WINDOW_SECS - 1, now - 100],
         );
         // Admitting at `now` prunes the two old entries; returns Admitted.
-        assert_eq!(
-            try_admit_convene(dir.path(), now),
-            AdmitResult::Admitted
-        );
+        assert_eq!(try_admit_convene(dir.path(), now), AdmitResult::Admitted);
         // Post-admit log: only the in-window entry (now-100) + newly admitted
         // `now` survive — 2 total.
         let after = read_log(dir.path());
@@ -403,20 +400,22 @@ mod tests {
             })
             .collect();
 
-        let results: Vec<AdmitResult> =
-            handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let results: Vec<AdmitResult> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
-        let admitted = results.iter().filter(|&&r| r == AdmitResult::Admitted).count();
-        let capped = results.iter().filter(|&&r| r == AdmitResult::Capped).count();
+        let admitted = results
+            .iter()
+            .filter(|&&r| r == AdmitResult::Admitted)
+            .count();
+        let capped = results
+            .iter()
+            .filter(|&&r| r == AdmitResult::Capped)
+            .count();
 
         assert_eq!(
             admitted, 3,
             "exactly 3 threads must be admitted (filling to cap): {results:?}"
         );
-        assert_eq!(
-            capped, 2,
-            "exactly 2 threads must be capped: {results:?}"
-        );
+        assert_eq!(capped, 2, "exactly 2 threads must be capped: {results:?}");
     }
 
     #[test]
@@ -490,10 +489,7 @@ mod tests {
         // (retain condition: t > cutoff). Entry at now - WINDOW_SECS + 1 is
         // INCLUDED.
         seed_log(dir.path(), &[now - WINDOW_SECS, now - WINDOW_SECS + 1]);
-        assert_eq!(
-            try_admit_convene(dir.path(), now),
-            AdmitResult::Admitted
-        );
+        assert_eq!(try_admit_convene(dir.path(), now), AdmitResult::Admitted);
         let after = read_log(dir.path());
         // Should contain only (now - WINDOW_SECS + 1) and the new `now`.
         assert_eq!(

@@ -23,10 +23,7 @@ use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Domain-separation prefix for the cluster_key branch. Different
-/// from `keet_crypto::TOPIC_DOMAIN` so an operator using the same
-/// phrase for Keet pairing AND cluster discovery gets two
-/// independent keys.
+/// Domain-separation prefix for the cluster-key branch.
 const CLUSTER_DOMAIN: &[u8] = b"neoth/cluster/v1\0";
 
 /// HMAC namespace for the cluster announce-packet authenticator.
@@ -122,12 +119,11 @@ pub struct ClusterAnnouncePacket {
     pub auth: [u8; 32],
 }
 
-/// Derive the cluster_key from a phrase. Same canonicalisation +
-/// domain-separation pattern as `keet_crypto::topic_key` so an
-/// operator using one phrase gets independent keys for the two
-/// usages.
+/// Derive the cluster key from a phrase. Whitespace canonicalisation makes
+/// copy/paste stable while the domain prefix keeps this key independent from
+/// every other secret derived by NEOTH.
 pub fn cluster_key(phrase: &str) -> Option<ClusterKey> {
-    let canonical = crate::channels::keet_crypto::canonicalize(phrase);
+    let canonical = phrase.split_whitespace().collect::<Vec<_>>().join(" ");
     if canonical.is_empty() {
         return None;
     }
@@ -170,9 +166,7 @@ pub fn sign_announce(
     msg.extend_from_slice(addr_str.as_bytes());
     msg.extend_from_slice(&(instance_label.len() as u32).to_le_bytes());
     msg.extend_from_slice(instance_label.as_bytes());
-    let mut auth = [0u8; 32];
-    crate::channels::keet_crypto::hmac_sha256(&key.0, &msg, &mut auth);
-    auth
+    crate::util::hmac::sha256(&key.0, &msg)
 }
 
 /// Verify a `ClusterAnnouncePacket`. Returns true when the
@@ -214,11 +208,10 @@ mod tests {
     }
 
     #[test]
-    fn cluster_key_differs_from_keet_topic_key() {
-        // Same phrase → different keys for Keet vs Cluster usage.
+    fn cluster_key_differs_from_plain_phrase_hash() {
         let ck = cluster_key(PHRASE).unwrap();
-        let tk = crate::channels::keet_crypto::topic_key(PHRASE).unwrap();
-        assert_ne!(ck.0, tk.0, "domain separation: cluster != keet topic");
+        let plain: [u8; 32] = Sha256::digest(PHRASE.as_bytes()).into();
+        assert_ne!(ck.0, plain, "cluster key must stay domain-separated");
     }
 
     #[test]

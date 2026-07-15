@@ -1,16 +1,17 @@
 //! PermissionToken typestate (S3 fix from ADVERSARIAL/03).
 //!
-//! Compile-time enforcement: every host hostcall takes a
-//! `&PermissionToken<L>` of the appropriate level. Plugin authors cannot
-//! forge tokens because:
-//!   1. `PermissionLevel` is sealed (private trait + `sealed::Sealed`).
-//!   2. `PermissionToken::mint()` is gated behind the `_host` Cargo feature.
-//!      Plugin crates do NOT enable that feature.
-//!   3. `PermissionToken<L>` is zero-sized but cannot be constructed by safe
-//!      code without `mint()` — no `Default`, no public fields.
+//! Compile-time API guidance: native Rust integration APIs can take a
+//! `&PermissionToken<L>` at the appropriate level, and the sealed
+//! `PermissionLevel` trait prevents consumers from adding new lattice points.
+//! `PermissionToken::mint()`, grant construction, and upgrades are hidden from
+//! the default feature set behind `_host` to keep normal plugin code on the
+//! intended API path.
 //!
-//! Upgrade transitions require a `FreedomGrant<L>` from the host — also
-//! sealed via `_host`.
+//! `_host` is not access control. Cargo features are selected by consumers, so
+//! a zero-sized token or grant must never be treated as an unforgeable runtime
+//! capability. For WASM plugins, the real security boundary is the NEOTH
+//! runtime's Wasmtime sandbox, operator-approved capability state, and
+//! per-hostcall allowlist enforcement.
 
 use std::marker::PhantomData;
 
@@ -22,15 +23,15 @@ mod sealed {
 /// Marker trait for permission-level types. Sealed.
 pub trait PermissionLevel: sealed::Sealed + 'static {}
 
-/// No authority. Default for plugin-issued contexts before any grant.
+/// Models the no-permission level in Rust APIs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct None;
 
-/// Permission to call host tools that read state without mutating it.
+/// Models read-only access in Rust APIs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadOnly;
 
-/// Permission to mutate vault state (WAL appends, SQLite writes,
+/// Models permission to mutate vault state (WAL appends, SQLite writes,
 /// `~/.neoth/` file writes) — but NOT to make external network calls
 /// or spawn processes. F-17: separates DB writes from RPC so a hook
 /// that needs to update memory does not need to authorise outbound
@@ -38,14 +39,14 @@ pub struct ReadOnly;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Write;
 
-/// Permission to call host tools that perform external network calls
+/// Models permission to call integration tools that perform external network calls
 /// (LLM provider HTTP, channel sends, MCP server spawn). Implies
 /// `Write` (you can mutate state on the way out / in).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Execute;
 
-/// Permission to invoke shell-like operations: process spawn, raw filesystem,
-/// arbitrary network. Requires hardware-2FA grant on most operator profiles.
+/// Models shell-like operations: process spawn, raw filesystem, arbitrary
+/// network. Operator policy commonly requires hardware 2FA for this level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dangerous;
 
@@ -64,7 +65,7 @@ impl PermissionLevel for Dangerous {}
 /// Compile-time subtyping over the permission lattice (F-18).
 ///
 /// `L: AtLeast<M>` reads as "level `L` is at least as powerful as level
-/// `M`". Host tools use this as a generic bound so any higher-or-equal
+/// `M`". Rust integration APIs use this as a generic bound so any higher-or-equal
 /// level satisfies a "needs at least `M`" requirement:
 ///
 /// ```ignore
@@ -103,18 +104,23 @@ impl AtLeast<Execute> for Dangerous {}
 
 impl AtLeast<Dangerous> for Dangerous {}
 
-/// Compile-time proof of authorization to invoke host tools at level `L`.
+/// Compile-time marker for Rust APIs that operate at permission level `L`.
 ///
-/// Zero-sized — costs nothing at runtime. Cannot be constructed by plugin
-/// crates because `mint()` is gated behind the `_host` Cargo feature.
+/// This is a zero-sized API-ergonomics type, not a runtime authority proof.
+/// `mint()` is absent from the default feature set, but Cargo consumers can
+/// explicitly enable `_host`; runtime code must enforce capabilities
+/// independently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PermissionToken<L: PermissionLevel> {
     _level: PhantomData<L>,
 }
 
 impl<L: PermissionLevel> PermissionToken<L> {
-    /// Host-internal token minting. Plugin authors do NOT have access to this
-    /// function — the `_host` Cargo feature is private to `neothd`.
+    /// Constructor for native Rust integration paths.
+    ///
+    /// `_host` keeps this out of the default plugin API, but Cargo features are
+    /// consumer-selectable. Callers must not treat this constructor or its
+    /// zero-sized result as a security boundary.
     #[cfg(feature = "_host")]
     pub fn mint() -> Self {
         PermissionToken {
@@ -123,18 +129,23 @@ impl<L: PermissionLevel> PermissionToken<L> {
     }
 }
 
-/// Operator-issued grant that authorizes a host runtime to mint a token of
-/// level `L`. Sealed via `_host` feature like `PermissionToken::mint()`.
+/// Typed marker available to Rust integration code when transitioning to level
+/// `L`.
 ///
-/// In the host, a `FreedomGrant<L>` is produced by validating
-/// `~/.neoth/freedom.yaml` capabilities + (for Dangerous) hardware 2FA.
+/// An integration may pair this marker with independently validated operator
+/// policy. The production Wasmtime path does not consume this zero-sized value:
+/// it stores the approved `HostcallPermission` in `PluginStoreState` and checks
+/// that grant on every hostcall.
 #[derive(Debug)]
 pub struct FreedomGrant<L: PermissionLevel> {
     _level: PhantomData<L>,
 }
 
 impl<L: PermissionLevel> FreedomGrant<L> {
-    /// Host-internal grant minting.
+    /// Constructor for native Rust integration paths.
+    ///
+    /// Feature-gating reduces accidental use; it does not make grants
+    /// unforgeable or replace runtime authorization.
     #[cfg(feature = "_host")]
     pub fn issue() -> Self {
         FreedomGrant {
@@ -145,15 +156,12 @@ impl<L: PermissionLevel> FreedomGrant<L> {
 
 /// Upgrade `ReadOnly -> Write` with a `FreedomGrant<Write>`. F-17:
 /// new intermediate step in the ladder so a hook that needs DB writes
-/// without network access can hold the minimal authority.
+/// without network access can model the minimal level.
 ///
-/// F-20 (rust-reviewer H-4): every upgrade fn is `_host`-feature
-/// gated. Plugin crates cannot enable that feature, so a plugin
-/// holding a `ReadOnly` token cannot call upgrade even if it
-/// somehow obtained a `FreedomGrant<Write>`. The grant constructor
-/// (`FreedomGrant::issue()`) is also `_host`-gated, but a layered
-/// defence keeps the path closed under future refactors that might
-/// accidentally expose a grant.
+/// F-20 (rust-reviewer H-4): every upgrade fn is `_host`-feature gated so the
+/// default dependency surface does not expose host integration transitions.
+/// This is compile-time API hygiene only: Cargo consumers can select `_host`,
+/// and the runtime must independently authorize every privileged operation.
 impl PermissionToken<ReadOnly> {
     /// Consume self and a `Write` grant to produce a `Write` token.
     #[cfg(feature = "_host")]
@@ -164,9 +172,8 @@ impl PermissionToken<ReadOnly> {
     }
 
     /// Shortcut upgrade `ReadOnly -> Execute` with a `FreedomGrant<Execute>`.
-    /// Retained for callers that need outbound network without going
-    /// through the intermediate `Write` step; the operator's grant
-    /// authorises the larger surface directly.
+    /// Retained for adapters that model outbound network without going through
+    /// the intermediate `Write` marker.
     #[cfg(feature = "_host")]
     pub fn upgrade_to_execute(self, _grant: FreedomGrant<Execute>) -> PermissionToken<Execute> {
         PermissionToken {
@@ -200,14 +207,16 @@ impl PermissionToken<Execute> {
     }
 }
 
-/// Error returned when a runtime check determines a plugin lacks the required
-/// permission level (e.g. via hostcall_allowlist in the WASM Phase 2 host).
+/// Error available to Rust integration adapters when a level check fails.
+///
+/// The production Wasmtime hostcall path has its own fail-closed status and WAL
+/// audit event; it does not use this SDK error as its authorization boundary.
 #[derive(thiserror::Error, Debug)]
 #[error("plugin lacks required permission level: needs {required:?}, has {actual:?}")]
 pub struct UnauthorizedLevel {
-    /// Permission level the host requires for this operation.
+    /// Permission level the Rust adapter requires for this operation.
     pub required: &'static str,
-    /// Permission level the plugin holds at the call site.
+    /// Permission marker the caller provides at the call site.
     pub actual: &'static str,
 }
 
@@ -216,31 +225,30 @@ pub struct UnauthorizedLevel {
 /// `PermissionToken<L>` is zero-cost + compile-time safe but its
 /// type parameter makes a heterogeneous registry (a `HashMap` of
 /// hooks at different levels) impossible without per-level boxing.
-/// `PermissionTokenAny` erases the level into a tag so the host can
-/// dispatch hooks of mixed levels through one collection. Plugin
-/// authors stay on `PermissionToken<L>`; the host converts via
-/// `to_any()` only at the dispatch boundary.
+/// `PermissionTokenAny` erases the level into a tag for Rust adapters or tests
+/// that need a heterogeneous collection. Production Wasmtime dispatch uses its
+/// separate `HostcallPermission` value in `PluginStoreState` and does not
+/// consume this enum as authority.
 ///
 /// The level tag is the same `&'static str` the trait-level shape
 /// already uses (`"read_only"` / `"write"` / `"execute"` /
 /// `"dangerous"` / `"none"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PermissionTokenAny {
-    /// Wraps a `PermissionToken<None>` — no authority granted yet.
+    /// Wraps a `PermissionToken<None>` marker.
     None(PermissionToken<None>),
-    /// Wraps a `PermissionToken<ReadOnly>` — host-state reads only.
+    /// Wraps a `PermissionToken<ReadOnly>` marker.
     ReadOnly(PermissionToken<ReadOnly>),
-    /// Wraps a `PermissionToken<Write>` — vault mutations, no network.
+    /// Wraps a `PermissionToken<Write>` marker.
     Write(PermissionToken<Write>),
-    /// Wraps a `PermissionToken<Execute>` — outbound network + RPC.
+    /// Wraps a `PermissionToken<Execute>` marker.
     Execute(PermissionToken<Execute>),
-    /// Wraps a `PermissionToken<Dangerous>` — process spawn + raw FS.
+    /// Wraps a `PermissionToken<Dangerous>` marker.
     Dangerous(PermissionToken<Dangerous>),
 }
 
 impl PermissionTokenAny {
-    /// Stable string id for the wrapped level. Matches the snake_case
-    /// names used by the wire schema in `freedom.yaml::capabilities`.
+    /// Stable snake_case string id for the wrapped level.
     pub fn level(&self) -> &'static str {
         match self {
             PermissionTokenAny::None(_) => "none",
@@ -251,9 +259,9 @@ impl PermissionTokenAny {
         }
     }
 
-    /// True when the held level is >= `required` per the [`AtLeast`]
-    /// lattice. Useful for the runtime check the host performs at
-    /// the hostcall_allowlist boundary.
+    /// True when the held marker level is >= `required` per the [`AtLeast`]
+    /// lattice. Useful for Rust adapters and tests only; production Wasmtime
+    /// authorization uses `HostcallPermission::allows` on host state.
     pub fn satisfies(&self, required: &'static str) -> bool {
         // Rank levels by ladder position; higher dominates.
         let rank = |s: &str| match s {
@@ -272,10 +280,9 @@ impl PermissionTokenAny {
     }
 }
 
-/// Conversions from typed token to type-erased token. Plugin code
-/// rarely needs the reverse direction — the host minted the typed
-/// variant, and downcasting back to a specific level requires the
-/// caller to commit at compile time which is what `PermissionToken<L>`
+/// Conversions from typed token to type-erased token. Rust integration code
+/// rarely needs the reverse direction: downcasting back to a specific level
+/// requires the caller to commit at compile time, which `PermissionToken<L>`
 /// already provides.
 impl From<PermissionToken<None>> for PermissionTokenAny {
     fn from(t: PermissionToken<None>) -> Self {
@@ -307,9 +314,9 @@ impl From<PermissionToken<Dangerous>> for PermissionTokenAny {
 mod tests {
     use super::*;
 
-    // These tests run under the `_host` feature only. With default features
-    // (plugin author setup), `mint()` is unavailable and these would not
-    // compile — that's the point.
+    // These tests exercise the host-integration API under `_host`. With default
+    // features `mint()` is intentionally absent, keeping ordinary plugin code
+    // on the typed surface; runtime security is tested in the Wasmtime host.
     #[cfg(feature = "_host")]
     #[test]
     fn mint_and_upgrade_chain() {
@@ -375,7 +382,7 @@ mod tests {
         requires_dangerous::<Dangerous>();
     }
 
-    /// F-18: the practical use-case — a generic host tool gated by an
+    /// F-18: the practical use-case — a generic Rust adapter gated by an
     /// `AtLeast<ReadOnly>` bound accepts every higher level. Spot-checks
     /// that the ergonomics work as advertised.
     #[cfg(feature = "_host")]
@@ -411,7 +418,7 @@ mod tests {
     /// F-19: `satisfies` mirrors the [`AtLeast`] lattice at runtime.
     /// Every level satisfies its own requirement + every lower one;
     /// strictly higher requirements fail; unknown level strings always
-    /// fail (defensive — operator typo should not silently grant).
+    /// fail (defensive — an unknown input must not satisfy a requirement).
     #[cfg(feature = "_host")]
     #[test]
     fn permission_token_any_satisfies_matches_atleast_lattice() {
@@ -443,7 +450,7 @@ mod tests {
         assert!(!e.satisfies("dangerous"));
 
         // Unknown level string never satisfies — defensive guard
-        // against operator typos in freedom.yaml.
+        // against unknown external input.
         assert!(!d.satisfies("admin"));
         assert!(!d.satisfies(""));
     }

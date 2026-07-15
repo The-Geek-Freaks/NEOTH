@@ -1,8 +1,8 @@
-# neoth Windows install script
-# Installs neoth via WSL2.
-# Native Windows (non-WSL) is Day-1 build-only; channel adapters are Linux-tested.
+# neoth Windows source-build helper
+# Installs neoth from source via WSL2. For the native prebuilt Windows release,
+# use https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1.
 #
-# Usage: irm https://raw.githubusercontent.com/<owner>/neoth/main/scripts/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.ps1 | iex
 # Or:    .\install.ps1
 
 #Requires -Version 5.1
@@ -92,12 +92,12 @@ Write-Step "Running neoth install.sh inside WSL2"
 Write-Host "This will:"
 Write-Host "  - Check/install Rust toolchain inside WSL2"
 Write-Host "  - Clone neoth to ~/.local/src/neoth"
-Write-Host "  - Build neoth (neoth + neothd binaries)"
+Write-Host "  - Build neoth, GUI, migration, relay, and compatibility binaries"
 Write-Host "  - Install to ~/.local/bin"
 Write-Host ""
 
 # The install script URL
-$installScriptUrl = "https://raw.githubusercontent.com/<owner>/neoth/main/scripts/install.sh"
+$installScriptUrl = "https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.sh"
 $localInstallScript = "/tmp/neoth_install.sh"
 
 # Check if install.sh is available locally (for offline/dev use)
@@ -135,16 +135,16 @@ Write-Host "To run neoth from PowerShell via WSL2, use:" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  wsl neoth init"
 Write-Host "  wsl neoth chat `"hello`""
-Write-Host "  wsl neothd"
+Write-Host "  wsl neoth"
 Write-Host ""
 Write-Host "Or open a WSL terminal: wsl"
 Write-Host ""
 
 # ── Notes on native Windows ───────────────────────────────────────────────────
-Write-Host "Native Windows support:" -ForegroundColor Yellow
-Write-Host "  Day-1 status: cargo build --release works on Windows."
-Write-Host "  Channel adapters (Telegram etc.) are Linux-tested only in Phase 1."
-Write-Host "  Native Windows channel support is planned for Phase 2+."
+Write-Host "Native Windows release:" -ForegroundColor Yellow
+Write-Host "  This helper deliberately creates a WSL source build."
+Write-Host "  For the prebuilt native binary, run:"
+Write-Host "  irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex"
 Write-Host ""
 
 # ── Next steps ────────────────────────────────────────────────────────────────
@@ -152,5 +152,5 @@ Write-Host "Next step: onboarding wizard" -ForegroundColor Green
 Write-Host ""
 Write-Host "  wsl neoth init"
 Write-Host ""
-Write-Host "Docs: https://github.com/<owner>/neoth/blob/main/docs/install.md"
+Write-Host "Docs: https://github.com/The-Geek-Freaks/NEOTH/blob/main/docs/install.md"
 Write-Host ""

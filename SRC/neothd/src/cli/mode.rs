@@ -70,7 +70,10 @@ fn list_modes(registry: &ModeRegistry, output: OutputFormat) {
                     "spectrum": r.mode.spectrum.as_str(),
                     "oversight": r.mode.oversight.as_str(),
                 });
-                println!("{}", serde_json::to_string(&v).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string(&v).expect("mode row is infallible JSON")
+                );
             }
         }
         OutputFormat::Table => {
@@ -117,7 +120,10 @@ fn show_mode(registry: &ModeRegistry, id: &str, output: OutputFormat) {
                 "trigger_phrases": resolved.mode.trigger_phrases,
                 "system_prompt_delta": resolved.mode.system_prompt_delta,
             });
-            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&v).expect("mode detail is infallible JSON")
+            );
         }
         OutputFormat::Table => {
             println!("mode:               {}", resolved.mode.id);
@@ -154,7 +160,10 @@ fn match_mode(registry: &ModeRegistry, text: &str, output: OutputFormat) {
                     "spectrum": resolved.mode.spectrum.as_str(),
                     "oversight": resolved.mode.oversight.as_str(),
                 });
-                println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&v).expect("mode match is infallible JSON")
+                );
             }
             OutputFormat::Table => {
                 println!("match: {} (skill: {})", resolved.mode.id, resolved.skill_id);

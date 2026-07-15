@@ -74,7 +74,10 @@ pub async fn run_loop_cmd(args: LoopArgs) -> Result<()> {
     let loops_dir = FreedomConfig::default_neoth_home().join("loops");
     match args.action {
         LoopAction::History => {
-            print!("{}", render_history(&load_records(&loops_dir)?, args.output)?);
+            print!(
+                "{}",
+                render_history(&load_records(&loops_dir)?, args.output)?
+            );
             Ok(())
         }
         LoopAction::Show { id } => {
@@ -110,21 +113,27 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
 
     // GOLD-LOOP-04 — named ladder; GOLD-LOOP-05 — L3 requires a budget.
     let level = match args.level.as_deref() {
-        Some(s) => Some(LoopAutonomyLevel::parse(s).ok_or_else(|| {
-            anyhow::anyhow!("--level `{s}` is not one of l1 / l2 / l3")
-        })?),
+        Some(s) => Some(
+            LoopAutonomyLevel::parse(s)
+                .ok_or_else(|| anyhow::anyhow!("--level `{s}` is not one of l1 / l2 / l3"))?,
+        ),
         None => None,
     };
     let budget = args.budget.or(config.loop_config.tool_call_budget);
     if let Some(level) = level {
-        level.validate_budget(budget).map_err(|e| anyhow::anyhow!(e))?;
+        level
+            .validate_budget(budget)
+            .map_err(|e| anyhow::anyhow!(e))?;
     }
     let autonomy = level
         .map(LoopAutonomyLevel::to_autonomy_level)
         .unwrap_or(config.autonomy);
 
     let loop_cfg = crate::loop_engine::engine::LoopConfig {
-        max_rounds: args.iterations.unwrap_or(config.loop_config.max_rounds).max(1),
+        max_rounds: args
+            .iterations
+            .unwrap_or(config.loop_config.max_rounds)
+            .max(1),
         until: args.until,
         tool_call_budget: budget,
         autonomy,
@@ -152,13 +161,19 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         .context("resolve provider chain")?;
     let servers = crate::mcp::config::McpServers::load().unwrap_or_default();
     let wal_dir = FreedomConfig::default_wal_dir();
-    let segment_path = wal_dir.join("000001.wal");
+    let segment_path = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "loop");
     if let Some(parent) = segment_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
     }
-    let (writer, writer_join) =
-        crate::wal::spawn(segment_path).context("spawn WAL writer")?;
+    let (writer, writer_join) = crate::wal::spawn(segment_path).context("spawn WAL writer")?;
+    let provider_policy =
+        crate::permissions::AutonomyPolicySnapshot::new(autonomy, &config.custom_autonomy);
+    let provider_call_authorizer =
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            provider_policy,
+            Some(writer.clone()),
+        );
 
     let req = crate::providers::Request {
         prompt: args.prompt,
@@ -187,6 +202,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         &servers,
         &writer,
         &config,
+        provider_call_authorizer,
         &elicitation,
     )
     .await;
@@ -326,6 +342,7 @@ mod tests {
                 failed_calls: 0,
                 stop_approved: true,
                 refine_fired: false,
+                quality_score: 0.75,
                 ts_start,
                 ts_end: ts_start + 5,
             }],
@@ -365,8 +382,7 @@ mod tests {
 
     #[test]
     fn render_history_table_lists_runs() {
-        let out =
-            render_history(&[record("abc123", 100)], OutputFormat::Table).unwrap();
+        let out = render_history(&[record("abc123", 100)], OutputFormat::Table).unwrap();
         assert!(out.contains("LOOP ID"), "{out}");
         assert!(out.contains("abc123"), "{out}");
         assert!(out.contains("converged"), "{out}");

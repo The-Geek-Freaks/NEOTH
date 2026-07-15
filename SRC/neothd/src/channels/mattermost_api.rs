@@ -247,7 +247,10 @@ pub async fn send_post(
             "mattermost rejected the token (HTTP {status})"
         ))),
         code if !(200..300).contains(&code) => {
-            let body = resp.text().await.unwrap_or_default();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|error| format!("<response body unreadable: {error}>"));
             Err(ChannelError::Transport(format!(
                 "mattermost /posts HTTP {status}: {}",
                 body.chars().take(200).collect::<String>()

@@ -46,6 +46,13 @@ pub struct ChannelDestinations {
     pub discord_channel_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_recipient: Option<String>,
+    /// Dedicated WhatsApp Web/Baileys destination. Kept separate from the
+    /// Meta Cloud recipient so switching transports cannot silently reuse a
+    /// destination from the other trust boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_baileys_recipient: Option<String>,
+    /// Legacy field from the removed guessed Keet transport. Deserialised so
+    /// old files remain readable, but never resolved or set by the CLI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keet_topic: Option<String>,
     /// B9 channel parity — Signal recipient (E.164 number or `group.<id>`),
@@ -61,10 +68,10 @@ pub struct ChannelDestinations {
     /// B9 — iMessage/BlueBubbles chat GUID (`iMessage;-;+491701234567`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imessage_chat_guid: Option<String>,
-    /// B9 — Matrix room id (`!abc:server`). Stored for parity; the proactive
-    /// tick can't construct the matrix-sdk client on demand (connection-bound,
-    /// same as Keet) so delivery stays SidecarOnly until the daemon adapter
-    /// is shared with the tick.
+    /// Matrix room id (`!abc:server`) used by proactive delivery. In builds
+    /// with `matrix-channel`, the tick lazily restores the persistent Matrix
+    /// session and applies the adapter's room/E2EE policy before sending;
+    /// feature-off builds retain the route but honestly stay SidecarOnly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matrix_room_id: Option<String>,
     /// B9 — IRC channel (`#chan`) or nick. Connection-bound (live socket in
@@ -86,17 +93,15 @@ pub struct ChannelDestinations {
 
 impl ChannelDestinations {
     /// The configured destination for the canonical channel name, if any.
-    /// Accepts the WhatsApp sub-kinds (`whatsapp_business`/`whatsapp_baileys`)
-    /// as aliases of `whatsapp`.
+    /// `whatsapp_business` aliases Meta Cloud's `whatsapp` slot. Baileys has a
+    /// dedicated slot because it is a separate transport and trust boundary.
     pub fn for_channel(&self, channel: &str) -> Option<&str> {
         match channel {
             "telegram" => self.telegram_chat_id.as_deref(),
             "slack" => self.slack_channel_id.as_deref(),
             "discord" => self.discord_channel_id.as_deref(),
-            "whatsapp" | "whatsapp_business" | "whatsapp_baileys" => {
-                self.whatsapp_recipient.as_deref()
-            }
-            "keet" => self.keet_topic.as_deref(),
+            "whatsapp" | "whatsapp_business" => self.whatsapp_recipient.as_deref(),
+            "whatsapp_baileys" => self.whatsapp_baileys_recipient.as_deref(),
             "signal" => self.signal_recipient.as_deref(),
             "line" => self.line_recipient.as_deref(),
             "mattermost" => self.mattermost_channel_id.as_deref(),
@@ -118,10 +123,8 @@ impl ChannelDestinations {
             "telegram" => self.telegram_chat_id = Some(id),
             "slack" => self.slack_channel_id = Some(id),
             "discord" => self.discord_channel_id = Some(id),
-            "whatsapp" | "whatsapp_business" | "whatsapp_baileys" => {
-                self.whatsapp_recipient = Some(id)
-            }
-            "keet" => self.keet_topic = Some(id),
+            "whatsapp" | "whatsapp_business" => self.whatsapp_recipient = Some(id),
+            "whatsapp_baileys" => self.whatsapp_baileys_recipient = Some(id),
             "signal" => self.signal_recipient = Some(id),
             "line" => self.line_recipient = Some(id),
             "mattermost" => self.mattermost_channel_id = Some(id),
@@ -150,7 +153,6 @@ pub fn is_known_channel(channel: &str) -> bool {
             | "whatsapp"
             | "whatsapp_business"
             | "whatsapp_baileys"
-            | "keet"
             | "signal"
             | "line"
             | "mattermost"
@@ -163,6 +165,21 @@ pub fn is_known_channel(channel: &str) -> bool {
             | "gchat"
             | "google_chat"
     )
+}
+
+/// Lightweight feature-independent Matrix room-id validation for routing
+/// configuration. The matrix-sdk adapter performs the authoritative ruma parse
+/// again before network use; this guard prevents obvious typos from entering
+/// `channel_routing.json` even in binaries without `matrix-channel`.
+pub fn is_valid_matrix_room_id(value: &str) -> bool {
+    let Some((opaque, server)) = value.strip_prefix('!').and_then(|id| id.split_once(':')) else {
+        return false;
+    };
+    !opaque.is_empty()
+        && !server.is_empty()
+        && !value
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control())
 }
 
 /// GOLD-FEAT-13 routing config. Persisted to `~/.neoth/channel_routing.json`.
@@ -308,21 +325,22 @@ mod tests {
     }
 
     #[test]
-    fn destinations_resolve_by_canonical_name_with_whatsapp_aliases() {
+    fn destinations_keep_meta_and_baileys_whatsapp_separate() {
         let r = routing();
         assert_eq!(r.destinations.for_channel("discord"), Some("987654321"));
         assert_eq!(r.destinations.for_channel("slack"), Some("C0B0QV5434G"));
         assert_eq!(r.destinations.for_channel("telegram"), None, "unset → None");
-        // whatsapp sub-kinds alias to the same recipient slot
+        // Business aliases Meta Cloud; Baileys has a separate trust boundary.
         let mut r2 = ChannelRouting::default();
         r2.destinations.whatsapp_recipient = Some("+15551234567".to_string());
+        r2.destinations.whatsapp_baileys_recipient = Some("+15557654321".to_string());
         assert_eq!(
             r2.destinations.for_channel("whatsapp_business"),
             Some("+15551234567")
         );
         assert_eq!(
             r2.destinations.for_channel("whatsapp_baileys"),
-            Some("+15551234567")
+            Some("+15557654321")
         );
     }
 
@@ -354,6 +372,16 @@ mod tests {
         assert_eq!(d.discord_channel_id.as_deref(), Some("123"));
         assert!(d.set_for_channel("whatsapp_business", "+15551234567".into()));
         assert_eq!(d.whatsapp_recipient.as_deref(), Some("+15551234567"));
+        assert!(d.set_for_channel("whatsapp_baileys", "+15557654321".into()));
+        assert_eq!(
+            d.whatsapp_baileys_recipient.as_deref(),
+            Some("+15557654321")
+        );
+        assert_eq!(
+            d.whatsapp_recipient.as_deref(),
+            Some("+15551234567"),
+            "Baileys route must not overwrite Meta"
+        );
         assert!(
             !d.set_for_channel("nonsense", "x".into()),
             "unknown channel name → false (caller warns)"
@@ -371,7 +399,6 @@ mod tests {
             "whatsapp",
             "whatsapp_business",
             "whatsapp_baileys",
-            "keet",
             "signal",
             "line",
             "mattermost",
@@ -387,6 +414,7 @@ mod tests {
             assert!(is_known_channel(ch), "{ch} must be known");
         }
         assert!(!is_known_channel("telegrm"), "typo rejected");
+        assert!(!is_known_channel("keet"), "unsupported Keet route rejected");
         assert!(!is_known_channel(""), "empty rejected");
     }
 
@@ -416,5 +444,24 @@ mod tests {
         assert_eq!(d.for_channel("imessage"), Some("guid"));
         assert!(d.set_for_channel("google_chat", "spaces/B".into()));
         assert_eq!(d.for_channel("gchat"), Some("spaces/B"));
+    }
+
+    #[test]
+    fn matrix_room_id_validation_rejects_routing_typos_without_sdk_feature() {
+        assert!(is_valid_matrix_room_id("!ops:example.org"));
+        assert!(is_valid_matrix_room_id("!opaque:matrix.example.org:8448"));
+        for invalid in [
+            "",
+            "ops:example.org",
+            "!:example.org",
+            "!ops:",
+            "!ops example:example.org",
+            "!ops:example.org\n",
+        ] {
+            assert!(
+                !is_valid_matrix_room_id(invalid),
+                "invalid Matrix room id accepted: {invalid:?}"
+            );
+        }
     }
 }

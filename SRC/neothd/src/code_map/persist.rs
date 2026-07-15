@@ -160,9 +160,7 @@ pub fn open(path: &Path) -> Result<Connection> {
         if let Some(v) = current_version {
             if v < CODE_MAP_SCHEMA_VERSION {
                 migrate_code_map(&conn, v).with_context(|| {
-                    format!(
-                        "migrate code_map DB from v{v} to v{CODE_MAP_SCHEMA_VERSION}"
-                    )
+                    format!("migrate code_map DB from v{v} to v{CODE_MAP_SCHEMA_VERSION}")
                 })?;
             }
         }
@@ -354,9 +352,7 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     // Empty when this is the first persist for this root.
     let stored: std::collections::HashMap<String, (String, i64)> = {
         let mut stmt = conn
-            .prepare(
-                "SELECT path, sha256, mtime_ns FROM code_map_files WHERE root = ?1",
-            )
+            .prepare("SELECT path, sha256, mtime_ns FROM code_map_files WHERE root = ?1")
             .context("prepare pre-pass stored-hash query")?;
         stmt.query_map(rusqlite::params![&map.root], |row| {
             let path: String = row.get(0)?;
@@ -379,8 +375,7 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     // `touch` with identical content), we still skip the reinsert —
     // the DB content is correct, only the mtime_ns column would
     // diverge, which is acceptable (minor mtime drift vs an I/O save).
-    let mut unchanged_paths: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
+    let mut unchanged_paths: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut changed_files: Vec<&super::walker::RepoFile> = Vec::new();
 
     for file in &map.files {
@@ -1497,19 +1492,34 @@ mod tests {
         let map1 = scan_dir(dir.path());
         let stats1 = persist_map(&mut conn, &map1).unwrap();
         assert_eq!(stats1.files_inserted, 2, "first persist: 2 new files");
-        assert_eq!(stats1.files_skipped_unchanged, 0, "first persist: nothing to skip");
+        assert_eq!(
+            stats1.files_skipped_unchanged, 0,
+            "first persist: nothing to skip"
+        );
 
         // Modify b.rs so its sha256 changes.
         std::fs::write(dir.path().join("b.rs"), b"fn b_modified() {}\n").unwrap();
 
         let map2 = scan_dir(dir.path());
         let stats2 = persist_map(&mut conn, &map2).unwrap();
-        assert_eq!(stats2.files_skipped_unchanged, 1, "a.rs unchanged — must be skipped");
-        assert_eq!(stats2.files_inserted, 1, "b.rs changed — must be reinserted");
+        assert_eq!(
+            stats2.files_skipped_unchanged, 1,
+            "a.rs unchanged — must be skipped"
+        );
+        assert_eq!(
+            stats2.files_inserted, 1,
+            "b.rs changed — must be reinserted"
+        );
 
         // Both files must still be in the DB after incremental persist.
-        let loaded = load_map(&conn, &map2.root).unwrap().expect("snapshot present");
-        assert_eq!(loaded.files.len(), 2, "both files present after incremental persist");
+        let loaded = load_map(&conn, &map2.root)
+            .unwrap()
+            .expect("snapshot present");
+        assert_eq!(
+            loaded.files.len(),
+            2,
+            "both files present after incremental persist"
+        );
         let paths: Vec<&str> = loaded.files.iter().map(|f| f.path.as_str()).collect();
         assert!(paths.iter().any(|p| p.ends_with("a.rs")));
         assert!(paths.iter().any(|p| p.ends_with("b.rs")));
@@ -1641,13 +1651,14 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "2", "schema_version must advance to 2 after migration");
+        assert_eq!(
+            version, "2",
+            "schema_version must advance to 2 after migration"
+        );
 
         // Both new columns must exist (PRAGMA table_info returns one row per column).
         let col_names: Vec<String> = {
-            let mut stmt = conn
-                .prepare("PRAGMA table_info(code_map_files)")
-                .unwrap();
+            let mut stmt = conn.prepare("PRAGMA table_info(code_map_files)").unwrap();
             stmt.query_map([], |row| row.get::<_, String>(1))
                 .unwrap()
                 .filter_map(|r| r.ok())
@@ -1670,7 +1681,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(sha256, "", "existing row sha256 must default to empty string");
+        assert_eq!(
+            sha256, "",
+            "existing row sha256 must default to empty string"
+        );
         assert_eq!(mtime_ns, 0, "existing row mtime_ns must default to 0");
     }
 }

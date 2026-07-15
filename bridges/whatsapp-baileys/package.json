@@ -1,0 +1,20 @@
+{
+  "name": "@neoth/whatsapp-baileys-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Operator-hosted Baileys sidecar for NEOTH WhatsApp Web",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "reconcile": "node src/reconcile.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "baileys": "7.0.0-rc13",
+    "qrcode-terminal": "0.12.0"
+  }
+}

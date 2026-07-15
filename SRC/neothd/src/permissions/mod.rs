@@ -1,18 +1,17 @@
-//! Permission gating — bridge between `neoth-plugin-sdk`'s sealed
-//! typestate machinery and the daemon's runtime decision logic.
+//! Runtime permission gating plus re-exports of the plugin SDK's typed markers.
 //!
 //! Phase 33b SP-3 — re-exports the SDK types and adds the `Action` /
 //! `AutonomyLevel` / `Decision` triad that Phase 28b R-23 will dispatch on.
 //!
 //! ## Layering
 //!
-//! - **Compile time** (`neoth-plugin-sdk::permission`): `PermissionToken<L>`
-//!   is zero-sized, sealed, and only `mint()`-able with the `_host` feature.
-//!   Tools require `&PermissionToken<L>` so plugin authors cannot bypass
-//!   typestate.
-//! - **Runtime** (this module): the daemon picks an [`AutonomyLevel`] at
-//!   onboarding (R-23) and consults [`evaluate`] before minting a token.
-//!   Decisions are `Allow` / `Confirm(reason)` / `Deny(reason)`.
+//! - **Compile-time API guidance** (`neoth-plugin-sdk::permission`):
+//!   `PermissionToken<L>` is a zero-sized marker over a sealed level lattice.
+//!   `_host` is consumer-selectable, so tokens and grants are not runtime
+//!   authority and must never be treated as unforgeable capabilities.
+//! - **Runtime** (this module): the daemon consults [`evaluate`] and [`Gate`]
+//!   for actual effects. Decisions are `Allow` / `Confirm(reason)` /
+//!   `Deny(reason)` independently of SDK marker construction.
 //!
 //! Until R-23 lands, `evaluate` is conservative: it returns `Allow` for
 //! reads, `Confirm` for writes / shell / paid provider calls, `Deny` for
@@ -24,11 +23,15 @@ pub mod confirm;
 pub mod confirm_bus;
 pub mod gate;
 pub mod lease;
+pub mod policy;
 pub mod tier_classifier;
 
 pub use gate::{ConfirmStrategy, Gate};
+pub use policy::{
+    ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision, PolicyArgument,
+};
 
-// SP-3 bridge: re-export the SDK's sealed-typestate primitives so daemon code
+// SP-3 bridge: re-export the SDK's typed API primitives so daemon code
 // can refer to `crate::permissions::PermissionToken<Read>` without coupling
 // callers to the plugin SDK crate name. allow(unused_imports) because the
 // non-test code paths reach these via fully-qualified SDK paths today;
@@ -42,7 +45,7 @@ pub use neoth_plugin_sdk::permission::{
 /// Classifies what NEOTH is about to do, independent of how the action
 /// arrived (CLI / channel / cron / hook).
 ///
-/// `Eq` deliberately not derived: `PaidProviderCall { eur_estimate: f32 }`
+/// `Eq` deliberately not derived: `PaidProviderCall { eur_estimate: f32, .. }`
 /// holds a float and `f32: !Eq`. Comparing two `Action`s via `==` works
 /// (via `PartialEq`) and is intentionally NaN-sensitive — two distinct
 /// NaN payloads should not collapse into one decision.
@@ -59,10 +62,50 @@ pub enum Action {
     ExecScripts,
     /// Spawn a shell process anywhere else on the filesystem.
     ExecArbitrary,
-    /// Outbound provider call with an estimated cost in EUR. The threshold
-    /// at which this becomes "confirm" or "deny" is autonomy-level-dependent.
-    PaidProviderCall { eur_estimate: f32 },
-    /// Send a message through a channel adapter (Telegram / Keet / ...).
+    /// Outbound provider call with an estimated cost in EUR. The immutable
+    /// identity + SHA-256 request binding let the permission prompt and WAL
+    /// prove exactly which leaf request the estimate authorises.
+    PaidProviderCall {
+        provider: String,
+        model: String,
+        authorization_id: String,
+        request_binding_sha256: String,
+        eur_estimate: f32,
+    },
+    /// Outbound paid-provider invocation for which the concrete adapter cannot
+    /// prove a finite, wire-enforced whole-invocation cost ceiling. This is not
+    /// represented as a bogus finite estimate: Strict through Elevated require
+    /// an explicit per-call confirmation, while Full deliberately allows it.
+    /// Never leasable.
+    UnboundedPaidProviderCall {
+        provider: String,
+        model: String,
+        authorization_id: String,
+        request_binding_sha256: String,
+    },
+    /// External text-to-speech egress. The request binding proves which spoken
+    /// text/voice/format tuple was authorised without placing the text or a
+    /// ViitorVoice reference-audio path in the permission prompt or WAL.
+    /// `destination` is a credential-free origin/service label validated by
+    /// the caller before this action is constructed. Never leasable.
+    ExternalTtsSynthesis {
+        provider: String,
+        destination: String,
+        sends_reference_audio: bool,
+        request_binding_sha256: String,
+    },
+    /// Request-bound external HTTP egress. `destination` is a credential-free
+    /// origin; the hash binds the exact method/URL/body/surface tuple to its
+    /// mandatory intent/result WAL lifecycle. Private self-hosted SearXNG is
+    /// classified as local before this action is constructed. Never leasable.
+    ExternalHttpRequest {
+        method: String,
+        destination: String,
+        surface: String,
+        request_id: String,
+        request_binding_sha256: String,
+    },
+    /// Send a message through a supported channel adapter.
     ChannelSend,
     /// Hit explicitly listed in `policy.yaml::dangerous_targets`.
     /// Always confirms at `full`, always denies at `standard` and below.
@@ -134,7 +177,7 @@ pub enum Action {
     /// policy), Elevated/Full allow. The `proactive.enabled` master switch
     /// (default OFF) is checked BEFORE this gate; this is the second layer.
     ProactiveChannelSend {
-        /// Channel family the message targets ("telegram", "keet", ...).
+        /// Channel family the message targets ("telegram", "slack", ...).
         channel: String,
     },
     /// PC-01: read a file on the operator's OS through the gated OS-tool
@@ -309,13 +352,10 @@ pub enum Action {
     ObsidianPreloadWrite,
 }
 
-/// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
-/// `FreedomConfig.autonomy`. Phase 28b wires the wizard step + serde.
-///
-/// `Custom` is intentionally unmodelled here: when selected, the resolver
-/// consults a per-category override map on `FreedomConfig`. That map
-/// doesn't exist yet — the variant is reserved so future code can match
-/// exhaustively without churn.
+/// Five autonomy levels per R-23 spec. Picked at onboarding and reloadable from
+/// `FreedomConfig.autonomy`. `Custom` resolves the typed per-action overrides
+/// captured in [`AutonomyPolicySnapshot`], with Standard as the missing-entry
+/// baseline and Full as the irreducible safety ceiling.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutonomyLevel {
@@ -351,9 +391,10 @@ impl AutonomyLevel {
         }
     }
 
-    /// Monotonic rank of the four linear levels. `Custom` is unmodelled (no
-    /// override map yet) so it ranks as `Standard` — deliberately low, so a
-    /// `Custom` operator never *implicitly* satisfies an Elevated/Full gate.
+    /// Monotonic rank of the four linear levels. `Custom` is non-linear, so it
+    /// ranks as `Standard`: it never implicitly satisfies an unrelated
+    /// Elevated/Full minimum-level rail. Its per-action policy is evaluated
+    /// separately through [`evaluate`].
     fn rank(self) -> u8 {
         match self {
             Self::Strict => 0,
@@ -364,9 +405,9 @@ impl AutonomyLevel {
     }
 
     /// GOLD-ADAPT-CCS-02 — does the operator's current level satisfy a server's
-    /// `autonomy_gate` (minimum required) level? Fail-closed: a `Custom`
-    /// *required* gate is satisfied only by `Full`, since the override map that
-    /// would resolve `Custom` does not exist yet.
+    /// `autonomy_gate` (minimum required) level? A `Custom` required gate is
+    /// satisfied only by `Full`; a non-linear action override cannot silently
+    /// weaken a separate minimum-level rail.
     pub fn meets_gate(self, required: AutonomyLevel) -> bool {
         if matches!(required, AutonomyLevel::Custom) {
             return matches!(self, AutonomyLevel::Full);
@@ -433,6 +474,9 @@ impl Decision {
 /// a deliberate scope is added with its own CLI controls):
 /// - [`Action::WriteOutsideHome`], [`Action::ExecScripts`],
 ///   [`Action::ExecArbitrary`], [`Action::PaidProviderCall`],
+///   [`Action::UnboundedPaidProviderCall`],
+///   [`Action::ExternalTtsSynthesis`],
+///   [`Action::ExternalHttpRequest`],
 ///   [`Action::ClusterPeerPairing`].
 pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
     use lease::LeaseScope;
@@ -468,6 +512,9 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         | Action::ExecScripts
         | Action::ExecArbitrary
         | Action::PaidProviderCall { .. }
+        | Action::UnboundedPaidProviderCall { .. }
+        | Action::ExternalTtsSynthesis { .. }
+        | Action::ExternalHttpRequest { .. }
         | Action::ClusterPeerPairing { .. }
         | Action::OsFileWrite { .. }
         // An app launch is arbitrary code execution (like `ExecArbitrary`): no
@@ -495,17 +542,28 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
     }
 }
 
-/// Decide whether `action` may proceed under `level`. Conservative default
-/// while R-23 wizard is unimplemented — see module docs.
+/// Decide whether `action` may proceed under an immutable policy snapshot.
 ///
-/// The `Custom` level currently delegates to `Standard`. Phase 28b extends
-/// the signature to accept a per-category override map.
-pub fn evaluate(action: &Action, level: AutonomyLevel) -> Decision {
-    match level {
+/// Production builds accept only `&AutonomyPolicySnapshot`, which makes a
+/// variable-level `Custom` fallback impossible at the type boundary. Unit
+/// tests retain a sealed `AutonomyLevel` adapter for the historical built-in
+/// decision matrix.
+pub fn evaluate<P: PolicyArgument>(action: &Action, policy: P) -> Decision {
+    policy.evaluate_action(action)
+}
+
+pub(crate) fn evaluate_snapshot(action: &Action, policy: &AutonomyPolicySnapshot) -> Decision {
+    match policy.level() {
         AutonomyLevel::Strict => evaluate_strict(action),
-        AutonomyLevel::Standard | AutonomyLevel::Custom => evaluate_standard(action),
+        AutonomyLevel::Standard => evaluate_standard(action),
         AutonomyLevel::Elevated => evaluate_elevated(action),
         AutonomyLevel::Full => evaluate_full(action),
+        AutonomyLevel::Custom => policy::custom_requested_decision(
+            action,
+            policy.custom_override(action.kind()),
+            evaluate_standard(action),
+            evaluate_full(action),
+        ),
     }
 }
 
@@ -517,9 +575,46 @@ fn evaluate_strict(action: &Action) -> Decision {
         | Action::ExecScripts
         | Action::ExecArbitrary
         | Action::ChannelSend => Decision::Confirm(format!("strict: confirm {:?}", action)),
-        Action::PaidProviderCall { .. } => {
-            Decision::Confirm("strict: every paid provider call requires confirm".into())
-        }
+        Action::PaidProviderCall {
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+            ..
+        } => Decision::Confirm(format!(
+            "strict: paid provider call {} requires confirm",
+            paid_call_identity(provider, model, authorization_id, request_binding_sha256)
+        )),
+        Action::UnboundedPaidProviderCall {
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+        } => Decision::Confirm(format!(
+            "strict: paid provider invocation {} has no proven finite whole-invocation cost bound and requires explicit confirm",
+            paid_call_identity(provider, model, authorization_id, request_binding_sha256)
+        )),
+        Action::ExternalTtsSynthesis {
+            provider,
+            destination,
+            sends_reference_audio,
+            ..
+        } => Decision::Confirm(format!(
+            "strict: external TTS via {provider} to {destination} requires confirm{}",
+            if *sends_reference_audio {
+                " (spoken text and reference audio leave the device)"
+            } else {
+                " (spoken text leaves the device)"
+            }
+        )),
+        Action::ExternalHttpRequest {
+            method,
+            destination,
+            surface,
+            ..
+        } => Decision::Confirm(format!(
+            "strict: external HTTP {method} to {destination} ({surface}) requires confirm"
+        )),
         Action::McpToolInvocation { server_id, tool } => Decision::Confirm(format!(
             "strict: MCP tool `{server_id}::{tool}` requires confirm"
         )),
@@ -600,9 +695,51 @@ fn evaluate_standard(action: &Action) -> Decision {
         Action::ExecScripts | Action::ExecArbitrary => {
             Decision::Confirm("standard: shell exec requires confirm".into())
         }
-        Action::PaidProviderCall { eur_estimate } => {
-            check_paid_call(*eur_estimate, 0.50, "standard")
-        }
+        Action::PaidProviderCall {
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+            eur_estimate,
+        } => check_paid_call(
+            *eur_estimate,
+            0.50,
+            "standard",
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+        ),
+        Action::UnboundedPaidProviderCall {
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+        } => Decision::Confirm(format!(
+            "standard: paid provider invocation {} has no proven finite whole-invocation cost bound and requires explicit confirm",
+            paid_call_identity(provider, model, authorization_id, request_binding_sha256)
+        )),
+        Action::ExternalTtsSynthesis {
+            provider,
+            destination,
+            sends_reference_audio,
+            ..
+        } => Decision::Confirm(format!(
+            "standard: external TTS via {provider} to {destination} requires confirm{}",
+            if *sends_reference_audio {
+                " (spoken text and reference audio leave the device)"
+            } else {
+                " (spoken text leaves the device)"
+            }
+        )),
+        Action::ExternalHttpRequest {
+            method,
+            destination,
+            surface,
+            ..
+        } => Decision::Confirm(format!(
+            "standard: external HTTP {method} to {destination} ({surface}) requires confirm"
+        )),
         Action::McpToolInvocation { server_id, tool } => Decision::Confirm(format!(
             "standard: MCP tool `{server_id}::{tool}` requires confirm — external server effects"
         )),
@@ -704,9 +841,35 @@ fn evaluate_elevated(action: &Action) -> Decision {
         Action::ExecArbitrary => Decision::Confirm(
             "elevated: shell exec outside ~/.neoth/scripts/ requires confirm".into(),
         ),
-        Action::PaidProviderCall { eur_estimate } => {
-            check_paid_call(*eur_estimate, 5.0, "elevated")
-        }
+        Action::PaidProviderCall {
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+            eur_estimate,
+        } => check_paid_call(
+            *eur_estimate,
+            5.0,
+            "elevated",
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+        ),
+        Action::UnboundedPaidProviderCall {
+            provider,
+            model,
+            authorization_id,
+            request_binding_sha256,
+        } => Decision::Confirm(format!(
+            "elevated: paid provider invocation {} has no proven finite whole-invocation cost bound and requires explicit confirm",
+            paid_call_identity(provider, model, authorization_id, request_binding_sha256)
+        )),
+        // The operator explicitly opted into autonomous external effects at
+        // Elevated. The independent `media.cloud_tts_enabled` consent rail and
+        // endpoint validator still have to pass at the caller.
+        Action::ExternalTtsSynthesis { .. } => Decision::Allow,
+        Action::ExternalHttpRequest { .. } => Decision::Allow,
         Action::McpToolInvocation { .. } => Decision::Allow,
         Action::DangerousTarget(t) => {
             Decision::Confirm(format!("elevated: dangerous target '{t}' requires confirm"))
@@ -815,22 +978,42 @@ fn evaluate_elevated(action: &Action) -> Decision {
 /// The "broken-estimate" Confirm path is louder than silent Allow so
 /// the operator sees the cost-predictor regression instead of being
 /// billed silently.
-fn check_paid_call(eur_estimate: f32, threshold: f32, level_name: &str) -> Decision {
+fn paid_call_identity(
+    provider: &str,
+    model: &str,
+    authorization_id: &str,
+    request_binding_sha256: &str,
+) -> String {
+    format!(
+        "{provider}/{model} (authorization_id={authorization_id}, request_binding_sha256={request_binding_sha256})"
+    )
+}
+
+fn check_paid_call(
+    eur_estimate: f32,
+    threshold: f32,
+    level_name: &str,
+    provider: &str,
+    model: &str,
+    authorization_id: &str,
+    request_binding_sha256: &str,
+) -> Decision {
+    let identity = paid_call_identity(provider, model, authorization_id, request_binding_sha256);
     if !eur_estimate.is_finite() {
         return Decision::Confirm(format!(
-            "{level_name}: paid provider with non-finite EUR estimate ({eur_estimate}) — \
+            "{level_name}: paid provider {identity} with non-finite EUR estimate ({eur_estimate}) — \
              cost predictor likely broken; refusing to silently allow"
         ));
     }
     if eur_estimate < 0.0 {
         return Decision::Confirm(format!(
-            "{level_name}: paid provider with negative EUR estimate ({eur_estimate}) — \
+            "{level_name}: paid provider {identity} with negative EUR estimate ({eur_estimate}) — \
              cost predictor likely broken; refusing to silently allow"
         ));
     }
     if eur_estimate > threshold {
         return Decision::Confirm(format!(
-            "{level_name}: paid provider €{eur_estimate:.2} > €{threshold:.2} limit"
+            "{level_name}: paid provider {identity} €{eur_estimate:.2} > €{threshold:.2} limit"
         ));
     }
     Decision::Allow
@@ -892,6 +1075,9 @@ fn evaluate_full(action: &Action) -> Decision {
         | Action::ExecArbitrary
         | Action::ChannelSend
         | Action::PaidProviderCall { .. }
+        | Action::UnboundedPaidProviderCall { .. }
+        | Action::ExternalTtsSynthesis { .. }
+        | Action::ExternalHttpRequest { .. }
         | Action::McpToolInvocation { .. }
         | Action::OsFileRead { .. }
         | Action::OsFileWrite { .. }
@@ -911,8 +1097,8 @@ fn evaluate_full(action: &Action) -> Decision {
         // is the firewall. Tests in `cli::self_activate` cover the full chain.
         //
         // Rationale for putting the sovereign/allowlist check in the CALLER:
-        // `evaluate` takes only an `Action` + `AutonomyLevel`; it has no
-        // access to `FreedomConfig`. The caller must gate on
+        // `evaluate` takes only an `Action` + immutable policy snapshot; it
+        // has no access to `FreedomConfig`. The caller must gate on
         // `cfg.sovereign_active()` and `cfg.self_activation.skill_allowed(id)`
         // BEFORE dispatching — otherwise fall back to Confirm.
         Action::SelfSkillToggle { .. } => Decision::Allow,
@@ -941,6 +1127,25 @@ fn evaluate_full(action: &Action) -> Decision {
 mod tests {
     use super::*;
 
+    fn paid_action(eur_estimate: f32) -> Action {
+        Action::PaidProviderCall {
+            provider: "openai_api".into(),
+            model: "gpt-5".into(),
+            authorization_id: "a".repeat(64),
+            request_binding_sha256: "b".repeat(64),
+            eur_estimate,
+        }
+    }
+
+    fn unbounded_paid_action(provider: &str, model: &str) -> Action {
+        Action::UnboundedPaidProviderCall {
+            provider: provider.into(),
+            model: model.into(),
+            authorization_id: "a".repeat(64),
+            request_binding_sha256: "b".repeat(64),
+        }
+    }
+
     #[test]
     fn external_task_write_gates_by_autonomy() {
         let a = Action::ExternalTaskWrite {
@@ -963,6 +1168,58 @@ mod tests {
         assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
         // Unleasable for now (gate-only).
         assert!(lease_scope_for(&a).is_none());
+    }
+
+    #[test]
+    fn external_tts_is_confirm_gated_and_never_leasable() {
+        let action = Action::ExternalTtsSynthesis {
+            provider: "viitor_voice".into(),
+            destination: "http://127.0.0.1:8200/v1/voice-clone".into(),
+            sends_reference_audio: true,
+            request_binding_sha256: "b".repeat(64),
+        };
+        for level in [
+            AutonomyLevel::Strict,
+            AutonomyLevel::Standard,
+            AutonomyLevel::Custom,
+        ] {
+            let decision = evaluate(&action, level);
+            assert!(
+                matches!(decision, Decision::Confirm(_)),
+                "{level:?}: {decision:?}"
+            );
+        }
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Elevated),
+            Decision::Allow
+        ));
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Full),
+            Decision::Allow
+        ));
+        assert!(lease_scope_for(&action).is_none());
+    }
+
+    #[test]
+    fn external_http_is_confirm_then_autonomous_and_never_leasable() {
+        let action = Action::ExternalHttpRequest {
+            method: "GET".into(),
+            destination: "https://example.com".into(),
+            surface: "fetch".into(),
+            request_id: "request-1".into(),
+            request_binding_sha256: "b".repeat(64),
+        };
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Strict),
+            Decision::Confirm(_)
+        ));
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        assert_eq!(evaluate(&action, AutonomyLevel::Elevated), Decision::Allow);
+        assert_eq!(evaluate(&action, AutonomyLevel::Full), Decision::Allow);
+        assert!(lease_scope_for(&action).is_none());
     }
 
     // ── PC-01 clipboard autonomy mapping ─────────────────────────────────────
@@ -1176,30 +1433,56 @@ mod tests {
 
     #[test]
     fn standard_paid_provider_threshold_is_fifty_cents() {
-        let cheap = evaluate(
-            &Action::PaidProviderCall { eur_estimate: 0.10 },
-            AutonomyLevel::Standard,
-        );
+        let cheap = evaluate(&paid_action(0.10), AutonomyLevel::Standard);
         assert!(cheap.is_allow());
-        let pricey = evaluate(
-            &Action::PaidProviderCall { eur_estimate: 0.99 },
-            AutonomyLevel::Standard,
-        );
-        assert!(matches!(pricey, Decision::Confirm(_)));
+        let pricey = evaluate(&paid_action(0.99), AutonomyLevel::Standard);
+        match pricey {
+            Decision::Confirm(reason) => {
+                assert!(reason.contains("openai_api/gpt-5"));
+                assert!(reason.contains(&format!("authorization_id={}", "a".repeat(64))));
+                assert!(reason.contains(&format!("request_binding_sha256={}", "b".repeat(64))));
+            }
+            other => panic!("expected Confirm, got {other:?}"),
+        }
     }
 
     #[test]
     fn elevated_paid_provider_threshold_is_five_eur() {
-        let mid = evaluate(
-            &Action::PaidProviderCall { eur_estimate: 2.50 },
-            AutonomyLevel::Elevated,
-        );
+        let mid = evaluate(&paid_action(2.50), AutonomyLevel::Elevated);
         assert!(mid.is_allow());
-        let high = evaluate(
-            &Action::PaidProviderCall { eur_estimate: 9.99 },
-            AutonomyLevel::Elevated,
-        );
+        let high = evaluate(&paid_action(9.99), AutonomyLevel::Elevated);
         assert!(matches!(high, Decision::Confirm(_)));
+    }
+
+    #[test]
+    fn unbounded_paid_provider_requires_live_confirmation_below_full() {
+        let action = unbounded_paid_action("claude_cli", "claude-opus-4-7");
+        for level in [
+            AutonomyLevel::Strict,
+            AutonomyLevel::Standard,
+            AutonomyLevel::Custom,
+            AutonomyLevel::Elevated,
+        ] {
+            let decision = evaluate(&action, level);
+            match decision {
+                Decision::Confirm(reason) => {
+                    assert!(reason.contains("claude_cli/claude-opus-4-7"));
+                    assert!(reason.contains("no proven finite"));
+                    assert!(reason.contains(&format!("authorization_id={}", "a".repeat(64))));
+                    assert!(reason.contains(&format!("request_binding_sha256={}", "b".repeat(64))));
+                }
+                other => panic!("{level:?} must confirm an unbounded paid call; got {other:?}"),
+            }
+        }
+        assert!(evaluate(&action, AutonomyLevel::Full).is_allow());
+    }
+
+    #[test]
+    fn unbounded_paid_provider_is_never_leasable() {
+        assert_eq!(
+            lease_scope_for(&unbounded_paid_action("claude_cli", "claude-opus-4-7")),
+            None
+        );
     }
 
     // ── Pick #32 (Session 14, type-design audit-fix) — NaN-safe ──────
@@ -1213,9 +1496,7 @@ mod tests {
 
     #[test]
     fn standard_paid_call_with_nan_estimate_confirms_not_allows() {
-        let action = Action::PaidProviderCall {
-            eur_estimate: f32::NAN,
-        };
+        let action = paid_action(f32::NAN);
         let d = evaluate(&action, AutonomyLevel::Standard);
         match d {
             Decision::Confirm(reason) => {
@@ -1231,10 +1512,7 @@ mod tests {
     #[test]
     fn standard_paid_call_with_infinity_confirms_not_allows() {
         for v in [f32::INFINITY, f32::NEG_INFINITY] {
-            let d = evaluate(
-                &Action::PaidProviderCall { eur_estimate: v },
-                AutonomyLevel::Standard,
-            );
+            let d = evaluate(&paid_action(v), AutonomyLevel::Standard);
             assert!(
                 matches!(d, Decision::Confirm(_)),
                 "{v} estimate must Confirm; got {d:?}"
@@ -1244,12 +1522,7 @@ mod tests {
 
     #[test]
     fn standard_paid_call_with_negative_estimate_confirms() {
-        let d = evaluate(
-            &Action::PaidProviderCall {
-                eur_estimate: -0.01,
-            },
-            AutonomyLevel::Standard,
-        );
+        let d = evaluate(&paid_action(-0.01), AutonomyLevel::Standard);
         match d {
             Decision::Confirm(reason) => {
                 assert!(
@@ -1263,12 +1536,7 @@ mod tests {
 
     #[test]
     fn elevated_paid_call_with_nan_estimate_confirms_not_allows() {
-        let d = evaluate(
-            &Action::PaidProviderCall {
-                eur_estimate: f32::NAN,
-            },
-            AutonomyLevel::Elevated,
-        );
+        let d = evaluate(&paid_action(f32::NAN), AutonomyLevel::Elevated);
         assert!(
             matches!(d, Decision::Confirm(_)),
             "NaN on Elevated must Confirm; got {d:?}"
@@ -1284,12 +1552,7 @@ mod tests {
         // returns Allow. If a future maintainer decides Full SHOULD
         // also Confirm on non-finite, this test fails + forces a
         // conscious design conversation.
-        let d = evaluate(
-            &Action::PaidProviderCall {
-                eur_estimate: f32::NAN,
-            },
-            AutonomyLevel::Full,
-        );
+        let d = evaluate(&paid_action(f32::NAN), AutonomyLevel::Full);
         assert!(
             d.is_allow(),
             "Full opted out of cost gating; NaN must still Allow as documented; got {d:?}"
@@ -1334,9 +1597,8 @@ mod tests {
             Action::ExecScripts,
             Action::ExecArbitrary,
             Action::ChannelSend,
-            Action::PaidProviderCall {
-                eur_estimate: 999.0,
-            },
+            paid_action(999.0),
+            unbounded_paid_action("claude_cli", "claude-opus-4-7"),
             Action::McpToolInvocation {
                 server_id: "s".into(),
                 tool: "t".into(),

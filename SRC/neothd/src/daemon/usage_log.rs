@@ -227,8 +227,7 @@ pub fn record_provider_call(
         let o = output_tokens.unwrap_or(0);
         let cc = cache_creation_tokens.unwrap_or(0);
         let cr = cache_read_tokens.unwrap_or(0);
-        let savings =
-            crate::providers::cost::cache_savings_usd(provider, model, cc, cr);
+        let savings = crate::providers::cost::cache_savings_usd(provider, model, cc, cr);
         (
             i,
             o,
@@ -242,8 +241,8 @@ pub fn record_provider_call(
         (0, 0, 0.0, 0, 0, 0.0)
     };
     record_now(
-        home, provider, model, input, output, cost, latency_ms, ok,
-        cc_tok, cr_tok, savings, automated,
+        home, provider, model, input, output, cost, latency_ms, ok, cc_tok, cr_tok, savings,
+        automated,
     )
 }
 
@@ -801,9 +800,19 @@ mod tests {
     #[test]
     fn record_provider_call_none_tokens_treated_as_zero() {
         let dir = tempdir().unwrap();
-        let ev =
-            record_provider_call(dir.path(), "local_qwen", "qwen2.5-7b", None, None, 10, true, None, None, false)
-                .unwrap();
+        let ev = record_provider_call(
+            dir.path(),
+            "local_qwen",
+            "qwen2.5-7b",
+            None,
+            None,
+            10,
+            true,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         assert_eq!(ev.input_tokens, 0);
         assert_eq!(ev.output_tokens, 0);
         // Unpriced local model → cost 0.0 (drift guard: actual_cost_usd
@@ -953,7 +962,10 @@ mod tests {
         let line = r#"{"ts_unix":1779494400,"provider":"openai_api","model":"gpt-4.1","input_tokens":10,"output_tokens":5,"cost_usd":0.001,"latency_ms":200,"ok":true,"cache_creation_tokens":0,"cache_read_tokens":0,"cache_savings_usd":0.0}"#;
         // Verify serde default kicks in.
         let ev: UsageEvent = serde_json::from_str(line).unwrap();
-        assert!(!ev.automated, "pre-VIEW-06 event must default automated=false");
+        assert!(
+            !ev.automated,
+            "pre-VIEW-06 event must default automated=false"
+        );
         // Write it directly to the JSONL file (mimics pre-VIEW-06 on-disk data).
         let dir = tempdir().unwrap();
         std::fs::create_dir_all(usage_dir(dir.path())).unwrap();
@@ -962,7 +974,10 @@ mod tests {
         // aggregate must classify it as human (human_count=1, automated_count=0).
         let roll = aggregate(dir.path(), 0, i64::MAX);
         assert_eq!(roll.total_call_count, 1);
-        assert_eq!(roll.total_human_count, 1, "pre-VIEW-06 record counts as human");
+        assert_eq!(
+            roll.total_human_count, 1,
+            "pre-VIEW-06 record counts as human"
+        );
         assert_eq!(roll.total_automated_count, 0);
     }
 }

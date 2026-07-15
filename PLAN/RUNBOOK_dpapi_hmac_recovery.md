@@ -1,244 +1,208 @@
-# Runbook — DPAPI-bound HMAC key disaster recovery
+# Runbook — DPAPI-bound WAL HMAC-key recovery
 
-**Round-3 v0.4 SC-09 deliverable.** Operator-facing playbook for the
-class of Windows-only failures where NEOTH's WAL HMAC compaction key
-becomes unreadable because its DPAPI wrapper can't decrypt anymore.
+This runbook covers a Windows installation whose WAL integrity key can no
+longer be opened after an account/profile change, machine replacement, restore,
+or Windows reinstall. The shipped commands also work on Linux and macOS, but
+those platforms store the live key as an owner-only mode-0600 file instead of a
+DPAPI blob.
 
-This runbook is for **Windows operators only**. Linux + macOS use
-filesystem permissions (0600 + DACL) without the DPAPI layer; recovery
-on those platforms is the simpler `chmod 600 ~/.neoth/wal_hmac_key`
-scenario.
+**Live key:** `~/.neoth/wal/hmac.key`
 
----
-
-## What DPAPI binding does + why
-
-NEOTH's WAL writer emits periodic **HMAC-SHA256 compaction markers**
-(Phase 33b SP-2) so a downstream reader can prove the WAL has not been
-tampered with since the last marker. The key for those HMACs lives at
-`~/.neoth/wal_hmac_key` (32 random bytes from the OS CSPRNG).
-
-On Windows, K-Sec-4 (Session 2026-05-22) added a DPAPI wrap so the
-on-disk key bytes are **encrypted with `CryptProtectData(... ,
-CRYPTPROTECT_LOCAL_MACHINE | CRYPTPROTECT_UI_FORBIDDEN, ...)`**. The
-DPAPI master key is bound to the operator's **user profile + machine**;
-Windows derives it from the operator's login credentials + a per-
-machine entropy source. A successful `CryptUnprotectData` requires:
-
-1. Same Windows user account that called `CryptProtectData`.
-2. Same machine identity (DPAPI machine key from `LSA\Secrets`).
-3. Same user-profile integrity (`%APPDATA%` not roamed cross-OS).
-
-When any of those three change, the wrap can't be unsealed +
-`neoth wal verify` fails with an opaque "HMAC key unreadable" error.
-
-## Failure modes catalogue
-
-| Scenario                                                                                       | Recovery path                          |
-|------------------------------------------------------------------------------------------------|----------------------------------------|
-| Operator changed Windows account password (Windows re-wraps DPAPI master on login — usually OK) | Usually no action — re-run `neoth wal verify`. |
-| Operator moved `~/.neoth` to a new machine (USB stick / OneDrive sync)                          | DPAPI unwrap fails. **Use this runbook.** |
-| Windows reinstalled in place; `%APPDATA%` survived                                              | DPAPI unwrap fails. **Use this runbook.** |
-| Operator logged in via Microsoft Account vs local account → switched account type               | DPAPI unwrap fails. **Use this runbook.** |
-| Disk imaged + restored to a new identical-hardware machine                                      | DPAPI unwrap fails. **Use this runbook.** |
-| Profile corruption (DPAPI master key corrupted by other software)                               | Run `neoth wal verify`; if it fails, **use this runbook**. |
-| Operator copied `wal_hmac_key` out via Explorer + back in elsewhere                             | DPAPI unwrap fails — DPAPI ciphertext only valid on origin. |
-
-## Quick-triage: is this you?
+**Primary recovery command:**
 
 ```powershell
-neothd wal verify
+neoth security rewrap-hmac-key --source X:\neoth-recovery\hmac.key
 ```
 
-If the output mentions any of:
-- `HMAC key unreadable`
-- `CryptUnprotectData failed`
-- `DPAPI unwrap failure (Win32 error 0x80090005)` (NTE_BAD_DATA)
-- `WAL compaction marker verification skipped — key inaccessible`
+The recovery file contains the raw HMAC secret. Anyone who can read it can
+forge WAL compaction markers. Keep it encrypted/offline and mount or copy it
+only for backup/recovery.
 
-…this runbook applies. If `neoth wal verify` returns OK, the HMAC
-chain is intact — no recovery needed.
+## What Windows protects
 
-## Recovery procedures
+On Windows, NEOTH calls `CryptProtectData` with flags `0`. It deliberately does
+**not** use `CRYPTPROTECT_LOCAL_MACHINE`; the blob is bound to the current
+Windows user/profile instead of being decryptable by every user on the machine.
+Moving only `~/.neoth` to another account or machine therefore does not create a
+portable key backup.
 
-### Tier 1 — Operator opted into plaintext key backup (preferred)
+The file begins with `NEOTH_DPAPIv1\n`; the remaining bytes are the DPAPI blob.
+On Unix, the file contains the key under mode 0600.
 
-If you accepted the wizard's **opt-in plaintext key backup** at install
-time, you have a USB-stick (or external file) copy of the raw 32-byte
-key. Recovery:
+Typical Windows failure cases are:
 
-1. Locate the backup file (default suggested path:
-   `<USB>:\neoth-recovery\wal_hmac_key.plaintext` or wherever you
-   chose).
-2. Stop the daemon: `neothd stop` (or close the GUI).
-3. Copy the backup into place + re-wrap with the new machine's DPAPI:
+- `~/.neoth` was restored on another machine;
+- Windows was reinstalled while the NEOTH directory was retained;
+- the installation moved to another local/Microsoft account or user profile;
+- the DPAPI master-key material or wrapped file was damaged.
+
+A normal password change is usually handled by Windows. Verify instead of
+assuming either success or failure.
+
+## Prevent the failure
+
+The interactive `neoth init` wizard offers a plaintext recovery backup. The
+offer defaults to **No** because exporting the secret is sensitive. If accepted,
+the wizard:
+
+1. asks for an explicit absolute file path outside `~/.neoth`;
+2. initializes the WAL HMAC key securely on a fresh installation;
+3. rejects `..`, symlink/junction escapes into `~/.neoth`, directories, and
+   existing files;
+4. writes through the same `backup-hmac-key` implementation used by the CLI;
+5. aborts onboarding on key-generation, path, DPAPI, directory, or write errors.
+
+NEOTH can prove that the path is outside its own home, but cannot prove that it
+is on another physical disk. Choose a USB volume, encrypted removable storage,
+password manager, or other genuinely independent destination. A sibling folder
+on the same system disk is not disaster recovery.
+
+To create a backup after onboarding:
+
+```powershell
+neoth security backup-hmac-key --output X:\neoth-recovery\hmac.key
+```
+
+The command refuses a path that resolves inside `~/.neoth` and refuses an
+existing destination unless `--force` is explicitly supplied. Prefer a new,
+epoch-labelled filename over `--force`; overwriting an older backup can destroy
+the only key that verifies an earlier WAL epoch.
+
+## Triage
+
+Stop writes before changing a key: stop the foreground `neoth serve` process
+with Ctrl-C, exit the GUI, or use the service manager that launched NEOTH.
+There is no `neoth stop` or `neoth boot` command.
+
+Run:
+
+```powershell
+neoth verify
+```
+
+This runbook applies when key loading reports `CryptUnprotectData`, a DPAPI
+unwrap failure, or says that `~/.neoth/wal/hmac.key` is bound to another Windows
+user/machine. A marker mismatch with a readable key is a different integrity
+incident; do not rewrap over it.
+
+Before recovery, preserve a read-only copy of the affected `~/.neoth` directory
+when audit history matters.
+
+## Recovery with the raw backup
+
+1. Stop every NEOTH writer as described above.
+2. Mount or copy the protected recovery file to the affected machine.
+3. Re-bind the same raw key to the current environment:
+
    ```powershell
-   $backup = "X:\neoth-recovery\wal_hmac_key.plaintext"
-   $target = "$env:USERPROFILE\.neoth\wal_hmac_key"
-   neothd security rewrap-hmac-key --plaintext-source $backup --target $target
+   neoth security rewrap-hmac-key --source X:\neoth-recovery\hmac.key
    ```
-   This subcommand (planned — see SC-09 follow-on) reads the plaintext,
-   re-wraps with `CryptProtectData` on the current machine + user, and
-   writes the new ciphertext to `~/.neoth/wal_hmac_key`.
-4. Re-run `neothd wal verify` — should now succeed; the existing WAL
-   segments verify against the recovered key.
 
-### Tier 2 — Operator declined backup, WAL audit history matters
+   On Windows this writes a new current-user DPAPI blob. On Unix it writes the
+   live key mode 0600. The command replaces the unreadable live key by design.
 
-Without a backup the **historical HMAC chain cannot be reconstructed**.
-This is by design — the HMAC's tamper-detection property depends on
-the key being secret + irrecoverable from disk-only observation. Two
-options:
+4. Verify the complete retained history:
 
-#### Option A — Rotate to a new key, accept the audit-chain gap
+   ```powershell
+   neoth verify
+   ```
 
-The new key starts a fresh HMAC chain; everything before the rotation
-becomes unverifiable (treated as "trust-on-first-use" from rotation
-onward). Acceptable when:
-- You aren't using the HMAC verification for legal-audit purposes.
-- The operator's threat model treats the on-machine WAL as trustworthy
-  via OS-level access controls (DACL + BitLocker).
+5. Only after verification passes, remove the mounted/working copy and return
+   the recovery backup to protected offline storage. Do not delete the only
+   disaster-recovery copy.
 
-Procedure:
-```powershell
-neothd stop
-del "$env:USERPROFILE\.neoth\wal_hmac_key"
-neothd boot  # daemon emits a fresh key on next start, DPAPI-wrapped
-neothd wal verify --since-rotation
-```
+`rewrap-hmac-key` records an authenticated `0xD9 HMAC_KEY_ROTATED` boundary when
+it can. If recording/signing fails, recovery still installs the key, but
+`neoth verify --since-rotation` deliberately ignores an unsigned or missing
+boundary and verifies the full history. This is fail-safe: it never skips more
+history because an audit boundary could not be authenticated.
 
-The `--since-rotation` flag (planned — SC-09 follow-on; today
-`neothd wal verify` skips windows whose key is unreadable) scopes
-verification to segments emitted after the new key landed.
+Because a rewrap restores the original raw key, the primary acceptance check is
+the full `neoth verify`, not `--since-rotation`.
 
-#### Option B — Treat WAL history as forensically void, archive + restart
+## No raw backup
 
-Most defensive option when the threat model treats compaction-marker
-verification as load-bearing:
+If the original Windows user/profile and machine still work, create the backup
+there first, then follow the recovery procedure:
 
 ```powershell
-neothd stop
-# Archive the unverifiable history
-$ts = Get-Date -UFormat "%Y%m%dT%H%M%S"
-$archive = "$env:USERPROFILE\.neoth\archived_unverifiable_$ts"
-mkdir $archive
-Move-Item "$env:USERPROFILE\.neoth\wal" $archive
-Move-Item "$env:USERPROFILE\.neoth\views.db" $archive
-Remove-Item "$env:USERPROFILE\.neoth\wal_hmac_key"
-neothd boot  # fresh WAL + fresh views + fresh key
+neoth security backup-hmac-key --output X:\neoth-recovery\hmac.key
 ```
 
-The archive directory preserves the prior WAL for forensic inspection
-(if you ever recover the original DPAPI environment, you can move it
-back) but the live daemon starts clean.
+If the original DPAPI context is gone, the HMAC secret cannot be reconstructed
+from the WAL. This is the intended security property. Two operational choices
+remain:
 
-### Tier 3 — Last resort: full reset
+### Preserve evidence and start a clean NEOTH home
 
-When even archival isn't worth keeping (operator wants a clean slate):
+This is the honest boundary when the old audit history matters. With every
+NEOTH process stopped:
 
 ```powershell
-neothd stop
-Remove-Item -Recurse -Force "$env:USERPROFILE\.neoth"
-neothd init  # restart from the wizard
+$home = Join-Path $env:USERPROFILE ".neoth"
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$archive = Join-Path $env:USERPROFILE ".neoth-unverifiable-$stamp"
+Move-Item -LiteralPath $home -Destination $archive
+neoth init
 ```
 
-This wipes every NEOTH artifact (memory tiers, ground truth, channel
-state, importer history). Use only when sure.
+This starts a new installation and preserves the old state separately for
+forensics or a future recovery of the original DPAPI environment. It does not
+claim continuity between the two audit histories. The move also removes the
+live configuration, memories, credentials, and channel state from the new home;
+restore only explicitly reviewed configuration, never the unreadable key.
 
-## Prevention — opt into the plaintext backup at wizard time
+### Rotate only when an audit gap is acceptable
 
-The wizard's step-3 (HMAC key generation) prompts:
-
-> _NEOTH protects the WAL HMAC key with Windows DPAPI. If you lose
-> access to this Windows account or move the install to a new machine,
-> the key becomes unrecoverable + your WAL audit chain breaks._
->
-> _Do you want NEOTH to write a plaintext copy of the key to an
-> external location now? You'll need to keep this file secret +
-> off the local disk (USB stick, password manager, etc.). Answer
-> 'yes' for installs where audit-chain continuity across machine
-> changes matters._
->
-> `[y/N]`
-
-Default `N` — opt-in. Operators who choose `y` get prompted for the
-destination path; NEOTH writes the 32-byte raw key + a recovery
-checksum + this runbook's URL.
-
-**If you skipped this prompt the first time + want to opt in now,**
-use the planned `neothd security backup-hmac-key --output <PATH>`
-subcommand (SC-09 follow-on; tracks in PROGRESS_v1_0.md as a
-remaining slice of SC-09).
-
-## `neothd wal verify` error message improvement
-
-Pre-SC-09 the verify command surfaced DPAPI failures as the bare
-Win32 error code:
-
-```
-HMAC marker verification failed (Win32 error 0x80090005)
+```powershell
+neoth keys rotate
+neoth keys archives
 ```
 
-Operators had no path forward from that. SC-09 expands the message to
-point at this runbook:
+`keys rotate` archives the current key file and generates a new key. On a moved
+Windows installation, the archived DPAPI blob remains unreadable outside its
+original user/profile. Historical markers therefore remain unverifiable unless
+that original environment is recovered.
 
+Current limitation: `keys rotate` does not emit the authenticated `0xD9`
+boundary used by `neoth verify --since-rotation`; that verifier consequently
+falls back to the full history. Rotation is operational recovery, not proof that
+the historical chain is valid and not a clean `--since-rotation` boundary.
+
+When an archived key is readable in its original environment, it can verify the
+matching epoch explicitly:
+
+```powershell
+neoth verify --key C:\path\to\hmac.key.<unix-ts>.archive
 ```
-HMAC marker verification failed: DPAPI unwrap returned 0x80090005
-(NTE_BAD_DATA). This usually means the ~/.neoth/wal_hmac_key was
-wrapped on a different Windows account or machine. See
-PLAN/RUNBOOK_dpapi_hmac_recovery.md for recovery procedures.
-```
 
-The improvement lives in `wal/dpapi.rs` once the runbook URL stabilises
-+ the operator-facing message gets the path right.
+## Command contract
 
-## Operator-visible audit trail
+| Purpose | Shipped command |
+|---|---|
+| Verify current WAL markers | `neoth verify` |
+| Export raw recovery key | `neoth security backup-hmac-key --output <PATH>` |
+| Re-bind raw key to this environment | `neoth security rewrap-hmac-key --source <PATH>` |
+| Create a new key and archive the old file | `neoth keys rotate` |
+| List archived key files | `neoth keys archives` |
+| Verify from the authenticated rewrap boundary | `neoth verify --since-rotation` |
+| Verify with a specific readable archived key | `neoth verify --key <PATH>` |
 
-Every step above emits a WAL event for the audit chain:
+## Audit semantics
 
-| Event                      | Code  | When                                            |
-|----------------------------|-------|-------------------------------------------------|
-| `HMAC_KEY_GENERATED`       | 0x18  | Wizard step-3 or auto-emit on first daemon boot.|
-| `HMAC_KEY_WRAPPED_DPAPI`   | 0x14  | Each successful `CryptProtectData` call.        |
-| `HMAC_KEY_UNWRAP_FAILED`   | 0x15  | DPAPI unwrap returns non-zero Win32 error.      |
-| `COMPACTION_MARKER`        | 0x15  | Every N frames or T seconds (Phase 33b SP-2).   |
+- `0x15 COMPACTION_MARKER` contains the HMAC-authenticated WAL range metadata.
+- `0xD9 HMAC_KEY_ROTATED` is emitted by `rewrap-hmac-key`; its payload contains
+  only metadata and the new-key SHA-256 digest, never the raw key.
+- `--since-rotation` accepts a `0xD9` boundary only when its operator signature
+  verifies. Forged or unsigned boundaries cannot suppress older verification.
+- Backup creation itself is intentionally not recorded with the secret bytes.
 
-(Event codes are illustrative — confirm with `wal/events.rs` for
-the current registry.)
+Implementation references:
 
-The presence of `HMAC_KEY_UNWRAP_FAILED` frames in the WAL is itself
-a useful audit signal: if a future investigator finds them, they know
-exactly when the DPAPI binding broke + can correlate with operator-
-machine-change events.
+- `SRC/neothd/src/wal/dpapi.rs`
+- `SRC/neothd/src/wal/compaction.rs`
+- `SRC/neothd/src/cli/security.rs`
+- `SRC/neothd/src/cli/verify.rs`
+- `SRC/neothd/src/cli/keys.rs`
 
-## Cross-references
-
-- `PLAN/PROGRESS_v1_0.md` SC-08 — DPAPI wrap implementation (the
-  feature this runbook covers recovery for).
-- `PLAN/PROGRESS_v1_0.md` SC-09 — this runbook (Round-3 v0.4 deliverable).
-- `SRC/neothd/src/wal/dpapi.rs` — the DPAPI wrap/unwrap implementation.
-- `SRC/neothd/src/cli/security.rs` — `neoth security audit` aggregator
-  surfaces HMAC-key health as one of its checks.
-- `~/.claude/CLAUDE.md` hard rules — operator-prompts for high-impact
-  recovery operations.
-
-## Future SC-09 follow-on items
-
-The runbook above references three subcommands that **don't ship in
-this session's SC-09 closure** but are the next concrete extensions:
-
-1. `neothd security rewrap-hmac-key --plaintext-source <PATH>` —
-   used by Tier 1 recovery to re-wrap a backed-up plaintext key
-   on the current machine.
-2. `neothd security backup-hmac-key --output <PATH>` — operator-
-   triggered post-install opt-in for the plaintext backup.
-3. `neothd wal verify --since-rotation` — scopes verification to
-   segments emitted after the most recent key rotation.
-
-Each is a focused 2-4 hour slice; track in the SC-09 PROGRESS entry.
-
----
-
-**Last reviewed:** 2026-05-27 (Session 28).
-**Maintainer:** Whichever operator next hits a DPAPI unwrap failure
-and refines the recovery path through experience.
+**Last reviewed:** 2026-07-14

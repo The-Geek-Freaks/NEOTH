@@ -14,6 +14,9 @@ use serde::Deserialize;
 
 use crate::providers::http_client;
 use crate::secret::SecretString;
+use crate::tools::external_http::{
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SearchHit {
@@ -65,14 +68,25 @@ pub async fn search(
     query: &str,
     count: usize,
 ) -> Result<Vec<SearchHit>> {
+    let http = interactive_http()?;
+    search_authorized(provider, api_key, query, count, &http).await
+}
+
+pub async fn search_authorized(
+    provider: Provider,
+    api_key: &SecretString,
+    query: &str,
+    count: usize,
+    http: &ExternalHttpAuthorizer,
+) -> Result<Vec<SearchHit>> {
     if query.trim().is_empty() {
         anyhow::bail!("web_search: empty query");
     }
     let count = count.clamp(1, 20);
     match provider {
-        Provider::Brave => brave_search(api_key, query, count).await,
-        Provider::Tavily => tavily_search(api_key, query, count).await,
-        Provider::SearXng => searxng_search(query, count).await,
+        Provider::Brave => brave_search(api_key, query, count, http).await,
+        Provider::Tavily => tavily_search(api_key, query, count, http).await,
+        Provider::SearXng => searxng_search(query, count, http).await,
     }
 }
 
@@ -88,6 +102,17 @@ pub async fn search_cached(
     query: &str,
     count: usize,
 ) -> Result<Vec<SearchHit>> {
+    let http = interactive_http()?;
+    search_cached_authorized(provider, api_key, query, count, &http).await
+}
+
+pub async fn search_cached_authorized(
+    provider: Provider,
+    api_key: &SecretString,
+    query: &str,
+    count: usize,
+    http: &ExternalHttpAuthorizer,
+) -> Result<Vec<SearchHit>> {
     // GOLD-ADAPT-ODY-30 — record every invocation (cache_hit / success / fail)
     // unless analytics are disabled. Best-effort: never breaks a search.
     let analytics_on = std::env::var_os("NEOTH_SEARCH_ANALYTICS_DISABLED").is_none();
@@ -100,7 +125,7 @@ pub async fn search_cached(
     use crate::tools::search_analytics::Outcome;
 
     if std::env::var_os("NEOTH_SEARCH_CACHE_DISABLED").is_some() {
-        let result = search(provider, api_key, query, count).await;
+        let result = search_authorized(provider, api_key, query, count, http).await;
         record(if result.is_ok() {
             Outcome::Success
         } else {
@@ -117,7 +142,7 @@ pub async fn search_cached(
         record(Outcome::CacheHit);
         return Ok(hits);
     }
-    match search(provider, api_key, query, count).await {
+    match search_authorized(provider, api_key, query, count, http).await {
         Ok(hits) => {
             record(Outcome::Success);
             if let Err(e) = cache.put(provider.as_str(), query, key_count, &hits, now) {
@@ -136,44 +161,71 @@ pub async fn search_cached(
 /// CDX-04 wiremock tests can override it via `brave_search_against`.
 pub const BRAVE_API_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 
-async fn brave_search(api_key: &SecretString, query: &str, count: usize) -> Result<Vec<SearchHit>> {
-    brave_search_against(BRAVE_API_URL, api_key, query, count).await
+async fn brave_search(
+    api_key: &SecretString,
+    query: &str,
+    count: usize,
+    http: &ExternalHttpAuthorizer,
+) -> Result<Vec<SearchHit>> {
+    brave_search_against_authorized(BRAVE_API_URL, api_key, query, count, http).await
 }
 
 /// Internal test seam — production `brave_search` calls this with the
 /// real endpoint; wiremock tests pass a mock server's URI.
+#[cfg(test)]
 async fn brave_search_against(
     endpoint: &str,
     api_key: &SecretString,
     query: &str,
     count: usize,
 ) -> Result<Vec<SearchHit>> {
-    let client = http_client::build_client()?;
-    let resp = client
-        .get(endpoint)
-        .header("Accept", "application/json")
-        .header("X-Subscription-Token", api_key.expose())
-        .query(&[("q", query), ("count", &count.to_string())])
-        .send()
-        .await
-        .context("brave search request")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("brave search returned {}", resp.status());
-    }
-    let body: BraveBody = resp.json().await.context("brave search decode")?;
-    Ok(body
-        .web
-        .map(|w| {
-            w.results
-                .into_iter()
-                .map(|r| SearchHit {
-                    title: r.title,
-                    url: r.url,
-                    snippet: r.description.unwrap_or_default(),
-                })
-                .collect()
-        })
-        .unwrap_or_default())
+    let http = ExternalHttpAuthorizer::test_allow();
+    brave_search_against_authorized(endpoint, api_key, query, count, &http).await
+}
+
+async fn brave_search_against_authorized(
+    endpoint: &str,
+    api_key: &SecretString,
+    query: &str,
+    count: usize,
+    http: &ExternalHttpAuthorizer,
+) -> Result<Vec<SearchHit>> {
+    let mut request_url = url::Url::parse(endpoint).context("parse Brave endpoint")?;
+    request_url
+        .query_pairs_mut()
+        .append_pair("q", query)
+        .append_pair("count", &count.to_string());
+    let request = ExternalHttpRequest::get(request_url.as_str(), ExternalHttpSurface::SearchBrave);
+    let permitted_request = request.clone();
+    http.execute(request, move |permit| async move {
+        permit.require(&permitted_request)?;
+        let client = http_client::build_client_no_redirect()?;
+        let resp = client
+            .get(request_url)
+            .header("Accept", "application/json")
+            .header("X-Subscription-Token", api_key.expose())
+            .send()
+            .await
+            .context("brave search request")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("brave search returned {}", resp.status());
+        }
+        let body: BraveBody = resp.json().await.context("brave search decode")?;
+        Ok(body
+            .web
+            .map(|w| {
+                w.results
+                    .into_iter()
+                    .map(|r| SearchHit {
+                        title: r.title,
+                        url: r.url,
+                        snippet: r.description.unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    })
+    .await
 }
 
 pub const TAVILY_API_URL: &str = "https://api.tavily.com/search";
@@ -182,15 +234,28 @@ async fn tavily_search(
     api_key: &SecretString,
     query: &str,
     count: usize,
+    http: &ExternalHttpAuthorizer,
 ) -> Result<Vec<SearchHit>> {
-    tavily_search_against(TAVILY_API_URL, api_key, query, count).await
+    tavily_search_against_authorized(TAVILY_API_URL, api_key, query, count, http).await
 }
 
+#[cfg(test)]
 async fn tavily_search_against(
     endpoint: &str,
     api_key: &SecretString,
     query: &str,
     count: usize,
+) -> Result<Vec<SearchHit>> {
+    let http = ExternalHttpAuthorizer::test_allow();
+    tavily_search_against_authorized(endpoint, api_key, query, count, &http).await
+}
+
+async fn tavily_search_against_authorized(
+    endpoint: &str,
+    api_key: &SecretString,
+    query: &str,
+    count: usize,
+    http: &ExternalHttpAuthorizer,
 ) -> Result<Vec<SearchHit>> {
     // Pick #33 (Session 14, security audit-fix Security#3): Tavily's
     // API accepts the key in the JSON body OR as `Authorization: Bearer
@@ -198,43 +263,54 @@ async fn tavily_search_against(
     // captures the request payload (tracing instrumentation, debug
     // logs, intermediate caches). The header form is the standard
     // surface for credentials and keeps the body free of secret.
-    let client = http_client::build_client()?;
-    let resp = client
-        .post(endpoint)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.expose()))
-        .json(&serde_json::json!({
-            "query": query,
-            "max_results": count,
-            "search_depth": "basic",
-        }))
-        .send()
-        .await
-        .context("tavily search request")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("tavily search returned {}", resp.status());
-    }
-    let body: TavilyBody = resp.json().await.context("tavily search decode")?;
-    Ok(body
-        .results
-        .into_iter()
-        .map(|r| SearchHit {
-            title: r.title,
-            url: r.url,
-            snippet: r.content,
-        })
-        .collect())
+    let body = serde_json::to_vec(&serde_json::json!({
+        "query": query,
+        "max_results": count,
+        "search_depth": "basic",
+    }))?;
+    let request = ExternalHttpRequest::post(endpoint, ExternalHttpSurface::SearchTavily, &body);
+    let permitted_request = request.clone();
+    http.execute(request, move |permit| async move {
+        permit.require(&permitted_request)?;
+        let client = http_client::build_client_no_redirect()?;
+        let resp = client
+            .post(endpoint)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", api_key.expose()))
+            .body(body)
+            .send()
+            .await
+            .context("tavily search request")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("tavily search returned {}", resp.status());
+        }
+        let body: TavilyBody = resp.json().await.context("tavily search decode")?;
+        Ok(body
+            .results
+            .into_iter()
+            .map(|r| SearchHit {
+                title: r.title,
+                url: r.url,
+                snippet: r.content,
+            })
+            .collect())
+    })
+    .await
 }
 
 /// Default SearXNG instance when `NEOTH_SEARXNG_URL` is unset — the loopback
 /// port the docker-compose'd SearXNG binds by convention.
 pub const SEARXNG_DEFAULT_URL: &str = "http://127.0.0.1:8888";
 
-async fn searxng_search(query: &str, count: usize) -> Result<Vec<SearchHit>> {
+async fn searxng_search(
+    query: &str,
+    count: usize,
+    http: &ExternalHttpAuthorizer,
+) -> Result<Vec<SearchHit>> {
     let base =
         std::env::var("NEOTH_SEARXNG_URL").unwrap_or_else(|_| SEARXNG_DEFAULT_URL.to_string());
     let lang = std::env::var("NEOTH_SEARXNG_LANG").unwrap_or_else(|_| "en".to_string());
-    searxng_search_against(base.trim_end_matches('/'), query, count, &lang).await
+    searxng_search_against_authorized(base.trim_end_matches('/'), query, count, &lang, http).await
 }
 
 /// True when the query reads like a news/recency request — triggers the
@@ -275,38 +351,64 @@ fn searxng_query_params(query: &str, lang: &str) -> Vec<(String, String)> {
 /// configured instance; wiremock tests pass a mock server's URI. SearXNG's
 /// JSON API: `GET {base}/search?q=…&format=json` → `{ results: [{title, url,
 /// content}] }`. No API key (self-hosted). Results are truncated to `count`.
+#[cfg(test)]
 async fn searxng_search_against(
     base: &str,
     query: &str,
     count: usize,
     lang: &str,
 ) -> Result<Vec<SearchHit>> {
+    let http = ExternalHttpAuthorizer::test_allow();
+    searxng_search_against_authorized(base, query, count, lang, &http).await
+}
+
+async fn searxng_search_against_authorized(
+    base: &str,
+    query: &str,
+    count: usize,
+    lang: &str,
+    http: &ExternalHttpAuthorizer,
+) -> Result<Vec<SearchHit>> {
     // GR-fix: no-redirect client (parity with web_fetch's SSRF posture) — a
     // compromised/misconfigured SearXNG instance must not be able to 3xx-redirect
     // the search request to an internal service.
-    let client = http_client::build_client_no_redirect()?;
-    let endpoint = format!("{base}/search");
-    let resp = client
-        .get(&endpoint)
-        .header("Accept", "application/json")
-        .query(&searxng_query_params(query, lang))
-        .send()
-        .await
-        .context("searxng search request")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("searxng search returned {}", resp.status());
-    }
-    let body: SearxngBody = resp.json().await.context("searxng search decode")?;
-    Ok(body
-        .results
-        .into_iter()
-        .take(count)
-        .map(|r| SearchHit {
-            title: r.title,
-            url: r.url,
-            snippet: r.content.unwrap_or_default(),
-        })
-        .collect())
+    let mut endpoint =
+        url::Url::parse(&format!("{base}/search")).context("parse SearXNG endpoint")?;
+    endpoint
+        .query_pairs_mut()
+        .extend_pairs(searxng_query_params(query, lang));
+    let request = ExternalHttpRequest::get(endpoint.as_str(), ExternalHttpSurface::SearchSearxng);
+    let permitted_request = request.clone();
+    http.execute(request, move |permit| async move {
+        permit.require(&permitted_request)?;
+        let client = http_client::build_client_no_redirect()?;
+        let resp = client
+            .get(endpoint)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .context("searxng search request")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("searxng search returned {}", resp.status());
+        }
+        let body: SearxngBody = resp.json().await.context("searxng search decode")?;
+        Ok(body
+            .results
+            .into_iter()
+            .take(count)
+            .map(|r| SearchHit {
+                title: r.title,
+                url: r.url,
+                snippet: r.content.unwrap_or_default(),
+            })
+            .collect())
+    })
+    .await
+}
+
+fn interactive_http() -> Result<ExternalHttpAuthorizer> {
+    let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    ExternalHttpAuthorizer::interactive(config.autonomy_policy())
 }
 
 #[derive(Deserialize)]

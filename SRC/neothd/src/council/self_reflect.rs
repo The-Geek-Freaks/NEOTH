@@ -412,16 +412,32 @@ pub fn score_answer(text: &str) -> SelfScore {
     // ── Correctness ────────────────────────────────────────────────────────
     // Absolutism keywords reduce score; hedging keywords raise it.
     let absolutism_hits: usize = [
-        "definitely", "certainly", "always", "never", "impossible",
-        "guaranteed", "absolutely", "undoubtedly", "without question",
+        "definitely",
+        "certainly",
+        "always",
+        "never",
+        "impossible",
+        "guaranteed",
+        "absolutely",
+        "undoubtedly",
+        "without question",
     ]
     .iter()
     .filter(|&&kw| lower.contains(kw))
     .count();
     let hedge_hits: usize = [
-        "may", "might", "could", "suggests", "evidence indicates",
-        "appears to", "likely", "probably", "according to", "it seems",
-        "research shows", "studies suggest",
+        "may",
+        "might",
+        "could",
+        "suggests",
+        "evidence indicates",
+        "appears to",
+        "likely",
+        "probably",
+        "according to",
+        "it seems",
+        "research shows",
+        "studies suggest",
     ]
     .iter()
     .filter(|&&kw| lower.contains(kw))
@@ -464,9 +480,21 @@ pub fn score_answer(text: &str) -> SelfScore {
     // ── Evidence ───────────────────────────────────────────────────────────
     // Citation/attribution signals.
     let citation_hits: usize = [
-        "source:", "sources:", "ref:", "reference:", "according to",
-        "per ", "via ", "http://", "https://", "doi:", "ibid",
-        "et al", "see also", "citation", "cited",
+        "source:",
+        "sources:",
+        "ref:",
+        "reference:",
+        "according to",
+        "per ",
+        "via ",
+        "http://",
+        "https://",
+        "doi:",
+        "ibid",
+        "et al",
+        "see also",
+        "citation",
+        "cited",
     ]
     .iter()
     .filter(|&&kw| lower.contains(kw))
@@ -554,9 +582,21 @@ mod self_score_tests {
     fn score_fields_in_range_and_composite_is_mean() {
         let text = "Some text with evidence maybe suggesting https://example.com per source:";
         let s = score_answer(text);
-        assert!((0.0..=1.0).contains(&s.correctness), "correctness {}", s.correctness);
-        assert!((0.0..=1.0).contains(&s.completeness), "completeness {}", s.completeness);
-        assert!((0.0..=1.0).contains(&s.coherence), "coherence {}", s.coherence);
+        assert!(
+            (0.0..=1.0).contains(&s.correctness),
+            "correctness {}",
+            s.correctness
+        );
+        assert!(
+            (0.0..=1.0).contains(&s.completeness),
+            "completeness {}",
+            s.completeness
+        );
+        assert!(
+            (0.0..=1.0).contains(&s.coherence),
+            "coherence {}",
+            s.coherence
+        );
         assert!((0.0..=1.0).contains(&s.evidence), "evidence {}", s.evidence);
         let expected = (s.correctness + s.completeness + s.coherence + s.evidence) / 4.0;
         assert!(
@@ -580,12 +620,14 @@ mod self_score_tests {
         );
         // spot-check it doesn't collide with known council events
         use crate::wal::events::{
-            EVENT_TYPE_COUNCIL_TRANSCRIPT,
-            EVENT_TYPE_COUNCIL_WINNER_SELECTED,
+            EVENT_TYPE_COUNCIL_TRANSCRIPT, EVENT_TYPE_COUNCIL_WINNER_SELECTED,
             EVENT_TYPE_TOKEN_TPS_SAMPLE,
         };
         assert_ne!(EVENT_TYPE_COUNCIL_SELF_SCORE, EVENT_TYPE_COUNCIL_TRANSCRIPT);
-        assert_ne!(EVENT_TYPE_COUNCIL_SELF_SCORE, EVENT_TYPE_COUNCIL_WINNER_SELECTED);
+        assert_ne!(
+            EVENT_TYPE_COUNCIL_SELF_SCORE,
+            EVENT_TYPE_COUNCIL_WINNER_SELECTED
+        );
         assert_ne!(EVENT_TYPE_COUNCIL_SELF_SCORE, EVENT_TYPE_TOKEN_TPS_SAMPLE);
     }
 

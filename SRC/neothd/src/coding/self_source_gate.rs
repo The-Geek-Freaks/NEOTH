@@ -15,6 +15,9 @@
 //! | 4     | Worktree        | apply diff in isolated `git worktree` (never live tree) |
 //! | 5     | Green-test      | `cargo check` GREEN in the worktree                    |
 //!
+//! Live applies additionally pass a caller-independent anti-loop cooldown
+//! after the cross-process reentrancy lock is acquired.
+//!
 //! ## WAL audit
 //!
 //! - `EXTENDED/SelfEditProposed` (0x01) emitted when a request enters
@@ -63,14 +66,16 @@ use tracing::{info, warn};
 use crate::coding::self_source::{
     SourceRoots, diff_line_count, diff_paths, diff_sha256, neoth_source_root,
 };
+use crate::coding::types::KanbanTaskId;
 use crate::coding::worktree::{
     PatchApplyOutcome, apply_patch_in_worktree, cleanup_worktree, create_task_worktree,
     run_cargo_check_json,
 };
-use crate::coding::types::KanbanTaskId;
 use crate::config::FreedomConfig;
 use crate::config::ops::SelfEditConfig;
-use crate::permissions::{self, Action, AutonomyLevel, Decision};
+#[cfg(test)]
+use crate::permissions::AutonomyLevel;
+use crate::permissions::{self, Action, Decision};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::types::EventFlags;
 use crate::wal::writer::WalWriterHandle;
@@ -177,6 +182,10 @@ pub struct SelfEditAudit {
     pub layer3_permission: LayerOutcome,
     pub layer4_worktree: LayerOutcome,
     pub layer5_green_test: LayerOutcome,
+    /// Outcome of the live-apply anti-loop cooldown. `Skipped` for dry-runs
+    /// and WAL records written before this field existed.
+    #[serde(default)]
+    pub layer_apply_cooldown: LayerOutcome,
     pub ts_unix: i64,
     pub dry_run: bool,
     /// Snapshot captured after lock acquisition; `None` when capture failed
@@ -204,6 +213,8 @@ pub enum GateError {
     Worktree(String),
     #[error("Layer 5 (green-test): {0}")]
     GreenTest(String),
+    #[error("apply cooldown: {0}")]
+    Cooldown(String),
     /// HEAD or staged index moved between worktree-test and live-apply.
     /// The diff was NOT applied. The operator must re-submit against HEAD.
     #[error("state drift (pre-apply): {0}")]
@@ -237,8 +248,9 @@ pub struct SelfEditOutcome {
 ///   (worktree apply, live apply, hash) uses THESE bytes — the gate never
 ///   re-reads a diff file from disk, so there is no validate-then-swap window.
 /// - `cfg`: loaded `FreedomConfig` (used for autonomy level + `coding.self_edit`).
-/// - `dry_run`: when `true`, all five gates still run but the diff is NOT
+/// - `dry_run`: when `true`, every enabled gate still runs but the diff is NOT
 ///   applied to the live tree and no `SelfEditApplied` WAL frame is emitted.
+///   A disabled green-test gate is allowed only in this preview mode.
 /// - `wal`: optional handle to the WAL writer for audit emission. When `None`,
 ///   a warning is logged and the gates proceed (WAL is audit, not security).
 pub async fn run_gate_stack(
@@ -252,6 +264,7 @@ pub async fn run_gate_stack(
     let diff_bytes = diff_text.as_bytes();
     let diff_hash = diff_sha256(diff_bytes);
     let ts = crate::time::now_unix_i64();
+    let autonomy_policy = cfg.autonomy_policy();
 
     // Parse paths first (needed for audit payload before any gate runs).
     let target_paths = diff_paths(diff_text)
@@ -266,6 +279,7 @@ pub async fn run_gate_stack(
         layer3_permission: LayerOutcome::Skipped,
         layer4_worktree: LayerOutcome::Skipped,
         layer5_green_test: LayerOutcome::Skipped,
+        layer_apply_cooldown: LayerOutcome::Skipped,
         ts_unix: ts,
         dry_run,
         base_snapshot: None,
@@ -313,7 +327,7 @@ pub async fn run_gate_stack(
 
     // ── Layer 3: autonomy permission gate ─────────────────────────────────────
     // dry_run implies acked: it never applies, so previewing needs no ack.
-    match layer3_permission(cfg.autonomy, &target_paths, operator_acked || dry_run) {
+    match layer3_permission(&autonomy_policy, &target_paths, operator_acked || dry_run) {
         Ok(()) => {
             audit.layer3_permission = LayerOutcome::Pass;
         }
@@ -346,6 +360,25 @@ pub async fn run_gate_stack(
             refuse!(audit, GateError::Worktree(reason));
         }
     };
+
+    // Caller-independent anti-loop guard. It lives under the same cross-process
+    // lock as the apply itself so two concurrent callers cannot both observe an
+    // expired sentinel and race through. Dry-runs never read or write it.
+    if !dry_run {
+        let cooldown_path = self_edit_cooldown_path();
+        match check_apply_cooldown_at(
+            &cooldown_path,
+            self_edit_cfg.apply_cooldown_secs,
+            crate::time::now_unix_i64(),
+        ) {
+            Ok(()) => audit.layer_apply_cooldown = LayerOutcome::Pass,
+            Err(reason) => {
+                audit.layer_apply_cooldown = LayerOutcome::Fail(reason.clone());
+                info!(reason, "self_edit gate: apply cooldown refused");
+                refuse!(audit, GateError::Cooldown(reason));
+            }
+        }
+    }
 
     // ── Base-SHA snapshot (M1 drift guard) ───────────────────────────────────
     // Capture HEAD + index tree right after the reentrancy lock so we have a
@@ -406,7 +439,10 @@ pub async fn run_gate_stack(
             Ok(Ok(paths)) => paths,
             Ok(Err(reason)) => {
                 audit.layer2_allowlist = LayerOutcome::Fail(reason.clone());
-                info!(reason, "self_edit gate: layer4b git-truth differential refused");
+                info!(
+                    reason,
+                    "self_edit gate: layer4b git-truth differential refused"
+                );
                 refuse!(audit, GateError::Allowlist(reason));
             }
             Err(e) => {
@@ -427,13 +463,16 @@ pub async fn run_gate_stack(
     // autonomy-TIER permission gate was not — so a diff crafted to hide a
     // permission-elevating path from the `---/+++` parser (while git still sees
     // it) could clear Layer 3 with the wrong path set. Re-run it on `real_paths`.
-    match layer3_permission(cfg.autonomy, &real_paths, operator_acked || dry_run) {
+    match layer3_permission(&autonomy_policy, &real_paths, operator_acked || dry_run) {
         Ok(()) => {
             audit.layer3_permission = LayerOutcome::Pass;
         }
         Err(reason) => {
             audit.layer3_permission = LayerOutcome::Fail(reason.clone());
-            info!(reason, "self_edit gate: layer3 permission refused (git-truth re-check)");
+            info!(
+                reason,
+                "self_edit gate: layer3 permission refused (git-truth re-check)"
+            );
             refuse!(audit, GateError::Permission(reason));
         }
     }
@@ -461,14 +500,18 @@ pub async fn run_gate_stack(
                 refuse!(audit, GateError::GreenTest(reason));
             }
         }
-    } else {
+    } else if dry_run {
         audit.layer5_green_test = LayerOutcome::Skipped;
-        if !dry_run {
-            warn!(
-                "self_edit: require_green_tests=false — layer 5 SKIPPED for a \
-                 LIVE apply (development setting; re-enable for production)"
-            );
-        }
+    } else {
+        let reason = "require_green_tests=false is allowed only for dry-run previews; \
+                      live self-source apply requires Layer 5 cargo check"
+            .to_string();
+        audit.layer5_green_test = LayerOutcome::Fail(reason.clone());
+        warn!(
+            reason,
+            "self_edit gate: live apply without green tests refused"
+        );
+        refuse!(audit, GateError::GreenTest(reason));
     }
 
     // ── All gates passed — apply to live tree (unless --dry-run) ─────────────
@@ -501,7 +544,10 @@ pub async fn run_gate_stack(
                 }
                 Ok(Err(reason)) => {
                     audit.layer_state_drift = LayerOutcome::Fail(reason.clone());
-                    warn!(reason, "self_edit: state drift detected before live apply — refusing");
+                    warn!(
+                        reason,
+                        "self_edit: state drift detected before live apply — refusing"
+                    );
                     let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
                     return Err(GateError::StateDrift(reason));
                 }
@@ -537,6 +583,16 @@ pub async fn run_gate_stack(
         if let Err(e) = emit_wal(wal, ExtendedSubtype::SelfEditApplied, &audit).await {
             return Err(GateError::AuditFailedAfterApply(e));
         }
+        if self_edit_cfg.apply_cooldown_secs > 0 {
+            let path = self_edit_cooldown_path();
+            if let Err(error) = record_apply_cooldown_at(&path, audit.ts_unix) {
+                warn!(
+                    error,
+                    path = %path.display(),
+                    "self_edit: cannot record apply cooldown sentinel"
+                );
+            }
+        }
         info!(
             paths = ?real_paths,
             diff_hash,
@@ -558,6 +614,61 @@ pub async fn run_gate_stack(
         diff_hash,
         dry_run,
     })
+}
+
+/// Canonical anti-loop sentinel (`~/.neoth/self_edit/last_apply`).
+fn self_edit_cooldown_path() -> PathBuf {
+    FreedomConfig::default_neoth_home()
+        .join("self_edit")
+        .join("last_apply")
+}
+
+/// Refuse when `path` records a successful live apply inside the configured
+/// interval. Missing files mean no previous apply; unreadable or malformed
+/// sentinels fail closed so corruption cannot silently disable the guard.
+fn check_apply_cooldown_at(
+    path: &Path,
+    cooldown_secs: u64,
+    now_unix: i64,
+) -> std::result::Result<(), String> {
+    if cooldown_secs == 0 {
+        return Ok(());
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "read cooldown sentinel {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    let last_apply = content
+        .trim()
+        .parse::<i64>()
+        .map_err(|error| format!("invalid cooldown sentinel {}: {error}", path.display()))?;
+    if last_apply < 0 {
+        return Err(format!(
+            "invalid cooldown sentinel {}: timestamp must be non-negative",
+            path.display()
+        ));
+    }
+    let elapsed = now_unix.saturating_sub(last_apply).max(0) as u64;
+    if elapsed < cooldown_secs {
+        let remaining = cooldown_secs - elapsed;
+        return Err(format!(
+            "self-edit apply on cooldown — {remaining}s remaining (cooldown: \
+             {cooldown_secs}s). Adjust \
+             freedom.yaml::coding.self_edit.apply_cooldown_secs to change this limit."
+        ));
+    }
+    Ok(())
+}
+
+fn record_apply_cooldown_at(path: &Path, now_unix: i64) -> std::result::Result<(), String> {
+    crate::util::atomic_write::atomic_write_private(path, now_unix.to_string().as_bytes())
+        .map_err(|error| format!("atomic write cooldown sentinel {}: {error}", path.display()))
 }
 
 // ── RAII guards ───────────────────────────────────────────────────────────────
@@ -773,15 +884,15 @@ fn layer2_allowlist(
 /// contract impossible for a future caller to forget: a bare `run_gate_stack`
 /// call with `operator_acked = false` REFUSES a Confirm decision instead of
 /// silently applying it.
-fn layer3_permission(
-    autonomy: AutonomyLevel,
+fn layer3_permission<P: permissions::PolicyArgument>(
+    policy: P,
     target_paths: &[String],
     operator_acked: bool,
 ) -> Result<(), String> {
     let action = Action::SelfSourceEdit {
         target_paths: target_paths.to_vec(),
     };
-    match permissions::evaluate(&action, autonomy) {
+    match permissions::evaluate(&action, policy) {
         Decision::Allow => Ok(()),
         Decision::Confirm(reason) => {
             if operator_acked {
@@ -868,7 +979,11 @@ fn layer5_green_test(worktree: &Path) -> Result<(), String> {
             .collect();
         Err(format!(
             "cargo check failed with {} error(s): {}",
-            check_run.diagnostics.iter().filter(|d| d.level == "error").count(),
+            check_run
+                .diagnostics
+                .iter()
+                .filter(|d| d.level == "error")
+                .count(),
             errors.join("; ")
         ))
     }
@@ -982,7 +1097,11 @@ fn verify_git_truth(
     let crate_rel = roots.crate_rel();
     let crate_prefix = {
         let p = crate_rel.to_string_lossy().replace('\\', "/");
-        if p == "." { String::new() } else { format!("{}/", p.trim_end_matches('/')) }
+        if p == "." {
+            String::new()
+        } else {
+            format!("{}/", p.trim_end_matches('/'))
+        }
     };
 
     let mut real_paths: Vec<String> = Vec::new();
@@ -1006,7 +1125,9 @@ fn verify_git_truth(
             return Err(format!("symlink change to '{repo_path}' is refused"));
         }
         if new_mode == "160000" || old_mode == "160000" {
-            return Err(format!("submodule/gitlink change to '{repo_path}' is refused"));
+            return Err(format!(
+                "submodule/gitlink change to '{repo_path}' is refused"
+            ));
         }
         if old_mode != "000000" && new_mode != "000000" && old_mode != new_mode {
             return Err(format!(
@@ -1014,7 +1135,9 @@ fn verify_git_truth(
             ));
         }
         if matches!(status, "R" | "C" | "T") || status.starts_with('R') || status.starts_with('C') {
-            return Err(format!("rename/copy/type-change ('{status}') on '{repo_path}' is refused"));
+            return Err(format!(
+                "rename/copy/type-change ('{status}') on '{repo_path}' is refused"
+            ));
         }
         if binary_paths.contains(repo_path) {
             return Err(format!("binary change to '{repo_path}' is refused"));
@@ -1073,7 +1196,10 @@ fn capture_base_snapshot(git_root: &Path) -> Result<BaseShaSnapshot, String> {
     // already exist; GC reclaims unreferenced objects later). Captures staged
     // changes that have not yet been committed.
     let index_tree = run_git(&["write-tree"])?;
-    Ok(BaseShaSnapshot { head_sha, index_tree })
+    Ok(BaseShaSnapshot {
+        head_sha,
+        index_tree,
+    })
 }
 
 /// Re-check that `git_root`'s HEAD and index tree match the captured snapshot.
@@ -1291,10 +1417,17 @@ mod tests {
         // Windows FS is case-insensitive: src/WAL/ IS src/wal/. The deny must
         // catch it even though the raw string doesn't match `src/wal/`.
         let cfg = cfg_enabled(&["src/coding"]);
-        for p in ["src/WAL/writer.rs", "SRC/wal/writer.rs", "src/Wal/writer.rs"] {
+        for p in [
+            "src/WAL/writer.rs",
+            "SRC/wal/writer.rs",
+            "src/Wal/writer.rs",
+        ] {
             let paths = vec![p.to_string()];
             let err = layer2_allowlist(&cfg, &paths, 0).unwrap_err();
-            assert!(err.contains("hard-deny prefix"), "path {p} not denied: {err}");
+            assert!(
+                err.contains("hard-deny prefix"),
+                "path {p} not denied: {err}"
+            );
         }
     }
 
@@ -1328,10 +1461,17 @@ mod tests {
         // The permission evaluator and config loader are as security-critical as
         // the WAL — self-edit may never touch them (gate-backdoor prevention).
         let cfg = cfg_enabled(&["src/permissions", "src/config"]);
-        for p in ["src/permissions/mod.rs", "src/config/ops.rs", "src/config/mod.rs"] {
+        for p in [
+            "src/permissions/mod.rs",
+            "src/config/ops.rs",
+            "src/config/mod.rs",
+        ] {
             let paths = vec![p.to_string()];
             let err = layer2_allowlist(&cfg, &paths, 0).unwrap_err();
-            assert!(err.contains("hard-deny prefix"), "path {p} not denied: {err}");
+            assert!(
+                err.contains("hard-deny prefix"),
+                "path {p} not denied: {err}"
+            );
         }
     }
 
@@ -1341,7 +1481,10 @@ mod tests {
         let cfg = cfg_enabled(&["src/cli"]);
         let bad = vec!["src/clitrap/evil.rs".to_string()];
         let err = layer2_allowlist(&cfg, &bad, 0).unwrap_err();
-        assert!(err.contains("not covered"), "src/clitrap wrongly allowed: {err}");
+        assert!(
+            err.contains("not covered"),
+            "src/clitrap wrongly allowed: {err}"
+        );
         // The real dir under the prefix is still allowed.
         let ok = vec!["src/cli/foo.rs".to_string()];
         assert!(layer2_allowlist(&cfg, &ok, 0).is_ok());
@@ -1369,7 +1512,10 @@ mod tests {
         let paths = vec!["src/cli/foo.rs".to_string()];
         // Without the operator ack, Confirm is a REFUSAL — not a silent pass.
         let err = layer3_permission(AutonomyLevel::Elevated, &paths, false).unwrap_err();
-        assert!(err.contains("--yes"), "expected ack-required error, got: {err}");
+        assert!(
+            err.contains("--yes"),
+            "expected ack-required error, got: {err}"
+        );
         assert!(layer3_permission(AutonomyLevel::Elevated, &paths, true).is_ok());
     }
 
@@ -1421,7 +1567,10 @@ mod tests {
         for prefix in ["", "/"] {
             let cfg = cfg_enabled(&[prefix]);
             let err = layer2_allowlist(&cfg, &["src/tools/foo.rs".to_string()], 1).unwrap_err();
-            assert!(err.contains("not covered"), "prefix {prefix:?} acted as allow-all: {err}");
+            assert!(
+                err.contains("not covered"),
+                "prefix {prefix:?} acted as allow-all: {err}"
+            );
         }
     }
 
@@ -1435,10 +1584,8 @@ mod tests {
 
     #[test]
     fn self_edit_lock_blocks_reentry_until_released() {
-        let root = std::env::temp_dir().join(format!(
-            "neoth_self_edit_lock_test_{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("neoth_self_edit_lock_test_{}", std::process::id()));
         let first = SelfEditLock::acquire(&root).expect("first acquire");
         let second = SelfEditLock::acquire(&root);
         assert!(second.is_err(), "reentry must be refused while lock held");
@@ -1447,6 +1594,31 @@ mod tests {
         // Drop released the lock file — a fresh acquire succeeds.
         let third = SelfEditLock::acquire(&root).expect("re-acquire after release");
         drop(third);
+    }
+
+    #[test]
+    fn apply_cooldown_is_fail_closed_and_recorded_atomically() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let sentinel = tmp.path().join("nested").join("last_apply");
+
+        assert!(check_apply_cooldown_at(&sentinel, 300, 1_000).is_ok());
+        record_apply_cooldown_at(&sentinel, 900).expect("record sentinel");
+        assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "900");
+
+        let fresh = check_apply_cooldown_at(&sentinel, 300, 1_000).unwrap_err();
+        assert!(
+            fresh.contains("200s remaining"),
+            "unexpected error: {fresh}"
+        );
+        assert!(check_apply_cooldown_at(&sentinel, 300, 1_200).is_ok());
+
+        std::fs::write(&sentinel, "not-a-timestamp").unwrap();
+        let corrupt = check_apply_cooldown_at(&sentinel, 300, 1_200).unwrap_err();
+        assert!(corrupt.contains("invalid cooldown sentinel"));
+        assert!(
+            check_apply_cooldown_at(&sentinel, 0, 1_200).is_ok(),
+            "zero explicitly disables the guard even when the sentinel is corrupt"
+        );
     }
 
     // ── End-to-end acceptance (spec: dummy.rs comment addition passes) ──────
@@ -1483,6 +1655,7 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(dir.join("src/cli")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "// compilable fixture target\n").unwrap();
         std::fs::write(dir.join("src/cli/dummy.rs"), "fn dummy() {}\n").unwrap();
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "init"]);
@@ -1507,9 +1680,8 @@ mod tests {
         cfg.autonomy = AutonomyLevel::Elevated;
         cfg.coding.self_edit.enabled = true;
         cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
-        // The fixture repo has no compilable crate — layer 5's cargo plumbing
-        // is covered by worktree.rs's run_cargo_check_json tests; skip it here.
-        cfg.coding.self_edit.require_green_tests = false;
+        cfg.coding.self_edit.require_green_tests = true;
+        cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
         // Live applies require a WAL writer (gate-enforced) — spawn one into
@@ -1549,6 +1721,47 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn disabled_green_test_is_preview_only_and_live_apply_fails_closed() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping green-test policy test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+
+        let diff = "--- a/src/cli/dummy.rs\n\
+                    +++ b/src/cli/dummy.rs\n\
+                    @@ -1 +1,2 @@\n \
+                    fn dummy() {}\n\
+                    +// untested apply attempt\n";
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        cfg.coding.self_edit.enabled = true;
+        cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
+        cfg.coding.self_edit.require_green_tests = false;
+        cfg.coding.self_edit.apply_cooldown_secs = 0;
+        cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+
+        let preview = run_gate_stack(diff, &cfg, true, false, None)
+            .await
+            .expect("dry-run may explicitly skip Layer 5");
+        assert!(preview.dry_run);
+
+        let err = run_gate_stack(diff, &cfg, false, true, None)
+            .await
+            .expect_err("live apply must not bypass Layer 5");
+        assert!(
+            matches!(err, GateError::GreenTest(_)),
+            "expected GreenTest refusal, got: {err:?}"
+        );
+        let body = std::fs::read_to_string(tmp.path().join("src/cli/dummy.rs")).unwrap();
+        assert!(
+            !body.contains("untested apply attempt"),
+            "live tree must remain unchanged after a Layer 5 refusal: {body}"
+        );
+    }
+
     /// Pins the gate-internal WAL invariant: a live apply with `wal: None`
     /// must be REFUSED before the tree is touched, no matter how careful the
     /// caller is elsewhere. Guards against any future GUI/IPC/daemon caller
@@ -1572,7 +1785,8 @@ mod tests {
         cfg.autonomy = AutonomyLevel::Elevated;
         cfg.coding.self_edit.enabled = true;
         cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
-        cfg.coding.self_edit.require_green_tests = false;
+        cfg.coding.self_edit.require_green_tests = true;
+        cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
         let err = run_gate_stack(diff, &cfg, false, true, None)
@@ -1614,6 +1828,7 @@ mod tests {
         cfg.coding.self_edit.enabled = true;
         cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
         cfg.coding.self_edit.require_green_tests = false;
+        cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
         let err = run_gate_stack(diff, &cfg, false, true, None)
@@ -1644,8 +1859,16 @@ mod tests {
 
         let snap = capture_base_snapshot(tmp.path()).expect("capture must succeed");
         // SHA-1 OIDs are 40 hex chars; SHA-256 repos produce 64. Either is fine.
-        assert!(snap.head_sha.len() >= 40, "head_sha too short: {:?}", snap.head_sha);
-        assert!(snap.index_tree.len() >= 40, "index_tree too short: {:?}", snap.index_tree);
+        assert!(
+            snap.head_sha.len() >= 40,
+            "head_sha too short: {:?}",
+            snap.head_sha
+        );
+        assert!(
+            snap.index_tree.len() >= 40,
+            "index_tree too short: {:?}",
+            snap.index_tree
+        );
         assert!(
             snap.head_sha.chars().all(|c| c.is_ascii_hexdigit()),
             "head_sha contains non-hex chars: {:?}",
@@ -1668,8 +1891,7 @@ mod tests {
         init_fixture_repo(tmp.path());
 
         let snap = capture_base_snapshot(tmp.path()).expect("capture");
-        verify_base_snapshot(tmp.path(), &snap)
-            .expect("unchanged repo must pass drift check");
+        verify_base_snapshot(tmp.path(), &snap).expect("unchanged repo must pass drift check");
     }
 
     #[test]
@@ -1696,7 +1918,10 @@ mod tests {
                 .unwrap_or(false)
         };
         assert!(git(&["add", "src/cli/added.rs"]), "git add failed");
-        assert!(git(&["commit", "-q", "-m", "concurrent commit"]), "commit failed");
+        assert!(
+            git(&["commit", "-q", "-m", "concurrent commit"]),
+            "commit failed"
+        );
 
         let err = verify_base_snapshot(tmp.path(), &snap)
             .expect_err("HEAD drift must be detected and refused");
@@ -1742,7 +1967,11 @@ mod tests {
     #[test]
     fn pseudo_task_id_high_bit_set() {
         let id = pseudo_task_id("abcdef01234567890000000000000000000000000000000000000000deadbeef");
-        assert!((id.0 as u64) & (1u64 << 63) != 0, "high bit must be set: {:x}", id.0);
+        assert!(
+            (id.0 as u64) & (1u64 << 63) != 0,
+            "high bit must be set: {:x}",
+            id.0
+        );
     }
 
     #[test]

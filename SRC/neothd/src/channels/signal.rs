@@ -191,7 +191,9 @@ mod tests {
     #[test]
     fn rate_limited_error_is_a_distinct_variant() {
         // Construct the error the way map_status emits it.
-        let e = ChannelError::RateLimited { retry_after_secs: 30 };
+        let e = ChannelError::RateLimited {
+            retry_after_secs: 30,
+        };
         // The error Display must mention the retry-after value for operator logs.
         let s = e.to_string();
         assert!(

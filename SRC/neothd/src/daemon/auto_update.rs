@@ -138,7 +138,7 @@ async fn emit_update_ran(
         "status": status,
         "ts": now_unix_secs(),
     }))
-    .unwrap_or_default();
+    .expect("UPDATE_RAN payload contains only infallible JSON values");
     let header = HeaderBuilder::new(EVENT_TYPE_UPDATE_RAN, &payload)
         .flags(EventFlags::SYNTHETIC)
         .build();
@@ -164,33 +164,38 @@ fn now_unix_secs() -> u64 {
 // --self --apply`), which keeps prereq #1's gate intact.
 
 /// Spawn the unattended neoth-self STAGING loop. Same gate as the CLI
-/// auto-apply lane (autonomy elevated/full + updater enabled) — returns
-/// `None` otherwise so notify-only operators accumulate no task.
+/// auto-apply lane (autonomy elevated/full + `auto_update.enabled` +
+/// `auto_update.auto_apply`). `check_interval_secs = 0` also disables the
+/// periodic task. Returns `None` otherwise so check-only operators accumulate
+/// no staging task.
 pub fn spawn_self_stage(
     autonomy: AutonomyLevel,
-    updater_enabled: bool,
-    interval_secs: u64,
-    repo: String,
+    config: crate::config::AutoUpdateConfig,
     home: PathBuf,
     writer: WalWriterHandle,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    if !updater_enabled || !auto_apply_enabled(autonomy) {
+    if !config.enabled || !config.auto_apply || config.check_interval_secs == 0 {
         return None;
     }
-    let interval = Duration::from_secs(interval_secs.max(60));
+    if !auto_apply_enabled(autonomy) {
+        return None;
+    }
+    let interval = Duration::from_secs(config.check_interval_secs.max(60));
     Some(tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         tracing::info!(
             autonomy = autonomy.as_str(),
             interval_secs = interval.as_secs(),
-            repo = %repo,
+            repo = %config.repo,
+            channel = %config.channel,
+            target = config.target_triple.as_deref().unwrap_or("host"),
             "neoth-self staging loop online (MV-01b #5; stage-only, never auto-swaps)"
         );
         ticker.tick().await; // burn immediate tick
         loop {
             ticker.tick().await;
-            run_self_stage_pass(&home, &repo, &writer).await;
+            run_self_stage_pass(&home, &config, &writer).await;
         }
     }))
 }
@@ -199,30 +204,51 @@ pub fn spawn_self_stage(
 /// download + verify + stage it + emit `0xD2 (staged_pending)` + notify.
 /// Every failure logs + the loop retries next tick — never crashes the
 /// daemon, never swaps the binary.
-async fn run_self_stage_pass(home: &Path, repo: &str, writer: &WalWriterHandle) {
-    let release = match updater::self_update::fetch_latest_release(repo).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "neoth-self staging: release probe failed");
+async fn run_self_stage_pass(
+    home: &Path,
+    config: &crate::config::AutoUpdateConfig,
+    writer: &WalWriterHandle,
+) {
+    let target = match updater::self_update::resolve_release_target(config.target_triple.as_deref())
+    {
+        Ok(target) => target,
+        Err(error) => {
+            tracing::warn!(error = %error, "neoth-self staging: invalid release target");
             return;
         }
     };
+    let release =
+        match updater::self_update::fetch_release_for_channel(&config.repo, config.channel).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "neoth-self staging: release probe failed");
+                return;
+            }
+        };
     let current = updater::self_update::current_version();
-    if !updater::self_update::version_is_newer(&release.tag_name, current).unwrap_or(false) {
+    let is_newer = match updater::self_update::version_is_newer(&release.tag_name, current) {
+        Ok(is_newer) => is_newer,
+        Err(error) => {
+            tracing::warn!(
+                version = %release.tag_name,
+                error = %error,
+                "neoth-self staging: release tag is not valid SemVer"
+            );
+            return;
+        }
+    };
+    if !is_newer {
         return; // already current — nothing to stage
     }
-    let Some(target) = updater::self_update::host_target_triple() else {
-        tracing::warn!("neoth-self staging: host target triple not in cargo-dist matrix");
-        return;
-    };
     let stage_dir = home.join("staged");
     match updater::self_update::stage_update(
         &release,
+        &config.repo,
+        config.channel,
         target,
-        // `neothd` is the Cargo binary + the archive member basename + the
-        // on-disk file to atomic-replace. Pre-Session-28f this was the
-        // wrong string `"neoth"` (product/CLI name, not binary file).
-        "neothd",
+        // The archive is a version-locked bundle. Apply-time preflight updates
+        // every installed companion beside the public `neoth` executable.
+        "neoth",
         &stage_dir,
         true, // require_signature — unattended demands a verified release
         now_unix_secs() as i64,
@@ -231,9 +257,13 @@ async fn run_self_stage_pass(home: &Path, repo: &str, writer: &WalWriterHandle) 
     {
         Ok(pending) => {
             emit_self_update_staged(writer, &pending).await;
-            write_stage_notification(home, &pending);
+            if let Err(error) = write_stage_notification(home, &pending) {
+                tracing::warn!(%error, "self-update notification sidecar write failed");
+            }
             tracing::info!(
                 to = %pending.to_version,
+                channel = %pending.channel,
+                target = %pending.target_triple,
                 sig = %pending.signature_status,
                 "neoth-self update staged + verified; awaiting operator `neoth update --self --apply`"
             );
@@ -255,6 +285,8 @@ async fn emit_self_update_staged(
     let payload = serde_json::to_vec(&serde_json::json!({
         "from_version": updater::self_update::current_version(),
         "to_version": pending.to_version,
+        "channel": pending.channel.as_str(),
+        "target_triple": pending.target_triple,
         "archive_sha256": pending.archive_sha256,
         "download_url": pending.download_url,
         "signature_status": pending.signature_status,
@@ -262,7 +294,7 @@ async fn emit_self_update_staged(
         "trigger_source": "staged_pending",
         "ts_unix": now_unix_secs(),
     }))
-    .unwrap_or_default();
+    .expect("SELF_UPDATE_APPLIED payload contains only infallible JSON values");
     let header = HeaderBuilder::new(EVENT_TYPE_SELF_UPDATE_APPLIED, &payload)
         .flags(EventFlags::SYNTHETIC)
         .build();
@@ -272,26 +304,34 @@ async fn emit_self_update_staged(
 }
 
 /// Drop an operator-facing notification sidecar
-/// (`~/.neoth/notifications/self_update_<ts>.json`) so the GUI / `neoth
-/// notifications` surface the staged update. Best-effort.
-fn write_stage_notification(home: &Path, pending: &updater::self_update::PendingUpdate) {
+/// (`~/.neoth/notifications/self_update_<ts>_<uuid>.json`) so the GUI / `neoth
+/// notifications` surface the staged update. Errors are returned for visible
+/// logging; the already verified staged artifact remains usable.
+fn write_stage_notification(
+    home: &Path,
+    pending: &updater::self_update::PendingUpdate,
+) -> std::io::Result<PathBuf> {
     let dir = home.join("notifications");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
     let ts = now_unix_secs();
-    let path = dir.join(format!("self_update_{ts}.json"));
+    let path = dir.join(format!(
+        "self_update_{ts:020}_{}.json",
+        uuid::Uuid::now_v7().simple()
+    ));
     let body = serde_json::json!({
         "ts_unix": ts,
         "kind": "self_update_staged",
         "to_version": pending.to_version,
+        "channel": pending.channel.as_str(),
+        "target_triple": pending.target_triple,
         "signature_status": pending.signature_status,
         "body": format!(
             "NEOTH {} is downloaded + verified ({}). Run `neoth update --self --apply` to install it.",
             pending.to_version, pending.signature_status
         ),
     });
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&body).unwrap_or_default());
+    let encoded = serde_json::to_vec_pretty(&body).map_err(std::io::Error::other)?;
+    crate::util::atomic_write::atomic_write_private(&path, &encoded)?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -351,36 +391,32 @@ mod tests {
     async fn self_stage_spawn_gated_like_cli_lane() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_path_buf();
-        let repo = "owner/repo".to_string();
+        let enabled = crate::config::AutoUpdateConfig {
+            enabled: true,
+            auto_apply: true,
+            check_interval_secs: 3_600,
+            repo: "owner/repo".into(),
+            ..Default::default()
+        };
         // Standard autonomy → no staging task (notify-only tier).
         let (w1, _j1) = crate::wal::writer::spawn(dir.path().join("s1.wal")).unwrap();
         assert!(
-            spawn_self_stage(
-                AutonomyLevel::Standard,
-                true,
-                3600,
-                repo.clone(),
-                home.clone(),
-                w1
-            )
-            .is_none()
+            spawn_self_stage(AutonomyLevel::Standard, enabled.clone(), home.clone(), w1).is_none()
         );
-        // Updater disabled → no staging task even at Full.
+        // Self-update disabled → no staging task even at Full.
         let (w2, _j2) = crate::wal::writer::spawn(dir.path().join("s2.wal")).unwrap();
-        assert!(
-            spawn_self_stage(
-                AutonomyLevel::Full,
-                false,
-                3600,
-                repo.clone(),
-                home.clone(),
-                w2
-            )
-            .is_none()
-        );
+        let mut disabled = enabled.clone();
+        disabled.enabled = false;
+        assert!(spawn_self_stage(AutonomyLevel::Full, disabled, home.clone(), w2).is_none());
+        // Check-only policy never downloads/stages.
+        let (w_check, _j_check) =
+            crate::wal::writer::spawn(dir.path().join("s-check.wal")).unwrap();
+        let mut check_only = enabled.clone();
+        check_only.auto_apply = false;
+        assert!(spawn_self_stage(AutonomyLevel::Full, check_only, home.clone(), w_check).is_none());
         // Elevated + enabled → task spawns.
         let (w3, _j3) = crate::wal::writer::spawn(dir.path().join("s3.wal")).unwrap();
-        let handle = spawn_self_stage(AutonomyLevel::Elevated, true, 3600, repo, home, w3)
+        let handle = spawn_self_stage(AutonomyLevel::Elevated, enabled, home, w3)
             .expect("staging task at elevated autonomy");
         handle.abort();
     }
@@ -400,6 +436,32 @@ mod tests {
         for key in ["component", "old_version", "new_version", "status", "ts"] {
             assert!(obj.contains_key(key), "0x13 payload missing key {key}");
         }
+    }
+
+    #[test]
+    fn stage_notifications_are_atomic_and_never_overwrite_same_second() {
+        let home = tempfile::tempdir().unwrap();
+        let pending = updater::self_update::PendingUpdate {
+            to_version: "1.0.1".into(),
+            source_repo: "owner/repo".into(),
+            channel: crate::config::ReleaseChannel::Stable,
+            archive_sha256: "ab".repeat(32),
+            download_url: "https://example.invalid/neoth.tar.gz".into(),
+            signature_status: "verified".into(),
+            staged_archive: home.path().join("stage.tar.gz").display().to_string(),
+            staged_signature: None,
+            target_triple: "x86_64-unknown-linux-gnu".into(),
+            staged_ts_unix: 1,
+        };
+        let first = write_stage_notification(home.path(), &pending).unwrap();
+        let second = write_stage_notification(home.path(), &pending).unwrap();
+        assert_ne!(first, second);
+        assert!(first.exists());
+        assert!(second.exists());
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(first).unwrap()).unwrap();
+        assert_eq!(parsed["kind"], "self_update_staged");
+        assert_eq!(parsed["to_version"], "1.0.1");
     }
 
     #[allow(dead_code)]

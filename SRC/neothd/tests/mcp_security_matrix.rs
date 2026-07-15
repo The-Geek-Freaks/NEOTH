@@ -21,9 +21,9 @@
 //! | meets_gate enforces Strict<Standard<Elev<Full, Custom fail-closed | the floor |
 
 use neothd::mcp::config::{
-    cbm_recommended_config, chrome_devtools_recommended_config, hex_graph_recommended_config,
-    hex_line_recommended_config, hex_research_recommended_config, hex_ssh_recommended_config,
-    mobile_mcp_recommended_config, tududi_recommended_config, McpServerConfig,
+    McpServerConfig, cbm_recommended_config, chrome_devtools_recommended_config,
+    hex_graph_recommended_config, hex_line_recommended_config, hex_research_recommended_config,
+    hex_ssh_recommended_config, mobile_mcp_recommended_config, tududi_recommended_config,
 };
 use neothd::permissions::AutonomyLevel;
 
@@ -37,7 +37,10 @@ fn all_recommended() -> Vec<(&'static str, McpServerConfig)> {
         ("hex-ssh", hex_ssh_recommended_config()),
         ("chrome-devtools", chrome_devtools_recommended_config()),
         ("mobile-mcp", mobile_mcp_recommended_config()),
-        ("tududi", tududi_recommended_config("/tmp/tududi-mcp/server.js")),
+        (
+            "tududi",
+            tududi_recommended_config("/tmp/tududi-mcp/server.js"),
+        ),
     ]
 }
 

@@ -391,14 +391,13 @@ fn run_history(limit: usize, output: &OutputFormat) -> Result<()> {
 /// same `classify_cause` + `applicable_reframings` the live
 /// `try_recover` orchestrator uses, so what this prints is exactly what
 /// recovery WOULD attempt (minus the provider call). `disabled_reframings`
-/// from freedom.yaml is honoured; a missing config falls back to "none
-/// disabled" so the operator sees the default plan.
+/// from freedom.yaml is honoured; only a genuinely missing config falls back
+/// to the compiled default. Existing invalid policy is surfaced.
 fn run_test(text: &str, prompt: Option<&str>, output: &OutputFormat) -> Result<()> {
     let cause = classify_cause(text);
-    let disabled: Vec<String> = match FreedomConfig::load_from_default_path() {
-        Ok(cfg) => cfg.refusal_recovery.disabled_reframings,
-        Err(_) => Vec::new(),
-    };
+    let disabled = FreedomConfig::load_from_default_path_or_default()?
+        .refusal_recovery
+        .disabled_reframings;
     let catalogue = default_catalogue();
     let chain = applicable_reframings(cause.cause, &catalogue, &disabled);
     let recoverable = !chain.is_empty();
@@ -508,15 +507,12 @@ fn run_cause(text: &str, output: &OutputFormat) -> Result<()> {
 }
 
 /// R-06: list every LOWKEY reframing + enabled/disabled per the
-/// operator's current freedom.yaml. Missing freedom.yaml (e.g.
-/// pre-init) falls back to "all enabled" so the operator sees the
-/// default state. Tests use `--home tempdir` for hermeticity (not
-/// supported here — uses the default home).
+/// operator's current freedom.yaml. Missing freedom.yaml (e.g. pre-init) uses
+/// the compiled default; an existing invalid file is an operator-visible error.
 fn run_reframings(output: &OutputFormat) -> Result<()> {
-    let disabled: Vec<String> = match FreedomConfig::load_from_default_path() {
-        Ok(cfg) => cfg.refusal_recovery.disabled_reframings,
-        Err(_) => Vec::new(),
-    };
+    let disabled = FreedomConfig::load_from_default_path_or_default()?
+        .refusal_recovery
+        .disabled_reframings;
     let catalogue = default_catalogue();
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {

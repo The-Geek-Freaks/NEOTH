@@ -80,6 +80,76 @@ async fn serve_fails_with_helpful_error_when_freedom_yaml_missing() {
     assert!(err.to_string().contains("neoth init"));
 }
 
+#[tokio::test]
+async fn serve_rejects_malformed_hook_set_before_wal_or_runtime_start() {
+    let dir = tempdir().unwrap();
+    let cfg_path = dir.path().join("freedom.yaml");
+    std::fs::write(
+        &cfg_path,
+        b"operator_id: alice\nrole: developer\nprovider_kind: claude_cli\n",
+    )
+    .unwrap();
+    let hooks = dir.path().join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    std::fs::write(hooks.join("broken.toml"), b"not = [valid").unwrap();
+    let seg_path = dir.path().join("malformed-hook.wal");
+
+    let error = run_serve(ServeArgs {
+        config: Some(cfg_path),
+        wal_segment: Some(seg_path.clone()),
+        one_shot: true,
+        allow_clock_rollback: false,
+    })
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("daemon startup refused"));
+    assert!(
+        !seg_path.exists(),
+        "hook parsing must complete before the WAL or runtime services start"
+    );
+}
+
+#[tokio::test]
+async fn on_session_start_block_is_audited_and_vetoes_startup() {
+    let dir = tempdir().unwrap();
+    let cfg_path = dir.path().join("freedom.yaml");
+    std::fs::write(
+        &cfg_path,
+        b"operator_id: alice\nrole: developer\nprovider_kind: claude_cli\n",
+    )
+    .unwrap();
+    let hooks = dir.path().join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    std::fs::write(
+        hooks.join("stop.toml"),
+        b"name = \"stop\"\nstage = \"on_session_start\"\n[action]\nkind = \"block\"\nreason = \"maintenance\"\n",
+    )
+    .unwrap();
+    let seg_path = dir.path().join("blocked-start.wal");
+
+    let error = run_serve(ServeArgs {
+        config: Some(cfg_path),
+        wal_segment: Some(seg_path.clone()),
+        one_shot: true,
+        allow_clock_rollback: false,
+    })
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("blocked daemon startup"));
+    let bytes = read(&seg_path).await.unwrap();
+    let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+    let frame = decode_frame(&bytes[header.header_len()..]).unwrap();
+    assert_eq!(
+        frame.header.event_type,
+        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED
+    );
+    let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+    assert_eq!(payload["name"], "stop");
+    assert_eq!(payload["reason"], "maintenance");
+}
+
 // ── SC-11 channel-path tool_allowlist threading (Session 28d) ─────────
 fn skill_with_allowlist(id: &str, kws: &[&str], allow: &[&str]) -> crate::skills::schema::Skill {
     crate::skills::schema::Skill {
@@ -226,6 +296,34 @@ fn cron_fingerprint_detects_interval_change() {
     );
 }
 
+#[cfg(feature = "cluster")]
+#[test]
+fn cron_fingerprint_swarm_restarts_only_for_sampler_changes() {
+    use std::collections::HashSet;
+
+    use crate::cli::serve_tasks::{CronKey::ResourceSnapshot, plan_cron_fleet_reload};
+
+    let mut cfg = crate::config::FreedomConfig::default();
+    let before = cron_spec_fingerprint(ResourceSnapshot, &cfg);
+    cfg.swarm.interval_secs = 45;
+    let interval_changed = cron_spec_fingerprint(ResourceSnapshot, &cfg);
+    assert_ne!(before, interval_changed);
+
+    let running = HashSet::from([ResourceSnapshot]);
+    let desired = HashSet::from([ResourceSnapshot]);
+    let fingerprint_changed = HashSet::from([ResourceSnapshot]);
+    let (to_stop, to_start) = plan_cron_fleet_reload(&running, &desired, &fingerprint_changed);
+    assert_eq!(to_stop, vec![ResourceSnapshot]);
+    assert_eq!(to_start, vec![ResourceSnapshot]);
+
+    cfg.swarm.stale_after_secs = 900;
+    let dashboard_only_changed = cron_spec_fingerprint(ResourceSnapshot, &cfg);
+    assert_eq!(
+        interval_changed, dashboard_only_changed,
+        "dashboard-only stale threshold must not restart the sampler"
+    );
+}
+
 #[test]
 fn cron_fingerprint_ignores_unrelated_fields() {
     let mut cfg = crate::config::FreedomConfig::default();
@@ -297,15 +395,9 @@ fn cron_fingerprint_obsidian_vault_reader_detects_enabled_toggle() {
     let mut cfg = crate::config::FreedomConfig::default();
     cfg.obsidian_vault = Some("~/v".to_string());
     cfg.obsidian_vault_reader_enabled = false;
-    let before = cron_spec_fingerprint(
-        crate::cli::serve_tasks::CronKey::ObsidianVaultReader,
-        &cfg,
-    );
+    let before = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::ObsidianVaultReader, &cfg);
     cfg.obsidian_vault_reader_enabled = true;
-    let after = cron_spec_fingerprint(
-        crate::cli::serve_tasks::CronKey::ObsidianVaultReader,
-        &cfg,
-    );
+    let after = cron_spec_fingerprint(crate::cli::serve_tasks::CronKey::ObsidianVaultReader, &cfg);
     assert_ne!(
         before, after,
         "reader_enabled toggle must shift ObsidianVaultReader fingerprint",

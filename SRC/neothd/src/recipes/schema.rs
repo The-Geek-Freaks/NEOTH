@@ -67,6 +67,12 @@ pub struct RecipeSettings {
     /// Sampling temperature override. Maps to `ChatArgs.temperature`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    /// Top-p nucleus cutoff. Maps to `ChatArgs.top_p`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    /// Deterministic sampling seed. Maps to `ChatArgs.sampling_seed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling_seed: Option<u64>,
 }
 
 /// A reference to another recipe run as a pre-step; its rendered prompt is
@@ -239,10 +245,12 @@ mod tests {
 
     #[test]
     fn settings_and_retry_round_trip() {
-        let y = "name: x\nprompt: \"go\"\nsettings:\n  model: claude-haiku-4-5\n  temperature: 0.2\nretry:\n  max: 2\n  success_check: \"test -f /tmp/done\"\n";
+        let y = "name: x\nprompt: \"go\"\nsettings:\n  model: claude-haiku-4-5\n  temperature: 0.2\n  top_p: 0.8\n  sampling_seed: 42\nretry:\n  max: 2\n  success_check: \"test -f /tmp/done\"\n";
         let r = RecipeSpec::parse(y).unwrap();
         assert_eq!(r.settings.model.as_deref(), Some("claude-haiku-4-5"));
         assert_eq!(r.settings.temperature, Some(0.2));
+        assert_eq!(r.settings.top_p, Some(0.8));
+        assert_eq!(r.settings.sampling_seed, Some(42));
         assert_eq!(r.retry.as_ref().unwrap().max, 2);
     }
 }

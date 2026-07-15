@@ -152,7 +152,7 @@ impl ApiErrorResponse {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
+        serde_json::to_vec(self).expect("ApiErrorResponse contains only JSON-serializable fields")
     }
 }
 
@@ -215,7 +215,7 @@ pub fn build_n8n_request_payload(
         "request_id": request_id,
         "ts_unix": ts_unix,
     }))
-    .unwrap_or_default()
+    .expect("n8n audit payload is a fixed JSON object")
 }
 
 #[cfg(test)]

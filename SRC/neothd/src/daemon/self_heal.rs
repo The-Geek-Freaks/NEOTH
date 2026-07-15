@@ -114,7 +114,8 @@ fn extract_location(line: &str) -> Option<String> {
 /// Classify a single panic line.
 fn categorise(line: &str) -> (PanicCategory, f32) {
     let l = line.to_ascii_lowercase();
-    if l.contains("on a `none`") || l.contains("on an `none`") || l.contains("unwrap()` on a `none") {
+    if l.contains("on a `none`") || l.contains("on an `none`") || l.contains("unwrap()` on a `none")
+    {
         (PanicCategory::UnwrapOnNone, 0.9)
     } else if l.contains("on an `err`") || l.contains("unwrap()` on an `err") {
         (PanicCategory::UnwrapOnErr, 0.9)
@@ -241,7 +242,11 @@ mod tests {
             let props = analyse_panic_lines(&[line], 1000);
             assert_eq!(props.len(), 1, "line should yield one proposal: {line}");
             assert_eq!(props[0].category, want_cat, "category for: {line}");
-            assert_eq!(props[0].location.as_deref(), want_loc, "location for: {line}");
+            assert_eq!(
+                props[0].location.as_deref(),
+                want_loc,
+                "location for: {line}"
+            );
             assert!(!props[0].suggested_action.is_empty());
         }
     }
@@ -269,7 +274,10 @@ mod tests {
         );
         stage_proposals(dir.path(), &props).unwrap();
         let loaded = load_proposals(dir.path());
-        assert_eq!(loaded, props, "proposals round-trip through the staging store");
+        assert_eq!(
+            loaded, props,
+            "proposals round-trip through the staging store"
+        );
         // The module exposes no apply()/patch() surface — staging is inert by design.
     }
 }

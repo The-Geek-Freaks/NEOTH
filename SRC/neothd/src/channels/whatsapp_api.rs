@@ -1,6 +1,5 @@
-//! WhatsApp Business Cloud API send surface — feeds the `whatsapp`
-//! scaffold's `send_text` implementation so operators can post one-shot
-//! messages today even though the inbound webhook is Phase 2.
+//! WhatsApp Business Cloud API send surface used by the live Graph adapter and
+//! verified inbound webhook reply path.
 //!
 //! Operator setup:
 //!   1. Configure `whatsapp_token` (long-lived system-user access
@@ -10,8 +9,10 @@
 //!      calls `https://graph.facebook.com/v18.0/<phone_id>/messages`
 //!      with the configured token.
 //!
-//! Receive path (webhook): deferred to Phase 2 — needs a public HTTPS
-//! endpoint operator-side and Meta's `hub.verify_token` round-trip.
+//! `neoth serve` exposes the loopback webhook listener, verifies Meta's
+//! challenge/signature, dispatches inbound messages through the common
+//! pipeline, and sends the final reply here. The operator supplies the public
+//! HTTPS reverse-proxy endpoint.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -25,8 +26,8 @@ use crate::secret::SecretString;
 pub const GRAPH_API_BASE: &str = "https://graph.facebook.com/v18.0";
 
 /// Result of a `messages` POST. `id` is WhatsApp's wamid (e.g.
-/// `"wamid.HBgL..."`); operators can use it for delivery-status webhooks
-/// once the receive path lands.
+/// `"wamid.HBgL..."`); operators can correlate it with delivery-status
+/// events received by the live webhook path.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct SendMessageResult {
     pub ok: bool,
@@ -84,7 +85,7 @@ pub(crate) async fn send_text_message_at(
         .await
         .context("WhatsApp Graph API request")?;
     let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
+    let body_text = resp.text().await.context("WhatsApp send response body")?;
     parse_send_response(status.is_success(), &body_text)
 }
 
@@ -168,7 +169,10 @@ pub(crate) async fn validate_token_at(
         .await
         .context("WhatsApp Graph API validate request")?;
     let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
+    let body_text = resp
+        .text()
+        .await
+        .context("WhatsApp validate response body")?;
     parse_validate_response(status.is_success(), &body_text)
 }
 

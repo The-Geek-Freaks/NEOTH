@@ -21,6 +21,7 @@ use serde_json::Value as JsonValue;
 
 use super::server::{ApiRequestCtx, ApiState, HandlerOutcome};
 use super::{ApiErrorCode, REQUEST_BODY_LIMIT_BYTES};
+use crate::providers::Provider;
 
 /// `/api/health` response payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,7 +97,7 @@ pub struct ProviderCallResponse {
 }
 
 /// `/api/channel/send` body. `channel` is the channel-id slug
-/// (`telegram`, `keet`, …); `recipient` is the channel-native
+/// (`telegram`, `slack`, …); `recipient` is the channel-native
 /// addressee.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelSendRequest {
@@ -148,7 +149,9 @@ pub fn health(_ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
         uptime_secs: uptime,
         status: "ok",
     };
-    HandlerOutcome::ok_json(serde_json::to_value(&body).unwrap_or(JsonValue::Null))
+    HandlerOutcome::ok_json(
+        serde_json::to_value(&body).expect("HealthResponse contains only JSON-safe fields"),
+    )
 }
 
 // ── /api/recall ─────────────────────────────────────────────────
@@ -164,16 +167,26 @@ pub fn recall(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
         Ok(conn) => match crate::memory::ctx::search(&conn, &req.query, limit) {
             Ok(hits) => {
                 let total = hits.len();
-                let json_hits: Vec<JsonValue> = hits
+                let json_hits: Vec<JsonValue> = match hits
                     .into_iter()
-                    .filter_map(|h| serde_json::to_value(&h).ok())
-                    .collect();
+                    .map(serde_json::to_value)
+                    .collect::<Result<_, _>>()
+                {
+                    Ok(hits) => hits,
+                    Err(error) => {
+                        return HandlerOutcome::error(
+                            ApiErrorCode::UpstreamError,
+                            format!("recall result serialization failed: {error}"),
+                            "inspect the matching recall row for invalid stored data",
+                        );
+                    }
+                };
                 HandlerOutcome::ok_json(
                     serde_json::to_value(RecallResponse {
                         hits: json_hits,
                         total,
                     })
-                    .unwrap_or(JsonValue::Null),
+                    .expect("RecallResponse contains only JSON values and integers"),
                 )
             }
             Err(e) => HandlerOutcome::error(
@@ -195,10 +208,17 @@ pub fn recall(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
 pub fn stats(_ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
     let views_path = state.home.join("views.db");
     match crate::memory::store::open(&views_path) {
-        Ok(conn) => {
-            let counts = read_stat_counts(&conn).unwrap_or_default();
-            HandlerOutcome::ok_json(serde_json::to_value(counts).unwrap_or(JsonValue::Null))
-        }
+        Ok(conn) => match read_stat_counts(&conn) {
+            Ok(counts) => HandlerOutcome::ok_json(
+                serde_json::to_value(counts)
+                    .expect("StatsResponse contains only fixed-width integer fields"),
+            ),
+            Err(error) => HandlerOutcome::error(
+                ApiErrorCode::UpstreamError,
+                format!("stats query failed: {error}"),
+                "check views.db integrity or run `neoth doctor`",
+            ),
+        },
         Err(e) => HandlerOutcome::error(
             ApiErrorCode::UpstreamError,
             format!("views.db open failed: {e}"),
@@ -224,7 +244,7 @@ fn read_stat_counts(conn: &rusqlite::Connection) -> Result<StatsResponse, rusqli
     };
     Ok(StatsResponse {
         events_total: count("SELECT COUNT(*) FROM idx_events")?,
-        provider_requests: count("SELECT COUNT(*) FROM idx_events WHERE event_type = 33")?,
+        provider_requests: count("SELECT COUNT(*) FROM idx_events WHERE event_type = 32")?,
         channel_inbound: count("SELECT COUNT(*) FROM idx_events WHERE event_type = 50")?,
         channel_outbound: count("SELECT COUNT(*) FROM idx_events WHERE event_type = 51")?,
     })
@@ -282,7 +302,7 @@ pub async fn memory_save(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcom
                 stored: true,
                 bytes,
             })
-            .unwrap_or(JsonValue::Null),
+            .expect("MemorySaveResponse contains only JSON-safe fields"),
         ),
         Err(e) => {
             tracing::warn!(error = %e, "n8n_api memory_save WAL append failed");
@@ -355,17 +375,17 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // channel pipeline run the full stack.
     //
     // Session 24 fix #5: even on the bare-metal surface we now
-    // (a) honour autonomy=Strict by refusing cloud provider calls
-    //     without explicit operator confirmation; n8n workflows
-    //     cannot bypass the operator's loudest privacy signal,
-    // (b) emit PROVIDER_REQUEST (0x20) BEFORE the call + a
-    //     PROVIDER_RESPONSE (0x21) on success / PROVIDER_ERROR
-    //     (0x22) on failure so `neoth wal show --type provider_request`
-    //     surfaces every n8n-initiated provider call alongside
-    //     the chat-initiated ones — single audit truth.
+    // (a) honour the current built-in or Custom autonomy policy at
+    //     the actual provider leaf; n8n workflows cannot bypass it,
+    // (b) use the mandatory leaf lifecycle boundary, which persists
+    //     PROVIDER_REQUEST (0x20) before dispatch and exactly one
+    //     PROVIDER_RESPONSE (0x21) or PROVIDER_ERROR (0x22), so
+    //     `neoth wal show --type provider_request` surfaces every
+    //     n8n-initiated call alongside chat — one audit truth.
     // (c) the circuit-breaker wrap happens INSIDE
     //     `provider.complete()` (GR-04) — automatic.
-    let provider_kind = state.config.provider_kind;
+    let live_config = state.reload_controller.latest();
+    let provider_kind = live_config.provider_kind;
     // GR-003 + H1 (2026-06-12): cloud egress on the n8n surface goes through
     // `cloud_egress_gate` — at autonomy=Strict cloud is refused outright (the
     // loudest privacy signal), and at EVERY other autonomy level the specific
@@ -374,7 +394,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // Strict case was gated, so an n8n workflow could drive un-consented cloud
     // LLM calls at the daemon-default Standard autonomy. `consent::is_cloud`
     // (inside the gate) is the compile-enforced EXHAUSTIVE classifier (GR-003).
-    if let Some(refusal) = cloud_egress_gate(state.config.autonomy, provider_kind, &state.home) {
+    if let Some(refusal) = cloud_egress_gate(live_config.autonomy, provider_kind, &state.home) {
         tracing::warn!(
             provider_kind = ?provider_kind,
             request_id = %ctx.request_id,
@@ -382,7 +402,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         );
         return refusal;
     }
-    let provider = match crate::providers::from_config(state.config.as_ref()).await {
+    let provider = match crate::providers::from_config(live_config.as_ref()).await {
         Ok(p) => p,
         Err(e) => {
             return HandlerOutcome::error(
@@ -401,10 +421,11 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     let effective_model: Option<String> = req
         .model
         .clone()
-        .or_else(|| state.config.provider_model.clone());
+        .or_else(|| live_config.provider_model.clone())
+        .or_else(|| provider.default_model().map(str::to_owned));
     let model_source = if req.model.is_some() {
         "request"
-    } else if effective_model.is_some() {
+    } else if live_config.provider_model.is_some() {
         "freedom"
     } else {
         "provider_default"
@@ -415,80 +436,46 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         model: effective_model.clone(),
         ..Default::default()
     };
-    // Emit PROVIDER_REQUEST (0x20) BEFORE the call so a crash mid-
-    // call still leaves the audit trail with the operator-typed
-    // prompt in `before_state`. The redactor in the WAL snapshot
-    // path strips secret patterns automatically.
-    let req_payload = serde_json::to_vec(&serde_json::json!({
-        "source": "n8n_api",
-        "request_id": ctx.request_id,
-        "provider_kind": provider_kind.map(|k| k.as_str()).unwrap_or("none"),
-        "model": effective_model,
-        "model_source": model_source,
-        "prompt_bytes": req.prompt.len(),
-        "system_bytes": req.system.as_deref().map(|s| s.len()).unwrap_or(0),
-    }))
-    .unwrap_or_default();
-    let req_header = crate::wal::HeaderBuilder::new(
-        crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
-        &req_payload,
-    )
-    .build();
-    if let Err(e) = state.writer.append(req_header, req_payload).await {
-        tracing::warn!(error = %e, request_id = %ctx.request_id, "n8n_api provider_request WAL append failed");
-    }
-
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
+            Arc::clone(&state.reload_controller),
+            Some(state.writer.clone()),
+        )
+        .with_audit_context(
+            crate::providers::cost_authorization::ProviderCallAuditContext {
+                source: Some("n8n_api"),
+                call_type: Some("n8n_provider_call"),
+                request_id: Some(ctx.request_id.clone()),
+                model_source: Some(model_source),
+                configured_provider_kind: Some(
+                    provider_kind
+                        .map(|kind| kind.as_str())
+                        .unwrap_or("none")
+                        .to_owned(),
+                ),
+                ..Default::default()
+            },
+        ),
+        effective_model,
+        "n8n.provider_call",
+    );
     match provider.complete(request).await {
         Ok(comp) => {
-            let resp_payload = serde_json::to_vec(&serde_json::json!({
-                "source": "n8n_api",
-                "request_id": ctx.request_id,
-                "model": comp.model,
-                "completion_bytes": comp.text.len(),
-                "latency_ms": comp.latency.as_millis() as u64,
-                "input_tokens": comp.input_tokens,
-                "output_tokens": comp.output_tokens,
-            }))
-            .unwrap_or_default();
-            let resp_header = crate::wal::HeaderBuilder::new(
-                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
-                &resp_payload,
-            )
-            .build();
-            if let Err(e) = state.writer.append(resp_header, resp_payload).await {
-                tracing::warn!(error = %e, request_id = %ctx.request_id, "n8n_api provider_response WAL append failed");
-            }
+            let model = comp.identity.wire_model.clone();
             HandlerOutcome::ok_json(
                 serde_json::to_value(ProviderCallResponse {
                     completion: comp.text,
-                    model: req.model,
+                    model: Some(model),
                 })
-                .unwrap_or(JsonValue::Null),
+                .expect("ProviderCallResponse contains only JSON-safe fields"),
             )
         }
-        Err(e) => {
-            let err_payload = serde_json::to_vec(&serde_json::json!({
-                "source": "n8n_api",
-                "request_id": ctx.request_id,
-                "provider_kind": provider_kind.map(|k| k.as_str()).unwrap_or("none"),
-                "model": req.model,
-                "error": e.to_string(),
-            }))
-            .unwrap_or_default();
-            let err_header = crate::wal::HeaderBuilder::new(
-                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
-                &err_payload,
-            )
-            .build();
-            if let Err(append_err) = state.writer.append(err_header, err_payload).await {
-                tracing::warn!(error = %append_err, request_id = %ctx.request_id, "n8n_api provider_error WAL append failed");
-            }
-            HandlerOutcome::error(
-                ApiErrorCode::UpstreamError,
-                format!("provider call failed: {e}"),
-                "check provider quota / credentials / cooldown",
-            )
-        }
+        Err(e) => HandlerOutcome::error(
+            ApiErrorCode::UpstreamError,
+            format!("provider call failed: {e}"),
+            "check provider quota / credentials / cooldown",
+        ),
     }
 }
 
@@ -537,7 +524,8 @@ pub async fn channel_send(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutco
     // — n8n got an OK for a payload that may have silently dropped.
     match state.writer.append(header, payload).await {
         Ok(_) => HandlerOutcome::ok_json(
-            serde_json::to_value(ChannelSendResponse { queued: true }).unwrap_or(JsonValue::Null),
+            serde_json::to_value(ChannelSendResponse { queued: true })
+                .expect("ChannelSendResponse contains only JSON-safe fields"),
         ),
         Err(e) => {
             tracing::warn!(error = %e, "n8n_api channel_send WAL append failed");

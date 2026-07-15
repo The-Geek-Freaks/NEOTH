@@ -5,7 +5,7 @@ NEOTH has two extension surfaces:
 | Extension | Best for | Safety model |
 | :-- | :-- | :-- |
 | **Skills** | Instructions, templates, workflows, domain knowledge. | Data-only; no code execution. |
-| **WASM plugins** | Real logic at lifecycle hooks. | Capability declarations, fuel limits, memory caps, timeout, hostcall allowlist. |
+| **WASM plugins** | Real logic at lifecycle hooks. | Exact approval binding, fuel limits, memory caps, hostcall allowlist. |
 
 ## Skills
 
@@ -47,29 +47,38 @@ neoth skills --uninstall rust-review
 Plugins are code and therefore need stronger boundaries.
 
 ```text
-~/.neoth/plugins/my-plugin/
+~/.neoth/plugins/my_plugin/
   plugin.toml
-  my-plugin.wasm
+  plugin.wasm
 ```
 
 Example manifest:
 
 ```toml
-id = "my-plugin"
+id = "my_plugin"
 name = "My Plugin"
 version = "1.0.0"
+description = "Example ABI v1 plugin"
+requested_permissions = "read_only"
+hook_stages = ["on_recall_query"]
 
-[permissions]
-memory_read = true
-memory_write = false
-network = false
-filesystem = "none"
+# Optional, validated per-invocation/per-instance ceilings.
+fuel_budget_override = 1000000
+memory_limit_bytes = 67108864
 
-[limits]
-memory_mb = 64
-fuel = 1000000
-timeout_ms = 250
+# Optional updater source and read-only GUI WAL feed.
+# source = "git+https://github.com/example/my_plugin"
+# [ui_surface]
+# kind = "wal_feed"
+# title = "My Plugin"
 ```
+
+`id` must be snake_case and the artifact filename is always `plugin.wasm`.
+`requested_permissions` is one of `none`, `read_only`, `write`, `execute`, or
+`dangerous`. Explicit fuel must be non-zero and is capped at 10,000,000; memory
+must be at least one 64-KiB WASM page and is capped at 256 MiB. The accepted
+limits are carried into each Wasmtime store; omitted values use the daemon
+defaults (1,000,000 fuel and 64 MiB).
 
 > **Feature gate:** WASM plugin support is compiled in only when `neothd` is built with
 > `--features wasm-plugin-host`. Stock release binaries (from GitHub Releases / winget) already
@@ -80,29 +89,61 @@ timeout_ms = 250
 > Runtime execution is separately gated by `freedom.yaml::plugins.wasm.enabled` (default `true`
 > on builds that include the feature).
 
-## Hook points
+## Rust guest ABI
 
-| Hook | Purpose |
+Rust WASM plugins depend on `neoth-plugin-sdk = "=0.1.0-alpha.0"`, compile as a
+`cdylib` for `wasm32-unknown-unknown`, and export through the SDK macro:
+
+```rust
+use neoth_plugin_sdk::guest::{GuestHost, HostcallError};
+use neoth_plugin_sdk::permission::ReadOnly;
+
+fn run(host: GuestHost<ReadOnly>) -> Result<(), HostcallError> {
+    host.log(b"plugin invoked")?;
+    let _hits = host.recall_top(42)?;
+    Ok(())
+}
+
+neoth_plugin_sdk::export_wasm_plugin!(ReadOnly, run);
+```
+
+ABI v1 requires `neoth_abi_version() -> i32` and `neoth_run() -> i32` exports.
+The macro generates both. The daemon rejects a missing or mismatched ABI before
+calling `neoth_run` and treats a non-zero run status as failure.
+`GuestHost<L>` exposes the correctly typed wrappers for `neoth.log`,
+`neoth.fuel_left`, `neoth.recall_top`, and `neoth.emit_event`; the daemon still
+enforces the separately approved runtime permission on every call.
+
+## Declared hook stages
+
+| Manifest value | Purpose |
 | :-- | :-- |
-| `on_message_ingest` | Inspect/sanitize inbound content. |
-| `on_profile_candidate` | Validate or enrich profile proposals. |
-| `on_recall_result` | Re-rank or annotate recall. |
-| `on_tool_result` | Process tool outcomes. |
-| `on_channel_send` | Format or block outbound messages. |
-| `on_coding_session_end` | Promote review findings or decisions. |
+| `pre_provider_call` | Before a provider request. |
+| `post_provider_call` | After a provider reply. |
+| `pre_channel_send` | Before a reply is sent to a channel. |
+| `post_channel_receive` | After a channel message is received. |
+| `on_recall_query` | A recall query ran. |
+| `on_consolidation_pass` | A memory consolidation pass ran. |
+
+These declarations are advisory metadata. They do not auto-register code at a
+pipeline stage. The operator must add an explicit plugin action in
+`~/.neoth/hooks.toml`; this prevents a manifest alone from intercepting every
+provider call or outbound message.
 
 ## Permission model
 
-| Permission | Grants |
+| Permission | ABI v1 hostcalls |
 | :-- | :-- |
-| `memory_read` | Read approved memory views. |
-| `memory_write` | Propose memory writes through policy gate. |
-| `network` | Use declared outbound destinations only. |
-| `filesystem` | Access scoped paths only. |
-| `channel_send` | Propose outbound messages through channel policy. |
-| `tool_call` | Call allowed host tools. |
+| `none` | `log`, `fuel_left` |
+| `read_only` | Above plus `recall_top` |
+| `write` | Above plus `emit_event` |
+| `execute` | No additional ABI v1 hostcall yet. |
+| `dangerous` | No additional ABI v1 hostcall yet. |
 
-No plugin should get ambient access to the operator's filesystem, network, profile, channels, or credentials.
+The SDK's type markers guide which wrappers plugin code can call, but they are
+not authority. The daemon derives the runtime grant from the exact persisted
+approval and checks it on every hostcall. ABI v1 exposes no WASI, filesystem,
+network, channel, credential, or arbitrary tool surface.
 
 ## Audit
 
@@ -126,11 +167,16 @@ Audit should show:
 
 ```bash
 neoth plugin install ./my-plugin
-neoth plugin enable my-plugin
-neoth plugin disable my-plugin
-neoth plugin remove my-plugin
-neoth plugin ledger my-plugin
+neoth plugin enable my_plugin
+neoth plugin disable my_plugin
+neoth plugin remove my_plugin
+neoth plugin ledger my_plugin
 ```
+
+Install and discovery do not activate code. `enable` records the approved
+permission plus canonical manifest and WASM digests. Any later manifest,
+permission, or binary change requires explicit re-consent and a daemon restart;
+disable/revocation takes effect fail-closed on live reload.
 
 ## Security expectations
 

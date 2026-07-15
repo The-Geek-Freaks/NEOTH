@@ -3,7 +3,7 @@
 //!
 //! CRON-A batch additions (HERMES-01 / JV-PRO-01 / JV-PRO-04 / JV-PRO-05 / JV-PRO-09):
 //! - `Job::validate()` — edit-guard (JV-PRO-01)
-//! - `preflight(job)` — 5-check delivery pre-flight warnings (JV-PRO-04)
+//! - `preflight(job)` — advisory schedule/prompt warnings (JV-PRO-04)
 //! - `CronRole` + `classify_role(job)` — keyword/schedule heuristic (JV-PRO-05)
 //! - `schedule_collides(new, existing, horizon_hours)` — collision detection (JV-PRO-09)
 //! - `JobsFile::save_to_path()` — atomic YAML write (HERMES-01)
@@ -18,11 +18,16 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
+
+/// Serialises in-process jobs.yaml read-modify-write cycles. The sibling OS
+/// lock in [`JobsFile::modify_at_path`] covers separate `neoth` processes.
+static JOBS_RMW_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobsFile {
@@ -63,13 +68,25 @@ pub struct Schedule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
-    /// Channel name as recognized by `channels::Channel::name()`: "telegram",
-    /// "keet", … When omitted from the job, the result only lands in the WAL.
+    /// Channel name as recognized by `channels::Channel::name()`, for example
+    /// "telegram". The actual destination is always resolved from the
+    /// operator-owned channel routing configuration.
     pub channel: String,
-    /// Optional channel-specific recipient id. Required for some channels
-    /// (Telegram chat_id), optional for others (WAL-only delivery).
-    #[serde(default)]
-    pub recipient: Option<String>,
+    /// Backward-deserialization seam for pre-v1 jobs that embedded a recipient.
+    /// Item-controlled recipients violate proactive delivery's anti-spoof
+    /// invariant, so [`Job::validate`] rejects this field when present.
+    #[serde(default, rename = "recipient", skip_serializing_if = "Option::is_none")]
+    legacy_recipient: Option<String>,
+}
+
+impl Delivery {
+    /// Create a delivery request for an operator-configured channel route.
+    pub fn new(channel: impl Into<String>) -> Self {
+        Self {
+            channel: channel.into(),
+            legacy_recipient: None,
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -147,9 +164,7 @@ pub fn classify_role(job: &Job) -> CronRole {
     {
         return CronRole::Research;
     }
-    if haystack.contains("proactive")
-        || haystack.contains("suggest")
-        || haystack.contains("remind")
+    if haystack.contains("proactive") || haystack.contains("suggest") || haystack.contains("remind")
     {
         return CronRole::Proactive;
     }
@@ -164,42 +179,14 @@ pub fn classify_role(job: &Job) -> CronRole {
     CronRole::Other
 }
 
-/// Channels that require an explicit `recipient` field.
-/// JV-PRO-04
-const CHANNELS_NEEDING_RECIPIENT: &[&str] = &["telegram", "whatsapp", "discord"];
-
-/// Run pre-flight delivery/schedule checks on a job. Returns a (possibly
+/// Run pre-flight schedule checks on a job. Returns a (possibly
 /// empty) list of human-readable warning strings. Warnings do not block save —
 /// they are surfaced by `neoth cron add` for operator awareness.
 /// JV-PRO-04
 pub fn preflight(job: &Job) -> Vec<String> {
     let mut warnings: Vec<String> = Vec::new();
 
-    match &job.delivery {
-        None => {}
-        Some(d) => {
-            // (1) recipient set but channel empty
-            if d.channel.trim().is_empty() && d.recipient.is_some() {
-                warnings.push(
-                    "delivery.recipient is set but delivery.channel is empty — \
-                     recipient will be ignored (no channel to route to)"
-                        .to_string(),
-                );
-            }
-            // (2) channel requires a recipient but none given
-            if CHANNELS_NEEDING_RECIPIENT.contains(&d.channel.to_lowercase().as_str())
-                && d.recipient.is_none()
-            {
-                warnings.push(format!(
-                    "channel `{}` usually requires a recipient (e.g. chat_id / user_id) \
-                     but none is set",
-                    d.channel
-                ));
-            }
-        }
-    }
-
-    // (3) timeout 0 or absurdly large (> 24 h)
+    // (1) timeout 0 or absurdly large (> 24 h)
     if job.timeout_seconds == 0 {
         warnings.push("timeout_seconds is 0 — job will be cancelled immediately".to_string());
     } else if job.timeout_seconds > 86_400 {
@@ -209,7 +196,7 @@ pub fn preflight(job: &Job) -> Vec<String> {
         ));
     }
 
-    // (4) prompt suspiciously short (< 10 non-whitespace chars)
+    // (2) prompt suspiciously short (< 10 non-whitespace chars)
     if job.prompt.split_whitespace().count() < 3 {
         warnings.push(format!(
             "prompt is very short ({} words) — make sure this is intentional",
@@ -217,7 +204,7 @@ pub fn preflight(job: &Job) -> Vec<String> {
         ));
     }
 
-    // (5) schedule fires more often than every minute (< 1-min granularity)
+    // (3) schedule fires more often than every minute (< 1-min granularity)
     // Standard 5-field cron minimum is 1 minute; we check by computing two
     // consecutive fire times and measuring the gap.
     if let Some(t0) = job.schedule.next_after(crate::time::utc_now()) {
@@ -312,7 +299,11 @@ impl std::fmt::Display for WaveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WaveError::Cycle(members) => {
-                write!(f, "dependency cycle detected among jobs: {}", members.join(" → "))
+                write!(
+                    f,
+                    "dependency cycle detected among jobs: {}",
+                    members.join(" → ")
+                )
             }
             WaveError::UnknownDep { job, dep } => {
                 write!(f, "job `{job}` depends on `{dep}` which is not defined")
@@ -352,12 +343,16 @@ pub fn topo_order(jobs: &[Job]) -> Result<Vec<String>, WaveError> {
     // `successors[id]` = list of jobs that list `id` as a dependency (edges
     // flow from dependency → dependent, which is the Kahn direction).
     let mut in_degree: HashMap<&str, usize> = jobs.iter().map(|j| (j.id.as_str(), 0)).collect();
-    let mut successors: HashMap<&str, Vec<&str>> = jobs.iter().map(|j| (j.id.as_str(), vec![])).collect();
+    let mut successors: HashMap<&str, Vec<&str>> =
+        jobs.iter().map(|j| (j.id.as_str(), vec![])).collect();
 
     for job in jobs {
         for dep in &job.depends_on {
             *in_degree.entry(job.id.as_str()).or_insert(0) += 1;
-            successors.entry(dep.as_str()).or_default().push(job.id.as_str());
+            successors
+                .entry(dep.as_str())
+                .or_default()
+                .push(job.id.as_str());
         }
     }
 
@@ -511,6 +506,38 @@ impl JobsFile {
         Ok(parsed)
     }
 
+    /// Mutate a complete jobs.yaml snapshot under process-local and OS-level
+    /// locks, validate the resulting generation, then commit it atomically.
+    ///
+    /// Atomic rename alone prevents torn reads but not lost updates when two
+    /// CLI processes both load the same generation. Every production jobs.yaml
+    /// mutation must use this helper so the scheduler's live reload observes a
+    /// complete, serialised generation. If `mutate` or validation fails, the
+    /// original file remains byte-for-byte untouched.
+    pub fn modify_at_path<T>(
+        path: &Path,
+        mutate: impl FnOnce(&mut JobsFile) -> Result<T>,
+    ) -> Result<T> {
+        let _process_guard = JOBS_RMW_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("jobs.yaml in-process lock poisoned"))?;
+        let lock_path = path.with_extension("yaml.lock");
+        let _file_guard = crate::util::locked_file::lock_file_blocking(&lock_path, "cron jobs")
+            .with_context(|| format!("lock jobs file {}", path.display()))?;
+
+        let mut jobs = if path.exists() {
+            let body = std::fs::read_to_string(path)
+                .with_context(|| format!("read jobs file {}", path.display()))?;
+            Self::from_yaml_str(&body)
+                .with_context(|| format!("load jobs file {}", path.display()))?
+        } else {
+            Self::empty()
+        };
+        let result = mutate(&mut jobs)?;
+        jobs.save_to_path(path)?;
+        Ok(result)
+    }
+
     /// Atomic YAML save via the shared fsync + rename primitive. On Unix the
     /// final file is chmoded 0600. HERMES-01
     pub fn save_to_path(&self, path: &Path) -> Result<()> {
@@ -549,6 +576,17 @@ impl Job {
         self.schedule
             .validate()
             .with_context(|| format!("invalid schedule on job `{}`", self.id))?;
+        if let Some(delivery) = &self.delivery {
+            if delivery.channel.trim().is_empty() {
+                anyhow::bail!("delivery.channel must not be empty");
+            }
+            if delivery.legacy_recipient.is_some() {
+                anyhow::bail!(
+                    "delivery.recipient is no longer supported; configure the operator-owned \
+                     destination in channel_routing.yaml and keep only delivery.channel"
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -618,7 +656,6 @@ jobs:
       Hi
     delivery:
       channel: telegram
-      recipient: "12345"
 "#;
         let f = JobsFile::from_yaml_str(yaml).unwrap();
         assert_eq!(f.version, 1);
@@ -724,7 +761,10 @@ jobs:
             id: id.to_string(),
             name: name.to_string(),
             enabled: true,
-            schedule: Schedule { cron: cron.to_string(), tz: None },
+            schedule: Schedule {
+                cron: cron.to_string(),
+                tz: None,
+            },
             prompt: prompt.to_string(),
             timeout_seconds: 600,
             delivery: None,
@@ -738,7 +778,10 @@ jobs:
             id: id.to_string(),
             name: id.to_string(),
             enabled: true,
-            schedule: Schedule { cron: "0 7 * * *".to_string(), tz: None },
+            schedule: Schedule {
+                cron: "0 7 * * *".to_string(),
+                tz: None,
+            },
             prompt: "do something meaningful please".to_string(),
             timeout_seconds: 600,
             delivery: None,
@@ -769,7 +812,10 @@ jobs:
     fn validate_rejects_empty_prompt() {
         let j = daily_job("x", "X", "0 7 * * *", "");
         let err = j.validate().unwrap_err();
-        assert!(err.to_string().contains("prompt must not be empty"), "{err}");
+        assert!(
+            err.to_string().contains("prompt must not be empty"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -809,75 +855,145 @@ jobs:
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
+    #[test]
+    fn locked_modify_serialises_concurrent_job_additions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::sync::Arc::new(dir.path().join("jobs.yaml"));
+        let mut threads = Vec::new();
+        for id in ["first", "second"] {
+            let path = std::sync::Arc::clone(&path);
+            threads.push(std::thread::spawn(move || {
+                JobsFile::modify_at_path(&path, |jobs| {
+                    jobs.jobs.push(daily_job(
+                        id,
+                        id,
+                        "0 7 * * *",
+                        "run the complete scheduled task",
+                    ));
+                    Ok(())
+                })
+                .unwrap();
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let body = std::fs::read_to_string(path.as_ref()).unwrap();
+        let jobs = JobsFile::from_yaml_str(&body).unwrap();
+        assert_eq!(jobs.jobs.len(), 2, "neither concurrent update may be lost");
+        assert!(jobs.jobs.iter().any(|job| job.id == "first"));
+        assert!(jobs.jobs.iter().any(|job| job.id == "second"));
+    }
+
+    #[test]
+    fn locked_modify_error_preserves_original_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.yaml");
+        let jobs = JobsFile {
+            version: 1,
+            jobs: vec![daily_job("valid", "Valid", "0 7 * * *", "valid prompt")],
+        };
+        jobs.save_to_path(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let error = JobsFile::modify_at_path(&path, |_jobs| -> Result<()> {
+            anyhow::bail!("refuse mutation")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("refuse mutation"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
     // ── CRON-A: JV-PRO-04 preflight() ────────────────────────────────────────
 
     #[test]
-    fn preflight_flags_recipient_without_channel() {
+    fn validation_rejects_empty_delivery_channel() {
         let mut j = daily_job("x", "X", "0 7 * * *", "do stuff do stuff");
         j.delivery = Some(Delivery {
             channel: "".to_string(),
-            recipient: Some("123".to_string()),
+            legacy_recipient: None,
         });
-        let warns = preflight(&j);
-        assert!(
-            warns.iter().any(|w| w.contains("channel is empty")),
-            "expected recipient-without-channel warning, got: {warns:?}"
-        );
+        let err = j.validate().unwrap_err();
+        assert!(err.to_string().contains("delivery.channel"));
     }
 
     #[test]
-    fn preflight_flags_telegram_without_recipient() {
+    fn validation_rejects_legacy_item_controlled_recipient() {
         let mut j = daily_job("x", "X", "0 7 * * *", "send news send news");
         j.delivery = Some(Delivery {
             channel: "telegram".to_string(),
-            recipient: None,
+            legacy_recipient: Some("123".to_string()),
         });
-        let warns = preflight(&j);
-        assert!(
-            warns.iter().any(|w| w.contains("recipient")),
-            "expected missing-recipient warning for telegram, got: {warns:?}"
-        );
+        let err = j.validate().unwrap_err();
+        assert!(err.to_string().contains("delivery.recipient"));
+        assert!(err.to_string().contains("channel_routing.yaml"));
     }
 
     #[test]
-    fn preflight_no_warnings_for_well_formed_job() {
-        let mut j = daily_job("x", "X", "0 7 * * *", "Summarise overnight tech news for the team.");
-        j.delivery = Some(Delivery {
-            channel: "telegram".to_string(),
-            recipient: Some("99999".to_string()),
-        });
+    fn channel_only_delivery_is_valid_and_has_no_delivery_warning() {
+        let mut j = daily_job(
+            "x",
+            "X",
+            "0 7 * * *",
+            "Summarise overnight tech news for the team.",
+        );
+        j.delivery = Some(Delivery::new("telegram"));
+        j.validate().unwrap();
         let warns = preflight(&j);
-        // May have no warnings (timeout/prompt ok, schedule daily)
         let delivery_warns: Vec<_> = warns
             .iter()
             .filter(|w| w.contains("recipient") || w.contains("channel"))
             .collect();
-        assert!(delivery_warns.is_empty(), "unexpected delivery warnings: {delivery_warns:?}");
+        assert!(
+            delivery_warns.is_empty(),
+            "unexpected delivery warnings: {delivery_warns:?}"
+        );
     }
 
     // ── CRON-A: JV-PRO-05 classify_role() ────────────────────────────────────
 
     #[test]
     fn classify_role_morning_briefing() {
-        let j = daily_job("mb", "Morning Briefing", "0 7 * * *", "Summarise overnight events.");
+        let j = daily_job(
+            "mb",
+            "Morning Briefing",
+            "0 7 * * *",
+            "Summarise overnight events.",
+        );
         assert_eq!(classify_role(&j), CronRole::Briefing);
     }
 
     #[test]
     fn classify_role_monitor_disk() {
-        let j = daily_job("md", "Monitor disk usage", "*/5 * * * *", "Check disk usage and alert if above 80%.");
+        let j = daily_job(
+            "md",
+            "Monitor disk usage",
+            "*/5 * * * *",
+            "Check disk usage and alert if above 80%.",
+        );
         assert_eq!(classify_role(&j), CronRole::Monitor);
     }
 
     #[test]
     fn classify_role_research() {
-        let j = daily_job("ar", "Arxiv Scanner", "0 9 * * *", "Research new papers on arxiv LLM.");
+        let j = daily_job(
+            "ar",
+            "Arxiv Scanner",
+            "0 9 * * *",
+            "Research new papers on arxiv LLM.",
+        );
         assert_eq!(classify_role(&j), CronRole::Research);
     }
 
     #[test]
     fn classify_role_other_fallback() {
-        let j = daily_job("zz", "Zap Widget", "0 1 * * *", "Do some totally unique thing.");
+        let j = daily_job(
+            "zz",
+            "Zap Widget",
+            "0 1 * * *",
+            "Do some totally unique thing.",
+        );
         assert_eq!(classify_role(&j), CronRole::Other);
     }
 
@@ -886,7 +1002,10 @@ jobs:
     #[test]
     fn schedule_collides_detects_same_minute() {
         let existing = daily_job("existing", "Existing", "0 7 * * *", "hi there hello world");
-        let new_sched = Schedule { cron: "0 7 * * *".to_string(), tz: None };
+        let new_sched = Schedule {
+            cron: "0 7 * * *".to_string(),
+            tz: None,
+        };
         let collisions = schedule_collides(&new_sched, &[existing], 48);
         assert!(
             !collisions.is_empty(),
@@ -898,7 +1017,10 @@ jobs:
     fn schedule_collides_no_collision_for_staggered() {
         let existing = daily_job("existing", "Existing", "0 7 * * *", "hi there hello world");
         // 5 minutes offset
-        let new_sched = Schedule { cron: "5 7 * * *".to_string(), tz: None };
+        let new_sched = Schedule {
+            cron: "5 7 * * *".to_string(),
+            tz: None,
+        };
         let collisions = schedule_collides(&new_sched, &[existing], 48);
         assert!(
             collisions.is_empty(),
@@ -918,7 +1040,11 @@ jobs:
         ];
         let order = topo_order(&jobs).expect("linear chain is acyclic");
         // a before b, b before c
-        let pos: HashMap<&str, usize> = order.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+        let pos: HashMap<&str, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
         assert!(pos["a"] < pos["b"], "a must come before b");
         assert!(pos["b"] < pos["c"], "b must come before c");
     }
@@ -933,7 +1059,11 @@ jobs:
             dep_job("d", &["b", "c"]),
         ];
         let order = topo_order(&jobs).expect("diamond is acyclic");
-        let pos: HashMap<&str, usize> = order.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+        let pos: HashMap<&str, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
         assert!(pos["a"] < pos["b"]);
         assert!(pos["a"] < pos["c"]);
         assert!(pos["b"] < pos["d"]);
@@ -985,7 +1115,10 @@ jobs:
         let mut last_run: HashMap<String, DateTime<Utc>> = HashMap::new();
         last_run.insert("a".to_string(), now - Duration::hours(1));
         let ready = ready_jobs(&jobs, &completed, now, &last_run, Duration::hours(4));
-        assert!(ready.contains(&"b".to_string()), "b should be ready; got {ready:?}");
+        assert!(
+            ready.contains(&"b".to_string()),
+            "b should be ready; got {ready:?}"
+        );
     }
 
     #[test]
@@ -998,7 +1131,10 @@ jobs:
         let mut last_run: HashMap<String, DateTime<Utc>> = HashMap::new();
         last_run.insert("a".to_string(), now - Duration::hours(5));
         let ready = ready_jobs(&jobs, &completed, now, &last_run, Duration::hours(4));
-        assert!(!ready.contains(&"b".to_string()), "b must not be ready with stale dep; got {ready:?}");
+        assert!(
+            !ready.contains(&"b".to_string()),
+            "b must not be ready with stale dep; got {ready:?}"
+        );
     }
 
     #[test]
@@ -1009,6 +1145,9 @@ jobs:
         let last_run: HashMap<String, DateTime<Utc>> = HashMap::new();
         let now = Utc::now();
         let ready = ready_jobs(&jobs, &completed, now, &last_run, Duration::hours(4));
-        assert!(!ready.contains(&"b".to_string()), "b must not be ready when a is incomplete");
+        assert!(
+            !ready.contains(&"b".to_string()),
+            "b must not be ready when a is incomplete"
+        );
     }
 }

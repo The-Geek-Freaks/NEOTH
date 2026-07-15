@@ -100,12 +100,7 @@ async fn run_refresh(
     stale_only: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    let yaml = home.join("freedom.yaml");
-    let config = if yaml.exists() {
-        FreedomConfig::load_from_path(&yaml).unwrap_or_default()
-    } else {
-        FreedomConfig::default()
-    };
+    let config = FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
 
     if stale_only {
         let existing = ModelsCatalog::load_from(path);

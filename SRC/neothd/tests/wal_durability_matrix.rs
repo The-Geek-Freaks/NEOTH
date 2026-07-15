@@ -35,12 +35,14 @@ use neothd::memory::store;
 use neothd::wal::builder::make_header;
 use neothd::wal::events::EVENT_TYPE_RAW_TEXT;
 use neothd::wal::frame::encode_frame;
-use neothd::wal::recovery::{scan_tail, ScanResult};
+use neothd::wal::recovery::{ScanResult, scan_tail};
 use neothd::wal::segment_header::SegmentHeader;
 
 /// The canonical segment prelude these tests share.
 fn prelude(seq: u64) -> Vec<u8> {
-    SegmentHeader::new(0, seq, 0, 0, [0u8; 16]).to_le_bytes().to_vec()
+    SegmentHeader::new(0, seq, 0, 0, [0u8; 16])
+        .to_le_bytes()
+        .to_vec()
 }
 
 /// One canonical CRC-valid RAW_TEXT frame. A 1µs gap keeps consecutive
@@ -98,9 +100,18 @@ async fn torn_final_frame_recovers_complete_prefix_then_resumes() {
 
     // scan_tail flags the tear exactly at the good-prefix boundary.
     match scan_tail(&torn) {
-        ScanResult::TornAt { good_through: g, torn_at } => {
-            assert_eq!(g, good_through, "good_through = end of the last complete frame");
-            assert_eq!(torn_at, good_through, "tear begins where the half-frame starts");
+        ScanResult::TornAt {
+            good_through: g,
+            torn_at,
+        } => {
+            assert_eq!(
+                g, good_through,
+                "good_through = end of the last complete frame"
+            );
+            assert_eq!(
+                torn_at, good_through,
+                "tear begins where the half-frame starts"
+            );
         }
         other => panic!("expected TornAt, got {other:?}"),
     }
@@ -123,7 +134,9 @@ async fn torn_final_frame_recovers_complete_prefix_then_resumes() {
     std::fs::write(&seg, &completed).unwrap();
     assert_eq!(
         scan_tail(&completed),
-        ScanResult::Clean { through: completed.len() as u64 },
+        ScanResult::Clean {
+            through: completed.len() as u64
+        },
         "segment is clean once the frame is fully written"
     );
     let n2 = replay_all_segments(&mut conn, &seg).await.unwrap();
@@ -156,7 +169,10 @@ async fn crc_corrupt_mid_frame_halts_replay_at_good_prefix() {
     // scan_tail reports the tear at frame 2's boundary (frame 1 is the good prefix).
     match scan_tail(&bytes) {
         ScanResult::TornAt { good_through, .. } => {
-            assert_eq!(good_through, f2_start as u64, "good prefix ends at frame 2's start");
+            assert_eq!(
+                good_through, f2_start as u64,
+                "good prefix ends at frame 2's start"
+            );
         }
         other => panic!("expected TornAt at the corrupt frame, got {other:?}"),
     }

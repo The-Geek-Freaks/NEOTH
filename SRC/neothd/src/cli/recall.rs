@@ -107,6 +107,13 @@ pub struct RecallArgs {
     #[arg(long, value_name = "EVENT_ID", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify"])]
     pub downvote: Option<i64>,
 
+    /// GOLD-ADAPT-JV-MEM-08 — explicit operator positive feedback: reinforce
+    /// this memory and mark every existing association touching it successful.
+    /// Bypasses search. Unlike ordinary recall, merely showing a result is not
+    /// treated as proof that it was useful.
+    #[arg(long, value_name = "EVENT_ID", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard", "hubs", "communities", "transcript"])]
+    pub upvote: Option<i64>,
+
     /// GOLD-ADAPT-MEM-06 — knowledge-graph query: print the entities reachable
     /// from this entity name within `--graph-depth` hops (BFS over the
     /// extracted entity/relation graph). Bypasses search.
@@ -179,6 +186,78 @@ pub struct RecallArgs {
 /// reinforcement records (event_id + frame) to audit on the async side.
 type RecallTaskOutput = (Vec<EpisodeHit>, Vec<(i64, ReinforceFrame)>);
 
+async fn apply_operator_memory_feedback(
+    db_override: Option<&Path>,
+    event_id: i64,
+    success: bool,
+    output: crate::cli::OutputFormat,
+) -> Result<()> {
+    let db_path = db_override
+        .map(Path::to_path_buf)
+        .unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path).context("open views.db")?;
+    let now_ns = crate::time::now_unix_ns();
+    let outcome = if success {
+        tiers::hebbian_reinforce_across_tiers(&conn, event_id, now_ns)?
+    } else {
+        tiers::hebbian_weaken_across_tiers(&conn, event_id, tiers::HEBBIAN_HARMFUL_PENALTY, now_ns)?
+    };
+    let edge_feedback_count = if outcome.is_some() {
+        crate::memory::assoc_graph::record_event_feedback(&conn, event_id, success)
+            .context("record association-edge feedback")?
+    } else {
+        0
+    };
+
+    if let Some(outcome) = outcome {
+        emit_reinforce_audit_frames(&[(
+            event_id,
+            ReinforceFrame {
+                tier: outcome.tier.as_str().to_string(),
+                old: outcome.old,
+                new: outcome.new,
+            },
+        )])
+        .await;
+        match output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({
+                    "event_id": event_id,
+                    "feedback": if success { "useful" } else { "harmful" },
+                    "found": true,
+                    "tier": outcome.tier.as_str(),
+                    "old": outcome.old,
+                    "new": outcome.new,
+                    "association_edges_updated": edge_feedback_count,
+                })
+            ),
+            crate::cli::OutputFormat::Table => println!(
+                "{} event {event_id}: importance {:.3} → {:.3} ({}, {} association edge(s) updated)",
+                if success { "upvoted" } else { "downvoted" },
+                outcome.old,
+                outcome.new,
+                outcome.tier.as_str(),
+                edge_feedback_count,
+            ),
+        }
+    } else {
+        match output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({
+                    "event_id": event_id,
+                    "feedback": if success { "useful" } else { "harmful" },
+                    "found": false,
+                    "association_edges_updated": 0,
+                })
+            ),
+            crate::cli::OutputFormat::Table => println!("no memory found for event {event_id}"),
+        }
+    }
+    Ok(())
+}
+
 pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // QM-18 citation-check short-circuit. No DB, no WAL, no network —
     // pure offline audit against the supplied text. `--citation-check -`
@@ -198,10 +277,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     if args.session_folders {
         let home = FreedomConfig::default_neoth_home();
         let cards = crate::memory::hindsight::list_cards(&home);
-        print!(
-            "{}",
-            crate::daemon::session_sort_cron::folders_view(&cards)
-        );
+        print!("{}", crate::daemon::session_sort_cron::folders_view(&cards));
         return Ok(());
     }
 
@@ -235,6 +311,15 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         // attributes head the result.
         let head = crate::memory::entities::get_entity(&conn, &entity)?;
         let neighbors = crate::memory::entities::get_neighbors(&conn, &entity, args.graph_depth)?;
+        let attributes = head
+            .as_ref()
+            .map(|entity| {
+                serde_json::from_str::<serde_json::Value>(&entity.attributes).with_context(|| {
+                    format!("parse persisted attributes for entity `{}`", entity.name)
+                })
+            })
+            .transpose()?
+            .unwrap_or_else(|| serde_json::json!({}));
         match args.output {
             crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
                 let rows: Vec<_> = neighbors
@@ -248,10 +333,6 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                         })
                     })
                     .collect();
-                let attributes: serde_json::Value = head
-                    .as_ref()
-                    .and_then(|e| serde_json::from_str(&e.attributes).ok())
-                    .unwrap_or_else(|| serde_json::json!({}));
                 println!(
                     "{}",
                     serde_json::json!({
@@ -265,7 +346,9 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             crate::cli::OutputFormat::Table => {
                 if let Some(e) = &head {
                     let attrs: std::collections::BTreeMap<String, String> =
-                        serde_json::from_str(&e.attributes).unwrap_or_default();
+                        serde_json::from_value(attributes.clone()).with_context(|| {
+                            format!("decode persisted attributes for entity `{}`", e.name)
+                        })?;
                     let attr_str = if attrs.is_empty() {
                         String::new()
                     } else {
@@ -310,12 +393,19 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         let provider = crate::providers::from_config(&config)
             .await
             .context("build provider for entity extraction")?;
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            provider,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+                config.autonomy_policy(),
+            )?,
+            config.provider_model.clone(),
+            "recall.entity_extract",
+        );
         let db_path = args.db.clone().unwrap_or_else(store::default_path);
         let conn = store::open(&db_path).context("open views.db")?;
         let now_unix = crate::time::now_unix_i64();
         let (ents, rels) =
-            crate::memory::entities::extract_and_persist(&conn, &text, provider.as_ref(), now_unix)
-                .await?;
+            crate::memory::entities::extract_and_persist(&conn, &text, &provider, now_unix).await?;
         match args.output {
             crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
                 println!(
@@ -330,42 +420,17 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         return Ok(());
     }
 
-    // GOLD-ADAPT-MEM-08 operator downvote short-circuit — weaken one memory's
-    // importance, no search.
+    // GOLD-ADAPT-JV-MEM-08 explicit operator feedback. Ordinary recall still
+    // reinforces co-access/importance, but it is not falsely counted as an
+    // outcome success. Only these explicit controls update the edge feedback
+    // counters.
+    if let Some(event_id) = args.upvote {
+        return apply_operator_memory_feedback(args.db.as_deref(), event_id, true, args.output)
+            .await;
+    }
     if let Some(event_id) = args.downvote {
-        let db_path = args.db.clone().unwrap_or_else(store::default_path);
-        let conn = store::open(&db_path).context("open views.db")?;
-        let now_ns = crate::time::now_unix_ns();
-        let outcome = crate::memory::tiers::hebbian_weaken_across_tiers(
-            &conn,
-            event_id,
-            crate::memory::tiers::HEBBIAN_HARMFUL_PENALTY,
-            now_ns,
-        )?;
-        match (outcome, args.output) {
-            (Some(o), crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl) => {
-                println!(
-                    "{}",
-                    serde_json::json!({ "event_id": event_id, "tier": o.tier.as_str(), "old": o.old, "new": o.new })
-                );
-            }
-            (Some(o), crate::cli::OutputFormat::Table) => println!(
-                "downvoted event {event_id}: importance {:.3} → {:.3} ({})",
-                o.old,
-                o.new,
-                o.tier.as_str()
-            ),
-            (None, crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl) => {
-                println!(
-                    "{}",
-                    serde_json::json!({ "event_id": event_id, "found": false })
-                );
-            }
-            (None, crate::cli::OutputFormat::Table) => {
-                println!("no memory found for event {event_id}")
-            }
-        }
-        return Ok(());
+        return apply_operator_memory_feedback(args.db.as_deref(), event_id, false, args.output)
+            .await;
     }
 
     // GOLD-ADAPT-MEM-07 — co-access association query short-circuit.
@@ -455,7 +520,9 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             }
             crate::cli::OutputFormat::Table => {
                 if hubs.is_empty() {
-                    println!("no association links found (run `neoth recall --bootstrap-assoc` to seed)");
+                    println!(
+                        "no association links found (run `neoth recall --bootstrap-assoc` to seed)"
+                    );
                 } else {
                     println!("top {} memory hub(s) by association degree:", hubs.len());
                     for (id, deg) in &hubs {
@@ -607,7 +674,15 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 episodic_lane.reserve(warm.len() + cold.len());
                 episodic_lane.extend(warm);
                 episodic_lane.extend(cold);
-                rank_in_place(&mut episodic_lane, now_ns);
+                let graph_degrees: std::collections::HashMap<i64, u32> = episodic_lane
+                    .iter()
+                    .filter_map(|hit| {
+                        crate::memory::assoc_graph::event_degree(&conn, hit.event_id)
+                            .ok()
+                            .map(|degree| (hit.event_id, degree))
+                    })
+                    .collect();
+                rank_in_place_with_degrees(&mut episodic_lane, now_ns, &graph_degrees);
             }
 
             let gt_rows = recall_groundtruth_like(&conn, &query, limit)?;
@@ -627,32 +702,11 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                     hits: episodic_lane,
                 });
             }
-            let fused = crate::memory::recall_lanes::fuse_lanes(&lanes, limit);
-
-            // GOLD-ADAPT-GRAPH-03 — Stage-3 community boost: float hits that
-            // share the plurality Louvain community (refreshed by decay_task into
-            // idx_memory_communities) to the front. Best-effort: a load failure
-            // or empty table leaves the RRF order unchanged.
-            let fused = {
-                let mut community_map: std::collections::HashMap<i64, i64> =
-                    std::collections::HashMap::new();
-                if let Ok(mut stmt) =
-                    conn.prepare("SELECT node_id, community_id FROM idx_memory_communities")
-                {
-                    if let Ok(mapped) =
-                        stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
-                    {
-                        for (node_id, community_id) in mapped.flatten() {
-                            community_map.insert(node_id, community_id);
-                        }
-                    }
-                }
-                if community_map.is_empty() {
-                    fused
-                } else {
-                    crate::memory::recall_lanes::boost_by_community(fused, &community_map)
-                }
-            };
+            let fused = apply_community_stage(
+                &conn,
+                crate::memory::recall_lanes::fuse_lanes_scored(&lanes, limit),
+                limit,
+            );
 
             let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + fused.len());
             rows.extend(gt_rows);
@@ -778,14 +832,14 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // prints nothing, so the default flat-recall output is unchanged.
     append_graph_facts(&db_path, &args.query, args.output);
 
-    // GOLD-ADAPT-MEM-07 — co-access association (additive, never re-ranks):
+    // GOLD-ADAPT-MEM-07 — co-access association:
     //   (a) reinforce links among the top-K episodic results (these memories
     //       were surfaced together for one query — "fired together, wired
     //       together"), and
-    //   (b) record positive feedback for every recalled pair — returning results
-    //       to the operator IS the downstream usage event (GOLD-ADAPT-JV-MEM-08),
-    //   (c) append the 1-hop neighbourhood as a [ASSOCIATED MEMORIES] block.
-    // All best-effort. The flat-recall output + ranking above are untouched.
+    //   (b) append the 1-hop neighbourhood as a [ASSOCIATED MEMORIES] block.
+    // Outcome feedback is intentionally NOT inferred from exposure: only
+    // explicit `--upvote`/`--downvote` updates success/failure counters.
+    // All best-effort. The flat-recall output remains available unchanged.
     const ASSOC_TOP_K: usize = 6;
     let episodic_ids: Vec<i64> = rows
         .iter()
@@ -801,51 +855,11 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             {
                 tracing::debug!(error = %e, "assoc_graph: co-access reinforce failed (non-fatal)");
             }
-            // GOLD-ADAPT-JV-MEM-08 — record positive feedback for every pair that
-            // was co-recalled and returned to the operator. Surfacing results together
-            // is a downstream usage signal: each pair that made it into the top-K
-            // proved useful enough to show, so increment `feedback_success`.
-            // Best-effort: a failure here must never fail or re-rank the recall.
-            reinforce_link_feedback(&conn, &episodic_ids);
         }
     }
     append_assoc_facts(&db_path, &episodic_ids, args.output);
 
     Ok(())
-}
-
-/// GOLD-ADAPT-JV-MEM-08 — record positive `feedback_success` for every
-/// unordered pair in `recalled_ids`.
-///
-/// Called immediately after `reinforce_co_access` in the main recall path:
-/// returning a result set to the operator is the downstream usage signal that
-/// the pair proved useful.  Only increments counters on **existing** link rows
-/// (links are always created by `reinforce_co_access` first); a missing row is
-/// silently skipped.  All errors are suppressed — this must never fail or
-/// re-rank the recall output.
-fn reinforce_link_feedback(conn: &rusqlite::Connection, recalled_ids: &[i64]) {
-    if recalled_ids.len() < 2 {
-        return;
-    }
-    for i in 0..recalled_ids.len() {
-        for j in (i + 1)..recalled_ids.len() {
-            let a = recalled_ids[i];
-            let b = recalled_ids[j];
-            if a == b {
-                continue;
-            }
-            if let Err(e) =
-                crate::memory::assoc_graph::record_link_feedback(conn, a, b, true)
-            {
-                tracing::debug!(
-                    error = %e,
-                    a_id = a,
-                    b_id = b,
-                    "assoc_graph: record_link_feedback failed (non-fatal)"
-                );
-            }
-        }
-    }
 }
 
 /// GOLD-ADAPT-MEM-07 Stage-4 — additive: append the 1-hop co-access
@@ -1021,11 +1035,30 @@ fn render_scorecard(
 
 /// Sort recall hits by composite ranking score, descending. Stable order so
 /// ties fall back to the tier-local SQL ordering (ts_ns DESC / importance DESC).
+#[cfg(test)]
 fn rank_in_place(rows: &mut [EpisodeHit], now_ns: u64) {
+    rank_in_place_with_degrees(rows, now_ns, &std::collections::HashMap::new());
+}
+
+fn rank_in_place_with_degrees(
+    rows: &mut [EpisodeHit],
+    now_ns: u64,
+    graph_degrees: &std::collections::HashMap<i64, u32>,
+) {
     const NS_PER_DAY: f64 = 86_400.0 * 1_000_000_000.0;
     rows.sort_by(|a, b| {
-        let score_a = composite_score(a, now_ns, NS_PER_DAY);
-        let score_b = composite_score(b, now_ns, NS_PER_DAY);
+        let score_a = composite_score_with_degree(
+            a,
+            now_ns,
+            NS_PER_DAY,
+            graph_degrees.get(&a.event_id).copied().unwrap_or(0),
+        );
+        let score_b = composite_score_with_degree(
+            b,
+            now_ns,
+            NS_PER_DAY,
+            graph_degrees.get(&b.event_id).copied().unwrap_or(0),
+        );
         // Reverse compare for descending order. NaN treated as smallest.
         score_b
             .partial_cmp(&score_a)
@@ -1033,7 +1066,17 @@ fn rank_in_place(rows: &mut [EpisodeHit], now_ns: u64) {
     });
 }
 
+#[cfg(test)]
 fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
+    composite_score_with_degree(h, now_ns, ns_per_day, 0)
+}
+
+fn composite_score_with_degree(
+    h: &EpisodeHit,
+    now_ns: u64,
+    ns_per_day: f64,
+    graph_degree: u32,
+) -> f64 {
     let age_tier = match h.tier.as_str() {
         "warm" => tiers::Tier::Warm,
         "cold" => tiers::Tier::Cold,
@@ -1076,7 +1119,15 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
     const LEN_ANCHOR_CHARS: f64 = 300.0;
     let ratio = (h.text.chars().count() as f64 / LEN_ANCHOR_CHARS).max(1.0);
     let length_norm = 1.0 / (1.0 + ratio.log2());
-    base * length_norm
+    let base = base * length_norm;
+    // JV-MEM-08: bounded out-degree component. `ln(1 + degree)` rewards real
+    // hubs without letting a densely-connected import swamp textual relevance;
+    // the factor saturates at +10% once degree reaches 32.
+    const DEGREE_SATURATION: f64 = 32.0;
+    const MAX_DEGREE_BOOST: f64 = 0.10;
+    let degree_ratio =
+        (graph_degree as f64).ln_1p().min(DEGREE_SATURATION.ln_1p()) / DEGREE_SATURATION.ln_1p();
+    base * (1.0 + MAX_DEGREE_BOOST * degree_ratio)
 }
 
 /// FTS5 path. Uses MATCH with the raw query — FTS5 supports prefix (`foo*`),
@@ -1107,8 +1158,9 @@ fn recall_fts(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Episod
 /// reply is the formatted hits, or a localized "nothing found" line when
 /// memory has no match); `None` when it's a normal prompt that should
 /// fall through to the provider. Best-effort on the DB: any open/query
-/// error → empty hits → "nothing found", never an `Err` — a recall miss
-/// must not break the chat turn.
+/// error → "nothing found", never an `Err` to the caller. Only a successful,
+/// empty query emits the optional Babel true-miss signal; DB/worker failures
+/// are explicitly not misclassified as misses.
 pub(crate) async fn answer_conversational_recall(prompt: &str, db_path: &Path) -> Option<String> {
     let query = crate::recall::conversational::detect_recall_intent(prompt)?;
     const RECALL_LIMIT: usize = 5;
@@ -1118,11 +1170,28 @@ pub(crate) async fn answer_conversational_recall(prompt: &str, db_path: &Path) -
     // best-effort contract.
     let db_owned = db_path.to_path_buf();
     let topic = query.topic.clone();
-    let hits = tokio::task::spawn_blocking(move || {
-        recall_episodes_best_effort(&db_owned, &topic, RECALL_LIMIT)
+    let hits = match tokio::task::spawn_blocking(move || {
+        recall_episodes_checked(&db_owned, &topic, RECALL_LIMIT)
     })
     .await
-    .unwrap_or_default();
+    {
+        Ok(Ok(hits)) => {
+            if hits.is_empty() {
+                crate::analytics::babel::signals::emit(
+                    crate::analytics::babel::signals::SignalKind::MemoryRecallMiss,
+                );
+            }
+            hits
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(error = %error, "conversational recall failed; not counted as a miss");
+            Vec::new()
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "conversational recall worker failed; not counted as a miss");
+            Vec::new()
+        }
+    };
     Some(crate::recall::conversational::format_recall_reply(
         &hits,
         query.language,
@@ -1160,23 +1229,16 @@ pub(crate) fn channel_recall_authorized(
 
 /// Hot-tier episode search for [`answer_conversational_recall`]: FTS5
 /// first, LIKE fallback (mirrors the main recall path's hot-tier query).
-/// Best-effort — a missing DB or any query error yields an empty Vec so
-/// the caller renders the localized "nothing found" reply instead of
-/// failing the chat turn.
-fn recall_episodes_best_effort(db_path: &Path, topic: &str, limit: usize) -> Vec<EpisodeHit> {
+/// Error-preserving search used to distinguish a real empty result from an
+/// unavailable/corrupt store before emitting telemetry.
+fn recall_episodes_checked(db_path: &Path, topic: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
     if !db_path.exists() {
-        return Vec::new();
+        anyhow::bail!("views.db does not exist");
     }
-    let conn = match store::open(db_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(error = %e, "conversational recall: views.db open failed; empty hits");
-            return Vec::new();
-        }
-    };
+    let conn = store::open(db_path)?;
     match recall_fts(&conn, topic, limit) {
-        Ok(hits) if !hits.is_empty() => hits,
-        _ => recall_like(&conn, topic, limit).unwrap_or_default(),
+        Ok(hits) if !hits.is_empty() => Ok(hits),
+        _ => recall_like(&conn, topic, limit),
     }
 }
 
@@ -1258,6 +1320,158 @@ fn recall_cold_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
                 importance: Some(r.get::<_, f64>(4)?),
                 access_count: r.get::<_, i64>(5)? as u32,
                 trust: 1,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// GRAPH-03 Stage-3 production seam shared by explicit `neoth recall` and the
+/// Chat/Channel Block-D path. Only assignments for the already-ranked seed hits
+/// are queried; after plurality selection, one bounded query loads members of
+/// that community. A missing/old schema degrades to the original ranking.
+fn apply_community_stage(
+    conn: &Connection,
+    scored: Vec<crate::memory::recall_lanes::ScoredHit>,
+    limit: usize,
+) -> Vec<EpisodeHit> {
+    if scored.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let mut community_map = match load_community_assignments_for_hits(conn, &scored) {
+        Ok(assignments) => assignments,
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                "recall: scoped community assignment load failed (non-fatal)"
+            );
+            return scored.into_iter().map(|scored| scored.hit).collect();
+        }
+    };
+    let Some(community_id) =
+        crate::memory::recall_lanes::plurality_community_id(&scored, &community_map)
+    else {
+        return scored.into_iter().map(|scored| scored.hit).collect();
+    };
+
+    // The first `limit` rows may include the already-ranked representatives.
+    // Fetch one additional result window so expansion can still fill a bounded
+    // page after event-id/text-hash deduplication.
+    let candidate_limit = limit.saturating_add(scored.len());
+    let community_candidates = match load_community_members(conn, community_id, candidate_limit) {
+        Ok(members) => members,
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                community_id,
+                "recall: community expansion load failed (non-fatal)"
+            );
+            Vec::new()
+        }
+    };
+    for candidate in &community_candidates {
+        community_map.insert(candidate.event_id, community_id);
+    }
+
+    crate::memory::recall_lanes::expand_and_boost_by_community(
+        scored,
+        community_candidates,
+        &community_map,
+        limit,
+    )
+}
+
+fn load_community_assignments_for_hits(
+    conn: &Connection,
+    hits: &[crate::memory::recall_lanes::ScoredHit],
+) -> Result<std::collections::HashMap<i64, i64>> {
+    const SQLITE_ID_CHUNK: usize = 400;
+
+    let ids: std::collections::BTreeSet<i64> =
+        hits.iter().map(|scored| scored.hit.event_id).collect();
+    let ids: Vec<i64> = ids.into_iter().collect();
+    let mut assignments = std::collections::HashMap::with_capacity(ids.len());
+    for chunk in ids.chunks(SQLITE_ID_CHUNK) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT node_id, community_id FROM idx_memory_communities \
+             WHERE node_id IN ({placeholders}) ORDER BY node_id ASC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (node_id, community_id) = row?;
+            assignments.insert(node_id, community_id);
+        }
+    }
+    Ok(assignments)
+}
+
+/// GRAPH-03 Stage-3 expansion candidates for one persisted Louvain community.
+///
+/// Community assignments use the original positive WAL event id, so warm
+/// summary rows (`event_id IS NULL`) cannot participate. The UNION covers the
+/// same hot/warm/cold stores as normal recall and returns a deterministic,
+/// bounded candidate set. Stage-3 performs the final event-id/text-hash dedup.
+fn load_community_members(
+    conn: &Connection,
+    community_id: i64,
+    limit: usize,
+) -> Result<Vec<EpisodeHit>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT event_id, event_type, ts_ns, text, text_hash, channel, sender_id, \
+                operator_id, tier, importance, access_count, trust \
+         FROM ( \
+             SELECT e.event_id, e.event_type, e.ts_ns, e.text, e.text_hash, \
+                    e.channel, e.sender_id, e.operator_id, 'hot' AS tier, \
+                    e.importance, e.access_count, e.trust, 0 AS tier_order \
+             FROM idx_memory_communities c \
+             JOIN idx_episode e ON e.event_id = c.node_id \
+             WHERE c.community_id = ?1 \
+             UNION ALL \
+             SELECT w.event_id, 0 AS event_type, w.consolidated_ts AS ts_ns, \
+                    w.text, w.text_hash, NULL AS channel, NULL AS sender_id, \
+                    NULL AS operator_id, 'warm' AS tier, w.importance, \
+                    w.access_count, 1 AS trust, 1 AS tier_order \
+             FROM idx_memory_communities c \
+             JOIN idx_consolidated w ON w.event_id = c.node_id \
+             WHERE c.community_id = ?1 \
+             UNION ALL \
+             SELECT l.event_id, 0 AS event_type, l.promoted_ts AS ts_ns, \
+                    l.text, l.text_hash, NULL AS channel, NULL AS sender_id, \
+                    NULL AS operator_id, 'cold' AS tier, l.importance, \
+                    l.access_count, 1 AS trust, 2 AS tier_order \
+             FROM idx_memory_communities c \
+             JOIN idx_longterm l ON l.event_id = c.node_id \
+             WHERE c.community_id = ?1 \
+         ) \
+         ORDER BY event_id ASC, tier_order ASC, text_hash ASC \
+         LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![community_id, limit as i64], |r| {
+            Ok(EpisodeHit {
+                event_id: r.get(0)?,
+                event_type: r.get::<_, i64>(1)? as u8,
+                ts_ns: r.get(2)?,
+                text: r.get(3)?,
+                text_hash: r.get(4)?,
+                channel: r.get(5)?,
+                sender_id: r.get(6)?,
+                operator_id: r.get(7)?,
+                tier: r.get(8)?,
+                importance: Some(r.get::<_, f64>(9)?),
+                access_count: r.get::<_, i64>(10)? as u32,
+                trust: r.get::<_, i64>(11)? as u8,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1368,8 +1582,13 @@ pub(crate) fn query_three_lanes(
     limit: usize,
 ) -> RecallOutput {
     let canonical = recall_groundtruth_like(conn, prompt, limit).unwrap_or_default();
-    let episodes = crate::memory::region_router::run_routed_recall(conn, plan, prompt, limit)
+    let episode_hits = crate::memory::region_router::run_routed_recall(conn, plan, prompt, limit)
         .unwrap_or_default();
+    let episodes = apply_community_stage(
+        conn,
+        crate::memory::recall_lanes::score_ranked_hits(episode_hits),
+        limit,
+    );
     let contradictions =
         recall_pending_contradictions(conn, prompt, CONTRADICTION_LANE_LIMIT).unwrap_or_default();
     RecallOutput {
@@ -1377,6 +1596,30 @@ pub(crate) fn query_three_lanes(
         episodes,
         contradictions,
     }
+}
+
+/// Error-preserving variant for telemetry-sensitive callers. A "true miss"
+/// is only observable when all three queries succeeded and returned empty;
+/// collapsing a SQLite error into an empty lane would fabricate that signal.
+pub(crate) fn query_three_lanes_checked(
+    conn: &Connection,
+    plan: &crate::memory::region_router::RouterPlan,
+    prompt: &str,
+    limit: usize,
+) -> Result<RecallOutput> {
+    let canonical = recall_groundtruth_like(conn, prompt, limit)?;
+    let episode_hits = crate::memory::region_router::run_routed_recall(conn, plan, prompt, limit)?;
+    let episodes = apply_community_stage(
+        conn,
+        crate::memory::recall_lanes::score_ranked_hits(episode_hits),
+        limit,
+    );
+    let contradictions = recall_pending_contradictions(conn, prompt, CONTRADICTION_LANE_LIMIT)?;
+    Ok(RecallOutput {
+        canonical,
+        episodes,
+        contradictions,
+    })
 }
 
 /// Prompt-relevant PENDING contradictions, joined to both facts' statement text.
@@ -1491,7 +1734,10 @@ fn run_transcript_search(
                 for b in &r.before {
                     println!("  ^ [{}] {}: {}", b.role, b.ts_unix, b.text);
                 }
-                println!("  * [{}] {}: {}", r.matched.role, r.matched.ts_unix, r.matched.text);
+                println!(
+                    "  * [{}] {}: {}",
+                    r.matched.role, r.matched.ts_unix, r.matched.text
+                );
                 for a in &r.after {
                     println!("  v [{}] {}: {}", a.role, a.ts_unix, a.text);
                 }
@@ -1621,17 +1867,17 @@ async fn run_citation_check(arg: &str, output: crate::cli::OutputFormat) -> Resu
 }
 
 /// GOLD-WIRE-07 — resolve the HNSW snapshot path when the operator opted into
-/// `memory.vector_index.backend: hnsw`, else `None` (brute-force). Best-effort:
-/// a missing/unparseable freedom.yaml falls back to brute-force (the safe
-/// default), so recall never errors on a config problem.
-fn configured_hnsw_path() -> Option<std::path::PathBuf> {
-    let cfg = crate::config::FreedomConfig::load_from_default_path().ok()?;
-    match cfg.memory.vector_index.backend {
+/// `memory.vector_index.backend: hnsw`, else `None` (brute-force). Missing
+/// config uses the compiled brute-force default; malformed existing policy is
+/// surfaced rather than silently changing the selected index backend.
+fn configured_hnsw_path() -> Result<Option<std::path::PathBuf>> {
+    let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    Ok(match cfg.memory.vector_index.backend {
         crate::config::VectorBackend::Hnsw => Some(crate::memory::embeddings::hnsw_snapshot_path(
             &crate::config::FreedomConfig::default_neoth_home(),
         )),
         crate::config::VectorBackend::BruteForce => None,
-    }
+    })
 }
 
 async fn run_similar_to_image(
@@ -1659,7 +1905,7 @@ async fn run_similar_to_image(
     // snapshot exists, AND the corpus is past the brute-force ceiling (below it
     // a per-query cold HNSW load is slower than the scan). Brute-force
     // otherwise, and always for kind-scoped queries (HNSW is not kind-filterable).
-    let hnsw = configured_hnsw_path().filter(|_| {
+    let hnsw = configured_hnsw_path()?.filter(|_| {
         embeddings::hnsw_beneficial_for_corpus(embeddings::count(conn).unwrap_or(0) as usize)
     });
     let hits =
@@ -1684,7 +1930,7 @@ async fn run_similar_to_text(conn: &Connection, prompt: String, args: &RecallArg
     // snapshot exists, AND the corpus is past the brute-force ceiling (below it
     // a per-query cold HNSW load is slower than the scan). Brute-force
     // otherwise, and always for kind-scoped queries (HNSW is not kind-filterable).
-    let hnsw = configured_hnsw_path().filter(|_| {
+    let hnsw = configured_hnsw_path()?.filter(|_| {
         embeddings::hnsw_beneficial_for_corpus(embeddings::count(conn).unwrap_or(0) as usize)
     });
     let hits =
@@ -1741,7 +1987,8 @@ fn render_similarity(
                 .collect();
             println!(
                 "{}",
-                serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".into())
+                serde_json::to_string_pretty(&rows)
+                    .expect("similarity rows contain only serializable values")
             );
         }
         OutputFormat::Jsonl => {
@@ -1786,9 +2033,9 @@ fn render(hits: &[EpisodeHit], output: crate::cli::OutputFormat, query: &str) {
     match output {
         OutputFormat::Jsonl => {
             for h in hits {
-                if let Ok(line) = serde_json::to_string(h) {
-                    println!("{line}");
-                }
+                let line =
+                    serde_json::to_string(h).expect("EpisodeHit contains only serializable fields");
+                println!("{line}");
             }
             println!(
                 "{}",
@@ -1798,7 +2045,8 @@ fn render(hits: &[EpisodeHit], output: crate::cli::OutputFormat, query: &str) {
         OutputFormat::Json => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".into())
+                serde_json::to_string_pretty(&hits)
+                    .expect("EpisodeHit contains only serializable fields")
             );
         }
         OutputFormat::Table => {
@@ -1963,6 +2211,7 @@ mod tests {
             context_rows: 2,
             classify: None,
             downvote: None,
+            upvote: None,
             graph: None,
             graph_depth: 2,
             extract: None,
@@ -1990,6 +2239,24 @@ mod tests {
         assert_eq!(
             count, 2,
             "two of three episodes mention wifi (case-insensitive)"
+        );
+        let feedback: (i64, i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(feedback_success), 0), \
+                        COALESCE(SUM(feedback_failure), 0) \
+                 FROM idx_memory_links",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!(
+            feedback.0 >= 1,
+            "normal recall still learns co-access edges"
+        );
+        assert_eq!(
+            (feedback.1, feedback.2),
+            (0, 0),
+            "showing results is exposure, not explicit success/failure feedback"
         );
     }
 
@@ -2057,6 +2324,43 @@ mod tests {
         assert_eq!(hits[0].tier, "cold");
         assert_eq!(hits[0].event_id, 200);
         assert_eq!(hits[0].importance, Some(0.9));
+    }
+
+    #[test]
+    fn community_member_loader_covers_all_tiers_deterministically() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let conn = store::open(&db).unwrap();
+
+        conn.execute_batch(
+            "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance) \
+                 VALUES (300, 16, 30, 'hot member', 'hot-hash', 0.7); \
+             INSERT INTO idx_consolidated \
+                 (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+                 VALUES ('retained', '2026-04-01', 100, 'warm member', 'warm-hash', 0.8, 10, 0); \
+             INSERT INTO idx_longterm \
+                 (event_id, text, text_hash, importance, promoted_ts, last_access_ts) \
+                 VALUES (200, 'cold member', 'cold-hash', 0.9, 20, 0); \
+             INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance) \
+                 VALUES (400, 16, 40, 'other community', 'other-hash', 0.6); \
+             INSERT INTO idx_memory_communities (node_id, community_id) \
+                 VALUES (300, 7), (100, 7), (200, 7), (400, 8);",
+        )
+        .unwrap();
+
+        let hits = load_community_members(&conn, 7, 10).expect("community members");
+        let ids: Vec<i64> = hits.iter().map(|hit| hit.event_id).collect();
+        let tiers: Vec<&str> = hits.iter().map(|hit| hit.tier.as_str()).collect();
+
+        assert_eq!(ids, vec![100, 200, 300]);
+        assert_eq!(tiers, vec!["warm", "cold", "hot"]);
+        assert_eq!(
+            load_community_members(&conn, 7, 2).unwrap().len(),
+            2,
+            "candidate loading stays bounded"
+        );
     }
 
     #[test]
@@ -2135,6 +2439,38 @@ mod tests {
             "cold beats hot at this importance gap"
         );
         assert_eq!(rows[2].tier, "hot");
+    }
+
+    #[test]
+    fn association_degree_is_a_bounded_recall_score_component() {
+        let now_ns: u64 = 10 * 86_400 * 1_000_000_000;
+        let mk = |event_id: i64| EpisodeHit {
+            event_id,
+            event_type: 0,
+            ts_ns: now_ns as i64,
+            text: "same topic".to_string(),
+            text_hash: format!("h-{event_id}"),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "hot".to_string(),
+            importance: Some(0.6),
+            access_count: 0,
+            trust: 1,
+        };
+        let mut rows = vec![mk(1), mk(2)];
+        let degrees = std::collections::HashMap::from([(1, 0), (2, 32)]);
+        rank_in_place_with_degrees(&mut rows, now_ns, &degrees);
+        assert_eq!(rows[0].event_id, 2, "the graph hub receives the tie boost");
+
+        let plain = composite_score(&rows[0], now_ns, 86_400.0 * 1_000_000_000.0);
+        let boosted =
+            composite_score_with_degree(&rows[0], now_ns, 86_400.0 * 1_000_000_000.0, 1_000);
+        assert!(boosted > plain);
+        assert!(
+            boosted <= plain * 1.100_000_1,
+            "degree must never boost a hit by more than ten percent"
+        );
     }
 
     #[test]
@@ -2249,6 +2585,7 @@ mod tests {
             context_rows: 2,
             classify: None,
             downvote: None,
+            upvote: None,
             graph: None,
             graph_depth: 2,
             extract: None,
@@ -2290,6 +2627,7 @@ mod tests {
             context_rows: 2,
             classify: None,
             downvote: None,
+            upvote: None,
             graph: None,
             graph_depth: 2,
             extract: None,
@@ -2331,6 +2669,7 @@ mod tests {
             context_rows: 2,
             classify: None,
             downvote: None,
+            upvote: None,
             graph: None,
             graph_depth: 2,
             extract: None,
@@ -2549,6 +2888,7 @@ mod tests {
             context_rows: 2,
             classify: None,
             downvote: None,
+            upvote: None,
             graph: None,
             graph_depth: 2,
             extract: None,
@@ -2680,93 +3020,29 @@ mod tests {
         );
     }
 
-    // ── GR-RESID-F35: reinforce_link_feedback production caller ─────────────
-
-    /// `reinforce_link_feedback` fires for every pair in the recalled set and
-    /// increments `feedback_success` on each existing link row.
-    ///
-    /// Verifies:
-    /// - All C(n,2) pairs receive +1 on `feedback_success`.
-    /// - `feedback_failure` is untouched.
-    /// - A second call accumulates (not idempotent on purpose — each recall is
-    ///   an independent positive signal).
     #[test]
-    fn reinforce_link_feedback_increments_success_for_all_pairs() {
-        use crate::memory::{assoc_graph, store};
-
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("views.db");
-        let conn = store::open(&db).unwrap();
-
-        // Create links for a 3-element recalled set {10, 20, 30} — three pairs.
-        let ids = &[10i64, 20, 30];
-        assoc_graph::reinforce_co_access(&conn, ids, 0).unwrap();
-
-        // Verify links exist but counters start at zero.
-        for &(lo, hi) in &[(10i64, 20i64), (10, 30), (20, 30)] {
-            let (succ, fail): (i64, i64) = conn
-                .query_row(
-                    "SELECT feedback_success, feedback_failure \
-                     FROM idx_memory_links WHERE lo_id = ?1 AND hi_id = ?2",
-                    rusqlite::params![lo, hi],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .unwrap_or((0, 0));
-            assert_eq!(succ, 0, "pair ({lo},{hi}): feedback_success starts at 0");
-            assert_eq!(fail, 0, "pair ({lo},{hi}): feedback_failure starts at 0");
-        }
-
-        // Fire the production caller once.
-        reinforce_link_feedback(&conn, ids);
-
-        // Every pair must have feedback_success == 1, failure == 0.
-        for &(lo, hi) in &[(10i64, 20i64), (10, 30), (20, 30)] {
-            let (succ, fail): (i64, i64) = conn
-                .query_row(
-                    "SELECT feedback_success, feedback_failure \
-                     FROM idx_memory_links WHERE lo_id = ?1 AND hi_id = ?2",
-                    rusqlite::params![lo, hi],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .unwrap();
-            assert_eq!(
-                succ, 1,
-                "pair ({lo},{hi}): feedback_success must be 1 after one recall"
-            );
-            assert_eq!(
-                fail, 0,
-                "pair ({lo},{hi}): feedback_failure must remain 0"
-            );
-        }
-
-        // A second call accumulates — each recall is an independent positive signal.
-        reinforce_link_feedback(&conn, ids);
-        let succ: i64 = conn
-            .query_row(
-                "SELECT feedback_success FROM idx_memory_links WHERE lo_id = 10 AND hi_id = 20",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(succ, 2, "second call accumulates: feedback_success == 2");
-    }
-
-    /// `reinforce_link_feedback` silently skips a missing link (no panic, no
-    /// error). The pair (100, 200) was never created by `reinforce_co_access`.
-    #[test]
-    fn reinforce_link_feedback_skips_missing_link_silently() {
+    fn query_three_lanes_applies_graph03_expansion_on_chat_path() {
+        use crate::memory::region_router::route_query;
         use crate::memory::store;
 
         let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("views.db");
-        let conn = store::open(&db).unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        conn.execute_batch(
+            "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES \
+                 (21, 1, 300, 'payment incident alpha', 'graph-a', 0.9, 0), \
+                 (22, 1, 200, 'payment incident beta', 'graph-b', 0.8, 0), \
+                 (23, 1, 100, 'deployment checklist learned nearby', 'graph-c', 0.7, 0); \
+             INSERT INTO idx_memory_communities (node_id, community_id) \
+             VALUES (21, 9), (22, 9), (23, 9);",
+        )
+        .unwrap();
 
-        // No links exist — must not panic.
-        reinforce_link_feedback(&conn, &[100, 200]);
-
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 0, "no link created by feedback alone");
+        let out = query_three_lanes(&conn, &route_query("payment"), "payment", 5);
+        assert!(
+            out.episodes.iter().any(|hit| hit.event_id == 23),
+            "Block-D production recall must expand the selected community beyond text matches"
+        );
     }
 }

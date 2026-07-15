@@ -4,13 +4,14 @@
 // bench harness + downstream consumers can reach internal modules via
 // `use neothd::*;`. All the original main.rs body — clippy lints +
 // module declarations + helpers + the body of `fn main` — lives in
-// `src/lib.rs` (see `pub async fn run`). This file is the binary target
-// the operator-facing `neothd` executable resolves to; it delegates
-// straight into the lib.
+// `src/lib.rs` (see `pub async fn run`). This file is the public `neoth`
+// binary target. The legacy `neothd` target includes this same launcher, so
+// both executable names stay behaviourally identical while the Rust library
+// keeps its established `neothd` name.
 //
 // Why split (V03-06): adding a `[lib]` section unblocks criterion benches
 // that need to `use neothd::wal::writer;` etc. Without the split,
-// `cargo bench -p neothd` had no entry point for the p99 / latency
+// `cargo bench -p neoth` had no entry point for the p99 / latency
 // benches the V03-06 GA requirement names. Now they do.
 
 use anyhow::{Context, Result};
@@ -29,7 +30,7 @@ fn main() -> Result<()> {
     // default `#[tokio::main]` main thread, so the clap help/parse pass that
     // happens at the top of `run()` (before the first await) can't overflow.
     let worker = std::thread::Builder::new()
-        .name("neothd-main".to_string())
+        .name("neoth-main".to_string())
         .stack_size(MAIN_STACK_BYTES)
         .spawn(|| {
             tokio::runtime::Builder::new_multi_thread()
@@ -38,10 +39,10 @@ fn main() -> Result<()> {
                 .context("build the tokio runtime")?
                 .block_on(neothd::run())
         })
-        .context("spawn the neothd main worker thread")?;
+        .context("spawn the neoth main worker thread")?;
     let outcome: Result<()> = worker
         .join()
-        .map_err(|_| anyhow::anyhow!("neothd main worker thread panicked"))?;
+        .map_err(|_| anyhow::anyhow!("neoth main worker thread panicked"))?;
 
     // GOLD-COR-01 / A-03: a subcommand that wants a non-zero status code
     // returns `QuietExit(code)` instead of calling `std::process::exit` deep in

@@ -297,8 +297,8 @@ mod tests {
 
         // Parse the WAL segment and count 0x69 frames.
         let bytes = std::fs::read(&seg).expect("segment must exist");
-        let hdr = crate::wal::segment_header::parse_segment_header(&bytes)
-            .expect("valid segment header");
+        let hdr =
+            crate::wal::segment_header::parse_segment_header(&bytes).expect("valid segment header");
         let mut cursor = hdr.header_len();
         let mut count = 0usize;
         while cursor < bytes.len() {
@@ -313,10 +313,7 @@ mod tests {
                     serde_json::from_slice(dec.payload).expect("valid json payload");
                 let tps = v["tps"].as_f64().expect("tps field");
                 // 300 tokens / 3 s = 100 tps
-                assert!(
-                    (tps - 100.0).abs() < 1e-6,
-                    "expected ~100 tps, got {tps}"
-                );
+                assert!((tps - 100.0).abs() < 1e-6, "expected ~100 tps, got {tps}");
                 assert_eq!(v["total_tokens"].as_u64().unwrap(), 300);
                 assert_eq!(v["elapsed_ms"].as_u64().unwrap(), 3000);
                 assert_eq!(v["observe_count"].as_u64().unwrap(), 30);

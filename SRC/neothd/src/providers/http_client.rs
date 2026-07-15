@@ -65,6 +65,20 @@ pub fn build_client_no_redirect() -> Result<reqwest::Client> {
     build_client_with(reqwest::redirect::Policy::none())
 }
 
+/// Build a direct, no-redirect client for a loopback-only provider endpoint.
+/// Loopback traffic must never be sent through an operator/environment proxy:
+/// that would disclose local prompts and let a proxy impersonate the trusted
+/// local service. Redirects are disabled so a local endpoint cannot bounce a
+/// request onto a different origin after locality was classified.
+pub fn build_direct_client_no_redirect() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .context("build direct no-redirect reqwest client")
+}
+
 fn build_client_with(redirect_policy: reqwest::redirect::Policy) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -126,5 +140,17 @@ mod tests {
         unsafe { std::env::remove_var("NEOTH_HTTP_PROXY") };
         let client = build_client();
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn direct_client_ignores_malformed_proxy_environment() {
+        let _env = crate::test_env::lock();
+        let previous = std::env::var_os("NEOTH_HTTP_PROXY");
+        unsafe { std::env::set_var("NEOTH_HTTP_PROXY", "not a url") };
+        assert!(build_direct_client_no_redirect().is_ok());
+        match previous {
+            Some(value) => unsafe { std::env::set_var("NEOTH_HTTP_PROXY", value) },
+            None => unsafe { std::env::remove_var("NEOTH_HTTP_PROXY") },
+        }
     }
 }

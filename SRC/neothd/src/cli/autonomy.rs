@@ -491,38 +491,8 @@ async fn run_set_mode(
 }
 
 async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
-    let required = cfg.audit_rpc.required_for_oneshot_permission_events;
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    );
-    // AUDIT-RPC-01 #1: under a required-audit posture, refuse to change autonomy
-    // if the daemon owns the WAL but its audit-RPC listener is unreachable — a
-    // security-relevant change must never land without an audit record. Checked
-    // BEFORE the persist so a refused change leaves freedom.yaml untouched.
-    crate::daemon::audit_rpc::enforce_required_audit(required, daemon_live, &home)?;
-    let (next, previous) = apply_level(cfg, level)?;
-    let applied = next.autonomy;
-    // GR-101 — escalating to the most-permissive Full level via `neoth autonomy
-    // set full` needs the same explicit confirmation as `sudomode` (fail closed
-    // when stdin is not a TTY). A no-op (already Full) or a de-escalation needs
-    // no confirmation.
-    if applied == AutonomyLevel::Full && previous != AutonomyLevel::Full {
-        // The raw `neoth autonomy set full` path stays interactive (no GUI
-        // pre-confirm, no token) — pass false/false so it fails closed without
-        // a TTY.
-        confirm_full_auto(false, false)?;
-    }
-    next.save_public_to_default_path()
-        .context("persist the new autonomy level to freedom.yaml")?;
-    // Forensic audit of the security-relevant change (best-effort, after the
-    // persist so a recorded frame always reflects what's on disk). No mode label
-    // — this is the raw level setter, not the headline-mode switch.
-    emit_autonomy_change(previous, applied, None, daemon_live, &home).await;
+    let (previous, applied) = set_level_at(&home, &FreedomConfig::default_path(), level).await?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -547,6 +517,60 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// Canonical raw-level setter shared by the CLI and slash dispatcher. The
+/// mutation reloads freedom.yaml under the cross-process lock, enforces the
+/// required-audit posture against that exact snapshot, and atomically writes
+/// only the autonomy field.
+pub(crate) async fn set_level_at(
+    home: &std::path::Path,
+    path: &std::path::Path,
+    level: &str,
+) -> Result<(AutonomyLevel, AutonomyLevel)> {
+    let parsed = AutonomyLevel::from_str(&level.trim().to_ascii_lowercase()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid autonomy level `{level}` — expected one of: strict, standard, elevated, full, custom"
+        )
+    })?;
+    let snapshot = FreedomConfig::load_from_path(path)
+        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
+    let full_confirmation =
+        if parsed == AutonomyLevel::Full && snapshot.autonomy != AutonomyLevel::Full {
+            confirm_full_auto(false, false)?;
+            true
+        } else {
+            false
+        };
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+        Ok(Some(_))
+    );
+    let (previous, applied) = FreedomConfig::update_at(path, |cfg| {
+        crate::daemon::audit_rpc::enforce_required_audit(
+            cfg.audit_rpc.required_for_oneshot_permission_events,
+            daemon_live,
+            home,
+        )?;
+        if parsed == AutonomyLevel::Full
+            && cfg.autonomy != AutonomyLevel::Full
+            && !full_confirmation
+        {
+            anyhow::bail!(
+                "autonomy changed concurrently before Full confirmation; retry the command"
+            );
+        }
+        let previous = cfg.autonomy;
+        cfg.autonomy = parsed;
+        Ok((previous, parsed))
+    })
+    .context("persist the new autonomy level to freedom.yaml")?;
+    // Forensic audit of the security-relevant change (best-effort, after the
+    // persist so a recorded frame always reflects what's on disk). No mode label
+    // — this is the raw level setter, not the headline-mode switch.
+    emit_autonomy_change(previous, applied, None, daemon_live, home).await;
+    Ok((previous, applied))
+}
+
 /// GR-101 / GR-RESID-D34 — confirm enabling the most-permissive FULL autonomy
 /// before it is persisted. Prints the consequence, then requires an interactive
 /// y/N. The default (un-flagged) path fails closed when stdin is not a terminal,
@@ -561,7 +585,7 @@ fn confirm_full_auto(pre_confirmed: bool, token_ok: bool) -> Result<()> {
     eprintln!(
         "  ⚠ FULL-AUTO lets NEOTH act WITHOUT asking — shell commands, channel sends, writes,\n\
          \x20   and token spend happen automatically (self-replace / patch-apply / dangerous\n\
-         \x20   targets / unsigned plugins stay blocked)."
+         \x20   targets stay blocked; every plugin still requires an exact approval-bound enable)."
     );
     // GR-RESID-D34 — the GUI bypass now requires a CONSUMED daemon token, not
     // just the flag. The consequence banner above still printed and the 0xDD
@@ -675,7 +699,10 @@ async fn run_sovereign(
                 })
             ),
             OutputFormat::Table => {
-                println!("sovereign-buddy: {}", if active { "ACTIVE" } else { "inactive" });
+                println!(
+                    "sovereign-buddy: {}",
+                    if active { "ACTIVE" } else { "inactive" }
+                );
                 println!("  sovereign_buddy flag: {}", cfg.sovereign_buddy);
                 println!("  autonomy:            {}", cfg.autonomy.as_str());
                 println!("  mode:                {mode}");
@@ -714,7 +741,14 @@ async fn run_sovereign(
         // when it sees sovereign_buddy in changed_fields. Three-frame sequence
         // provides equivalent forensic coverage to a dedicated event code
         // (byte space is exhausted — no new code possible).
-        emit_autonomy_change(previous, applied, Some("sovereign-buddy"), daemon_live, &home).await;
+        emit_autonomy_change(
+            previous,
+            applied,
+            Some("sovereign-buddy"),
+            daemon_live,
+            &home,
+        )
+        .await;
         emit_sudomode_preset_applied(previous, daemon_live, &home).await;
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -748,8 +782,14 @@ async fn run_sovereign(
         let mode_after = operating_mode_label(&next);
         next.save_public_to_default_path()
             .context("persist sovereign-buddy disable to freedom.yaml")?;
-        emit_autonomy_change(previous, applied, Some("sovereign-buddy-off"), daemon_live, &home)
-            .await;
+        emit_autonomy_change(
+            previous,
+            applied,
+            Some("sovereign-buddy-off"),
+            daemon_live,
+            &home,
+        )
+        .await;
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => println!(
                 "{}",
@@ -763,9 +803,7 @@ async fn run_sovereign(
                 println!("sovereign-buddy: DISABLED (saved to freedom.yaml)");
                 println!("  proactive.enabled cleared to false");
                 println!("  autonomy unchanged: {}", previous.as_str());
-                println!(
-                    "  To return to full-auto without sovereign: neoth autonomy full-auto"
-                );
+                println!("  To return to full-auto without sovereign: neoth autonomy full-auto");
             }
         }
     }
@@ -979,9 +1017,15 @@ mod tests {
         let (next, prev) = apply_sovereign_mode(cfg);
         assert_eq!(prev, AutonomyLevel::Standard);
         assert_eq!(next.autonomy, AutonomyLevel::Full);
-        assert!(next.skills.enable_all_bundled, "full skill set must be enabled");
+        assert!(
+            next.skills.enable_all_bundled,
+            "full skill set must be enabled"
+        );
         assert!(next.sovereign_buddy, "sovereign_buddy flag must be set");
-        assert!(next.proactive.enabled, "proactive.enabled must be forced ON");
+        assert!(
+            next.proactive.enabled,
+            "proactive.enabled must be forced ON"
+        );
     }
 
     #[test]
@@ -1030,7 +1074,10 @@ mod tests {
         cfg.skills.enable_all_bundled = true;
         // Switch to gated → sovereign_buddy cleared.
         let (next, _) = apply_mode(cfg.clone(), false);
-        assert!(!next.sovereign_buddy, "gated switch must clear sovereign_buddy");
+        assert!(
+            !next.sovereign_buddy,
+            "gated switch must clear sovereign_buddy"
+        );
         // Switch to full-auto → sovereign_buddy still cleared.
         let (next2, _) = apply_mode(cfg, true);
         assert!(
@@ -1048,7 +1095,10 @@ mod tests {
         let (next, prev) = apply_sovereign_disable(cfg);
         assert_eq!(prev, AutonomyLevel::Full);
         assert!(!next.sovereign_buddy, "flag must be cleared on disable");
-        assert!(!next.proactive.enabled, "proactive.enabled must be cleared on disable");
+        assert!(
+            !next.proactive.enabled,
+            "proactive.enabled must be cleared on disable"
+        );
         // autonomy is NOT changed by disable.
         assert_eq!(
             next.autonomy,
@@ -1094,8 +1144,14 @@ mod tests {
         // The field must default to false so existing freedom.yaml files
         // that predate this field are unaffected.
         let cfg = FreedomConfig::default();
-        assert!(!cfg.sovereign_buddy, "sovereign_buddy must default to false");
-        assert!(!cfg.sovereign_active(), "sovereign_active must be false by default");
+        assert!(
+            !cfg.sovereign_buddy,
+            "sovereign_buddy must default to false"
+        );
+        assert!(
+            !cfg.sovereign_active(),
+            "sovereign_active must be false by default"
+        );
     }
 
     #[test]

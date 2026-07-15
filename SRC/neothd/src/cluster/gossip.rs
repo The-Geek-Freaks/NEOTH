@@ -1,10 +1,11 @@
 //! Cluster Phase 6 — gossip state-sync primitives.
 //!
 //! Per the Session 21 architect verdict (`neoth_open_decisions_verdicts`):
-//!   - **Per-event `do_not_gossip` tag** (highest operator visibility):
-//!     without it, paired peers silently receive every conversation —
-//!     privacy breach the moment the operator realises their home
-//!     node holds their work node's client chats.
+//!   - **Default-deny event ACL plus wire-level `do_not_gossip` defence**:
+//!     the live sender classifies every event type/subtype before building a
+//!     frame, and the receiver repeats that classification. The wire tag is an
+//!     additional rejection signal; v1 has no operator-facing per-event tag
+//!     command.
 //!   - **Episodes-only replication** (semantic content, no raw PII):
 //!     channel-ingress frames stay local; episodes carry the
 //!     consolidated meaning without the raw payload. Operators who
@@ -16,28 +17,25 @@
 //!     up peer. 30 days aligns with the warm-memory tier window
 //!     already in the codebase.
 //!
-//! v0.1 scope = **primitives + policy types + tests**. The wire
-//! protocol (vector-clock gossip + BudgetToken Raft consensus + JSONL
-//! append-stream) ships in follow-up bites per
-//! `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
+//! These policy types are live in `cluster::wal_sync` on both the peeroxide and
+//! optional iroh transports. Accepted frames are persisted in the foreign-event
+//! ledger before the receiver advances its dedup/vector-clock state.
 
 use serde::{Deserialize, Serialize};
 
-/// Per-event tag the operator (or upstream skill) attaches to a
-/// WAL event to opt that event out of cross-peer gossip. Default
-/// is "replicate" — operators opt OUT, not IN. Aligns with the
-/// "replicate-most, exclude-some" pattern operators expect from
-/// chat surfaces (Signal, iMessage, etc).
+/// Wire-level replication tag carried by a gossip frame. The production sender
+/// currently emits `Replicate` only after the default-deny event ACL accepts the
+/// event; `DoNotGossip` remains a receiver-side defence-in-depth verdict. There
+/// is no v1 operator-facing per-event tagging command.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GossipTag {
     /// Replicate this event to every paired peer (default).
     #[default]
     Replicate,
-    /// Operator-flagged "do not gossip" — never crosses the peer
-    /// boundary. Common cases: a private chat with a client, a
-    /// secret entered into a credential prompt, anything tagged
-    /// by the future `neoth tag privacy <event_id>` operator CLI.
+    /// Explicit "do not gossip" wire verdict — never accepted across the peer
+    /// boundary. Sensitive event classes are also blocked independently by the
+    /// event-type/subtype ACL.
     DoNotGossip,
 }
 
@@ -158,8 +156,7 @@ impl ReplayBudget {
 
 /// Default tag-and-replicate decision for a single WAL event.
 /// Composes:
-///   - the event's `GossipTag` (operator may have tagged
-///     `DoNotGossip` upstream)
+///   - the event's wire `GossipTag`
 ///   - the policy's `replicate_raw_ingress` flag
 ///   - the event's "is this raw channel ingress?" classification
 ///     (caller passes the bool — typically derived from the WAL

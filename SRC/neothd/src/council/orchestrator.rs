@@ -183,7 +183,7 @@ pub async fn run_debate_with_depth(
         right,
         cerebellum,
         None, // compat entry — Jaccard dissent (callers wanting embedding
-              // call run_debate_with_depth_budget directly with a provider)
+        // call run_debate_with_depth_budget directly with a provider)
         assertions,
     )
     .await
@@ -1104,7 +1104,8 @@ mod tests {
         let r = mk("gemini", "beta");
         let c = mk("local_qwen", "gamma");
         let budget = BudgetToken::new(2);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
+        let d =
+            run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         assert_eq!(d.responses.len(), 3, "all three slots present");
         let skipped: Vec<_> = d
             .responses
@@ -1154,7 +1155,8 @@ mod tests {
         let r = mk("gemini", "q");
         let c = mk("local_qwen", "r");
         let budget = BudgetToken::new(crate::config::inference::DEFAULT_MAX_CALLS_PER_USER_MESSAGE);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
+        let d =
+            run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         let any_skipped = d
             .responses
             .iter()
@@ -1219,7 +1221,8 @@ mod tests {
         let c = mk("local_qwen", "gamma");
         let budget = BudgetToken::new(15);
         let embed = DistinctEmbed;
-        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed), &[]).await;
+        let d =
+            run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed), &[]).await;
         assert_eq!(d.responses.len(), 3);
         assert!(
             d.dissent.0 > 0.0,
@@ -1238,7 +1241,8 @@ mod tests {
         let c = mk("local_qwen", "gamma");
         let budget = BudgetToken::new(15);
         let embed = FailEmbed;
-        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed), &[]).await;
+        let d =
+            run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed), &[]).await;
         assert_eq!(d.responses.len(), 3, "fallback still yields a full debate");
         assert!(
             d.dissent.0 >= 0.0,
@@ -1256,14 +1260,16 @@ mod tests {
         let r = mk("gemini", "b");
         let c = mk("local_qwen", "c");
         let budget = BudgetToken::new(4);
-        let d1 = run_debate_with_depth_budget("p1", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
+        let d1 =
+            run_debate_with_depth_budget("p1", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         let skipped1 = d1
             .responses
             .iter()
             .filter(|r| r.error.as_deref() == Some(BUDGET_EXHAUSTED_ERROR))
             .count();
         assert_eq!(skipped1, 0, "first debate must complete fully");
-        let d2 = run_debate_with_depth_budget("p2", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
+        let d2 =
+            run_debate_with_depth_budget("p2", 0, 1, budget.clone(), &l, &r, &c, None, &[]).await;
         let skipped2 = d2
             .responses
             .iter()
@@ -1337,7 +1343,8 @@ mod tests {
         let r = RecursingMock { id: "outer-r" };
         let c = RecursingMock { id: "outer-c" };
         let budget = BudgetToken::new(5);
-        let _ = run_debate_with_depth_budget("p", 0, 2, budget.clone(), &l, &r, &c, None, &[]).await;
+        let _ =
+            run_debate_with_depth_budget("p", 0, 2, budget.clone(), &l, &r, &c, None, &[]).await;
         assert_eq!(
             budget.used(),
             5,
@@ -1361,7 +1368,7 @@ mod tests {
     /// the prompt itself is reflected back (mock echoes its input).
     #[tokio::test]
     async fn groundtruth_tag_injected_into_hemisphere_prompt() {
-        use crate::council::factual_check::{GROUND_TRUTH_TAG_OPEN, GROUND_TRUTH_TAG_CLOSE};
+        use crate::council::factual_check::{GROUND_TRUTH_TAG_CLOSE, GROUND_TRUTH_TAG_OPEN};
 
         struct EchoHemisphere {
             id: &'static str,
@@ -1389,7 +1396,9 @@ mod tests {
 
         // All three hemispheres echo the enriched prompt; consensus text
         // should contain the [GROUND_TRUTH] tag block.
-        let winning = d.winning_text().expect("consensus should have winning_text");
+        let winning = d
+            .winning_text()
+            .expect("consensus should have winning_text");
         assert!(
             winning.contains(GROUND_TRUTH_TAG_OPEN),
             "winning_text must contain [GROUND_TRUTH] open tag"
@@ -1412,7 +1421,9 @@ mod tests {
             d.factual_outcomes.len()
         );
         assert!(
-            d.factual_outcomes.iter().all(|(_, agrees, n)| *agrees && *n == 0),
+            d.factual_outcomes
+                .iter()
+                .all(|(_, agrees, n)| *agrees && *n == 0),
             "echoing the assertion keyword must count as agreement"
         );
     }
@@ -1458,7 +1469,8 @@ mod tests {
             text: "Sam's birthday falls in March every year.",
         };
 
-        let d = run_debate_with_depth("When is Sam's birthday?", 0, 1, &l, &r, &c, &assertions).await;
+        let d =
+            run_debate_with_depth("When is Sam's birthday?", 0, 1, &l, &r, &c, &assertions).await;
 
         // factual_outcomes should record left as contradicting
         let left_outcome = d

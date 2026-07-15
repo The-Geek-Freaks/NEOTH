@@ -68,6 +68,7 @@ neoth privacy audit            # config posture
 neoth privacy audit --last 30d # + what actually left the device recently
 neoth verify
 neoth wal show --type provider_request --last 50
+neoth wal proof-key rotate --dry-run
 neoth plugin ledger
 ```
 
@@ -76,29 +77,91 @@ neoth plugin ledger
 | `privacy audit` | Show destinations, sensitive events, provider calls, plugin activity. |
 | `verify` | Verify the local WAL event chain (HMAC audit-chain integrity). |
 | `wal show` | Inspect recent WAL events. |
+| `wal proof-key rotate [--dry-run]` | Rotate an existing proof key only after a dual-signed `proof_key_rotated` transition is durably audited; `--dry-run` writes nothing. |
 | `plugin ledger` | Inspect plugin capabilities and activity. |
+
+## Autonomy policy
+
+```bash
+neoth permissions show
+neoth permissions check external_http_request
+neoth permissions set external_http_request confirm
+neoth permissions clear external_http_request
+```
+
+| Command | Purpose |
+| :-- | :-- |
+| `permissions show [--level <level>]` | Show the active policy, Custom overrides, and all stable action decisions. |
+| `permissions check <action>` | Evaluate one payload-safe representative against the active immutable policy; payload-bearing checks accept `--eur` or `--target`. |
+| `permissions set <action> <allow\|confirm\|deny>` | Atomically persist a typed Custom override in `freedom.yaml`. It becomes active when autonomy is `custom`. |
+| `permissions clear <action>` | Atomically remove an override so the action inherits Standard again. |
+
+Custom can tighten any action, but cannot weaken Full's irreducible
+confirm/deny floor. Cron registration and automatic update application remain
+disabled under Custom regardless of overrides.
+
+## OMI private ingest
+
+```bash
+# First-run/non-interactive onboarding (secrets never enter argv)
+NEOTH_OMI_DEVELOPER_API_KEY='omi_dev_...' \
+  neoth init --non-interactive --accept-license --omi \
+  --omi-mode developer_api --omi-retention-days 30
+
+# Native media remains separately opted in
+NEOTH_OMI_INGEST_TOKEN='<at-least-32-characters>' \
+  neoth init --non-interactive --accept-license --omi \
+  --omi-mode native_ingest --omi-audio true --omi-images false --omi-video false
+
+neoth omi status --output json
+neoth omi probe
+printf '%s' '{"developer_api_key":"omi_dev_..."}' | neoth omi set-credentials
+neoth omi enforce-retention
+neoth omi purge <conversation-id> --yes
+```
+
+| Command | Purpose |
+| :-- | :-- |
+| `init --omi ...` | Configure OMI during first-run/reconfigure with the same mode, endpoint/listener, retention, transcript, audio, image, video, summary, action, and ground-truth controls as the desktop wizard. Use `NEOTH_OMI_DEVELOPER_API_KEY` / `NEOTH_OMI_INGEST_TOKEN`; OMI secrets have no init argv flags and are omitted from crash-resume checkpoints. |
+| `omi status` | Show mode, consent controls, credential presence, ledger counts, pending reconciliation, and PID-verified runtime health without exposing secrets or transcript content. |
+| `omi probe` | Probe only the configured local endpoint/native listener; authenticated public Developer APIs are not contacted. |
+| `omi set-credentials` | Read a bounded JSON update from standard input and preserve encryption, keychain selection, and unrelated credentials. Secret values never enter argv. |
+| `omi resume --review-note <note>` | Resume an SC-18-halted stream after a durable operator review intent. |
+| `omi enforce-retention` | Apply `omi.retention_days` immediately. |
+| `omi purge <id> --yes` | Permanently delete one conversation and local derivatives, remove its native receipt, and retain an anti-reimport tombstone. |
+| `omi allow-reimport <id> --yes` | Explicitly remove the tombstone and stale reconciliation state so the remote source may restore the conversation. |
+
+OMI and every media type are off by default. Audio, images, video frames, raw
+transcript retention, public API access, cloud summaries, actions, and
+ground-truth seeding have independent controls. See the
+[OMI privacy runbook](runbook_omi_privacy.md) for modes, native event headers,
+limits, retention, and incident handling.
 
 ## Providers and models
 
 ```bash
 neoth provider list
-neoth provider setup openai
-neoth provider doctor
-neoth model list
-neoth model fetch qwen
-neoth model fetch ouro
-neoth model fetch clip
-neoth model fetch whisper
+neoth provider known
+neoth provider show openai_api
+neoth provider test openai_api
+neoth models list
+neoth models pull clip
+neoth models pull whisper
+neoth ouro list
+neoth ouro fetch --checkpoint ByteDance/Ouro-1.4B-Thinking
 ```
 
 | Command | Purpose |
 | :-- | :-- |
 | `provider list` | Show configured providers. |
-| `provider setup <name>` | Configure cloud/local provider. |
-| `provider doctor` | Diagnose auth, routing, circuit breakers. |
-| `model list` | Show local model catalog/cache. |
-| `model fetch <name>` | Download a local model. |
-| `model doctor` | Diagnose local model cache and runtime. |
+| `provider known` | Show well-known OpenAI-compatible endpoint presets. |
+| `provider show <id>` | Show one provider's requirements and configuration status. |
+| `provider test <id>` | Show where that provider is wired into the inference topology. |
+| `init --force` | Re-run onboarding to change provider configuration. |
+| `models list` | Show managed CLIP/Whisper/Piper cache state. |
+| `models pull <name>` | Download managed CLIP or Whisper artifacts. |
+| `ouro list/fetch/status` | Inspect, download, and inspect Ouro checkpoints. |
+| `init --provider local_qwen` | Select Qwen through hardware-aware onboarding. |
 
 ## Channels
 
@@ -113,13 +176,17 @@ neoth serve
 | Command | Purpose |
 | :-- | :-- |
 | `channel list` | Show every channel + whether it is configured. |
-| `channel add <name>` | Connect a channel (telegram/slack/whatsapp/keet); writes credentials.yaml. |
+| `channel add <name>` | Connect a supported channel (telegram/slack/whatsapp/...); writes credentials.yaml. `keet` is rejected as unavailable. |
 | `channel test <name>` | Live read-only credential check (no message sent, nothing billed). |
 | `channel remove <name>` | Clear a channel's credentials. |
 | `serve` | Run daemon/channel server. |
 
-Email and calendar are ingest surfaces configured through `neoth init`, not bot
-tokens. Discord has no credential field yet (outbound adapter only).
+Discord stores `discord_bot_token` in `credentials.yaml`; `channel test discord`
+performs a read-only `GET /users/@me` identity probe and `serve` owns the live
+Gateway receive loop. Email IMAP ingest is a source-build `imap_fetch` opt-in,
+configured through IMAP environment/OAuth credentials rather than
+`channel add`. Calendar reads its CalDAV URL and credentials from
+`freedom.yaml` / `credentials.yaml`.
 
 ## Coding buddy
 
@@ -208,7 +275,8 @@ neoth hardware
 ## Maintenance
 
 ```bash
-neoth backup create
+neoth backup
+neoth backup --include-credentials   # explicit plaintext-secret opt-in
 neoth rollback list
 neoth update check
 neoth update apply
@@ -217,7 +285,30 @@ neoth export --out ~/neoth-export
 
 | Command | Purpose |
 | :-- | :-- |
-| `backup create` | Create backup. |
+| `backup` | Create a state backup; `credentials.yaml` is excluded by default. |
+| `backup --include-credentials` | Include plaintext credentials explicitly; store the resulting archive only on encrypted media. |
 | `rollback list` | Show rollback points. |
 | `update check/apply` | Self-update where configured. |
 | `export` | Export memory/profile/vault data. |
+
+### Release signing (maintainers)
+
+```bash
+neoth release setup --repo owner/name
+neoth release setup --repo owner/name --force
+neoth release pubkey
+neoth release sign <artifact> --comment "file:<release-asset-name>"
+neoth release verify <artifact>
+```
+
+Plain `release setup` bootstraps a genuinely empty trust root, reuses a fully
+matching local/Actions/source key, or completes provisioning for an existing
+local key when the published state is empty/matching and the source pin is
+missing. Any mismatch fails closed. When source synchronization is needed it
+requires checkout `origin == --repo`, writes a crash-recovery marker, and
+updates `NEOTH_RELEASE_MINISIGN_PUBKEY.txt` plus both installer pins before
+provisioning Actions. `--force` is the explicit rotation path and also resumes
+the exact pending key after an interrupted bootstrap/rotation. If source pins
+changed, review, commit, and push them before tagging; only a fully matching
+state has no repository edit. See the
+[release-signing runbook](runbook_release_signing.md).

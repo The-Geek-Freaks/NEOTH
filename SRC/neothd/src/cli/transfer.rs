@@ -110,7 +110,7 @@ async fn run_export(
     let dest = parse_b64_32(&dest_b64, "--dest pubkey")
         .context("invalid --dest: expected a base64 X25519 public key (32 bytes)")?;
     let home = FreedomConfig::default_neoth_home();
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
     let caps = cfg.transfer;
     let days = days.unwrap_or(DEFAULT_WINDOW_DAYS);
 
@@ -246,7 +246,7 @@ async fn emit_transfer_exported(
 /// Read + parse a bundle file, refusing one larger than the configured bundle
 /// cap (a hostile/oversized file can't force a huge allocation).
 fn read_bundle(file: &Path) -> Result<TransferBundle> {
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
     let meta =
         std::fs::metadata(file).with_context(|| format!("stat bundle {}", file.display()))?;
     if meta.len() as usize > cfg.transfer.max_bundle_bytes {
@@ -365,13 +365,12 @@ fn run_import(
     output: OutputFormat,
 ) -> Result<()> {
     let bundle = read_bundle(&file)?;
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
     let my_secret =
         transfer_bundle::load_or_init_transfer_key(&transfer_bundle::default_transfer_key_path())
             .context("load transfer key")?;
     // my_secret is Zeroizing<[u8;32]>; auto-deref coerces to &[u8;32].
-    let my_pub_bytes =
-        parse_b64_32(&transfer_bundle::transfer_pubkey_b64(&my_secret), "pub")?;
+    let my_pub_bytes = parse_b64_32(&transfer_bundle::transfer_pubkey_b64(&my_secret), "pub")?;
     let expected = parse_expected_sender(pubkey.as_deref())?;
 
     // Verify FIRST — refuse to decrypt a wrong-recipient / unsupported / (when

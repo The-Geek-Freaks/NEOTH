@@ -100,7 +100,7 @@ pub fn evaluate_regression(
 pub async fn run_regression_tick(
     home: &Path,
     config: &RegressionAnchorConfig,
-    provider: &dyn Provider,
+    provider: &crate::providers::cost_authorization::AuthorizedProvider,
     embed: &dyn EmbedProvider,
     writer: &WalWriterHandle,
 ) -> Result<Vec<RegressionAlert>, String> {
@@ -174,7 +174,7 @@ pub async fn run_regression_tick(
 pub fn spawn_regression_cron_loop(
     config: RegressionAnchorConfig,
     home: PathBuf,
-    provider: Arc<dyn Provider>,
+    provider: Arc<crate::providers::cost_authorization::AuthorizedProvider>,
     embed: Arc<dyn EmbedProvider>,
     writer: WalWriterHandle,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -213,6 +213,19 @@ mod tests {
     use crate::providers::Completion;
     use crate::providers::embed::EmbedResponse;
     use crate::wal::events::EVENT_TYPE_REGRESSION_ALERT;
+
+    fn authorized(
+        provider: impl Provider + 'static,
+    ) -> crate::providers::cost_authorization::AuthorizedProvider {
+        crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(provider),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            Some("mock".to_string()),
+            "regression.test",
+        )
+    }
     use async_trait::async_trait;
     use std::time::Duration;
 
@@ -298,6 +311,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
                 text: self.reply.into(),
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: Duration::from_millis(1),
                 input_tokens: None,
@@ -369,9 +383,9 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
 
-        let provider = MockProvider {
+        let provider = authorized(MockProvider {
             reply: "I am something else now",
-        };
+        });
         let embed = MockEmbed {
             vector: vec![0.0, 1.0],
         };
@@ -403,9 +417,9 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
         // Mock embed returns the SAME direction ⇒ cosine 1.0 ⇒ no regression.
-        let provider = MockProvider {
+        let provider = authorized(MockProvider {
             reply: "same as before",
-        };
+        });
         let embed = MockEmbed {
             vector: vec![1.0, 0.0],
         };
@@ -429,7 +443,7 @@ mod tests {
         let seg_dir = tempfile::tempdir().unwrap();
         let seg = seg_dir.path().join("000001.wal");
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
-        let provider: Arc<dyn Provider> = Arc::new(MockProvider { reply: "x" });
+        let provider = Arc::new(authorized(MockProvider { reply: "x" }));
         let embed: Arc<dyn EmbedProvider> = Arc::new(MockEmbed { vector: vec![1.0] });
         let cfg = RegressionAnchorConfig {
             enabled: false,

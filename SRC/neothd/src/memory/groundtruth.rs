@@ -95,14 +95,10 @@ impl Source {
     pub fn is_operator_attested(&self) -> bool {
         matches!(
             self,
-            Source::Onboarding
-                | Source::OperatorRuntime
-                | Source::NmapScan
-                | Source::ArpScan
-            // BulkText removed: extraction is automated; corroboration required.
-            // GOLD-ADAPT-JV-MEM-01.
-            // Synthesis is NOT operator-attested: it's an automated cron pass.
-            // NN-MEM-02.
+            Source::Onboarding | Source::OperatorRuntime | Source::NmapScan | Source::ArpScan // BulkText removed: extraction is automated; corroboration required.
+                                                                                              // GOLD-ADAPT-JV-MEM-01.
+                                                                                              // Synthesis is NOT operator-attested: it's an automated cron pass.
+                                                                                              // NN-MEM-02.
         )
     }
 
@@ -192,15 +188,18 @@ const CORROBORATION_THRESHOLD: usize = 2;
 /// NOT be retroactively demoted — they stay Candidate until a 3rd source arrives.
 const PROMOTION_CONFIDENCE_THRESHOLD: f64 = 0.85;
 
-/// Parse a `source_weight` JSON `{source: count}` map (best-effort: a malformed
-/// value yields an empty map so a corrupt column never breaks an insert).
-fn parse_source_weight(json: &str) -> std::collections::BTreeMap<String, u32> {
-    serde_json::from_str(json).unwrap_or_default()
+/// Parse a `source_weight` JSON `{source: count}` map. Mutating callers must
+/// propagate corruption rather than replacing provenance with a fresh map.
+fn parse_source_weight(
+    json: &str,
+) -> serde_json::Result<std::collections::BTreeMap<String, u32>> {
+    serde_json::from_str(json)
 }
 
-/// Serialize a `source_weight` map back to JSON (`{}` on failure).
-fn source_weight_json(map: &std::collections::BTreeMap<String, u32>) -> String {
-    serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string())
+fn source_weight_json(
+    map: &std::collections::BTreeMap<String, u32>,
+) -> serde_json::Result<String> {
+    serde_json::to_string(map)
 }
 
 // ── GOLD-ADAPT-NN-MEM-03/04 + JV-SELF-01 helpers ────────────────────────────
@@ -227,47 +226,76 @@ pub fn bump_confidence(current: f64) -> f64 {
     (current + 1.0) / 2.0
 }
 
-/// GOLD-ADAPT-NN-MEM-03 — append `episode_id` to the JSON evidence array
-/// stored for `fact_id`. Deduplicates and caps at 50 most-recent entries.
-/// Best-effort: any parse/write failure is a no-op so the caller is never
-/// blocked.
+/// Maximum number of episode backlinks retained on one ground-truth row.
+pub const MAX_EVIDENCE_BACKLINKS: usize = 50;
+
+fn evidence_episode_exists(conn: &Connection, episode_id: i64) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(\
+             SELECT 1 FROM idx_episode WHERE event_id = ?1 \
+             UNION ALL \
+             SELECT 1 FROM idx_consolidated WHERE event_id = ?1 \
+             UNION ALL \
+             SELECT 1 FROM idx_longterm WHERE event_id = ?1\
+         )",
+        params![episode_id],
+        |r| r.get(0),
+    )
+    .context("check ground-truth evidence episode")
+}
+
+/// GOLD-ADAPT-NN-MEM-03 — append episode ids to the JSON evidence array stored
+/// for `fact_id`. The references are validated against all three episode tiers,
+/// deduplicated in source order, and capped at the 50 most-recent entries.
 ///
-/// Use this sibling instead of threading `Option<i64>` through every
-/// `groundtruth::insert` call site (those span hot files chat.rs / serve.rs).
-/// Call it right after `insert(...)` when the asserting episode id is known.
-pub fn record_evidence(
-    conn: &Connection,
-    fact_id: i64,
-    episode_id: i64,
-) -> Result<()> {
-    let raw: Option<String> = conn
+/// This is deliberately fail-loud. Silently replacing malformed provenance or
+/// accepting an unknown episode id would turn the backlink field into an
+/// unverifiable label instead of an evidence trail.
+pub fn record_evidence_batch(conn: &Connection, fact_id: i64, episode_ids: &[i64]) -> Result<()> {
+    if episode_ids.is_empty() {
+        anyhow::bail!("ground-truth evidence must contain at least one episode id");
+    }
+
+    let raw: String = conn
         .query_row(
             "SELECT evidence FROM idx_groundtruth WHERE id = ?1",
             params![fact_id],
             |r| r.get(0),
         )
         .optional()
-        .context("record_evidence: query evidence")?;
+        .context("record_evidence: query evidence")?
+        .ok_or_else(|| anyhow::anyhow!("ground-truth fact {fact_id} not found"))?;
 
-    let Some(raw) = raw else {
-        return Ok(()); // fact_id not found — silent no-op
-    };
+    let mut ids: Vec<i64> = serde_json::from_str(&raw)
+        .with_context(|| format!("ground-truth fact {fact_id} has malformed evidence JSON"))?;
+    let mut seen: std::collections::HashSet<i64> = ids.iter().copied().collect();
 
-    let mut ids: Vec<i64> = serde_json::from_str(&raw).unwrap_or_default();
-    if !ids.contains(&episode_id) {
-        ids.push(episode_id);
-        // Keep only the 50 most-recent (last 50 entries).
-        if ids.len() > 50 {
-            ids.drain(0..ids.len() - 50);
+    for &episode_id in episode_ids {
+        if !evidence_episode_exists(conn, episode_id)? {
+            anyhow::bail!(
+                "ground-truth evidence episode {episode_id} is absent from hot, warm, and cold tiers"
+            );
+        }
+        if seen.insert(episode_id) {
+            ids.push(episode_id);
         }
     }
-    let json = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
+
+    if ids.len() > MAX_EVIDENCE_BACKLINKS {
+        ids.drain(0..ids.len() - MAX_EVIDENCE_BACKLINKS);
+    }
+    let json = serde_json::to_string(&ids).context("serialize ground-truth evidence")?;
     conn.execute(
         "UPDATE idx_groundtruth SET evidence = ?1 WHERE id = ?2",
         params![json, fact_id],
     )
     .context("record_evidence: write")?;
     Ok(())
+}
+
+/// Append one validated episode backlink. See [`record_evidence_batch`].
+pub fn record_evidence(conn: &Connection, fact_id: i64, episode_id: i64) -> Result<()> {
+    record_evidence_batch(conn, fact_id, &[episode_id])
 }
 
 /// Scope = "to whom / where" this fact applies. Free-form so operators can
@@ -332,7 +360,9 @@ impl GroundTruth {
     /// fact (from the `source_weight` JSON map). Used to pick the more-credible
     /// fact when two contradict. A malformed map counts as 1 (the row exists).
     pub fn source_count(&self) -> usize {
-        parse_source_weight(&self.source_weight).len().max(1)
+        parse_source_weight(&self.source_weight)
+            .map(|weights| weights.len().max(1))
+            .unwrap_or(1)
     }
 }
 
@@ -374,7 +404,8 @@ pub fn insert(
         .context("query existing ground-truth")?;
 
     let id = if let Some((id, state_str, sw_json, confidence, confirmed_count)) = existing {
-        let mut weights = parse_source_weight(&sw_json);
+        let mut weights = parse_source_weight(&sw_json)
+            .context("parse stored ground-truth source_weight provenance")?;
         *weights.entry(source.as_str().to_string()).or_insert(0) += 1;
         let mut state = FactState::parse(&state_str).unwrap_or(FactState::Candidate);
         // Only an unverified (Raw/Candidate) fact is promotable; a terminal state
@@ -409,13 +440,15 @@ pub fn insert(
         // GOLD-ADAPT-NN-MEM-04: increment confirmed_count and recompute maturity.
         let new_confirmed = confirmed_count.saturating_add(1);
         let new_maturity = maturity_for(new_confirmed);
+        let weights_json = source_weight_json(&weights)
+            .context("serialize ground-truth source_weight provenance")?;
         conn.execute(
             "UPDATE idx_groundtruth \
              SET source_weight = ?1, fact_state = ?2, \
                  confidence = ?3, confirmed_count = ?4, maturity = ?5 \
              WHERE id = ?6",
             params![
-                source_weight_json(&weights),
+                weights_json,
                 state.as_str(),
                 new_confidence,
                 new_confirmed,
@@ -424,10 +457,10 @@ pub fn insert(
             ],
         )
         .context("corroborate ground-truth")?;
-        // GOLD-ADAPT-NN-MEM-03: evidence backlinks are threaded via the sibling
-        // `record_evidence(conn, id, episode_id)` — call it from the site that
-        // holds the episode_id. The insert fn has no episode_id in its signature
-        // to avoid touching all callers (hot files: chat.rs, serve.rs).
+        // GOLD-ADAPT-NN-MEM-03: derived writers use `insert_with_evidence`,
+        // which calls this corroboration path and attaches validated backlinks
+        // inside the same SAVEPOINT. Direct operator/source assertions keep
+        // their explicit source_weight provenance without inventing an episode.
         // neoth: confidence-decrement on contradiction — not wired here; a
         // `set_fact_state(Contradicted)` transition is the current mechanism.
         id
@@ -435,6 +468,8 @@ pub fn insert(
         let state = source.initial_fact_state();
         let mut weights = std::collections::BTreeMap::new();
         weights.insert(source.as_str().to_string(), 1u32);
+        let weights_json = source_weight_json(&weights)
+            .context("serialize new ground-truth source_weight provenance")?;
         // New rows start with defaults: confidence 0.5, empty evidence, maturity
         // "emerging", confirmed_count 0 (no corroboration events yet).
         conn.execute(
@@ -448,7 +483,7 @@ pub fn insert(
                 scope,
                 now_ns,
                 state.as_str(),
-                source_weight_json(&weights)
+                weights_json
             ],
         )
         .context("insert ground-truth")?;
@@ -463,6 +498,60 @@ pub fn insert(
         tracing::debug!(error = %e, id, "contradiction scan failed (non-fatal)");
     }
     Ok(id)
+}
+
+/// Insert/corroborate a fact and attach its episode provenance as one atomic
+/// operation. This is the required write path for synthesis or consolidation
+/// output derived from episodic memory.
+///
+/// A SAVEPOINT keeps the API usable both on a bare connection and inside a
+/// caller-owned transaction. If any backlink is invalid, neither the new fact
+/// nor a corroboration/state update is left behind.
+pub fn insert_with_evidence(
+    conn: &Connection,
+    statement: &str,
+    source: &Source,
+    scope: &str,
+    now_ns: i64,
+    episode_ids: &[i64],
+) -> Result<i64> {
+    if episode_ids.is_empty() {
+        anyhow::bail!("derived ground-truth requires at least one evidence episode");
+    }
+
+    conn.execute_batch("SAVEPOINT groundtruth_with_evidence")
+        .context("begin ground-truth evidence savepoint")?;
+    let result: Result<i64> = (|| {
+        let id = insert(conn, statement, source, scope, now_ns)?;
+        record_evidence_batch(conn, id, episode_ids)?;
+        Ok(id)
+    })();
+
+    match result {
+        Ok(id) => match conn.execute_batch("RELEASE SAVEPOINT groundtruth_with_evidence") {
+            Ok(()) => Ok(id),
+            Err(release_error) => {
+                let _ = conn.execute_batch(
+                    "ROLLBACK TO SAVEPOINT groundtruth_with_evidence; \
+                         RELEASE SAVEPOINT groundtruth_with_evidence",
+                );
+                Err(anyhow::Error::new(release_error)
+                    .context("commit ground-truth evidence savepoint"))
+            }
+        },
+        Err(error) => {
+            let rollback = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT groundtruth_with_evidence; \
+                 RELEASE SAVEPOINT groundtruth_with_evidence",
+            );
+            if let Err(rollback_error) = rollback {
+                return Err(error.context(format!(
+                    "rollback ground-truth evidence savepoint failed: {rollback_error}"
+                )));
+            }
+            Err(error)
+        }
+    }
 }
 
 /// GOLD-ADAPT-MEM-01 — set a fact's trust state explicitly (operator transition:
@@ -502,6 +591,21 @@ pub fn list_for_scope(conn: &Connection, scope: &str) -> Result<Vec<GroundTruth>
         .query_map(params![scope], row_to_gt)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+
+/// Fetch one ground-truth row by id for operator inspection. Unlike recall,
+/// this includes revoked and unverified rows so provenance remains auditable
+/// after a lifecycle transition.
+pub fn get(conn: &Connection, id: i64) -> Result<Option<GroundTruth>> {
+    conn.query_row(
+        "SELECT id, statement, source, scope, asserted_at, revoked_at, fact_state, source_weight, \
+                confidence, evidence, maturity, confirmed_count \
+         FROM idx_groundtruth WHERE id = ?1",
+        params![id],
+        row_to_gt,
+    )
+    .optional()
+    .context("get ground-truth row")
 }
 
 /// Active ground-truth rows for the recall surface, which prepends authoritative
@@ -780,9 +884,14 @@ pub fn promote_restricted(
         .context("promote_restricted: begin savepoint")?;
 
     let result: Result<i64> = (|| {
-        let gt_id =
-            insert(conn, &chunk.statement, &Source::OperatorRuntime, &chunk.scope, now_ns)
-                .context("promote_restricted: groundtruth insert")?;
+        let gt_id = insert(
+            conn,
+            &chunk.statement,
+            &Source::OperatorRuntime,
+            &chunk.scope,
+            now_ns,
+        )
+        .context("promote_restricted: groundtruth insert")?;
 
         conn.execute(
             "UPDATE idx_restricted SET promoted_at = ?1, promoted_by = ?2 WHERE id = ?3",
@@ -847,6 +956,21 @@ mod tests {
         let db = dir.path().join("v.db");
         let conn = store::open(&db).unwrap();
         (dir, conn)
+    }
+
+    fn insert_episode(conn: &Connection, event_id: i64) {
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (?1, 1, ?2, ?3, ?4, 0.5, ?2)",
+            params![
+                event_id,
+                event_id.saturating_mul(1_000),
+                format!("episode {event_id}"),
+                format!("hash-{event_id}")
+            ],
+        )
+        .unwrap();
     }
 
     #[test]
@@ -964,6 +1088,35 @@ mod tests {
         );
         // The operator can still inspect it.
         assert_eq!(surface_for_recall(&conn, 10, true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn corrupt_source_weight_blocks_corroboration_without_erasing_provenance() {
+        let (_dir, conn) = open();
+        let id = insert(&conn, "alice prefers tea", &Source::Omi, "global", 1).unwrap();
+        conn.execute(
+            "UPDATE idx_groundtruth SET source_weight = '{not json' WHERE id = ?1",
+            params![id],
+        )
+        .unwrap();
+        let error = insert(
+            &conn,
+            "alice prefers tea",
+            &Source::ImportHermes,
+            "global",
+            2,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("source_weight provenance"));
+        let (weight, confirmed): (String, u32) = conn
+            .query_row(
+                "SELECT source_weight, confirmed_count FROM idx_groundtruth WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(weight, "{not json");
+        assert_eq!(confirmed, 0);
     }
 
     #[test]
@@ -1189,14 +1342,16 @@ mod tests {
     #[test]
     fn fresh_row_reads_defaults_confidence_maturity() {
         let (_dir, conn) = open();
-        let id =
-            insert(&conn, "fresh fact", &Source::OperatorRuntime, "global", 1).unwrap();
+        let id = insert(&conn, "fresh fact", &Source::OperatorRuntime, "global", 1).unwrap();
         let rows = list_for_scope(&conn, "global").unwrap();
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
         assert_eq!(row.id, id);
         // v20 defaults
-        assert!((row.confidence - 0.5).abs() < f64::EPSILON, "default confidence 0.5");
+        assert!(
+            (row.confidence - 0.5).abs() < f64::EPSILON,
+            "default confidence 0.5"
+        );
         assert_eq!(row.evidence, "[]", "default evidence is empty JSON array");
         assert_eq!(row.maturity, "emerging", "default maturity is emerging");
         assert_eq!(row.confirmed_count, 0, "default confirmed_count is 0");
@@ -1230,7 +1385,10 @@ mod tests {
         assert_eq!(r.confirmed_count, 1, "one corroboration event");
         assert_eq!(r.maturity, "emerging", "1 corroboration → still emerging");
         // confidence: (0.5 + 1.0) / 2.0 = 0.75
-        assert!((r.confidence - 0.75).abs() < f64::EPSILON, "confidence bumped");
+        assert!(
+            (r.confidence - 0.75).abs() < f64::EPSILON,
+            "confidence bumped"
+        );
         assert_eq!(
             r.fact_state, "candidate",
             "2 sources, confidence 0.75 < 0.85 — gate 3 blocks promotion"
@@ -1263,7 +1421,17 @@ mod tests {
     #[test]
     fn record_evidence_appends_and_deduplicates() {
         let (_dir, conn) = open();
-        let id = insert(&conn, "dns is 1.1.1.1", &Source::OperatorRuntime, "global", 1).unwrap();
+        let id = insert(
+            &conn,
+            "dns is 1.1.1.1",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+
+        insert_episode(&conn, 42);
+        insert_episode(&conn, 99);
 
         record_evidence(&conn, id, 42).unwrap();
         record_evidence(&conn, id, 99).unwrap();
@@ -1271,8 +1439,7 @@ mod tests {
         record_evidence(&conn, id, 42).unwrap();
 
         let rows = list_for_scope(&conn, "global").unwrap();
-        let ev: Vec<i64> =
-            serde_json::from_str(&rows[0].evidence).expect("valid JSON array");
+        let ev: Vec<i64> = serde_json::from_str(&rows[0].evidence).expect("valid JSON array");
         assert_eq!(ev.len(), 2, "42 deduplicated; only 42 + 99");
         assert!(ev.contains(&42));
         assert!(ev.contains(&99));
@@ -1281,15 +1448,21 @@ mod tests {
     #[test]
     fn record_evidence_caps_at_50() {
         let (_dir, conn) = open();
-        let id =
-            insert(&conn, "many-witnesses", &Source::OperatorRuntime, "global", 1).unwrap();
+        let id = insert(
+            &conn,
+            "many-witnesses",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
 
         for ep in 0i64..60 {
+            insert_episode(&conn, ep);
             record_evidence(&conn, id, ep).unwrap();
         }
         let rows = list_for_scope(&conn, "global").unwrap();
-        let ev: Vec<i64> =
-            serde_json::from_str(&rows[0].evidence).expect("valid JSON array");
+        let ev: Vec<i64> = serde_json::from_str(&rows[0].evidence).expect("valid JSON array");
         assert_eq!(ev.len(), 50, "capped at 50 most-recent");
         // The oldest 10 (0..10) must have been dropped; last 50 (10..60) survive.
         assert_eq!(ev[0], 10, "oldest retained is episode 10");
@@ -1297,10 +1470,68 @@ mod tests {
     }
 
     #[test]
-    fn record_evidence_noop_on_unknown_id() {
+    fn record_evidence_rejects_unknown_fact_or_episode() {
         let (_dir, conn) = open();
-        // Must not error.
-        record_evidence(&conn, 999_999, 1).unwrap();
+        insert_episode(&conn, 1);
+        let error = record_evidence(&conn, 999_999, 1).unwrap_err();
+        assert!(error.to_string().contains("not found"));
+
+        let id = insert(&conn, "known fact", &Source::OperatorRuntime, "global", 1).unwrap();
+        let error = record_evidence(&conn, id, 999_999).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("absent from hot, warm, and cold")
+        );
+    }
+
+    #[test]
+    fn insert_with_evidence_is_atomic_and_retains_all_sources() {
+        let (_dir, conn) = open();
+        insert_episode(&conn, 7);
+        insert_episode(&conn, 8);
+
+        let id = insert_with_evidence(
+            &conn,
+            "derived fact",
+            &Source::Synthesis,
+            "meta",
+            1,
+            &[7, 8, 7],
+        )
+        .unwrap();
+        let row = get(&conn, id).unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<i64>>(&row.evidence).unwrap(),
+            vec![7, 8],
+            "all distinct contributing episodes are retained in source order"
+        );
+
+        let error = insert_with_evidence(
+            &conn,
+            "must roll back",
+            &Source::Synthesis,
+            "meta",
+            2,
+            &[999_999],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("absent from hot, warm, and cold")
+        );
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_groundtruth WHERE statement = 'must roll back'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "invalid evidence cannot leave an orphan fact behind"
+        );
     }
 
     // ── GOLD-ADAPT-JV-MEM-01 — 7-state machine + 5-gate promotion ───────────
@@ -1395,8 +1626,22 @@ mod tests {
         // All gates 1+3+4 pass → promoted to Verified and surfaced in recall.
         let (_dir, conn) = open();
         insert(&conn, "proxy is 10.0.0.1", &Source::Omi, "global", 1).unwrap();
-        insert(&conn, "proxy is 10.0.0.1", &Source::ImportHermes, "global", 2).unwrap();
-        insert(&conn, "proxy is 10.0.0.1", &Source::ImportOpenclaw, "global", 3).unwrap();
+        insert(
+            &conn,
+            "proxy is 10.0.0.1",
+            &Source::ImportHermes,
+            "global",
+            2,
+        )
+        .unwrap();
+        insert(
+            &conn,
+            "proxy is 10.0.0.1",
+            &Source::ImportOpenclaw,
+            "global",
+            3,
+        )
+        .unwrap();
         let (st, conf): (String, f64) = conn
             .query_row(
                 "SELECT fact_state, confidence FROM idx_groundtruth WHERE statement=?1",
@@ -1453,10 +1698,7 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(
-            st2, "candidate",
-            "first corroboration lifts Raw→Candidate"
-        );
+        assert_eq!(st2, "candidate", "first corroboration lifts Raw→Candidate");
         assert!(
             (conf2 - 0.75).abs() < 1e-9,
             "confidence 0.5→0.75 after 1 bump"
@@ -1509,7 +1751,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(st, "verified", "NmapScan is still operator-attested → Verified");
+        assert_eq!(
+            st, "verified",
+            "NmapScan is still operator-attested → Verified"
+        );
         // Operator-attested reassertion of a Candidate also verifies immediately.
         let id2 = insert(&conn, "dns is 8.8.8.8", &Source::Omi, "global", 2).unwrap();
         let id3 = insert(
@@ -1610,9 +1855,14 @@ mod tests {
     #[test]
     fn insert_restricted_idempotent_on_same_statement_scope() {
         let (_dir, conn) = open();
-        let id1 = insert_restricted(&conn, "payload A", "src", "scope-x", "dual-use", 1_000).unwrap();
-        let id2 = insert_restricted(&conn, "payload A", "src", "scope-x", "dual-use", 2_000).unwrap();
-        assert_eq!(id1, id2, "re-insert of identical (statement, scope) must be a no-op");
+        let id1 =
+            insert_restricted(&conn, "payload A", "src", "scope-x", "dual-use", 1_000).unwrap();
+        let id2 =
+            insert_restricted(&conn, "payload A", "src", "scope-x", "dual-use", 2_000).unwrap();
+        assert_eq!(
+            id1, id2,
+            "re-insert of identical (statement, scope) must be a no-op"
+        );
         let rows = search_restricted(&conn, "scope-x").unwrap();
         assert_eq!(rows.len(), 1);
     }
@@ -1621,7 +1871,15 @@ mod tests {
     fn promotion_round_trip_moves_to_groundtruth_and_stamps() {
         let (_dir, conn) = open();
         let stmt = "GTFOBins: find / -perm -u=s -type f 2>/dev/null";
-        let rid = insert_restricted(&conn, stmt, "gtfobins", "gtfo-scope", "dual-use-payloads", 1_000).unwrap();
+        let rid = insert_restricted(
+            &conn,
+            stmt,
+            "gtfobins",
+            "gtfo-scope",
+            "dual-use-payloads",
+            1_000,
+        )
+        .unwrap();
 
         let outcome = promote_restricted(&conn, rid, "operator-runtime", 2_000, false).unwrap();
         let gt_id = match outcome {
@@ -1645,7 +1903,8 @@ mod tests {
     #[test]
     fn re_promote_is_noop_returns_already_promoted() {
         let (_dir, conn) = open();
-        let rid = insert_restricted(&conn, "payload X", "src", "scope-y", "exploit-code", 1_000).unwrap();
+        let rid =
+            insert_restricted(&conn, "payload X", "src", "scope-y", "exploit-code", 1_000).unwrap();
         let first = promote_restricted(&conn, rid, "op", 2_000, false).unwrap();
         assert!(matches!(first, PromoteOutcome::Promoted { .. }));
 
@@ -1659,7 +1918,11 @@ mod tests {
 
         // Only one groundtruth row should exist.
         let gt_rows = list_for_scope(&conn, "scope-y").unwrap();
-        assert_eq!(gt_rows.len(), 1, "duplicate groundtruth rows must not be created");
+        assert_eq!(
+            gt_rows.len(),
+            1,
+            "duplicate groundtruth rows must not be created"
+        );
     }
 
     /// RESTRICTED-GROUNDTRUTH-ISOLATION-01 — a chunk that carries both
@@ -1737,18 +2000,25 @@ mod tests {
     #[test]
     fn dry_run_promote_writes_nothing() {
         let (_dir, conn) = open();
-        let rid = insert_restricted(&conn, "payload Y", "src", "scope-z", "exploit-code", 1_000).unwrap();
+        let rid =
+            insert_restricted(&conn, "payload Y", "src", "scope-z", "exploit-code", 1_000).unwrap();
 
         let outcome = promote_restricted(&conn, rid, "op", 2_000, true).unwrap();
         assert!(matches!(outcome, PromoteOutcome::DryRun { .. }));
 
         // Nothing should be in groundtruth.
         let gt_rows = list_for_scope(&conn, "scope-z").unwrap();
-        assert!(gt_rows.is_empty(), "dry-run must not write to idx_groundtruth");
+        assert!(
+            gt_rows.is_empty(),
+            "dry-run must not write to idx_groundtruth"
+        );
 
         // The restricted row must remain un-stamped.
         let r = get_restricted(&conn, rid).unwrap().unwrap();
-        assert!(r.promoted_at.is_none(), "dry-run must not stamp promoted_at");
+        assert!(
+            r.promoted_at.is_none(),
+            "dry-run must not stamp promoted_at"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -1815,7 +2085,10 @@ mod tests {
         mark_outbox_drained(&conn, pending_before[0].outbox_id, 3_000).unwrap();
 
         let pending_after = pending_promotions(&conn).unwrap();
-        assert!(pending_after.is_empty(), "no pending rows after drain marks done");
+        assert!(
+            pending_after.is_empty(),
+            "no pending rows after drain marks done"
+        );
 
         // The row must be stamped, not deleted.
         let drained_at: Option<i64> = conn
@@ -1825,7 +2098,11 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(drained_at, Some(3_000), "drained_at_ns must be set to drain timestamp");
+        assert_eq!(
+            drained_at,
+            Some(3_000),
+            "drained_at_ns must be set to drain timestamp"
+        );
     }
 
     /// (c) A row left pending by a prior crash surfaces in pending_promotions
@@ -1846,7 +2123,11 @@ mod tests {
         .unwrap();
 
         let pending = pending_promotions(&conn).unwrap();
-        assert_eq!(pending.len(), 1, "crash-survivor row must surface on replay");
+        assert_eq!(
+            pending.len(),
+            1,
+            "crash-survivor row must surface on replay"
+        );
         assert_eq!(pending[0].restricted_id, 42);
         assert_eq!(pending[0].groundtruth_id, 99);
         assert_eq!(pending[0].promoted_by, "op-crash");

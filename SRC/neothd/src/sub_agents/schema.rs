@@ -235,6 +235,23 @@ pub struct SubAgentRequest {
     pub ts_unix: i64,
 }
 
+/// Content-free audit evidence for one real provider invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubAgentProviderCall {
+    /// `primary` or `qa`.
+    pub stage: String,
+    /// One-based candidate attempt.
+    pub attempt: u8,
+    /// Authoritative B22-stamped leaf provider.
+    pub provider: String,
+    /// Exact model identifier sent on the provider wire.
+    pub wire_model: String,
+    #[serde(default)]
+    pub input_tokens: Option<u32>,
+    #[serde(default)]
+    pub output_tokens: Option<u32>,
+}
+
 /// Response from a sub-agent back to its caller (typically Cerebellum)
 /// or forward to the next sub-agent in the chain. The verdict field
 /// carries the structured PASS/FAIL/BLOCKED outcome from QM-6
@@ -257,6 +274,16 @@ pub struct SubAgentResult {
     /// this in `neoth code show <task>`.
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// Full operator-requested result. Stored only in the private run record;
+    /// WAL receives hashes and typed verdict metadata, never this content.
+    #[serde(default)]
+    pub output: String,
+    /// Exact leaf identity for every primary/QA provider call.
+    #[serde(default)]
+    pub provider_calls: Vec<SubAgentProviderCall>,
+    /// Candidate attempts consumed (1 normally; hard-capped at 2).
+    #[serde(default)]
+    pub attempts: u8,
     /// Optional pointer to the next sub-agent in the chain. `Some`
     /// for Dev → QA handoffs; `None` for terminal results that close
     /// the kanban row.
@@ -350,8 +377,14 @@ mod tests {
             omit_recall: true,
             omit_repo_context: true,
         };
-        assert!(a.denies_tool("dangerous_tool"), "listed tool must be denied");
-        assert!(!a.denies_tool("safe_tool"), "non-listed tool must not be denied");
+        assert!(
+            a.denies_tool("dangerous_tool"),
+            "listed tool must be denied"
+        );
+        assert!(
+            !a.denies_tool("safe_tool"),
+            "non-listed tool must not be denied"
+        );
     }
 
     #[test]
@@ -394,12 +427,18 @@ mod tests {
             system = "Be a planner."
         "#;
         let a: SubAgent = toml::from_str(toml_src).unwrap();
-        assert!(a.omit_operator_context, "omit_operator_context must default true");
+        assert!(
+            a.omit_operator_context,
+            "omit_operator_context must default true"
+        );
         assert!(a.omit_mcp_catalogue, "omit_mcp_catalogue must default true");
         assert!(a.omit_preset, "omit_preset must default true");
         assert!(a.omit_recall, "omit_recall must default true");
         assert!(a.omit_repo_context, "omit_repo_context must default true");
-        assert!(!a.omit_moral_core, "omit_moral_core must default false (safety layer stays in)");
+        assert!(
+            !a.omit_moral_core,
+            "omit_moral_core must default false (safety layer stays in)"
+        );
     }
 
     #[test]
@@ -412,7 +451,10 @@ mod tests {
         "#;
         let a: SubAgent = toml::from_str(toml_src).unwrap();
         let flags = a.to_omit_flags();
-        assert!(flags.moral_core, "to_omit_flags must propagate omit_moral_core=true");
+        assert!(
+            flags.moral_core,
+            "to_omit_flags must propagate omit_moral_core=true"
+        );
     }
 
     #[test]
@@ -485,6 +527,9 @@ mod tests {
             task_id: "T-42".into(),
             verdict: QaVerdict::pass_with_evidence(vec!["1450 tests pass".into()]),
             evidence: vec!["cargo test output: 1450 / 0".into()],
+            output: "implementation result".into(),
+            provider_calls: vec![],
+            attempts: 1,
             next_agent: Some("evidence_collector".into()),
             ts_unix: 1_700_000_500,
         };
@@ -509,6 +554,9 @@ mod tests {
                 citation: Some("src/math.rs:88".into()),
             }]),
             evidence: vec!["cargo test failed".into()],
+            output: "candidate result".into(),
+            provider_calls: vec![],
+            attempts: 1,
             next_agent: None,
             ts_unix: 1_700_001_000,
         };

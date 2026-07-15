@@ -69,7 +69,9 @@ impl ProbeResult {
                 format!(
                     "Down — {} unreachable ({})",
                     self.endpoint,
-                    self.reason.as_deref().unwrap_or("connection refused or timeout")
+                    self.reason
+                        .as_deref()
+                        .unwrap_or("connection refused or timeout")
                 ),
             ),
         };
@@ -90,8 +92,8 @@ impl ProbeResult {
 /// is purely structural — it verifies the server is reachable and returns
 /// an HTTP 200; it does NOT parse the model list.
 pub async fn probe_ollama() -> ProbeResult {
-    let base = std::env::var("NEOTH_OLLAMA_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+    let base =
+        std::env::var("NEOTH_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
     let url = format!("{}/v1/models", base.trim_end_matches('/'));
     http_get_probe("ollama", &url, HTTP_PROBE_TIMEOUT).await
 }
@@ -102,8 +104,8 @@ pub async fn probe_ollama() -> ProbeResult {
 /// [`crate::tools::web_search::SEARXNG_DEFAULT_URL`]) and can be overridden
 /// via `NEOTH_SEARXNG_URL`.
 pub async fn probe_searxng() -> ProbeResult {
-    let base = std::env::var("NEOTH_SEARXNG_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8888".to_string());
+    let base =
+        std::env::var("NEOTH_SEARXNG_URL").unwrap_or_else(|_| "http://127.0.0.1:8888".to_string());
     let url = format!("{}/", base.trim_end_matches('/'));
     http_get_probe("searxng", &url, HTTP_PROBE_TIMEOUT).await
 }
@@ -114,8 +116,7 @@ pub async fn probe_searxng() -> ProbeResult {
 /// Host defaults to `imap.gmail.com`; port to `993`.  Override via
 /// `NEOTH_IMAP_HOST` / `NEOTH_IMAP_PORT`.
 pub async fn probe_imap() -> ProbeResult {
-    let host = std::env::var("NEOTH_IMAP_HOST")
-        .unwrap_or_else(|_| "imap.gmail.com".to_string());
+    let host = std::env::var("NEOTH_IMAP_HOST").unwrap_or_else(|_| "imap.gmail.com".to_string());
     let port: u16 = std::env::var("NEOTH_IMAP_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -142,7 +143,10 @@ async fn http_get_probe(name: &'static str, url: &str, timeout: Duration) -> Pro
                 endpoint: url.to_string(),
                 status: ProbeStatus::Down,
                 latency_ms: None,
-                reason: Some(format!("client build failed: {}", safe_error(&e.to_string()))),
+                reason: Some(format!(
+                    "client build failed: {}",
+                    safe_error(&e.to_string())
+                )),
             };
         }
     };
@@ -180,11 +184,7 @@ async fn http_get_probe(name: &'static str, url: &str, timeout: Duration) -> Pro
 /// successful handshake regardless of what the server sends after.
 async fn tcp_connect_probe(name: &'static str, addr: &str, timeout: Duration) -> ProbeResult {
     let start = Instant::now();
-    let result = tokio::time::timeout(
-        timeout,
-        tokio::net::TcpStream::connect(addr),
-    )
-    .await;
+    let result = tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await;
     let latency_ms = start.elapsed().as_millis() as u64;
     match result {
         Err(_) => ProbeResult {
@@ -278,7 +278,11 @@ mod tests {
             "closed-port probe took too long: {:?}",
             start.elapsed()
         );
-        assert_eq!(result.status, ProbeStatus::Down, "expected Down on closed port");
+        assert_eq!(
+            result.status,
+            ProbeStatus::Down,
+            "expected Down on closed port"
+        );
         assert!(result.latency_ms.is_none(), "no latency on Down");
         assert!(result.reason.is_some(), "reason must be set on Down");
     }
@@ -356,7 +360,11 @@ mod tests {
             .await;
         let url = format!("{}/", mock.uri());
         let result = http_get_probe("searxng", &url, Duration::from_secs(4)).await;
-        assert_eq!(result.status, ProbeStatus::Up, "5xx is still Up (server reachable)");
+        assert_eq!(
+            result.status,
+            ProbeStatus::Up,
+            "5xx is still Up (server reachable)"
+        );
     }
 
     // ── into_outcome ─────────────────────────────────────────────────────
@@ -388,17 +396,25 @@ mod tests {
         let out = r.into_outcome();
         assert_eq!(out.status, CheckStatus::Warn);
         assert!(out.detail.contains("unreachable"), "detail: {}", out.detail);
-        assert!(out.detail.contains("connection refused"), "detail: {}", out.detail);
+        assert!(
+            out.detail.contains("connection refused"),
+            "detail: {}",
+            out.detail
+        );
     }
 
     // ── safe_error ────────────────────────────────────────────────────────
 
     #[test]
     fn safe_error_strips_url_fragment() {
-        let raw = "error sending request for url (http://127.0.0.1:11434/v1/models): connection refused";
+        let raw =
+            "error sending request for url (http://127.0.0.1:11434/v1/models): connection refused";
         let safe = safe_error(raw);
         assert!(!safe.contains("127.0.0.1"), "safe_error leaked IP: {safe}");
-        assert!(safe.contains("error sending request"), "kind preserved: {safe}");
+        assert!(
+            safe.contains("error sending request"),
+            "kind preserved: {safe}"
+        );
     }
 
     #[test]
@@ -422,18 +438,27 @@ mod tests {
         let mock = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/v1/models"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({"object": "list", "data": []}),
-            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"object": "list", "data": []})),
+            )
             .mount(&mock)
             .await;
         // Scope the env override so it doesn't leak to other tests.
         // SAFETY: single-threaded tokio test runtime; no other thread reads
         // this variable concurrently inside this test.
-        unsafe { std::env::set_var("NEOTH_OLLAMA_URL", mock.uri()); }
+        unsafe {
+            std::env::set_var("NEOTH_OLLAMA_URL", mock.uri());
+        }
         let result = probe_ollama().await;
-        unsafe { std::env::remove_var("NEOTH_OLLAMA_URL"); }
-        assert_eq!(result.status, ProbeStatus::Up, "ollama probe via env override: {result:?}");
+        unsafe {
+            std::env::remove_var("NEOTH_OLLAMA_URL");
+        }
+        assert_eq!(
+            result.status,
+            ProbeStatus::Up,
+            "ollama probe via env override: {result:?}"
+        );
     }
 
     /// Verify that probe_searxng reads NEOTH_SEARXNG_URL.
@@ -445,10 +470,18 @@ mod tests {
             .mount(&mock)
             .await;
         // SAFETY: single-threaded tokio test runtime.
-        unsafe { std::env::set_var("NEOTH_SEARXNG_URL", mock.uri()); }
+        unsafe {
+            std::env::set_var("NEOTH_SEARXNG_URL", mock.uri());
+        }
         let result = probe_searxng().await;
-        unsafe { std::env::remove_var("NEOTH_SEARXNG_URL"); }
-        assert_eq!(result.status, ProbeStatus::Up, "searxng probe via env override: {result:?}");
+        unsafe {
+            std::env::remove_var("NEOTH_SEARXNG_URL");
+        }
+        assert_eq!(
+            result.status,
+            ProbeStatus::Up,
+            "searxng probe via env override: {result:?}"
+        );
     }
 
     /// Verify that probe_imap reads NEOTH_IMAP_HOST / NEOTH_IMAP_PORT.
@@ -457,7 +490,9 @@ mod tests {
         use tokio::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move { let _ = listener.accept().await; });
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
         // SAFETY: single-threaded tokio test runtime.
         unsafe {
             std::env::set_var("NEOTH_IMAP_HOST", "127.0.0.1");
@@ -468,7 +503,11 @@ mod tests {
             std::env::remove_var("NEOTH_IMAP_HOST");
             std::env::remove_var("NEOTH_IMAP_PORT");
         }
-        assert_eq!(result.status, ProbeStatus::Up, "imap probe via env override: {result:?}");
+        assert_eq!(
+            result.status,
+            ProbeStatus::Up,
+            "imap probe via env override: {result:?}"
+        );
     }
 
     /// run_live_probes returns 3 outcomes — one per subsystem.

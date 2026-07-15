@@ -7,27 +7,30 @@
 //! -35% cost and -70% tool calls when the LLM has typed codegraph
 //! access instead of re-deriving relevance via repeated greps.
 //!
-//! ## Scope of this commit
+//! ## Surface
 //!
-//! Two pure helpers:
+//! The canonical tool definitions and dispatcher are exposed through a real
+//! newline-delimited JSON-RPC stdio server (`neoth mcp codegraph-serve`).
+//! External clients therefore consume the same typed source of truth as NEOTH's
+//! in-process catalogue. The outline tool is restricted to files present in the
+//! persisted code-map; the MCP client cannot turn it into an arbitrary local
+//! file reader.
 //!
-//! - [`codegraph_tools`] returns the canonical [`McpTool`] list with
-//!   names + descriptions + JSON-Schema input shapes. The wider
-//!   stdio JSON-RPC server that exposes this list to external
-//!   processes is the follow-up; this module ships the typed tool
-//!   definitions so every future surface (in-process, stdio,
-//!   HTTP, GUI) consumes the same source of truth.
+//! - [`codegraph_tools`] returns the canonical [`McpTool`] list with names,
+//!   descriptions, and JSON-Schema input shapes.
 //! - [`dispatch_codegraph_tool`] takes a tool name + args + the
 //!   operator's code-map DB path and returns a [`ToolCallResult`]
 //!   ready for the MCP `tools/call` response envelope.
 //!
-//! Today's tool set (5 tools, mirrors the smallcode minimum + call-chain BFS):
+//! Today's tool set (6 tools, mirrors the smallcode minimum + call-chain BFS):
 //!
 //! - `codegraph_relevant_files` — top-N files for a prompt
 //! - `codegraph_extract_identifiers` — symbol-shape extraction
 //! - `codegraph_path_keywords` — path-segment extraction
 //! - `codegraph_callers` — transitive callers of a symbol (inverse BFS)
 //! - `codegraph_callees` — transitive callees of a symbol (forward BFS)
+//! - `codegraph_outline` — structural outline for a file already indexed in
+//!   the persisted code map
 //!
 //! Each is a pure read against the operator's persisted code map
 //! (`~/.neoth/code_map.db`): relevant_files ranks stored file rows;
@@ -36,10 +39,11 @@
 //! calls, no network. Safe to expose to any MCP client the operator's
 //! autonomy level allows.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::mcp::client::{McpContent, McpTool, ToolAnnotations, ToolCallResult};
 
@@ -189,7 +193,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
         McpTool {
             name: "codegraph_outline".into(),
             description: Some(
-                "Return a structural outline of a source file: every top-level \
+                "Return a structural outline of an indexed source file: every top-level \
                  declaration (function, struct, trait, class, …) with its name, \
                  kind, start line, and estimated end line. \
                  Replaces reading the whole file to understand its shape — \
@@ -204,7 +208,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Absolute or relative path to the source file to outline."
+                        "description": "Absolute or unambiguous repo-relative path already present in the persisted code map."
                     }
                 },
                 "required": ["path"]
@@ -245,7 +249,7 @@ pub fn dispatch_codegraph_tool(
         "codegraph_relevant_files" => tool_relevant_files(db_path, args),
         "codegraph_callers" => tool_callers(db_path, args),
         "codegraph_callees" => tool_callees(db_path, args),
-        "codegraph_outline" => tool_outline(args),
+        "codegraph_outline" => tool_outline(db_path, args),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
             TOOL_NAMES.join(", "),
@@ -275,7 +279,10 @@ fn tool_extract_identifiers(args: &serde_json::Value) -> ToolCallResult {
         Err(e) => return error_result(format!("bad args: {e}")),
     };
     let ids = crate::code_map::recall::extract_identifiers(&parsed.text);
-    text_result(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into()))
+    text_result(
+        serde_json::to_string(&ids)
+            .expect("identifier strings and vectors are always JSON-serializable"),
+    )
 }
 
 fn tool_path_keywords(args: &serde_json::Value) -> ToolCallResult {
@@ -284,7 +291,10 @@ fn tool_path_keywords(args: &serde_json::Value) -> ToolCallResult {
         Err(e) => return error_result(format!("bad args: {e}")),
     };
     let keys = crate::code_map::recall::extract_path_keywords(&parsed.text);
-    text_result(serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into()))
+    text_result(
+        serde_json::to_string(&keys)
+            .expect("path-keyword strings and vectors are always JSON-serializable"),
+    )
 }
 
 fn tool_relevant_files(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
@@ -322,7 +332,8 @@ fn relevant_files_inner(db_path: &Path, prompt: &str, limit: usize) -> Result<St
             })
         })
         .collect();
-    Ok(serde_json::to_string(&payload).unwrap_or_else(|_| "[]".into()))
+    Ok(serde_json::to_string(&payload)
+        .expect("serde_json::Value arrays are always JSON-serializable"))
 }
 
 #[derive(Deserialize)]
@@ -410,7 +421,7 @@ pub(crate) fn callers_inner(
             })
         })
         .collect();
-    serde_json::to_string(&payload).unwrap_or_else(|_| "[]".into())
+    serde_json::to_string(&payload).expect("serde_json::Value arrays are always JSON-serializable")
 }
 
 /// Same as [`callers_inner`] for the forward direction.
@@ -431,7 +442,7 @@ pub(crate) fn callees_inner(
             })
         })
         .collect();
-    serde_json::to_string(&payload).unwrap_or_else(|_| "[]".into())
+    serde_json::to_string(&payload).expect("serde_json::Value arrays are always JSON-serializable")
 }
 
 // ── GOLD-ADAPT-CCS-04: codegraph_outline ─────────────────────────────────
@@ -441,17 +452,276 @@ struct OutlineArgs {
     path: String,
 }
 
-fn tool_outline(args: &serde_json::Value) -> ToolCallResult {
+fn tool_outline(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
     let parsed: OutlineArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
-    let path = std::path::Path::new(&parsed.path);
-    let entries = crate::code_map::outline::outline_file(path);
+    let path = match resolve_indexed_outline_path(db_path, &parsed.path) {
+        Ok(path) => path,
+        Err(error) => return error_result(format!("outline access denied: {error:#}")),
+    };
+    let entries = crate::code_map::outline::outline_file(&path);
     match serde_json::to_string(&entries) {
         Ok(payload) => text_result(payload),
         Err(e) => error_result(format!("outline serialisation failed: {e}")),
     }
+}
+
+/// Resolve an outline request only when the canonical file is part of the
+/// persisted code-map. Relative paths must identify exactly one indexed root;
+/// callers can disambiguate duplicate repo-relative paths with an absolute path.
+/// Canonical root containment also rejects indexed symlinks/junctions that now
+/// escape their original repository.
+fn resolve_indexed_outline_path(db_path: &Path, requested: &str) -> Result<PathBuf> {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        anyhow::bail!("path is empty");
+    }
+    if !db_path.exists() {
+        anyhow::bail!("code-map database is missing; build it before requesting file outlines");
+    }
+    let requested_path = Path::new(requested);
+    let requested_absolute = if requested_path.is_absolute() {
+        Some(
+            requested_path
+                .canonicalize()
+                .with_context(|| format!("canonicalize requested path `{requested}`"))?,
+        )
+    } else {
+        None
+    };
+
+    let conn = crate::code_map::persist::open(db_path)
+        .with_context(|| format!("open {}", db_path.display()))?;
+    let mut stmt = conn
+        .prepare("SELECT root, path FROM code_map_files ORDER BY root, path")
+        .context("prepare indexed-outline membership query")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .context("query indexed-outline membership")?;
+
+    let mut matches = Vec::new();
+    for row in rows {
+        let (root, relative) = row.context("read indexed-outline membership row")?;
+        if requested_absolute.is_none() && Path::new(&relative) != requested_path {
+            continue;
+        }
+        let canonical_root = match Path::new(&root).canonicalize() {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        let canonical_file = match canonical_root.join(&relative).canonicalize() {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if canonical_file.strip_prefix(&canonical_root).is_err() {
+            continue;
+        }
+        if requested_absolute
+            .as_ref()
+            .is_some_and(|absolute| absolute != &canonical_file)
+        {
+            continue;
+        }
+        matches.push(canonical_file);
+    }
+    matches.sort();
+    matches.dedup();
+    match matches.as_slice() {
+        [path] => Ok(path.clone()),
+        [] => anyhow::bail!("`{requested}` is not an indexed code-map file"),
+        _ => anyhow::bail!(
+            "relative path `{requested}` exists in multiple indexed roots; use an absolute path"
+        ),
+    }
+}
+
+#[derive(Default)]
+struct StdioSession {
+    initialize_seen: bool,
+    ready: bool,
+}
+
+/// Run the production codegraph MCP server on stdin/stdout. Stdout is reserved
+/// exclusively for compact JSON-RPC messages; diagnostics belong on stderr via
+/// the process tracing subscriber.
+pub async fn serve_stdio(db_path: PathBuf) -> Result<()> {
+    let mut input = tokio::io::stdin();
+    let mut output = tokio::io::stdout();
+    let mut buffer = Vec::with_capacity(8 * 1024);
+    let mut chunk = [0u8; 8 * 1024];
+    let mut session = StdioSession::default();
+
+    loop {
+        while let Some((body, consumed)) = crate::mcp::transport::parse_frame(&buffer)
+            .map_err(|error| anyhow::anyhow!("invalid MCP stdio message: {error}"))?
+        {
+            buffer.drain(..consumed);
+            if let Some(response) = handle_stdio_message(&db_path, &body, &mut session) {
+                let encoded = serde_json::to_vec(&response).context("encode MCP response")?;
+                let message = crate::mcp::transport::frame(&encoded);
+                output
+                    .write_all(&message)
+                    .await
+                    .context("write MCP response")?;
+                output.flush().await.context("flush MCP response")?;
+            }
+        }
+
+        let read = input.read(&mut chunk).await.context("read MCP stdin")?;
+        if read == 0 {
+            if buffer.is_empty() {
+                return Ok(());
+            }
+            anyhow::bail!("MCP stdin closed with an incomplete JSON message");
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if !buffer.contains(&b'\n') && buffer.len() > crate::mcp::transport::MAX_MCP_FRAME_BYTES {
+            anyhow::bail!(
+                "MCP stdin message exceeds {} bytes",
+                crate::mcp::transport::MAX_MCP_FRAME_BYTES
+            );
+        }
+    }
+}
+
+/// Pure JSON-RPC request handler used by the stdio loop and protocol tests.
+/// Notifications return `None` as required by JSON-RPC.
+fn handle_stdio_message(
+    db_path: &Path,
+    body: &[u8],
+    session: &mut StdioSession,
+) -> Option<serde_json::Value> {
+    let value: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Some(rpc_error(
+                serde_json::Value::Null,
+                -32700,
+                "Parse error",
+                Some(serde_json::json!({"detail": error.to_string()})),
+            ));
+        }
+    };
+    let id = value.get("id").cloned();
+    let Some(method) = value.get("method").and_then(serde_json::Value::as_str) else {
+        return Some(rpc_error(
+            id.unwrap_or(serde_json::Value::Null),
+            -32600,
+            "Invalid Request",
+            None,
+        ));
+    };
+    if value.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0") {
+        return Some(rpc_error(
+            id.unwrap_or(serde_json::Value::Null),
+            -32600,
+            "Invalid Request",
+            None,
+        ));
+    }
+
+    // Notifications never receive a response.
+    if id.is_none() {
+        if method == "notifications/initialized" && session.initialize_seen {
+            session.ready = true;
+        }
+        return None;
+    }
+    let id = id.expect("checked above");
+
+    if method == "initialize" {
+        if session.initialize_seen {
+            return Some(rpc_error(
+                id,
+                -32600,
+                "initialize may only be sent once",
+                None,
+            ));
+        }
+        let Some(requested) = value
+            .pointer("/params/protocolVersion")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Some(rpc_error(id, -32602, "Invalid params", None));
+        };
+        let negotiated = if crate::mcp::client::SUPPORTED_PROTOCOL_VERSIONS.contains(&requested) {
+            requested
+        } else {
+            crate::mcp::client::MCP_PROTOCOL_VERSION
+        };
+        session.initialize_seen = true;
+        return Some(rpc_result(
+            id,
+            serde_json::json!({
+                "protocolVersion": negotiated,
+                "capabilities": {"tools": {"listChanged": false}},
+                "serverInfo": {
+                    "name": "neoth-codegraph",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "description": "Read-only queries over NEOTH's persisted local code map"
+                },
+                "instructions": "Only files already indexed in the local code map can be outlined."
+            }),
+        ));
+    }
+
+    if method == "ping" {
+        return Some(rpc_result(id, serde_json::json!({})));
+    }
+    if !session.ready {
+        return Some(rpc_error(id, -32002, "Server not initialized", None));
+    }
+
+    match method {
+        "tools/list" => Some(rpc_result(
+            id,
+            serde_json::json!({"tools": codegraph_tools()}),
+        )),
+        "tools/call" => {
+            let Some(name) = value
+                .pointer("/params/name")
+                .and_then(serde_json::Value::as_str)
+            else {
+                return Some(rpc_error(id, -32602, "Invalid params", None));
+            };
+            let arguments = value
+                .pointer("/params/arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            Some(rpc_result(
+                id,
+                serde_json::to_value(dispatch_codegraph_tool(db_path, name, &arguments))
+                    .unwrap_or_else(|error| {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("result serialisation failed: {error}")}],
+                            "isError": true
+                        })
+                    }),
+            ))
+        }
+        _ => Some(rpc_error(id, -32601, "Method not found", None)),
+    }
+}
+
+fn rpc_result(id: serde_json::Value, result: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})
+}
+
+fn rpc_error(
+    id: serde_json::Value,
+    code: i64,
+    message: &str,
+    data: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut error = serde_json::json!({"code": code, "message": message});
+    if let Some(data) = data {
+        error["data"] = data;
+    }
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "error": error})
 }
 
 fn text_result(text: String) -> ToolCallResult {
@@ -658,11 +928,11 @@ fn root() { middle(); }
         let g = graph_from_rust("x.rs", src);
         let json = callers_inner(&g, "leaf", 5);
         let rows: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
-        let symbols: Vec<&str> = rows
-            .iter()
-            .map(|r| r["symbol"].as_str().unwrap())
-            .collect();
-        assert!(symbols.contains(&"middle"), "missing middle in: {symbols:?}");
+        let symbols: Vec<&str> = rows.iter().map(|r| r["symbol"].as_str().unwrap()).collect();
+        assert!(
+            symbols.contains(&"middle"),
+            "missing middle in: {symbols:?}"
+        );
         assert!(symbols.contains(&"root"), "missing root in: {symbols:?}");
         // depth ordering: middle=1, root=2
         let middle = rows.iter().find(|r| r["symbol"] == "middle").unwrap();
@@ -821,10 +1091,7 @@ fn root() { alpha(); beta(); }
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
-        let syms: Vec<&str> = rows
-            .iter()
-            .map(|x| x["symbol"].as_str().unwrap())
-            .collect();
+        let syms: Vec<&str> = rows.iter().map(|x| x["symbol"].as_str().unwrap()).collect();
         assert!(syms.contains(&"middle"), "wiring broken — got: {syms:?}");
         assert!(syms.contains(&"root"), "wiring broken — got: {syms:?}");
     }
@@ -848,6 +1115,25 @@ fn root() { alpha(); beta(); }
 
     // ── GOLD-ADAPT-CCS-04: codegraph_outline dispatch tests ───────────────
 
+    fn seed_indexed_file(db: &Path, root: &Path, relative: &str) {
+        let conn = crate::code_map::persist::open(db).unwrap();
+        let root = root.canonicalize().unwrap().display().to_string();
+        conn.execute(
+            "INSERT INTO code_map_roots \
+             (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped) \
+             VALUES (?1, 0, 1, 0, 1, 0)",
+            rusqlite::params![root],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO code_map_files \
+             (root, path, language, bytes, loc, sha256, mtime_ns) \
+             VALUES (?1, ?2, 'rust', 0, 1, '', 0)",
+            rusqlite::params![root, relative],
+        )
+        .unwrap();
+    }
+
     #[test]
     fn dispatch_codegraph_outline_rejects_missing_path() {
         let dir = tempdir().unwrap();
@@ -861,15 +1147,15 @@ fn root() { alpha(); beta(); }
     }
 
     #[test]
-    fn dispatch_codegraph_outline_nonexistent_file_returns_empty_array() {
+    fn dispatch_codegraph_outline_rejects_unindexed_file() {
         let dir = tempdir().unwrap();
         let r = dispatch_codegraph_tool(
             &dir.path().join("code_map.db"),
             "codegraph_outline",
             &serde_json::json!({"path": "/this/does/not/exist.rs"}),
         );
-        assert!(!r.is_error, "missing file must not produce error result");
-        assert_eq!(text_content(&r), "[]");
+        assert!(r.is_error);
+        assert!(text_content(&r).contains("access denied"));
     }
 
     #[test]
@@ -883,16 +1169,17 @@ fn root() { alpha(); beta(); }
             "pub struct Config {}\npub fn init() {}\npub fn run() {\n    // body\n}\n",
         )
         .unwrap();
+        let db = dir.path().join("code_map.db");
+        seed_indexed_file(&db, dir.path(), "fixture.rs");
 
         let r = dispatch_codegraph_tool(
-            &dir.path().join("code_map.db"),
+            &db,
             "codegraph_outline",
-            &serde_json::json!({"path": fixture.to_str().unwrap()}),
+            &serde_json::json!({"path": "fixture.rs"}),
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
 
-        let entries: Vec<serde_json::Value> =
-            serde_json::from_str(&text_content(&r)).unwrap();
+        let entries: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
         assert_eq!(entries.len(), 3, "expected 3 outline entries: {entries:?}");
 
         // Config at line 1
@@ -917,20 +1204,143 @@ fn root() { alpha(); beta(); }
         let dir = tempdir().unwrap();
         let fixture = dir.path().join("keys.rs");
         std::fs::write(&fixture, "fn one() {}\nfn two() {}\n").unwrap();
+        let db = dir.path().join("code_map.db");
+        seed_indexed_file(&db, dir.path(), "keys.rs");
 
         let r = dispatch_codegraph_tool(
-            &dir.path().join("code_map.db"),
+            &db,
             "codegraph_outline",
             &serde_json::json!({"path": fixture.to_str().unwrap()}),
         );
         assert!(!r.is_error);
-        let entries: Vec<serde_json::Value> =
-            serde_json::from_str(&text_content(&r)).unwrap();
+        let entries: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
         for e in &entries {
-            assert!(e.get("name").is_some(),       "name missing in {e}");
-            assert!(e.get("kind").is_some(),       "kind missing in {e}");
+            assert!(e.get("name").is_some(), "name missing in {e}");
+            assert!(e.get("kind").is_some(), "kind missing in {e}");
             assert!(e.get("line_start").is_some(), "line_start missing in {e}");
-            assert!(e.get("line_end").is_some(),   "line_end missing in {e}");
+            assert!(e.get("line_end").is_some(), "line_end missing in {e}");
         }
+    }
+
+    #[test]
+    fn dispatch_codegraph_outline_cannot_read_unindexed_neighbor() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("indexed.rs"), "fn allowed() {}\n").unwrap();
+        let secret = dir.path().join("secret.rs");
+        std::fs::write(&secret, "fn must_not_leak() {}\n").unwrap();
+        let db = dir.path().join("code_map.db");
+        seed_indexed_file(&db, dir.path(), "indexed.rs");
+
+        let denied = dispatch_codegraph_tool(
+            &db,
+            "codegraph_outline",
+            &serde_json::json!({"path": secret}),
+        );
+        assert!(denied.is_error);
+        assert!(!text_content(&denied).contains("must_not_leak"));
+    }
+
+    // ── Production stdio JSON-RPC wiring ─────────────────────────────────
+
+    fn message(
+        db: &Path,
+        session: &mut StdioSession,
+        value: serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        handle_stdio_message(db, &serde_json::to_vec(&value).unwrap(), session)
+    }
+
+    #[test]
+    fn stdio_server_negotiates_and_requires_initialized_notification() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let mut session = StdioSession::default();
+        let initialized = message(
+            &db,
+            &mut session,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "init-1",
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}
+            }),
+        )
+        .unwrap();
+        assert_eq!(initialized["id"], "init-1");
+        assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
+        assert_eq!(
+            initialized["result"]["capabilities"]["tools"]["listChanged"],
+            false
+        );
+
+        let early = message(
+            &db,
+            &mut session,
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+        )
+        .unwrap();
+        assert_eq!(early["error"]["code"], -32002);
+
+        assert!(
+            message(
+                &db,
+                &mut session,
+                serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
+            )
+            .is_none(),
+            "notifications must never receive a response"
+        );
+        let listed = message(
+            &db,
+            &mut session,
+            serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}),
+        )
+        .unwrap();
+        assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn stdio_server_calls_real_dispatcher_and_preserves_string_id() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let mut session = StdioSession {
+            initialize_seen: true,
+            ready: true,
+        };
+        let response = message(
+            &db,
+            &mut session,
+            serde_json::json!({
+                "jsonrpc":"2.0",
+                "id":"call-7",
+                "method":"tools/call",
+                "params":{"name":"codegraph_extract_identifiers","arguments":{"text":"OrderService auth_middleware"}}
+            }),
+        )
+        .unwrap();
+        assert_eq!(response["id"], "call-7");
+        assert_eq!(response["result"]["isError"], false);
+        let payload = response["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(payload.contains("OrderService"));
+        assert!(payload.contains("auth_middleware"));
+    }
+
+    #[test]
+    fn stdio_server_returns_json_rpc_errors_for_parse_and_unknown_method() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let mut session = StdioSession {
+            initialize_seen: true,
+            ready: true,
+        };
+        let parse = handle_stdio_message(&db, b"not json", &mut session).unwrap();
+        assert_eq!(parse["error"]["code"], -32700);
+        let unknown = message(
+            &db,
+            &mut session,
+            serde_json::json!({"jsonrpc":"2.0","id":9,"method":"resources/list","params":{}}),
+        )
+        .unwrap();
+        assert_eq!(unknown["error"]["code"], -32601);
     }
 }

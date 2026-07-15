@@ -3,7 +3,7 @@
 //! # Dependency decision: windows-sys direct (no `keyring` crate)
 //!
 //! **Chosen**: `windows-sys 0.59` (`Win32_Security_Credentials` feature) for
-//! Windows, with macOS and Linux wired as design notes for follow-on commits.
+//! Windows, plus the already-pinned native crates on macOS and Linux.
 //!
 //! **Rejected**: `keyring 3.x` — it wraps the same OS APIs but pins its OWN
 //! versions of the platform crates. We already carry:
@@ -23,36 +23,10 @@
 //! | macOS    | `"neoth"`             | account `"{field_key}"`     |
 //! | Linux    | label `"neoth/{field_key}"` | attr `("neoth-key", "{field_key}")` |
 //!
-//! # macOS implementation (design note)
-//!
-//! `security-framework 3` is already in
-//! `[target.'cfg(target_os = "macos")'.dependencies]`. Wire with:
-//! ```ignore
-//! use security_framework::passwords::{
-//!     get_generic_password, set_generic_password, delete_generic_password,
-//! };
-//! // "not found" → errSecItemNotFound = -25300 → Ok(None)
-//! fn get(key: &str) -> Result<Option<SecretString>> {
-//!     match get_generic_password("neoth", key) {
-//!         Ok(bytes) => Ok(Some(SecretString::from(String::from_utf8(bytes)?))),
-//!         Err(e) if e.code() == -25300 => Ok(None),
-//!         Err(e) => Err(anyhow::anyhow!("Keychain error: {e}")),
-//!     }
-//! }
-//! ```
-//!
-//! # Linux implementation (design note)
-//!
-//! `secret-service 4` (rt-tokio-crypto-rust) is in
-//! `[target.'cfg(target_os = "linux")'.dependencies]`. Wire with async +
-//! a `block_in_place` bridge:
-//! ```ignore
-//! use secret_service::{EncryptionType, SecretService};
-//! // bridge: tokio::task::block_in_place(|| handle.block_on(async { ... }))
-//! // "not found" → `secret_service::Error::LockedItem` or empty list → Ok(None)
-//! ```
-//! Verify that the daemon's systemd unit sets `KeyringMode=inherit` (or
-//! similar) so the D-Bus session keyring is reachable from the service context.
+//! macOS uses Security.framework generic-password entries. Linux uses the
+//! freedesktop Secret Service blocking client with DH-encrypted sessions; the
+//! CLI calls it outside async executor hot paths. Headless Linux services need
+//! an inherited/unlocked D-Bus session keyring or the backend returns an error.
 //!
 //! # Runtime degradation
 //!
@@ -88,7 +62,11 @@ use crate::secret::SecretString;
 /// subset that carries keychain-worthy secrets.
 pub const SECRET_FIELD_KEYS: &[&str] = &[
     "provider_key",
+    "elevenlabs_tts_api_key",
+    "azure_tts_api_key",
     "telegram_token",
+    "omi_developer_api_key",
+    "omi_ingest_token",
     "inference_left_key",
     "inference_right_key",
     "inference_cerebellum_key",
@@ -179,27 +157,18 @@ impl Default for InMemorySecretStore {
 
 impl SecretStore for InMemorySecretStore {
     fn get(&self, key: &str) -> Result<Option<SecretString>> {
-        let map = self
-            .data
-            .lock()
-            .expect("InMemorySecretStore lock poisoned");
+        let map = self.data.lock().expect("InMemorySecretStore lock poisoned");
         Ok(map.get(key).map(|v| SecretString::from(v.clone())))
     }
 
     fn set(&self, key: &str, value: &SecretString) -> Result<()> {
-        let mut map = self
-            .data
-            .lock()
-            .expect("InMemorySecretStore lock poisoned");
+        let mut map = self.data.lock().expect("InMemorySecretStore lock poisoned");
         map.insert(key.to_string(), value.expose().to_string());
         Ok(())
     }
 
     fn delete(&self, key: &str) -> Result<()> {
-        let mut map = self
-            .data
-            .lock()
-            .expect("InMemorySecretStore lock poisoned");
+        let mut map = self.data.lock().expect("InMemorySecretStore lock poisoned");
         map.remove(key);
         Ok(())
     }
@@ -229,9 +198,9 @@ pub(super) struct WinCredStore;
 impl SecretStore for WinCredStore {
     fn get(&self, key: &str) -> Result<Option<SecretString>> {
         use windows_sys::Win32::Foundation::{
-            GetLastError, ERROR_NOT_FOUND, ERROR_NO_SUCH_LOGON_SESSION,
+            ERROR_NO_SUCH_LOGON_SESSION, ERROR_NOT_FOUND, GetLastError,
         };
-        use windows_sys::Win32::Security::Credentials::{CredFree, CredReadW, CRED_TYPE_GENERIC};
+        use windows_sys::Win32::Security::Credentials::{CRED_TYPE_GENERIC, CredFree, CredReadW};
 
         let target = to_wide(&store_key(key));
         let mut pcred = std::ptr::null_mut();
@@ -289,15 +258,15 @@ impl SecretStore for WinCredStore {
             CredFree(pcred.cast());
             data
         };
-        let value =
-            String::from_utf8(blob_bytes).context("Windows Credential Manager blob is not UTF-8")?;
+        let value = String::from_utf8(blob_bytes)
+            .context("Windows Credential Manager blob is not UTF-8")?;
         Ok(Some(SecretString::from(value)))
     }
 
     fn set(&self, key: &str, value: &SecretString) -> Result<()> {
-        use windows_sys::Win32::Foundation::{GetLastError, FILETIME};
+        use windows_sys::Win32::Foundation::{FILETIME, GetLastError};
         use windows_sys::Win32::Security::Credentials::{
-            CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+            CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
         };
 
         let target = to_wide(&store_key(key));
@@ -343,7 +312,7 @@ impl SecretStore for WinCredStore {
 
     fn delete(&self, key: &str) -> Result<()> {
         use windows_sys::Win32::Foundation::GetLastError;
-        use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
+        use windows_sys::Win32::Security::Credentials::{CRED_TYPE_GENERIC, CredDeleteW};
 
         let target = to_wide(&store_key(key));
         // SAFETY: target is a valid null-terminated UTF-16 string.
@@ -355,9 +324,7 @@ impl SecretStore for WinCredStore {
             if err == 1168 {
                 return Ok(());
             }
-            anyhow::bail!(
-                "CredDeleteW failed for key \"{key}\": Win32 error {err}"
-            );
+            anyhow::bail!("CredDeleteW failed for key \"{key}\": Win32 error {err}");
         }
         Ok(())
     }
@@ -375,63 +342,147 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-// ── macOS stub ───────────────────────────────────────────────────────────────
+// ── macOS implementation ─────────────────────────────────────────────────────
 
-/// macOS Keychain placeholder — see module-level doc for the wiring plan.
+/// macOS Keychain generic-password backend.
 #[cfg(all(target_os = "macos", feature = "keychain"))]
 pub(super) struct MacCredStore;
 
 #[cfg(all(target_os = "macos", feature = "keychain"))]
 impl SecretStore for MacCredStore {
-    fn get(&self, _key: &str) -> Result<Option<SecretString>> {
-        anyhow::bail!(
-            "macOS Keychain not yet wired (D003 follow-on). \
-             Use `neoth credential migrate --to file` to restore plaintext mode, \
-             or build NEOTH from source once the macOS implementation is merged."
-        )
+    fn get(&self, key: &str) -> Result<Option<SecretString>> {
+        const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+        match security_framework::passwords::get_generic_password(NS, key) {
+            Ok(bytes) => Ok(Some(SecretString::from(
+                String::from_utf8(bytes).context("macOS Keychain value is not UTF-8")?,
+            ))),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            Err(error) => Err(anyhow::anyhow!(
+                "macOS Keychain read failed for key {key:?}: {error}"
+            )),
+        }
     }
 
-    fn set(&self, _key: &str, _value: &SecretString) -> Result<()> {
-        self.get("").map(|_| ())
+    fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+        security_framework::passwords::set_generic_password(NS, key, value.expose().as_bytes())
+            .with_context(|| format!("macOS Keychain write failed for key {key:?}"))
     }
 
-    fn delete(&self, _key: &str) -> Result<()> {
-        self.get("").map(|_| ())
+    fn delete(&self, key: &str) -> Result<()> {
+        const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+        match security_framework::passwords::delete_generic_password(NS, key) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+            Err(error) => Err(anyhow::anyhow!(
+                "macOS Keychain delete failed for key {key:?}: {error}"
+            )),
+        }
     }
 
     fn backend_name(&self) -> &'static str {
-        "macOS Keychain (not yet wired)"
+        "macOS Keychain"
     }
 }
 
-// ── Linux stub ───────────────────────────────────────────────────────────────
+// ── Linux implementation ─────────────────────────────────────────────────────
 
-/// Linux Secret Service placeholder — see module-level doc for the wiring plan.
+/// Linux freedesktop Secret Service backend.
 #[cfg(all(target_os = "linux", feature = "keychain"))]
 pub(super) struct LinuxCredStore;
 
 #[cfg(all(target_os = "linux", feature = "keychain"))]
 impl SecretStore for LinuxCredStore {
-    fn get(&self, _key: &str) -> Result<Option<SecretString>> {
-        anyhow::bail!(
-            "Linux Secret Service not yet wired (D003 follow-on). \
-             Ensure `secret-service` D-Bus session is available and the \
-             `keychain` cargo feature is enabled, then rebuild once the \
-             async bridge is merged."
-        )
+    fn get(&self, key: &str) -> Result<Option<SecretString>> {
+        let service = linux_secret_service()?;
+        let mut found = service
+            .search_items(linux_secret_attributes(key))
+            .with_context(|| format!("Linux Secret Service search failed for key {key:?}"))?;
+        let count = found.unlocked.len() + found.locked.len();
+        if count == 0 {
+            return Ok(None);
+        }
+        if count != 1 {
+            anyhow::bail!(
+                "Linux Secret Service contains {count} entries for key {key:?}; \
+                 remove duplicates before continuing"
+            );
+        }
+        let item = if let Some(item) = found.unlocked.pop() {
+            item
+        } else {
+            let item = found.locked.pop().expect("count checked");
+            item.unlock()
+                .with_context(|| format!("unlock Linux Secret Service key {key:?}"))?;
+            item
+        };
+        let bytes = item
+            .get_secret()
+            .with_context(|| format!("read Linux Secret Service key {key:?}"))?;
+        Ok(Some(SecretString::from(
+            String::from_utf8(bytes).context("Linux Secret Service value is not UTF-8")?,
+        )))
     }
 
-    fn set(&self, _key: &str, _value: &SecretString) -> Result<()> {
-        self.get("").map(|_| ())
+    fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+        let service = linux_secret_service()?;
+        let collection = service
+            .get_default_collection()
+            .or_else(|_| service.get_any_collection())
+            .context("open a Linux Secret Service collection")?;
+        if collection
+            .is_locked()
+            .context("query Linux Secret Service collection lock state")?
+        {
+            collection
+                .unlock()
+                .context("unlock Linux Secret Service collection")?;
+        }
+        collection
+            .create_item(
+                &store_key(key),
+                linux_secret_attributes(key),
+                value.expose().as_bytes(),
+                true,
+                "text/plain; charset=utf-8",
+            )
+            .with_context(|| format!("write Linux Secret Service key {key:?}"))?;
+        Ok(())
     }
 
-    fn delete(&self, _key: &str) -> Result<()> {
-        self.get("").map(|_| ())
+    fn delete(&self, key: &str) -> Result<()> {
+        let service = linux_secret_service()?;
+        let found = service
+            .search_items(linux_secret_attributes(key))
+            .with_context(|| format!("Linux Secret Service search failed for key {key:?}"))?;
+        for item in found.unlocked {
+            item.delete()
+                .with_context(|| format!("delete Linux Secret Service key {key:?}"))?;
+        }
+        for item in found.locked {
+            item.unlock()
+                .with_context(|| format!("unlock Linux Secret Service key {key:?}"))?;
+            item.delete()
+                .with_context(|| format!("delete Linux Secret Service key {key:?}"))?;
+        }
+        Ok(())
     }
 
     fn backend_name(&self) -> &'static str {
-        "Linux Secret Service (not yet wired)"
+        "Linux Secret Service"
     }
+}
+
+#[cfg(all(target_os = "linux", feature = "keychain"))]
+fn linux_secret_service() -> Result<secret_service::blocking::SecretService<'static>> {
+    secret_service::blocking::SecretService::connect(secret_service::EncryptionType::Dh)
+        .context("connect to Linux Secret Service over the session D-Bus")
+}
+
+#[cfg(all(target_os = "linux", feature = "keychain"))]
+fn linux_secret_attributes(key: &str) -> std::collections::HashMap<&str, &str> {
+    let mut attributes = std::collections::HashMap::new();
+    attributes.insert("neoth-key", key);
+    attributes
 }
 
 // ── factory ──────────────────────────────────────────────────────────────────
@@ -440,7 +491,7 @@ impl SecretStore for LinuxCredStore {
 ///
 /// Returns `Err` when:
 /// - The `keychain` cargo feature is not compiled in.
-/// - The current platform has no wired implementation yet (macOS, Linux stubs).
+/// - The current platform is unsupported.
 /// - The OS store is unavailable at runtime (no session, locked vault, etc.).
 ///
 /// The caller should treat `Err` as a signal to degrade gracefully (log at
@@ -701,7 +752,7 @@ pub fn purge_from_keychain(store: &dyn SecretStore, keys: &[String]) -> Vec<(Str
 /// overwritten — the YAML value takes precedence (allows emergency override).
 ///
 /// Individual key lookup errors are logged at `warn!` level but do NOT abort
-/// the supplement: the 31 successful lookups must not be discarded because 1
+/// the supplement: successful lookups must not be discarded because one
 /// field fails (e.g. a single corrupted credential entry). The caller
 /// (`load_from_path`) already logs at `warn!` on any `Err` returned here; for
 /// a partial OS-error during supplement, logging per-field is more actionable.
@@ -746,8 +797,8 @@ pub fn supplement_from_store(
         }
     }
 
-    *creds =
-        serde_yaml::from_value(yaml_val).context("deserialize keychain-supplemented Credentials")?;
+    *creds = serde_yaml::from_value(yaml_val)
+        .context("deserialize keychain-supplemented Credentials")?;
     Ok(())
 }
 
@@ -858,10 +909,16 @@ mod tests {
     fn migrate_to_file_restores_values_then_purge_empties_store() {
         let store = InMemorySecretStore::default();
         store
-            .set("provider_key", &SecretString::from("sk-restored".to_string()))
+            .set(
+                "provider_key",
+                &SecretString::from("sk-restored".to_string()),
+            )
             .unwrap();
         store
-            .set("telegram_token", &SecretString::from("bot-restored".to_string()))
+            .set(
+                "telegram_token",
+                &SecretString::from("bot-restored".to_string()),
+            )
             .unwrap();
 
         let empty_creds = Credentials::default();
@@ -897,7 +954,10 @@ mod tests {
     fn migrate_to_file_dry_run_skips_delete() {
         let store = InMemorySecretStore::default();
         store
-            .set("cluster_passphrase", &SecretString::from("pass123".to_string()))
+            .set(
+                "cluster_passphrase",
+                &SecretString::from("pass123".to_string()),
+            )
             .unwrap();
 
         let (_, report) = migrate_to_file(&Credentials::default(), &store, true).unwrap();
@@ -914,7 +974,10 @@ mod tests {
     fn supplement_from_store_fills_none_fields_from_store() {
         let store = InMemorySecretStore::default();
         store
-            .set("provider_key", &SecretString::from("sk-from-store".to_string()))
+            .set(
+                "provider_key",
+                &SecretString::from("sk-from-store".to_string()),
+            )
             .unwrap();
 
         let mut creds = Credentials::default();
@@ -982,10 +1045,16 @@ mod tests {
         // telegram_token errors; provider_key should still be loaded.
         let inner = InMemorySecretStore::default();
         inner
-            .set("provider_key", &SecretString::from("sk-partial".to_string()))
+            .set(
+                "provider_key",
+                &SecretString::from("sk-partial".to_string()),
+            )
             .unwrap();
         inner
-            .set("telegram_token", &SecretString::from("bot-should-fail".to_string()))
+            .set(
+                "telegram_token",
+                &SecretString::from("bot-should-fail".to_string()),
+            )
             .unwrap();
         let store = ErrorOnFieldStore {
             fail_field: "telegram_token",
@@ -1017,7 +1086,10 @@ mod tests {
         // keychain → file (phase 1: pure read, no delete)
         let (restored, r2) = migrate_to_file(&blanked, &store, false).unwrap();
         assert!(r2.is_clean());
-        assert_eq!(restored.provider_key.as_ref().unwrap().expose(), "sk-roundtrip");
+        assert_eq!(
+            restored.provider_key.as_ref().unwrap().expose(),
+            "sk-roundtrip"
+        );
         assert_eq!(
             restored.telegram_token.as_ref().unwrap().expose(),
             "bot-roundtrip"
@@ -1026,5 +1098,80 @@ mod tests {
         // Phase 3: caller purges the keychain only after the file is durable.
         assert!(purge_from_keychain(&store, &r2.moved).is_empty());
         assert!(store.get("provider_key").unwrap().is_none());
+    }
+
+    #[test]
+    fn omi_secrets_are_managed_by_every_keychain_path() {
+        assert!(SECRET_FIELD_KEYS.contains(&"elevenlabs_tts_api_key"));
+        assert!(SECRET_FIELD_KEYS.contains(&"azure_tts_api_key"));
+        assert!(SECRET_FIELD_KEYS.contains(&"omi_developer_api_key"));
+        assert!(SECRET_FIELD_KEYS.contains(&"omi_ingest_token"));
+        let unique = SECRET_FIELD_KEYS
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            unique.len(),
+            SECRET_FIELD_KEYS.len(),
+            "keychain field names must stay unique"
+        );
+
+        let store = InMemorySecretStore::default();
+        let original = Credentials {
+            omi_developer_api_key: Some(SecretString::from("omi_dev_keychain_secret")),
+            omi_ingest_token: Some(SecretString::from("omi-keychain-secret")),
+            ..Default::default()
+        };
+        let (blanked, to_keychain) = migrate_to_keychain(&original, &store, false).unwrap();
+        assert!(to_keychain.is_clean());
+        assert!(
+            to_keychain
+                .moved
+                .contains(&"omi_developer_api_key".to_string())
+        );
+        assert!(to_keychain.moved.contains(&"omi_ingest_token".to_string()));
+        assert!(blanked.omi_developer_api_key.is_none());
+        assert!(blanked.omi_ingest_token.is_none());
+        assert_eq!(
+            store
+                .get("omi_developer_api_key")
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "omi_dev_keychain_secret"
+        );
+        assert_eq!(
+            store.get("omi_ingest_token").unwrap().unwrap().expose(),
+            "omi-keychain-secret"
+        );
+
+        let mut supplemented = Credentials::default();
+        supplement_from_store(&mut supplemented, &store).unwrap();
+        assert_eq!(
+            supplemented
+                .omi_developer_api_key
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "omi_dev_keychain_secret"
+        );
+        assert_eq!(
+            supplemented.omi_ingest_token.as_ref().unwrap().expose(),
+            "omi-keychain-secret"
+        );
+
+        let (restored, to_file) = migrate_to_file(&blanked, &store, false).unwrap();
+        assert!(to_file.is_clean());
+        assert_eq!(
+            restored.omi_developer_api_key.as_ref().unwrap().expose(),
+            "omi_dev_keychain_secret"
+        );
+        assert_eq!(
+            restored.omi_ingest_token.as_ref().unwrap().expose(),
+            "omi-keychain-secret"
+        );
+        assert!(purge_from_keychain(&store, &to_file.moved).is_empty());
+        assert!(store.get("omi_developer_api_key").unwrap().is_none());
+        assert!(store.get("omi_ingest_token").unwrap().is_none());
     }
 }

@@ -22,7 +22,9 @@
 //! ## Output
 //!
 //! The synthesis note is a JSON blob written as a new `idx_groundtruth` row
-//! (`source = "synthesis-cron"`, `scope = "meta"`, `fact_state = "candidate"`).
+//! (`source = "synthesis-cron"`, `scope = "meta"`, `fact_state = "candidate"`)
+//! together with the contributing episode ids. An empty/unresolved source
+//! window is not persisted, preventing orphan synthesis.
 //! When `freedom.yaml::obsidian_vault` is set, an atomic `YYYY-WW.md` file is
 //! also written to `~/.neoth/synthesis/` via tempfile-rename (race-safe with
 //! JV-IMP-05 vault writer).
@@ -210,7 +212,10 @@ fn shingle_set(text: &str) -> std::collections::HashSet<String> {
 }
 
 /// Jaccard similarity between two shingle sets (0.0 when both empty).
-fn jaccard_shingles(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<String>) -> f32 {
+fn jaccard_shingles(
+    a: &std::collections::HashSet<String>,
+    b: &std::collections::HashSet<String>,
+) -> f32 {
     if a.is_empty() && b.is_empty() {
         return 0.0;
     }
@@ -231,7 +236,7 @@ fn compute_frequency_and_temporal(
     conn: &rusqlite::Connection,
     window_start_ns: i64,
     now_ns: i64,
-) -> (Vec<FrequencyPeak>, Vec<TemporalCluster>) {
+) -> (Vec<FrequencyPeak>, Vec<TemporalCluster>, Vec<i64>) {
     // ── Dimension 1: frequency ───────────────────────────────────────────────
     let texts: Vec<String> = {
         let mut stmt = match conn.prepare(
@@ -239,7 +244,7 @@ fn compute_frequency_and_temporal(
              WHERE ts_ns >= ?1 AND ts_ns <= ?2 AND event_type = ?3",
         ) {
             Ok(s) => s,
-            Err(_) => return (vec![], vec![]),
+            Err(_) => return (vec![], vec![], vec![]),
         };
         match stmt
             .query_map(
@@ -249,7 +254,7 @@ fn compute_frequency_and_temporal(
             .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         {
             Ok(v) => v,
-            Err(_) => return (vec![], vec![]),
+            Err(_) => return (vec![], vec![], vec![]),
         }
     };
 
@@ -259,39 +264,51 @@ fn compute_frequency_and_temporal(
     let top_topics: Vec<FrequencyPeak> = sorted
         .iter()
         .take(TOP_N_TOPICS)
-        .map(|(t, c)| FrequencyPeak { topic: t.clone(), count: *c })
+        .map(|(t, c)| FrequencyPeak {
+            topic: t.clone(),
+            count: *c,
+        })
         .collect();
 
     // ── Dimension 2: temporal clustering ────────────────────────────────────
     // Fetch (ts_ns, text) rows for the window; bucket by UTC day;
     // find consecutive day-buckets where ≥2 top topics appear in ≥3 episodes.
-    let top_set: std::collections::HashSet<&str> =
-        sorted.iter().take(TOP_N_TOPICS).map(|(t, _)| t.as_str()).collect();
+    let top_set: std::collections::HashSet<&str> = sorted
+        .iter()
+        .take(TOP_N_TOPICS)
+        .map(|(t, _)| t.as_str())
+        .collect();
 
-    let day_episodes: Vec<(i64, String)> = {
+    let day_episodes: Vec<(i64, i64, String)> = {
         let mut stmt = match conn.prepare(
-            "SELECT ts_ns, text FROM idx_episode \
+            "SELECT ts_ns, event_id, text FROM idx_episode \
              WHERE ts_ns >= ?1 AND ts_ns <= ?2 AND event_type = ?3 \
-             ORDER BY ts_ns ASC",
+             ORDER BY ts_ns ASC, event_id ASC",
         ) {
             Ok(s) => s,
-            Err(_) => return (top_topics, vec![]),
+            Err(_) => return (top_topics, vec![], vec![]),
         };
         match stmt
             .query_map(
                 rusqlite::params![window_start_ns, now_ns, RAW_TEXT_EVENT_TYPE],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
             )
             .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         {
             Ok(v) => v,
-            Err(_) => return (top_topics, vec![]),
+            Err(_) => return (top_topics, vec![], vec![]),
         }
     };
 
     // Group episodes by UTC day (ts_ns / 86_400_000_000_000).
     let mut day_map: HashMap<i64, Vec<String>> = HashMap::new();
-    for (ts, text) in &day_episodes {
+    for (ts, _event_id, text) in &day_episodes {
         let day = ts / (86_400 * 1_000_000_000);
         day_map.entry(day).or_default().push(text.clone());
     }
@@ -313,7 +330,12 @@ fn compute_frequency_and_temporal(
         if run_len >= 2 {
             // Collect all texts in this run.
             let run_texts: Vec<String> = (i..=j)
-                .flat_map(|k| day_map.get(&days_sorted[k]).map(|v| v.to_vec()).unwrap_or_default())
+                .flat_map(|k| {
+                    day_map
+                        .get(&days_sorted[k])
+                        .map(|v| v.to_vec())
+                        .unwrap_or_default()
+                })
                 .collect();
             let run_counts = crate::reflection::topic_counts(&run_texts);
             let cluster_topics: Vec<String> = run_counts
@@ -332,7 +354,15 @@ fn compute_frequency_and_temporal(
         i = j + 1;
     }
 
-    (top_topics, clusters)
+    let evidence_start = day_episodes
+        .len()
+        .saturating_sub(crate::memory::groundtruth::MAX_EVIDENCE_BACKLINKS);
+    let evidence_ids = day_episodes[evidence_start..]
+        .iter()
+        .map(|(_, event_id, _)| *event_id)
+        .collect();
+
+    (top_topics, clusters, evidence_ids)
 }
 
 /// Dimension 3 — domain correlations between top topics and groundtruth facts.
@@ -416,7 +446,13 @@ fn compute_contradiction_flags(
             Err(_) => return vec![],
         };
         match stmt
-            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
             .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         {
             Ok(v) => v,
@@ -424,8 +460,11 @@ fn compute_contradiction_flags(
         }
     };
 
-    let top_set: std::collections::HashSet<&str> =
-        top_topics.iter().take(10).map(|p| p.topic.as_str()).collect();
+    let top_set: std::collections::HashSet<&str> = top_topics
+        .iter()
+        .take(10)
+        .map(|p| p.topic.as_str())
+        .collect();
 
     let mut flags: Vec<ContradictionFlag> = Vec::new();
 
@@ -479,10 +518,33 @@ fn compute_cross_cutting(
 
     // Heuristic technical keywords (any match → "technical" domain).
     const TECH_KEYWORDS: &[&str] = &[
-        "rust", "cargo", "tokio", "async", "server", "daemon", "build",
-        "docker", "deploy", "github", "git", "code", "compile", "debug",
-        "kubernetes", "pipeline", "database", "sqlite", "http", "tcp",
-        "memory", "config", "yaml", "json", "api", "test", "error",
+        "rust",
+        "cargo",
+        "tokio",
+        "async",
+        "server",
+        "daemon",
+        "build",
+        "docker",
+        "deploy",
+        "github",
+        "git",
+        "code",
+        "compile",
+        "debug",
+        "kubernetes",
+        "pipeline",
+        "database",
+        "sqlite",
+        "http",
+        "tcp",
+        "memory",
+        "config",
+        "yaml",
+        "json",
+        "api",
+        "test",
+        "error",
     ];
 
     let domain_episodes: Vec<(i64, String)> = {
@@ -615,7 +677,9 @@ pub(crate) fn compute_skill_perf_pass(
         });
         entry.total += 1;
         if rec.accepted {
-            entry.accepted_deltas.push(rec.score_after - rec.score_before);
+            entry
+                .accepted_deltas
+                .push(rec.score_after - rec.score_before);
         } else {
             entry.rejected += 1;
         }
@@ -660,8 +724,8 @@ pub(crate) fn compute_skill_perf_pass(
             stats.accepted_deltas.iter().sum::<f64>() / stats.accepted_deltas.len() as f64
         };
 
-        let low_delta = !stats.accepted_deltas.is_empty()
-            && score_delta_mean < SKILL_PERF_MIN_SCORE_DELTA;
+        let low_delta =
+            !stats.accepted_deltas.is_empty() && score_delta_mean < SKILL_PERF_MIN_SCORE_DELTA;
         let high_rejection = rejection_rate > SKILL_PERF_MAX_REJECTION_RATE;
 
         if !low_delta && !high_rejection {
@@ -709,9 +773,10 @@ pub(crate) fn compute_skill_perf_pass(
 // Main tick function
 
 /// One synthesis tick. Opens `db_path`, runs all 5 dimensions, writes the
-/// result as a `idx_groundtruth` row (`source = "synthesis-cron"`, `scope =
-/// "meta"`), and optionally writes `home/synthesis/YYYY-WW.md` via atomic
-/// tempfile rename.
+/// result as an evidence-bound `idx_groundtruth` row (`source =
+/// "synthesis-cron"`, `scope = "meta"`), and optionally writes
+/// `home/synthesis/YYYY-WW.md` via atomic tempfile rename. With no contributing
+/// episode the tick still reports its analysis but persists neither output.
 ///
 /// Returns `Ok(SynthesisReport)` on success. A missing `db_path` (fresh
 /// install with no views.db yet) is treated as a graceful no-op → `Ok` with
@@ -733,8 +798,8 @@ pub fn run_synthesis_tick_once(
         return Ok(SynthesisReport::default());
     }
 
-    let conn = crate::memory::store::open(db_path)
-        .map_err(|e| format!("synthesis cron: open db: {e}"))?;
+    let conn =
+        crate::memory::store::open(db_path).map_err(|e| format!("synthesis cron: open db: {e}"))?;
 
     let now_ns = crate::time::now_unix_ns_i64();
     let now_unix = now_ns / 1_000_000_000;
@@ -745,7 +810,7 @@ pub fn run_synthesis_tick_once(
     let window_start_ns = now_ns.saturating_sub(window_ns);
 
     // ── Dimension 1+2: frequency peaks + temporal clusters ──────────────────
-    let (frequency_peaks, temporal_clusters) =
+    let (frequency_peaks, temporal_clusters, evidence_ids) =
         compute_frequency_and_temporal(&conn, window_start_ns, now_ns);
 
     // ── Dimension 3: domain correlations ────────────────────────────────────
@@ -797,37 +862,47 @@ pub fn run_synthesis_tick_once(
         skill_perf_suggestions,
     };
 
-    let statement = serde_json::to_string(&note)
-        .map_err(|e| format!("synthesis cron: serialise note: {e}"))?;
+    let statement =
+        serde_json::to_string(&note).map_err(|e| format!("synthesis cron: serialise note: {e}"))?;
 
     // ── Write to idx_groundtruth ─────────────────────────────────────────────
     // Use the `Synthesis` source variant (→ as_str() = "synthesis-cron").
     // scope = "meta" so operators can query with `neoth groundtruth list --scope meta`.
-    let note_written = match crate::memory::groundtruth::insert(
-        &conn,
-        &statement,
-        &crate::memory::groundtruth::Source::Synthesis,
-        "meta",
-        now_ns,
-    ) {
-        Ok(id) => {
-            tracing::info!(
-                id,
-                week = %week_iso,
-                topics = topics_analyzed,
-                correlations = correlations_found,
-                contradictions = contradictions_flagged,
-                skill_suggestions = skill_suggestions_written,
-                "NN-MEM-02/NN-MEM-05: synthesis note written to idx_groundtruth"
-            );
-            true
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "synthesis cron: groundtruth insert failed (non-fatal)"
-            );
-            false
+    let note_written = if evidence_ids.is_empty() {
+        tracing::debug!(
+            week = %week_iso,
+            "synthesis cron: no contributing episodes; refusing to write orphan synthesis"
+        );
+        false
+    } else {
+        match crate::memory::groundtruth::insert_with_evidence(
+            &conn,
+            &statement,
+            &crate::memory::groundtruth::Source::Synthesis,
+            "meta",
+            now_ns,
+            &evidence_ids,
+        ) {
+            Ok(id) => {
+                tracing::info!(
+                    id,
+                    week = %week_iso,
+                    topics = topics_analyzed,
+                    correlations = correlations_found,
+                    contradictions = contradictions_flagged,
+                    evidence_episodes = evidence_ids.len(),
+                    skill_suggestions = skill_suggestions_written,
+                    "NN-MEM-02/NN-MEM-03/NN-MEM-05: synthesis note written to idx_groundtruth"
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "synthesis cron: evidence-bound groundtruth insert failed (non-fatal)"
+                );
+                false
+            }
         }
     };
 
@@ -837,7 +912,12 @@ pub fn run_synthesis_tick_once(
     let vault_path = synthesis_dir.join(format!("{week_iso}.md"));
     let tmp_path = synthesis_dir.join(format!(".{week_iso}.md.tmp"));
 
-    if let Err(e) = std::fs::create_dir_all(&synthesis_dir) {
+    if !note_written {
+        tracing::debug!(
+            evidence_episodes = evidence_ids.len(),
+            "synthesis cron: vault note skipped because no evidence-bound groundtruth row committed"
+        );
+    } else if let Err(e) = std::fs::create_dir_all(&synthesis_dir) {
         tracing::debug!(error = %e, "synthesis cron: could not create synthesis dir (non-fatal)");
     } else {
         let md = build_synthesis_markdown(&note, now_unix);
@@ -1023,11 +1103,7 @@ fn build_synthesis_markdown(note: &SynthesisNote, now_unix: i64) -> String {
         md.push_str("_(no cross-cutting topics detected)_\n");
     } else {
         for cc in &note.cross_cutting {
-            md.push_str(&format!(
-                "- **{}**: {}\n",
-                cc.topic,
-                cc.domains.join(" + ")
-            ));
+            md.push_str(&format!("- **{}**: {}\n", cc.topic, cc.domains.join(" + ")));
         }
     }
 
@@ -1103,8 +1179,7 @@ mod tests {
     fn spawn_synthesis_cron_loop_returns_none_when_disabled() {
         let cfg = SynthesisCronConfig::default();
         assert!(!cfg.enabled, "must be off by default");
-        let handle =
-            spawn_synthesis_cron_loop(cfg, "/nonexistent".into(), "/nonexistent".into());
+        let handle = spawn_synthesis_cron_loop(cfg, "/nonexistent".into(), "/nonexistent".into());
         assert!(handle.is_none(), "disabled config must return None");
     }
 
@@ -1131,11 +1206,7 @@ mod tests {
     fn run_synthesis_tick_once_no_db_returns_ok() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = SynthesisCronConfig::default();
-        let result = run_synthesis_tick_once(
-            &dir.path().join("views.db"),
-            dir.path(),
-            &cfg,
-        );
+        let result = run_synthesis_tick_once(&dir.path().join("views.db"), dir.path(), &cfg);
         assert!(result.is_ok(), "must not error when views.db absent");
         let report = result.unwrap();
         assert!(!report.note_written, "no note when db absent");
@@ -1176,15 +1247,14 @@ mod tests {
             enable_skill_perf_pass: false,
             propose_skills_from_perf: false,
         };
-        let report = run_synthesis_tick_once(
-            &db_path,
-            dir.path(),
-            &cfg,
-        )
-        .expect("tick must succeed");
+        let report =
+            run_synthesis_tick_once(&db_path, dir.path(), &cfg).expect("tick must succeed");
 
         // Must have analyzed some topics.
-        assert!(report.topics_analyzed > 0, "must analyze topics from seeded episodes");
+        assert!(
+            report.topics_analyzed > 0,
+            "must analyze topics from seeded episodes"
+        );
 
         // Consumer proof: exactly one synthesis-cron row in idx_groundtruth.
         let conn2 = store::open(&db_path).unwrap();
@@ -1195,17 +1265,97 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1, "synthesis cron must write exactly one groundtruth row per tick");
+        assert_eq!(
+            count, 1,
+            "synthesis cron must write exactly one groundtruth row per tick"
+        );
 
         // The row must have scope = 'meta'.
-        let scope: String = conn2
+        let (scope, evidence): (String, String) = conn2
             .query_row(
-                "SELECT scope FROM idx_groundtruth WHERE source = 'synthesis-cron'",
+                "SELECT scope, evidence FROM idx_groundtruth WHERE source = 'synthesis-cron'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(scope, "meta");
+        assert_eq!(
+            serde_json::from_str::<Vec<i64>>(&evidence).unwrap(),
+            vec![5, 4, 3, 2, 1, 0],
+            "the synthesis note must retain every contributing episode in chronological order"
+        );
+    }
+
+    #[test]
+    fn run_synthesis_tick_refuses_orphan_note_without_episodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        store::open(&db_path).unwrap();
+
+        let cfg = SynthesisCronConfig {
+            enabled: true,
+            interval_secs: 604_800,
+            window_days: 30,
+            enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
+        };
+        let report = run_synthesis_tick_once(&db_path, dir.path(), &cfg).unwrap();
+        assert!(!report.note_written);
+
+        let conn = store::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_groundtruth WHERE source = 'synthesis-cron'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(scope, "meta");
+        assert_eq!(count, 0, "empty synthesis must not become orphan wisdom");
+        assert!(
+            !dir.path().join("synthesis").exists(),
+            "vault synthesis is skipped when it has no episode provenance"
+        );
+    }
+
+    #[test]
+    fn run_synthesis_tick_does_not_write_vault_when_evidence_insert_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let conn = store::open(&db_path).unwrap();
+        let now_ns = crate::time::now_unix_ns_i64();
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (91, 1, ?1, 'rust deployment synthesis evidence', 'synth-evidence', 0.7, ?1)",
+            rusqlite::params![now_ns],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_synthesis_groundtruth \
+             BEFORE INSERT ON idx_groundtruth \
+             WHEN NEW.source = 'synthesis-cron' \
+             BEGIN SELECT RAISE(FAIL, 'test insert failure'); END;",
+        )
+        .unwrap();
+        drop(conn);
+
+        let report = run_synthesis_tick_once(
+            &db_path,
+            dir.path(),
+            &SynthesisCronConfig {
+                enabled: true,
+                interval_secs: 604_800,
+                window_days: 30,
+                enable_skill_perf_pass: false,
+                propose_skills_from_perf: false,
+            },
+        )
+        .unwrap();
+        assert!(!report.note_written);
+        assert!(
+            !dir.path().join("synthesis").exists(),
+            "a vault file must never outlive a failed evidence-bound DB insert"
+        );
     }
 
     // ── Test 5: config defaults ───────────────────────────────────────────────
@@ -1214,11 +1364,19 @@ mod tests {
     fn config_defaults() {
         let cfg = SynthesisCronConfig::default();
         assert!(!cfg.enabled, "off by default");
-        assert_eq!(cfg.interval_secs, super::super::super::config::automation::DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS);
-        assert_eq!(cfg.window_days, super::super::super::config::automation::DEFAULT_SYNTHESIS_WINDOW_DAYS);
+        assert_eq!(
+            cfg.interval_secs,
+            super::super::super::config::automation::DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS
+        );
+        assert_eq!(
+            cfg.window_days,
+            super::super::super::config::automation::DEFAULT_SYNTHESIS_WINDOW_DAYS
+        );
         assert_eq!(
             cfg.interval_duration(),
-            Duration::from_secs(super::super::super::config::automation::DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS)
+            Duration::from_secs(
+                super::super::super::config::automation::DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS
+            )
         );
     }
 
@@ -1251,7 +1409,10 @@ mod tests {
     fn iso_week_label_format() {
         // Unix epoch 0 = 1970-01-01 (Thursday). Week 1.
         let label = iso_week_label(0);
-        assert!(label.starts_with("1970-W"), "label must start with year-W: {label}");
+        assert!(
+            label.starts_with("1970-W"),
+            "label must start with year-W: {label}"
+        );
         // A known timestamp: 2026-06-22 ≈ Unix 1750550400.
         let label2 = iso_week_label(1_750_550_400);
         assert!(label2.starts_with("202"), "year 2026 label: {label2}");
@@ -1263,7 +1424,10 @@ mod tests {
     fn build_synthesis_markdown_contains_week_label() {
         let note = SynthesisNote {
             week_iso: "2026-W25".to_string(),
-            frequency_peaks: vec![FrequencyPeak { topic: "kubernetes".to_string(), count: 5 }],
+            frequency_peaks: vec![FrequencyPeak {
+                topic: "kubernetes".to_string(),
+                count: 5,
+            }],
             temporal_clusters: vec![],
             domain_correlations: vec![],
             contradiction_flags: vec![],
@@ -1273,6 +1437,9 @@ mod tests {
         let md = build_synthesis_markdown(&note, 1_750_000_000);
         assert!(md.contains("2026-W25"), "must contain week label");
         assert!(md.contains("kubernetes"), "must contain topic");
-        assert!(md.contains("synthesis-cron"), "must have source in frontmatter");
+        assert!(
+            md.contains("synthesis-cron"),
+            "must have source in frontmatter"
+        );
     }
 }

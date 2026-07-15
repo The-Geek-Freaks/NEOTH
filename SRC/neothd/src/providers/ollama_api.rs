@@ -14,9 +14,9 @@
 //! # Provider registration
 //!
 //! `ProviderKind::LocalOllama` / `InferenceProvider::LocalOllama` route here
-//! through `providers::from_config`. The adapter name is `"local_ollama"`;
-//! `is_local_provider("local_ollama")` returns `true` so quota / privacy /
-//! WAL audit gating treat it identically to `local_qwen` / `local_ouro`.
+//! through `providers::from_config`. Loopback endpoints identify as
+//! `"local_ollama"`; every other endpoint identifies as `"ollama_remote"`
+//! so quota/privacy/cost guards cannot inherit a false local bypass.
 
 use std::time::Instant;
 
@@ -26,12 +26,19 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::{ChunkStream, Completion, CompletionChunk, Provider, Request};
+use super::{
+    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 
 /// Default Ollama base URL when the operator hasn't overridden it.
 pub const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 /// Default model when the operator hasn't set one.
 pub const DEFAULT_MODEL: &str = "llama3.2";
+/// Hard generation cap sent as Ollama's `options.num_predict`. This makes a
+/// remote Ollama endpoint cost-authorizable instead of relying on its server
+/// default, which may be unlimited/model-dependent.
+const OUTPUT_TOKEN_CEILING: u32 = super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING;
 
 /// Adapter for Ollama's native `/api/chat` endpoint.
 pub struct OllamaAdapter {
@@ -39,6 +46,9 @@ pub struct OllamaAdapter {
     base_url: String,
     /// Model name (e.g. `llama3.2`, `qwen2.5:7b`).
     model: String,
+    /// Only loopback endpoints are local/free. Private-LAN and public hosts are
+    /// remote dispatches and must cross the paid-provider boundary.
+    is_loopback_endpoint: bool,
     /// Shared HTTP client.
     http: reqwest::Client,
 }
@@ -46,29 +56,76 @@ pub struct OllamaAdapter {
 impl OllamaAdapter {
     pub fn new(base_url: String, model: String) -> Result<Self> {
         let base_url = base_url.trim_end_matches('/').to_string();
-        let http = crate::providers::http_client::build_client()?;
+        let parsed = reqwest::Url::parse(&base_url)
+            .with_context(|| format!("parse Ollama endpoint `{base_url}`"))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            anyhow::bail!(
+                "Ollama endpoint `{base_url}` must use http or https, got `{}`",
+                parsed.scheme()
+            );
+        }
+        let host = parsed
+            .host_str()
+            .with_context(|| format!("Ollama endpoint `{base_url}` has no host"))?;
+        let is_loopback_endpoint = is_loopback_host(host);
+        let http = if is_loopback_endpoint {
+            crate::providers::http_client::build_direct_client_no_redirect()?
+        } else {
+            crate::providers::http_client::build_client_no_redirect()?
+        };
         Ok(Self {
             base_url,
             model,
+            is_loopback_endpoint,
             http,
         })
     }
 }
 
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 #[async_trait]
 impl Provider for OllamaAdapter {
     fn name(&self) -> &'static str {
-        "local_ollama"
+        if self.is_loopback_endpoint {
+            "local_ollama"
+        } else {
+            "ollama_remote"
+        }
+    }
+
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(OUTPUT_TOKEN_CEILING)
+    }
+
+    fn streams_on_wire(&self) -> bool {
+        true
     }
 
     /// Non-streaming completion via `/api/chat` with `stream: false`.
-    async fn complete(&self, req: Request) -> Result<Completion> {
-        crate::providers::circuit_breaker::run_with_breaker("local_ollama", async {
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
+        let provider_name = self.name();
+        crate::providers::circuit_breaker::run_with_breaker(provider_name, async {
             let started = Instant::now();
-            let model = req
-                .model
-                .clone()
-                .unwrap_or_else(|| self.model.clone());
+            let model = req.model.clone().unwrap_or_else(|| self.model.clone());
 
             let body = build_request(&model, &req, false);
             let url = format!("{}/api/chat", self.base_url);
@@ -88,7 +145,7 @@ impl Provider for OllamaAdapter {
                     .await
                     .unwrap_or_else(|_| "<unreadable body>".into());
                 anyhow::bail!(
-                    "local_ollama returned HTTP {}: {}",
+                    "{provider_name} returned HTTP {}: {}",
                     status.as_u16(),
                     body_text.trim()
                 );
@@ -97,12 +154,12 @@ impl Provider for OllamaAdapter {
             let parsed: OllamaChatResponse = response
                 .json()
                 .await
-                .with_context(|| "parse local_ollama /api/chat response JSON")?;
+                .with_context(|| format!("parse {provider_name} /api/chat response JSON"))?;
 
             let text = parsed.message.content;
             let latency = started.elapsed();
             debug!(
-                adapter = "local_ollama",
+                adapter = provider_name,
                 model = %model,
                 response_bytes = text.len(),
                 latency_ms = latency.as_millis(),
@@ -111,6 +168,7 @@ impl Provider for OllamaAdapter {
 
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model,
                 latency,
                 input_tokens: parsed.prompt_eval_count,
@@ -128,156 +186,159 @@ impl Provider for OllamaAdapter {
     /// `message.content` (delta text) and `done` (true on the final line).
     /// The final line also carries `prompt_eval_count` and `eval_count` for
     /// token metering.
-    async fn stream(&self, req: Request) -> Result<ChunkStream> {
-        crate::providers::circuit_breaker_stream::run_stream_with_breaker(
-            "local_ollama",
-            async {
-                let model = req
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| self.model.clone());
+    async fn stream_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<ChunkStream> {
+        let provider_name = self.name();
+        crate::providers::circuit_breaker_stream::run_stream_with_breaker(provider_name, async {
+            let model = req.model.clone().unwrap_or_else(|| self.model.clone());
 
-                let body = build_request(&model, &req, true);
-                let url = format!("{}/api/chat", self.base_url);
+            let body = build_request(&model, &req, true);
+            let url = format!("{}/api/chat", self.base_url);
 
-                let response = self
-                    .http
-                    .post(&url)
-                    .json(&body)
-                    .send()
+            let response = self
+                .http
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .with_context(|| format!("POST {url} (stream)"))?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body_text = response
+                    .text()
                     .await
-                    .with_context(|| format!("POST {url} (stream)"))?;
+                    .unwrap_or_else(|_| "<unreadable body>".into());
+                anyhow::bail!(
+                    "{provider_name} stream returned HTTP {}: {}",
+                    status.as_u16(),
+                    body_text.trim()
+                );
+            }
 
-                let status = response.status();
-                if !status.is_success() {
-                    let body_text = response
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "<unreadable body>".into());
-                    anyhow::bail!(
-                        "local_ollama stream returned HTTP {}: {}",
-                        status.as_u16(),
-                        body_text.trim()
-                    );
-                }
+            let model_log = model.clone();
+            let byte_stream = response.bytes_stream();
 
-                let model_log = model.clone();
-                let byte_stream = response.bytes_stream();
+            let inner: ChunkStream = Box::pin(async_stream::try_stream! {
+                let mut buf = String::new();
+                let mut input_tokens: Option<u32> = None;
+                let mut output_tokens: Option<u32> = None;
 
-                let inner: ChunkStream = Box::pin(async_stream::try_stream! {
-                    let mut buf = String::new();
-                    let mut input_tokens: Option<u32> = None;
-                    let mut output_tokens: Option<u32> = None;
+                tokio::pin!(byte_stream);
+                while let Some(chunk_result) = byte_stream.next().await {
+                    let bytes = chunk_result
+                        .with_context(|| format!("{provider_name}: NDJSON byte read error"))?;
+                    let text = std::str::from_utf8(&bytes)
+                        .with_context(|| format!("{provider_name}: NDJSON chunk not valid UTF-8"))?;
+                    buf.push_str(text);
 
-                    tokio::pin!(byte_stream);
-                    while let Some(chunk_result) = byte_stream.next().await {
-                        let bytes = chunk_result
-                            .with_context(|| "local_ollama: NDJSON byte read error")?;
-                        let text = std::str::from_utf8(&bytes)
-                            .with_context(|| "local_ollama: NDJSON chunk not valid UTF-8")?;
-                        buf.push_str(text);
+                    // Each Ollama response line is a complete JSON object.
+                    while let Some(newline_pos) = buf.find('\n') {
+                        let line = buf[..newline_pos].trim_end_matches('\r').trim().to_string();
+                        buf.drain(..=newline_pos);
 
-                        // Each Ollama response line is a complete JSON object.
-                        while let Some(newline_pos) = buf.find('\n') {
-                            let line = buf[..newline_pos].trim_end_matches('\r').trim().to_string();
-                            buf.drain(..=newline_pos);
+                        if line.is_empty() {
+                            continue;
+                        }
 
-                            if line.is_empty() {
+                        let chunk: OllamaChatChunk = match serde_json::from_str(&line) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!(
+                                    adapter = provider_name,
+                                    error = %e,
+                                    raw = %line,
+                                    "NDJSON chunk parse error; skipping"
+                                );
                                 continue;
                             }
+                        };
 
-                            let chunk: OllamaChatChunk = match serde_json::from_str(&line) {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        adapter = "local_ollama",
-                                        error = %e,
-                                        raw = %line,
-                                        "NDJSON chunk parse error; skipping"
-                                    );
-                                    continue;
-                                }
+                        if chunk.done {
+                            // Capture token counts from the done line.
+                            input_tokens = chunk.prompt_eval_count;
+                            output_tokens = chunk.eval_count;
+                            yield CompletionChunk {
+                                delta: String::new(),
+                                done: true,
+                                identity: Default::default(),
+                                input_tokens,
+                                output_tokens,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
                             };
+                            return;
+                        }
 
-                            if chunk.done {
-                                // Capture token counts from the done line.
-                                input_tokens = chunk.prompt_eval_count;
-                                output_tokens = chunk.eval_count;
-                                yield CompletionChunk {
-                                    delta: String::new(),
-                                    done: true,
-                                    input_tokens,
-                                    output_tokens,
-                                    cache_creation_tokens: None,
-                                    cache_read_tokens: None,
-                                };
-                                return;
-                            }
-
-                            let delta = chunk.message.content;
-                            if !delta.is_empty() {
-                                yield CompletionChunk {
-                                    delta,
-                                    done: false,
-                                    input_tokens: None,
-                                    output_tokens: None,
-                                    cache_creation_tokens: None,
-                                    cache_read_tokens: None,
-                                };
-                            }
+                        let delta = chunk.message.content;
+                        if !delta.is_empty() {
+                            yield CompletionChunk {
+                                delta,
+                                done: false,
+                                identity: Default::default(),
+                                input_tokens: None,
+                                output_tokens: None,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
+                            };
                         }
                     }
+                }
 
-                    // EOF residual: a server may end the FINAL JSON line without a
-                    // trailing newline, so the line-loop above never consumed it.
-                    // Parse whatever is left before synthesising the terminator so a
-                    // newline-less done line (token counts) or content delta is not
-                    // dropped.
-                    let tail = buf.trim();
-                    if !tail.is_empty() {
-                        if let Ok(chunk) = serde_json::from_str::<OllamaChatChunk>(tail) {
-                            if chunk.done {
-                                input_tokens = chunk.prompt_eval_count;
-                                output_tokens = chunk.eval_count;
-                            } else if !chunk.message.content.is_empty() {
-                                yield CompletionChunk {
-                                    delta: chunk.message.content,
-                                    done: false,
-                                    input_tokens: None,
-                                    output_tokens: None,
-                                    cache_creation_tokens: None,
-                                    cache_read_tokens: None,
-                                };
-                            }
-                        } else {
-                            tracing::warn!(
-                                adapter = "local_ollama",
-                                raw = %tail,
-                                "NDJSON EOF-residual parse error; dropping tail"
-                            );
+                // EOF residual: a server may end the FINAL JSON line without a
+                // trailing newline, so the line-loop above never consumed it.
+                // Parse whatever is left before synthesising the terminator so a
+                // newline-less done line (token counts) or content delta is not
+                // dropped.
+                let tail = buf.trim();
+                if !tail.is_empty() {
+                    if let Ok(chunk) = serde_json::from_str::<OllamaChatChunk>(tail) {
+                        if chunk.done {
+                            input_tokens = chunk.prompt_eval_count;
+                            output_tokens = chunk.eval_count;
+                        } else if !chunk.message.content.is_empty() {
+                            yield CompletionChunk {
+                                delta: chunk.message.content,
+                                done: false,
+                                identity: Default::default(),
+                                input_tokens: None,
+                                output_tokens: None,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
+                            };
                         }
+                    } else {
+                        tracing::warn!(
+                            adapter = provider_name,
+                            raw = %tail,
+                            "NDJSON EOF-residual parse error; dropping tail"
+                        );
                     }
+                }
 
-                    // Stream ended; emit a clean terminator carrying any token
-                    // counts captured from a done line (incl. a newline-less tail).
-                    yield CompletionChunk {
-                        delta: String::new(),
-                        done: true,
-                        input_tokens,
-                        output_tokens,
-                        cache_creation_tokens: None,
-                        cache_read_tokens: None,
-                    };
-                });
+                // Stream ended; emit a clean terminator carrying any token
+                // counts captured from a done line (incl. a newline-less tail).
+                yield CompletionChunk {
+                    delta: String::new(),
+                    done: true,
+                    identity: Default::default(),
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                };
+            });
 
-                debug!(
-                    adapter = "local_ollama",
-                    model = %model_log,
-                    "ollama NDJSON stream started"
-                );
-                Ok(inner)
-            },
-        )
+            debug!(
+                adapter = provider_name,
+                model = %model_log,
+                "ollama NDJSON stream started"
+            );
+            Ok(inner)
+        })
         .await
     }
 }
@@ -363,13 +424,15 @@ fn build_request(model: &str, req: &Request, stream: bool) -> OllamaChatRequest 
             top_p: req.top_p,
             seed: req.sampling_seed,
             stop: req.stop_sequences.clone(),
-            num_predict: None,
+            num_predict: Some(OUTPUT_TOKEN_CEILING),
         };
-        // Only include options when at least one field is set.
+        // `num_predict` is mandatory: it is the wire-enforced output ceiling
+        // used by paid-call authorization for remote Ollama endpoints.
         if opts.temperature.is_some()
             || opts.top_p.is_some()
             || opts.seed.is_some()
             || !opts.stop.is_empty()
+            || opts.num_predict.is_some()
         {
             Some(opts)
         } else {
@@ -405,6 +468,45 @@ mod tests {
     fn adapter_name_is_local_ollama() {
         let a = build_adapter_against("http://localhost:11434");
         assert_eq!(a.name(), "local_ollama");
+    }
+
+    #[test]
+    fn locality_is_derived_from_loopback_endpoint_not_provider_kind() {
+        for endpoint in [
+            "http://localhost:11434",
+            "http://LOCALHOST.:11434",
+            "http://127.0.0.42:11434",
+            "http://[::1]:11434",
+        ] {
+            let adapter = build_adapter_against(endpoint);
+            assert_eq!(adapter.name(), "local_ollama", "endpoint={endpoint}");
+        }
+
+        for endpoint in [
+            "https://ollama.example.com",
+            "http://192.168.1.20:11434",
+            "http://localhost.evil.example:11434",
+        ] {
+            let adapter = build_adapter_against(endpoint);
+            assert_eq!(adapter.name(), "ollama_remote", "endpoint={endpoint}");
+            assert!(!crate::providers::is_local_provider(adapter.name()));
+        }
+    }
+
+    #[tokio::test]
+    async fn strict_blocks_remote_ollama_before_any_network_dispatch() {
+        let adapter = build_adapter_against("https://ollama.example.com");
+        let error = adapter
+            .complete_authorized(
+                Request::default(),
+                &crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    crate::permissions::AutonomyLevel::Strict,
+                ),
+                "test.remote_ollama",
+            )
+            .await
+            .expect_err("remote endpoint must cross and fail the paid-provider gate");
+        assert!(error.to_string().contains("authorization"));
     }
 
     #[test]
@@ -469,8 +571,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/chat"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_raw(ndjson_body, "application/x-ndjson"),
+                ResponseTemplate::new(200).set_body_raw(ndjson_body, "application/x-ndjson"),
             )
             .mount(&mock)
             .await;
@@ -544,7 +645,10 @@ mod tests {
             .map(|c| c.delta.as_str())
             .collect();
         assert_eq!(content, "Hi");
-        let done = chunks.iter().find(|c| c.done).expect("must have a done chunk");
+        let done = chunks
+            .iter()
+            .find(|c| c.done)
+            .expect("must have a done chunk");
         assert_eq!(
             done.input_tokens,
             Some(7),
@@ -565,8 +669,7 @@ mod tests {
                 "stream": true
             })))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_raw(ndjson_body, "application/x-ndjson"),
+                ResponseTemplate::new(200).set_body_raw(ndjson_body, "application/x-ndjson"),
             )
             .mount(&mock)
             .await;
@@ -616,10 +719,10 @@ mod tests {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/chat"))
-            .respond_with(ResponseTemplate::new(500).set_body_raw(
-                r#"{"error":"model not found"}"#,
-                "application/json",
-            ))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_raw(r#"{"error":"model not found"}"#, "application/json"),
+            )
             .mount(&mock)
             .await;
 
@@ -635,6 +738,36 @@ mod tests {
         assert!(msg.contains("500"), "error must mention status; got: {msg}");
     }
 
+    #[tokio::test]
+    async fn loopback_ollama_does_not_follow_redirects_off_origin() {
+        let redirect_target = MockServer::start().await;
+        let source = MockServer::start().await;
+        let location = format!("{}/capture", redirect_target.uri());
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(307).insert_header("location", location))
+            .mount(&source)
+            .await;
+
+        let adapter = build_adapter_against(&source.uri());
+        let error = adapter
+            .complete(Request {
+                prompt: "stay local".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("loopback redirect must be surfaced, never followed");
+        assert!(error.to_string().contains("307"));
+        assert!(
+            redirect_target
+                .received_requests()
+                .await
+                .expect("request recording enabled")
+                .is_empty(),
+            "redirect target must receive no prompt"
+        );
+    }
+
     /// Sampling options are forwarded to the request body when set.
     #[tokio::test]
     async fn build_request_includes_options_when_set() {
@@ -647,24 +780,29 @@ mod tests {
             ..Default::default()
         };
         let body = build_request("llama3.2", &req, false);
-        let opts = body.options.expect("options must be present when sampling fields set");
+        let opts = body
+            .options
+            .expect("options must be present when sampling fields set");
         assert_eq!(opts.temperature, Some(0.7));
         assert_eq!(opts.top_p, Some(0.9));
         assert_eq!(opts.seed, Some(42));
         assert_eq!(opts.stop, vec!["</s>"]);
+        assert_eq!(opts.num_predict, Some(OUTPUT_TOKEN_CEILING));
     }
 
-    /// No options field when all sampling fields are None/empty.
-    #[tokio::test]
-    async fn build_request_omits_options_when_defaults() {
+    /// The output cap is present even without sampling overrides.
+    #[test]
+    fn build_request_always_sends_authorized_num_predict_ceiling() {
         let req = Request {
             prompt: "test".into(),
             ..Default::default()
         };
         let body = build_request("llama3.2", &req, false);
-        assert!(
-            body.options.is_none(),
-            "options must be omitted when no sampling overrides are set"
+        assert_eq!(
+            body.options
+                .expect("num_predict makes options mandatory")
+                .num_predict,
+            Some(OUTPUT_TOKEN_CEILING)
         );
     }
 }

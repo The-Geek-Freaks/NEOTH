@@ -2,12 +2,12 @@
 //!
 //! Spawns an LSP server via stdio, sends `textDocument/didOpen`, and
 //! collects `textDocument/publishDiagnostics` notifications — all over raw
-//! JSON-RPC with `Content-Length` framing (identical to MCP transport).
+//! JSON-RPC with LSP's `Content-Length` framing.
 //!
-//! No `tower-lsp` or `lsp-types` crate required: we re-use the framing from
-//! `mcp::transport::{frame, parse_frame}` and do minimal serde-typed parsing
-//! of the notification we care about. All other server → client frames are
-//! skipped silently.
+//! No `tower-lsp` or `lsp-types` crate required. LSP framing stays local here:
+//! MCP stdio is newline-delimited JSON and must not be coupled to this distinct
+//! transport. We do minimal serde-typed parsing of the one notification we care
+//! about; all other server → client frames are skipped silently.
 //!
 //! The subprocess I/O is fully synchronous (matching `cli::edit::run`'s sync
 //! context). A single reader thread owns the `ChildStdout` and streams complete
@@ -28,7 +28,12 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::lsp::types::{LspDiagnostic, severity_name};
-use crate::mcp::transport::frame;
+
+/// Cold language servers may need to build a crate graph before either the
+/// initialize response or the first diagnostic snapshot is available. Both
+/// waits are bounded, but deliberately long enough for rust-analyzer startup.
+pub(crate) const DEFAULT_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const DEFAULT_DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -60,9 +65,7 @@ impl LspSession {
     /// `workspace_root` is used as the `rootUri` for the `initialize` request.
     pub fn open(server_cmd: &str, workspace_root: &Path) -> Result<Self> {
         let mut parts = server_cmd.split_whitespace();
-        let bin = parts
-            .next()
-            .context("lsp_server_cmd is empty")?;
+        let bin = parts.next().context("lsp_server_cmd is empty")?;
         let rest: Vec<&str> = parts.collect();
 
         let mut child = Command::new(bin)
@@ -123,7 +126,7 @@ impl LspSession {
         });
         sess.send_request("initialize", init_params)?;
         // Read the `initialize` response (we do not inspect capabilities).
-        sess.read_one_frame_timeout(Duration::from_millis(3_000))?;
+        sess.read_one_frame_timeout(DEFAULT_INITIALIZE_TIMEOUT)?;
 
         // `initialized` notification — no response expected.
         sess.send_notification("initialized", json!({}))?;
@@ -149,9 +152,10 @@ impl LspSession {
         )
     }
 
-    /// Read LSP server output for up to `timeout`, collecting any
-    /// `textDocument/publishDiagnostics` notifications. Returns whatever was
-    /// collected before the timeout or EOF; never errors on timeout/EOF alone.
+    /// Wait up to `timeout` for the first well-formed
+    /// `textDocument/publishDiagnostics` snapshot. A valid empty snapshot is a
+    /// completed clean result, so the caller returns immediately instead of
+    /// sleeping out the full deadline.
     pub fn collect_diagnostics(&mut self, timeout: Duration) -> Result<Vec<LspDiagnostic>> {
         let mut diagnostics: Vec<LspDiagnostic> = Vec::new();
         let deadline = std::time::Instant::now() + timeout;
@@ -164,11 +168,11 @@ impl LspSession {
             match self.read_one_frame_timeout(remaining) {
                 Ok(Some(body)) => {
                     if let Ok(parsed) = serde_json::from_slice::<RawNotification>(&body) {
-                        if parsed.method.as_deref()
-                            == Some("textDocument/publishDiagnostics")
-                        {
+                        if parsed.method.as_deref() == Some("textDocument/publishDiagnostics") {
                             if let Some(p) = parsed.params {
-                                collect_from_params(p, &mut diagnostics);
+                                if collect_from_params(p, &mut diagnostics) {
+                                    return Ok(diagnostics);
+                                }
                             }
                         }
                     }
@@ -228,7 +232,7 @@ impl LspSession {
 
     fn write_msg(&mut self, msg: &serde_json::Value) -> Result<()> {
         let body = serde_json::to_vec(msg).context("serialize JSON-RPC message")?;
-        let framed = frame(&body);
+        let framed = frame_lsp(&body);
         self.stdin
             .write_all(&framed)
             .context("write JSON-RPC frame to LSP stdin")?;
@@ -256,9 +260,16 @@ impl LspSession {
     }
 }
 
+fn frame_lsp(body: &[u8]) -> Vec<u8> {
+    let header = format!("Content-Length: {}\r\n\r\n", body.len());
+    let mut framed = Vec::with_capacity(header.len() + body.len());
+    framed.extend_from_slice(header.as_bytes());
+    framed.extend_from_slice(body);
+    framed
+}
+
 /// Blocking read of one complete Content-Length frame from `r`.
 fn read_one_complete_frame<R: std::io::Read>(r: &mut R) -> Result<Option<Vec<u8>>> {
-
     // Read the header line-by-line until \r\n\r\n.
     let mut header_buf = Vec::with_capacity(64);
     loop {
@@ -344,11 +355,10 @@ struct DiagPosition {
     character: u32,
 }
 
-fn collect_from_params(params: serde_json::Value, out: &mut Vec<LspDiagnostic>) {
-    let Ok(p): std::result::Result<PublishDiagnosticsParams, _> =
-        serde_json::from_value(params)
+fn collect_from_params(params: serde_json::Value, out: &mut Vec<LspDiagnostic>) -> bool {
+    let Ok(p): std::result::Result<PublishDiagnosticsParams, _> = serde_json::from_value(params)
     else {
-        return;
+        return false;
     };
     // Normalise the URI to a plain path for compact display.
     let file = uri_to_path(&p.uri);
@@ -365,6 +375,7 @@ fn collect_from_params(params: serde_json::Value, out: &mut Vec<LspDiagnostic>) 
             message: d.message,
         });
     }
+    true
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -432,7 +443,10 @@ mod tests {
     #[test]
     fn uri_to_path_strips_file_prefix() {
         assert_eq!(uri_to_path("file:///C:/foo/bar.rs"), "C:/foo/bar.rs");
-        assert_eq!(uri_to_path("file:///home/user/main.rs"), "home/user/main.rs");
+        assert_eq!(
+            uri_to_path("file:///home/user/main.rs"),
+            "home/user/main.rs"
+        );
     }
 
     #[test]
@@ -444,9 +458,8 @@ mod tests {
 
     #[test]
     fn read_one_complete_frame_round_trips_content_length() {
-        use crate::mcp::transport::frame;
         let body = br#"{"method":"test","params":{}}"#;
-        let framed = frame(body);
+        let framed = frame_lsp(body);
         let mut cursor = std::io::Cursor::new(framed);
         let result = read_one_complete_frame(&mut cursor).unwrap().unwrap();
         assert_eq!(result, body);
@@ -470,11 +483,22 @@ mod tests {
             }]
         });
         let mut out = Vec::new();
-        collect_from_params(params, &mut out);
+        assert!(collect_from_params(params, &mut out));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].line, 5);
         assert_eq!(out[0].col, 2);
         assert_eq!(out[0].severity, "error");
         assert_eq!(out[0].message, "unused variable: `x`");
+    }
+
+    #[test]
+    fn empty_publish_diagnostics_is_a_complete_clean_snapshot() {
+        let params = serde_json::json!({
+            "uri": "file:///src/main.rs",
+            "diagnostics": []
+        });
+        let mut out = Vec::new();
+        assert!(collect_from_params(params, &mut out));
+        assert!(out.is_empty());
     }
 }

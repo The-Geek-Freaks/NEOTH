@@ -285,7 +285,7 @@ fn optimal_k(rows: &[Value], min_k: usize, max_k: usize) -> usize {
     let mut templates: BTreeSet<String> = BTreeSet::new();
     for v in rows {
         templates.insert(digit_template(
-            &serde_json::to_string(v).unwrap_or_default(),
+            &serde_json::to_string(v).expect("serde_json::Value serialization is infallible"),
         ));
         if templates.len() >= max_k {
             break; // already at the cap — counting further can't raise k

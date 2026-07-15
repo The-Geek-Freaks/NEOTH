@@ -25,7 +25,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 /// The 8 canonical collapse labels, matching the enum in the JSON schema
-/// (event schema v0.1.1 / window schema v0.2.1 — `tool_selection_failure`
+/// (event schema v0.1.1 / window schema v0.4.0 — `tool_selection_failure`
 /// added upstream in delta-kosmologie `a4bd367`, FINDING-09).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -85,7 +85,6 @@ pub struct CollapseDetection {
     /// Whether any collapse label fired in the prediction horizon.
     pub collapse_within_5m: bool,
     pub collapse_within_30m: Option<bool>,
-    pub collapse_at_next_task: Option<bool>,
     /// The first label that fired, for stratified analysis.
     pub collapse_kind: Option<CollapseLabel>,
     /// Is this window a negative control (deliberately stable run)?
@@ -103,6 +102,32 @@ pub enum NegativeControlType {
     IsolatedRun,
     /// Deterministic replay of a known-stable session.
     ReplayDeterministic,
+}
+
+impl NegativeControlType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SyntheticStable => "synthetic_stable",
+            Self::IsolatedRun => "isolated_run",
+            Self::ReplayDeterministic => "replay_deterministic",
+        }
+    }
+}
+
+impl std::str::FromStr for NegativeControlType {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "synthetic_stable" => Ok(Self::SyntheticStable),
+            "isolated_run" => Ok(Self::IsolatedRun),
+            "replay_deterministic" => Ok(Self::ReplayDeterministic),
+            other => anyhow::bail!(
+                "unknown negative-control type `{other}` (expected one of: \
+                 synthetic_stable, isolated_run, replay_deterministic)"
+            ),
+        }
+    }
 }
 
 /// Minimal event record for collapse detection — stripped of all content.
@@ -165,8 +190,7 @@ pub fn detect_collapse(events: &[CollapseEventRecord], k_d_series: &[f64]) -> Co
 
     CollapseDetection {
         collapse_within_5m: fired,
-        collapse_within_30m: None,   // populated by the 30m window aggregator
-        collapse_at_next_task: None, // populated by the export pipeline
+        collapse_within_30m: None, // populated by the 30m window aggregator
         collapse_kind: kind,
         negative_control: false,
         negative_control_type: None,
@@ -177,7 +201,8 @@ pub fn detect_collapse(events: &[CollapseEventRecord], k_d_series: &[f64]) -> Co
 
 /// agent_loop: identical (tool, agent_id) retry tuple ≥3 times within 60s.
 fn detect_agent_loop(events: &[CollapseEventRecord]) -> Option<i64> {
-    let retries: Vec<_> = events.iter()
+    let retries: Vec<_> = events
+        .iter()
         .filter(|e| e.event_type == CollapseEventType::Retry)
         .collect();
     let mut counts: std::collections::HashMap<(String, String), Vec<i64>> =
@@ -203,7 +228,8 @@ fn detect_agent_loop(events: &[CollapseEventRecord]) -> Option<i64> {
 
 /// retry_storm: >5 retry events in any 30-second sub-window.
 fn detect_retry_storm(events: &[CollapseEventRecord]) -> Option<i64> {
-    let mut retry_ts: Vec<i64> = events.iter()
+    let mut retry_ts: Vec<i64> = events
+        .iter()
         .filter(|e| e.event_type == CollapseEventType::Retry)
         .map(|e| e.ts_unix)
         .collect();
@@ -218,11 +244,15 @@ fn detect_retry_storm(events: &[CollapseEventRecord]) -> Option<i64> {
 
 /// tool_timeout_cascade: >3 distinct tool ids with timeout/error in the window.
 fn detect_tool_timeout_cascade(events: &[CollapseEventRecord]) -> Option<i64> {
-    let timeout_tools: std::collections::HashSet<_> = events.iter()
+    let timeout_tools: std::collections::HashSet<_> = events
+        .iter()
         .filter(|e| {
             e.event_type == CollapseEventType::ToolTimeout
                 || (e.event_type == CollapseEventType::ToolError
-                    && e.error_kind.as_deref().map(|s| s.contains("timeout")).unwrap_or(false))
+                    && e.error_kind
+                        .as_deref()
+                        .map(|s| s.contains("timeout"))
+                        .unwrap_or(false))
         })
         .filter_map(|e| e.tool.as_deref())
         .collect();
@@ -230,7 +260,8 @@ fn detect_tool_timeout_cascade(events: &[CollapseEventRecord]) -> Option<i64> {
         // Timestamp of the earliest timeout/error evidence in the window
         // (not the 4th distinct tool — earliest onset is what the horizon
         // analysis wants).
-        events.iter()
+        events
+            .iter()
             .filter(|e| {
                 e.event_type == CollapseEventType::ToolTimeout
                     || e.event_type == CollapseEventType::ToolError
@@ -254,9 +285,11 @@ fn detect_context_limit_failure(events: &[CollapseEventRecord]) -> Option<i64> {
         if let Some(ts) = near_limit_ts {
             if (ev.event_type == CollapseEventType::ToolError
                 || ev.event_type == CollapseEventType::InferenceEnd)
-                && ev.error_kind.as_deref().map(|s| {
-                    s.contains("context") || s.contains("truncation")
-                }).unwrap_or(false)
+                && ev
+                    .error_kind
+                    .as_deref()
+                    .map(|s| s.contains("context") || s.contains("truncation"))
+                    .unwrap_or(false)
             {
                 return Some(ts);
             }
@@ -267,13 +300,18 @@ fn detect_context_limit_failure(events: &[CollapseEventRecord]) -> Option<i64> {
 
 /// semantic_degradation: K_d > 0.90 for 3 consecutive 5-minute values.
 fn detect_semantic_degradation(k_d_series: &[f64]) -> bool {
-    if k_d_series.len() < 3 { return false; }
+    if k_d_series.len() < 3 {
+        return false;
+    }
     k_d_series.windows(3).any(|w| w.iter().all(|&k| k > 0.90))
 }
 
 /// fallback_failure: fallback_attempt not followed by success=true within 60s.
 fn detect_fallback_failure(events: &[CollapseEventRecord]) -> Option<i64> {
-    for ev in events.iter().filter(|e| e.event_type == CollapseEventType::FallbackAttempt) {
+    for ev in events
+        .iter()
+        .filter(|e| e.event_type == CollapseEventType::FallbackAttempt)
+    {
         let deadline = ev.ts_unix + 60;
         let succeeded = events.iter().any(|r| {
             r.event_type == CollapseEventType::FallbackResult
@@ -290,7 +328,8 @@ fn detect_fallback_failure(events: &[CollapseEventRecord]) -> Option<i64> {
 
 /// objective_failure: explicit operator-label event in stream.
 fn detect_objective_failure(events: &[CollapseEventRecord]) -> Option<i64> {
-    events.iter()
+    events
+        .iter()
         .find(|e| e.event_type == CollapseEventType::OperatorLabel)
         .map(|e| e.ts_unix)
 }
@@ -432,9 +471,7 @@ mod tests {
 
     #[test]
     fn retry_storm_fires_on_six_retries_within_30s() {
-        let events: Vec<_> = (0..6)
-            .map(|i| retry_event(i * 4, "any", "any"))
-            .collect();
+        let events: Vec<_> = (0..6).map(|i| retry_event(i * 4, "any", "any")).collect();
         assert!(detect_retry_storm(&events).is_some());
     }
 
@@ -448,7 +485,25 @@ mod tests {
     #[test]
     fn collapse_label_as_str_round_trips() {
         assert_eq!(CollapseLabel::AgentLoop.as_str(), "agent_loop");
-        assert_eq!(CollapseLabel::SemanticDegradation.as_str(), "semantic_degradation");
+        assert_eq!(
+            CollapseLabel::SemanticDegradation.as_str(),
+            "semantic_degradation"
+        );
+    }
+
+    #[test]
+    fn negative_control_type_round_trips_canonical_wire_values() {
+        for value in [
+            NegativeControlType::SyntheticStable,
+            NegativeControlType::IsolatedRun,
+            NegativeControlType::ReplayDeterministic,
+        ] {
+            assert_eq!(
+                value.as_str().parse::<NegativeControlType>().unwrap(),
+                value
+            );
+        }
+        assert!("syntheticstable".parse::<NegativeControlType>().is_err());
     }
 
     const T: i64 = 1_800_000_000;
@@ -472,7 +527,14 @@ mod tests {
              (id, session_id, window_secs, ts_start, ts_end, b_bottleneck, variables,
               collapse_5m, collapse_kind)
              VALUES (?1, 'a1b2c3d4e5f60718', ?2, ?3, ?4, 0.5, '{}', ?5, ?6)",
-            rusqlite::params![id, window_secs, ts_end - window_secs, ts_end, collapse_5m, kind],
+            rusqlite::params![
+                id,
+                window_secs,
+                ts_end - window_secs,
+                ts_end,
+                collapse_5m,
+                kind
+            ],
         )
         .expect("seed window");
     }
@@ -492,7 +554,10 @@ mod tests {
             )
             .expect("row");
         assert_eq!(count, 1, "upsert, not duplicate");
-        assert_eq!(confirmed, 1, "operator confirmation survives a machine re-pass");
+        assert_eq!(
+            confirmed, 1,
+            "operator confirmation survives a machine re-pass"
+        );
         assert_eq!(at, 200, "labeled_at refreshed");
     }
 
@@ -505,9 +570,11 @@ mod tests {
         let stamped = post_hoc_label_pass(&conn, 1800, T + 1801).expect("pass");
         assert_eq!(stamped, 1, "only w15 is ripe (v5's horizon is not)");
         let c30: i64 = conn
-            .query_row("SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'",
+                [],
+                |r| r.get(0),
+            )
             .expect("row");
         assert_eq!(c30, 1);
         let label: String = conn
@@ -527,9 +594,11 @@ mod tests {
         let stamped = post_hoc_label_pass(&conn, 1800, T + 1801).expect("pass");
         assert_eq!(stamped, 1);
         let c30: i64 = conn
-            .query_row("SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'",
+                [],
+                |r| r.get(0),
+            )
             .expect("row");
         assert_eq!(c30, 0);
         let labels: i64 = conn
@@ -545,9 +614,11 @@ mod tests {
         let stamped = post_hoc_label_pass(&conn, 1800, T + 900).expect("pass");
         assert_eq!(stamped, 0, "horizon not yet observable");
         let c30: Option<i64> = conn
-            .query_row("SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT collapse_30m FROM idx_babel_windows WHERE id='w15'",
+                [],
+                |r| r.get(0),
+            )
             .expect("row");
         assert!(c30.is_none());
     }

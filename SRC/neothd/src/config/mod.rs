@@ -46,6 +46,7 @@ pub mod wal;
 // readable by anyone other than the operator.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,17 @@ use serde::{Deserialize, Serialize};
 pub mod credentials;
 // D003-KEYCHAIN-01 — OS keychain backend, migration helpers, SecretStore trait.
 pub mod keychain;
+
+// Serialises same-process freedom.yaml read-modify-write cycles. The sibling
+// OS lock below covers separate CLI/daemon processes; both tiers are needed
+// because advisory file-lock reentrancy differs across platforms.
+static FREEDOM_UPDATE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_freedom_update() -> MutexGuard<'static, ()> {
+    FREEDOM_UPDATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 // GOLD-ADAPT-DOC-01 (2026-06-23) — Python pip-gate helpers (ppt_master → python-pptx).
 pub mod installer;
 pub mod preset_builtins;
@@ -84,13 +96,13 @@ pub use features::{
     ChannelWeightsConfig, DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS,
     DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS, DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE, DreamingConfig,
     EcologyConfig, EmailConfig, FallbackConfig, GoalConfig, HintsConfig, HookChainConfig,
-    LiveDeliveryConfig, LoopConfig, MediaConfig, OmiConfig, TransferConfig,
+    LiveDeliveryConfig, LoopConfig, MediaConfig, OmiConfig, OmiIngestMode, TransferConfig,
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
     AutoUpdateConfig, CodeMapConfig, CodingConfig, DoctorConfig, PluginsConfig, ProfileConfig,
-    RefusalRecoveryConfig, SupervisorConfig, SupervisorKind, TaskEngineConfig, UpdaterConfig,
-    WasmPluginsConfig,
+    RefusalRecoveryConfig, ReleaseChannel, SupervisorConfig, SupervisorKind, TaskEngineConfig,
+    UpdaterConfig, WasmPluginsConfig,
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
@@ -224,6 +236,11 @@ pub struct FreedomConfig {
     /// the field round-trip cleanly via `#[serde(default)]`.
     #[serde(default)]
     pub autonomy: crate::permissions::AutonomyLevel,
+    /// Per-action overrides used only when `autonomy: custom` is active.
+    /// Missing entries inherit the `Standard` decision exactly; explicit
+    /// overrides remain bounded by the irreducible `Full` safety floor.
+    #[serde(default)]
+    pub custom_autonomy: crate::permissions::CustomAutonomyConfig,
     /// Optional `host:port` for the local `/healthz` + `/metrics` listener.
     /// Defaults to `None` (listener disabled). Example: `127.0.0.1:43117`.
     /// Phase 33c BS-1.
@@ -458,14 +475,11 @@ pub struct FreedomConfig {
     /// (or similar).
     #[serde(default)]
     pub code_map: CodeMapConfig,
-    /// V03-09 Phase 2a (2026-05-21): daemon self-update policy.
-    /// `enabled: false` keeps the daemon silent (no check, no nag,
-    /// no download). `enabled: true && auto_apply: false` =
-    /// background check + nag in `neoth doctor` output (Phase 1
-    /// behaviour today). `auto_apply: true` lets Phase 2b
-    /// download + verify + extract + atomic-replace once that
-    /// landing arrives. Operators on a forked build override
-    /// `repo` to point at their own release feed.
+    /// Daemon self-update policy. `enabled: false` keeps both background
+    /// check and staging silent. Check-only mode probes the configured release
+    /// ring; `auto_apply: true` additionally permits verified stage-and-notify
+    /// at Elevated/Full autonomy. The running binary is replaced only by the
+    /// operator-initiated `neoth update --self --apply` path.
     #[serde(default)]
     pub auto_update: AutoUpdateConfig,
     /// Pick #6 Phase 4 (2026-05-21): coding-workflow runtime knobs.
@@ -576,8 +590,9 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub hints: HintsConfig,
 
-    /// OM-01 — local OMI transcript ingest. Off by default; the daemon REFUSES
-    /// to start (SC-14) if enabled with a non-local endpoint.
+    /// OMI-MULTIMODAL-01 — Developer API conversation import plus local native
+    /// PCM/media ingest. Off by default. Legacy mode remains local-only; a
+    /// public Developer API endpoint needs the explicit cloud-egress opt-in.
     #[serde(default)]
     pub omi: OmiConfig,
 
@@ -836,15 +851,19 @@ pub struct FreedomConfig {
     /// (`0xA8`/`0xA9`).
     #[serde(default)]
     pub tools: ToolsConfig,
-    /// SL-00 — cluster identity. `name` is the PUBLIC rendezvous label that
-    /// derives the Hyperswarm DHT topic + the mDNS service name (it is NOT a
-    /// secret — the DHT topic is public; the shared `cluster_passphrase` in
-    /// credentials.yaml is what authenticates). Empty `name` = no cluster
-    /// identity = the transport stays inert (fail-closed). The existing
-    /// untyped `cluster.mdns.enabled` / `cluster.listen_port` are read
-    /// separately by `cluster::policy`; serde ignores them here.
+    /// SL-00 — fully typed cluster identity, transport, peer seeds, mDNS and
+    /// announce policy. `name` is the PUBLIC rendezvous label that derives the
+    /// Hyperswarm DHT topic + the mDNS service name (it is NOT a secret — the
+    /// DHT topic is public; the shared `cluster_passphrase` in credentials.yaml
+    /// is what authenticates). Empty `name` = no cluster identity = every
+    /// transport stays inert (fail-closed).
     #[serde(default)]
     pub cluster: ClusterConfig,
+    /// GOLD-FEAT-06 — local/peer resource snapshot cadence and dashboard
+    /// freshness policy. Always parsed even in builds without the optional
+    /// cluster transport so one freedom.yaml remains portable across builds.
+    #[serde(default)]
+    pub swarm: SwarmConfig,
     /// AUDIT-RPC-01 — loopback audit-RPC listener. When the daemon owns the
     /// single WAL writer, one-shot CLIs (`neoth os launch`, `fs`, `lease`, …)
     /// can't write their own audit frames; with this enabled they forward an
@@ -1047,8 +1066,47 @@ pub struct AuditRpcConfig {
     pub required_for_oneshot_permission_events: bool,
 }
 
-/// SL-00 cluster-identity config. Default: no name (no cluster).
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+/// Default TCP port shared by cluster mDNS announces and Tailscale probes.
+pub const DEFAULT_CLUSTER_LISTEN_PORT: u16 = 49_737;
+
+/// Wire carrier for authenticated cluster gossip and WAL sync.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterTransport {
+    /// peeroxide Hyperswarm (the shipped default).
+    #[default]
+    Peeroxide,
+    /// iroh QUIC (requires the `cluster-iroh` build feature).
+    Iroh,
+}
+
+/// mDNS discovery switch. Default-on discovery is still privacy-gated by
+/// [`ClusterAnnouncePolicy`], whose default trusted-SSID set is empty.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ClusterMdnsConfig {
+    pub enabled: bool,
+}
+
+impl Default for ClusterMdnsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// Operator-controlled LAN announcement policy.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ClusterAnnouncePolicy {
+    /// Permit mDNS announcement on any reachable network. Default false.
+    pub announce_on_untrusted_wifi: bool,
+    /// Case-sensitive SSIDs on which mDNS announcement is permitted.
+    pub trusted_ssids: Vec<String>,
+}
+
+/// SL-00 cluster identity and transport config. Default: inert cluster,
+/// peeroxide selected, no peers, and privacy-gated mDNS discovery.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct ClusterConfig {
     /// Public cluster rendezvous name — derives the DHT topic + mDNS service.
@@ -1060,6 +1118,113 @@ pub struct ClusterConfig {
     /// announces on the public DHT while this is `false` — the safety gate
     /// against an accidental cluster join on a fresh install.
     pub enabled: bool,
+    /// Authenticated gossip/WAL-sync carrier.
+    pub transport: ClusterTransport,
+    /// iroh endpoint ids used to bootstrap the first outbound contacts.
+    pub peers: Vec<String>,
+    /// LAN discovery switch (announcement remains subject to `policy`).
+    pub mdns: ClusterMdnsConfig,
+    /// LAN privacy policy used by daemon, CLI and doctor alike.
+    pub policy: ClusterAnnouncePolicy,
+    /// Shared mDNS/Tailscale probe port. Zero is invalid.
+    pub listen_port: u16,
+}
+
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            name: None,
+            enabled: false,
+            transport: ClusterTransport::Peeroxide,
+            peers: Vec::new(),
+            mdns: ClusterMdnsConfig::default(),
+            policy: ClusterAnnouncePolicy::default(),
+            listen_port: DEFAULT_CLUSTER_LISTEN_PORT,
+        }
+    }
+}
+
+impl ClusterConfig {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.listen_port == 0 {
+            return Err("listen_port must be greater than zero".to_string());
+        }
+        if self.peers.iter().any(|peer| peer.trim().is_empty()) {
+            return Err("peers must not contain empty endpoint ids".to_string());
+        }
+        if self.enabled
+            && self
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .is_none()
+        {
+            return Err("name is required when cluster.enabled is true".to_string());
+        }
+        if self.enabled && !cfg!(feature = "cluster") {
+            return Err(
+                "cluster.enabled is true, but this binary was built without the `cluster` feature"
+                    .to_string(),
+            );
+        }
+        if self.enabled
+            && self.transport == ClusterTransport::Iroh
+            && !cfg!(feature = "cluster-iroh")
+        {
+            return Err(
+                "cluster.transport is `iroh`, but this binary was built without the `cluster-iroh` feature"
+                    .to_string(),
+            );
+        }
+        #[cfg(feature = "cluster-iroh")]
+        if self.transport == ClusterTransport::Iroh {
+            for peer in &self.peers {
+                peer.trim().parse::<iroh::EndpointId>().map_err(|error| {
+                    format!("invalid iroh endpoint id `{peer}` in cluster.peers: {error}")
+                })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// GOLD-FEAT-06 resource-snapshot and swarm-dashboard policy.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SwarmConfig {
+    /// Emit local resource snapshots when the cluster feature is compiled in.
+    pub enabled: bool,
+    /// Seconds between local CPU/RAM/VRAM samples.
+    pub interval_secs: u64,
+    /// Seconds after which a dashboard snapshot is stale.
+    pub stale_after_secs: i64,
+}
+
+impl Default for SwarmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 30,
+            stale_after_secs: 300,
+        }
+    }
+}
+
+impl SwarmConfig {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.interval_secs == 0 {
+            return Err("interval_secs must be greater than zero".to_string());
+        }
+        if self.stale_after_secs <= 0 {
+            return Err("stale_after_secs must be greater than zero".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs)
+    }
 }
 
 /// GOLD-ADAPT-ODY-17 — operator-tunable iteration budget for the deep-research engine.
@@ -1083,6 +1248,14 @@ pub struct DeepResearchConfig {
 mod inline_tests;
 
 impl FreedomConfig {
+    /// Immutable point-in-time autonomy policy for one permission decision.
+    ///
+    /// Reload-aware callers must obtain a fresh snapshot from their active
+    /// [`crate::config::reload::ReloadController`] at each side-effect leaf.
+    pub fn autonomy_policy(&self) -> crate::permissions::AutonomyPolicySnapshot {
+        crate::permissions::AutonomyPolicySnapshot::new(self.autonomy, &self.custom_autonomy)
+    }
+
     /// AR-03 — look up the configured policy for `stage` and return
     /// the `fail_fast` flag. Returns `false` for any stage the
     /// operator hasn't pinned (= legacy lenient behaviour).
@@ -1172,17 +1345,66 @@ impl FreedomConfig {
         Self::load_from_path(&Self::default_path())
     }
 
+    /// Load the default config when present, or use the safe compiled defaults
+    /// only when the path is genuinely absent. Unlike `unwrap_or_default()`,
+    /// this preserves read, parse, validation, and credential-backend errors
+    /// from an existing operator config.
+    pub fn load_from_default_path_or_default() -> Result<Self> {
+        Self::load_from_path_or_default(&Self::default_path())
+    }
+
+    /// Path-injectable counterpart to [`Self::load_from_default_path_or_default`].
+    /// The `try_exists` error is significant: an unreadable path must not be
+    /// mistaken for first-run absence and silently relax policy to defaults.
+    pub fn load_from_path_or_default(path: &Path) -> Result<Self> {
+        match path
+            .try_exists()
+            .with_context(|| format!("check freedom.yaml path {}", path.display()))?
+        {
+            true => Self::load_from_path(path),
+            false => Ok(Self::default()),
+        }
+    }
+
     /// Write the public (secret-free) portion of this config to the
     /// default `freedom.yaml` path with mode 0600 (unix) + atomic
     /// rename. SecretString fields are stripped before serialisation
     /// — secret-split (Codex audit #7) requires API keys / tokens to
     /// live in `credentials.yaml`, not `freedom.yaml`.
     ///
-    /// Used by `neoth hemispheres set` and similar CLI commands that
-    /// mutate freedom.yaml after onboarding. Per-hemisphere API keys
-    /// must be set by editing `~/.neoth/credentials.yaml` manually for
-    /// v0.1; a future `neoth credentials set` CLI will close that gap.
+    /// Used by CLI paths that already hold a complete config value. New
+    /// read-modify-write callers should prefer [`Self::update_at`]; provider
+    /// keys are persisted separately through `Credentials::update_at`.
     pub fn save_public_to_default_path(&self) -> Result<()> {
+        let path = Self::default_path();
+        let _process_guard = lock_freedom_update();
+        let _file_guard = crate::util::locked_file::lock_file_blocking(
+            &path.with_extension("lock"),
+            "freedom config",
+        )?;
+        self.write_public_to_path(&path)
+    }
+
+    /// Concurrency-safe read-modify-write for `freedom.yaml`.
+    ///
+    /// The config is reloaded only after both the process-local mutex and the
+    /// sibling OS lock are held. A malformed existing file therefore returns
+    /// an error before `mutation` runs and before any bytes are replaced. The
+    /// resulting public config is secret-stripped and atomically renamed.
+    pub fn update_at<T>(path: &Path, mutation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        let _process_guard = lock_freedom_update();
+        let _file_guard = crate::util::locked_file::lock_file_blocking(
+            &path.with_extension("lock"),
+            "freedom config",
+        )?;
+        let mut config = Self::load_from_path(path)?;
+        let value = mutation(&mut config)?;
+        config.write_public_to_path(path)?;
+        Ok(value)
+    }
+
+    /// Secret-free YAML rendering used by operator-facing config inspection.
+    pub(crate) fn public_yaml(&self) -> Result<String> {
         let mut public = self.clone();
         // Strip every secret field so freedom.yaml stays free of
         // plaintext API keys. Operators who want per-slot keys edit
@@ -1194,21 +1416,28 @@ impl FreedomConfig {
         public.inference.cerebellum.key = None;
         public.inference.default_slot.key = None;
 
-        let body = serde_yaml::to_string(&public)
-            .context("serialize FreedomConfig as YAML for freedom.yaml")?;
-        let path = Self::default_path();
-        let tmp = path.with_extension("yaml.tmp");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create parent {}", parent.display()))?;
-        }
-        credentials::write_mode_0600(&tmp, body.as_bytes())
-            .with_context(|| format!("write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path)
-            .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+        public
+            .companion
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
+        public
+            .swarm
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid swarm config: {error}"))?;
+        public
+            .cluster
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
+        serde_yaml::to_string(&public).context("serialize FreedomConfig as YAML for freedom.yaml")
+    }
+
+    fn write_public_to_path(&self, path: &Path) -> Result<()> {
+        let body = self.public_yaml()?;
+        crate::util::atomic_write::atomic_write_private(path, body.as_bytes())
+            .with_context(|| format!("atomically write {}", path.display()))?;
         #[cfg(windows)]
         {
-            let _ = crate::wal::win_acl::restrict_to_owner(&path);
+            let _ = crate::wal::win_acl::restrict_to_owner(path);
         }
         Ok(())
     }
@@ -1228,6 +1457,18 @@ impl FreedomConfig {
             .with_context(|| format!("read freedom.yaml at {}", path.display()))?;
         let mut config: FreedomConfig = serde_yaml::from_str(&body)
             .with_context(|| format!("parse YAML at {}", path.display()))?;
+        config
+            .companion
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
+        config
+            .swarm
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid swarm config: {error}"))?;
+        config
+            .cluster
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
 
         // Merge `~/.neoth/credentials.yaml` if present. credentials.yaml
         // is the dedicated home for plaintext secrets — the values there
@@ -1240,33 +1481,8 @@ impl FreedomConfig {
         };
         #[cfg(unix)]
         warn_if_world_readable(&cred_path);
-        let mut creds = credentials::Credentials::load_or_default(&cred_path)
+        let creds = credentials::Credentials::load_effective(&cred_path, config.secrets_backend)
             .with_context(|| format!("load credentials at {}", cred_path.display()))?;
-
-        // D003-KEYCHAIN-01 — supplement YAML secrets with OS keychain when
-        // the operator has opted in. YAML values (already populated above) take
-        // precedence over keychain entries — `supplement_from_store` only fills
-        // fields that are still `None`. On any keychain error we log at `warn!`
-        // and fall through to the YAML-only path (graceful degradation).
-        #[cfg(feature = "keychain")]
-        if config.secrets_backend == SecretsBackend::Keychain {
-            match keychain::open_store() {
-                Ok(store) => {
-                    if let Err(e) = keychain::supplement_from_store(&mut creds, store.as_ref()) {
-                        tracing::warn!(
-                            err = %e,
-                            "OS keychain unavailable; falling back to credentials.yaml secrets"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        err = %e,
-                        "could not open OS keychain; falling back to credentials.yaml secrets"
-                    );
-                }
-            }
-        }
 
         if let Some(k) = creds.provider_key {
             config.provider_key = Some(k);

@@ -20,7 +20,7 @@
 //!      consumers can persist it directly.
 //!
 //! What is NOT in scope today:
-//!   - Caption generation (BLIP-2 / LLaVA — Phase 2c).
+//!   - Local caption generation; no local vision-caption backend is offered.
 //!   - GPU acceleration for CLIP — CPU forward stays portable.
 //!   - Embedding-vector WAL events (0x2C+ band reserved); recall write
 //!     happens via the extraction-side caller when it persists to

@@ -29,7 +29,9 @@ use tracing::{error, info, warn};
 
 use crate::mcp::config::McpServers;
 use crate::mcp::tool_call_parser::{ParseError, ParsedToolCall, extract_tool_calls};
+#[cfg(test)]
 use crate::permissions::AutonomyLevel;
+use crate::permissions::PolicyArgument;
 use crate::wal::writer::WalWriterHandle;
 
 /// Cap on dispatcher iterations. Prevents a model that emits a
@@ -109,11 +111,11 @@ pub trait CompletionDriver {
 
 /// Run the dispatch loop with the default iteration cap.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_tool_loop<D: CompletionDriver + Send>(
+pub async fn run_tool_loop<D, P>(
     driver: &mut D,
     initial_prompt: String,
     servers: &McpServers,
-    autonomy: AutonomyLevel,
+    policy: P,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
@@ -121,12 +123,16 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
     // gate (security review Finding 4). Pass `&SecurityPolicy::default()` to
     // accept the secure defaults (deny dangerous, warn egress).
     security_policy: &crate::config::SecurityPolicy,
-) -> Result<LoopOutcome> {
+) -> Result<LoopOutcome>
+where
+    D: CompletionDriver + Send,
+    P: PolicyArgument + Copy + Send + Sync,
+{
     run_tool_loop_with_cap(
         driver,
         initial_prompt,
         servers,
-        autonomy,
+        policy,
         writer,
         rollback_policy,
         skill_allowlist,
@@ -161,11 +167,11 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
 /// Run the dispatch loop with an explicit iteration cap. Mostly for
 /// tests + operators who want to widen the chain.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
+pub async fn run_tool_loop_with_cap<D, P>(
     driver: &mut D,
     initial_prompt: String,
     servers: &McpServers,
-    autonomy: AutonomyLevel,
+    policy: P,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
@@ -209,7 +215,11 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // `freedom.yaml::tools.harness`. Last param so existing call-sites need only
     // a one-line append.
     harness_cfg: &crate::config::tools::McpHarnessConfig,
-) -> Result<LoopOutcome> {
+) -> Result<LoopOutcome>
+where
+    D: CompletionDriver + Send,
+    P: PolicyArgument + Copy + Send + Sync,
+{
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
     let mut hit_cap = false;
@@ -477,7 +487,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                     manifest_count,
                     resolution_lock_count,
                     package_count,
-                    mut scan_proven,
+                    mut dependency_policy_clean,
                     result_code,
                     manifest_audit,
                 ) = match request {
@@ -494,42 +504,81 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         Vec::new(),
                     ),
                     InstallGateRequest::Scan(intent) => {
-                        let mut manifest_results =
-                            Vec::with_capacity(intent.resolution_locks.len());
-                        for manifest in &intent.resolution_locks {
-                            manifest_results.push((
-                                manifest.clone(),
-                                crate::security::dep_health::scan_manifest_strict(
-                                    std::path::Path::new(manifest),
-                                    security_policy.dep_vuln_threshold,
-                                )
-                                .await,
-                            ));
-                        }
-                        let package_result = if intent.packages.is_empty() {
-                            None
-                        } else {
-                            let packages = intent
-                                .packages
-                                .iter()
-                                .map(|package| crate::security::dep_health::StrictPackageQuery {
-                                    name: package.name.clone(),
-                                    ecosystem: package.ecosystem,
-                                    version: package.version.clone(),
-                                })
-                                .collect::<Vec<_>>();
-                            Some(
-                                crate::security::dep_health::scan_registry_packages_strict(
-                                    &packages,
-                                    security_policy.dep_vuln_threshold,
-                                )
-                                .await,
-                            )
-                        };
+                        // Bound the whole install set, not each lockfile independently.
+                        // Otherwise an attacker can multiply a per-scan timeout by
+                        // supplying many manifests.
+                        let scan_results = tokio::time::timeout(
+                            crate::security::dep_health::STRICT_SCAN_TIME_BUDGET,
+                            async {
+                                let mut manifest_results =
+                                    Vec::with_capacity(intent.resolution_locks.len());
+                                for manifest in &intent.resolution_locks {
+                                    manifest_results.push((
+                                        manifest.clone(),
+                                        crate::security::dep_health::scan_manifest_strict(
+                                            std::path::Path::new(manifest),
+                                            security_policy.dep_vuln_threshold,
+                                        )
+                                        .await,
+                                    ));
+                                }
+                                let package_result = if intent.packages.is_empty() {
+                                    None
+                                } else {
+                                    let packages = intent
+                                        .packages
+                                        .iter()
+                                        .map(|package| {
+                                            crate::security::dep_health::StrictPackageQuery {
+                                                name: package.name.clone(),
+                                                ecosystem: package.ecosystem,
+                                                version: package.version.clone(),
+                                            }
+                                        })
+                                        .collect::<Vec<_>>();
+                                    Some(
+                                        crate::security::dep_health::scan_registry_packages_strict(
+                                            &packages,
+                                            security_policy.dep_vuln_threshold,
+                                        )
+                                        .await,
+                                    )
+                                };
+                                (manifest_results, package_result)
+                            },
+                        )
+                        .await;
+                        let (manifest_results, package_result, scan_budget_exceeded) =
+                            match scan_results {
+                                Ok((manifest_results, package_result)) => {
+                                    (manifest_results, package_result, false)
+                                }
+                                Err(_) => {
+                                    let manifest_results = intent
+                                        .resolution_locks
+                                        .iter()
+                                        .cloned()
+                                        .map(|manifest| {
+                                            (
+                                                manifest,
+                                                crate::security::dep_health::StrictManifestScan::Unverified {
+                                                    code: crate::security::dep_health::StrictScanCode::ScanTimeBudgetExceeded,
+                                                },
+                                            )
+                                        })
+                                        .collect::<Vec<_>>();
+                                    let package_result = (!intent.packages.is_empty()).then_some(
+                                        crate::security::dep_health::StrictPackageScan::Unverified {
+                                            code: crate::security::dep_health::StrictScanCode::ScanTimeBudgetExceeded,
+                                        },
+                                    );
+                                    (manifest_results, package_result, true)
+                                }
+                            };
                         let locks_clean = manifest_results.iter().all(|(_, result)| {
                             matches!(
                                 result,
-                                crate::security::dep_health::StrictManifestScan::ProvenClean { .. }
+                                crate::security::dep_health::StrictManifestScan::DependencyPolicyClean { .. }
                             )
                         });
                         let mut snapshots = Vec::with_capacity(intent.manifests.len());
@@ -542,7 +591,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                                     });
                                 let expected_digest = match scanned_digest {
                                     Some(
-                                        crate::security::dep_health::StrictManifestScan::ProvenClean {
+                                        crate::security::dep_health::StrictManifestScan::DependencyPolicyClean {
                                             manifest_sha256,
                                             ..
                                         },
@@ -575,18 +624,20 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         let packages_clean = package_result.as_ref().is_none_or(|result| {
                             matches!(
                                 result,
-                                crate::security::dep_health::StrictPackageScan::ProvenClean { .. }
+                                crate::security::dep_health::StrictPackageScan::DependencyPolicyClean { .. }
                             )
                         });
-                        let proven = manifests_clean && packages_clean;
-                        if proven {
+                        let policy_clean = manifests_clean && packages_clean;
+                        if policy_clean {
                             approval = Some(InstallApproval {
                                 binding_sha256: intent.binding_sha256.clone(),
                                 manifests: snapshots,
                             });
                         }
-                        let result_code = if proven {
-                            "proven_clean"
+                        let result_code = if scan_budget_exceeded {
+                            "scan_time_budget_exceeded"
+                        } else if policy_clean {
+                            "dependency_policy_clean"
                         } else if manifest_results.iter().any(|(_, result)| {
                             matches!(
                                 result,
@@ -605,12 +656,12 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         let manifest_audit = manifest_results
                             .iter()
                             .map(|(_, result)| match result {
-                                crate::security::dep_health::StrictManifestScan::ProvenClean {
+                                crate::security::dep_health::StrictManifestScan::DependencyPolicyClean {
                                     manifest_sha256,
                                     packages_scanned,
                                     warnings,
                                 } => serde_json::json!({
-                                    "status": "proven_clean",
+                                    "status": "dependency_policy_clean",
                                     "sha256": manifest_sha256,
                                     "packages_scanned": packages_scanned,
                                     "warning_count": warnings.len(),
@@ -637,7 +688,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                             intent.manifests.len(),
                             intent.resolution_locks.len(),
                             intent.packages.len(),
-                            proven,
+                            policy_clean,
                             result_code,
                             manifest_audit,
                         )
@@ -663,7 +714,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         "resolution_lock_count": resolution_lock_count,
                         "package_count": package_count,
                         "manifest_results": manifest_audit,
-                        "scan_proven": scan_proven,
+                        "dependency_policy_clean": dependency_policy_clean,
                         "result_code": result_code,
                         "severity_policy": security_policy.dep_vuln_threshold,
                         "server": call.server,
@@ -697,19 +748,19 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         "manifest-install WAL writer unavailable; approval withheld"
                     );
                 }
-                if scan_proven && audit_ok {
+                if dependency_policy_clean && audit_ok {
                     if let Some(approval) = approval {
-                        inspectors.on_install_scan_proven(approval);
+                        inspectors.on_install_dependency_policy_clean(approval);
                     }
                 } else if !audit_ok {
-                    scan_proven = false;
+                    dependency_policy_clean = false;
                 }
                 iteration_made_progress = true;
                 let summary = format!(
                     "package-manager gate: call NOT executed; result={result_code}; manifests={manifest_count}; \
                      requested_packages={package_count}; {}",
-                    if scan_proven {
-                        "exact scan proven clean; retry the identical server/tool/cwd/command once"
+                    if dependency_policy_clean {
+                        "exact dependency graph is clean under policy; retry the identical server/tool/cwd/command once"
                     } else {
                         "no permit issued; use one explicit absolute local cwd and registry-only dependencies"
                     }
@@ -861,7 +912,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
             match dispatch_one(
                 call,
                 servers,
-                autonomy,
+                policy,
                 writer,
                 rollback_policy,
                 skill_allowlist,
@@ -1173,10 +1224,10 @@ fn now_unix_i64() -> i64 {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn dispatch_one(
+async fn dispatch_one<P: PolicyArgument + Copy>(
     call: &ParsedToolCall,
     servers: &McpServers,
-    autonomy: AutonomyLevel,
+    policy: P,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
@@ -1238,7 +1289,7 @@ async fn dispatch_one(
         cfg,
         &call.tool,
         call.arguments.clone(),
-        autonomy,
+        policy,
         writer,
         rollback_policy,
         smart_approve,
@@ -2245,7 +2296,7 @@ mod tests {
         let prompts = driver.seen_prompts.lock().unwrap();
         assert_eq!(prompts.len(), 3);
         assert!(
-            prompts[1].contains("result=proven_clean")
+            prompts[1].contains("result=dependency_policy_clean")
                 && prompts[1].contains("no permit issued")
                 && prompts[2].contains("no permit issued"),
             "clean scans without durable audit must remain fail closed"
@@ -2665,6 +2716,7 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
                 text: self.0.clone(),
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,

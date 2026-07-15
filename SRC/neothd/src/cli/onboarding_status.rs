@@ -59,17 +59,20 @@ pub struct OnboardingSnapshot {
 
 impl OnboardingSnapshot {
     /// Build a snapshot from `FreedomConfig`.  Calls OH-04 for device data.
-    pub fn from_config(cfg: &FreedomConfig) -> Self {
+    pub(crate) fn from_readiness(
+        cfg: &FreedomConfig,
+        readiness: &crate::cli::onboarding_readiness::OnboardingReadiness,
+    ) -> Self {
         // ── Provider ──────────────────────────────────────────────────────
         let provider_configured = cfg.provider_kind.is_some();
-        // // neoth: `provider_key` is a SecretString; we can only check
-        // // presence, not the actual value.  `provider_binary` covers
-        // // claude-cli / local-binary paths that need no API key.
-        let provider_auth_present = cfg.provider_key.is_some() || cfg.provider_binary.is_some();
+        let provider_auth_present = readiness.provider_ready();
 
         // ── Channels ──────────────────────────────────────────────────────
-        let telegram_enabled = cfg.telegram_token.is_some();
-        let whatsapp_enabled = cfg.whatsapp_webhook_port.is_some();
+        let telegram_enabled = readiness.channel_names.contains(&"Telegram");
+        let whatsapp_enabled = readiness
+            .channel_names
+            .iter()
+            .any(|name| name.starts_with("WhatsApp"));
 
         // ── Autonomy ──────────────────────────────────────────────────────
         let autonomy_level = format!("{:?}", cfg.autonomy);
@@ -81,8 +84,19 @@ impl OnboardingSnapshot {
 
         // ── Readiness gate ────────────────────────────────────────────────
         let (ready, not_ready_reason) = if !provider_configured {
-            (false, "No provider configured — run `neoth init`.".to_string())
-        } else if !telegram_enabled && !whatsapp_enabled {
+            (
+                false,
+                "No provider configured — run `neoth init`.".to_string(),
+            )
+        } else if !provider_auth_present {
+            (
+                false,
+                readiness
+                    .provider_gap
+                    .clone()
+                    .unwrap_or_else(|| "Provider is not ready.".to_string()),
+            )
+        } else if !readiness.channel_ready() {
             (
                 false,
                 "No channel enabled — configure Telegram or WhatsApp via `neoth init`.".to_string(),
@@ -144,10 +158,7 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
         channels.join(", ")
     };
 
-    let operator_str = snapshot
-        .operator_id
-        .as_deref()
-        .unwrap_or("(not set)");
+    let operator_str = snapshot.operator_id.as_deref().unwrap_or("(not set)");
 
     let mut out = format!(
         "## NEOTH Onboarding Status\n\
@@ -177,7 +188,11 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
         auth_str = auth_str,
         channels_str = channels_str,
         autonomy = snapshot.autonomy_level,
-        review_gate = if snapshot.review_gate_enabled { "enabled" } else { "disabled" },
+        review_gate = if snapshot.review_gate_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
         ram = snapshot.total_ram_gb,
         cores = snapshot.cpu_cores,
         gpu = if snapshot.gpu_detected { "yes" } else { "no" },
@@ -187,10 +202,7 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
     );
 
     if !snapshot.not_ready_reason.is_empty() {
-        out.push_str(&format!(
-            "\n> **Blocker:** {}\n",
-            snapshot.not_ready_reason
-        ));
+        out.push_str(&format!("\n> **Blocker:** {}\n", snapshot.not_ready_reason));
     }
 
     out
@@ -202,8 +214,9 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
 
 /// Entry point called from the `Commands` dispatch match.
 pub async fn run_onboarding_status(args: OnboardingStatusArgs) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path()?;
-    let snapshot = OnboardingSnapshot::from_config(&cfg);
+    let home = FreedomConfig::default_neoth_home();
+    let (cfg, readiness) = crate::cli::onboarding_readiness::load(&home)?;
+    let snapshot = OnboardingSnapshot::from_readiness(&cfg, &readiness);
 
     if args.json {
         let json = serde_json::to_string_pretty(&snapshot)
@@ -258,8 +271,8 @@ mod tests {
             cpu_cores: 4,
             gpu_detected: false,
             ready: false,
-            not_ready_reason: "No channel enabled — configure Telegram or WhatsApp via `neoth init`."
-                .to_string(),
+            not_ready_reason:
+                "No channel enabled — configure Telegram or WhatsApp via `neoth init`.".to_string(),
         }
     }
 
@@ -299,10 +312,7 @@ mod tests {
             out.contains("**Ready: no**"),
             "expected 'Ready: no' in:\n{out}"
         );
-        assert!(
-            out.contains("Blocker:"),
-            "expected blocker line in:\n{out}"
-        );
+        assert!(out.contains("Blocker:"), "expected blocker line in:\n{out}");
         assert!(
             out.contains("channel"),
             "expected channel mention in blocker:\n{out}"

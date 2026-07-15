@@ -91,7 +91,7 @@ async fn run_write(
                 path,
                 contents,
                 &cfg.tools.os,
-                cfg.autonomy,
+                &cfg.autonomy_policy(),
                 AuditSink::DaemonRpc(&home),
                 now,
             )
@@ -109,7 +109,7 @@ async fn run_write(
                         path,
                         contents,
                         &cfg.tools.os,
-                        cfg.autonomy,
+                        &cfg.autonomy_policy(),
                         AuditSink::Writer(&writer),
                         now,
                     )
@@ -127,7 +127,7 @@ async fn run_write(
                         path,
                         contents,
                         &cfg.tools.os,
-                        cfg.autonomy,
+                        &cfg.autonomy_policy(),
                         AuditSink::None,
                         now,
                     )
@@ -188,7 +188,7 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
             read_os_file(
                 path,
                 &cfg.tools.os,
-                cfg.autonomy,
+                &cfg.autonomy_policy(),
                 AuditSink::DaemonRpc(&home),
                 now,
             )
@@ -205,7 +205,7 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
                     let r = read_os_file(
                         path,
                         &cfg.tools.os,
-                        cfg.autonomy,
+                        &cfg.autonomy_policy(),
                         AuditSink::Writer(&writer),
                         now,
                     )
@@ -223,7 +223,14 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
                         error = %e,
                         "fs read proceeding WITHOUT WAL audit — could not open a one-shot WAL writer"
                     );
-                    read_os_file(path, &cfg.tools.os, cfg.autonomy, AuditSink::None, now).await
+                    read_os_file(
+                        path,
+                        &cfg.tools.os,
+                        &cfg.autonomy_policy(),
+                        AuditSink::None,
+                        now,
+                    )
+                    .await
                 }
             }
         }

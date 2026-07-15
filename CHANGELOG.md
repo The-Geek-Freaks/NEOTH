@@ -64,6 +64,13 @@ CodeQL); 10,400+ lib tests, 309 GUI tests, workspace + doctests in CI.
 
 ### Fixed
 
+- **Gold wiring/adoption truth sweep** — removed future-only Pears/Keet and
+  generic cloud-connector scaffolds instead of shipping public dead surfaces;
+  dropped the now-unused OpenDAL dependency. The supported cloud archive
+  contract remains the live local-folder mirror driven by the operator's sync
+  client or mounted storage. Telegram outbound media, progressive provider
+  streaming through LiveDelivery, and native Windows/macOS/Linux keychains are
+  now reflected as shipped rather than left in stale "parked" documentation.
 - **CI 8-day red resolved**: monolith test-binary link OOM
   (`CARGO_PROFILE_DEV/TEST_DEBUG=0`), a broken doctest, a real WAL-quota
   fail-open race, and a 60 s self-improve pipe-drain hang.

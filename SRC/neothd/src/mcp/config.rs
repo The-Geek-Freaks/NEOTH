@@ -2,17 +2,17 @@
 //!
 //! ```yaml
 //! servers:
-//!   - id: filesystem
+//!   - id: filesystem-example
 //!     command: npx
-//!     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/notes"]
+//!     args: ["-y", "@example/mcp-filesystem@1.2.3", "/home/user/notes"]
 //!     env:
 //!       LOG_LEVEL: info
 //!
-//!   - id: github
+//!   - id: example
 //!     command: npx
-//!     args: ["-y", "@modelcontextprotocol/server-github"]
+//!     args: ["-y", "@example/mcp-server@1.2.3"]
 //!     env:
-//!       GITHUB_PERSONAL_ACCESS_TOKEN: from_env  # operator-controlled
+//!       EXAMPLE_TOKEN: from_env  # operator-controlled
 //! ```
 //!
 //! `env: from_env` is a sentinel meaning "read this value from the
@@ -204,8 +204,7 @@ impl McpServers {
 
         // 2. Cross-process OS-level advisory file lock.
         let lock_path = path.with_extension("yaml.lock");
-        let _file_lock =
-            crate::util::locked_file::lock_file_blocking(&lock_path, "mcp_servers")?;
+        let _file_lock = crate::util::locked_file::lock_file_blocking(&lock_path, "mcp_servers")?;
 
         // 3. Strict reload under lock — any YAML error propagates (fail-closed).
         //    Never replace a corrupt file with a stripped-down one.
@@ -247,6 +246,29 @@ pub enum AutorouteDecision {
     AutoOff,
 }
 
+/// Static supply-chain posture of one MCP launcher.
+///
+/// Runtime package fetching is supported only through the narrow
+/// `npx -y package@exact-version` form. Everything else must be a directly
+/// installed executable; shell and package-manager wrappers are rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpLauncherPosture {
+    /// Exact top-level npm package pin. This prevents tag/version drift, but
+    /// transitive dependencies remain inside npm's upstream trust boundary.
+    PinnedNpx,
+    /// PATH-resolved or absolute executable with no runtime package fetcher.
+    DirectExecutable,
+}
+
+impl McpLauncherPosture {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PinnedNpx => "pinned_npx",
+            Self::DirectExecutable => "direct_executable",
+        }
+    }
+}
+
 impl AutorouteDecision {
     /// Whether the dispatch loop should run.
     pub fn is_on(self) -> bool {
@@ -264,6 +286,127 @@ impl AutorouteDecision {
 }
 
 impl McpServerConfig {
+    /// Validate the launcher without consulting process-global state.
+    ///
+    /// This is the shared static contract used by `doctor`, `mcp list`, and
+    /// installers. The live spawn path additionally calls
+    /// [`Self::validate_spawn_context`] to reject ambient Node/npm overrides.
+    pub fn validate_launcher(&self) -> Result<McpLauncherPosture> {
+        let command = self.command.trim();
+        if command.is_empty() || command.contains('\0') {
+            anyhow::bail!("MCP server `{}` has an empty or invalid command", self.id);
+        }
+
+        let raw_basename = command
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(command)
+            .to_ascii_lowercase();
+        let command_name = normalise_command_name(command);
+
+        if matches!(
+            command_name.as_str(),
+            "sh" | "bash"
+                | "zsh"
+                | "fish"
+                | "cmd"
+                | "powershell"
+                | "pwsh"
+                | "wsl"
+                | "env"
+                | "command"
+        ) {
+            anyhow::bail!(
+                "MCP server `{}` uses opaque shell/wrapper launcher `{}`; configure the direct executable instead",
+                self.id,
+                self.command
+            );
+        }
+
+        if matches!(
+            command_name.as_str(),
+            "npm" | "pnpm" | "yarn" | "corepack" | "bunx" | "uvx" | "pipx"
+        ) {
+            anyhow::bail!(
+                "MCP server `{}` uses unsupported runtime fetch launcher `{}`; use a directly installed executable or `npx -y package@exact-version`",
+                self.id,
+                self.command
+            );
+        }
+
+        // Batch/PowerShell wrappers can hide arbitrary command expansion. The
+        // one exception is the platform-provided npx.cmd shim, whose arguments
+        // are constrained below.
+        if (raw_basename.ends_with(".cmd")
+            || raw_basename.ends_with(".bat")
+            || raw_basename.ends_with(".ps1"))
+            && command_name != "npx"
+        {
+            anyhow::bail!(
+                "MCP server `{}` uses opaque script launcher `{}`; configure the direct executable instead",
+                self.id,
+                self.command
+            );
+        }
+
+        if command_name == "npx" {
+            if self.args.len() < 2 || !matches!(self.args[0].as_str(), "-y" | "--yes") {
+                anyhow::bail!(
+                    "MCP server `{}` must start with `npx -y package@exact-version` (no extra npx options before the package)",
+                    self.id
+                );
+            }
+            parse_exact_npm_spec(&self.args[1]).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MCP server `{}` has unpinned or unsupported npx package `{}`; use package@exact-version",
+                    self.id,
+                    self.args[1]
+                )
+            })?;
+        }
+
+        for key in self.env.keys() {
+            if forbidden_launcher_env(&command_name, key) {
+                anyhow::bail!(
+                    "MCP server `{}` sets forbidden launcher environment `{key}`; use the default registry/runtime context or a directly installed executable",
+                    self.id
+                );
+            }
+        }
+
+        Ok(if command_name == "npx" {
+            McpLauncherPosture::PinnedNpx
+        } else {
+            McpLauncherPosture::DirectExecutable
+        })
+    }
+
+    /// Validate the full live spawn context, including inherited Node/npm
+    /// variables that could redirect the registry or inject JavaScript before
+    /// the MCP server starts.
+    pub fn validate_spawn_context(&self) -> Result<McpLauncherPosture> {
+        let posture = self.validate_launcher()?;
+        let command_name = normalise_command_name(&self.command);
+        for (key, _) in std::env::vars_os() {
+            let key = key.to_string_lossy();
+            if forbidden_launcher_env(&command_name, &key) {
+                anyhow::bail!(
+                    "MCP server `{}` spawn blocked by inherited launcher environment `{key}`; clear it or use a directly installed executable",
+                    self.id
+                );
+            }
+        }
+        Ok(posture)
+    }
+
+    /// Exact package name without the version, for typo-squat diagnostics.
+    pub fn pinned_npx_package(&self) -> Option<&str> {
+        if normalise_command_name(&self.command) != "npx" || self.args.len() < 2 {
+            return None;
+        }
+        parse_exact_npm_spec(&self.args[1]).map(|(package, _)| package)
+    }
+
     /// Resolve `env: from_env` sentinels at spawn time. Returns the final
     /// env map the spawn helper will hand to the child process. Missing
     /// variables surface as an error so the operator sees the failure
@@ -286,6 +429,103 @@ impl McpServerConfig {
         }
         Ok(out)
     }
+}
+
+fn normalise_command_name(command: &str) -> String {
+    let basename = command
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(command)
+        .to_ascii_lowercase();
+    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
+        if let Some(stripped) = basename.strip_suffix(suffix) {
+            return stripped.to_string();
+        }
+    }
+    basename
+}
+
+fn forbidden_launcher_env(command_name: &str, key: &str) -> bool {
+    if !matches!(command_name, "npx" | "node") {
+        return false;
+    }
+    let upper = key.to_ascii_uppercase();
+    if matches!(upper.as_str(), "NODE_OPTIONS" | "NODE_PATH") {
+        return true;
+    }
+    command_name == "npx"
+        && (matches!(
+            upper.as_str(),
+            "NPM_CONFIG_REGISTRY"
+                | "NPM_CONFIG_USERCONFIG"
+                | "NPM_CONFIG_GLOBALCONFIG"
+                | "COREPACK_NPM_REGISTRY"
+        ) || (upper.starts_with("NPM_CONFIG_") && upper.ends_with("_REGISTRY")))
+}
+
+fn parse_exact_npm_spec(spec: &str) -> Option<(&str, &str)> {
+    if spec.is_empty() || spec.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let split_at = spec.rfind('@')?;
+    if split_at == 0 {
+        return None;
+    }
+    let (package, version_with_at) = spec.split_at(split_at);
+    let version = version_with_at.strip_prefix('@')?;
+    if !valid_npm_package_name(package) || !exact_semver(version) {
+        return None;
+    }
+    Some((package, version))
+}
+
+fn valid_npm_package_name(package: &str) -> bool {
+    let valid_part = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~'))
+    };
+    if let Some(scoped) = package.strip_prefix('@') {
+        let Some((scope, name)) = scoped.split_once('/') else {
+            return false;
+        };
+        valid_part(scope) && valid_part(name) && !name.contains('/')
+    } else {
+        valid_part(package) && !package.contains('/')
+    }
+}
+
+fn exact_semver(version: &str) -> bool {
+    let (without_build, build) = match version.split_once('+') {
+        Some((base, build)) => (base, Some(build)),
+        None => (version, None),
+    };
+    let (core, prerelease) = match without_build.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (without_build, None),
+    };
+    let mut core_parts = core.split('.');
+    let valid_number = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    if !valid_number(core_parts.next().unwrap_or_default())
+        || !valid_number(core_parts.next().unwrap_or_default())
+        || !valid_number(core_parts.next().unwrap_or_default())
+        || core_parts.next().is_some()
+    {
+        return false;
+    }
+    let valid_identifiers = |value: &str| {
+        !value.is_empty()
+            && value.split('.').all(|part| {
+                !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            })
+    };
+    prerelease.is_none_or(valid_identifiers) && build.is_none_or(valid_identifiers)
 }
 
 /// GOLD-ADAPT-CBM-02 — hardened default registration for codebase-memory-mcp.
@@ -350,47 +590,58 @@ pub fn cbm_recommended_config() -> McpServerConfig {
     }
 }
 
+pub const HEX_GRAPH_NPM_PACKAGE: &str = "@levnikolaevich/hex-graph-mcp";
+pub const HEX_GRAPH_NPM_VERSION: &str = "0.21.1";
+pub const HEX_GRAPH_NPM_SPEC: &str = "@levnikolaevich/hex-graph-mcp@0.21.1";
+pub const HEX_GRAPH_MIN_NODE_VERSION: (u64, u64, u64) = (20, 19, 0);
+
 /// Returns the hardened, opt-in `McpServerConfig` for **hex-graph-mcp** — a
 /// semantic code-graph MCP server that builds a tree-sitter AST index stored
-/// in SQLite and exposes read-only query tools (symbol lookup, reference
-/// tracing, dataflow, architecture analysis).
+/// in SQLite and exposes code-query tools (symbol lookup, reference tracing,
+/// dataflow, change impact, and architecture analysis).
 ///
 /// Security defaults:
-/// - `enabled: false`      — operator must opt in explicitly after verifying
-///   the npx package resolves to the expected bundle.
+/// - `enabled: false`      — operator must opt in explicitly.
 /// - `trust_all_tools: false` — only the tools in `allow_tools` are reachable.
-/// - `allow_tools`         — READ-ONLY query surface only; no indexing/write
-///   tools are included (operator adds those by hand if needed).
+/// - `allow_tools`         — complete query surface plus `index_project`, the
+///   required local cache-index operation. Provider installation and SCIP
+///   import/export tools are excluded from the default.
 /// - `smart_approve: false` — no name-pattern exemption.
 ///
-/// Binary invocation: `npx -y <pkg>` — npx auto-fetches the package on first
-/// use; no separate install step required.
-// neoth: verify the exact npm package name/launch arg before shipping —
-// @levnikolaevich/hex-graph-mcp (from GOLD-ADAPT-CCS-01; not deep-verified).
+/// Binary invocation is pinned to the exact top-level npm version verified on
+/// 2026-07-13. npx still resolves transitive dependencies under npm's upstream
+/// trust boundary; the pin prevents silent package-tag drift.
 pub fn hex_graph_recommended_config() -> McpServerConfig {
     McpServerConfig {
         id: "hex-graph".into(),
         description: Some(
-            "hex-graph-mcp: tree-sitter AST + SQLite semantic code-graph (read-only rail). \
-             Launched via npx; set enabled: true after verifying the package."
+            "hex-graph-mcp: tree-sitter AST + SQLite semantic code-graph. Query tools plus \
+             the required local index_project cache write are enabled; provider install and \
+             SCIP import/export stay excluded."
                 .into(),
         ),
         command: "npx".into(),
-        // neoth: verify the exact npm package name/launch arg before shipping —
-        // @levnikolaevich/hex-graph-mcp (from GOLD-ADAPT-CCS-01; not deep-verified).
-        args: vec!["-y".into(), "@levnikolaevich/hex-graph-mcp".into()],
+        args: vec!["-y".into(), HEX_GRAPH_NPM_SPEC.into()],
         env: std::collections::HashMap::new(),
-        // Operator must explicitly enable after verifying the npx package.
+        // The init installer flips this only after explicit operator consent.
         enabled: false,
-        // 5 documented read-only query tools (v0 surface from CCS-01 GOLD plan).
-        // Indexing tools (e.g. `index_repository`) are intentionally absent;
-        // the operator adds them to allow_tools by hand if write access is needed.
+        // Upstream 0.21.1 exposes 16 tools. Keep all 12 query/diagnostic tools
+        // plus the required local cache indexer; exclude provider installation
+        // and SCIP import/export from the safe default.
         allow_tools: Some(vec![
+            "index_project".into(),
             "find_symbols".into(),
+            "inspect_symbol".into(),
             "find_references".into(),
+            "find_implementations".into(),
             "trace_paths".into(),
             "trace_dataflow".into(),
+            "analyze_changes".into(),
+            "analyze_edit_region".into(),
+            "api_impact".into(),
             "analyze_architecture".into(),
+            "diagnose_graph".into(),
+            "audit_workspace".into(),
         ]),
         // Secure-by-default: deny anything outside allow_tools.
         trust_all_tools: false,
@@ -412,9 +663,7 @@ pub fn hex_graph_recommended_config() -> McpServerConfig {
 ///   add them to the allowlist by hand to unlock writes.
 /// - `smart_approve: false` — no name-pattern exemption.
 ///
-/// Binary invocation: `npx -y <pkg>` — npx auto-fetches on first use.
-// neoth: verify the exact npm package name/launch arg before shipping —
-// @levnikolaevich/hex-line-mcp (from GOLD-ADAPT-CCS-03; not deep-verified).
+/// Binary invocation: exact top-level package pin verified on 2026-07-13.
 pub fn hex_line_recommended_config() -> McpServerConfig {
     McpServerConfig {
         id: "hex-line".into(),
@@ -425,18 +674,12 @@ pub fn hex_line_recommended_config() -> McpServerConfig {
                 .into(),
         ),
         command: "npx".into(),
-        // neoth: verify the exact npm package name/launch arg before shipping —
-        // @levnikolaevich/hex-line-mcp (from GOLD-ADAPT-CCS-03; not deep-verified).
-        args: vec!["-y".into(), "@levnikolaevich/hex-line-mcp".into()],
+        args: vec!["-y".into(), "@levnikolaevich/hex-line-mcp@1.31.0".into()],
         env: std::collections::HashMap::new(),
         enabled: false,
         // 3 read-only tools: AST overview, semantic diff, checksum check.
         // `bulk_replace` (write/destructive) is intentionally absent.
-        allow_tools: Some(vec![
-            "outline".into(),
-            "changes".into(),
-            "verify".into(),
-        ]),
+        allow_tools: Some(vec!["outline".into(), "changes".into(), "verify".into()]),
         trust_all_tools: false,
         smart_approve: false,
         // CCS-02 — these read-only rails impose no per-server autonomy floor.
@@ -457,9 +700,7 @@ pub fn hex_line_recommended_config() -> McpServerConfig {
 ///   before queries can return results).  Destructive tools, if any, are absent.
 /// - `smart_approve: false` — no name-pattern exemption.
 ///
-/// Binary invocation: `npx -y <pkg>` — npx auto-fetches on first use.
-// neoth: verify the exact npm package name/launch arg before shipping —
-// @levnikolaevich/hex-research-mcp (from GOLD-ADAPT-CCS-05; not deep-verified).
+/// Binary invocation: exact top-level package pin verified on 2026-07-13.
 pub fn hex_research_recommended_config() -> McpServerConfig {
     McpServerConfig {
         id: "hex-research".into(),
@@ -470,9 +711,7 @@ pub fn hex_research_recommended_config() -> McpServerConfig {
                 .into(),
         ),
         command: "npx".into(),
-        // neoth: verify the exact npm package name/launch arg before shipping —
-        // @levnikolaevich/hex-research-mcp (from GOLD-ADAPT-CCS-05; not deep-verified).
-        args: vec!["-y".into(), "@levnikolaevich/hex-research-mcp".into()],
+        args: vec!["-y".into(), "@levnikolaevich/hex-research-mcp@0.2.1".into()],
         env: std::collections::HashMap::new(),
         enabled: false,
         // Read tools + index_hypotheses (needed to bootstrap the server's own DB;
@@ -511,7 +750,7 @@ pub fn hex_research_recommended_config() -> McpServerConfig {
 ///
 /// Tool names verified against `@levnikolaevich/hex-ssh-mcp` package manifest
 /// (GOLD-ADAPT-CCS-02 recon 2026-06-24; re-verify on upstream version bumps).
-// neoth: verify against live `npx -y @levnikolaevich/hex-ssh-mcp` tools/list
+// neoth: verify against live `npx -y @levnikolaevich/hex-ssh-mcp@1.9.2` tools/list
 // before setting enabled: true.  The FNV checksum protocol is enforced by the
 // subprocess — NEOTH's gate (Layer 1b) blocks the whole server below Elevated.
 // The 0xC0/0xC1 WAL events are emitted generically by invoke_with_audit.
@@ -525,9 +764,7 @@ pub fn hex_ssh_recommended_config() -> McpServerConfig {
                 .into(),
         ),
         command: "npx".into(),
-        // neoth: verify the exact npm package name/launch arg before shipping —
-        // @levnikolaevich/hex-ssh-mcp (GOLD-ADAPT-CCS-02 recon 2026-06-24).
-        args: vec!["-y".into(), "@levnikolaevich/hex-ssh-mcp".into()],
+        args: vec!["-y".into(), "@levnikolaevich/hex-ssh-mcp@1.9.2".into()],
         env: std::collections::HashMap::new(),
         // Operator must explicitly enable after verifying the package.
         enabled: false,
@@ -600,13 +837,10 @@ pub fn chrome_devtools_recommended_config() -> McpServerConfig {
                 .into(),
         ),
         command: "npx".into(),
-        args: vec!["-y".into(), "chrome-devtools-mcp@latest".into()],
+        args: vec!["-y".into(), "chrome-devtools-mcp@1.5.0".into()],
         env: std::collections::HashMap::from([
             // Telemetry opt-out (the package's own switch, per the GOLD plan).
-            (
-                "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS".into(),
-                "1".into(),
-            ),
+            ("CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS".into(), "1".into()),
             ("DO_NOT_TRACK".into(), "1".into()),
         ]),
         // Operator must explicitly enable after confirming license + telemetry.
@@ -651,9 +885,9 @@ pub fn chrome_devtools_recommended_config() -> McpServerConfig {
 ///   discloses this to the operator before they opt in.
 ///
 /// Prerequisites (NOT installed by NEOTH; operator-supplied):
-/// - Node ≥18 + npm/npx on PATH — `npx -y @mobilenext/mobile-mcp@latest`
-///   auto-fetches the package on first use (supply-chain risk: same as other
-///   `@latest` MCP packages; pin the version in mcp_servers.yaml after verifying).
+/// - Node ≥18 + npm/npx on PATH — `npx -y @mobilenext/mobile-mcp@0.0.62`
+///   auto-fetches the exact top-level package on first use. Transitive
+///   dependencies remain inside npm's upstream trust boundary.
 /// - iOS real device: Xcode CLI tools + WebDriverAgent installed + signed with
 ///   a valid Apple Developer account. iOS Simulator requires no WDA signing.
 /// - Android: `adb` in PATH and USB debugging enabled on the target device.
@@ -671,7 +905,7 @@ pub fn mobile_mcp_recommended_config() -> McpServerConfig {
                 .into(),
         ),
         command: "npx".into(),
-        args: vec!["-y".into(), "@mobilenext/mobile-mcp@latest".into()],
+        args: vec!["-y".into(), "@mobilenext/mobile-mcp@0.0.62".into()],
         env: std::collections::HashMap::from([
             // PostHog telemetry opt-out — mobile-mcp fires posthog("launch", {})
             // and per-tool events unless this sentinel is present. Forced OFF here;
@@ -920,6 +1154,129 @@ servers:
         );
     }
 
+    fn launcher_config(command: &str, args: &[&str]) -> McpServerConfig {
+        McpServerConfig {
+            id: "launcher-test".into(),
+            description: None,
+            command: command.into(),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            env: HashMap::new(),
+            enabled: true,
+            allow_tools: Some(vec!["read".into()]),
+            trust_all_tools: false,
+            smart_approve: false,
+            autonomy_gate: None,
+        }
+    }
+
+    #[test]
+    fn launcher_accepts_exact_npx_specs_and_windows_shim_paths() {
+        for spec in [
+            "example-mcp@1.2.3",
+            "@example/mcp@2026.7.13",
+            "@example/mcp@1.2.3-beta.4+build.9",
+        ] {
+            let cfg = launcher_config(r"C:\Program Files\nodejs\npx.cmd", &["--yes", spec]);
+            assert_eq!(
+                cfg.validate_launcher().unwrap(),
+                McpLauncherPosture::PinnedNpx,
+                "exact spec should pass: {spec}"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_rejects_unpinned_ranges_tags_and_extra_npx_options() {
+        for spec in [
+            "example-mcp",
+            "example-mcp@latest",
+            "example-mcp@^1.2.3",
+            "example-mcp@1.2.x",
+            "example-mcp@https://example.invalid/pkg.tgz",
+            "npm:other@1.2.3",
+        ] {
+            let cfg = launcher_config("npx", &["-y", spec]);
+            assert!(
+                cfg.validate_launcher().is_err(),
+                "unpinned/unsupported spec must fail: {spec}"
+            );
+        }
+        let extra = launcher_config(
+            "npx",
+            &[
+                "--yes",
+                "--registry=https://example.invalid",
+                "example@1.2.3",
+            ],
+        );
+        assert!(extra.validate_launcher().is_err());
+    }
+
+    #[test]
+    fn launcher_rejects_shells_script_wrappers_and_other_runtime_fetchers() {
+        for command in [
+            "sh",
+            "bash",
+            "cmd.exe",
+            "powershell.exe",
+            "pwsh",
+            "wsl",
+            "env",
+            "npm",
+            "pnpm.cmd",
+            "yarn",
+            "corepack",
+            "bunx",
+            "uvx",
+            "pipx",
+            "custom-server.cmd",
+            "custom-server.ps1",
+        ] {
+            let cfg = launcher_config(command, &["anything"]);
+            assert!(
+                cfg.validate_launcher().is_err(),
+                "opaque/runtime launcher must fail: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_accepts_direct_executables() {
+        for command in ["node", "codebase-memory-mcp", "/opt/neoth/mcp-server"] {
+            let cfg = launcher_config(command, &["--stdio"]);
+            assert_eq!(
+                cfg.validate_launcher().unwrap(),
+                McpLauncherPosture::DirectExecutable
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_rejects_node_injection_and_registry_override_env() {
+        for (command, key) in [
+            ("node", "NODE_OPTIONS"),
+            ("node", "NODE_PATH"),
+            ("npx", "NPM_CONFIG_REGISTRY"),
+            ("npx", "npm_config_foo_registry"),
+            ("npx", "NPM_CONFIG_USERCONFIG"),
+            ("npx", "COREPACK_NPM_REGISTRY"),
+        ] {
+            let mut cfg = if command == "npx" {
+                launcher_config(command, &["-y", "example-mcp@1.2.3"])
+            } else {
+                launcher_config(command, &["server.js"])
+            };
+            cfg.env.insert(key.into(), "attacker-controlled".into());
+            assert!(
+                cfg.validate_launcher().is_err(),
+                "forbidden environment must fail: {command} {key}"
+            );
+        }
+        assert!(forbidden_launcher_env("npx", "NPM_CONFIG_REGISTRY"));
+        assert!(!forbidden_launcher_env("npx", "NPM_CONFIG_LOGLEVEL"));
+        assert!(!forbidden_launcher_env("native-server", "NODE_OPTIONS"));
+    }
+
     // --- A8 autoroute_decision tests ---
 
     fn one_enabled_server() -> McpServers {
@@ -1093,10 +1450,15 @@ servers:
         let cfg = hex_graph_recommended_config();
         assert_eq!(cfg.id, "hex-graph");
         assert_eq!(cfg.command, "npx");
-        assert!(
-            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-graph-mcp"),
-            "args must contain the hex-graph npm package name"
+        assert_eq!(
+            cfg.args,
+            vec!["-y".to_string(), HEX_GRAPH_NPM_SPEC.to_string()]
         );
+        assert_eq!(
+            cfg.validate_launcher().unwrap(),
+            McpLauncherPosture::PinnedNpx
+        );
+        assert_eq!(cfg.pinned_npx_package(), Some(HEX_GRAPH_NPM_PACKAGE));
     }
 
     #[test]
@@ -1119,6 +1481,18 @@ servers:
             tools.iter().any(|t| t == "analyze_architecture"),
             "allow_tools must contain analyze_architecture"
         );
+        assert_eq!(tools.len(), 13, "0.21.1 safe default tool surface drifted");
+        assert!(tools.iter().any(|t| t == "index_project"));
+        for excluded in [
+            "install_graph_providers",
+            "export_scip",
+            "import_scip_overlay",
+        ] {
+            assert!(
+                !tools.iter().any(|tool| tool == excluded),
+                "{excluded} must remain explicit operator opt-in"
+            );
+        }
     }
 
     #[test]
@@ -1137,9 +1511,12 @@ servers:
         assert_eq!(cfg.id, "hex-line");
         assert_eq!(cfg.command, "npx");
         assert!(
-            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-line-mcp"),
+            cfg.args
+                .iter()
+                .any(|a| a == "@levnikolaevich/hex-line-mcp@1.31.0"),
             "args must contain the hex-line npm package name"
         );
+        assert!(cfg.validate_launcher().is_ok());
     }
 
     #[test]
@@ -1186,9 +1563,12 @@ servers:
         assert_eq!(cfg.id, "hex-research");
         assert_eq!(cfg.command, "npx");
         assert!(
-            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-research-mcp"),
+            cfg.args
+                .iter()
+                .any(|a| a == "@levnikolaevich/hex-research-mcp@0.2.1"),
             "args must contain the hex-research npm package name"
         );
+        assert!(cfg.validate_launcher().is_ok());
     }
 
     #[test]
@@ -1225,12 +1605,15 @@ servers:
         assert_eq!(cfg.id, "chrome-devtools");
         assert_eq!(cfg.command, "npx");
         assert!(
-            cfg.args.iter().any(|a| a == "chrome-devtools-mcp@latest"),
+            cfg.args.iter().any(|a| a == "chrome-devtools-mcp@1.5.0"),
             "args must launch chrome-devtools-mcp"
         );
+        assert!(cfg.validate_launcher().is_ok());
         // Telemetry opt-out is forced via env (the GOLD plan's named switch).
         assert_eq!(
-            cfg.env.get("CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS").map(String::as_str),
+            cfg.env
+                .get("CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS")
+                .map(String::as_str),
             Some("1"),
             "usage-statistics must be disabled"
         );
@@ -1293,7 +1676,10 @@ servers:
         assert!(!cfg.enabled, "must be disabled until operator opts in");
         assert!(!cfg.trust_all_tools, "trust_all_tools must be false");
         assert!(!cfg.smart_approve, "smart_approve must be false");
-        assert!(cfg.autonomy_gate.is_none(), "no autonomy floor for task tools");
+        assert!(
+            cfg.autonomy_gate.is_none(),
+            "no autonomy floor for task tools"
+        );
     }
 
     #[test]
@@ -1334,9 +1720,12 @@ servers:
         assert_eq!(cfg.id, "mobile-mcp");
         assert_eq!(cfg.command, "npx");
         assert!(
-            cfg.args.iter().any(|a| a.contains("@mobilenext/mobile-mcp")),
+            cfg.args
+                .iter()
+                .any(|a| a == "@mobilenext/mobile-mcp@0.0.62"),
             "args must launch @mobilenext/mobile-mcp"
         );
+        assert!(cfg.validate_launcher().is_ok());
     }
 
     #[test]
@@ -1350,7 +1739,9 @@ servers:
         );
         // PostHog telemetry must be disabled unconditionally.
         assert_eq!(
-            cfg.env.get("MOBILEMCP_DISABLE_TELEMETRY").map(String::as_str),
+            cfg.env
+                .get("MOBILEMCP_DISABLE_TELEMETRY")
+                .map(String::as_str),
             Some("1"),
             "MOBILEMCP_DISABLE_TELEMETRY must be forced to 1"
         );
@@ -1410,13 +1801,16 @@ servers:
         assert_eq!(cfg.id, "hex-ssh");
         assert_eq!(cfg.command, "npx");
         assert!(
-            cfg.args.iter().any(|a| a == "@levnikolaevich/hex-ssh-mcp"),
+            cfg.args
+                .iter()
+                .any(|a| a == "@levnikolaevich/hex-ssh-mcp@1.9.2"),
             "args must contain the hex-ssh npm package name"
         );
         assert!(
             cfg.args.iter().any(|a| a == "-y"),
             "args must contain -y for auto-fetch"
         );
+        assert!(cfg.validate_launcher().is_ok());
     }
 
     #[test]
@@ -1473,15 +1867,29 @@ servers:
         // connects correctly to the live gate enforcement.
         use crate::permissions::AutonomyLevel::*;
         let cfg = hex_ssh_recommended_config();
-        let required = cfg.autonomy_gate.expect("autonomy_gate must be Some(Elevated)");
+        let required = cfg
+            .autonomy_gate
+            .expect("autonomy_gate must be Some(Elevated)");
         assert_eq!(required, Elevated, "gate must be Elevated");
         // Strict and Standard must NOT satisfy the gate.
-        assert!(!Strict.meets_gate(required), "Strict must not satisfy Elevated gate");
-        assert!(!Standard.meets_gate(required), "Standard must not satisfy Elevated gate");
+        assert!(
+            !Strict.meets_gate(required),
+            "Strict must not satisfy Elevated gate"
+        );
+        assert!(
+            !Standard.meets_gate(required),
+            "Standard must not satisfy Elevated gate"
+        );
         // Custom ranks as Standard (unmodelled) — also blocked.
-        assert!(!Custom.meets_gate(required), "Custom must not satisfy Elevated gate");
+        assert!(
+            !Custom.meets_gate(required),
+            "Custom must not satisfy Elevated gate"
+        );
         // Elevated and Full must satisfy the gate.
-        assert!(Elevated.meets_gate(required), "Elevated must satisfy its own gate");
+        assert!(
+            Elevated.meets_gate(required),
+            "Elevated must satisfy its own gate"
+        );
         assert!(Full.meets_gate(required), "Full must satisfy Elevated gate");
     }
 
@@ -1499,7 +1907,11 @@ servers:
 
         // File bytes must be byte-identical — no write happened.
         let after = std::fs::read(&path).unwrap();
-        assert_eq!(after.as_slice(), bad_yaml, "file must be byte-identical after failed load");
+        assert_eq!(
+            after.as_slice(),
+            bad_yaml,
+            "file must be byte-identical after failed load"
+        );
     }
 
     #[test]
@@ -1549,7 +1961,10 @@ servers:
 
         let loaded = McpServers::load_from(&path).unwrap();
         assert_eq!(loaded.servers.len(), 2, "both entries must survive");
-        assert!(loaded.servers.iter().any(|s| s.id == "keeper"), "keeper must be preserved");
+        assert!(
+            loaded.servers.iter().any(|s| s.id == "keeper"),
+            "keeper must be preserved"
+        );
         let target = loaded.servers.iter().find(|s| s.id == "target").unwrap();
         assert_eq!(target.command, "new");
     }
@@ -1661,6 +2076,9 @@ servers:
 
         let loaded = McpServers::load_from(&path).unwrap();
         let count = loaded.servers.iter().filter(|s| s.id == "shared").count();
-        assert_eq!(count, 1, "exactly one 'shared' entry after concurrent same-id upserts");
+        assert_eq!(
+            count, 1,
+            "exactly one 'shared' entry after concurrent same-id upserts"
+        );
     }
 }

@@ -80,11 +80,10 @@ struct GuiRequest {
 pub async fn run_gui_stream(args: GuiStreamArgs) -> Result<()> {
     let db_path = args.db.clone().unwrap_or_else(memstore::default_path);
     let conn = open_warm_conn(&db_path)?;
-    // Best-effort config load — a missing/garbled freedom.yaml must not
-    // take down the board (the db is independent of it). `unwrap_or_default`
-    // gives a defaults-config; the GUI's own one-shot fallback covers any
-    // truly-degraded case.
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    // Missing freedom.yaml uses the safe first-run defaults. Existing malformed
+    // policy is surfaced so the board cannot display a fabricated default
+    // posture while the operator's real configuration is unreadable.
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
     // Mirror the GUI's `kanban watch` call (no `--wal-dir` → default dir).
     let wal_dir = FreedomConfig::default_wal_dir();
 
@@ -97,14 +96,12 @@ pub async fn run_gui_stream(args: GuiStreamArgs) -> Result<()> {
     // GOLD-ADAPT-TRAIL-02: track views.db mtime for spontaneous push.
     // When the mtime changes (indexer committed new frames), emit a push
     // frame WITHOUT waiting for the GUI to request a board update.
-    let mut db_mtime = std::fs::metadata(&db_path)
-        .and_then(|m| m.modified())
-        .ok();
+    let mut db_mtime = std::fs::metadata(&db_path).and_then(|m| m.modified()).ok();
 
-    // DES-10: channel-feed cursor — byte offset of the last frame we emitted
-    // from the current WAL segment.  Resets to 0 on each process start (the
-    // GUI reconnects from scratch on daemon restart anyway).
-    let mut last_channel_cursor: usize = 0;
+    // DES-10: channel-feed cursor — segment identity plus byte offset of the
+    // last frame we emitted. The offset is segment-local and must reset when
+    // the writer rotates to a new WAL segment.
+    let mut channel_cursor = ChannelFeedCursor::default();
 
     let stdin = tokio::io::stdin();
     let mut reader = tokio::io::BufReader::new(stdin);
@@ -168,7 +165,7 @@ pub async fn run_gui_stream(args: GuiStreamArgs) -> Result<()> {
 
                 // DES-10: channel-activity feed — poll WAL for new channel
                 // frames since the last tick. Metadata only; no message body.
-                let feed = poll_channel_feed(&wal_dir, &mut last_channel_cursor);
+                let feed = poll_channel_feed(&wal_dir, &mut channel_cursor);
                 if !feed.is_empty() {
                     let push = serde_json::json!({"push": true, "channel_feed": feed});
                     writeln!(out, "{push}").context("gui-stream: write channel_feed push")?;
@@ -281,8 +278,8 @@ fn channel_event_direction(event_type: u8) -> Option<&'static str> {
 }
 
 /// Scan the latest WAL segment for channel-activity frames newer than the
-/// cursor `last_cursor` (byte offset of the last frame we already emitted).
-/// Advances `last_cursor` to the highest cursor seen.  Returns at most 50
+/// segment-local cursor. Resets the byte offset when the latest segment path
+/// changes, then advances it to the highest offset seen. Returns at most 50
 /// items per tick so a burst doesn't flood the pipe.
 ///
 /// Payload fields extracted (all optional — tolerate missing gracefully):
@@ -296,28 +293,46 @@ fn channel_event_direction(event_type: u8) -> Option<&'static str> {
 /// payload lacks a `ts_unix` field (nanoseconds → seconds).
 ///
 /// READ-ONLY; no state mutation; never emits message text (WAL stores hashes).
-fn poll_channel_feed(wal_dir: &Path, last_cursor: &mut usize) -> Vec<serde_json::Value> {
+#[derive(Debug, Default)]
+struct ChannelFeedCursor {
+    segment: Option<std::path::PathBuf>,
+    offset: usize,
+}
+
+fn poll_channel_feed(wal_dir: &Path, cursor: &mut ChannelFeedCursor) -> Vec<serde_json::Value> {
     const MAX_BATCH: usize = 50;
 
     let Some(seg_path) = latest_segment(wal_dir) else {
         return Vec::new();
     };
+    if cursor.segment.as_ref() != Some(&seg_path) {
+        cursor.segment = Some(seg_path.clone());
+        cursor.offset = 0;
+    }
     let Ok(bytes) = std::fs::read(&seg_path) else {
         return Vec::new();
     };
 
     let mut events: Vec<serde_json::Value> = Vec::new();
-    let mut new_cursor = *last_cursor;
+    let last_offset = cursor.offset;
+    let mut new_offset = last_offset;
 
-    let _ = crate::wal::scan::for_each_frame(&bytes, |cursor, dec| {
+    let _ = crate::wal::scan::for_each_frame(&bytes, |frame_offset, dec| {
+        // Stop advancing once this tick's output batch is full. The next poll
+        // resumes at the first unprocessed frame instead of silently dropping
+        // the tail of a burst.
+        if events.len() >= MAX_BATCH {
+            return Ok(());
+        }
+
         // Advance our high-water mark regardless of event type so we never
         // re-scan frames we've already passed on this segment.
-        if cursor > new_cursor {
-            new_cursor = cursor;
+        if frame_offset > new_offset {
+            new_offset = frame_offset;
         }
 
         // Skip frames we have already emitted.
-        if cursor <= *last_cursor {
+        if frame_offset <= last_offset {
             return Ok(());
         }
 
@@ -325,20 +340,24 @@ fn poll_channel_feed(wal_dir: &Path, last_cursor: &mut usize) -> Vec<serde_json:
             return Ok(());
         };
 
-        if events.len() >= MAX_BATCH {
-            return Ok(());
-        }
-
         // Parse payload JSON; tolerate non-JSON payloads (some events use
         // binary or empty bodies — just produce a minimal metadata record).
         let payload: serde_json::Value = serde_json::from_slice(dec.payload)
             .unwrap_or(serde_json::Value::Object(Default::default()));
 
-        let channel = payload.get("channel").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let channel = payload
+            .get("channel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         // peer: sender_id on ingress; short hash prefix on egress/proactive.
         let peer = if direction == "in" {
-            payload.get("sender_id").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            payload
+                .get("sender_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
         } else {
             // recipient_hash or to_hash — take first 8 chars as display hint.
             let hash = payload
@@ -357,7 +376,7 @@ fn poll_channel_feed(wal_dir: &Path, last_cursor: &mut usize) -> Vec<serde_json:
             .unwrap_or_else(|| dec.header.hlc.physical_ns() / 1_000_000_000);
 
         events.push(serde_json::json!({
-            "event_id":  cursor,
+            "event_id":  frame_offset,
             "direction": direction,
             "channel":   channel,
             "peer":      peer,
@@ -368,7 +387,7 @@ fn poll_channel_feed(wal_dir: &Path, last_cursor: &mut usize) -> Vec<serde_json:
         Ok(())
     });
 
-    *last_cursor = new_cursor;
+    cursor.offset = new_offset;
     events
 }
 
@@ -581,10 +600,22 @@ mod tests {
     #[test]
     fn channel_event_direction_maps_all_covered_types() {
         use crate::wal::events as ev;
-        assert_eq!(channel_event_direction(ev::EVENT_TYPE_CHANNEL_INGRESS), Some("in"));
-        assert_eq!(channel_event_direction(ev::EVENT_TYPE_CHANNEL_EGRESS), Some("out"));
-        assert_eq!(channel_event_direction(ev::EVENT_TYPE_CHANNEL_SEND), Some("out"));
-        assert_eq!(channel_event_direction(ev::EVENT_TYPE_PROACTIVE_SENT), Some("proactive"));
+        assert_eq!(
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_INGRESS),
+            Some("in")
+        );
+        assert_eq!(
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_EGRESS),
+            Some("out")
+        );
+        assert_eq!(
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_SEND),
+            Some("out")
+        );
+        assert_eq!(
+            channel_event_direction(ev::EVENT_TYPE_PROACTIVE_SENT),
+            Some("proactive")
+        );
         assert_eq!(
             channel_event_direction(ev::EVENT_TYPE_CHANNEL_GATE_REJECTED),
             Some("blocked")
@@ -594,7 +625,10 @@ mod tests {
             Some("blocked")
         );
         // Non-channel events → None
-        assert_eq!(channel_event_direction(ev::EVENT_TYPE_PROVIDER_REQUEST), None);
+        assert_eq!(
+            channel_event_direction(ev::EVENT_TYPE_PROVIDER_REQUEST),
+            None
+        );
         assert_eq!(channel_event_direction(ev::EVENT_TYPE_RAW_TEXT), None);
         assert_eq!(channel_event_direction(0x00), None);
     }
@@ -643,7 +677,7 @@ mod tests {
         let seg_path = tmp.join("99999.wal");
         std::fs::write(&seg_path, &seg).unwrap();
 
-        let mut cursor: usize = 0;
+        let mut cursor = ChannelFeedCursor::default();
         let feed = poll_channel_feed(&tmp, &mut cursor);
 
         // Clean up before asserting (don't leave state for other tests).
@@ -666,7 +700,7 @@ mod tests {
         assert_eq!(feed[1]["bytes"], 18);
 
         // Cursor must have advanced past both frames.
-        assert!(cursor >= SEGMENT_HEADER_V2_LEN + f_ingress.len() + f_noise.len());
+        assert!(cursor.offset >= SEGMENT_HEADER_V2_LEN + f_ingress.len() + f_noise.len());
     }
 
     #[test]
@@ -682,7 +716,7 @@ mod tests {
         let seg_path = tmp.join("99998.wal");
         std::fs::write(&seg_path, &seg).unwrap();
 
-        let mut cursor: usize = 0;
+        let mut cursor = ChannelFeedCursor::default();
 
         // First poll — must return the frame.
         let first = poll_channel_feed(&tmp, &mut cursor);
@@ -693,6 +727,64 @@ mod tests {
         let _ = std::fs::remove_file(&seg_path);
 
         assert!(second.is_empty(), "duplicate emission: {second:?}");
+    }
+
+    #[test]
+    fn poll_channel_feed_resets_offset_after_segment_rotation() {
+        use crate::wal::events::EVENT_TYPE_CHANNEL_INGRESS;
+
+        let dir = tempfile::tempdir().unwrap();
+        let first_path = dir.path().join("000001.wal");
+        let second_path = dir.path().join("000002.wal");
+        let first_frame = make_frame(
+            EVENT_TYPE_CHANNEL_INGRESS,
+            br#"{"channel":"telegram","sender_id":"first","bytes":200}"#,
+        );
+        let mut first_frames = first_frame.clone();
+        first_frames.extend_from_slice(&first_frame);
+        std::fs::write(&first_path, make_segment(&first_frames)).unwrap();
+
+        let mut cursor = ChannelFeedCursor::default();
+        assert_eq!(poll_channel_feed(dir.path(), &mut cursor).len(), 2);
+        let old_offset = cursor.offset;
+
+        let rotated_frame = make_frame(
+            EVENT_TYPE_CHANNEL_INGRESS,
+            br#"{"channel":"signal","sender_id":"rotated","bytes":1}"#,
+        );
+        std::fs::write(&second_path, make_segment(&rotated_frame)).unwrap();
+        let feed = poll_channel_feed(dir.path(), &mut cursor);
+
+        assert_eq!(feed.len(), 1, "first frame in rotated segment was skipped");
+        assert_eq!(feed[0]["peer"], "rotated");
+        assert!(cursor.offset < old_offset, "offset must be segment-local");
+        assert_eq!(cursor.segment.as_deref(), Some(second_path.as_path()));
+    }
+
+    #[test]
+    fn poll_channel_feed_batch_limit_resumes_without_dropping_tail() {
+        use crate::wal::events::EVENT_TYPE_CHANNEL_INGRESS;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("000001.wal");
+        let frame = make_frame(
+            EVENT_TYPE_CHANNEL_INGRESS,
+            br#"{"channel":"telegram","sender_id":"burst","bytes":1}"#,
+        );
+        let mut frames = Vec::new();
+        for _ in 0..51 {
+            frames.extend_from_slice(&frame);
+        }
+        std::fs::write(path, make_segment(&frames)).unwrap();
+
+        let mut cursor = ChannelFeedCursor::default();
+        assert_eq!(poll_channel_feed(dir.path(), &mut cursor).len(), 50);
+        assert_eq!(
+            poll_channel_feed(dir.path(), &mut cursor).len(),
+            1,
+            "the frame after MAX_BATCH must be emitted on the next poll"
+        );
+        assert!(poll_channel_feed(dir.path(), &mut cursor).is_empty());
     }
 
     #[test]
@@ -707,9 +799,10 @@ mod tests {
                 }
             }
         }
-        let mut cursor: usize = 0;
+        let mut cursor = ChannelFeedCursor::default();
         let feed = poll_channel_feed(&tmp, &mut cursor);
         assert!(feed.is_empty());
-        assert_eq!(cursor, 0);
+        assert_eq!(cursor.offset, 0);
+        assert!(cursor.segment.is_none());
     }
 }

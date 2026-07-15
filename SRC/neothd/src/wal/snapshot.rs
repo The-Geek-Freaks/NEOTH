@@ -766,7 +766,10 @@ mod tests {
 
         // The mutation happens AFTER the snapshot — the live resource changes.
         let mut resource: Vec<u8> = b"mutated content".to_vec();
-        assert_ne!(resource, original, "the mutation actually changed the resource");
+        assert_ne!(
+            resource, original,
+            "the mutation actually changed the resource"
+        );
 
         // Recover the pre-mutation state from the WAL alone.
         drop(writer);
@@ -787,9 +790,18 @@ mod tests {
 
         // The invariant: the WAL holds the pre-mutation state, independent of the
         // live mutation. "Restoring" is writing that recovered state back.
-        assert_eq!(recovered, original, "recovered state must equal the pre-mutation original");
-        assert_ne!(recovered, resource, "recovered state must NOT equal the post-mutation value");
+        assert_eq!(
+            recovered, original,
+            "recovered state must equal the pre-mutation original"
+        );
+        assert_ne!(
+            recovered, resource,
+            "recovered state must NOT equal the post-mutation value"
+        );
         resource = recovered.clone(); // notional restore
-        assert_eq!(resource, original, "after restore the resource matches the original again");
+        assert_eq!(
+            resource, original,
+            "after restore the resource matches the original again"
+        );
     }
 }

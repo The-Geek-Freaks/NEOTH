@@ -97,7 +97,7 @@ pub enum ProactiveAction {
         /// Source tag to route (e.g. `coding_session`). With `--channel`.
         #[arg(long)]
         source: Option<String>,
-        /// Channel name (`telegram`/`slack`/`discord`/`whatsapp`/`keet`).
+        /// Channel name (`telegram`/`slack`/`discord`/`whatsapp`/...).
         #[arg(long)]
         channel: Option<String>,
         /// Per-channel destination id (use with `--channel`).
@@ -145,7 +145,7 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             // than failing the command (re-running `accept` retries the write,
             // which is idempotent).
             if updated.kind == ProposalKind::Skill {
-                match write_accepted_skill(&home, &updated) {
+                match crate::proactive::action_staging::adopt_approved_skill(&home, &updated) {
                     Ok(path) => println!(
                         "  skill written → {} (live on next `neoth reload` or hot-watch)",
                         path.display(),
@@ -207,21 +207,21 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
                 obs.truncate(limit);
             }
             if obs.is_empty() {
-                println!(
-                    "(no reflection observations yet — runs weekly after the first 7 days)"
-                );
+                println!("(no reflection observations yet — runs weekly after the first 7 days)");
                 return Ok(());
             }
             if json {
-                println!("{}", serde_json::to_string_pretty(&obs).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&obs)
+                        .expect("reflection observations contain only serializable fields")
+                );
             } else {
                 for o in &obs {
-                    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                        o.generated_ts_unix,
-                        0,
-                    )
-                    .map(|d| d.format("%Y-%m-%d").to_string())
-                    .unwrap_or_else(|| o.generated_ts_unix.to_string());
+                    let dt =
+                        chrono::DateTime::<chrono::Utc>::from_timestamp(o.generated_ts_unix, 0)
+                            .map(|d| d.format("%Y-%m-%d").to_string())
+                            .unwrap_or_else(|| o.generated_ts_unix.to_string());
                     println!(
                         "[{week}]  {dt}  topics: {topics}\n  → {body}\n",
                         week = o.iso_week_tag,
@@ -251,30 +251,52 @@ fn run_route(
     let mut routing = ChannelRouting::load_from(&path).context("load channel routing")?;
     let mut changed = false;
 
+    if channel
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("keet"))
+    {
+        anyhow::bail!("Keet routing is unavailable: Keet exposes no supported public chat API");
+    }
+
     if let (Some(ch), Some(id)) = (channel.as_ref(), dest.as_ref()) {
+        if ch == "matrix" && !crate::channels::routing::is_valid_matrix_room_id(id) {
+            anyhow::bail!("Matrix destination must be a room id like `!opaque:server`");
+        }
         if routing.destinations.set_for_channel(ch, id.clone()) {
             println!("destination[{ch}] = {id}");
+            #[cfg(not(feature = "matrix-channel"))]
+            if ch == "matrix" {
+                eprintln!(
+                    "warning: Matrix route saved, but this binary lacks `matrix-channel`; delivery remains sidecar-only"
+                );
+            }
             changed = true;
         } else {
-            anyhow::bail!("unknown channel '{ch}' (use telegram/slack/discord/whatsapp/keet)");
+            anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
     } else if let (Some(src), Some(ch)) = (source.as_ref(), channel.as_ref()) {
         // F54 — validate the channel name like the --dest branch does, so a
         // typo (`--channel telegrm`) is rejected at config time instead of
         // being stored and silently routed to SidecarOnly at send time.
         if !crate::channels::routing::is_known_channel(ch) {
-            anyhow::bail!("unknown channel '{ch}' (use telegram/slack/discord/whatsapp/keet)");
+            anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
         routing.by_source.insert(src.clone(), ch.clone());
         println!("route: source '{src}' -> {ch}");
         changed = true;
     } else if default {
         let ch = channel.as_ref().context("--default requires --channel")?;
+        if !crate::channels::routing::is_known_channel(ch) {
+            anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
+        }
         routing.default_channel = Some(ch.clone());
         println!("default proactive channel -> {ch}");
         changed = true;
     } else if failure {
         let ch = channel.as_ref().context("--failure requires --channel")?;
+        if !crate::channels::routing::is_known_channel(ch) {
+            anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
+        }
         routing.failure_channel = Some(ch.clone());
         println!("failure-alert channel -> {ch}");
         changed = true;
@@ -287,7 +309,8 @@ fn run_route(
         println!(
             "current channel routing ({}):\n{}",
             path.display(),
-            serde_json::to_string_pretty(&routing).unwrap_or_default()
+            serde_json::to_string_pretty(&routing)
+                .expect("channel routing contains only serializable fields")
         );
     }
     Ok(())
@@ -298,37 +321,6 @@ fn print_status_change(p: &ProposedAction) {
     if !p.operator_note.is_empty() {
         println!("  note: {}", p.operator_note);
     }
-}
-
-/// KF-04 — write an accepted Skill proposal's manifest live into the
-/// operator's skills dir (`<home>/skills/<skill-id>/skill.yaml`), closing
-/// the idle-forge -> propose -> accept loop. The proposal's `draft_yaml`
-/// IS a loader-compatible [`SkillManifest`] (the forge builds it via
-/// `skills::creator::build_manifest`); parse it to recover the skill id
-/// (the on-disk directory name), validate the id (which is ALSO the
-/// path-traversal guard — `validate_skill_id` rejects anything outside
-/// `[a-zA-Z0-9_-]`, so a crafted `../` id can't escape the skills dir),
-/// then write atomically via the shared `write_skill_yaml` path the
-/// `neoth skills --create` command already uses. Returns the written path.
-fn write_accepted_skill(home: &std::path::Path, proposal: &ProposedAction) -> Result<PathBuf> {
-    use crate::skills::creator::{validate_skill_id, write_skill_yaml};
-    use crate::skills::schema::SkillManifest;
-
-    let manifest: SkillManifest =
-        serde_yaml::from_str(&proposal.draft_yaml).with_context(|| {
-            format!(
-                "accepted skill proposal {} carries a draft_yaml that is not a valid SkillManifest",
-                proposal.id,
-            )
-        })?;
-    validate_skill_id(&manifest.id).with_context(|| {
-        format!(
-            "skill id {:?} is invalid (cannot be a dir name)",
-            manifest.id
-        )
-    })?;
-    let skills_dir = home.join("skills");
-    write_skill_yaml(&skills_dir, &manifest.id, &proposal.draft_yaml)
 }
 
 fn print_full_proposal(p: &ProposedAction) {
@@ -636,7 +628,10 @@ mod tests {
     fn oh08_intelligence_empty_returns_ok() {
         let home = tempfile::tempdir().unwrap();
         let args = ProactiveArgs {
-            action: ProactiveAction::Intelligence { limit: 10, json: false },
+            action: ProactiveAction::Intelligence {
+                limit: 10,
+                json: false,
+            },
             home: Some(home.path().to_path_buf()),
         };
         // No staged_observations.jsonl → "(no reflection observations yet…)" printed.
@@ -656,7 +651,10 @@ mod tests {
         append_staged_observation(home.path(), &obs).unwrap();
 
         let args = ProactiveArgs {
-            action: ProactiveAction::Intelligence { limit: 10, json: false },
+            action: ProactiveAction::Intelligence {
+                limit: 10,
+                json: false,
+            },
             home: Some(home.path().to_path_buf()),
         };
         run_proactive(args).expect("intelligence with one entry");
@@ -672,7 +670,10 @@ mod tests {
         append_staged_observation(home.path(), &obs).unwrap();
 
         let args = ProactiveArgs {
-            action: ProactiveAction::Intelligence { limit: 10, json: true },
+            action: ProactiveAction::Intelligence {
+                limit: 10,
+                json: true,
+            },
             home: Some(home.path().to_path_buf()),
         };
         run_proactive(args).expect("intelligence json mode");
@@ -694,7 +695,10 @@ mod tests {
         }
         // limit=2 → only 2 should be shown (run_proactive returns Ok; no panic).
         let args = ProactiveArgs {
-            action: ProactiveAction::Intelligence { limit: 2, json: false },
+            action: ProactiveAction::Intelligence {
+                limit: 2,
+                json: false,
+            },
             home: Some(home.path().to_path_buf()),
         };
         run_proactive(args).expect("intelligence with limit");
@@ -706,11 +710,66 @@ mod tests {
         let mut p = skill_proposal("p-id");
         // A YAML sequence can't deserialize into the SkillManifest struct.
         p.draft_yaml = "- not\n- a\n- manifest\n".into();
-        let err = write_accepted_skill(home.path(), &p).unwrap_err();
+        p.status = ProposalStatus::Approved;
+        let err =
+            crate::proactive::action_staging::adopt_approved_skill(home.path(), &p).unwrap_err();
         assert!(format!("{err:#}").contains("SkillManifest"));
         assert!(
             !home.path().join("skills").exists(),
             "a malformed draft must not leave a partial skill dir",
         );
+    }
+
+    #[test]
+    fn matrix_route_destination_is_validated_and_persisted() {
+        let home = tempfile::tempdir().unwrap();
+        run_route(
+            home.path(),
+            None,
+            Some("matrix".to_string()),
+            Some("!ops:example.org".to_string()),
+            false,
+            false,
+        )
+        .unwrap();
+        let routing = ChannelRouting::load_from(&home.path().join(CHANNEL_ROUTING_FILE)).unwrap();
+        assert_eq!(
+            routing.destinations.matrix_room_id.as_deref(),
+            Some("!ops:example.org")
+        );
+
+        let invalid_home = tempfile::tempdir().unwrap();
+        let err = run_route(
+            invalid_home.path(),
+            None,
+            Some("matrix".to_string()),
+            Some("not-a-room".to_string()),
+            false,
+            false,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("!opaque:server"));
+        assert!(
+            !invalid_home.path().join(CHANNEL_ROUTING_FILE).exists(),
+            "invalid Matrix destination must not create routing state"
+        );
+    }
+
+    #[test]
+    fn default_and_failure_routes_reject_unknown_channel_names() {
+        for (default, failure) in [(true, false), (false, true)] {
+            let home = tempfile::tempdir().unwrap();
+            let err = run_route(
+                home.path(),
+                None,
+                Some("matrx".to_string()),
+                None,
+                default,
+                failure,
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("unknown channel"));
+            assert!(!home.path().join(CHANNEL_ROUTING_FILE).exists());
+        }
     }
 }

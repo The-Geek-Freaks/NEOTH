@@ -46,7 +46,7 @@ pub enum ChannelSendVerdict {
 /// `Decision::Confirm` (e.g. Strict autonomy) has NO arm here and falls through
 /// to `Send`. That degrade is UNREACHABLE on the standard serve.rs
 /// `build_pipeline_handler` wiring: that pipeline runs a
-/// `Gate::for_level(..).with_confirm(ConfirmStrategy::FailClosed)` ChannelSend
+/// `Gate::for_policy(..).with_confirm(ConfirmStrategy::FailClosed)` ChannelSend
 /// gate which resolves Strict's Confirm to Deny and returns `Ok(None)` BEFORE
 /// `decide_channel_send` is ever reached. The fallthrough therefore only fires
 /// for an operator-constructed listener that bypasses that pipeline gate — and

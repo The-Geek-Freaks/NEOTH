@@ -14,8 +14,9 @@ updates:
   # ---------------------------------------------------------------------------
   - package-ecosystem: "cargo"
     # Workspace root — the post-O-3 split lives at SRC/Cargo.toml with
-    # `neothd` + `neothd-gui` + `neoth-plugin-sdk` as members. Pointing
-    # at SRC/neothd would miss the GUI + plugin SDK deps.
+    # `neoth` + `neothd-gui` + `neoth-migrate` + `neoth-relay` +
+    # `neoth-plugin-sdk` as members. Pointing at SRC/neothd would miss the
+    # companion-crate dependencies.
     directory: "/SRC"
     schedule:
       interval: "weekly"

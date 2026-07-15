@@ -19,7 +19,7 @@ pub struct HardwareArgs {
 
 pub async fn run_hardware(args: HardwareArgs) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    let report = hardware::probe(&home);
+    let report = hardware::probe(&home)?;
     match args.output {
         OutputFormat::Table => {
             print!("{}", report.render_summary());

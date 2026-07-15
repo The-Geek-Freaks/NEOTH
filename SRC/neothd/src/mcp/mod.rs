@@ -14,7 +14,8 @@
 //! v0.1 ships **stdio** transport only — the most widely deployed MCP
 //! transport. Operators configure `command + args + env`, NEOTH spawns
 //! the child process, and JSON-RPC 2.0 frames flow over stdin/stdout
-//! delimited by `Content-Length` headers per MCP spec.
+//! encoded as newline-delimited JSON per the MCP stdio transport spec. LSP's
+//! separate `Content-Length` framing lives exclusively in `crate::lsp`.
 //!
 //! HTTP/SSE transport is a future addition once any real server NEOTH
 //! cares about ships only over HTTP.
@@ -35,10 +36,11 @@ pub mod codegraph_server;
 pub mod config;
 pub mod dispatch_loop;
 pub mod gate;
-pub mod harness;
 pub mod goal_judge;
 pub mod goal_tracker;
+pub mod harness;
 pub mod hints;
+mod package_gate;
 pub mod repetition_guard;
 pub mod sanitizer;
 pub mod smart_approve;
@@ -50,7 +52,7 @@ pub mod transport;
 #[allow(unused_imports)]
 pub use client::{McpClient, McpError, McpTool, ToolCallResult};
 #[allow(unused_imports)]
-pub use config::{AutorouteDecision, McpServerConfig, McpServers};
+pub use config::{AutorouteDecision, McpLauncherPosture, McpServerConfig, McpServers};
 #[allow(unused_imports)]
 pub use gate::{GateError, SanitizedTool, invoke_with_audit, list_tools_sanitized};
 #[allow(unused_imports)]

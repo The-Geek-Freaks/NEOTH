@@ -17,9 +17,6 @@
 //!     code with lang tag for syntax highlighting, blockquotes `> `,
 //!     inline links `[label](url)`. 2000-char body cap. Tolerant of
 //!     unbalanced markdown (unlike Telegram MarkdownV2).
-//!   - **Keet**: plaintext-only — Pears chat surface does no markdown
-//!     rendering. Code fences pass through as literal text but stay
-//!     copy-paste friendly. Conservative 2000-char cap.
 //!
 //! Input: [`CanonicalReply`] — the LLM's response normalised into a
 //! channel-agnostic shape (text + extracted code blocks + length
@@ -93,9 +90,8 @@ pub trait Formatter {
     fn format(&self, reply: &CanonicalReply) -> Vec<String>;
 }
 
-/// Build the right formatter for `kind`. Session 14 Pick #27 completes
-/// the formatter matrix — Discord + Keet now have impls. Returns
-/// `Some(_)` for every variant of [`ChannelKind`].
+/// Build the right formatter for a supported channel. Keet deliberately
+/// returns `None`: no supported public Keet chat transport exists.
 pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
     match kind {
         ChannelKind::Telegram => Some(Box::new(TelegramFormatter)),
@@ -104,7 +100,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
             Some(Box::new(WhatsAppFormatter))
         }
         ChannelKind::Discord => Some(Box::new(DiscordFormatter)),
-        ChannelKind::Keet => Some(Box::new(KeetFormatter)),
+        ChannelKind::Keet => None,
         ChannelKind::Signal => Some(Box::new(SignalFormatter)),
         ChannelKind::Matrix => Some(Box::new(MatrixFormatter)),
         ChannelKind::Line => Some(Box::new(LineFormatter)),
@@ -333,63 +329,10 @@ impl Formatter for DiscordFormatter {
     }
 }
 
-// ── Keet (Pears bridge) ──────────────────────────────────────────────
-
-/// Keet channel formatter (Session 14 Pick #27).
-///
-/// Keet is built on the Pears stack and ships a minimal plaintext
-/// chat surface — no markdown rendering, no code-fence highlighting,
-/// no inline link formatting. Operators see exactly the characters
-/// we send. The formatter therefore passes `text` through verbatim
-/// and renders code blocks as triple-backtick fences (which become
-/// plaintext on the rendered side but stay readable as copy-paste).
-///
-/// Conservative 2000-char cap matches the WhatsApp / Signal floor
-/// where the protocol layer doesn't pin a hard limit but UX
-/// degrades above ~2k characters on the typical mobile render.
-pub struct KeetFormatter;
-
-const KEET_MAX_CHARS: usize = 2_000;
-
-impl Formatter for KeetFormatter {
-    fn channel(&self) -> ChannelKind {
-        ChannelKind::Keet
-    }
-    fn max_chars_per_message(&self) -> usize {
-        KEET_MAX_CHARS
-    }
-    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
-        let mut rendered = String::new();
-        rendered.push_str(&reply.text);
-        for cb in &reply.code_blocks {
-            // Triple-backtick fence renders as literal text in Keet's
-            // plaintext UI, but stays selectable for copy-paste +
-            // matches what an operator copying out of the chat would
-            // expect to find when they paste into a code editor.
-            rendered.push_str("\n```");
-            if !cb.lang.is_empty() {
-                rendered.push_str(&cb.lang);
-            }
-            rendered.push('\n');
-            rendered.push_str(&cb.body);
-            if !cb.body.ends_with('\n') {
-                rendered.push('\n');
-            }
-            rendered.push_str("```");
-        }
-        split_into_messages(
-            &rendered,
-            KEET_MAX_CHARS - SPLIT_HEADROOM,
-            reply.length_hint,
-        )
-    }
-}
-
 // ── Signal (plaintext) ───────────────────────────────────────────────
 
 /// GOLD-FEAT-10 — Signal formatter. signal-cli `send` takes a plaintext
-/// `message` (no markdown dialect to honour), so this mirrors the Keet
-/// plaintext renderer: append code blocks as literal triple-backtick
+/// `message` (no markdown dialect to honour): append code blocks as literal triple-backtick
 /// fences (readable + copy-paste-clean) and split at the 2000-char UX
 /// floor (Signal has no hard protocol cap, but mobile render degrades
 /// above ~2k).
@@ -431,7 +374,7 @@ impl Formatter for SignalFormatter {
 
 /// GOLD-FEAT-10 — Matrix formatter. v1 sends the plaintext `body` of an
 /// `m.room.message` (rich `formatted_body`/HTML is a follow-up), so this
-/// mirrors the Signal/Keet plaintext renderer. 4096-char split — Matrix has
+/// mirrors the Signal plaintext renderer. 4096-char split — Matrix has
 /// no fixed event cap but homeservers reject oversized events.
 pub struct MatrixFormatter;
 
@@ -755,15 +698,14 @@ mod tests {
 
     #[test]
     fn for_channel_routes_every_known_dialect() {
-        // Session 14 Pick #27 — Discord + Keet now have impls. Every
-        // ChannelKind variant must produce Some(_); future variants
-        // added without a formatter would trip this test.
+        // Supported transports have a formatter; the known-but-unavailable
+        // Keet inventory row deliberately does not.
         assert!(for_channel(ChannelKind::Telegram).is_some());
         assert!(for_channel(ChannelKind::Slack).is_some());
         assert!(for_channel(ChannelKind::WhatsAppBusiness).is_some());
         assert!(for_channel(ChannelKind::WhatsAppBaileys).is_some());
         assert!(for_channel(ChannelKind::Discord).is_some());
-        assert!(for_channel(ChannelKind::Keet).is_some());
+        assert!(for_channel(ChannelKind::Keet).is_none());
     }
 
     #[test]
@@ -772,7 +714,6 @@ mod tests {
         assert_eq!(SlackFormatter.channel(), ChannelKind::Slack);
         assert_eq!(WhatsAppFormatter.channel(), ChannelKind::WhatsAppBusiness);
         assert_eq!(DiscordFormatter.channel(), ChannelKind::Discord);
-        assert_eq!(KeetFormatter.channel(), ChannelKind::Keet);
     }
 
     // ── Telegram MarkdownV2 golden output ────────────────────────────
@@ -941,48 +882,6 @@ mod tests {
         let out = DiscordFormatter.format(&r);
         assert_eq!(out[0], "auth_middleware in src/auth/middleware.rs");
         assert!(!out[0].contains("\\_"), "Discord must not backslash-escape");
-    }
-
-    // ── Keet (Pick #27) ──────────────────────────────────────────────
-
-    #[test]
-    fn keet_passes_plain_text_through() {
-        let r = reply("hello from Keet");
-        assert_eq!(
-            KeetFormatter.format(&r),
-            vec!["hello from Keet".to_string()]
-        );
-    }
-
-    #[test]
-    fn keet_renders_code_block_as_literal_fence() {
-        // Keet has no markdown rendering, so the fence becomes literal
-        // text. We still emit it because it stays copy-paste friendly.
-        let r = reply_with_code("Status:", "rust", "let x = 1;");
-        let out = KeetFormatter.format(&r);
-        let s = &out[0];
-        assert!(s.contains("Status:"));
-        assert!(s.contains("```rust\nlet x = 1;\n```"));
-    }
-
-    #[test]
-    fn keet_caps_at_2000_chars() {
-        let body = "y".repeat(2500);
-        let out = KeetFormatter.format(&reply(&body));
-        assert!(out.len() >= 2);
-        for c in &out {
-            assert!(
-                c.chars().count() <= KEET_MAX_CHARS,
-                "chunk over Keet cap: {} > {}",
-                c.chars().count(),
-                KEET_MAX_CHARS,
-            );
-        }
-    }
-
-    #[test]
-    fn keet_max_chars_per_message_matches_const() {
-        assert_eq!(KeetFormatter.max_chars_per_message(), KEET_MAX_CHARS);
     }
 
     #[test]

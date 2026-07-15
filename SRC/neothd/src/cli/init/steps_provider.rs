@@ -125,6 +125,14 @@ pub(crate) async fn step5_provider(
                     "openai_compat (OpenRouter / Together / Groq / LM Studio / vLLM / Ollama / custom)",
                 ),
                 (
+                    ProviderKind::AwsBedrock,
+                    "aws_bedrock (native SigV4 + AWS credential chain; billed by AWS)",
+                ),
+                (
+                    ProviderKind::AzureOpenAi,
+                    "azure_openai (native Azure deployment endpoint; billed by Azure)",
+                ),
+                (
                     ProviderKind::LocalQwen,
                     "local_qwen — Qwen2/Qwen3 dense on your hardware (~3 GB cached, CPU + GPU). No GPU? Pick openai_compat + OpenRouter instead.",
                 ),
@@ -134,7 +142,7 @@ pub(crate) async fn step5_provider(
                 ),
                 (
                     ProviderKind::GitHubCopilot,
-                    "copilot_api (GitHub Copilot — OAuth PAT, zero per-token cost for GH subscribers)",
+                    "copilot_api (GitHub Copilot — OAuth PAT; variable billing, cost-gated as unbounded)",
                 ),
                 (ProviderKind::Skip, "skip (configure later)"),
             ];
@@ -340,28 +348,158 @@ pub(crate) async fn step5_provider(
             state.provider_model = Some(args.provider_model.clone().unwrap_or(resolved_default));
         }
         ProviderKind::AwsBedrock => {
-            // C-3 (Session 13) Phase 1 — scaffold variant. Operator
-            // sees it in the wizard select but the actual SigV4
-            // adapter lands in Phase 2. Region + IAM credential
-            // chain config schema also Phase 2.
+            let default_region = args
+                .provider_region
+                .clone()
+                .or_else(|| std::env::var("AWS_REGION").ok())
+                .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
+                .unwrap_or_else(|| "us-east-1".to_string());
+            let region = if args.provider_region.is_some() || !interactive {
+                default_region
+            } else {
+                #[cfg(feature = "wizard")]
+                {
+                    dialoguer::Input::<String>::with_theme(
+                        &dialoguer::theme::ColorfulTheme::default(),
+                    )
+                    .with_prompt("[5/9] AWS Bedrock region")
+                    .default(default_region)
+                    .interact_text()
+                    .context("AWS Bedrock region input")?
+                }
+                #[cfg(not(feature = "wizard"))]
+                {
+                    default_region
+                }
+            };
+            if region.trim().is_empty() {
+                anyhow::bail!("aws_bedrock requires a non-empty --provider-region");
+            }
+            let default_model = catalog_recommended_for_provider_kind(kind).unwrap_or_else(|| {
+                crate::providers::default_model(
+                    "aws_bedrock",
+                    crate::providers::model_roles::ModelRole::Flagship,
+                    "anthropic.claude-opus-4-7-v1:0",
+                )
+            });
+            let model = if let Some(model) = args.provider_model.clone() {
+                model
+            } else if !interactive {
+                default_model
+            } else {
+                #[cfg(feature = "wizard")]
+                {
+                    dialoguer::Input::<String>::with_theme(
+                        &dialoguer::theme::ColorfulTheme::default(),
+                    )
+                    .with_prompt("[5/9] AWS Bedrock model id")
+                    .default(default_model)
+                    .interact_text()
+                    .context("AWS Bedrock model input")?
+                }
+                #[cfg(not(feature = "wizard"))]
+                {
+                    default_model
+                }
+            };
+            if model.trim().is_empty() {
+                anyhow::bail!("aws_bedrock requires a non-empty --provider-model");
+            }
+            state.provider_region = Some(region);
+            state.provider_model = Some(model);
             if interactive {
                 println!(
-                    "  aws_bedrock is C-3 Phase 1 scaffold — the variant is selectable \
-                     for forward-compat but the SigV4 adapter ships in Phase 2. \
-                     Use `openai_compat` against a Bedrock-on-OpenAI proxy in the interim."
+                    "  aws_bedrock uses the native Converse API with SigV4. Credentials \
+                     resolve from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (plus optional \
+                     AWS_SESSION_TOKEN) or the [default] profile in ~/.aws/credentials. \
+                     Calls are billed by AWS and cross the normal NEOTH cost/consent gate."
                 );
             }
         }
         ProviderKind::AzureOpenAi => {
-            // C-4 (Session 13) Phase 1 — scaffold variant. Operator
-            // sees it in the wizard select; actual adapter ships in
-            // Phase 2 with the `api-version` + deployment-name-as-
-            // model schema.
+            let endpoint = if let Some(endpoint) = args.provider_endpoint.clone() {
+                endpoint
+            } else if !interactive {
+                anyhow::bail!(
+                    "azure_openai requires --provider-endpoint \
+                     https://<resource>.openai.azure.com in non-interactive mode"
+                );
+            } else {
+                #[cfg(feature = "wizard")]
+                {
+                    dialoguer::Input::<String>::with_theme(
+                        &dialoguer::theme::ColorfulTheme::default(),
+                    )
+                    .with_prompt("[5/9] Azure OpenAI resource endpoint")
+                    .interact_text()
+                    .context("Azure OpenAI endpoint input")?
+                }
+                #[cfg(not(feature = "wizard"))]
+                {
+                    String::new()
+                }
+            };
+            if endpoint.trim().is_empty() {
+                anyhow::bail!("azure_openai requires a non-empty --provider-endpoint");
+            }
+            let deployment = if let Some(model) = args.provider_model.clone() {
+                model
+            } else if !interactive {
+                anyhow::bail!(
+                    "azure_openai requires --provider-model <deployment-name> in non-interactive mode"
+                );
+            } else {
+                #[cfg(feature = "wizard")]
+                {
+                    dialoguer::Input::<String>::with_theme(
+                        &dialoguer::theme::ColorfulTheme::default(),
+                    )
+                    .with_prompt("[5/9] Azure OpenAI deployment name")
+                    .interact_text()
+                    .context("Azure OpenAI deployment input")?
+                }
+                #[cfg(not(feature = "wizard"))]
+                {
+                    String::new()
+                }
+            };
+            if deployment.trim().is_empty() {
+                anyhow::bail!("azure_openai requires a non-empty deployment name");
+            }
+            let default_api_version = args
+                .provider_api_version
+                .clone()
+                .unwrap_or_else(|| "2024-10-21".to_string());
+            let api_version = if args.provider_api_version.is_some() || !interactive {
+                default_api_version
+            } else {
+                #[cfg(feature = "wizard")]
+                {
+                    dialoguer::Input::<String>::with_theme(
+                        &dialoguer::theme::ColorfulTheme::default(),
+                    )
+                    .with_prompt("[5/9] Azure OpenAI API version")
+                    .default(default_api_version)
+                    .interact_text()
+                    .context("Azure OpenAI API-version input")?
+                }
+                #[cfg(not(feature = "wizard"))]
+                {
+                    default_api_version
+                }
+            };
+            let key = prompt_provider_key(args, interactive, kind)?.ok_or_else(|| {
+                anyhow::anyhow!("azure_openai requires --provider-key (or NEOTH_PROVIDER_KEY)")
+            })?;
+            state.provider_key = Some(crate::secret::SecretString::from(key));
+            state.provider_endpoint = Some(endpoint);
+            state.provider_model = Some(deployment);
+            state.provider_api_version = Some(api_version);
             if interactive {
                 println!(
-                    "  azure_openai is C-4 Phase 1 scaffold — the variant is selectable \
-                     for forward-compat but the adapter (api-version query param + \
-                     deployment-name-as-model schema) ships in Phase 2."
+                    "  azure_openai is configured through the native deployment endpoint \
+                     (`api-key` header + api-version query). Calls are billed by Azure \
+                     and cross the normal NEOTH cost/consent gate."
                 );
             }
         }
@@ -372,7 +510,8 @@ pub(crate) async fn step5_provider(
             // endpoint will authenticate with.
             if interactive {
                 println!(
-                    "  copilot_api uses your GitHub Copilot subscription — no per-token metering. \
+                    "  copilot_api billing varies by plan, model, allowance and overage state; \
+                     NEOTH therefore confirms it as an unbounded paid call unless Full autonomy is active. \
                      Requires a GitHub PAT with `copilot` scope (Settings → Developer settings → \
                      Personal access tokens → Fine-grained; scope: Copilot Editor Context). \
                      Your PAT is stored locally in credentials.yaml (mlock + zeroize)."
@@ -408,7 +547,9 @@ pub(crate) async fn step5_provider(
         }
         ProviderKind::Skip => {
             if interactive {
-                println!("  Skipped. Configure later: `neoth provider add`");
+                println!(
+                    "  Skipped. Configure later with `neoth init` or `neoth hemispheres set`."
+                );
             }
         }
         ProviderKind::LocalOllama => {

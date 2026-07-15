@@ -3,20 +3,18 @@
 //! Subcommands:
 //!   - `neoth updater status` — render the most recent
 //!     `UpdaterTaskResultPayload`s as a table.
-//!   - `neoth updater check` — bootstrap entry for cron+manual
-//!     pass (wire-up lands in U-01/02/03; CLI surface here so
-//!     `neoth updater status`'s "Run `neoth updater check`"
-//!     prompt resolves).
+//!   - `neoth updater check` — compatibility spelling that delegates to the
+//!     canonical, live `neoth update --check` component probe.
 //!
-//! The actual WAL-read happens when U-01/02/03 wire up; today
-//! this command accepts a `--from-jsonl <path>` flag for the
-//! operator (or test) to feed in a synthetic payload list.
+//! Status reads the live WAL by default; `--from-jsonl <path>` remains an
+//! explicit synthetic/test input.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
+use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::wal::events::EVENT_TYPE_UPDATER_TASK_RESULT;
 use crate::wal::payloads_u04::{UpdaterTaskResultPayload, render_updater_status};
@@ -49,12 +47,23 @@ pub enum UpdaterAction {
         #[arg(long, value_name = "PATH")]
         from_jsonl: Option<PathBuf>,
     },
-    /// Bootstrap entry. Today's slice prints a friendly hint —
-    /// the actual check pipeline lands with U-01..U-03.
+    /// Run the canonical component update check (`neoth update --check`).
     Check,
 }
 
-pub fn run_updater(args: UpdaterArgs) -> Result<()> {
+fn canonical_check_args(output: OutputFormat) -> crate::cli::update::UpdateArgs {
+    crate::cli::update::UpdateArgs {
+        check: true,
+        apply: false,
+        list: false,
+        self_check: false,
+        self_repo: None,
+        allow_unsigned: false,
+        output,
+    }
+}
+
+pub async fn run_updater(args: UpdaterArgs, output: OutputFormat) -> Result<()> {
     match args.action {
         UpdaterAction::Status {
             wal_segment,
@@ -70,14 +79,7 @@ pub fn run_updater(args: UpdaterArgs) -> Result<()> {
             print!("{}", render_updater_status(&results));
             Ok(())
         }
-        UpdaterAction::Check => {
-            println!(
-                "neoth updater check — \
-                 will run U-01 (self-update), U-02 (skills+plugins), \
-                 U-03 (CLI versions) when wired. Today: no-op."
-            );
-            Ok(())
-        }
+        UpdaterAction::Check => crate::cli::update::run_update(canonical_check_args(output)).await,
     }
 }
 
@@ -176,8 +178,8 @@ mod tests {
         assert_eq!(r.len(), 2);
     }
 
-    #[test]
-    fn run_status_with_explicit_missing_wal_prints_bootstrap_hint() {
+    #[tokio::test]
+    async fn run_status_with_explicit_missing_wal_prints_bootstrap_hint() {
         // Point at a tempdir-segment that doesn't exist. The WAL
         // reader returns empty + render_updater_status prints the
         // "no record yet" friendly line. No error.
@@ -188,11 +190,13 @@ mod tests {
                 from_jsonl: None,
             },
         };
-        run_updater(args).expect("status with missing wal");
+        run_updater(args, OutputFormat::Table)
+            .await
+            .expect("status with missing wal");
     }
 
-    #[test]
-    fn run_status_with_jsonl_renders_results() {
+    #[tokio::test]
+    async fn run_status_with_jsonl_renders_results() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("results.jsonl");
         let line = serde_json::to_string(&sample_result()).unwrap();
@@ -203,7 +207,9 @@ mod tests {
                 from_jsonl: Some(path),
             },
         };
-        run_updater(args).expect("status with jsonl");
+        run_updater(args, OutputFormat::Table)
+            .await
+            .expect("status with jsonl");
     }
 
     #[test]
@@ -220,6 +226,18 @@ mod tests {
         std::fs::write(&path, [0u8; 5]).unwrap();
         let r = load_results_from_wal(&path).unwrap();
         assert!(r.is_empty());
+    }
+
+    #[test]
+    fn updater_check_delegates_to_read_only_canonical_mode() {
+        let args = canonical_check_args(OutputFormat::Json);
+        assert!(args.check);
+        assert!(!args.apply);
+        assert!(!args.list);
+        assert!(!args.self_check);
+        assert!(args.self_repo.is_none());
+        assert!(!args.allow_unsigned);
+        assert!(matches!(args.output, OutputFormat::Json));
     }
 
     #[tokio::test]
@@ -259,14 +277,6 @@ mod tests {
         assert_eq!(results.len(), 1, "only the 0x45 frame should match");
         assert_eq!(results[0].task_kind, payload.task_kind);
         assert_eq!(results[0].ts_unix, payload.ts_unix);
-    }
-
-    #[test]
-    fn run_check_prints_today_noop_hint() {
-        let args = UpdaterArgs {
-            action: UpdaterAction::Check,
-        };
-        run_updater(args).expect("check no-op");
     }
 
     #[test]

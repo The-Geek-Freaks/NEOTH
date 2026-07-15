@@ -300,11 +300,13 @@ pub(crate) enum BoostOutcome {
 ///
 /// Uses read-then-conditional-write so callers (gossip loop and restore path)
 /// can distinguish Applied/Idempotent/Missing for dry-run reporting without a
-/// second SELECT. Single-threaded CLI invocation makes this safe.
+/// second SELECT. With `dry_run`, the same comparison runs but the UPDATE is
+/// skipped. Single-threaded CLI invocation makes this safe.
 pub(crate) fn apply_episode_boost(
     conn: &Connection,
     event_id: i64,
     peer_importance: f64,
+    dry_run: bool,
 ) -> Result<BoostOutcome> {
     if !peer_importance.is_finite() {
         return Ok(BoostOutcome::Idempotent);
@@ -325,6 +327,9 @@ pub(crate) fn apply_episode_boost(
     };
     if local >= importance {
         return Ok(BoostOutcome::Idempotent);
+    }
+    if dry_run {
+        return Ok(BoostOutcome::Applied);
     }
     conn.execute(
         "UPDATE idx_episode SET importance = ?1 WHERE event_id = ?2",
@@ -586,7 +591,10 @@ mod tests {
             )
             .unwrap();
         // Must remain 0.4 — gossip boost must NOT apply the peer's 0.8 to our row.
-        assert!((importance - 0.4).abs() < 1e-9, "cross-peer boost must not mutate local row");
+        assert!(
+            (importance - 0.4).abs() < 1e-9,
+            "cross-peer boost must not mutate local row"
+        );
         assert_eq!(indexed_count(&conn), 1);
     }
 
@@ -643,7 +651,10 @@ mod tests {
             )
             .unwrap();
         // Must remain 0.3 — gossip promote must NOT apply the peer's 0.95 to our row.
-        assert!((importance - 0.3).abs() < 1e-9, "cross-peer promote must not mutate local row");
+        assert!(
+            (importance - 0.3).abs() < 1e-9,
+            "cross-peer promote must not mutate local row"
+        );
     }
 
     #[test]
@@ -672,7 +683,10 @@ mod tests {
             )
             .unwrap();
         // Must remain 0.4 — gossip handler is a NO-OP regardless of payload value.
-        assert!((importance - 0.4).abs() < 1e-9, "cross-peer event must not mutate local row");
+        assert!(
+            (importance - 0.4).abs() < 1e-9,
+            "cross-peer event must not mutate local row"
+        );
     }
 
     #[test]
@@ -708,7 +722,10 @@ mod tests {
             )
             .unwrap();
         // Must remain 0.5 — gossip decay must NOT mutate the local row.
-        assert!((importance - 0.5).abs() < 1e-9, "cross-peer decay must not mutate local row");
+        assert!(
+            (importance - 0.5).abs() < 1e-9,
+            "cross-peer decay must not mutate local row"
+        );
 
         // Second pass: all rows already indexed, nothing new to process.
         assert_eq!(process_pending(&conn).unwrap(), 0);
@@ -848,7 +865,11 @@ mod tests {
             (importance - 0.6).abs() < 1e-9,
             "local episode importance must be unchanged after cross-peer events; got {importance}"
         );
-        assert_eq!(indexed_count(&conn), 3, "all three rows must be marked indexed");
+        assert_eq!(
+            indexed_count(&conn),
+            3,
+            "all three rows must be marked indexed"
+        );
     }
 
     /// Fix (b): a retryable error from process_one must leave the row in
@@ -863,8 +884,7 @@ mod tests {
         let conn = open_test_db();
         ensure_marker_table(&conn).unwrap();
 
-        let payload =
-            serde_json::json!({"event_id": 5, "importance": 0.7, "ts": 1000}).to_string();
+        let payload = serde_json::json!({"event_id": 5, "importance": 0.7, "ts": 1000}).to_string();
         let fid = insert_foreign_event(
             &conn,
             crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
@@ -874,7 +894,8 @@ mod tests {
         // Simulate a retryable infrastructure error: drop the marker table so
         // marker_exists returns Err("no such table"). process_one must propagate
         // this Err without running the INSERT OR IGNORE that marks the row.
-        conn.execute_batch("DROP TABLE idx_foreign_indexed_events").unwrap();
+        conn.execute_batch("DROP TABLE idx_foreign_indexed_events")
+            .unwrap();
 
         let row = PendingRow {
             id: fid,
@@ -916,8 +937,7 @@ mod tests {
         // Unknown event type → terminal no-op.
         insert_foreign_event(&conn, 0xAB, b"{\"whatever\":true}");
         // GROUNDTRUTH_REVOKED → skipped (local-id-only), but still terminal no-op.
-        let gt_payload =
-            serde_json::json!({"id": 1, "ts": 0}).to_string();
+        let gt_payload = serde_json::json!({"id": 1, "ts": 0}).to_string();
         insert_foreign_event(
             &conn,
             crate::wal::events::EVENT_TYPE_GROUNDTRUTH_REVOKED,
@@ -925,7 +945,11 @@ mod tests {
         );
 
         assert_eq!(process_pending(&conn).unwrap(), 2);
-        assert_eq!(indexed_count(&conn), 2, "terminal no-ops must be marked processed");
+        assert_eq!(
+            indexed_count(&conn),
+            2,
+            "terminal no-ops must be marked processed"
+        );
 
         // Second pass: both rows already indexed, nothing new.
         assert_eq!(process_pending(&conn).unwrap(), 0);
@@ -943,10 +967,14 @@ mod tests {
             [],
         )
         .unwrap();
-        let outcome = apply_episode_boost(&conn, 1, 0.8).unwrap();
+        let outcome = apply_episode_boost(&conn, 1, 0.8, false).unwrap();
         assert_eq!(outcome, BoostOutcome::Applied);
         let imp: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((imp - 0.8).abs() < 1e-9);
     }
@@ -959,11 +987,15 @@ mod tests {
             [],
         )
         .unwrap();
-        let outcome = apply_episode_boost(&conn, 2, 0.7).unwrap();
+        let outcome = apply_episode_boost(&conn, 2, 0.7, false).unwrap();
         assert_eq!(outcome, BoostOutcome::Idempotent);
         // value unchanged
         let imp: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 2", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 2",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((imp - 0.9).abs() < 1e-9);
     }
@@ -971,7 +1003,7 @@ mod tests {
     #[test]
     fn apply_episode_boost_missing_when_no_row() {
         let conn = open_test_db();
-        let outcome = apply_episode_boost(&conn, 999, 0.5).unwrap();
+        let outcome = apply_episode_boost(&conn, 999, 0.5, false).unwrap();
         assert_eq!(outcome, BoostOutcome::Missing);
     }
 
@@ -986,7 +1018,11 @@ mod tests {
         let found = apply_episode_decay_sql(&conn, 5).unwrap();
         assert!(found);
         let imp: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 5", [], |r| r.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 5",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         // 0.8 * 0.5 = 0.4, above DECAY_FLOOR
         assert!((imp - 0.4).abs() < 1e-9);
@@ -1006,7 +1042,11 @@ mod tests {
         let outcome = apply_groundtruth_revoke(&conn, 10, 1_700_000_000).unwrap();
         assert_eq!(outcome, GroundtruthRevokeOutcome::Applied);
         let ra: Option<i64> = conn
-            .query_row("SELECT revoked_at FROM idx_groundtruth WHERE id = 10", [], |r| r.get(0))
+            .query_row(
+                "SELECT revoked_at FROM idx_groundtruth WHERE id = 10",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(ra, Some(1_700_000_000));
     }
@@ -1042,7 +1082,11 @@ mod tests {
         assert_eq!(outcome, GroundtruthRevokeOutcome::Contradicted);
         // revoked_at must remain NULL
         let ra: Option<i64> = conn
-            .query_row("SELECT revoked_at FROM idx_groundtruth WHERE id = 12", [], |r| r.get(0))
+            .query_row(
+                "SELECT revoked_at FROM idx_groundtruth WHERE id = 12",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(ra, None);
     }

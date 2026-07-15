@@ -8,20 +8,9 @@
 //! `--watch` enters a loop that clears the terminal and refreshes every 5 s
 //! (exit with Ctrl-C).
 //!
-//! # Wiring into `cli/cluster.rs` (TODO FEAT-06)
-//! `cli/cluster.rs` is owned by a parallel session and cannot be edited now.
-//! Once that session completes, wire the subcommand with:
-//!
-//! ```text
-//! // 1. In ClusterAction enum:
-//! /// GOLD-FEAT-06 — swarm resource dashboard.
-//! Swarm(crate::cli::cluster_swarm::ClusterSwarmArgs),
-//!
-//! // 2. In run_cluster() match:
-//! ClusterAction::Swarm(a) => crate::cli::cluster_swarm::run_cluster_swarm(a).await,
-//! ```
-//!
-//! For testing / standalone use, call [`run_cluster_swarm`] directly.
+//! The command is wired through `cli::cluster::ClusterAction::Swarm`. Its
+//! sampling interval and default stale threshold come from
+//! `freedom.yaml::swarm`; `--stale-secs` is an explicit one-shot override.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -30,8 +19,8 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::cli::OutputFormat;
-use crate::cluster::swarm::{NodeResourceSnapshot, SwarmConfig, SwarmTable};
-use crate::config::FreedomConfig;
+use crate::cluster::swarm::{NodeResourceSnapshot, SwarmTable};
+use crate::config::{FreedomConfig, SwarmConfig};
 use crate::wal::compress::decompress_frames;
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::frame::decode_frame;
@@ -47,9 +36,8 @@ pub struct ClusterSwarmArgs {
     pub watch: bool,
 
     /// Drop nodes whose last snapshot is older than this many seconds.
-    /// Defaults to `SwarmConfig::stale_after_secs` (300) when not supplied.
-    /// Once `freedom.yaml` gains a `swarm` section (TODO FEAT-06), the default
-    /// will be read from config; explicit `--stale-secs` always overrides it.
+    /// Defaults to `freedom.yaml::swarm.stale_after_secs` (300).
+    /// Must be greater than zero; an explicit value overrides config.
     #[arg(long)]
     pub stale_secs: Option<i64>,
 
@@ -64,38 +52,43 @@ pub struct ClusterSwarmArgs {
 pub async fn run_cluster_swarm(args: ClusterSwarmArgs) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let wal_dir = home.join("wal");
-
-    // Wire SwarmConfig.stale_after_secs to the dashboard's prune window.
-    // CLI `--stale-secs` overrides; when absent the value comes from
-    // SwarmConfig (currently always default until freedom.yaml gains a `swarm`
-    // section — TODO FEAT-06 replace with loaded config).
-    let stale_secs = resolve_stale_secs(args.stale_secs);
+    let config = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml swarm dashboard policy")?;
+    let stale_secs = resolve_stale_secs(args.stale_secs, config.swarm.stale_after_secs)?;
 
     if args.watch {
         loop {
             // Clear terminal between refreshes.
             print!("\x1B[2J\x1B[H");
-            print_swarm(&wal_dir, stale_secs, &args.output)?;
+            print_swarm(&wal_dir, config.swarm, stale_secs, &args.output)?;
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     } else {
-        print_swarm(&wal_dir, stale_secs, &args.output)
+        print_swarm(&wal_dir, config.swarm, stale_secs, &args.output)
     }
 }
 
 /// Resolve the effective stale threshold (seconds) for snapshot pruning.
 ///
-/// CLI `--stale-secs` overrides `SwarmConfig::stale_after_secs`; when no CLI
-/// arg is supplied, the config field is applied.  Once `FreedomConfig` gains a
-/// `swarm: SwarmConfig` field (TODO FEAT-06), callers may pass the loaded
-/// config value here instead of `SwarmConfig::default()`.
-pub(crate) fn resolve_stale_secs(cli_override: Option<i64>) -> i64 {
-    cli_override.unwrap_or_else(|| SwarmConfig::default().stale_after_secs)
+/// CLI `--stale-secs` overrides `SwarmConfig::stale_after_secs`; both surfaces
+/// reject zero/negative windows so pruning cannot invert or immediately erase
+/// the dashboard.
+pub(crate) fn resolve_stale_secs(cli_override: Option<i64>, configured: i64) -> Result<i64> {
+    let stale_secs = cli_override.unwrap_or(configured);
+    if stale_secs <= 0 {
+        anyhow::bail!("swarm stale threshold must be greater than zero seconds");
+    }
+    Ok(stale_secs)
 }
 
 // ── Output ────────────────────────────────────────────────────────────────────
 
-fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result<()> {
+fn print_swarm(
+    wal_dir: &Path,
+    config: SwarmConfig,
+    stale_secs: i64,
+    output: &OutputFormat,
+) -> Result<()> {
     let mut table = SwarmTable::new();
 
     // Only scan segments recent enough to still hold a non-stale snapshot. A
@@ -129,9 +122,19 @@ fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result
         OutputFormat::Json | OutputFormat::Jsonl => {
             let json_rows: Vec<serde_json::Value> =
                 rows.iter().map(|r| snapshot_to_json(r)).collect();
-            println!("{}", serde_json::json!({ "nodes": json_rows }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "sampling": swarm_policy_json(config, stale_secs),
+                    "nodes": json_rows,
+                })
+            );
         }
         OutputFormat::Table => {
+            println!(
+                "# sampling_enabled={}, interval_secs={}, configured_stale_secs={}, effective_stale_secs={}",
+                config.enabled, config.interval_secs, config.stale_after_secs, stale_secs,
+            );
             if rows.is_empty() {
                 println!(
                     "# no swarm snapshot frames found in WAL\n\
@@ -176,10 +179,21 @@ fn print_swarm(wal_dir: &Path, stale_secs: i64, output: &OutputFormat) -> Result
                 );
             }
             println!("{}", "-".repeat(115));
-            println!("# {} node(s), stale_secs={}", rows.len(), stale_secs);
+            println!("# {} node(s)", rows.len());
         }
     }
     Ok(())
+}
+
+/// Serialize the effective dashboard policy so JSON output exposes the same
+/// config state as the human-readable status line.
+fn swarm_policy_json(config: SwarmConfig, stale_secs: i64) -> serde_json::Value {
+    serde_json::json!({
+        "enabled": config.enabled,
+        "interval_secs": config.interval_secs,
+        "configured_stale_after_secs": config.stale_after_secs,
+        "effective_stale_after_secs": stale_secs,
+    })
 }
 
 /// Serialize a snapshot to a JSON value with all required fields.
@@ -212,8 +226,7 @@ pub fn snapshot_to_json(r: &NodeResourceSnapshot) -> serde_json::Value {
 /// cleanly; the segment is not an error unless the segment header itself is
 /// unreadable.
 fn scan_segment_into_table(path: &Path, table: &mut SwarmTable) -> Result<()> {
-    let bytes =
-        std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
 
     let hdr = match parse_segment_header(&bytes) {
         Ok(h) => h,
@@ -236,8 +249,8 @@ fn scan_segment_into_table(path: &Path, table: &mut SwarmTable) -> Result<()> {
     let body = &bytes[header_len..];
     let decompressed: Vec<u8>;
     let frames: &[u8] = if hdr.is_compressed() {
-        decompressed = decompress_frames(body)
-            .with_context(|| format!("decompress {}", path.display()))?;
+        decompressed =
+            decompress_frames(body).with_context(|| format!("decompress {}", path.display()))?;
         &decompressed
     } else {
         body
@@ -325,34 +338,42 @@ fn trunc(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::swarm::{NodeResourceSnapshot, SwarmConfig, SwarmTable};
+    use crate::cluster::swarm::{NodeResourceSnapshot, SwarmTable};
 
     // ── resolve_stale_secs ────────────────────────────────────────────────
 
-    /// No CLI arg → value comes from `SwarmConfig::stale_after_secs` (the
-    /// previously unapplied config field is now the authoritative source).
+    /// No CLI arg → the loaded `SwarmConfig::stale_after_secs` wins.
     #[test]
     fn resolve_stale_secs_defaults_to_swarm_config_field() {
-        assert_eq!(
-            resolve_stale_secs(None),
-            SwarmConfig::default().stale_after_secs,
-            "absent CLI arg must apply SwarmConfig.stale_after_secs"
-        );
+        assert_eq!(resolve_stale_secs(None, 777).unwrap(), 777);
     }
 
     /// Explicit CLI arg must override the config default.
     #[test]
     fn resolve_stale_secs_cli_override_wins() {
         assert_eq!(
-            resolve_stale_secs(Some(60)),
+            resolve_stale_secs(Some(60), 300).unwrap(),
             60,
             "explicit CLI arg must override SwarmConfig default"
         );
-        assert_eq!(
-            resolve_stale_secs(Some(0)),
-            0,
-            "zero override (stale immediately) must be respected"
-        );
+        assert!(resolve_stale_secs(Some(0), 300).is_err());
+        assert!(resolve_stale_secs(Some(-1), 300).is_err());
+        assert!(resolve_stale_secs(None, 0).is_err());
+    }
+
+    #[test]
+    fn swarm_status_reports_loaded_and_effective_policy() {
+        let config = SwarmConfig {
+            enabled: false,
+            interval_secs: 45,
+            stale_after_secs: 900,
+        };
+        let policy = swarm_policy_json(config, 60);
+
+        assert_eq!(policy["enabled"].as_bool(), Some(false));
+        assert_eq!(policy["interval_secs"].as_u64(), Some(45));
+        assert_eq!(policy["configured_stale_after_secs"].as_i64(), Some(900));
+        assert_eq!(policy["effective_stale_after_secs"].as_i64(), Some(60));
     }
 
     fn make_snap(node_id: &str, ts_unix: i64) -> NodeResourceSnapshot {
@@ -452,7 +473,7 @@ mod tests {
     #[test]
     fn stale_entries_pruned_after_scan() {
         let mut table = SwarmTable::new();
-        table.upsert(make_snap("old-node", 0));         // ancient: ts_unix = epoch
+        table.upsert(make_snap("old-node", 0)); // ancient: ts_unix = epoch
         table.upsert(make_snap("fresh-node", i64::MAX / 2)); // far-future: always fresh
         table.prune(1); // anything older than 1 s is stale
         assert_eq!(table.len(), 1);

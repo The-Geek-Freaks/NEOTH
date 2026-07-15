@@ -175,13 +175,7 @@ pub async fn run_github(args: GithubArgs) -> Result<()> {
             base,
             draft,
         } => {
-            let url = github::create_pr(
-                repo.as_deref(),
-                &title,
-                &body,
-                base.as_deref(),
-                draft,
-            )?;
+            let url = github::create_pr(repo.as_deref(), &title, &body, base.as_deref(), draft)?;
             println!("{url}");
         }
     }

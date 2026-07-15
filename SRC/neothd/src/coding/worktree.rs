@@ -51,7 +51,7 @@
 //!   (success) or `0xD4 PATCH_APPLY_FAILED` (apply or test fail)
 //!   based on this module's outcome.
 //! - Permission gating. The dispatcher consults
-//!   `permissions::evaluate(WriteToRepo, level)` BEFORE calling
+//!   `permissions::evaluate(WriteToRepo, &policy_snapshot)` BEFORE calling
 //!   into this module; the per-autonomy confirm prompt lives in
 //!   the dispatcher's CLI surface (`neoth code` invocation),
 //!   not the worktree helper.

@@ -6,11 +6,11 @@ NEOTH's normal path is the GUI/CLI wizard. Advanced users can edit config files 
 
 | File | Purpose |
 | :-- | :-- |
-| `~/.neoth/freedom.yaml` | Main operator preferences, autonomy, channels, memory, privacy. |
-| `~/.neoth/credentials.yaml` | Local credential references and secrets metadata. |
-| `~/.neoth/inference.toml` | Provider and local model routing. |
-| `~/.neoth/policy.yaml` | Machine-level policy and allowlists. |
-| `~/.neoth/council.toml` | Council budget and trigger behavior. |
+| `~/.neoth/freedom.yaml` | Main provider, inference, autonomy, channel, media, memory, council, and runtime configuration. |
+| `~/.neoth/credentials.yaml` | File-backed secrets when `secrets_backend: file` is selected. |
+| `~/.neoth/policy.yaml` | Dangerous targets/patterns and optional startup credential-scan paths. |
+| `~/.neoth/mcp_servers.yaml` | External MCP launchers, tool allowlists, and per-server autonomy floors. |
+| `~/.neoth/tweaks.toml` | Optional UI/statusline/model/persona customisation. |
 | `~/.neoth/plugins/` | Installed WASM plugins. |
 | `~/.neoth/skills/` | Installed skills. |
 | `~/.neoth/wal/` | Event log. Do not edit manually. |
@@ -29,87 +29,176 @@ neoth init
 ```
 
 The wizard should be enough for normal users. Manual editing is for operators.
+On a fresh CLI onboarding (including an Express preset), the wizard writes
+`audit_rpc.enabled: true` so one-shot permission events can reach the
+daemon-owned WAL. The stricter
+`audit_rpc.required_for_oneshot_permission_events` switch remains `false`
+unless the operator enables compliance fail-closed behavior. `neoth init
+--force` preserves the existing `audit_rpc` block instead of resetting either
+choice.
 
 ## `freedom.yaml`
 
 Example:
 
 ```yaml
-operator:
-  language: en
-  answer_style: direct
+operator_id: alex
+language_primary: en
+language_code: en
+role: developer
 
-privacy:
-  local_profile_extraction: true
-  allow_cloud_fallback: false
+provider_kind: claude_cli
+provider_model: claude-opus-4-7
+
+autonomy: standard
 
 profile:
+  learn_enabled: false
+  learn_provider: local_qwen
+  allow_cloud_fallback: false
   require_approval: true
-  learn:
-    preferences: true
-    projects: true
-    health: false
 
-autonomy:
-  level: standard
+inference:
+  mode: single
+  embedding_provider: local_qwen
+  max_new_tokens: 256
 
-channels:
-  telegram:
-    enabled: true
-  whatsapp:
-    enabled: false
-  slack:
-    enabled: false
-
-mesh:
-  tailscale: true
-  hysteria: false
-  keet: false
+media:
+  cloud_stt_enabled: false
+  cloud_tts_enabled: false
+  cloud_vision_enabled: false
 ```
+
+These keys match the deserialized schema. Channel credentials belong in the
+credential store and should normally be written through `neoth channel add`,
+not invented as nested `channels.*.enabled` booleans.
+
+### Swarm resource dashboard
+
+Cluster-enabled builds can persist local CPU/RAM/VRAM samples and display the
+fresh local/peer set with `neoth cluster swarm`:
+
+```yaml
+swarm:
+  enabled: true
+  interval_secs: 30
+  stale_after_secs: 300
+```
+
+`interval_secs` controls the daemon sampler; `stale_after_secs` controls the
+dashboard's default prune window. Both must be greater than zero or config load
+fails. `neoth cluster swarm --stale-secs N` overrides the prune window for one
+invocation without changing the daemon cadence.
 
 ## Autonomy
 
 | Level | Behavior |
 | :-- | :-- |
-| `strict` | Ask before profile changes, sends, network, plugins, file mutation, workflows. |
-| `standard` | Auto-allow low-risk read-only actions; ask before mutation or external action. |
-| `elevated` | Allow routine local actions; gate sensitive/high-impact actions. |
-| `full` | Execute within explicit policy scope; audit everything. |
+| `strict` | Permission-engine actions take the strict confirm/deny path; unattended cron is disabled. Dedicated integration switches still apply independently. |
+| `standard` | Auto-allow low-risk actions represented in the permission engine; retain action-specific confirms and explicit integration opt-ins. |
+| `elevated` | Allow more routine local actions; retain hard safety floors and dedicated opt-ins. |
+| `full` | Execute within explicit policy scope; hard safety floors and path-specific audit semantics remain. |
+| `custom` | Standard baseline plus typed per-action `allow`, `confirm`, or `deny` overrides. Missing entries inherit Standard. Full's confirm/deny decisions are an irreducible floor; unattended cron and auto-update remain explicitly fail-closed. |
+
+Custom policy lives in the main config, not in a second policy file:
+
+```yaml
+autonomy: custom
+custom_autonomy:
+  overrides:
+    exec_arbitrary: deny
+    external_http_request: confirm
+    channel_send: allow
+```
+
+Use `neoth permissions show` to inspect all stable action names and effective
+decisions, `neoth permissions check <action>` to probe the active policy, and
+`neoth permissions set <action> <allow|confirm|deny>` / `clear <action>` for an
+atomic config update. Invalid action names or decision values fail config
+deserialization. A successful daemon reload publishes a new immutable policy
+snapshot; an in-flight decision keeps the snapshot with which it started.
+
+Autonomy is not a universal network switch. Non-local HTTP and TTS pass their
+typed permission actions, while cloud TTS additionally requires the separate
+default-off `media.cloud_tts_enabled` switch. Other integrations retain their
+own allowlists, consent records, endpoint validation, and audit requirements. The
+[threat model](security/threat-model.md) is the authoritative per-surface map.
 
 ## Inference
 
-`~/.neoth/inference.toml`:
+Inference routing is an `inference:` block in `~/.neoth/freedom.yaml`; NEOTH
+does not load a separate `inference.toml`:
 
-```toml
-[inference]
-allow_cloud_fallback = false
+```yaml
+provider_kind: openai_compat
+provider_endpoint: http://127.0.0.1:1234/v1
+provider_model: local-model-id
 
-[providers.fast]
-kind = "openai-compatible"
-model = "fast-model"
+inference:
+  mode: single
+  accelerator_override: cuda  # optional; omit for auto-detection
+  embedding_provider: local_qwen
+  profile_provider: local_qwen
+  utility_provider: local_qwen
+  max_new_tokens: 256
 
-[providers.deep]
-kind = "claude"
-model = "deep-model"
-
-[providers.profile]
-kind = "local-qwen"
+profile:
+  learn_provider: local_qwen
+  allow_cloud_fallback: false
 ```
+
+`profile.learn_provider` controls the post-reply extraction path used today.
+`profile.allow_cloud_fallback` is the explicit fail-open switch for that path;
+it does not live under `inference`.
 
 See [providers.md](providers.md) and [local-models.md](local-models.md).
 
 ## Council
 
-`~/.neoth/council.toml`:
+Council settings also live in `~/.neoth/freedom.yaml`:
 
-```toml
-[council.budget]
-trigger = "smart"
-max_debates_per_day = 5
-max_usd_per_day = 2.00
+```yaml
+council:
+  max_calls_per_user_message: 15
+  daily_usd_cap: 2.0
+  max_recursion_depth: 2
+  self_reflect_enabled: false
+
+inference:
+  hemisphere_council_depth: 1
 ```
 
 See [council.md](council.md).
+
+## External MCP servers
+
+`mcp_servers.yaml` is spawned through one central fail-closed launcher contract.
+Use a directly installed executable, or an exact top-level npm pin:
+
+```yaml
+servers:
+  - id: hex-graph
+    command: npx
+    args: ["-y", "@levnikolaevich/hex-graph-mcp@0.21.1"]
+    enabled: true
+    allow_tools:
+      - index_project
+      - find_symbols
+      - find_references
+      - analyze_architecture
+    trust_all_tools: false
+```
+
+Tags (`@latest`), ranges, unversioned npx packages, shell/script wrappers, and
+alternate runtime fetchers are rejected before process creation. Node injection
+and npm registry/userconfig overrides are also rejected. `neoth doctor` reports
+invalid enabled launchers as failures; `neoth mcp list` shows each static launcher
+posture. Server arguments may follow the exact package spec.
+
+The optional `neoth init --force` hex-graph offer writes the full canonical
+13-tool allowlist and checks Node >=20.19.0 plus npx. Its first use can still
+download through npm: the exact top-level pin prevents tag drift, but transitive
+dependencies remain in npm's upstream trust boundary.
 
 ### Council depth and the `3^depth` cost curve
 
@@ -130,26 +219,51 @@ rate-limit budget instead. NEOTH surfaces this as a one-line warning — interac
 the wizard and the GUI Config tab, and as a stderr line in non-interactive runs — so a
 deep tree is a deliberate choice. Lower `hemisphere_council_depth` to bring it back down.
 
-## Policy
+### WASM plugin approvals
 
-`policy.yaml` is the machine guardrail layer.
+Plugin activation state lives under `freedom.yaml::plugins.wasm.activations`, but
+Active entries are CLI-managed approval records, not plain booleans:
 
 ```yaml
-channels:
-  telegram:
-    allowed_chat_ids: [123456789]
-
-filesystem:
-  writable_roots:
-    - "~/projects"
-
-network:
-  allow_domains:
-    - "api.openai.com"
-    - "api.anthropic.com"
-
 plugins:
-  default_network: false
+  wasm:
+    activations:
+      example:
+        state: active
+        approval:
+          approved_permission: read_only
+          manifest_sha256: "<canonical-plugin.toml-digest>"
+          wasm_sha256: "<plugin.wasm-digest>"
+```
+
+Use `neoth plugin enable <id>` to create or refresh the record. Startup and every
+live invocation fail closed if the persisted approval is missing or changes. A
+semantic manifest change, any requested-permission change, or different WASM bytes
+cannot load on the next daemon start without explicit re-enable; the current daemon
+continues only its already-validated immutable module snapshot. Old scalar entries
+such as `example: active` are accepted for safe migration but never auto-grant
+authority. `neoth plugin list` reports these as `reconsent_required` with the exact
+reason.
+
+## Policy
+
+`policy.yaml` is a small dangerous-target and startup credential-audit layer.
+It is not the schema for `security`, filesystem roots, channel allowlists, or
+Custom autonomy. Custom overrides live at
+`freedom.yaml::custom_autonomy.overrides`; other controls live in their typed
+`freedom.yaml` sections or dedicated registries.
+
+```yaml
+dangerous_targets:
+  - 192.168.1.100
+  - gateway.internal
+dangerous_patterns:
+  - "rm -rf"
+  - "kill -9"
+startup_audit_scan_paths:
+  - ~/.config/git/config
+  - ~/work/project/.env
+forbid_inline_tokens_in_remotes: true
 ```
 
 ### Tool risk gate & SmartApprove (`security:`)
@@ -187,10 +301,32 @@ Credential setup should normally happen through:
 ```bash
 neoth credential import --file creds.yaml   # merge a credentials.yaml-shaped file
 neoth connect telegram                       # show how to wire a channel
-neoth provider add openai                    # register a provider
+neoth provider list                          # inspect supported/configured providers
+neoth init --force                           # change provider configuration
 ```
 
 Secrets should not be pasted into docs, tickets, logs, or profile memory.
+
+The optional WhatsApp Web/Baileys bridge has a dedicated credential namespace;
+none of these fields are interchangeable with the Meta Cloud fields:
+
+| Field | Purpose |
+| :-- | :-- |
+| `whatsapp_baileys_url` | Repository sidecar base URL. HTTP is loopback-only; remote bridges require HTTPS. |
+| `whatsapp_baileys_token` | Dedicated bridge bearer token, at least 32 characters. |
+| `whatsapp_baileys_allowed_senders` | Required comma-separated E.164 numbers or exact WhatsApp JIDs. |
+| `whatsapp_baileys_allowed_groups` | Optional exact `@g.us` JIDs; absent means all groups denied. |
+
+Use `neoth channel add whatsapp_baileys` so URL, token, sender, and group policy
+are validated atomically. Configure its proactive destination separately with
+`neoth proactive route --channel whatsapp_baileys --dest <E.164-or-JID>`.
+
+OMI uses dedicated credential fields rather than provider/channel tokens:
+`omi_developer_api_key` for official Developer API import/export and
+`omi_ingest_token` for the authenticated native listener. Keep them in
+`credentials.yaml` or the configured keychain. See
+[runbook_omi_privacy.md](runbook_omi_privacy.md) for the full mode and consent
+contract.
 
 Common environment variables:
 
@@ -204,6 +340,7 @@ Common environment variables:
 | `SLACK_APP_TOKEN` | Slack Socket Mode token. |
 | `WHATSAPP_TOKEN` | WhatsApp Business Cloud API. |
 | `WHATSAPP_PHONE_ID` | WhatsApp Business phone number ID. |
+| `NEOTH_WA_BRIDGE_TOKEN` | Repository Baileys sidecar bearer token; copy it into the dedicated CLI channel config. |
 
 ## Reload behavior
 
@@ -212,6 +349,7 @@ Common environment variables:
 | Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
 | Provider config | Daemon reload or restart depending on provider. |
 | Channels | Restart `neoth serve` after credential changes. |
+| OMI | `neoth reload` validates effective file/keychain credentials and restarts only the OMI workers; an invalid reload preserves the last valid runtime. |
 | Plugins | Restart after enabling/disabling code plugins. |
 | Policy | Reload where supported; restart for safest behavior. |
 

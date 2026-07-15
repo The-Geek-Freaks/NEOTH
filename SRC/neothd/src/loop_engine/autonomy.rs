@@ -61,7 +61,7 @@ impl LoopAutonomyLevel {
     /// Validate the level/budget pairing BEFORE the loop starts — the gate
     /// belongs at argument time, not round N.
     pub fn validate_budget(self, tool_call_budget: Option<u64>) -> Result<(), String> {
-        if self.requires_budget() && tool_call_budget.is_none() {
+        if self.requires_budget() && tool_call_budget.is_none_or(|budget| budget == 0) {
             return Err(
                 "loop level l3 (full autonomy) requires --budget <N> — the most \
                  autonomous mode must carry a hard tool-call cap"
@@ -100,12 +100,16 @@ mod tests {
             LoopAutonomyLevel::L2.to_autonomy_level(),
             AutonomyLevel::Elevated
         );
-        assert_eq!(LoopAutonomyLevel::L3.to_autonomy_level(), AutonomyLevel::Full);
+        assert_eq!(
+            LoopAutonomyLevel::L3.to_autonomy_level(),
+            AutonomyLevel::Full
+        );
     }
 
     #[test]
     fn l3_without_budget_is_refused() {
         assert!(LoopAutonomyLevel::L3.validate_budget(None).is_err());
+        assert!(LoopAutonomyLevel::L3.validate_budget(Some(0)).is_err());
         assert!(LoopAutonomyLevel::L3.validate_budget(Some(50)).is_ok());
         assert!(LoopAutonomyLevel::L1.validate_budget(None).is_ok());
         assert!(LoopAutonomyLevel::L2.validate_budget(None).is_ok());

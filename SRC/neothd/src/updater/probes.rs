@@ -20,19 +20,30 @@
 //! audit frame so operators see "yes, the cron ran; yes, it
 //! tried; here's why it didn't have a latest_version answer".
 
+use crate::config::ReleaseChannel;
 use crate::updater::pipeline::{ComponentSpec, GateDecision, cli_version_specs, neoth_self_specs};
-use crate::updater::self_update::{check_for_update, current_version};
+use crate::updater::self_update::{check_for_update_channel, current_version};
 
-/// Canonical owner/repo for the `neothd` binary lookup.
+/// Canonical owner/repo for the public `neoth` binary lookup.
 pub const NEOTH_OWNER_REPO: &str = "The-Geek-Freaks/NEOTH";
 
 // ── U-01 neoth_self ──────────────────────────────────────────────────────────
 
-/// Probe `neothd` self-version. Returns a single-component spec
+/// Probe `neoth` self-version. Returns a single-component spec
 /// list ready for `run_updater_pass(UpdaterTaskKind::NeothSelf, …)`.
 pub async fn neoth_self_specs_async(gate: GateDecision) -> Vec<ComponentSpec> {
+    neoth_self_specs_async_for(NEOTH_OWNER_REPO, ReleaseChannel::Stable, gate).await
+}
+
+/// Config-aware self-update probe. The daemon passes the operator's repository
+/// and release ring here instead of silently probing the public stable feed.
+pub async fn neoth_self_specs_async_for(
+    owner_repo: &str,
+    channel: ReleaseChannel,
+    gate: GateDecision,
+) -> Vec<ComponentSpec> {
     let current = current_version().to_string();
-    let latest = match check_for_update(NEOTH_OWNER_REPO).await {
+    let latest = match check_for_update_channel(owner_repo, channel).await {
         Ok(c) => Ok(c.latest),
         Err(e) => Err(format!("github probe: {e}")),
     };
@@ -43,8 +54,16 @@ pub async fn neoth_self_specs_async(gate: GateDecision) -> Vec<ComponentSpec> {
 /// `block_on` on the current tokio runtime — safe because the
 /// closure runs on `spawn_blocking` (no nested-runtime issue).
 pub fn neoth_self_specs_blocking(gate: GateDecision) -> Vec<ComponentSpec> {
+    neoth_self_specs_blocking_for(NEOTH_OWNER_REPO, ReleaseChannel::Stable, gate)
+}
+
+pub fn neoth_self_specs_blocking_for(
+    owner_repo: &str,
+    channel: ReleaseChannel,
+    gate: GateDecision,
+) -> Vec<ComponentSpec> {
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle.block_on(neoth_self_specs_async(gate)),
+        Ok(handle) => handle.block_on(neoth_self_specs_async_for(owner_repo, channel, gate)),
         Err(_) => Vec::new(),
     }
 }
@@ -322,7 +341,7 @@ mod tests {
         // still a valid single-spec list.
         let specs = neoth_self_specs_async(GateDecision::Allow).await;
         assert_eq!(specs.len(), 1, "neoth_self probe yields exactly one spec");
-        assert_eq!(specs[0].name, "neothd");
+        assert_eq!(specs[0].name, "neoth");
         assert_eq!(specs[0].current_version, current_version());
     }
 

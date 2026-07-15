@@ -64,11 +64,24 @@ pub async fn spawn_background_session(
     config: FreedomConfig,
     provider: Arc<dyn Provider>,
     writer: Option<&crate::wal::writer::WalWriterHandle>,
-) -> BgJobId {
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+) -> Result<BgJobId> {
     let job_id = BgJobId::new();
     let bgjobs_dir = FreedomConfig::default_neoth_home().join("bgjobs");
     let result_path = bgjobs_dir.join(format!("{}.result", job_id.as_str()));
     let exit_path = bgjobs_dir.join(format!("{}.exit", job_id.as_str()));
+
+    let request = build_bg_request(&prompt, &config);
+    // The owned boundary travels into the detached job so authorization stays
+    // immediately adjacent to the actual leaf request (including any fallback
+    // hop or compactor mutation) instead of becoming a stale queue-time quote.
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+        provider,
+        authorizer,
+        request.model.clone(),
+        "background_session",
+    )
+    .into_arc();
 
     // WAL 0x87 BG_SESSION_STARTED — best-effort.
     if let Some(w) = writer {
@@ -98,7 +111,7 @@ pub async fn spawn_background_session(
             return;
         }
 
-        let result_text = match run_bg_headless(prompt, config, provider).await {
+        let result_text = match run_bg_headless(request, provider).await {
             Ok(text) => text,
             Err(e) => {
                 warn!(job_id = job_id_clone.as_str(), error = %e, "bg_session: provider call failed");
@@ -130,28 +143,33 @@ pub async fn spawn_background_session(
         emit_bg_done_wal_sync(job_id_clone.as_str(), &label_str);
     });
 
-    job_id
+    Ok(job_id)
 }
 
 /// Thin headless provider call. Uses `provider.complete()` directly —
 /// no stdout, no WAL/hook overhead, no skill routing. Intentionally
 /// thin: ephemeral background sessions trade depth for speed.
-async fn run_bg_headless(
-    prompt: String,
-    _config: FreedomConfig,
-    provider: Arc<dyn Provider>,
-) -> Result<String> {
-    let req = Request {
-        prompt,
+fn build_bg_request(prompt: &str, config: &FreedomConfig) -> Request {
+    let default_model = config
+        .inference
+        .slot_for(crate::config::inference::HemisphereRole::Left)
+        .model
+        .clone()
+        .or(config.provider_model.clone());
+    Request {
+        prompt: prompt.to_owned(),
         system: None,
-        model: None,
+        model: default_model,
         temperature: None,
         top_p: None,
         sampling_seed: None,
         stop_sequences: vec![],
         thinking_budget: None,
-    };
-    let completion = provider.complete(req).await?;
+    }
+}
+
+async fn run_bg_headless(request: Request, provider: Arc<dyn Provider>) -> Result<String> {
+    let completion = provider.complete(request).await?;
     Ok(completion.text)
 }
 
@@ -327,6 +345,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
                 text: self.reply.clone(),
+                identity: Default::default(),
                 model: "mock".to_string(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,
@@ -345,7 +364,8 @@ mod tests {
         assert_eq!(id.as_str().len(), 16);
         assert!(
             id.as_str().chars().all(|c| c.is_ascii_hexdigit()),
-            "BgJobId must be hex: {}", id.as_str()
+            "BgJobId must be hex: {}",
+            id.as_str()
         );
     }
 
@@ -398,7 +418,9 @@ mod tests {
         let id = BgJobId::new();
         let result_file = tmp.path().join(format!("{}.result", id.as_str()));
         let exit_file = tmp.path().join(format!("{}.exit", id.as_str()));
-        tokio::fs::write(&result_file, b"background-answer").await.unwrap();
+        tokio::fs::write(&result_file, b"background-answer")
+            .await
+            .unwrap();
         tokio::fs::write(&exit_file, b"done\n").await.unwrap();
 
         let results = maybe_deliver_bg_result(tmp.path()).await;
@@ -433,12 +455,9 @@ mod tests {
         )
         .await
         .unwrap();
-        tokio::fs::write(
-            tmp.path().join(format!("{}.exit", id.as_str())),
-            b"done\n",
-        )
-        .await
-        .unwrap();
+        tokio::fs::write(tmp.path().join(format!("{}.exit", id.as_str())), b"done\n")
+            .await
+            .unwrap();
 
         let results = maybe_deliver_bg_result(tmp.path()).await;
         assert_eq!(results[0], "answer");
@@ -454,9 +473,8 @@ mod tests {
         let provider = Arc::new(MockProvider::new("the-answer"));
         let config = FreedomConfig::default();
 
-        let text = run_bg_headless("test prompt".to_string(), config, provider)
-            .await
-            .unwrap();
+        let request = build_bg_request("test prompt", &config);
+        let text = run_bg_headless(request, provider).await.unwrap();
         assert_eq!(text, "the-answer");
     }
 
@@ -475,12 +493,9 @@ mod tests {
         )
         .await
         .unwrap();
-        tokio::fs::write(
-            dir.path().join(format!("{}.exit", id.as_str())),
-            b"done\n",
-        )
-        .await
-        .unwrap();
+        tokio::fs::write(dir.path().join(format!("{}.exit", id.as_str())), b"done\n")
+            .await
+            .unwrap();
 
         let results = maybe_deliver_bg_result(dir.path()).await;
         assert_eq!(results.len(), 1, "result should be delivered");
@@ -496,9 +511,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         for suffix in ["aaa", "bbb", "ccc"] {
             let id = format!("{suffix:0<16}");
-            tokio::fs::write(tmp.path().join(format!("{id}.result")), format!("result-{suffix}").as_bytes())
-                .await
-                .unwrap();
+            tokio::fs::write(
+                tmp.path().join(format!("{id}.result")),
+                format!("result-{suffix}").as_bytes(),
+            )
+            .await
+            .unwrap();
             tokio::fs::write(tmp.path().join(format!("{id}.exit")), b"done\n")
                 .await
                 .unwrap();

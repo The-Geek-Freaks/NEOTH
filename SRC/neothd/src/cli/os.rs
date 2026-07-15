@@ -101,7 +101,7 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
             launch_os_app(
                 program,
                 &cfg.tools.os,
-                cfg.autonomy,
+                &cfg.autonomy_policy(),
                 AuditSink::DaemonRpc(&home),
                 now,
             )
@@ -118,7 +118,7 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
                     let r = launch_os_app(
                         program,
                         &cfg.tools.os,
-                        cfg.autonomy,
+                        &cfg.autonomy_policy(),
                         AuditSink::Writer(&writer),
                         now,
                     )
@@ -141,7 +141,14 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
                         error = %e,
                         "os launch proceeding WITHOUT WAL audit — could not open a one-shot WAL writer"
                     );
-                    launch_os_app(program, &cfg.tools.os, cfg.autonomy, AuditSink::None, now).await
+                    launch_os_app(
+                        program,
+                        &cfg.tools.os,
+                        &cfg.autonomy_policy(),
+                        AuditSink::None,
+                        now,
+                    )
+                    .await
                 }
             }
         }
@@ -199,7 +206,13 @@ async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<
     )?;
     let clip = &cfg.tools.os.clipboard;
     let result = if daemon_live {
-        read_os_clipboard(clip, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
+        read_os_clipboard(
+            clip,
+            &cfg.autonomy_policy(),
+            AuditSink::DaemonRpc(&home),
+            now,
+        )
+        .await
     } else {
         let segment = home.join("wal").join("000001.wal");
         if let Some(parent) = segment.parent() {
@@ -207,8 +220,13 @@ async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<
         }
         match crate::wal::spawn(segment) {
             Ok((writer, join)) => {
-                let r =
-                    read_os_clipboard(clip, cfg.autonomy, AuditSink::Writer(&writer), now).await;
+                let r = read_os_clipboard(
+                    clip,
+                    &cfg.autonomy_policy(),
+                    AuditSink::Writer(&writer),
+                    now,
+                )
+                .await;
                 drop(writer);
                 let _ = join.await;
                 r
@@ -222,7 +240,7 @@ async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<
                     );
                 }
                 tracing::warn!(error = %e, "clipboard read proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
-                read_os_clipboard(clip, cfg.autonomy, AuditSink::None, now).await
+                read_os_clipboard(clip, &cfg.autonomy_policy(), AuditSink::None, now).await
             }
         }
     };
@@ -285,7 +303,7 @@ async fn run_clipboard_set(
         write_os_clipboard(
             &content,
             clip,
-            cfg.autonomy,
+            &cfg.autonomy_policy(),
             AuditSink::DaemonRpc(&home),
             now,
         )
@@ -300,7 +318,7 @@ async fn run_clipboard_set(
                 let r = write_os_clipboard(
                     &content,
                     clip,
-                    cfg.autonomy,
+                    &cfg.autonomy_policy(),
                     AuditSink::Writer(&writer),
                     now,
                 )
@@ -318,7 +336,8 @@ async fn run_clipboard_set(
                     );
                 }
                 tracing::warn!(error = %e, "clipboard write proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
-                write_os_clipboard(&content, clip, cfg.autonomy, AuditSink::None, now).await
+                write_os_clipboard(&content, clip, &cfg.autonomy_policy(), AuditSink::None, now)
+                    .await
             }
         }
     };

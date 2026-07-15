@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
-use super::{Completion, Provider, Request};
+use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
 /// Latest GA api-version as of 2026-05-18. Operators wanting newer
@@ -155,7 +155,23 @@ impl Provider for AzureOpenAiAdapter {
         "azure_openai"
     }
 
-    async fn complete(&self, req: Request) -> Result<Completion> {
+    fn request_controls(&self) -> ProviderRequestControls {
+        ProviderRequestControls::SAMPLING
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.deployment_name)
+    }
+
+    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    }
+
+    async fn complete_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+    ) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("azure_openai", async {
             let started = Instant::now();
@@ -192,6 +208,11 @@ impl Provider for AzureOpenAiAdapter {
                 model: deployment.clone(),
                 messages,
                 stream: false,
+                max_completion_tokens: super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+                temperature: req.temperature,
+                top_p: req.top_p,
+                seed: req.sampling_seed,
+                stop: (!req.stop_sequences.is_empty()).then(|| req.stop_sequences.clone()),
             };
 
             let url = self.url(&deployment);
@@ -257,6 +278,7 @@ impl Provider for AzureOpenAiAdapter {
 
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model: deployment,
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
@@ -330,6 +352,15 @@ struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     stream: bool,
+    max_completion_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -380,6 +411,50 @@ mod tests {
         .expect("construct");
         assert_eq!(a.name(), "azure_openai");
         assert_eq!(a.api_version, DEFAULT_API_VERSION);
+    }
+
+    #[test]
+    fn chat_request_serializes_bounded_output_ceiling() {
+        let body = ChatRequest {
+            model: "gpt-5-prod".into(),
+            messages: vec![ChatMessage {
+                role: "user",
+                content: "ping".into(),
+            }],
+            stream: false,
+            max_completion_tokens: crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+            temperature: None,
+            top_p: None,
+            seed: None,
+            stop: None,
+        };
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(json["max_completion_tokens"], 4096);
+        for field in ["temperature", "top_p", "seed", "stop"] {
+            assert!(json.get(field).is_none());
+        }
+    }
+
+    #[test]
+    fn chat_request_serializes_sampling_controls() {
+        let body = ChatRequest {
+            model: "gpt-5-prod".into(),
+            messages: vec![ChatMessage {
+                role: "user",
+                content: "ping".into(),
+            }],
+            stream: false,
+            max_completion_tokens: crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+            temperature: Some(0.3),
+            top_p: Some(0.8),
+            seed: Some(9),
+            stop: Some(vec!["END".into()]),
+        };
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(json["temperature"], 0.3);
+        assert_eq!(json["top_p"], 0.8);
+        assert_eq!(json["seed"], 9);
+        assert_eq!(json["stop"], serde_json::json!(["END"]));
     }
 
     #[test]

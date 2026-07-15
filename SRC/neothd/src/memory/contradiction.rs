@@ -253,7 +253,9 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
 /// Adjacent-token bigram shingles: `["a","b","c"]` → `{"a b","b c"}`. Empty for
 /// fewer than 2 tokens (JV-MEM-03 v2 — adjacency signal for the subject match).
 fn bigram_shingles(toks: &[String]) -> HashSet<String> {
-    toks.windows(2).map(|w| format!("{} {}", w[0], w[1])).collect()
+    toks.windows(2)
+        .map(|w| format!("{} {}", w[0], w[1]))
+        .collect()
 }
 
 /// Subject similarity (JV-MEM-03 v2): unigram-token Jaccard LIFTED by a bigram-
@@ -451,14 +453,18 @@ fn record_pair(
                 confidence = sig.confidence,
                 "MEM-02: polarity contradiction — loser flagged Contradicted",
             );
-            // refines-MEM-06: best-effort KG invalidation — close any active
-            // relation triple that corresponds to the losing ground-truth fact.
+            // refines-MEM-06: the KG stores positive relation edges. Close an
+            // edge only when the losing fact is positive. If the loser is the
+            // negated statement, stripping its negation would identify the
+            // winner's true edge and incorrectly delete it from graph recall.
             let loser_stmt = if loser == a.id {
                 &a.statement
             } else {
                 &b.statement
             };
-            if let Err(e) = try_invalidate_for_statement(conn, loser_stmt, now_ns) {
+            if !has_negation(loser_stmt)
+                && let Err(e) = try_invalidate_for_statement(conn, loser_stmt, now_ns)
+            {
                 tracing::debug!(
                     error = %e,
                     "MEM-06: invalidate_relation best-effort (non-fatal, record_pair)"
@@ -471,6 +477,11 @@ fn record_pair(
             fact_b_id = hi,
             confidence = sig.confidence,
             "MEM-02: value-divergence recorded for operator review (no auto-flag)",
+        );
+    }
+    if inserted > 0 {
+        crate::analytics::babel::signals::emit(
+            crate::analytics::babel::signals::SignalKind::MemoryContradiction,
         );
     }
     Ok(inserted > 0)
@@ -677,9 +688,7 @@ pub struct AutoResolveSummary {
 fn full_token_set(s: &str) -> HashSet<String> {
     s.to_lowercase()
         .split_whitespace()
-        .map(|t| {
-            normalize_token(t.trim_matches(|c: char| c.is_ascii_punctuation()))
-        })
+        .map(|t| normalize_token(t.trim_matches(|c: char| c.is_ascii_punctuation())))
         .filter(|t| !t.is_empty() && !STOPWORDS.contains(&t.as_str()))
         .collect()
 }
@@ -750,7 +759,11 @@ pub async fn auto_resolve_batch(
         // the newer one wins as the canonical phrasing.
         let fj = full_jaccard(&a.statement, &b.statement);
         if fj >= SEMANTIC_EQUIV_JACCARD {
-            let older = if a.asserted_at <= b.asserted_at { a.id } else { b.id };
+            let older = if a.asserted_at <= b.asserted_at {
+                a.id
+            } else {
+                b.id
+            };
             suppress_fact(conn, older)?;
             close_ledger_row(conn, row.ledger_id, DECISION_MERGED, now_ns)?;
             summary.merged += 1;
@@ -783,7 +796,11 @@ pub async fn auto_resolve_batch(
         };
 
         if entity_same && a.asserted_at != b.asserted_at {
-            let older = if a.asserted_at < b.asserted_at { a.id } else { b.id };
+            let older = if a.asserted_at < b.asserted_at {
+                a.id
+            } else {
+                b.id
+            };
             let older_stmt = if older == a.id {
                 a.statement.clone()
             } else {
@@ -859,12 +876,7 @@ fn suppress_fact(conn: &Connection, id: i64) -> Result<()> {
 
 /// Update a ledger row's `decision` + `resolved_at`. Idempotent if the row
 /// was already closed by a concurrent path.
-fn close_ledger_row(
-    conn: &Connection,
-    ledger_id: i64,
-    decision: &str,
-    now_ns: i64,
-) -> Result<()> {
+fn close_ledger_row(conn: &Connection, ledger_id: i64, decision: &str, now_ns: i64) -> Result<()> {
     conn.execute(
         "UPDATE idx_contradictions SET decision = ?1, resolved_at = ?2 \
          WHERE id = ?3 AND decision = 'pending'",
@@ -990,11 +1002,7 @@ pub fn forget_for_ids(conn: &Connection, revoked_ids: &[i64]) -> Result<i64> {
 /// This is intentionally lossy — a parse failure (empty subject or object
 /// after normalisation) is a silent no-op (`Ok(())`), matching the non-fatal
 /// pattern used throughout MEM-02.
-fn try_invalidate_for_statement(
-    conn: &Connection,
-    statement: &str,
-    now_ns: i64,
-) -> Result<()> {
+fn try_invalidate_for_statement(conn: &Connection, statement: &str, now_ns: i64) -> Result<()> {
     // Subject phrase — using the module's canonical subject extractor.
     let subj_tokens: Vec<String> = subject_tokens(statement).into_iter().collect();
     let subject_phrase = subj_tokens.join(" ");
@@ -1002,10 +1010,8 @@ fn try_invalidate_for_statement(
     // Object phrase — value_tokens gives tokens after the first copula,
     // stopwords already dropped. Additionally strip negation markers so
     // "alice is NOT at mozilla" → object = "mozilla", not "not mozilla".
-    let negation_set: std::collections::HashSet<&str> = DEFAULT_NEGATION_MARKERS
-        .iter()
-        .copied()
-        .collect();
+    let negation_set: std::collections::HashSet<&str> =
+        DEFAULT_NEGATION_MARKERS.iter().copied().collect();
     let obj_tokens: Vec<String> = value_tokens(statement)
         .into_iter()
         .filter(|t| !negation_set.contains(t.as_str()))
@@ -1021,23 +1027,13 @@ fn try_invalidate_for_statement(
     // regardless of how the extraction phrased the relation label.
     // best-effort: errors (unknown entity, no active row) are surfaced to the
     // caller which logs them at debug level — never propagated as a hard failure.
-    let _ = entities::invalidate_relation_by_names(
-        conn,
-        &subject_phrase,
-        "*",
-        &object_phrase,
-        now_ns,
-    )?;
+    let _ =
+        entities::invalidate_relation_by_names(conn, &subject_phrase, "*", &object_phrase, now_ns)?;
 
     // Also try the reverse direction in case the KG stored the edge as
     // object→subject (some extractions flip direction).
-    let _ = entities::invalidate_relation_by_names(
-        conn,
-        &object_phrase,
-        "*",
-        &subject_phrase,
-        now_ns,
-    )?;
+    let _ =
+        entities::invalidate_relation_by_names(conn, &object_phrase, "*", &subject_phrase, now_ns)?;
 
     Ok(())
 }
@@ -1129,7 +1125,10 @@ mod tests {
         // score, so an identical short subject still scores 1.0 (existing tuning
         // preserved) and a multi-token subject sharing adjacency is >= its
         // unigram score.
-        assert_eq!(subject_similarity("nas at 10.0.0.5", "nas at 10.0.0.6"), 1.0);
+        assert_eq!(
+            subject_similarity("nas at 10.0.0.5", "nas at 10.0.0.6"),
+            1.0
+        );
         let uni = jaccard(
             &subject_tokens("vpn server is up"),
             &subject_tokens("vpn server is down"),
@@ -1282,12 +1281,10 @@ mod tests {
     // ── refines-MEM-06: contradiction detector → invalidate_relation wire ────
 
     #[test]
-    fn negation_contradiction_invalidates_kg_relation_for_loser() {
-        // End-to-end proof: record_pair (negation path) → try_invalidate_for_statement
-        // → invalidate_relation closes the KG edge for the losing ground-truth fact.
-        use crate::memory::entities::{
-            get_neighbors, insert_relation, resolve_or_create_entity,
-        };
+    fn losing_negation_preserves_the_winning_positive_kg_relation() {
+        // End-to-end proof: when the negative statement loses, the positive
+        // winner's relation remains visible in graph recall.
+        use crate::memory::entities::{get_neighbors, insert_relation, resolve_or_create_entity};
 
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("v.db")).unwrap();
@@ -1306,10 +1303,22 @@ mod tests {
         );
 
         // Insert the winning fact first (2 sources → higher credibility).
-        groundtruth::insert(&conn, "alice is at mozilla", &Source::OperatorRuntime, "global", 1)
-            .unwrap();
-        groundtruth::insert(&conn, "alice is at mozilla", &Source::Onboarding, "global", 2)
-            .unwrap();
+        groundtruth::insert(
+            &conn,
+            "alice is at mozilla",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "alice is at mozilla",
+            &Source::Onboarding,
+            "global",
+            2,
+        )
+        .unwrap();
 
         // Insert the losing fact (opposite polarity, 1 source).
         groundtruth::insert(
@@ -1323,7 +1332,11 @@ mod tests {
 
         // Contradiction recorded + loser flagged.
         let pending = list_contradictions(&conn, false).unwrap();
-        assert_eq!(pending.len(), 1, "negation contradiction recorded in ledger");
+        assert_eq!(
+            pending.len(),
+            1,
+            "negation contradiction recorded in ledger"
+        );
 
         // The loser ("not at", 1-source) is flagged Contradicted.
         let loser_state: String = conn
@@ -1336,7 +1349,8 @@ mod tests {
             .unwrap();
         assert_eq!(loser_state, "contradicted", "loser auto-flagged");
 
-        // refines-MEM-06: the KG edge must now be closed (valid_to IS NOT NULL).
+        // The negative loser has no positive KG edge to invalidate. The active
+        // Alice→Mozilla edge belongs to the winning positive fact.
         let vt: Option<String> = conn
             .query_row(
                 "SELECT valid_to FROM idx_relations \
@@ -1345,15 +1359,64 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(
-            vt.is_some(),
-            "KG edge closed (valid_to stamped) after negation contradiction"
-        );
+        assert!(vt.is_none(), "winning KG edge must remain active");
 
         // BFS can no longer reach Mozilla from Alice via that edge.
         assert!(
+            !get_neighbors(&conn, "alice", 1).unwrap().is_empty(),
+            "BFS must still reach the winning positive relation"
+        );
+    }
+
+    #[test]
+    fn losing_positive_fact_closes_its_kg_relation() {
+        use crate::memory::entities::{get_neighbors, insert_relation, resolve_or_create_entity};
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        let now = 1_000i64;
+        let alice = resolve_or_create_entity(&conn, "alice", "person", now).unwrap();
+        let moz = resolve_or_create_entity(&conn, "mozilla", "org", now).unwrap();
+        insert_relation(&conn, alice, moz, "at", 1.0).unwrap();
+
+        // Positive has one source; negative has two and therefore wins.
+        groundtruth::insert(
+            &conn,
+            "alice is at mozilla",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "alice is not at mozilla",
+            &Source::OperatorRuntime,
+            "global",
+            2,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "alice is not at mozilla",
+            &Source::Onboarding,
+            "global",
+            3,
+        )
+        .unwrap();
+
+        let positive_state: String = conn
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth \
+                 WHERE statement = 'alice is at mozilla'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(positive_state, "contradicted");
+        assert!(
             get_neighbors(&conn, "alice", 1).unwrap().is_empty(),
-            "BFS sees no neighbours after edge invalidation"
+            "the losing positive relation must be closed"
         );
     }
 
@@ -1656,9 +1719,23 @@ mod tests {
         let conn = store::open(&dir.path().join("v.db")).unwrap();
 
         // fact A: asserted earlier (ts=1)
-        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 1).unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 192.168.1.20",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
         // fact B: asserted later (ts=100) — same entity, different value
-        groundtruth::insert(&conn, "nas is at 10.0.0.5", &Source::OperatorRuntime, "global", 100).unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            100,
+        )
+        .unwrap();
 
         // Insert-time already detected the divergence; the row is pending.
         let pending = list_contradictions(&conn, false).unwrap();
@@ -1670,21 +1747,30 @@ mod tests {
         assert_eq!(summary.human_queue, 0);
 
         // The OLDER fact (ts=1, "192.168.1.20") must be Superseded.
-        let older_state: String = conn.query_row(
-            "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let older_state: String = conn
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(older_state, "superseded", "older fact is superseded");
 
         // The NEWER fact stays Verified.
-        let newer_state: String = conn.query_row(
-            "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 10.0.0.5'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let newer_state: String = conn
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 10.0.0.5'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(newer_state, "verified", "newer fact stays verified");
 
         // The ledger row is now closed (no longer pending).
-        assert!(list_contradictions(&conn, false).unwrap().is_empty(), "no pending after resolve");
+        assert!(
+            list_contradictions(&conn, false).unwrap().is_empty(),
+            "no pending after resolve"
+        );
         let all = list_contradictions(&conn, true).unwrap();
         assert_eq!(all[0].decision, DECISION_SUPERSEDED);
     }
@@ -1700,36 +1786,60 @@ mod tests {
         // "vpn active" vs "vpn is active" — after stopword removal both → {vpn, active},
         // so Jaccard=1.0 ≥ SEMANTIC_EQUIV_JACCARD.
         groundtruth::insert(&conn, "vpn active", &Source::OperatorRuntime, "global", 1).unwrap();
-        groundtruth::insert(&conn, "vpn is active", &Source::OperatorRuntime, "global", 2).unwrap();
+        groundtruth::insert(
+            &conn,
+            "vpn is active",
+            &Source::OperatorRuntime,
+            "global",
+            2,
+        )
+        .unwrap();
 
         // The insert-time Jaccard detects subject overlap + may not fire (values
         // identical after copula). Force a ledger entry if needed:
         let pending = list_contradictions(&conn, false).unwrap();
         if pending.is_empty() {
             // Insert a synthetic ledger row to test the merge path directly.
-            let a_id: i64 = conn.query_row(
-                "SELECT id FROM idx_groundtruth WHERE statement = 'vpn active'", [], |r| r.get(0),
-            ).unwrap();
-            let b_id: i64 = conn.query_row(
-                "SELECT id FROM idx_groundtruth WHERE statement = 'vpn is active'", [], |r| r.get(0),
-            ).unwrap();
-            let (lo, hi) = if a_id < b_id { (a_id, b_id) } else { (b_id, a_id) };
+            let a_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM idx_groundtruth WHERE statement = 'vpn active'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let b_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM idx_groundtruth WHERE statement = 'vpn is active'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let (lo, hi) = if a_id < b_id {
+                (a_id, b_id)
+            } else {
+                (b_id, a_id)
+            };
             conn.execute(
                 "INSERT OR IGNORE INTO idx_contradictions \
                  (fact_a_id, fact_b_id, confidence, detected_at) VALUES (?1, ?2, 0.9, 50)",
                 rusqlite::params![lo, hi],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let summary = auto_resolve_batch(&conn, 999, None).await.unwrap();
         // Either merged or superseded (both close the pair); at minimum one bucket > 0.
         assert!(
-            summary.merged + summary.superseded > 0 || summary.human_queue == 0
+            summary.merged + summary.superseded > 0
+                || summary.human_queue == 0
                 || summary.merged > 0,
             "semantic-equiv should resolve or at least not leave it pending",
         );
         // No pending rows remain.
-        assert!(list_contradictions(&conn, false).unwrap().is_empty(), "no pending after batch");
+        assert!(
+            list_contradictions(&conn, false).unwrap().is_empty(),
+            "no pending after batch"
+        );
     }
 
     #[tokio::test]
@@ -1740,24 +1850,51 @@ mod tests {
         let conn = store::open(&dir.path().join("v.db")).unwrap();
 
         // Same timestamp (ts=50 for both), completely different values.
-        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 50).unwrap();
-        groundtruth::insert(&conn, "nas is at 10.0.0.5", &Source::OperatorRuntime, "global", 50).unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 192.168.1.20",
+            &Source::OperatorRuntime,
+            "global",
+            50,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            50,
+        )
+        .unwrap();
 
         // If insert-time fired, we have the ledger row; otherwise insert manually.
         let pending = list_contradictions(&conn, false).unwrap();
         if pending.is_empty() {
-            let a_id: i64 = conn.query_row(
-                "SELECT id FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'", [], |r| r.get(0),
-            ).unwrap();
-            let b_id: i64 = conn.query_row(
-                "SELECT id FROM idx_groundtruth WHERE statement = 'nas is at 10.0.0.5'", [], |r| r.get(0),
-            ).unwrap();
-            let (lo, hi) = if a_id < b_id { (a_id, b_id) } else { (b_id, a_id) };
+            let a_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let b_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM idx_groundtruth WHERE statement = 'nas is at 10.0.0.5'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let (lo, hi) = if a_id < b_id {
+                (a_id, b_id)
+            } else {
+                (b_id, a_id)
+            };
             conn.execute(
                 "INSERT OR IGNORE INTO idx_contradictions \
                  (fact_a_id, fact_b_id, confidence, detected_at) VALUES (?1, ?2, 0.9, 50)",
                 rusqlite::params![lo, hi],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let summary = auto_resolve_batch(&conn, 999, None).await.unwrap();
@@ -1787,32 +1924,65 @@ mod tests {
         let conn = store::open(&dir.path().join("v.db")).unwrap();
 
         // ts=1 for nas, ts=200 for storage server (same entity semantically).
-        groundtruth::insert(&conn, "nas is at 192.168.1.20", &Source::OperatorRuntime, "global", 1).unwrap();
-        groundtruth::insert(&conn, "storage server is at 10.0.0.5", &Source::OperatorRuntime, "global", 200).unwrap();
+        groundtruth::insert(
+            &conn,
+            "nas is at 192.168.1.20",
+            &Source::OperatorRuntime,
+            "global",
+            1,
+        )
+        .unwrap();
+        groundtruth::insert(
+            &conn,
+            "storage server is at 10.0.0.5",
+            &Source::OperatorRuntime,
+            "global",
+            200,
+        )
+        .unwrap();
 
         // Insert-time Jaccard sees zero subject overlap → no ledger entry. Plant one.
-        let a_id: i64 = conn.query_row(
-            "SELECT id FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'", [], |r| r.get(0),
-        ).unwrap();
-        let b_id: i64 = conn.query_row(
-            "SELECT id FROM idx_groundtruth WHERE statement = 'storage server is at 10.0.0.5'", [], |r| r.get(0),
-        ).unwrap();
-        let (lo, hi) = if a_id < b_id { (a_id, b_id) } else { (b_id, a_id) };
+        let a_id: i64 = conn
+            .query_row(
+                "SELECT id FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let b_id: i64 = conn
+            .query_row(
+                "SELECT id FROM idx_groundtruth WHERE statement = 'storage server is at 10.0.0.5'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let (lo, hi) = if a_id < b_id {
+            (a_id, b_id)
+        } else {
+            (b_id, a_id)
+        };
         conn.execute(
             "INSERT OR IGNORE INTO idx_contradictions \
              (fact_a_id, fact_b_id, confidence, detected_at) VALUES (?1, ?2, 0.9, 50)",
             rusqlite::params![lo, hi],
-        ).unwrap();
+        )
+        .unwrap();
 
         let mock = SlotMockEmbed;
         let summary = auto_resolve_batch(&conn, 999, Some(&mock)).await.unwrap();
-        assert_eq!(summary.superseded, 1, "semantic embed triggers temporal-supersede");
+        assert_eq!(
+            summary.superseded, 1,
+            "semantic embed triggers temporal-supersede"
+        );
 
         // The older (ts=1, nas) is Superseded.
-        let older_state: String = conn.query_row(
-            "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let older_state: String = conn
+            .query_row(
+                "SELECT fact_state FROM idx_groundtruth WHERE statement = 'nas is at 192.168.1.20'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(older_state, "superseded");
     }
 

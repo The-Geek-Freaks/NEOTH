@@ -33,16 +33,16 @@
 
 pub mod adapter;
 pub mod forward;
+/// GOLD-ADAPT-KV-03 — CPU-RAM LRU cold tier behind the hot prefix-KV map.
+/// Wraps `PrefixKvEntry`/`KvSnapshot` from `prefix_kv_cache` in a two-tier
+/// `LruCache` stack with suffix-first eviction ordering.
+pub mod kv_offload;
 pub mod layers;
 pub mod model;
 pub mod model_trait;
 /// GOLD-ADAPT-KV-01 — cross-request prefix-KV reuse cache (LMCache idea, adapted
 /// to Ouro's recurrent per-loop KV). Gated OFF by default.
 pub mod prefix_kv_cache;
-/// GOLD-ADAPT-KV-03 — CPU-RAM LRU cold tier behind the hot prefix-KV map.
-/// Wraps `PrefixKvEntry`/`KvSnapshot` from `prefix_kv_cache` in a two-tier
-/// `LruCache` stack with suffix-first eviction ordering.
-pub mod kv_offload;
 pub mod quantize;
 pub mod quantized_forward;
 pub mod quantized_layers;

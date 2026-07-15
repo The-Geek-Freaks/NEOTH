@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -73,6 +73,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
 pub struct ApiState {
     pub writer: WalWriterHandle,
     pub config: Arc<FreedomConfig>,
+    pub reload_controller: Arc<crate::config::reload::ReloadController>,
     pub home: PathBuf,
     pub token: String,
     pub cooldown: Arc<AuthCooldown>,
@@ -127,7 +128,8 @@ impl HandlerOutcome {
         match self {
             Self::Ok { body } => {
                 let env = ApiOkResponse::new(body, request_id);
-                let bytes = serde_json::to_vec(&env).unwrap_or_default();
+                let bytes = serde_json::to_vec(&env)
+                    .expect("ApiOkResponse contains only JSON-serializable values");
                 build_http_response(StatusCode::OK, bytes)
             }
             Self::Err {
@@ -288,19 +290,23 @@ async fn serve(
             )
             .into_http_response(&request_id);
         };
-        let auth_result = match api_tokens::load_store(&state.home) {
-            Ok(mut records) => {
-                let result =
-                    api_tokens::verify_token_for_scope(&mut records, candidate, required_scope);
-                // Persist last_used update on success — best-effort, don't fail the request.
-                if matches!(result, VerifyResult::Ok { .. }) {
-                    if let Err(e) = api_tokens::save_store(&state.home, &records) {
-                        tracing::debug!(error = %e, "api_tokens last_used persist failed (non-fatal)");
-                    }
-                }
-                result
-            }
-            Err(e) => {
+        // PBKDF2 + locked file I/O are blocking work. Keep them off the Tokio
+        // worker and perform verification + last_used persistence as one
+        // cross-process transaction so a stale request cannot resurrect a
+        // concurrently revoked token.
+        let token_home = state.home.clone();
+        let token_candidate = candidate.to_owned();
+        let auth_result = match tokio::task::spawn_blocking(move || {
+            api_tokens::verify_token_for_scope_persisted(
+                &token_home,
+                &token_candidate,
+                required_scope,
+            )
+        })
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => {
                 // Infrastructure failure — the token file is unreadable. This is NOT
                 // an auth failure: the client's token may be perfectly valid but the
                 // store is temporarily unavailable. Do NOT call cooldown.record_failure
@@ -310,6 +316,15 @@ async fn serve(
                     ApiErrorCode::StoreUnavailable,
                     "token store temporarily unavailable",
                     "check disk permissions on ~/.neoth/ and retry",
+                )
+                .into_http_response(&request_id);
+            }
+            Err(e) => {
+                tracing::error!(error = %e, path = %path, "n8n_api: token verification worker failed");
+                return HandlerOutcome::error(
+                    ApiErrorCode::StoreUnavailable,
+                    "token verification temporarily unavailable",
+                    "retry the request; inspect daemon logs if the failure persists",
                 )
                 .into_http_response(&request_id);
             }
@@ -391,18 +406,28 @@ async fn read_body_capped(req: Request<Incoming>) -> Result<Vec<u8>, HandlerOutc
     let limited = Limited::new(req.into_body(), REQUEST_BODY_LIMIT_BYTES);
     let bytes = match limited.collect().await {
         Ok(c) => c.to_bytes(),
-        Err(_) => {
-            return Err(HandlerOutcome::error(
-                ApiErrorCode::BadRequest,
-                format!(
-                    "request body exceeds cap {} bytes",
-                    REQUEST_BODY_LIMIT_BYTES
-                ),
-                "shrink the payload — the workflow JSON likely embeds a huge field",
-            ));
-        }
+        Err(error) => return Err(body_read_error(error.as_ref())),
     };
     Ok(bytes.to_vec())
+}
+
+fn body_read_error(error: &(dyn std::error::Error + Send + Sync + 'static)) -> HandlerOutcome {
+    if error.downcast_ref::<LengthLimitError>().is_some() {
+        HandlerOutcome::error(
+            ApiErrorCode::BadRequest,
+            format!(
+                "request body exceeds cap {} bytes",
+                REQUEST_BODY_LIMIT_BYTES
+            ),
+            "shrink the payload — the workflow JSON likely embeds a huge field",
+        )
+    } else {
+        HandlerOutcome::error(
+            ApiErrorCode::BadRequest,
+            format!("request body read failed: {error}"),
+            "retry the request; if it repeats, inspect the client or connection",
+        )
+    }
 }
 
 /// Load or freshly mint the bearer token. The token lives at
@@ -582,12 +607,32 @@ mod tests {
         use hyper::body::Bytes;
         let oversized = Full::new(Bytes::from(vec![0u8; REQUEST_BODY_LIMIT_BYTES + 1]));
         let limited = Limited::new(oversized, REQUEST_BODY_LIMIT_BYTES);
-        assert!(
-            limited.collect().await.is_err(),
-            "Limited must error on a body {} bytes over the {} cap",
-            1,
-            REQUEST_BODY_LIMIT_BYTES
-        );
+        let error = limited.collect().await.unwrap_err();
+        let outcome = body_read_error(error.as_ref());
+        match outcome {
+            HandlerOutcome::Err { message, .. } => assert_eq!(
+                message,
+                format!(
+                    "request body exceeds cap {} bytes",
+                    REQUEST_BODY_LIMIT_BYTES
+                )
+            ),
+            HandlerOutcome::Ok { .. } => panic!("oversized body must be rejected"),
+        }
+    }
+
+    #[test]
+    fn body_transport_error_is_not_reported_as_size_violation() {
+        let error = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "peer reset");
+        let outcome = body_read_error(&error);
+        match outcome {
+            HandlerOutcome::Err { message, .. } => {
+                assert!(message.contains("request body read failed"));
+                assert!(message.contains("peer reset"));
+                assert!(!message.contains("exceeds cap"));
+            }
+            HandlerOutcome::Ok { .. } => panic!("body transport error must be rejected"),
+        }
     }
 
     #[tokio::test]

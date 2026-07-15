@@ -2,7 +2,7 @@
 //! toolchain, tmux for claude_cli, stuck claude processes, model caches,
 //! hysteria config, wasm plugins.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
@@ -195,10 +195,10 @@ pub(crate) fn freedom_uses_claude_cli(home: &Path) -> bool {
 /// to NEOTH want them populated. We emit a `Warn` (not `Fail`) so
 /// `neoth doctor` exits clean for text-only setups while still
 /// surfacing the actionable next step.
-pub(crate) fn check_model_caches(_home: &Path) -> CheckOutcome {
-    use crate::providers::{clip_engine, whisper};
+pub(crate) fn check_model_caches(home: &Path) -> CheckOutcome {
+    use crate::providers::clip_engine;
 
-    let clip_dir = clip_engine::default_cache_dir(clip_engine::DEFAULT_CLIP_REPO);
+    let clip_dir = clip_engine::cache_dir_at(&home.join("models"), clip_engine::DEFAULT_CLIP_REPO);
     let clip_present = [
         clip_engine::CONFIG_FILE,
         clip_engine::SAFETENSORS_FILE,
@@ -207,24 +207,49 @@ pub(crate) fn check_model_caches(_home: &Path) -> CheckOutcome {
     .iter()
     .all(|f| clip_dir.join(f).exists());
 
-    let whisper_dir = whisper_doctor_cache_dir(whisper::DEFAULT_WHISPER_REPO);
-    let whisper_present = [
-        whisper::CONFIG_FILE,
-        whisper::TOKENIZER_FILE,
-        whisper::SAFETENSORS_FILE,
-    ]
-    .iter()
-    .all(|f| whisper_dir.join(f).exists());
-
-    let detail = match (clip_present, whisper_present) {
-        (true, true) => "clip + whisper cached".to_string(),
-        (true, false) => "whisper missing — run `neoth models pull whisper`".to_string(),
-        (false, true) => "clip missing — run `neoth models pull clip`".to_string(),
-        (false, false) => {
-            "clip + whisper missing — run `neoth models pull clip whisper`".to_string()
+    let config = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+        .unwrap_or_default();
+    let whisper_target = crate::media::stt_provider::resolve_local_whisper_target(
+        home,
+        config.media.stt.primary,
+        config.media.stt.model_size,
+    );
+    let (whisper_present, whisper_required, whisper_detail) = match whisper_target {
+        Ok(target) => {
+            let health = target.cache_health();
+            (
+                health.is_ready(),
+                true,
+                format!(
+                    "{} {} at {} ({health})",
+                    target.backend().as_str(),
+                    target.model_id(),
+                    target.cache_path().display()
+                ),
+            )
         }
+        Err(error) => (false, false, error.to_string()),
     };
-    let status = if clip_present && whisper_present {
+
+    let detail = match (clip_present, whisper_required, whisper_present) {
+        (true, true, true) => format!("clip + configured whisper cached ({whisper_detail})"),
+        (true, true, false) => format!(
+            "configured whisper cache not ready ({whisper_detail}) — run `neoth models pull whisper`"
+        ),
+        (false, true, true) => {
+            "clip missing — run `neoth models pull clip`; configured whisper cached".to_string()
+        }
+        (false, true, false) => format!(
+            "clip missing + configured whisper cache not ready ({whisper_detail}) — run `neoth models pull clip`, then `neoth models pull whisper`"
+        ),
+        (true, false, _) => format!(
+            "clip cached; configured STT has no managed local Whisper cache ({whisper_detail})"
+        ),
+        (false, false, _) => format!(
+            "clip missing — run `neoth models pull clip`; configured STT has no managed local Whisper cache ({whisper_detail})"
+        ),
+    };
+    let status = if clip_present && (!whisper_required || whisper_present) {
         CheckStatus::Pass
     } else {
         CheckStatus::Warn
@@ -233,6 +258,139 @@ pub(crate) fn check_model_caches(_home: &Path) -> CheckOutcome {
         name: "model caches",
         status,
         detail,
+    }
+}
+
+/// TTS Gold — validate the exact configured production provider without making
+/// a network request or synthesising. Piper checks executable + contained model
+/// assets; cloud providers check consent and their canonical credential fields.
+pub(crate) fn check_tts_runtime(home: &Path) -> CheckOutcome {
+    use crate::media::tts_dispatch::TtsProvider;
+
+    let path = home.join("freedom.yaml");
+    let config = if path.exists() {
+        match crate::config::FreedomConfig::load_from_path(&path) {
+            Ok(config) => config,
+            Err(_) => {
+                return CheckOutcome {
+                    name: "TTS runtime",
+                    status: CheckStatus::Pass,
+                    detail: "freedom.yaml unreadable; config check owns this diagnostic".into(),
+                };
+            }
+        }
+    } else {
+        crate::config::FreedomConfig::default()
+    };
+    let provider = config.media.tts.primary;
+    let result = match provider {
+        TtsProvider::SystemNative => {
+            let binary = match crate::media::tts_provider::pick_native_binary() {
+                crate::media::tts_provider::NativeBinary::MacSay => "say",
+                crate::media::tts_provider::NativeBinary::LinuxEspeakNg => "espeak-ng",
+                crate::media::tts_provider::NativeBinary::WindowsPowerShellSapi => "powershell",
+            };
+            if crate::media::tts_provider::find_on_path(binary).is_some() {
+                Ok(format!("offline system-native provider ready ({binary})"))
+            } else {
+                Err(format!(
+                    "system-native TTS executable `{binary}` is missing"
+                ))
+            }
+        }
+        TtsProvider::Piper => {
+            let voice = if config.media.tts.voice.is_empty() {
+                crate::media::tts_dispatch::pick_voice_for_locale(
+                    &config.media.tts.locale,
+                    TtsProvider::Piper,
+                )
+                .unwrap_or("")
+                .to_string()
+            } else {
+                config.media.tts.voice.clone()
+            };
+            crate::media::tts_provider::piper_status(
+                &home.join("models/piper"),
+                config.media.tts.piper_model.as_deref(),
+                config.media.tts.piper_config.as_deref(),
+                &voice,
+            )
+            .map(|assets| {
+                format!(
+                    "Piper ready: model={} config={}",
+                    assets.model.display(),
+                    assets.config.display()
+                )
+            })
+        }
+        TtsProvider::EdgeTts => {
+            if !config.media.cloud_tts_enabled {
+                Err("edge_tts is cloud egress but media.cloud_tts_enabled is false".to_string())
+            } else if crate::media::tts_provider::edge_tts_exe().is_none() {
+                Err("edge-tts executable missing; install with `pip install edge-tts`".to_string())
+            } else {
+                Ok("edge_tts executable present + cloud consent enabled".to_string())
+            }
+        }
+        TtsProvider::ElevenLabs | TtsProvider::AzureTts => {
+            if !config.media.cloud_tts_enabled {
+                Err(format!(
+                    "{} selected but media.cloud_tts_enabled is false",
+                    provider.as_str()
+                ))
+            } else {
+                let credentials = match crate::config::credentials::Credentials::load_effective(
+                    &home.join("credentials.yaml"),
+                    config.secrets_backend,
+                ) {
+                    Ok(credentials) => credentials,
+                    Err(error) => {
+                        return CheckOutcome {
+                            name: "TTS runtime",
+                            status: CheckStatus::Warn,
+                            detail: format!("load TTS credentials: {error}"),
+                        };
+                    }
+                };
+                let present = match provider {
+                    TtsProvider::ElevenLabs => credentials.elevenlabs_tts_api_key.is_some(),
+                    TtsProvider::AzureTts => {
+                        credentials.azure_tts_api_key.is_some()
+                            && config.media.tts.azure_region.is_some()
+                    }
+                    _ => unreachable!(),
+                };
+                if present {
+                    Ok(format!("{} consent + credentials ready", provider.as_str()))
+                } else {
+                    Err(format!(
+                        "{} credential/region missing; inspect credentials.yaml and media.tts",
+                        provider.as_str()
+                    ))
+                }
+            }
+        }
+        TtsProvider::ViitorVoice => {
+            if !config.media.cloud_tts_enabled {
+                Err("viitor_voice selected but media.cloud_tts_enabled is false".to_string())
+            } else if config.media.tts.viitor_endpoint.is_none() {
+                Err("viitor_voice endpoint missing under media.tts.viitor_endpoint".to_string())
+            } else {
+                Ok("viitor_voice endpoint + cloud consent configured".to_string())
+            }
+        }
+    };
+    match result {
+        Ok(detail) => CheckOutcome {
+            name: "TTS runtime",
+            status: CheckStatus::Pass,
+            detail,
+        },
+        Err(detail) => CheckOutcome {
+            name: "TTS runtime",
+            status: CheckStatus::Warn,
+            detail: format!("{detail}; run `neoth tts status` and `neoth models list`"),
+        },
     }
 }
 
@@ -400,24 +558,11 @@ pub(crate) fn check_officecli_binary(_home: &Path) -> CheckOutcome {
     }
 }
 
-/// Local copy of the whisper engine's `default_cache_dir` so the doctor
-/// can run with the same path math as the engine without exposing the
-/// engine's `pub` surface. Kept in sync via the
-/// `whisper_cache_dir_matches_engine_default` test in
-/// `cli::models::tests`.
-pub(crate) fn whisper_doctor_cache_dir(repo: &str) -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let flattened = repo.replace('/', "-");
-    home.join(".neoth").join("models").join(flattened)
-}
-
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
 pub(crate) const CHECKS: &[CheckFn] = &[
     check_model_caches,
+    check_tts_runtime,
     check_hysteria_config,
     check_node_toolchain,
     check_tmux_for_claude_cli,
@@ -435,16 +580,21 @@ pub(crate) const CHECKS: &[CheckFn] = &[
 pub(crate) const DOCS: &[CheckDoc] = &[
     CheckDoc {
         name: "model caches",
-        purpose: "HuggingFace model caches under \
-                  `~/.cache/huggingface/hub/`. Doctor checks the bundled \
-                  models (whisper-large-v3, clip-vit-base-patch32, \
-                  Qwen2.5-3B-Instruct) are downloaded — warns when \
-                  missing so operators don't first discover the \
-                  network requirement mid-chat.",
-        common_failures: "Fresh install with no HF cache; partial download \
-                         (interrupted git-lfs).",
-        fix: "Run `neoth models pull` to bulk-download. Or accept the \
-              warning — models lazy-download on first use.",
+        purpose: "Doctor checks CLIP plus the exact local Whisper backend/model \
+                  selected by `media.stt`. Candle uses `<NEOTH_HOME>/models`; \
+                  faster-whisper follows the effective Hugging Face cache root. \
+                  Cloud configurations are not misreported as missing local models.",
+        common_failures: "Fresh install, a policy-blocked or interrupted model \
+                         download, or a model-size/backend change whose exact \
+                         cache has not been populated yet.",
+        fix: "Run `neoth models pull clip`. For a configured local STT backend, \
+              also run `neoth models pull whisper`.",
+    },
+    CheckDoc {
+        name: "TTS runtime",
+        purpose: "Validates the exact `media.tts.primary` production path. Piper requires the native executable plus an operator-provided ONNX/config pair contained under `~/.neoth/models/piper`; Edge and REST providers require explicit cloud consent; credential values are never printed.",
+        common_failures: "Piper executable or voice files missing, model path escaping the Piper root, Edge selected without cloud consent, or a cloud provider selected without its dedicated credential/region.",
+        fix: "Run `neoth tts status` and `neoth models list`. For Piper, install the `piper` executable and place the ONNX plus matching `.onnx.json` beneath `~/.neoth/models/piper`; NEOTH intentionally does not download an unpinned voice.",
     },
     CheckDoc {
         name: "hysteria",
@@ -619,3 +769,120 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               `freedom.yaml::skills.enabled` and restart the daemon.",
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_safetensors() -> Vec<u8> {
+        let header = br#"{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+        let mut bytes = Vec::with_capacity(8 + header.len() + 4);
+        bytes.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(&[0_u8; 4]);
+        bytes
+    }
+
+    fn materialize_files(path: &Path, files: &[&str]) {
+        std::fs::create_dir_all(path).unwrap();
+        for file in files {
+            let bytes = if file.ends_with(".json") {
+                b"{}".to_vec()
+            } else if file.ends_with(".safetensors") {
+                minimal_safetensors()
+            } else {
+                b"fixture".to_vec()
+            };
+            std::fs::write(path.join(file), bytes).unwrap();
+        }
+    }
+
+    #[test]
+    fn model_cache_check_uses_exact_home_and_configured_whisper_size() {
+        let home = tempfile::tempdir().unwrap();
+        materialize_files(
+            &home
+                .path()
+                .join("models")
+                .join("openai-clip-vit-base-patch32"),
+            &[
+                crate::providers::clip_engine::CONFIG_FILE,
+                crate::providers::clip_engine::SAFETENSORS_FILE,
+                crate::providers::clip_engine::TOKENIZER_FILE,
+            ],
+        );
+        materialize_files(
+            &home.path().join("models").join("openai-whisper-base"),
+            &[
+                crate::providers::whisper::CONFIG_FILE,
+                crate::providers::whisper::SAFETENSORS_FILE,
+                crate::providers::whisper::TOKENIZER_FILE,
+            ],
+        );
+
+        let outcome = check_model_caches(home.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("openai/whisper-base"));
+        assert!(outcome.detail.contains(&home.path().display().to_string()));
+    }
+
+    #[test]
+    fn cloud_stt_does_not_report_a_missing_local_whisper_model() {
+        let home = tempfile::tempdir().unwrap();
+        materialize_files(
+            &home
+                .path()
+                .join("models")
+                .join("openai-clip-vit-base-patch32"),
+            &[
+                crate::providers::clip_engine::CONFIG_FILE,
+                crate::providers::clip_engine::SAFETENSORS_FILE,
+                crate::providers::clip_engine::TOKENIZER_FILE,
+            ],
+        );
+        let mut config = crate::config::FreedomConfig::default();
+        config.media.stt.primary = crate::media::stt_dispatch::SttProvider::OpenAiWhisperApi;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
+
+        let outcome = check_model_caches(home.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("no managed local Whisper cache"));
+        assert!(outcome.detail.contains("openai_whisper_api"));
+    }
+
+    #[test]
+    fn model_cache_check_surfaces_structurally_corrupt_whisper_cache() {
+        let home = tempfile::tempdir().unwrap();
+        materialize_files(
+            &home
+                .path()
+                .join("models")
+                .join("openai-clip-vit-base-patch32"),
+            &[
+                crate::providers::clip_engine::CONFIG_FILE,
+                crate::providers::clip_engine::SAFETENSORS_FILE,
+                crate::providers::clip_engine::TOKENIZER_FILE,
+            ],
+        );
+        let whisper = home.path().join("models").join("openai-whisper-base");
+        materialize_files(
+            &whisper,
+            &[
+                crate::providers::whisper::CONFIG_FILE,
+                crate::providers::whisper::SAFETENSORS_FILE,
+                crate::providers::whisper::TOKENIZER_FILE,
+            ],
+        );
+        std::fs::write(whisper.join(crate::providers::whisper::CONFIG_FILE), b"bad").unwrap();
+
+        let outcome = check_model_caches(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("corrupt"));
+        assert!(outcome.detail.contains("config.json"));
+    }
+}

@@ -134,7 +134,6 @@ pub struct JobPreview {
     /// Empty when the schedule resolves to "never" from `now`.
     pub next_fires_utc: Vec<String>,
     pub delivery_channel: Option<String>,
-    pub delivery_recipient: Option<String>,
     /// Predicted EUR cost via [`crate::providers::cost::predict`] using
     /// the job's prompt body + the configured provider/model. Defaults
     /// to a conservative high-estimate fallback when no price row
@@ -182,12 +181,12 @@ fn run_preview(jobs: &JobsFile, id: &str, output: &OutputFormat) -> Result<()> {
                 println!("  tz             : {tz}");
             }
             println!(
-                "  delivery       : {} → {}",
-                preview.delivery_channel.as_deref().unwrap_or("wal-only"),
+                "  delivery       : {}",
                 preview
-                    .delivery_recipient
+                    .delivery_channel
                     .as_deref()
-                    .unwrap_or("(no recipient)"),
+                    .map(|channel| format!("{channel} (operator-configured route)"))
+                    .unwrap_or_else(|| "wal-only".to_string()),
             );
             println!();
             if preview.next_fires_utc.is_empty() {
@@ -221,11 +220,10 @@ fn run_preview(jobs: &JobsFile, id: &str, output: &OutputFormat) -> Result<()> {
 
 /// Pure-helper: walk one [`crate::cron::schema::Job`] into a [`JobPreview`].
 /// Reads `FreedomConfig` from disk for the provider + autonomy lookup;
-/// failures fall back to neutral defaults so the preview always renders
-/// SOMETHING (operator with a fresh install + `--file ./draft.yaml`
-/// shouldn't be blocked by a missing freedom.yaml).
+/// a genuinely missing file uses neutral defaults so a fresh-install preview
+/// still renders. Malformed/unreadable existing policy is surfaced.
 pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
 
     let now = crate::time::utc_now();
     let mut next_fires: Vec<String> = Vec::with_capacity(3);
@@ -293,7 +291,6 @@ pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
         tz: job.schedule.tz.clone(),
         next_fires_utc: next_fires,
         delivery_channel: job.delivery.as_ref().map(|d| d.channel.clone()),
-        delivery_recipient: job.delivery.as_ref().and_then(|d| d.recipient.clone()),
         predicted_cost_eur: est.total_eur,
         predicted_input_tokens: est.input_tokens,
         predicted_output_tokens: est.output_tokens_est,
@@ -362,7 +359,8 @@ fn run_bg_job(command: &str, label: &str) -> Result<()> {
     }
     let bgjobs_dir = FreedomConfig::default_neoth_home().join("bgjobs");
     std::fs::create_dir_all(&bgjobs_dir).context("create ~/.neoth/bgjobs")?;
-    let id = crate::daemon::bg_jobs::BgJobId::new(&sanitise_label(label), crate::time::now_unix_secs());
+    let id =
+        crate::daemon::bg_jobs::BgJobId::new(&sanitise_label(label), crate::time::now_unix_secs());
     let log = bgjobs_dir.join(format!("{}.log", id.as_str()));
     let exit = bgjobs_dir.join(format!("{}.exit", id.as_str()));
     let (program, wrapper_args) = bg_wrapper_argv(command, &log, &exit);
@@ -370,7 +368,11 @@ fn run_bg_job(command: &str, label: &str) -> Result<()> {
         .args(&wrapper_args)
         .spawn()
         .with_context(|| format!("spawn detached job via `{program}`"))?;
-    println!("started background job `{}` (pid {})", id.as_str(), child.id());
+    println!(
+        "started background job `{}` (pid {})",
+        id.as_str(),
+        child.id()
+    );
     println!("  log   : {}", log.display());
     println!("  status: `neoth jobs --bg` (a running daemon's bg-monitor auto-tracks completion)");
     Ok(())
@@ -430,7 +432,8 @@ fn list_bg_jobs(output: &OutputFormat) -> Result<()> {
                     "{:<36} {:<12} {}",
                     truncate(id, 36),
                     state,
-                    code.map(|c| c.to_string()).unwrap_or_else(|| "-".to_string()),
+                    code.map(|c| c.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
                 );
             }
         }
@@ -596,7 +599,10 @@ mod tests {
         let joined = wargs.join(" ");
         assert!(joined.contains("echo hi"), "must run the command: {joined}");
         assert!(joined.contains("j.log"), "must tee to the log: {joined}");
-        assert!(joined.contains("j.exit"), "must write the exit marker: {joined}");
+        assert!(
+            joined.contains("j.exit"),
+            "must write the exit marker: {joined}"
+        );
         if cfg!(target_os = "windows") {
             assert_eq!(program, "cmd");
             assert!(
@@ -605,7 +611,10 @@ mod tests {
             );
         } else {
             assert_eq!(program, "sh");
-            assert!(joined.contains("$?"), "unix captures $? as the exit code: {joined}");
+            assert!(
+                joined.contains("$?"),
+                "unix captures $? as the exit code: {joined}"
+            );
         }
     }
 

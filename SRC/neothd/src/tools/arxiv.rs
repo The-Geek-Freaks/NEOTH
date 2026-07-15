@@ -1,6 +1,6 @@
 //! ArXiv search + retrieval (A-24).
 //!
-//! Public XML API at `http://export.arxiv.org/api/query` — no API
+//! Public XML API at `https://export.arxiv.org/api/query` — no API
 //! key, no rate-limit surprise. Operator queries by keyword + gets
 //! back a structured `Vec<ArxivPaper>` with title, authors, abstract,
 //! pdf url. Downstream skills can `neoth fetch <pdf_url>` + run the
@@ -11,6 +11,9 @@
 use anyhow::{Context, Result};
 
 use crate::providers::http_client;
+use crate::tools::external_http::{
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+};
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ArxivPaper {
@@ -25,23 +28,36 @@ pub struct ArxivPaper {
 
 /// Production ArXiv Atom endpoint. Lifted to a const so the CDX-04
 /// wiremock tests can override it via `search_against`.
-pub const ARXIV_API_URL: &str = "http://export.arxiv.org/api/query";
+pub const ARXIV_API_URL: &str = "https://export.arxiv.org/api/query";
 
 /// Query the ArXiv API + return up to `max_results` matches. Most
 /// recent first. ArXiv's search query syntax: `all:keyword`,
 /// `ti:title`, `au:author`, `cat:cs.CL`, `AND` / `OR` / `ANDNOT`.
 pub async fn search(query: &str, max_results: usize) -> Result<Vec<ArxivPaper>> {
-    search_against(ARXIV_API_URL, query, max_results).await
+    let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    let http = ExternalHttpAuthorizer::interactive(config.autonomy_policy())?;
+    search_against_authorized(ARXIV_API_URL, query, max_results, &http).await
 }
 
 /// Internal test seam — production `search` calls this with the real
 /// ArXiv endpoint; wiremock tests pass a mock server's URI. `pub(crate)`
 /// so the EL-02 ingest task (`cli::arxiv_ingest_task`) can drive it
 /// against a mock endpoint in its own wiremock tests.
+#[cfg(test)]
 pub(crate) async fn search_against(
     endpoint: &str,
     query: &str,
     max_results: usize,
+) -> Result<Vec<ArxivPaper>> {
+    let http = ExternalHttpAuthorizer::test_allow();
+    search_against_authorized(endpoint, query, max_results, &http).await
+}
+
+pub(crate) async fn search_against_authorized(
+    endpoint: &str,
+    query: &str,
+    max_results: usize,
+    http: &ExternalHttpAuthorizer,
 ) -> Result<Vec<ArxivPaper>> {
     if query.trim().is_empty() {
         anyhow::bail!("arxiv: empty query");
@@ -52,18 +68,24 @@ pub(crate) async fn search_against(
         urlencode(query),
         max
     );
-    let client = http_client::build_client()?;
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "NEOTH-arxiv/0.1")
-        .send()
-        .await
-        .context("arxiv API request")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("arxiv API returned {}", resp.status());
-    }
-    let body = resp.text().await.context("arxiv body read")?;
-    parse_atom(&body)
+    let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::Arxiv);
+    let permitted_request = request.clone();
+    http.execute(request, move |permit| async move {
+        permit.require(&permitted_request)?;
+        let client = http_client::build_client_no_redirect()?;
+        let resp = client
+            .get(url)
+            .header("User-Agent", "NEOTH-arxiv/0.1")
+            .send()
+            .await
+            .context("arxiv API request")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("arxiv API returned {}", resp.status());
+        }
+        let body = resp.text().await.context("arxiv body read")?;
+        parse_atom(&body)
+    })
+    .await
 }
 
 /// Minimal Atom XML parser scoped to ArXiv's response shape. We pull
@@ -263,6 +285,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_does_not_follow_redirects() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", "http://169.254.169.254/latest/meta-data"),
+            )
+            .mount(&mock)
+            .await;
+        let err = search_against(&mock.uri(), "x", 1).await.unwrap_err();
+        assert!(err.to_string().contains("302"));
+        assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn search_clamps_max_results_to_50() {
         use wiremock::matchers::method;
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -288,6 +327,6 @@ mod tests {
 
     #[test]
     fn arxiv_url_constant_pinned() {
-        assert_eq!(ARXIV_API_URL, "http://export.arxiv.org/api/query");
+        assert_eq!(ARXIV_API_URL, "https://export.arxiv.org/api/query");
     }
 }

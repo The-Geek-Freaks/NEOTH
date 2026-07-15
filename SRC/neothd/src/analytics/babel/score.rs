@@ -57,9 +57,8 @@ impl BabelScores {
         // zero would make the buffer ratios undefined (0/0 when D or H is
         // also zero) — treat like the log form and emit no score.
         let (b_mult, b_mult_epsilon) = match epsilon {
-            Some(eps) if eps > 0.0 && f.a > 0.0 && f.v > 0.0 => {
-                let raw = (f.c * f.k * f.m)
-                    / ((f.d / f.a) * (f.h / f.v) + eps);
+            Some(eps) if normaliser.is_calibrated() && eps > 0.0 && f.a > 0.0 && f.v > 0.0 => {
+                let raw = (f.c * f.k * f.m) / ((f.d / f.a) * (f.h / f.v) + eps);
                 let normed = normaliser.normalise(raw);
                 (Some(normed), Some(eps))
             }
@@ -82,30 +81,35 @@ fn compute_log_form(f: &BabelFeatures) -> Option<f64> {
     if f.c <= 0.0 || f.k <= 0.0 || f.m <= 0.0 || f.a <= 0.0 || f.v <= 0.0 {
         return None;
     }
-    Some(
-        f.c.ln() + f.k.ln() + f.m.ln() + f.a.ln() + f.v.ln()
-        - f.d.ln() - f.h.ln()
-    )
+    Some(f.c.ln() + f.k.ln() + f.m.ln() + f.a.ln() + f.v.ln() - f.d.ln() - f.h.ln())
 }
 
 /// min(C,K,M,A,V) / max(D,H).
 fn compute_bottleneck(f: &BabelFeatures) -> f64 {
     let numerator_min = f.c.min(f.k).min(f.m).min(f.a).min(f.v);
     let denominator_max = f.d.max(f.h);
-    if denominator_max <= 0.0 { return 0.0; }
+    if denominator_max <= 0.0 {
+        return 0.0;
+    }
     numerator_min / denominator_max
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::feature::FeatureAlgorithmVersions;
     use super::super::norm::Normaliser;
+    use super::*;
 
     fn sample_features() -> BabelFeatures {
         BabelFeatures {
-            c: 0.62, k: 0.71, m: 0.56, a: 0.48, v: 0.68,
-            d: 0.44, h: 0.39,
+            c: 0.62,
+            k: 0.71,
+            m: 0.56,
+            a: 0.48,
+            v: 0.68,
+            d: 0.44,
+            h: 0.39,
+            k_d_posture: super::super::feature::KdPosture::default(),
             algorithm_versions: FeatureAlgorithmVersions::default(),
         }
     }
@@ -146,7 +150,11 @@ mod tests {
     #[test]
     fn scores_emit_b_mult_when_epsilon_provided() {
         let f = sample_features();
-        let norm = Normaliser::cold_start();
+        let norm = Normaliser {
+            p1: 0.0,
+            p99: 1.0,
+            sample_count: super::super::norm::MIN_SAMPLES,
+        };
         let s = BabelScores::compute(&f, &norm, Some(0.01));
         assert!(s.b_mult.is_some());
         assert_eq!(s.b_mult_epsilon, Some(0.01));
@@ -157,12 +165,25 @@ mod tests {
     }
 
     #[test]
+    fn scores_emit_no_b_mult_before_normaliser_is_calibrated() {
+        let f = sample_features();
+        let norm = Normaliser::cold_start();
+        let s = BabelScores::compute(&f, &norm, Some(0.01));
+        assert!(s.b_mult.is_none());
+        assert!(s.b_mult_epsilon.is_none());
+    }
+
+    #[test]
     fn scores_emit_no_b_mult_when_agent_density_is_zero() {
         // a = 0 makes the D/A buffer ratio undefined — the ratio form must
         // decline to score, exactly like the log form does.
         let mut f = sample_features();
         f.a = 0.0;
-        let norm = Normaliser::cold_start();
+        let norm = Normaliser {
+            p1: 0.0,
+            p99: 1.0,
+            sample_count: super::super::norm::MIN_SAMPLES,
+        };
         let s = BabelScores::compute(&f, &norm, Some(0.01));
         assert!(s.b_mult.is_none());
         assert!(s.b_mult_epsilon.is_none());

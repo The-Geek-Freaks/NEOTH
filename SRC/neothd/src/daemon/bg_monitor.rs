@@ -142,7 +142,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let reg = Arc::new(BgJobRegistry::new(dir.path().to_path_buf()));
         let id = BgJobId::new("test-job", 100);
-        reg.register(id.clone(), "a test job", 100, on_complete).await;
+        reg.register(id.clone(), "a test job", 100, on_complete)
+            .await;
         (reg, dir, id)
     }
 
@@ -162,7 +163,10 @@ mod tests {
         assert_eq!(reports[0].exit_code, Some(0));
         assert!(!reports[0].callback_invoked, "no callback was registered");
         // Entry must have been removed.
-        assert!(reg.is_empty().await, "registry must be empty after completion");
+        assert!(
+            reg.is_empty().await,
+            "registry must be empty after completion"
+        );
     }
 
     #[tokio::test]
@@ -191,7 +195,10 @@ mod tests {
         let reports = scan_once(&reg).await;
         assert_eq!(reports.len(), 1);
         assert!(reports[0].callback_invoked);
-        assert!(fired.load(Ordering::SeqCst), "callback must have been called");
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "callback must have been called"
+        );
     }
 
     #[tokio::test]
@@ -220,8 +227,10 @@ mod tests {
         let done_id = BgJobId::new("done", 200);
         let running_id = BgJobId::new("running", 201);
 
-        reg.register(done_id.clone(), "will finish", 200, None).await;
-        reg.register(running_id.clone(), "still going", 201, None).await;
+        reg.register(done_id.clone(), "will finish", 200, None)
+            .await;
+        reg.register(running_id.clone(), "still going", 201, None)
+            .await;
 
         // Only write exit marker for `done`.
         std::fs::write(

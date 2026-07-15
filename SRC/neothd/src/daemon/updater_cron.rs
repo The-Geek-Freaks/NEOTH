@@ -11,7 +11,7 @@
 //!
 //! - [`spawn_updater_cron_loop`] — boxed `Fn() -> Vec<ComponentSpec>`
 //!   builder so callers plug in per-task version-probe logic (e.g.
-//!   GitHub Releases for `neothd`, `claude --version` for the CLI
+//!   GitHub Releases for `neoth`, `claude --version` for the CLI
 //!   lane). The builder runs ON each tick so a transient network
 //!   failure produces a Failed outcome instead of a panic.
 //! - [`run_updater_tick`] — pure-fn over the builder, emits WAL +
@@ -269,7 +269,7 @@ mod tests {
 
         let builder = || {
             vec![
-                spec("neothd", "0.2.1", Ok("0.2.1")),
+                spec("neoth", "0.2.1", Ok("0.2.1")),
                 spec("claude", "0.42.0", Ok("0.43.0")),
             ]
         };

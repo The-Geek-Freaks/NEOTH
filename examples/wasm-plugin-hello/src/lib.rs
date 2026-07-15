@@ -1,8 +1,7 @@
-//! Minimal NEOTH WASM plugin — `neoth_run() -> i32`.
+//! Minimal versioned NEOTH WASM plugin.
 //!
 //! Smallest possible plugin that satisfies the NEOTH plugin ABI:
-//! one exported function named `neoth_run`, signature `() -> i32`,
-//! returning zero (the operator-defined convention for "success").
+//! `export_wasm_plugin!` exports both the ABI-version probe and `neoth_run`.
 //!
 //! Build:
 //!   cargo build --release --target wasm32-unknown-unknown \
@@ -14,13 +13,9 @@
 //! pipeline against a real artefact (instead of the minimal-WASM
 //! preamble that has no exports).
 
-/// Exported entry point. `#[no_mangle]` keeps the symbol name
-/// stable across rustc versions; `extern "C"` matches the
-/// `Instance::get_typed_func::<(), i32>("neoth_run")` lookup the
-/// host performs.
-#[unsafe(no_mangle)]
-pub extern "C" fn neoth_run() -> i32 {
-    // Plugin convention: 0 = success, non-zero = plugin-defined
-    // error code. This minimal plugin always succeeds.
-    0
-}
+use neoth_plugin_sdk::guest::GuestHost;
+use neoth_plugin_sdk::permission::None as NoPermission;
+
+fn run(_host: GuestHost<NoPermission>) {}
+
+neoth_plugin_sdk::export_wasm_plugin!(NoPermission, run);

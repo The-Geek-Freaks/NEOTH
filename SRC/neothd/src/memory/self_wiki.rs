@@ -224,102 +224,390 @@ struct CliCmd {
 /// Top-level `neoth` sub-commands. Derived from `cli/mod.rs` module list and
 /// the clap subcommand variants. Sorted alphabetically; cluster is feature-gated.
 static CLI_COMMANDS: &[CliCmd] = &[
-    CliCmd { id: "adr", description: "Architecture Decision Record management." },
-    CliCmd { id: "agents", description: "List and manage autonomous agent definitions." },
-    CliCmd { id: "arxiv", description: "Search and ingest arXiv preprints." },
-    CliCmd { id: "autonomy", description: "Get or set the current autonomy level." },
-    CliCmd { id: "backup", description: "Trigger or configure WAL+SQLite backups." },
-    CliCmd { id: "calendar", description: "CalDAV calendar event list and creation." },
-    CliCmd { id: "catalog", description: "Browse the model catalog." },
-    CliCmd { id: "channel", description: "Manage messaging channel adapters." },
-    CliCmd { id: "chat", description: "Start an interactive chat session." },
-    CliCmd { id: "checkpoint", description: "Snapshot and restore daemon state." },
-    CliCmd { id: "cluster", description: "Peer cluster management (feature-gated)." },
-    CliCmd { id: "code", description: "Coding-buddy sub-surface." },
-    CliCmd { id: "code-map", description: "Codebase semantic map builder." },
-    CliCmd { id: "connect", description: "Connect a channel adapter." },
-    CliCmd { id: "consent", description: "Manage provider consent flags." },
-    CliCmd { id: "cost", description: "Token cost breakdown and budget queries." },
-    CliCmd { id: "council", description: "Council (multi-provider deliberation) control." },
-    CliCmd { id: "credential", description: "Credential store management." },
-    CliCmd { id: "cron", description: "Operator cron job management." },
-    CliCmd { id: "demo", description: "Demo and tour launcher." },
-    CliCmd { id: "deps", description: "Dependency audit." },
-    CliCmd { id: "dictate", description: "Transcribe an audio file via the local STT pipeline." },
-    CliCmd { id: "distill", description: "Distil insights from memory into facts." },
-    CliCmd { id: "doctor", description: "System self-diagnosis." },
-    CliCmd { id: "dream", description: "Dream (offline replay + enrichment) controller." },
-    CliCmd { id: "ecology", description: "Ecosystem health and dependency scanner." },
-    CliCmd { id: "edit", description: "Edit a WAL or config entry." },
-    CliCmd { id: "email", description: "Email integration surface." },
-    CliCmd { id: "events", description: "Browse WAL events." },
-    CliCmd { id: "export", description: "Export memory or WAL to external formats." },
-    CliCmd { id: "fact-check", description: "Verify factual claims against memory." },
-    CliCmd { id: "feedback", description: "Submit operator feedback." },
-    CliCmd { id: "fetch", description: "Fetch a URL and optionally ingest it." },
-    CliCmd { id: "github", description: "GitHub integration (issues, PRs, notifications)." },
-    CliCmd { id: "glossary", description: "Domain glossary management." },
-    CliCmd { id: "goal", description: "Goal tracking and progress." },
-    CliCmd { id: "groundtruth", description: "Ground-truth fact store management." },
-    CliCmd { id: "hardware", description: "Hardware profile and resource queries." },
-    CliCmd { id: "hemispheres", description: "Left/right hemisphere provider configuration." },
-    CliCmd { id: "hooks", description: "Operator hook management." },
-    CliCmd { id: "identity", description: "Operator identity and profile." },
-    CliCmd { id: "import", description: "Import data from external sources." },
-    CliCmd { id: "ingest", description: "Ingest content into memory." },
-    CliCmd { id: "init", description: "Run or re-run the onboarding wizard." },
-    CliCmd { id: "installer", description: "Install optional dependencies (n8n, Ollama, etc.)." },
-    CliCmd { id: "jobs", description: "Operator job (cron) file management." },
-    CliCmd { id: "kanban", description: "Kanban task board." },
-    CliCmd { id: "keys", description: "API key management." },
-    CliCmd { id: "lease", description: "Distributed lease management." },
-    CliCmd { id: "mcp", description: "MCP server management." },
-    CliCmd { id: "memory", description: "Memory store queries and management." },
-    CliCmd { id: "memory-eval", description: "Memory recall benchmark harness." },
-    CliCmd { id: "migrate", description: "WAL and SQLite schema migration." },
-    CliCmd { id: "mode", description: "Named mode registry and activation." },
-    CliCmd { id: "models", description: "Model discovery and switching." },
-    CliCmd { id: "monitor", description: "Real-time daemon health monitor." },
-    CliCmd { id: "moral-core", description: "Moral-core directive management." },
-    CliCmd { id: "n8n", description: "n8n workflow integration." },
-    CliCmd { id: "obsidian", description: "Obsidian vault sync." },
-    CliCmd { id: "okf", description: "Open Knowledge Format export." },
-    CliCmd { id: "os", description: "OS tool invocations." },
-    CliCmd { id: "ouro", description: "Local Ouroboros provider management." },
-    CliCmd { id: "paperless", description: "Paperless-ngx integration." },
-    CliCmd { id: "permissions", description: "Tool permission management." },
-    CliCmd { id: "plugin", description: "WASM plugin management." },
-    CliCmd { id: "preset", description: "Freedom.yaml preset management." },
-    CliCmd { id: "privacy", description: "Privacy and consent surface." },
-    CliCmd { id: "proactive", description: "Proactive queue inspection." },
-    CliCmd { id: "profile", description: "Operator profile management." },
-    CliCmd { id: "providers", description: "Provider configuration." },
-    CliCmd { id: "quota", description: "Token budget and quota management." },
-    CliCmd { id: "recall", description: "Query memory recall." },
-    CliCmd { id: "recon", description: "Recon / OSINT tooling." },
-    CliCmd { id: "recover", description: "WAL recovery and integrity repair." },
-    CliCmd { id: "reflect", description: "Self-reflection and insight builder." },
-    CliCmd { id: "review", description: "Document and code review surface." },
-    CliCmd { id: "rollback", description: "Roll back a recent change." },
-    CliCmd { id: "schema", description: "Database schema inspection." },
-    CliCmd { id: "search", description: "Cross-memory and web search." },
-    CliCmd { id: "security", description: "Security scan and audit tools." },
-    CliCmd { id: "self-improve", description: "Self-improvement cycle controller." },
-    CliCmd { id: "serve", description: "Start the NEOTH daemon." },
-    CliCmd { id: "skills", description: "Skill registry management." },
-    CliCmd { id: "slash", description: "Slash command registry." },
-    CliCmd { id: "status", description: "Daemon status snapshot." },
-    CliCmd { id: "todo", description: "To-do list management." },
-    CliCmd { id: "trace-replay", description: "Replay a WAL trace for debugging." },
-    CliCmd { id: "transfer", description: "Bulk transfer between memory stores." },
-    CliCmd { id: "trust", description: "Trust-level management." },
-    CliCmd { id: "tts", description: "Text-to-speech output." },
-    CliCmd { id: "undo", description: "Undo the last reversible operation." },
-    CliCmd { id: "update", description: "Check and apply NEOTH updates." },
-    CliCmd { id: "usage", description: "Token and cost usage report." },
-    CliCmd { id: "verify", description: "Cryptographic audit and signature verification." },
-    CliCmd { id: "wal", description: "WAL inspection and maintenance." },
-    CliCmd { id: "webhook", description: "Webhook receiver management." },
+    CliCmd {
+        id: "adr",
+        description: "Architecture Decision Record management.",
+    },
+    CliCmd {
+        id: "agents",
+        description: "List and manage autonomous agent definitions.",
+    },
+    CliCmd {
+        id: "arxiv",
+        description: "Search and ingest arXiv preprints.",
+    },
+    CliCmd {
+        id: "autonomy",
+        description: "Get or set the current autonomy level.",
+    },
+    CliCmd {
+        id: "backup",
+        description: "Trigger or configure WAL+SQLite backups.",
+    },
+    CliCmd {
+        id: "calendar",
+        description: "CalDAV calendar event list and creation.",
+    },
+    CliCmd {
+        id: "catalog",
+        description: "Browse the model catalog.",
+    },
+    CliCmd {
+        id: "channel",
+        description: "Manage messaging channel adapters.",
+    },
+    CliCmd {
+        id: "chat",
+        description: "Start an interactive chat session.",
+    },
+    CliCmd {
+        id: "checkpoint",
+        description: "Snapshot and restore daemon state.",
+    },
+    CliCmd {
+        id: "cluster",
+        description: "Peer cluster management (feature-gated).",
+    },
+    CliCmd {
+        id: "code",
+        description: "Coding-buddy sub-surface.",
+    },
+    CliCmd {
+        id: "code-map",
+        description: "Codebase semantic map builder.",
+    },
+    CliCmd {
+        id: "connect",
+        description: "Connect a channel adapter.",
+    },
+    CliCmd {
+        id: "consent",
+        description: "Manage provider consent flags.",
+    },
+    CliCmd {
+        id: "cost",
+        description: "Token cost breakdown and budget queries.",
+    },
+    CliCmd {
+        id: "council",
+        description: "Council (multi-provider deliberation) control.",
+    },
+    CliCmd {
+        id: "credential",
+        description: "Credential store management.",
+    },
+    CliCmd {
+        id: "cron",
+        description: "Operator cron job management.",
+    },
+    CliCmd {
+        id: "demo",
+        description: "Demo and tour launcher.",
+    },
+    CliCmd {
+        id: "deps",
+        description: "Dependency audit.",
+    },
+    CliCmd {
+        id: "dictate",
+        description: "Transcribe an audio file via the local STT pipeline.",
+    },
+    CliCmd {
+        id: "distill",
+        description: "Distil insights from memory into facts.",
+    },
+    CliCmd {
+        id: "doctor",
+        description: "System self-diagnosis.",
+    },
+    CliCmd {
+        id: "dream",
+        description: "Dream (offline replay + enrichment) controller.",
+    },
+    CliCmd {
+        id: "ecology",
+        description: "Ecosystem health and dependency scanner.",
+    },
+    CliCmd {
+        id: "edit",
+        description: "Edit a WAL or config entry.",
+    },
+    CliCmd {
+        id: "email",
+        description: "Email integration surface.",
+    },
+    CliCmd {
+        id: "events",
+        description: "Browse WAL events.",
+    },
+    CliCmd {
+        id: "export",
+        description: "Export memory or WAL to external formats.",
+    },
+    CliCmd {
+        id: "fact-check",
+        description: "Verify factual claims against memory.",
+    },
+    CliCmd {
+        id: "feedback",
+        description: "Submit operator feedback.",
+    },
+    CliCmd {
+        id: "fetch",
+        description: "Fetch a URL and optionally ingest it.",
+    },
+    CliCmd {
+        id: "github",
+        description: "GitHub integration (issues, PRs, notifications).",
+    },
+    CliCmd {
+        id: "glossary",
+        description: "Domain glossary management.",
+    },
+    CliCmd {
+        id: "goal",
+        description: "Goal tracking and progress.",
+    },
+    CliCmd {
+        id: "groundtruth",
+        description: "Ground-truth fact store management.",
+    },
+    CliCmd {
+        id: "hardware",
+        description: "Hardware profile and resource queries.",
+    },
+    CliCmd {
+        id: "hemispheres",
+        description: "Left/right hemisphere provider configuration.",
+    },
+    CliCmd {
+        id: "hooks",
+        description: "Operator hook management.",
+    },
+    CliCmd {
+        id: "identity",
+        description: "Operator identity and profile.",
+    },
+    CliCmd {
+        id: "import",
+        description: "Import data from external sources.",
+    },
+    CliCmd {
+        id: "ingest",
+        description: "Ingest content into memory.",
+    },
+    CliCmd {
+        id: "init",
+        description: "Run or re-run the onboarding wizard.",
+    },
+    CliCmd {
+        id: "installer",
+        description: "Install optional dependencies (n8n, Ollama, etc.).",
+    },
+    CliCmd {
+        id: "jobs",
+        description: "Operator job (cron) file management.",
+    },
+    CliCmd {
+        id: "kanban",
+        description: "Kanban task board.",
+    },
+    CliCmd {
+        id: "keys",
+        description: "API key management.",
+    },
+    CliCmd {
+        id: "lease",
+        description: "Distributed lease management.",
+    },
+    CliCmd {
+        id: "mcp",
+        description: "MCP server management.",
+    },
+    CliCmd {
+        id: "memory",
+        description: "Memory store queries and management.",
+    },
+    CliCmd {
+        id: "memory-eval",
+        description: "Memory recall benchmark harness.",
+    },
+    CliCmd {
+        id: "migrate",
+        description: "WAL and SQLite schema migration.",
+    },
+    CliCmd {
+        id: "mode",
+        description: "Named mode registry and activation.",
+    },
+    CliCmd {
+        id: "models",
+        description: "Model discovery and switching.",
+    },
+    CliCmd {
+        id: "monitor",
+        description: "Real-time daemon health monitor.",
+    },
+    CliCmd {
+        id: "moral-core",
+        description: "Moral-core directive management.",
+    },
+    CliCmd {
+        id: "n8n",
+        description: "n8n workflow integration.",
+    },
+    CliCmd {
+        id: "obsidian",
+        description: "Obsidian vault sync.",
+    },
+    CliCmd {
+        id: "okf",
+        description: "Open Knowledge Format export.",
+    },
+    CliCmd {
+        id: "os",
+        description: "OS tool invocations.",
+    },
+    CliCmd {
+        id: "ouro",
+        description: "Local Ouroboros provider management.",
+    },
+    CliCmd {
+        id: "paperless",
+        description: "Paperless-ngx integration.",
+    },
+    CliCmd {
+        id: "permissions",
+        description: "Tool permission management.",
+    },
+    CliCmd {
+        id: "plugin",
+        description: "WASM plugin management.",
+    },
+    CliCmd {
+        id: "preset",
+        description: "Freedom.yaml preset management.",
+    },
+    CliCmd {
+        id: "privacy",
+        description: "Privacy and consent surface.",
+    },
+    CliCmd {
+        id: "proactive",
+        description: "Proactive queue inspection.",
+    },
+    CliCmd {
+        id: "profile",
+        description: "Operator profile management.",
+    },
+    CliCmd {
+        id: "providers",
+        description: "Provider configuration.",
+    },
+    CliCmd {
+        id: "quota",
+        description: "Token budget and quota management.",
+    },
+    CliCmd {
+        id: "recall",
+        description: "Query memory recall.",
+    },
+    CliCmd {
+        id: "recon",
+        description: "Recon / OSINT tooling.",
+    },
+    CliCmd {
+        id: "recover",
+        description: "WAL recovery and integrity repair.",
+    },
+    CliCmd {
+        id: "reflect",
+        description: "Self-reflection and insight builder.",
+    },
+    CliCmd {
+        id: "review",
+        description: "Document and code review surface.",
+    },
+    CliCmd {
+        id: "rollback",
+        description: "Roll back a recent change.",
+    },
+    CliCmd {
+        id: "schema",
+        description: "Database schema inspection.",
+    },
+    CliCmd {
+        id: "search",
+        description: "Cross-memory and web search.",
+    },
+    CliCmd {
+        id: "security",
+        description: "Security scan and audit tools.",
+    },
+    CliCmd {
+        id: "self-improve",
+        description: "Self-improvement cycle controller.",
+    },
+    CliCmd {
+        id: "serve",
+        description: "Start the NEOTH daemon.",
+    },
+    CliCmd {
+        id: "skills",
+        description: "Skill registry management.",
+    },
+    CliCmd {
+        id: "slash",
+        description: "Slash command registry.",
+    },
+    CliCmd {
+        id: "status",
+        description: "Daemon status snapshot.",
+    },
+    CliCmd {
+        id: "todo",
+        description: "To-do list management.",
+    },
+    CliCmd {
+        id: "trace-replay",
+        description: "Replay a WAL trace for debugging.",
+    },
+    CliCmd {
+        id: "transfer",
+        description: "Bulk transfer between memory stores.",
+    },
+    CliCmd {
+        id: "trust",
+        description: "Trust-level management.",
+    },
+    CliCmd {
+        id: "tts",
+        description: "Text-to-speech output.",
+    },
+    CliCmd {
+        id: "undo",
+        description: "Undo the last reversible operation.",
+    },
+    CliCmd {
+        id: "update",
+        description: "Check and apply NEOTH updates.",
+    },
+    CliCmd {
+        id: "usage",
+        description: "Token and cost usage report.",
+    },
+    CliCmd {
+        id: "verify",
+        description: "Cryptographic audit and signature verification.",
+    },
+    CliCmd {
+        id: "wal",
+        description: "WAL inspection and maintenance.",
+    },
+    CliCmd {
+        id: "webhook",
+        description: "Webhook receiver management.",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -379,9 +667,7 @@ impl SelfWiki {
 
     /// Find a single entry by kind + exact id. Returns `None` when not found.
     pub fn find(&self, kind: CapabilityKind, id: &str) -> Option<&CapabilityEntry> {
-        self.entries
-            .iter()
-            .find(|e| e.kind == kind && e.id == id)
+        self.entries.iter().find(|e| e.kind == kind && e.id == id)
     }
 
     /// All entries whose description contains `keyword` (case-insensitive).
@@ -488,8 +774,14 @@ mod tests {
         assert!(!wiki.is_empty(), "SelfWiki must not be empty");
         assert!(wiki.skills().count() > 0, "must have skill entries");
         assert!(wiki.crons().count() > 0, "must have cron entries");
-        assert!(wiki.cli_commands().count() > 0, "must have CLI command entries");
-        assert!(wiki.slash_commands().count() > 0, "must have slash command entries");
+        assert!(
+            wiki.cli_commands().count() > 0,
+            "must have CLI command entries"
+        );
+        assert!(
+            wiki.slash_commands().count() > 0,
+            "must have slash command entries"
+        );
     }
 
     /// A known bundled skill id must appear in the wiki.
@@ -608,7 +900,13 @@ mod tests {
         let s = wiki.summary();
         assert!(s.contains("skills"), "summary must mention skills");
         assert!(s.contains("crons"), "summary must mention crons");
-        assert!(s.contains("cli-commands"), "summary must mention cli-commands");
-        assert!(s.contains("slash-commands"), "summary must mention slash-commands");
+        assert!(
+            s.contains("cli-commands"),
+            "summary must mention cli-commands"
+        );
+        assert!(
+            s.contains("slash-commands"),
+            "summary must mention slash-commands"
+        );
     }
 }

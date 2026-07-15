@@ -105,9 +105,7 @@ pub fn run_buddy(args: BuddyArgs) -> Result<()> {
         BuddyAction::SelfActivation { enable, disable } => {
             run_self_activation(enable, disable, args.output)
         }
-        BuddyAction::Proactive { enable, disable } => {
-            run_proactive(enable, disable, args.output)
-        }
+        BuddyAction::Proactive { enable, disable } => run_proactive(enable, disable, args.output),
     }
 }
 
@@ -149,7 +147,9 @@ fn run_status(output: OutputFormat) -> Result<()> {
                 "self_activation_skills : [{}]",
                 self_activation_skills.join(", ")
             );
-            println!("smart_approve_any      : {smart_approve_any}  (global master; per-server flag also required — see mcp_servers.yaml)");
+            println!(
+                "smart_approve_any      : {smart_approve_any}  (global master; per-server flag also required — see mcp_servers.yaml)"
+            );
             println!("autonomy               : {autonomy}");
             println!("proactive_enabled      : {proactive_enabled}");
         }
@@ -207,10 +207,7 @@ fn run_proactive(enable: bool, disable: bool, output: OutputFormat) -> Result<()
     let verb = if turn_on { "enabled" } else { "disabled" };
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!(
-                "{}",
-                json!({ "ok": true, "proactive_enabled": turn_on })
-            );
+            println!("{}", json!({ "ok": true, "proactive_enabled": turn_on }));
         }
         OutputFormat::Table => {
             println!("proactive.enabled → {verb}");
@@ -280,7 +277,10 @@ mod tests {
             "proactive_enabled": proactive_enabled,
         });
 
-        assert!(v["sovereign_buddy"].is_boolean(), "sovereign_buddy must be bool");
+        assert!(
+            v["sovereign_buddy"].is_boolean(),
+            "sovereign_buddy must be bool"
+        );
         assert!(
             v["self_activation_enabled"].is_boolean(),
             "self_activation_enabled must be bool"
@@ -289,9 +289,15 @@ mod tests {
             v["self_activation_skills"].is_array(),
             "self_activation_skills must be array"
         );
-        assert!(v["smart_approve_any"].is_boolean(), "smart_approve_any must be bool");
+        assert!(
+            v["smart_approve_any"].is_boolean(),
+            "smart_approve_any must be bool"
+        );
         assert!(v["autonomy"].is_string(), "autonomy must be string");
-        assert!(v["proactive_enabled"].is_boolean(), "proactive_enabled must be bool");
+        assert!(
+            v["proactive_enabled"].is_boolean(),
+            "proactive_enabled must be bool"
+        );
 
         // Values match the constructed config.
         assert_eq!(v["sovereign_buddy"], false);
@@ -316,18 +322,27 @@ mod tests {
         use crate::config::policy::SecurityPolicy;
 
         let mut cfg_off = make_buddy_cfg();
-        cfg_off.security = SecurityPolicy { smart_approve: false, ..Default::default() };
+        cfg_off.security = SecurityPolicy {
+            smart_approve: false,
+            ..Default::default()
+        };
         let v_off = json!({
             "smart_approve_any": cfg_off.security.smart_approve,
         });
         assert_eq!(v_off["smart_approve_any"], false, "master OFF → false");
 
         let mut cfg_on = make_buddy_cfg();
-        cfg_on.security = SecurityPolicy { smart_approve: true, ..Default::default() };
+        cfg_on.security = SecurityPolicy {
+            smart_approve: true,
+            ..Default::default()
+        };
         let v_on = json!({
             "smart_approve_any": cfg_on.security.smart_approve,
         });
-        assert_eq!(v_on["smart_approve_any"], true, "master ON → true (not hardcoded false)");
+        assert_eq!(
+            v_on["smart_approve_any"], true,
+            "master ON → true (not hardcoded false)"
+        );
     }
 
     // ── self-activation toggle round-trip ─────────────────────────────────────
@@ -346,14 +361,12 @@ mod tests {
         // We exercise the mutation directly (env override path) via the helper
         // that mirrors what run_self_activation does.
         let path = dir.path().join("freedom.yaml");
-        let mut loaded =
-            FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
+        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
         loaded.self_activation.enabled = true;
         let yaml = serde_yaml::to_string(&loaded).expect("serialize");
         std::fs::write(&path, yaml).expect("write");
 
-        let reloaded =
-            FreedomConfig::load_from_path(&path).expect("reload after toggle");
+        let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(
             reloaded.self_activation.enabled,
             "self_activation.enabled must be true after enable toggle"
@@ -371,14 +384,12 @@ mod tests {
         write_cfg(&dir, &cfg);
 
         let path = dir.path().join("freedom.yaml");
-        let mut loaded =
-            FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
+        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
         loaded.self_activation.enabled = false;
         let yaml = serde_yaml::to_string(&loaded).expect("serialize");
         std::fs::write(&path, yaml).expect("write");
 
-        let reloaded =
-            FreedomConfig::load_from_path(&path).expect("reload after toggle");
+        let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(
             !reloaded.self_activation.enabled,
             "self_activation.enabled must be false after disable toggle"
@@ -397,14 +408,12 @@ mod tests {
         write_cfg(&dir, &cfg);
 
         let path = dir.path().join("freedom.yaml");
-        let mut loaded =
-            FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
+        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
         loaded.proactive.enabled = true;
         let yaml = serde_yaml::to_string(&loaded).expect("serialize");
         std::fs::write(&path, yaml).expect("write");
 
-        let reloaded =
-            FreedomConfig::load_from_path(&path).expect("reload after toggle");
+        let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(
             reloaded.proactive.enabled,
             "proactive.enabled must be true after enable toggle"
@@ -421,14 +430,12 @@ mod tests {
         write_cfg(&dir, &cfg);
 
         let path = dir.path().join("freedom.yaml");
-        let mut loaded =
-            FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
+        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
         loaded.proactive.enabled = false;
         let yaml = serde_yaml::to_string(&loaded).expect("serialize");
         std::fs::write(&path, yaml).expect("write");
 
-        let reloaded =
-            FreedomConfig::load_from_path(&path).expect("reload after toggle");
+        let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(
             !reloaded.proactive.enabled,
             "proactive.enabled must be false after disable toggle"

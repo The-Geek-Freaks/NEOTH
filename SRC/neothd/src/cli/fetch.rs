@@ -140,12 +140,20 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
         if goal.trim().is_empty() {
             anyhow::bail!("--goal must not be empty");
         }
-        let config = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+        let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
         let provider = crate::providers::from_config_for_utility(&config)
             .await
             .context("build utility provider for goal extraction")?;
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            provider,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+                config.autonomy_policy(),
+            )?,
+            crate::providers::utility_model_for_config(&config),
+            "fetch.goal_extract",
+        );
         let extraction =
-            crate::tools::web_fetch::fetch_with_goal(&args.url, &goal, provider.as_ref()).await?;
+            crate::tools::web_fetch::fetch_with_goal(&args.url, &goal, &provider).await?;
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 println!(
@@ -250,7 +258,10 @@ mod tests {
             output: OutputFormat::Json,
         };
         let err = run_fetch(with_jina).await.unwrap_err();
-        assert!(err.to_string().contains("--goal cannot be combined"), "{err}");
+        assert!(
+            err.to_string().contains("--goal cannot be combined"),
+            "{err}"
+        );
 
         let with_selector = FetchArgs {
             url: "https://example.com".to_string(),
@@ -260,7 +271,10 @@ mod tests {
             output: OutputFormat::Json,
         };
         let err = run_fetch(with_selector).await.unwrap_err();
-        assert!(err.to_string().contains("--goal cannot be combined"), "{err}");
+        assert!(
+            err.to_string().contains("--goal cannot be combined"),
+            "{err}"
+        );
     }
 
     #[test]

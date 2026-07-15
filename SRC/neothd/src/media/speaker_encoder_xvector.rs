@@ -1,14 +1,14 @@
 //! SPEAKR-02c — x-vector (TDNN) speaker-embedding encoder.
 //!
-//! ## Status: DORMANT SCAFFOLD
+//! ## Status: OPTIONAL PRODUCTION BACKEND
 //!
-//! This module compiles and passes shape/wiring tests, but **produces
-//! meaningful embeddings ONLY when real weights are provisioned**. The
+//! This module is wired into the common STT speaker-label path and produces
+//! embeddings when real weights are provisioned. The
 //! `speechbrain/spkrec-xvect-voxceleb` checkpoint is NOT bundled; an operator
 //! must run `scripts/convert_xvector.py` and place the output safetensors in
-//! the NEOTH model cache (see `try_load` for the path). Until that file exists
-//! `try_load()` returns `None` and the caller falls back to the log-mel
-//! encoder in `speaker_encoder.rs`.
+//! the NEOTH model cache (see `try_load` for the path). Until that file exists,
+//! `try_load()` returns `None` and the caller deliberately falls back to the
+//! weight-free log-mel production tier.
 //!
 //! ## Architecture (extracted from speechbrain/spkrec-xvect-voxceleb)
 //!
@@ -82,9 +82,7 @@
 
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, Module, ModuleT, Tensor};
-use candle_nn::{
-    BatchNormConfig, Conv1dConfig, VarBuilder, batch_norm, conv1d, linear,
-};
+use candle_nn::{BatchNormConfig, Conv1dConfig, VarBuilder, batch_norm, conv1d, linear};
 
 use crate::media::speaker_profile::unit_normalise;
 use crate::providers::clip_engine::default_cache_dir;
@@ -146,10 +144,9 @@ impl TdnnBlock {
             dilation,
             groups: 1,
         };
-        let conv = conv1d(in_ch, out_ch, kernel, cfg, conv_vb)
-            .context("TdnnBlock: conv1d")?;
-        let bn =
-            batch_norm(out_ch, BatchNormConfig::default(), bn_vb).context("TdnnBlock: batch_norm")?;
+        let conv = conv1d(in_ch, out_ch, kernel, cfg, conv_vb).context("TdnnBlock: conv1d")?;
+        let bn = batch_norm(out_ch, BatchNormConfig::default(), bn_vb)
+            .context("TdnnBlock: batch_norm")?;
         Ok(Self { conv, bn })
     }
 
@@ -192,7 +189,7 @@ fn statistics_pooling(x: &Tensor) -> candle_core::Result<Tensor> {
 
 // ── XVectorEncoder ────────────────────────────────────────────────────────────
 
-/// x-vector encoder (dormant until weights are provisioned).
+/// x-vector encoder (available when weights are provisioned).
 ///
 /// Construct via [`XVectorEncoder::try_load`]. Returns `None` if the
 /// safetensors file is not in the NEOTH model cache — the caller should fall
@@ -255,12 +252,16 @@ impl XVectorEncoder {
 
         let tdnn = Self::build_tdnn_blocks(&vb)?;
         // blocks.16 → linear_out
-        let linear_out =
-            linear(1500 * 2, XVECTOR_EMBEDDING_DIM, vb.pp("blocks_16"))
-                .context("xvector: linear_out")?;
+        let linear_out = linear(1500 * 2, XVECTOR_EMBEDDING_DIM, vb.pp("blocks_16"))
+            .context("xvector: linear_out")?;
 
         let filterbank = fbank_filterbank();
-        Ok(Self { tdnn, linear_out, device, filterbank })
+        Ok(Self {
+            tdnn,
+            linear_out,
+            device,
+            filterbank,
+        })
     }
 
     fn build_tdnn_blocks(vb: &VarBuilder) -> Result<[TdnnBlock; 5]> {
@@ -277,11 +278,11 @@ impl XVectorEncoder {
         //   block 4: conv idx=12, bn idx=14
         let specs: [(usize, usize, usize, usize, usize, usize); 5] = [
             // (in, out, kernel, dilation, conv_idx, bn_idx)
-            (N_MELS, 512,  5, 1, 0,  2),
-            (512,    512,  3, 2, 3,  5),
-            (512,    512,  3, 3, 6,  8),
-            (512,    512,  1, 1, 9,  11),
-            (512,    1500, 1, 1, 12, 14),
+            (N_MELS, 512, 5, 1, 0, 2),
+            (512, 512, 3, 2, 3, 5),
+            (512, 512, 3, 3, 6, 8),
+            (512, 512, 1, 1, 9, 11),
+            (512, 1500, 1, 1, 12, 14),
         ];
         let mut blocks = Vec::with_capacity(5);
         for (in_ch, out_ch, kernel, dilation, conv_idx, bn_idx) in specs {
@@ -515,10 +516,7 @@ mod tests {
                 format!("blocks_{conv_idx}.weight"),
                 zeros(&[out_ch, in_ch, kernel]),
             );
-            tensors.insert(
-                format!("blocks_{conv_idx}.bias"),
-                zeros(&[out_ch]),
-            );
+            tensors.insert(format!("blocks_{conv_idx}.bias"), zeros(&[out_ch]));
             // BatchNorm: weight (γ), bias (β), running_mean, running_var
             tensors.insert(format!("blocks_{bn_idx}.weight"), zeros(&[out_ch]));
             tensors.insert(format!("blocks_{bn_idx}.bias"), zeros(&[out_ch]));
@@ -527,7 +525,10 @@ mod tests {
         }
 
         // Linear output layer (blocks_16): weight [512, 3000], bias [512]
-        tensors.insert("blocks_16.weight".into(), zeros(&[XVECTOR_EMBEDDING_DIM, 1500 * 2]));
+        tensors.insert(
+            "blocks_16.weight".into(),
+            zeros(&[XVECTOR_EMBEDDING_DIM, 1500 * 2]),
+        );
         tensors.insert("blocks_16.bias".into(), zeros(&[XVECTOR_EMBEDDING_DIM]));
 
         VarBuilder::from_tensors(tensors, DType::F32, dev)
@@ -539,11 +540,15 @@ mod tests {
 
         let tdnn = XVectorEncoder::build_tdnn_blocks(&vb).expect("build TDNN blocks");
         let linear_out =
-            linear(1500 * 2, XVECTOR_EMBEDDING_DIM, vb.pp("blocks_16"))
-                .expect("build linear_out");
+            linear(1500 * 2, XVECTOR_EMBEDDING_DIM, vb.pp("blocks_16")).expect("build linear_out");
         let filterbank = fbank_filterbank();
 
-        XVectorEncoder { tdnn, linear_out, device, filterbank }
+        XVectorEncoder {
+            tdnn,
+            linear_out,
+            device,
+            filterbank,
+        }
     }
 
     /// Synthetic audio: 1 second of a pure-tone sine wave @ 16 kHz.
@@ -566,7 +571,11 @@ mod tests {
         let fb = fbank_filterbank();
         let frames = fbank_frames(&samples, &fb);
         // At HOP_LEN=160, 16000 samples → ~99 frames.
-        assert!(frames.len() >= 90, "expected ~99 frames, got {}", frames.len());
+        assert!(
+            frames.len() >= 90,
+            "expected ~99 frames, got {}",
+            frames.len()
+        );
         assert_eq!(frames[0].len(), N_MELS);
     }
 
@@ -643,24 +652,37 @@ mod tests {
             (512, 1500, 1, 1, 12, 14),
         ];
         for (in_ch, out_ch, kernel, _dilation, conv_idx, bn_idx) in specs {
-            tensors.insert(format!("blocks_{conv_idx}.weight"), zeros(&[out_ch, in_ch, kernel]));
+            tensors.insert(
+                format!("blocks_{conv_idx}.weight"),
+                zeros(&[out_ch, in_ch, kernel]),
+            );
             tensors.insert(format!("blocks_{conv_idx}.bias"), zeros(&[out_ch]));
-            tensors.insert(format!("blocks_{bn_idx}.weight"), ones(&[out_ch]));   // γ=1
-            tensors.insert(format!("blocks_{bn_idx}.bias"), zeros(&[out_ch]));    // β=0
+            tensors.insert(format!("blocks_{bn_idx}.weight"), ones(&[out_ch])); // γ=1
+            tensors.insert(format!("blocks_{bn_idx}.bias"), zeros(&[out_ch])); // β=0
             tensors.insert(format!("blocks_{bn_idx}.running_mean"), zeros(&[out_ch]));
             tensors.insert(format!("blocks_{bn_idx}.running_var"), ones(&[out_ch])); // var=1
         }
-        tensors.insert("blocks_16.weight".into(), zeros(&[XVECTOR_EMBEDDING_DIM, 1500 * 2]));
+        tensors.insert(
+            "blocks_16.weight".into(),
+            zeros(&[XVECTOR_EMBEDDING_DIM, 1500 * 2]),
+        );
         tensors.insert("blocks_16.bias".into(), zeros(&[XVECTOR_EMBEDDING_DIM]));
 
         let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
         let tdnn = XVectorEncoder::build_tdnn_blocks(&vb).unwrap();
         let linear_out = linear(1500 * 2, XVECTOR_EMBEDDING_DIM, vb.pp("blocks_16")).unwrap();
         let filterbank = fbank_filterbank();
-        let enc = XVectorEncoder { tdnn, linear_out, device, filterbank };
+        let enc = XVectorEncoder {
+            tdnn,
+            linear_out,
+            device,
+            filterbank,
+        };
 
         let samples = sine_1s(300.0);
-        let v = enc.embed_inner(&samples).expect("forward pass should succeed");
+        let v = enc
+            .embed_inner(&samples)
+            .expect("forward pass should succeed");
         assert_eq!(v.len(), XVECTOR_EMBEDDING_DIM);
         assert!(v.iter().all(|x| x.is_finite()), "all values must be finite");
         // With zero weights the output is all-zeros; unit_normalise on zero
@@ -672,7 +694,10 @@ mod tests {
     fn too_short_clip_returns_none() {
         let enc = make_encoder_with_zero_weights();
         let short = vec![0.0f32; MIN_SAMPLES - 1];
-        assert!(enc.embed(&short).is_none(), "sub-MIN_SAMPLES must return None");
+        assert!(
+            enc.embed(&short).is_none(),
+            "sub-MIN_SAMPLES must return None"
+        );
     }
 
     #[test]

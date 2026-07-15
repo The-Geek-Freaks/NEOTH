@@ -225,23 +225,20 @@ pub(crate) fn print_gui_handoff_banner() {
 /// to a sidecar file under `~/.neoth/`. The daemon's
 /// `detect_complete_sidecar` ingester picks it up on next tick,
 /// emits the `0xD5 DETECT_COMPLETE` WAL frame, then deletes the
-/// sidecar. Atomic via `.tmp` + rename, Windows-safe.
+/// sidecar. Crash-safe through the canonical fsynced private atomic writer.
 pub(crate) fn write_detect_complete_sidecar(
     neoth_dir: &std::path::Path,
     ts_unix: u64,
     payload: &crate::wal::payloads_w08::DetectCompletePayload,
 ) -> std::io::Result<std::path::PathBuf> {
-    std::fs::create_dir_all(neoth_dir)?;
     // Zero-padded timestamp so lexicographic == chronological order
-    // when the ingester walks the home dir.
-    let final_path = neoth_dir.join(format!("detect_complete_{ts_unix:020}.json"));
-    let tmp_path = final_path.with_extension("json.tmp");
+    // when the ingester walks the home dir. UUID prevents same-second loss.
+    let final_path = neoth_dir.join(format!(
+        "detect_complete_{ts_unix:020}_{}.json",
+        uuid::Uuid::now_v7().simple()
+    ));
     let body = serde_json::to_vec_pretty(payload).map_err(std::io::Error::other)?;
-    std::fs::write(&tmp_path, &body)?;
-    if final_path.exists() {
-        let _ = std::fs::remove_file(&final_path);
-    }
-    std::fs::rename(&tmp_path, &final_path)?;
+    crate::util::atomic_write::atomic_write_private(&final_path, &body)?;
     Ok(final_path)
 }
 
@@ -253,15 +250,12 @@ pub(crate) fn write_credential_import_sidecar(
     ts_unix: i64,
     payload: &crate::security::credential_redact::RedactedCredentialImportPayload,
 ) -> std::io::Result<std::path::PathBuf> {
-    std::fs::create_dir_all(neoth_dir)?;
-    let final_path = neoth_dir.join(format!("credentials_import_{ts_unix}.json"));
-    let tmp_path = final_path.with_extension("json.tmp");
+    let final_path = neoth_dir.join(format!(
+        "credentials_import_{ts_unix:020}_{}.json",
+        uuid::Uuid::now_v7().simple()
+    ));
     let body = serde_json::to_vec_pretty(payload).map_err(std::io::Error::other)?;
-    std::fs::write(&tmp_path, &body)?;
-    if final_path.exists() {
-        let _ = std::fs::remove_file(&final_path);
-    }
-    std::fs::rename(&tmp_path, &final_path)?;
+    crate::util::atomic_write::atomic_write_private(&final_path, &body)?;
     Ok(final_path)
 }
 

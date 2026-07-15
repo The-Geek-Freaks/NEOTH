@@ -32,14 +32,16 @@
 //!
 //! ## Norm refresh
 //!
-//! A background task calls `spawn_norm_refresh` every 5 min; it reads
-//! `idx_babel_windows` for all raw b_mult scores and updates `idx_babel_norm`.
+//! A background task calls `spawn_norm_refresh` every 5 min; it recomputes the
+//! raw multiplicative score from `idx_babel_windows` and updates the consumed
+//! `b_raw` distribution in `idx_babel_norm`.
 
 use serde::{Deserialize, Serialize};
 
 use super::collapse::CollapseDetection;
 use super::feature::BabelFeatures;
 use super::score::BabelScores;
+use super::signals::SignalPosture;
 
 /// Canonical window granularities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +103,9 @@ pub struct BabelWindow {
     pub features: BabelFeatures,
     pub scores: BabelScores,
     pub collapse: CollapseDetection,
+    /// Optional-source posture and content-free counts. This is intentionally
+    /// outside the seven score variables.
+    pub signal_posture: SignalPosture,
     /// Schema version of this record format — pin for compatibility checks.
     pub schema_version: String,
     /// Algorithm version map so sensitivity analysis is possible.
@@ -114,16 +119,10 @@ pub struct BabelWindow {
 }
 
 impl BabelWindow {
-    pub const SCHEMA_VERSION: &'static str = "neoth-babel-window/0.2.0";
+    pub const SCHEMA_VERSION: &'static str = "neoth-babel-window/0.4.0";
 
     pub fn duration_secs(&self) -> i64 {
         self.ts_end.saturating_sub(self.ts_start)
-    }
-
-    /// Whether this window meets the minimum submission threshold (60 s minimum,
-    /// negative controls must be tagged, non-control windows must have data).
-    pub fn is_submittable(&self) -> bool {
-        self.duration_secs() >= 60
     }
 }
 
@@ -136,7 +135,11 @@ pub struct WindowAccumulator {
 
 impl WindowAccumulator {
     pub fn new(granularity: WindowGranularity, ts_start: i64) -> Self {
-        Self { granularity, ts_start, event_count: 0 }
+        Self {
+            granularity,
+            ts_start,
+            event_count: 0,
+        }
     }
 
     pub fn deadline(&self) -> i64 {

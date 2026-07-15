@@ -62,7 +62,7 @@ v2 endpoints (deferred until v1 has operator usage data):
 - The HTTP server runs in `cli::serve::run_serve` alongside the rest
   of the daemon. It shares the same `Daemon` handle so every endpoint
   has access to the autonomy gate + consent layer + WAL writer.
-- `/api/provider/call` consults `permissions::evaluate(action, level)`
+- `/api/provider/call` consults `permissions::evaluate(action, &policy_snapshot)`
   exactly as the CLI chat path does. A request that lands at autonomy
   level `strict` and tries to hit a cloud provider gets the same
   consent prompt UX — except n8n can't prompt, so the request fails

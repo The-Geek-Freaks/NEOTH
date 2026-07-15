@@ -21,7 +21,7 @@ visitor hits.
 - [x] License layout: combined LICENSE pointer removed so GitHub licensee
       detects LICENSE-MIT + LICENSE-APACHE (dual); README links both
 - [x] CITATION.cff added (cites delta-kosmologie as reference)
-- [x] neothd Cargo.toml: repository placeholder fixed, crates.io
+- [x] neoth Cargo.toml: public package/binary contract, repository, crates.io
       description/keywords/categories set
 
 ## Done — live and public
@@ -60,10 +60,20 @@ visitor hits.
       product (fixed the old GIFs' `cargo install neoth` and "six memory
       layers" errors), render inline on GitHub. Optionally re-record real
       screencasts later, but the SVGs are correct and shippable now.
-- [ ] **crates.io publish** (`cargo install neoth` path) — lands with 1.0
-- [x] **Release binaries**: tag → release.yml artifacts verified on all
-      targets, with `SHA256SUMS`, per-asset checksums, cosign bundles, and
-      minisigs uploaded
+- [ ] **crates.io publish** (`cargo install neoth` path) — run the manual
+      `publish-crates.yml` workflow on the approved `v1.0.0` tag. It fails
+      closed unless tag/version/package/bin contracts match, publishes
+      `neoth-plugin-sdk` first, waits until Cargo can resolve that exact SDK
+      version, packages `neoth`, and only then publishes the public crate.
+      Configure the `crates-io` environment with required reviewer protection
+      and `CARGO_REGISTRY_TOKEN`; no publication has been performed yet.
+- [ ] **Stable v1.0.0 release binaries**: the fail-closed `release.yml`
+      contract is ready, but the `v1.0.0` tag and its artifacts do not exist
+      yet. Push the approved tag only after exact-head CI is green, then verify
+      every target archive plus `SHA256SUMS`, per-asset checksums, cosign
+      bundles, minisigs, and the pinned public-key asset. The beta.4 artifact
+      run remains recorded above as historical evidence, not as stable-v1
+      publication.
 - [ ] **Announce**: HN (Show HN), r/rust, r/LocalLLaMA, lobste.rs — lead with
       the evaluation page (docs/evaluation.md), not adjectives; delta-kosmologie
       cross-post links back

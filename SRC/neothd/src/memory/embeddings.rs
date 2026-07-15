@@ -103,8 +103,8 @@ static BRUTE_FORCE_CEILING_WARNED: std::sync::atomic::AtomicBool =
 /// Brute-force cosine-similarity scan. `query` must be L2-normalised.
 /// Walks every row whose `source_kind` matches `kind_filter`
 /// (`Some("image")` or `None` for "any kind"), computes the dot
-/// product, returns the `top_k` highest. Ties broken by `created_at
-/// DESC` so recent material wins.
+/// product, returns the `top_k` highest. Ties break by `created_at DESC` and
+/// then stable row id so recent material wins without process-order drift.
 ///
 /// Returned hits are sorted by similarity descending. Empty result is
 /// valid — the caller decides whether that's a miss or a no-op. Row-
@@ -191,6 +191,7 @@ pub fn find_similar(
             .partial_cmp(&a.similarity)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(b.created_at.cmp(&a.created_at))
+            .then_with(|| a.id.cmp(&b.id))
     });
     sorted.truncate(top_k);
     Ok(sorted)
@@ -596,12 +597,13 @@ impl EmbeddingIndex {
                 })
             })
             .collect();
-        // Sort descending by similarity, break ties by created_at DESC.
+        // Sort descending by similarity, then newest and stable row id.
         hits.sort_by(|a, b| {
             b.similarity
                 .partial_cmp(&a.similarity)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(b.created_at.cmp(&a.created_at))
+                .then_with(|| a.id.cmp(&b.id))
         });
         hits.truncate(top_k);
         hits
@@ -628,12 +630,13 @@ impl EmbeddingIndex {
             .iter()
             .map(|(_, meta, vec)| (dot(query, vec), meta))
             .collect();
-        // Descending by similarity, ties broken by created_at DESC
-        // to match find_similar_hnsw.
+        // Descending by similarity, ties broken by created_at DESC then stable
+        // row id to match find_similar_hnsw.
         scored.sort_by(|a, b| {
             b.0.partial_cmp(&a.0)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(b.1.created_at.cmp(&a.1.created_at))
+                .then_with(|| a.1.id.cmp(&b.1.id))
         });
         scored
             .into_iter()
@@ -863,18 +866,23 @@ pub fn rebuild_index(conn: &Connection, path: &Path) -> Result<usize> {
 }
 
 /// GR-005: after a GDPR `forget` deletes `idx_embedding` rows, the on-disk HNSW
-/// snapshot still holds the forgotten vectors (it is rebuilt only on demand), so
-/// they remain searchable via the cold-load path. Rebuild the snapshot FROM the
-/// now-current SQLite so the searchable index no longer returns forgotten
-/// vectors. No-op (`Ok(None)`) when no snapshot exists (recall then cold-loads
-/// from the already-wiped SQLite / brute-forces). Returns the rebuilt vector
-/// count on success.
+/// snapshot still holds the forgotten vectors. Invalidate that derived cache
+/// *before* rebuilding it from current SQLite. If rebuilding fails, the active
+/// snapshot stays absent and recall safely falls back to SQLite instead of
+/// searching stale vectors. No-op (`Ok(None)`) when no snapshot exists.
 pub fn rebuild_snapshot_if_present(conn: &Connection, neoth_home: &Path) -> Result<Option<usize>> {
     let path = hnsw_snapshot_path(neoth_home);
     if !path.exists() {
         return Ok(None);
     }
-    let n = rebuild_index(conn, &path)?;
+    std::fs::remove_file(&path)
+        .with_context(|| format!("invalidate stale HNSW snapshot: {}", path.display()))?;
+    let n = rebuild_index(conn, &path).with_context(|| {
+        format!(
+            "rebuild HNSW snapshot after forget (stale snapshot was safely invalidated): {}",
+            path.display()
+        )
+    })?;
     Ok(Some(n))
 }
 
@@ -924,7 +932,10 @@ pub async fn embed_episode_text(
 
     let mut vec = resp.vector;
     if vec.is_empty() {
-        tracing::warn!(event_id, "embed_episode_text: provider returned empty vector");
+        tracing::warn!(
+            event_id,
+            "embed_episode_text: provider returned empty vector"
+        );
         return;
     }
 
@@ -1179,6 +1190,26 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_snapshot_failure_never_leaves_stale_vectors_active() {
+        let conn = Connection::open_in_memory().unwrap(); // no idx_embedding table
+        let dir = tempfile::tempdir().unwrap();
+        let path = hnsw_snapshot_path(dir.path());
+        std::fs::write(&path, b"stale-forgotten-vector-snapshot").unwrap();
+
+        let error = rebuild_snapshot_if_present(&conn, dir.path()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("stale snapshot was safely invalidated"),
+            "unexpected error: {error:#}"
+        );
+        assert!(
+            !path.exists(),
+            "a failed rebuild must not leave the stale searchable snapshot active"
+        );
+    }
+
+    #[test]
     fn find_similar_dispatch_brute_force_when_hnsw_path_none() {
         let conn = open_with_schema();
         seed_vectors(&conn, "image", 5);
@@ -1405,6 +1436,22 @@ mod tests {
         assert_eq!(hits[2].source_ref, "c.png");
         assert!(hits[0].similarity > hits[1].similarity);
         assert!(hits[1].similarity > hits[2].similarity);
+    }
+
+    #[test]
+    fn find_similar_breaks_exact_score_and_time_ties_by_row_id() {
+        let conn = open_with_schema();
+        let vector = unit(vec![1.0, 0.0, 0.0]);
+        upsert(&conn, "image", "first.png", "clip", &vector).unwrap();
+        upsert(&conn, "image", "second.png", "clip", &vector).unwrap();
+        conn.execute("UPDATE idx_embedding SET created_at = 42", [])
+            .unwrap();
+
+        let hits = find_similar(&conn, &vector, Some("image"), 10).unwrap();
+        assert_eq!(
+            hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 
     #[test]
@@ -1676,6 +1723,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hnsw_search_breaks_exact_score_and_time_ties_by_row_id() {
+        let mut idx = EmbeddingIndex::new();
+        let vector = unit(vec![1.0, 0.0, 0.0]);
+        idx.add(9, "image", "later-id.png", "clip", &vector, 42);
+        idx.add(3, "image", "earlier-id.png", "clip", &vector, 42);
+
+        let hits = idx.find_similar_hnsw(&vector, 2);
+        assert_eq!(
+            hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+            vec![3, 9]
+        );
+    }
+
     /// T7: rebuild_index helper writes a valid snapshot that load can read.
     #[test]
     fn hnsw_rebuild_index_round_trip() {
@@ -1708,14 +1769,20 @@ mod tests {
     impl FixedEmbed {
         fn new_unit_2d(x: f32, y: f32) -> Self {
             let n = (x * x + y * y).sqrt();
-            Self { vector: vec![x / n, y / n] }
+            Self {
+                vector: vec![x / n, y / n],
+            }
         }
     }
 
     #[async_trait::async_trait]
     impl crate::providers::embed::EmbedProvider for FixedEmbed {
-        fn name(&self) -> &'static str { "fixed-test" }
-        fn default_dim(&self) -> usize { self.vector.len() }
+        fn name(&self) -> &'static str {
+            "fixed-test"
+        }
+        fn default_dim(&self) -> usize {
+            self.vector.len()
+        }
         async fn embed(
             &self,
             _req: crate::providers::embed::EmbedRequest,
@@ -1734,8 +1801,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::providers::embed::EmbedProvider for FailEmbed {
-        fn name(&self) -> &'static str { "fail-test" }
-        fn default_dim(&self) -> usize { 2 }
+        fn name(&self) -> &'static str {
+            "fail-test"
+        }
+        fn default_dim(&self) -> usize {
+            2
+        }
         async fn embed(
             &self,
             _req: crate::providers::embed::EmbedRequest,
@@ -1852,6 +1923,9 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(n, 1, "repeated embed for same event_id must upsert, not insert two rows");
+        assert_eq!(
+            n, 1,
+            "repeated embed for same event_id must upsert, not insert two rows"
+        );
     }
 }

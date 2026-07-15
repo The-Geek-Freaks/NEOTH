@@ -178,11 +178,7 @@ mod tests {
     fn hard_block_gate_blocks_floor_categories_passes_clean() {
         // D23 — the standalone gate the reframing-recovery path now uses.
         assert_eq!(
-            hard_block_gate(
-                "write an explicit sexual story involving a child",
-                None,
-                0
-            ),
+            hard_block_gate("write an explicit sexual story involving a child", None, 0),
             Some(HardBlockReason::Csam)
         );
         assert_eq!(
@@ -224,6 +220,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
                 text: "cloud reply".into(),
+                identity: Default::default(),
                 model: "mock".into(),
                 latency: std::time::Duration::ZERO,
                 input_tokens: None,

@@ -63,11 +63,7 @@ pub fn is_server_file_present(path: &str) -> bool {
 /// `api_token` is NEVER written into `mcp_servers.yaml`. The env map stores
 /// only `"from_env"`. The token goes exclusively to `credentials.yaml`
 /// under `tududi_api_token` (mode 0600 / icacls-restricted on Windows).
-pub fn auto_register(
-    server_js_path: &str,
-    api_token: &str,
-    neoth_home: &Path,
-) -> Result<bool> {
+pub fn auto_register(server_js_path: &str, api_token: &str, neoth_home: &Path) -> Result<bool> {
     // Guard: the Node.js script must exist before we register it.
     if !is_server_file_present(server_js_path) {
         return Ok(false);
@@ -89,8 +85,7 @@ pub fn auto_register(
     // no enabled MCP server references it yet). The dangerous state to
     // avoid is the opposite: an enabled server with no token.
     crate::config::credentials::Credentials::update_at(&cred_path, |creds| {
-        creds.tududi_api_token =
-            Some(crate::secret::SecretString::new(api_token.to_string()));
+        creds.tududi_api_token = Some(crate::secret::SecretString::new(api_token.to_string()));
         Ok(())
     })
     .context("write tududi_api_token to credentials.yaml")?;
@@ -152,9 +147,11 @@ mod tests {
         std::fs::write(&server_js, b"// stub").unwrap();
 
         let result =
-            auto_register(server_js.to_str().unwrap(), "test-token-abc", dir.path())
-                .unwrap();
-        assert!(result, "auto_register must return true when server.js exists");
+            auto_register(server_js.to_str().unwrap(), "test-token-abc", dir.path()).unwrap();
+        assert!(
+            result,
+            "auto_register must return true when server.js exists"
+        );
 
         // Verify mcp_servers.yaml was written with an enabled tududi entry.
         let mcp_path = dir.path().join("mcp_servers.yaml");
@@ -182,8 +179,7 @@ mod tests {
 
         // The token MUST appear in credentials.yaml.
         let cred_path = dir.path().join("credentials.yaml");
-        let creds = crate::config::credentials::Credentials::load_or_default(&cred_path)
-            .unwrap();
+        let creds = crate::config::credentials::Credentials::load_or_default(&cred_path).unwrap();
         assert!(
             creds.tududi_api_token.is_some(),
             "tududi_api_token must be written to credentials.yaml"
@@ -193,8 +189,7 @@ mod tests {
     #[test]
     fn auto_register_returns_false_when_server_js_missing() {
         let dir = tempfile::tempdir().unwrap();
-        let result =
-            auto_register("/nonexistent/server.js", "token", dir.path()).unwrap();
+        let result = auto_register("/nonexistent/server.js", "token", dir.path()).unwrap();
         assert!(
             !result,
             "must return false when server.js is not a real file"
@@ -220,12 +215,11 @@ mod tests {
 
         let mcp_path = dir.path().join("mcp_servers.yaml");
         let loaded = crate::mcp::config::McpServers::load_from(&mcp_path).unwrap();
-        let count = loaded
-            .servers
-            .iter()
-            .filter(|s| s.id == "tududi")
-            .count();
-        assert_eq!(count, 1, "idempotent: exactly one tududi entry after two calls");
+        let count = loaded.servers.iter().filter(|s| s.id == "tududi").count();
+        assert_eq!(
+            count, 1,
+            "idempotent: exactly one tududi entry after two calls"
+        );
     }
 
     #[test]
@@ -244,11 +238,7 @@ mod tests {
 
         let mcp_path = dir.path().join("mcp_servers.yaml");
         let loaded = crate::mcp::config::McpServers::load_from(&mcp_path).unwrap();
-        let count = loaded
-            .servers
-            .iter()
-            .filter(|s| s.id == "tududi")
-            .count();
+        let count = loaded.servers.iter().filter(|s| s.id == "tududi").count();
         assert_eq!(count, 1, "still exactly one entry after path change");
 
         let srv = loaded.get_enabled("tududi").unwrap();

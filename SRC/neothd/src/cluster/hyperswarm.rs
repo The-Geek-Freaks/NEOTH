@@ -1,11 +1,10 @@
-//! R-7 live-wire scaffold — peeroxide Hyperswarm bridge.
+//! R-7 peeroxide Hyperswarm transport.
 //!
 //! Per `PLAN/PROGRESS.md` post-v0.1 backlog. The Phase-3 dep
 //! block lifted in Session 19 (commit `d44a0e8`) — peeroxide
 //! 1.3.x is the maintained pure-Rust Hyperswarm port. This
-//! module is the integration site: bring up a swarm, join a
-//! topic derived from the operator's cluster ID, hand each
-//! incoming peer connection off to the heartbeat exchanger.
+//! module brings up a swarm, joins the cluster topic, authenticates peers, and
+//! hands each connection to the live heartbeat/task/gossip protocol.
 //!
 //! ## Operator-facing wire
 //!
@@ -19,23 +18,17 @@
 //! let cluster_key = Arc::new(identity.key);
 //! let handle = hyperswarm::spawn_discovery_with_wal(
 //!     "my-cluster",
-//!     Some(cluster_key),
+//!     cluster_key,
 //!     registry,
 //!     Some(Arc::new(wal_writer)),
+//!     peer_streams,
+//!     Arc::clone(&reload_controller),
+//!     neoth_home,
+//!     Some(dispatch_tx),
 //! ).await?;
 //! // ... daemon runs ...
 //! handle.shutdown().await?;
 //! ```
-//!
-//! ## Why a scaffold
-//!
-//! peeroxide ships a Noise-encrypted AsyncRead+AsyncWrite per
-//! peer connection but the cross-peer wire protocol is
-//! NEOTH-specific (heartbeat frame with load + last-seen +
-//! capabilities). The protocol itself needs a separate Chorus
-//! pass — until that lands, this module brings up the swarm
-//! + logs peer connections + exposes the surface the future
-//! protocol implementer plugs into.
 //!
 //! ## What this module owns
 //!
@@ -48,20 +41,8 @@
 //!   Callers always supply a cluster_key (the keyless convenience
 //!   wrapper was deleted — it had no consumer).
 //!
-//! ## What this module does NOT do (yet)
-//!
-//! - Heartbeat protocol exchange. The peer-acceptor logs each
-//!   new connection but doesn't yet write/read frames. That
-//!   ships in the follow-up commit alongside the WAL
-//!   `0xE0..=0xE7` band reservation for cluster-event frames.
-//! - LOCAL→registry write path. Once heartbeats land,
-//!   `registry.lock().record_heartbeat(peer_load)` fires per
-//!   received frame.
-//! - DHT bootstrap-server config from `freedom.yaml`. Today
-//!   we use peeroxide's public bootstrap default — a future
-//!   commit reads
-//!   `freedom.yaml::cluster.hyperswarm.bootstrap` for
-//!   operator-private DHT networks.
+//! Peeroxide's public bootstrap set remains the discovery boundary; private
+//! bootstrap selection is intentionally not exposed as a half-wired option.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -86,7 +67,7 @@ use super::heartbeat::{
 use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
-use super::swarm::encode_snapshot_gossip_payload;
+use super::swarm::{emit_peer_snapshot_to_wal, encode_snapshot_gossip_payload};
 use super::wal_sync::{GossipState, SWARM_SNAPSHOT_SUBTYPE};
 use super::{PeerLoad, PeerLoadRegistry, PeerPubkey, PeerSessionId};
 use crate::daemon::resource_snapshot_cron::{new_system, resolve_node_id, sample_snapshot};
@@ -141,9 +122,16 @@ pub struct SwarmHandle {
     swarm_task: Option<tokio::task::JoinHandle<()>>,
     /// Our per-peer connection-accept loop.
     accept_task: Option<tokio::task::JoinHandle<()>>,
+    /// Stable authenticated origin used by every local gossip frame: the
+    /// peeroxide Noise static public key in lowercase hex.
+    own_peer_id: String,
 }
 
 impl SwarmHandle {
+    pub fn own_peer_id(&self) -> &str {
+        &self.own_peer_id
+    }
+
     /// Explicit graceful shutdown — unannounces, stops the DHT actor, and
     /// awaits termination. Use over `Drop` when the caller wants synchronous
     /// teardown (daemon SIGTERM path) with no lingering DHT announce.
@@ -194,17 +182,17 @@ impl Drop for SwarmHandle {
 /// discovery entry point — a WAL-free variant was never built.
 pub async fn spawn_discovery_with_wal(
     cluster_name: &str,
-    // SL-00(1b): the shared cluster_key. `Some` enforces the cluster_key
-    // proof in every peer handshake (the activated transport path always
-    // passes it); `None` is the legacy/no-auth path (CLI one-shots / tests).
-    cluster_key: Option<Arc<ClusterKey>>,
+    // SL-00(1b): the mandatory shared cluster_key. The type boundary makes an
+    // unauthenticated discovery/handshake path impossible.
+    cluster_key: Arc<ClusterKey>,
     registry: Arc<Mutex<PeerLoadRegistry>>,
     wal_writer: ClusterWalWriter,
     // SL-00(1c): shared registry of per-peer outbound channels. The daemon
     // holds a clone so SL-01/SL-01b can send directed frames to a peer.
     peer_streams: Arc<PeerStreamRegistry>,
-    // SL-01 accept-gate inputs threaded into every peer session.
-    autonomy: AutonomyLevel,
+    // SL-01 accept-gate policy source threaded into every peer session. Each
+    // inbound task obtains a fresh immutable snapshot at the side-effect leaf.
+    reload_controller: Arc<crate::config::reload::ReloadController>,
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
 ) -> Result<SwarmHandle> {
@@ -226,7 +214,8 @@ pub async fn spawn_discovery_with_wal(
     let session_limiter = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PEER_SESSIONS));
 
     let cluster_name_owned = cluster_name.to_string();
-    let own_peer_id = local_peer_id();
+    let own_peer_id = hex_encode(&own_noise_pk);
+    let accept_peer_id = own_peer_id.clone();
     let accept_task = tokio::spawn(async move {
         while let Some(conn) = conn_rx.recv().await {
             let peer_hex = hex_encode(conn.remote_public_key());
@@ -249,13 +238,14 @@ pub async fn spawn_discovery_with_wal(
             };
             debug!(peer = %peer_hex, "hyperswarm: peer connected — driving handshake");
             let cluster = cluster_name_owned.clone();
-            let own_id = own_peer_id.clone();
+            let own_id = accept_peer_id.clone();
             let reg = Arc::clone(&registry);
             let wal = wal_writer.clone();
             let ckey = cluster_key.clone();
             let streams = Arc::clone(&peer_streams);
             let home = neoth_home.clone();
             let dtx = dispatch_tx.clone();
+            let reload = Arc::clone(&reload_controller);
             tokio::spawn(async move {
                 // Hold the permit until this session ends.
                 let _permit = permit;
@@ -269,7 +259,7 @@ pub async fn spawn_discovery_with_wal(
                     ckey,
                     own_noise_pk,
                     streams,
-                    autonomy,
+                    reload,
                     home,
                     dtx,
                 )
@@ -317,15 +307,8 @@ pub async fn spawn_discovery_with_wal(
         topic,
         swarm_task: Some(swarm_task),
         accept_task: Some(accept_task),
+        own_peer_id,
     })
-}
-
-/// Derive a stable per-process peer id. UUID v7 (when
-/// `uuid::Uuid::now_v7` is reachable) carries a unix-ms
-/// timestamp so audit consumers see roughly when each peer
-/// came up.
-fn local_peer_id() -> String {
-    uuid::Uuid::now_v7().to_string()
 }
 
 /// Drive one peer connection end-to-end against peeroxide's
@@ -345,20 +328,19 @@ async fn handle_peeroxide_connection(
     own_peer_id: String,
     registry: Arc<Mutex<PeerLoadRegistry>>,
     wal_writer: ClusterWalWriter,
-    // SL-00(1b): the shared cluster_key (Some on the activated transport path,
-    // None on the legacy/no-auth path) + our own Noise static pubkey, used to
-    // prove + verify cluster membership in the Hello exchange.
-    cluster_key: Option<Arc<ClusterKey>>,
+    // SL-00(1b): the mandatory shared cluster_key + our own Noise static
+    // pubkey, used to prove + verify cluster membership in the Hello exchange.
+    cluster_key: Arc<ClusterKey>,
     own_noise_pk: [u8; 32],
     // SL-00(1c): registry of outbound channels so other subsystems can send
     // directed frames to this peer; the session loop drains its receiver.
     peer_streams: Arc<PeerStreamRegistry>,
-    // SL-01: the 3-checkpoint accept-gate inputs. `autonomy` is the node's
-    // level; `neoth_home` locates cluster.yaml (pairing) + leases.json;
+    // SL-01: the 3-checkpoint accept-gate inputs. `reload_controller` supplies
+    // the active immutable policy; `neoth_home` locates cluster.yaml + leases;
     // `dispatch_tx` hands an accepted task to the executor (None ⇒ no executor,
     // e.g. no-provider / CLI one-shot — a delegate then gets a "no_provider"
     // rejection).
-    autonomy: AutonomyLevel,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
 ) -> Result<()> {
@@ -392,9 +374,11 @@ async fn handle_peeroxide_connection(
             capabilities_schema_version: 1,
             // SL-00(1b): prove we hold the shared cluster_key. signer = us,
             // verifier = the peer (the peer recomputes proof(us, them)).
-            cluster_key_proof: cluster_key
-                .as_ref()
-                .map(|k| compute_cluster_key_proof(k, &own_noise_pk, &peer_noise_pk)),
+            cluster_key_proof: Some(compute_cluster_key_proof(
+                &cluster_key,
+                &own_noise_pk,
+                &peer_noise_pk,
+            )),
         }),
     };
     let our_hello_bytes = heartbeat::encode_frame(&our_hello).context("encode our Hello")?;
@@ -466,6 +450,16 @@ async fn handle_peeroxide_connection(
         anyhow::bail!("peer first frame was {:?}, expected Hello", peer_frame.kind);
     }
     let peer_id = peer_frame.peer_id.clone();
+    if peer_id != remote_pk_hex {
+        emit_peer_rejected_wal(
+            wal_writer.as_deref(),
+            &peer_id,
+            "Hello peer_id does not match authenticated Noise public key",
+        );
+        anyhow::bail!(
+            "peer Hello identity mismatch: claimed `{peer_id}`, authenticated `{remote_pk_hex}`"
+        );
+    }
     let mut peer_capabilities: Vec<String> = match peer_frame.body {
         FrameBody::Hello(ref body) => {
             if let Err(e) = heartbeat::validate_hello(body) {
@@ -489,32 +483,30 @@ async fn handle_peeroxide_connection(
             }
             // SL-00(1b): the cluster_name_hash is PUBLIC — it only proves the
             // peer knows the cluster's name. The cluster_key proof below is
-            // what proves shared-secret possession. Fail-closed: when we hold
-            // a cluster_key (the activated path always does), a missing OR
-            // mismatched proof is a hard rejection. `peer_pk` is the peer's
+            // what proves shared-secret possession. The key is mandatory at
+            // the API boundary, so a missing OR mismatched proof is always a
+            // hard rejection. `peer_pk` is the peer's
             // Noise static key from the authenticated channel (never the
             // payload); we recompute proof(peer_pk, own_pk) and constant-time
             // compare.
-            if let Some(ref ckey) = cluster_key {
-                match body.cluster_key_proof {
-                    Some(ref claimed) => {
-                        if !verify_peer_proof(ckey, claimed, &peer_noise_pk, &own_noise_pk) {
-                            emit_peer_rejected_wal(
-                                wal_writer.as_deref(),
-                                &peer_id,
-                                "cluster_key_proof mismatch — peer not a cluster member",
-                            );
-                            anyhow::bail!("peer cluster_key_proof invalid — unauthorized");
-                        }
-                    }
-                    None => {
+            match body.cluster_key_proof {
+                Some(ref claimed) => {
+                    if !verify_peer_proof(&cluster_key, claimed, &peer_noise_pk, &own_noise_pk) {
                         emit_peer_rejected_wal(
                             wal_writer.as_deref(),
                             &peer_id,
-                            "missing cluster_key_proof — peer unauthorized",
+                            "cluster_key_proof mismatch — peer not a cluster member",
                         );
-                        anyhow::bail!("peer Hello missing cluster_key_proof — unauthorized");
+                        anyhow::bail!("peer cluster_key_proof invalid — unauthorized");
                     }
+                }
+                None => {
+                    emit_peer_rejected_wal(
+                        wal_writer.as_deref(),
+                        &peer_id,
+                        "missing cluster_key_proof — peer unauthorized",
+                    );
+                    anyhow::bail!("peer Hello missing cluster_key_proof — unauthorized");
                 }
             }
             body.capabilities.clone()
@@ -662,13 +654,18 @@ async fn handle_peeroxide_connection(
                     // RAM/VRAM/hostname are correct from the very first tick.
                     let snap = sample_snapshot(&resolve_node_id(), &mut gossip_sys);
                     if let Some(gossip_payload) = encode_snapshot_gossip_payload(&snap) {
+                        let gossip_timestamp =
+                            crate::cluster::wal_sync::gossip_payload_timestamp_unix(
+                                &gossip_payload,
+                            )
+                            .expect("snapshot encoder must produce a canonical WAL frame");
                         let self_pk = PeerPubkey::new(own_peer_id.clone());
                         if let Some(gframe) = gossip_state.build_outbound(
                             &self_pk,
                             0x00,
                             SWARM_SNAPSHOT_SUBTYPE,
                             gossip_payload,
-                            crate::time::now_unix_i64(),
+                            gossip_timestamp,
                             &gossip_policy,
                         ) {
                             let snap_wf = WireFrame {
@@ -777,11 +774,12 @@ async fn handle_peeroxide_connection(
         // audited. Both `continue` — they never reach handle_inbound_frame.
         if frame.kind == FrameKind::TaskDelegate {
             if let FrameBody::TaskDelegate(delegate) = frame.body {
+                let autonomy_policy = reload_controller.autonomy_policy();
                 handle_task_delegate(
                     delegate,
                     &remote_pk_hex,
                     &own_peer_id,
-                    autonomy,
+                    &autonomy_policy,
                     &neoth_home,
                     wal_writer.clone(),
                     &peer_streams,
@@ -804,16 +802,36 @@ async fn handle_peeroxide_connection(
             }
             continue;
         }
-        // SL-01b: inbound WAL gossip. Run the receive ACL (tag/budget/dedup +
-        // a band re-check on the payload's OWN event_type, byte 2 of the inner
-        // WAL header — extracted WITHOUT HMAC validation since it is a foreign
-        // node's frame), audit accept/drop, then DROP the payload (applying it
-        // into local memory is the deferred foreign-event-store slice).
+        // SL-01b: inbound WAL gossip. Decode the canonical frame (including
+        // length + CRC), then run the receive ACL over its real type/subtype.
+        // Accepted payloads are durably persisted before their stable identity
+        // advances.
         if frame.kind == FrameKind::Gossip {
             if let FrameBody::Gossip(gframe) = frame.body {
-                let payload_et = gframe.payload.get(2).copied();
-                // Byte 3 is the subtype for EXTENDED (0x00) frames.
-                let payload_sub = gframe.payload.get(3).copied();
+                if gframe.origin.as_str() != remote_pk_hex {
+                    emit_gossip_dropped_wal(
+                        wal_writer.as_deref(),
+                        &gframe,
+                        &GossipAcceptance::DroppedDoNotGossipTag,
+                    );
+                    anyhow::bail!(
+                        "gossip origin mismatch: envelope `{}`, authenticated Noise peer `{remote_pk_hex}`",
+                        gframe.origin.as_str()
+                    );
+                }
+                let payload_timestamp =
+                    crate::cluster::wal_sync::gossip_payload_timestamp_unix(&gframe.payload);
+                let (payload_et, payload_sub) = match (
+                    crate::cluster::wal_sync::gossip_payload_event_meta(&gframe.payload),
+                    payload_timestamp,
+                ) {
+                    (Some((event_type, subtype)), Some(timestamp))
+                        if timestamp == gframe.timestamp_unix =>
+                    {
+                        (Some(event_type), Some(subtype))
+                    }
+                    _ => (None, None),
+                };
                 let now = now_unix_secs() as i64;
                 match gossip_state.accept_inbound(
                     &gframe,
@@ -826,9 +844,9 @@ async fn handle_peeroxide_connection(
                         emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
                         // G02-CLUSTER-02 persist-then-dedup: INSERT into
                         // idx_foreign_events FIRST (awaited), advance the dedup
-                        // high-water + merge the sender's VC only after the DB
+                        // remember the stable identity + merge the sender's VC only after the DB
                         // write is confirmed. The old fire-and-forget order made
-                        // a views.db-contention drop permanent (high-water +
+                        // a views.db-contention drop permanent (dedup identity +
                         // VC already advanced ⇒ the peer never re-sent). One
                         // awaited spawn_blocking per accepted frame is fine —
                         // this loop does async I/O anyway, and the DB write is
@@ -857,18 +875,27 @@ async fn handle_peeroxide_connection(
                         });
                         match persisted {
                             Ok(()) => {
-                                gossip_state.commit_inbound(&gframe);
                                 // GOLD-FEAT-06 gossip-piggyback (b): write a
                                 // peer SwarmResourceSnapshot (0x00/0x03) to the
                                 // LOCAL WAL so `neoth cluster swarm` shows it.
                                 // The foreign-event store holds the raw bytes;
                                 // this WAL write is what the swarm scanner reads.
-                                if payload_et == Some(0x00)
+                                let snapshot_persisted = if payload_et == Some(0x00)
                                     && payload_sub == Some(SWARM_SNAPSHOT_SUBTYPE)
                                 {
-                                    emit_peer_snapshot_to_wal(
-                                        wal_writer.as_deref(),
-                                        &gframe.payload,
+                                    wal_writer.as_deref().is_none_or(|writer| {
+                                        emit_peer_snapshot_to_wal(writer, &gframe.payload)
+                                    })
+                                } else {
+                                    true
+                                };
+                                if snapshot_persisted {
+                                    gossip_state.commit_inbound(&gframe);
+                                } else {
+                                    tracing::warn!(
+                                        origin = %gframe.origin.as_str(),
+                                        seq = gframe.event_seq,
+                                        "cluster: peer snapshot WAL append failed — dedup identity not recorded"
                                     );
                                 }
                             }
@@ -879,7 +906,7 @@ async fn handle_peeroxide_connection(
                                     origin = %gframe.origin.as_str(),
                                     seq = gframe.event_seq,
                                     error = %e,
-                                    "cluster: foreign event ingest failed — high-water not advanced, peer will re-send"
+                                    "cluster: foreign event ingest failed — dedup identity not recorded, peer will re-send"
                                 );
                             }
                         }
@@ -1218,7 +1245,7 @@ async fn handle_task_delegate(
     body: TaskDelegateBody,
     remote_pk_hex: &str,
     own_peer_id: &str,
-    autonomy: AutonomyLevel,
+    autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
     neoth_home: &std::path::Path,
     wal_writer: ClusterWalWriter,
     peer_streams: &PeerStreamRegistry,
@@ -1244,7 +1271,7 @@ async fn handle_task_delegate(
     // Checkpoint 3 (pure, zero-cost) FIRST so a flood of frames can't force
     // disk I/O on a guaranteed-Deny path (review DoS finding). Strict ⇒ Deny ⇒
     // reject without touching the registry or lease store.
-    let decision = permissions::evaluate(&Action::ClusterTaskAccept, autonomy);
+    let decision = permissions::evaluate(&Action::ClusterTaskAccept, autonomy_policy);
     if matches!(decision, Decision::Deny(_)) {
         reply_task_rejected(
             peer_streams,
@@ -1290,7 +1317,6 @@ async fn handle_task_delegate(
                 task_id: task_id.clone(),
                 prompt: body.prompt,
                 reply_peer_pk: remote_pk_hex.to_string(),
-                wal_writer: wal_writer.clone(),
             };
             match dispatch_tx {
                 Some(tx) => match tx.try_send(job) {
@@ -1300,7 +1326,7 @@ async fn handle_task_delegate(
                             &task_id,
                             remote_pk_hex,
                             lease_backed,
-                            autonomy,
+                            autonomy_policy.level(),
                         );
                         notify_task_accepted(neoth_home, &task_id, remote_pk_hex).await;
                     }
@@ -1504,35 +1530,6 @@ fn emit_gossip_dropped_wal(
         crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_DROPPED,
         payload,
     );
-}
-
-/// GOLD-FEAT-06 gossip-piggyback: write a received peer `SwarmResourceSnapshot`
-/// gossip payload into the local WAL as an `EXTENDED/SwarmResourceSnapshot`
-/// (0x00/0x03) frame so `neoth cluster swarm` can display peer rows.
-///
-/// The gossip payload has a 96-byte synthetic header (no MAGIC preamble) +
-/// JSON. We write a proper WAL frame (with MAGIC) via `HeaderBuilder` so the
-/// existing `cluster_swarm` scanner (`decode_frame`) can read it.
-fn emit_peer_snapshot_to_wal(writer: Option<&WalWriterHandle>, gossip_payload: &[u8]) {
-    use super::swarm::GOSSIP_HEADER_SIZE;
-    let Some(w) = writer else { return };
-    // Extract JSON body from the gossip payload (after the 96-byte synthetic header).
-    let json_bytes = match gossip_payload.get(GOSSIP_HEADER_SIZE..) {
-        Some(b) if !b.is_empty() => b,
-        _ => return,
-    };
-    let header = crate::wal::HeaderBuilder::new(
-        crate::wal::events::EVENT_TYPE_EXTENDED,
-        json_bytes,
-    )
-    .event_subtype(crate::wal::events::ExtendedSubtype::SwarmResourceSnapshot as u8)
-    .build();
-    if let Err(e) = w.try_append_sync(header, json_bytes.to_vec()) {
-        tracing::debug!(
-            error = %e,
-            "hyperswarm: peer snapshot WAL write failed (non-fatal, peer will re-send)"
-        );
-    }
 }
 
 // ── Connection-loop primitives (testable against tokio::io::duplex) ────────
@@ -2112,29 +2109,41 @@ mod tests {
         notify_task_accepted(home.path(), "t-42", &peer).await;
         notify_task_accepted(home.path(), "t-42", &peer).await; // re-delivered frame
 
-        let q = crate::proactive::ProactiveQueue::load_from(
-            &home.path().join("proactive_queue.json"),
-        )
-        .expect("queue readable");
+        let q =
+            crate::proactive::ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
+                .expect("queue readable");
         let items = q.peek();
-        assert_eq!(items.len(), 1, "duplicate accept dedups on cluster:accept:<task_id>");
+        assert_eq!(
+            items.len(),
+            1,
+            "duplicate accept dedups on cluster:accept:<task_id>"
+        );
         let item = &items[0];
         assert_eq!(item.source, "cluster_task_accept");
         assert_eq!(item.dedup_key, "cluster:accept:t-42");
-        assert!(item.body.contains("t-42"), "body names the task: {}", item.body);
+        assert!(
+            item.body.contains("t-42"),
+            "body names the task: {}",
+            item.body
+        );
         assert!(
             !item.body.contains(&peer),
             "full peer key never reaches the operator channel"
         );
-        assert!(item.expires_unix > 0, "accept notice must expire, not linger");
-        assert!(item.channel.is_empty(), "routes to the operator default channel");
+        assert!(
+            item.expires_unix > 0,
+            "accept notice must expire, not linger"
+        );
+        assert!(
+            item.channel.is_empty(),
+            "routes to the operator default channel"
+        );
 
         // A different task queues alongside.
         notify_task_accepted(home.path(), "t-43", &peer).await;
-        let q2 = crate::proactive::ProactiveQueue::load_from(
-            &home.path().join("proactive_queue.json"),
-        )
-        .expect("queue readable");
+        let q2 =
+            crate::proactive::ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
+                .expect("queue readable");
         assert_eq!(q2.peek().len(), 2);
     }
 }

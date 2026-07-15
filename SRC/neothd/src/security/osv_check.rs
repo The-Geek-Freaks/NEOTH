@@ -5,7 +5,8 @@
 //! `npm install -g`, query the OSV database (api.osv.dev) for advisories naming
 //! that package. A confirmed `MAL-*` hit BLOCKS unconditionally. CVE/GHSA hits
 //! are classified by severity and block-or-warn depending on the threshold passed
-//! by the caller (default: warn-only, block at >= `High` when operator opts in).
+//! by the caller. Production `SecurityPolicy` defaults to `High`; an explicit
+//! `None` threshold is the opt-in warn-only mode.
 //! A network / HTTP / parse error FAILS OPEN so an offline or transient failure
 //! never bricks onboarding.
 //!

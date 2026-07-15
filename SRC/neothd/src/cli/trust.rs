@@ -136,7 +136,7 @@ pub fn recovery_readiness(wal_dir: &Path) -> RecoveryReadiness {
 }
 
 pub async fn run_trust(args: TrustArgs) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
     let home = args
         .home
         .clone()
@@ -151,6 +151,12 @@ pub async fn run_trust(args: TrustArgs) -> Result<()> {
         email_llm_tiebreak: cfg.email.llm_tiebreak,
         email_tiebreak_allow_downgrade: cfg.email.llm_tiebreak_allow_downgrade,
         omi_ingest: cfg.omi.enabled,
+        omi_cloud_api: cfg.omi.enabled && cfg.omi.allow_cloud_api,
+        omi_cloud_summary: cfg.omi.enabled && cfg.omi.allow_cloud_summary,
+        omi_retain_transcripts: cfg.omi.enabled && cfg.omi.retain_transcripts,
+        omi_audio: cfg.omi.enabled && cfg.omi.audio_enabled,
+        omi_images: cfg.omi.enabled && cfg.omi.visual_enabled,
+        omi_video: cfg.omi.enabled && cfg.omi.video_enabled,
         calendar_writes: cfg.calendar.writes_enabled,
         live_delivery_edits: cfg.live_delivery.edits_enabled,
         ecology_scheduler: cfg.ecology.enabled,
@@ -184,8 +190,14 @@ pub struct PrivacySwitches {
     pub email_llm_tiebreak: bool,
     /// PL-05b — may a benign LLM verdict DEMOTE a flagged email to auto-deliver?
     pub email_tiebreak_allow_downgrade: bool,
-    /// OM-01 — is passive OMI transcript ingest on (the most sensitive surface)?
+    /// Is any OMI conversation/native-media surface active?
     pub omi_ingest: bool,
+    pub omi_cloud_api: bool,
+    pub omi_cloud_summary: bool,
+    pub omi_retain_transcripts: bool,
+    pub omi_audio: bool,
+    pub omi_images: bool,
+    pub omi_video: bool,
     /// EM-02b — may `neoth calendar add` write to the operator's CalDAV calendar?
     pub calendar_writes: bool,
     /// SPEC-11 — may live-delivery edit a message in place (vs send-only)?
@@ -257,6 +269,12 @@ fn render_json(
             "email_llm_tiebreak": switches.email_llm_tiebreak,
             "email_tiebreak_allow_downgrade": switches.email_tiebreak_allow_downgrade,
             "omi_ingest": switches.omi_ingest,
+            "omi_cloud_api": switches.omi_cloud_api,
+            "omi_cloud_summary": switches.omi_cloud_summary,
+            "omi_retain_transcripts": switches.omi_retain_transcripts,
+            "omi_audio": switches.omi_audio,
+            "omi_images": switches.omi_images,
+            "omi_video": switches.omi_video,
             "calendar_writes": switches.calendar_writes,
             "live_delivery_edits": switches.live_delivery_edits,
             "ecology_scheduler": switches.ecology_scheduler,
@@ -353,11 +371,22 @@ fn render_table(
         "  OMI ingest:           {}  ({})",
         on_off(switches.omi_ingest),
         if switches.omi_ingest {
-            "passive transcript ingest ON — LOCAL-only, sanitized, default-off surface"
+            "configured OMI mode ON — authenticated/policy-bounded; inspect `neoth omi status`"
         } else {
-            "off — no passive transcript ingest"
+            "off — no OMI conversation or native media ingest"
         }
     );
+    if switches.omi_ingest {
+        println!(
+            "    cloud-api={} cloud-summary={} retain-transcripts={} audio={} images={} video={}",
+            on_off(switches.omi_cloud_api),
+            on_off(switches.omi_cloud_summary),
+            on_off(switches.omi_retain_transcripts),
+            on_off(switches.omi_audio),
+            on_off(switches.omi_images),
+            on_off(switches.omi_video),
+        );
+    }
     println!(
         "  calendar writes:      {}  ({})",
         on_off(switches.calendar_writes),

@@ -17,7 +17,9 @@ use anyhow::Result;
 use tokio::task::JoinHandle;
 
 use crate::memory::{consolidate, store};
+use crate::permissions::AutonomyLevel;
 use crate::providers::Provider;
+use crate::providers::cost_authorization::{CostAuthorizingProvider, ProviderCallAuthorizer};
 use crate::wal::writer::WalWriterHandle;
 
 /// 2 hours. Matches the hippocampus-preprocess.timer cadence pattern.
@@ -263,12 +265,21 @@ pub async fn run_once(
     // GOLD-FEAT-12 (b): roll up the days this pass consolidated into
     // `kind='summary'` rows. MUST run here (async), NOT inside the consolidation
     // `spawn_blocking` above — `local_qwen::complete` itself uses `spawn_blocking`,
-    // so a nested `block_on` would deadlock. Local providers only (no cloud
-    // billing for background consolidation); best-effort, never fails the pass.
+    // so a nested `block_on` would deadlock. Local-primary providers only; the
+    // summarizer adds a fixed Strict/fail-closed B22 boundary before dispatch so
+    // a local-named fallback/compactor can never wander to a cloud child. This
+    // preserves the no-background-billing contract. Best-effort: a denied child
+    // call skips the summary and never fails the consolidation pass.
     if let Some(p) = provider.as_ref() {
         if crate::providers::is_local_provider(p.name()) && !report.days_needing_summary.is_empty()
         {
-            summarize_consolidated_days(db_path, p.as_ref(), &report.days_needing_summary).await;
+            summarize_consolidated_days(
+                db_path,
+                p.as_ref(),
+                &report.days_needing_summary,
+                wal_writer,
+            )
+            .await;
         }
     }
 
@@ -296,14 +307,35 @@ async fn summarize_consolidated_days(
     db_path: &Path,
     provider: &dyn Provider,
     days: &[(String, Vec<(i64, String)>)],
+    wal_writer: Option<&WalWriterHandle>,
 ) {
-    // GOLD-ADAPT-SPEAKR-01 — load the operator's summarize prompt-layer override
-    // ONCE per pass (best-effort; an absent/unreadable config → hardcoded
-    // defaults, byte-identical to the legacy prompt). Composed per-day below.
-    let meeting_cfg = crate::config::FreedomConfig::load_from_default_path()
-        .ok()
-        .map(|c| c.skills.meeting_summary);
-    let layers = crate::memory::warm_summarize::summary_layers(meeting_cfg.as_ref());
+    // B22: `provider` can be a composite whose public name is its local primary
+    // while a fallback or compaction utility is remote. Bind the authorization
+    // boundary here, immediately above the raw warm-summarize helper, so every
+    // concrete child hop is re-authorized by the decorators' authorized
+    // overrides. Strict is intentional: this unattended task promises local
+    // inference only, regardless of the operator's broader autonomy setting.
+    let authorizer = ProviderCallAuthorizer::fail_closed(
+        crate::permissions::AutonomyPolicySnapshot::builtin(AutonomyLevel::Strict)
+            .expect("Strict is a built-in autonomy policy"),
+        wal_writer.cloned(),
+    );
+    let provider = CostAuthorizingProvider::new(provider, authorizer, None, "memory.warm_summary");
+
+    // GOLD-ADAPT-SPEAKR-01 — load the operator's prompt-layer override once.
+    // Missing config uses compiled defaults; existing malformed policy blocks
+    // this unattended pass rather than silently changing its prompts.
+    let meeting_cfg = match crate::config::FreedomConfig::load_from_default_path_or_default() {
+        Ok(config) => config.skills.meeting_summary,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "warm-summary pass blocked: freedom.yaml is invalid"
+            );
+            return;
+        }
+    };
+    let layers = crate::memory::warm_summarize::summary_layers(Some(&meeting_cfg));
     for (day, _events_this_pass) in days {
         // Load the FULL retained set for this day (check + fetch in one open).
         // Returns None when the day already has a summary or has < 2 rows.
@@ -325,7 +357,7 @@ async fn summarize_consolidated_days(
         };
 
         let summary = match crate::memory::warm_summarize::summarize_day_batch(
-            provider,
+            &provider,
             &all_events,
             &layers,
         )
@@ -370,8 +402,96 @@ async fn summarize_consolidated_days(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait;
+
     use super::*;
+    use crate::providers::compactor::CompactingProvider;
+    use crate::providers::fallback::FallbackProvider;
+    use crate::providers::quota::QuotaError;
+    use crate::providers::{Completion, Request};
     use tempfile::tempdir;
+
+    struct QuotaLocalProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Provider for QuotaLocalProvider {
+        fn name(&self) -> &'static str {
+            "local_qwen"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-local-model")
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(anyhow::Error::new(QuotaError {
+                provider: "local_qwen",
+                retry_after: None,
+                body: String::new(),
+            }))
+        }
+    }
+
+    struct CloudCallSpy {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Provider for CloudCallSpy {
+        fn name(&self) -> &'static str {
+            "b22_test_cloud"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("gpt-4o-mini")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(64)
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "must not execute".into(),
+                identity: Default::default(),
+                model: req.model.unwrap_or_default(),
+                latency: Duration::ZERO,
+                ..Completion::default()
+            })
+        }
+    }
+
+    struct LocalCallSpy {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Provider for LocalCallSpy {
+        fn name(&self) -> &'static str {
+            "local_qwen"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-local-model")
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "local summary".into(),
+                identity: Default::default(),
+                model: req.model.unwrap_or_default(),
+                latency: Duration::ZERO,
+                ..Completion::default()
+            })
+        }
+    }
 
     #[test]
     fn community_snapshot_rolls_back_delete_and_partial_inserts() {
@@ -418,6 +538,119 @@ mod tests {
         assert_eq!(report.hot_decayed, 0);
         assert_eq!(report.hot_archived, 0);
         assert_eq!(report.consolidated, 0);
+    }
+
+    #[tokio::test]
+    async fn warm_summary_local_quota_never_calls_cloud_fallback() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("v.db");
+        {
+            let conn = store::open(&db).unwrap();
+            conn.execute(
+                "INSERT INTO idx_consolidated \
+                 (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts, access_count) \
+                 VALUES ('retained', '2026-07-13', 1, 'first retained event', 'h1', 0.5, 1, 1, 0), \
+                        ('retained', '2026-07-13', 2, 'second retained event', 'h2', 0.5, 1, 1, 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let local_calls = Arc::new(AtomicUsize::new(0));
+        let cloud_calls = Arc::new(AtomicUsize::new(0));
+        let seg = dir.path().join("b22-warm-summary.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+        let fallback = FallbackProvider::new(
+            vec![
+                Box::new(QuotaLocalProvider {
+                    calls: local_calls.clone(),
+                }),
+                Box::new(CloudCallSpy {
+                    calls: cloud_calls.clone(),
+                }),
+            ],
+            1,
+            Some(writer.clone()),
+        );
+
+        let days = vec![("2026-07-13".to_string(), Vec::new())];
+        summarize_consolidated_days(&db, &fallback, &days, Some(&writer)).await;
+
+        assert_eq!(
+            local_calls.load(Ordering::SeqCst),
+            1,
+            "the local primary must be attempted before its quota fallback"
+        );
+        assert_eq!(
+            cloud_calls.load(Ordering::SeqCst),
+            0,
+            "Strict warm-summary authorization must block the cloud fallback before dispatch"
+        );
+        let summary_count: i64 = store::open(&db)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM idx_consolidated WHERE kind = 'summary'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(summary_count, 0, "a denied fallback must fail soft");
+
+        drop(fallback);
+        drop(writer);
+        join.await.ok();
+    }
+
+    #[tokio::test]
+    async fn warm_summary_local_compactor_never_calls_cloud_utility() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("v.db");
+        {
+            let conn = store::open(&db).unwrap();
+            conn.execute(
+                "INSERT INTO idx_consolidated \
+                 (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts, access_count) \
+                 VALUES ('retained', '2026-07-14', 1, 'first ordinary retained event', 'h1', 0.5, 1, 1, 0), \
+                        ('retained', '2026-07-14', 2, 'second ordinary retained event', 'h2', 0.5, 1, 1, 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let local_calls = Arc::new(AtomicUsize::new(0));
+        let cloud_calls = Arc::new(AtomicUsize::new(0));
+        let seg = dir.path().join("b22-warm-compactor.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+        let compactor = CompactingProvider::new(
+            Box::new(LocalCallSpy {
+                calls: local_calls.clone(),
+            }),
+            Some(Box::new(CloudCallSpy {
+                calls: cloud_calls.clone(),
+            })),
+            1,
+            0.0,
+            1,
+            Some(writer.clone()),
+        );
+
+        let days = vec![("2026-07-14".to_string(), Vec::new())];
+        summarize_consolidated_days(&db, &compactor, &days, Some(&writer)).await;
+
+        assert_eq!(
+            cloud_calls.load(Ordering::SeqCst),
+            0,
+            "Strict warm-summary authorization must block the cloud utility before dispatch"
+        );
+        assert_eq!(
+            local_calls.load(Ordering::SeqCst),
+            0,
+            "a denied compaction utility must abort before the main local call"
+        );
+
+        drop(compactor);
+        drop(writer);
+        join.await.ok();
     }
 
     #[tokio::test]

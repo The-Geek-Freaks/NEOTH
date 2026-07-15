@@ -233,6 +233,7 @@ mod tests {
             };
             Ok(Completion {
                 text,
+                identity: Default::default(),
                 model: "scripted".into(),
                 latency: std::time::Duration::from_millis(1),
                 input_tokens: Some(1),

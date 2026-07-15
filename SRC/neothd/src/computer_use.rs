@@ -7,7 +7,7 @@
 //! NEOTH owns it as a KNOWN MCP server. Once enabled (`neoth computer-use
 //! enable`), the cua-driver tools (screenshot / click / type / …) flow through
 //! NEOTH's existing MCP machinery, so every computer-use action is:
-//!   - **autonomy-gated** — `permissions::evaluate(McpToolInvocation, autonomy)`
+//!   - **autonomy-gated** — `permissions::evaluate(McpToolInvocation, &policy_snapshot)`
 //!     (`mcp/gate.rs`) decides Allow / Confirm / Deny per call;
 //!   - **WAL-audited** — a `0xC0` MCP-invocation frame per call;
 //!   - **allowlisted** — secure-by-default: only the pinned computer-use verbs

@@ -11,7 +11,9 @@ use crate::os_tools::allowlist::{
 use crate::os_tools::launch::launch_program;
 use crate::os_tools::read::read_file_text;
 use crate::os_tools::write::write_file_atomic;
-use crate::permissions::{Action, AutonomyLevel, Decision, evaluate};
+#[cfg(test)]
+use crate::permissions::AutonomyLevel;
+use crate::permissions::{Action, Decision, PolicyArgument, evaluate};
 use crate::wal::events::{
     EVENT_TYPE_OS_APP_LAUNCH, EVENT_TYPE_OS_APP_LAUNCH_DENIED, EVENT_TYPE_OS_FILE_DENIED,
     EVENT_TYPE_OS_FILE_READ, EVENT_TYPE_OS_FILE_WRITE, EVENT_TYPE_OS_FILE_WRITE_DENIED,
@@ -108,10 +110,10 @@ async fn dispatch_frame(sink: AuditSink<'_>, event_type: u8, payload: Vec<u8>) {
 /// allowlist / autonomy / read failure. `writer` is `None` only in contexts
 /// that don't own a WAL writer (the daemon-single-writer rule); the read
 /// itself is gated identically either way.
-pub async fn read_os_file(
+pub async fn read_os_file<P: PolicyArgument>(
     target: &Path,
     cfg: &OsToolsConfig,
-    autonomy: AutonomyLevel,
+    policy: P,
     sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<String, OsGateError> {
@@ -134,7 +136,7 @@ pub async fn read_os_file(
     let action = Action::OsFileRead {
         path: canonical.clone(),
     };
-    match evaluate(&action, autonomy) {
+    match evaluate(&action, policy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_denied(sink, &canonical.display().to_string(), &reason, now_unix).await;
@@ -178,11 +180,11 @@ pub async fn read_os_file(
 /// atomic write → WAL audit (`0xAA OS_FILE_WRITE` on success, `0xAB
 /// OS_FILE_WRITE_DENIED` on any refusal/failure). Returns the resolved path
 /// written on success.
-pub async fn write_os_file(
+pub async fn write_os_file<P: PolicyArgument>(
     target: &Path,
     contents: &[u8],
     cfg: &OsToolsConfig,
-    autonomy: AutonomyLevel,
+    policy: P,
     sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<PathBuf, OsGateError> {
@@ -217,7 +219,7 @@ pub async fn write_os_file(
     let action = Action::OsFileWrite {
         path: resolved.clone(),
     };
-    match evaluate(&action, autonomy) {
+    match evaluate(&action, policy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_write_denied(sink, &resolved.display().to_string(), &reason, now_unix).await;
@@ -268,10 +270,10 @@ pub async fn write_os_file(
 /// stdio) → WAL audit (`0xAC OS_APP_LAUNCH` on success, `0xAD
 /// OS_APP_LAUNCH_DENIED` on any refusal/failure). Returns the resolved program
 /// path + the launched PID on success.
-pub async fn launch_os_app(
+pub async fn launch_os_app<P: PolicyArgument>(
     program: &Path,
     cfg: &OsToolsConfig,
-    autonomy: AutonomyLevel,
+    policy: P,
     sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<(PathBuf, u32), OsGateError> {
@@ -294,7 +296,7 @@ pub async fn launch_os_app(
     let action = Action::OsAppLaunch {
         program: resolved.clone(),
     };
-    match evaluate(&action, autonomy) {
+    match evaluate(&action, policy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_launch_denied(sink, &resolved.display().to_string(), &reason, now_unix).await;
@@ -349,9 +351,9 @@ fn is_clipboard_line_terminator(c: char) -> bool {
 /// emit `0xBC`/`0xBD` carrying ONLY `{op, bytes|reason, ts_unix}` — the clipboard
 /// CONTENT is never in any frame, log, or error. Returns the text on success.
 #[cfg(feature = "os-clipboard")]
-pub async fn read_os_clipboard(
+pub async fn read_os_clipboard<P: PolicyArgument>(
     cfg: &crate::config::ClipboardConfig,
-    autonomy: AutonomyLevel,
+    policy: P,
     sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<String, OsGateError> {
@@ -370,7 +372,7 @@ pub async fn read_os_clipboard(
     }
     // Layer 2 — autonomy gate, BEFORE touching the backend: a denied read must
     // never open the clipboard.
-    match evaluate(&Action::OsClipboardRead, autonomy) {
+    match evaluate(&Action::OsClipboardRead, policy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_clipboard_denied(sink, "read", &reason, now_unix).await;
@@ -424,10 +426,10 @@ pub async fn read_os_clipboard(
 /// audit. `0xBC`/`0xBD` carry only `{op, bytes|reason, ts_unix}` — never content.
 /// Returns the byte count written on success.
 #[cfg(feature = "os-clipboard")]
-pub async fn write_os_clipboard(
+pub async fn write_os_clipboard<P: PolicyArgument>(
     content: &str,
     cfg: &crate::config::ClipboardConfig,
-    autonomy: AutonomyLevel,
+    policy: P,
     sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<usize, OsGateError> {
@@ -488,7 +490,7 @@ pub async fn write_os_clipboard(
         ));
     }
     // Layer 2 — autonomy gate.
-    match evaluate(&Action::OsClipboardWrite, autonomy) {
+    match evaluate(&Action::OsClipboardWrite, policy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_clipboard_denied(sink, "write", &reason, now_unix).await;

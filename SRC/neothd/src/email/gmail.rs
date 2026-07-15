@@ -1,9 +1,9 @@
 //! EM-01 — Gmail OAuth + IMAP config primitives.
 //!
-//! Pure-data + URL-building surface for the Gmail OAuth + IMAP path.
-//! The actual TLS IMAP connection lands in EM-01b once we add the
-//! `imap` crate (gated behind a feature flag so default builds stay
-//! lean). What ships today:
+//! Pure-data + URL-building surface shared by the Gmail OAuth and live IMAP
+//! ingest paths. The TLS socket and MIME parsing live in `email::imap_fetch`
+//! behind the `imap_fetch` feature; default and named release builds keep that
+//! feature off. This module provides:
 //!
 //!   - [`OAuthConfig`] / [`OAuthScope`] — operator-config primitives.
 //!   - [`build_authorize_url`] — exact URL string an operator browser
@@ -16,14 +16,9 @@
 //!   - [`fetch_strategy_for_freshness`] — picks `RECENT` vs `UNSEEN`
 //!     vs `SINCE <date>` based on operator's last-poll timestamp.
 //!
-//! ## Why no crate add today
-//!
-//! Adding `imap` + `mailparse` would expand the dep graph by ~12
-//! crates, half of them with OpenSSL pulls. The primitives above are
-//! sufficient for the SC-15 sanitizer + PL-05 threat-assessment +
-//! EM-04 draft path to be exercised end-to-end against in-memory
-//! fixtures. The actual network fetch is a one-file follow-up that
-//! plugs into these primitives once an operator opts in.
+//! No SMTP or Gmail-API send client is wired. Send-related constants and scope
+//! variants below are configuration primitives only; they do not make outbound
+//! email reachable.
 
 use std::collections::BTreeSet;
 
@@ -47,9 +42,8 @@ pub const GMAIL_IMAP_HOST: &str = "imap.gmail.com";
 /// regression.
 pub const GMAIL_IMAP_PORT: u16 = 993;
 
-/// Gmail SMTP submission TLS port — the send-side primitive for
-/// EM-01b lands here once we wire `lettre`. Pinned today so
-/// operator-config validators have something to check.
+/// Reserved SMTP endpoint constants for configuration validation. NEOTH does
+/// not currently construct an SMTP client or send email.
 pub const GMAIL_SMTP_HOST: &str = "smtp.gmail.com";
 pub const GMAIL_SMTP_PORT: u16 = 587;
 
@@ -59,14 +53,11 @@ pub const GMAIL_SMTP_PORT: u16 = 587;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OAuthScope {
-    /// Read-only IMAP + Gmail API. Required for inbound-only flows
-    /// like the EM-01 draft-mode (no send).
+    /// Read-only IMAP + Gmail API. Required for inbound-only flows.
     GmailReadonly,
-    /// Read + send via Gmail API. Required for EM-04 send wire-up
-    /// in EM-01b.
+    /// Read + send scope primitive. No Gmail API send client is wired today.
     GmailModify,
-    /// SMTP submission. Required only when going via SMTP instead
-    /// of the Gmail API send endpoint.
+    /// Gmail send scope primitive. No SMTP or Gmail API send path is wired.
     GmailSend,
     /// User profile (email address + display name). Always
     /// requested so the draft module knows the operator's address.
@@ -112,9 +103,8 @@ pub struct OAuthConfig {
 }
 
 impl OAuthConfig {
-    /// True when the configured scopes include the send capability
-    /// — the email::draft mark-sent path consults this to decide
-    /// whether send is reachable.
+    /// True when the configuration requests a send-capable scope. This reports
+    /// scope intent only; it does not imply a send transport exists.
     pub fn can_send(&self) -> bool {
         self.scopes
             .iter()
@@ -155,8 +145,8 @@ pub fn build_authorize_url(config: &OAuthConfig, pkce: &PkcePair, state: &str) -
 }
 
 /// Build the application/x-www-form-urlencoded body for the
-/// code→token POST. Returns a `String` ready to feed to a future
-/// HTTP client.
+/// code→token POST. The live ingest path consumes already-provisioned refresh
+/// credentials; this pure helper does not perform a network request.
 pub fn token_exchange_form(config: &OAuthConfig, pkce: &PkcePair, auth_code: &str) -> String {
     [
         ("grant_type", "authorization_code"),

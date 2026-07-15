@@ -7,34 +7,23 @@
 //!   - **Forget** is explicit, immediate, transactional,
 //!     operator-initiated when DSGVO / personal request demands it.
 //!
-//! ## What this module does today (v0.1.x)
+//! The cascade is SQLite-transactional across every recall/profile/graph tier,
+//! embeddings, raw transcripts, pending/outbox state and the queryable foreign
+//! gossip ledger. Ground-truth assertions are revoked to preserve audit
+//! provenance. The same transaction installs a `_tombstone.<topic>` sentinel,
+//! which blocks profile re-extraction and future raw peer frames containing the
+//! topic. The confirmed CLI path also appends a TOMBSTONE_REQUESTED audit frame.
 //!
-//! The shipped path is **SQLite-only**: cascade-delete across the
-//! four memory-tier views + the embedding store, revoke ground-truth
-//! rows. The operator's recall queries stop surfacing the topic
-//! immediately.
-//!
-//! ## What it does NOT do yet (Phase 2)
-//!
-//! WAL tombstone frames + HMAC recompaction is **deferred**. The
-//! original RAW_TEXT WAL events still contain the topic on disk; the
-//! SQLite indexes no longer point at them, but a low-level WAL reader
-//! can still see the original frames. Per the AD-4 decision logged in
-//! `PLAN/FEATURE_EVAL.md`, the intent is to replace those payload bytes
-//! with a TOMBSTONE frame and recompute the HMAC chain over the
-//! tombstone — that keeps the audit trail tamper-evident while making
-//! the content unrecoverable. Implementation lives in
-//! `wal::compaction::rewrite_with_tombstone` once it ships.
-//!
-//! Operators who need full WAL-layer wipe today should run
-//! `neoth backup` first, then `neoth memory --forget` for the SQLite
-//! wipe, then manually delete the WAL segments containing the topic
-//! (or wait for Phase 2). For most GDPR use cases the SQLite wipe is
-//! sufficient because all operator-visible paths (recall, chat,
-//! Obsidian sync) read from SQLite, not directly from WAL.
+//! The default forget leaves historical payload bytes in the tamper-evident
+//! WAL. Operators requiring physical erasure use
+//! `neoth memory --forget <topic> --confirm --physical`: the CLI rewrites both
+//! live and sealed/compressed segments, zeroes matching payloads, marks the
+//! frames REDACTED, recomputes CRCs, emits signed redaction markers, and fails
+//! loudly if any segment cannot be proven complete.
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use std::collections::HashSet;
 
 use crate::memory::embeddings;
 
@@ -87,6 +76,11 @@ pub struct ForgetReport {
     /// contradicted fact B).
     #[serde(default)]
     pub contradiction_rows: i64,
+    /// Accepted raw peer-gossip frames removed from the queryable foreign
+    /// backup surface. These bytes can contain the forgotten topic even after
+    /// every local recall projection has been erased.
+    #[serde(default)]
+    pub foreign_event_rows: i64,
     /// D4 (GDPR) — People-scorer entries wiped from `~/.neoth/people.json`
     /// whose display name matches the forgotten topic. people.json is an
     /// operator-visible store (`neoth memory --people`) that the SQLite-only
@@ -112,8 +106,195 @@ impl ForgetReport {
             + self.relation_rows
             + self.link_rows
             + self.contradiction_rows
+            + self.foreign_event_rows
             + self.people_rows
     }
+}
+
+/// Read-only, transactionally consistent preview of [`forget_by_topic`].
+///
+/// Every counter intentionally mirrors one mutation leg below, including the
+/// indirect channel/sender embedding cascade and the filesystem-backed people
+/// scorer. Any schema/read error is returned: a GDPR preview must never silently
+/// under-report what the confirmed operation will erase.
+pub fn preview_forget_by_topic(conn: &Connection, topic: &str) -> Result<ForgetReport> {
+    if topic.trim().is_empty() {
+        anyhow::bail!(
+            "forget: topic must be non-empty (use `neoth memory purge` for a wholesale wipe)"
+        );
+    }
+    let pattern = format!("%{}%", crate::memory::escape_like(topic));
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin forget preview transaction")?;
+
+    let count = |sql: &str, label: &str| -> Result<i64> {
+        tx.query_row(sql, rusqlite::params![&pattern], |row| row.get(0))
+            .with_context(|| format!("count {label} for forget preview"))
+    };
+
+    let episode_rows = count(
+        "SELECT COUNT(*) FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_episode",
+    )?;
+    let consolidated_rows = count(
+        "SELECT COUNT(*) FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_consolidated",
+    )?;
+    let longterm_rows = count(
+        "SELECT COUNT(*) FROM idx_longterm WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_longterm",
+    )?;
+    let raw_turn_rows = count(
+        "SELECT COUNT(*) FROM raw_turns WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "raw_turns",
+    )?;
+    let profile_rows = count(
+        "SELECT COUNT(*) FROM idx_profile \
+         WHERE field COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+            OR value_json COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_profile",
+    )?;
+    let profile_pending_rows = count(
+        "SELECT COUNT(*) FROM idx_profile_pending \
+         WHERE delta_json COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_profile_pending",
+    )?;
+    let profile_outbox_rows = count(
+        "SELECT COUNT(*) FROM idx_profile_outbox \
+         WHERE CAST(payload AS TEXT) COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_profile_outbox",
+    )?;
+    let groundtruth_revoked = count(
+        "SELECT COUNT(*) FROM idx_groundtruth \
+         WHERE revoked_at IS NULL AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "active idx_groundtruth",
+    )?;
+    let entity_rows = count(
+        "SELECT COUNT(*) FROM idx_entities \
+         WHERE name COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+            OR attributes COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_entities",
+    )?;
+    let relation_rows = count(
+        "SELECT COUNT(*) FROM idx_relations \
+         WHERE src_id IN (SELECT id FROM idx_entities \
+                          WHERE name COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                             OR attributes COLLATE NOCASE LIKE ?1 ESCAPE '\\') \
+            OR dst_id IN (SELECT id FROM idx_entities \
+                          WHERE name COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                             OR attributes COLLATE NOCASE LIKE ?1 ESCAPE '\\')",
+        "idx_relations",
+    )?;
+    let link_rows = count(
+        "SELECT COUNT(*) FROM idx_memory_links \
+         WHERE lo_id IN (SELECT event_id FROM idx_episode \
+                         WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\') \
+            OR hi_id IN (SELECT event_id FROM idx_episode \
+                         WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\')",
+        "idx_memory_links",
+    )?;
+    let contradiction_rows = count(
+        "SELECT COUNT(*) FROM idx_contradictions \
+         WHERE fact_a_id IN (SELECT id FROM idx_groundtruth \
+                             WHERE revoked_at IS NULL \
+                               AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\') \
+            OR fact_b_id IN (SELECT id FROM idx_groundtruth \
+                             WHERE revoked_at IS NULL \
+                               AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\')",
+        "idx_contradictions",
+    )?;
+
+    // Direct source refs and indirect channel/sender refs can overlap. Count a
+    // set of row ids so the preview matches the sequential DELETE operations,
+    // where an already-deleted direct match cannot be counted a second time.
+    let mut embedding_ids = HashSet::new();
+    {
+        let mut stmt = tx
+            .prepare(
+                "SELECT id FROM idx_embedding \
+                 WHERE source_ref COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            )
+            .context("prepare direct embedding preview")?;
+        let rows = stmt
+            .query_map(rusqlite::params![&pattern], |row| row.get::<_, i64>(0))
+            .context("query direct embedding preview")?;
+        for row in rows {
+            embedding_ids.insert(row.context("read direct embedding preview row")?);
+        }
+    }
+    let channel_sender_pairs: Vec<(String, String)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT DISTINCT channel, sender_id FROM idx_episode \
+                 WHERE channel IS NOT NULL AND sender_id IS NOT NULL \
+                   AND text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            )
+            .context("prepare channel/sender embedding preview")?;
+        stmt.query_map(rusqlite::params![&pattern], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .context("query channel/sender embedding preview")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect channel/sender embedding preview")?
+    };
+    for (channel, sender_id) in channel_sender_pairs {
+        let source_pattern = format!(
+            "{}:%:{}:%",
+            crate::memory::escape_like(&channel),
+            crate::memory::escape_like(&sender_id),
+        );
+        let mut stmt = tx
+            .prepare(
+                "SELECT id FROM idx_embedding \
+                 WHERE source_ref COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            )
+            .context("prepare indirect embedding preview")?;
+        let rows = stmt
+            .query_map(rusqlite::params![source_pattern], |row| {
+                row.get::<_, i64>(0)
+            })
+            .context("query indirect embedding preview")?;
+        for row in rows {
+            embedding_ids.insert(row.context("read indirect embedding preview row")?);
+        }
+    }
+    let embedding_rows =
+        i64::try_from(embedding_ids.len()).context("embedding preview count exceeds i64")?;
+    let foreign_event_rows = i64::try_from(matching_foreign_event_ids(&tx, topic)?.len())
+        .context("foreign-event preview count exceeds i64")?;
+
+    drop(count);
+    tx.commit().context("finish forget preview transaction")?;
+
+    let people_rows = match conn
+        .path()
+        .map(std::path::Path::new)
+        .and_then(|path| path.parent())
+    {
+        Some(home) => crate::memory::people::count_people_by_display(home, topic)
+            .context("count people.json rows for forget preview")?,
+        None => 0,
+    };
+
+    Ok(ForgetReport {
+        episode_rows,
+        consolidated_rows,
+        longterm_rows,
+        raw_turn_rows,
+        groundtruth_revoked,
+        embedding_rows,
+        profile_rows,
+        profile_pending_rows,
+        profile_outbox_rows,
+        entity_rows,
+        relation_rows,
+        link_rows,
+        contradiction_rows,
+        foreign_event_rows,
+        people_rows,
+        topic: topic.to_string(),
+    })
 }
 
 /// Cascade-delete every row matching `topic` (case-insensitive LIKE)
@@ -129,6 +310,15 @@ impl ForgetReport {
 /// Pure-SQLite version — does NOT emit a WAL tombstone audit frame.
 /// Callers that want the audit anchor use [`forget_by_topic_with_audit`].
 pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<ForgetReport> {
+    forget_by_topic_as_source(conn, topic, now_unix, "memory")
+}
+
+fn forget_by_topic_as_source(
+    conn: &Connection,
+    topic: &str,
+    now_unix: i64,
+    source: &str,
+) -> Result<ForgetReport> {
     if topic.trim().is_empty() {
         anyhow::bail!(
             "forget: topic must be non-empty (use `neoth memory purge` for a wholesale wipe)"
@@ -153,6 +343,21 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     let tx = conn
         .unchecked_transaction()
         .context("begin forget cascade transaction")?;
+
+    // Install the anti-resurrection sentinel in the SAME SQLite transaction as
+    // the cascade. The old cluster-only helper wrote it after commit and the
+    // public CLI never called that helper, leaving a crash window (and in
+    // practice no product wiring at all). INSERT OR IGNORE makes repeat-forget
+    // idempotent against the active-redaction unique index.
+    let sentinel_field = tombstone_sentinel_field(topic);
+    let sentinel_reason = format!("forget_by_topic at ts_unix={now_unix} (source={source})");
+    tx.execute(
+        "INSERT OR IGNORE INTO idx_profile_redactions \
+         (field, never_recreate, reason, asserted_by, asserted_at, revoked_at) \
+         VALUES (?1, 1, ?2, ?3, ?4, NULL)",
+        rusqlite::params![sentinel_field, sentinel_reason, source, now_unix],
+    )
+    .context("install forget anti-resurrection sentinel")?;
 
     // GR-165: collect channel-side (channel, sender_id) pairs BEFORE the
     // episode delete below destroys the correlation. Channel ingest keys
@@ -263,7 +468,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
 
     // GOLD-ADAPT-MEM-02 — cascade the GDPR wipe into the contradiction ledger so
     // a revoked fact never lingers as a live leg of a pair.
-    let contradiction_rows = crate::memory::contradiction::forget_for_ids(&tx,&revoked_gt_ids)?;
+    let contradiction_rows = crate::memory::contradiction::forget_for_ids(&tx, &revoked_gt_ids)?;
 
     // GOLD-SEC-28 — in-flight profile extractions. A pending delta or a queued
     // outbox frame mentioning the topic would re-materialise the forgotten data
@@ -290,22 +495,35 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // the topic pattern directly; channel-keyed refs (opaque ids) match
     // via the (channel, sender_id) pairs pre-collected above (GR-165).
     let mut embedding_rows =
-        embeddings::wipe_by_source_ref_pattern(&tx,&pattern).context("wipe idx_embedding")?;
+        embeddings::wipe_by_source_ref_pattern(&tx, &pattern).context("wipe idx_embedding")?;
     if !channel_sender_pairs.is_empty() {
-        embedding_rows += embeddings::wipe_by_channel_sender_refs(&tx,&channel_sender_pairs)
+        embedding_rows += embeddings::wipe_by_channel_sender_refs(&tx, &channel_sender_pairs)
             .context("wipe idx_embedding channel-side")?;
     }
 
     // GOLD-ADAPT-MEM-06 — cascade the GDPR wipe into the knowledge graph:
     // entities whose name matches the topic + every relation touching them.
     let (entity_rows, relation_rows) =
-        crate::memory::entities::forget_entities_like(&tx,&pattern)?;
+        crate::memory::entities::forget_entities_like(&tx, &pattern)?;
 
     // GOLD-ADAPT-MEM-07 — cascade into the co-access association graph: drop
     // every link touching a forgotten episode so none is left dangling.
     let mut link_rows: i64 = 0;
     for eid in &forgotten_event_ids {
-        link_rows += crate::memory::assoc_graph::forget_links_for_event(&tx,*eid)?;
+        link_rows += crate::memory::assoc_graph::forget_links_for_event(&tx, *eid)?;
+    }
+
+    // Raw peer gossip is a queryable backup surface (`neoth cluster events` /
+    // export), not merely a transport buffer. Purge matching frames in the
+    // same transaction so a forget cannot leave the topic recoverable there.
+    // A malformed/mismatched raw frame is deleted conservatively: we cannot
+    // prove that opaque PII does not contain the topic.
+    let foreign_event_ids = matching_foreign_event_ids(&tx, topic)?;
+    let mut foreign_event_rows = 0i64;
+    for id in foreign_event_ids {
+        foreign_event_rows += tx
+            .execute("DELETE FROM idx_foreign_events WHERE id = ?1", [id])
+            .context("delete forgotten foreign-event frame")? as i64;
     }
 
     // GR-fix: commit the SQLite cascade atomically. Any `?` above dropped `tx`
@@ -323,7 +541,8 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         .map(std::path::Path::new)
         .and_then(|p| p.parent())
     {
-        Some(home) => crate::memory::people::forget_people_by_display(home, topic).unwrap_or(0),
+        Some(home) => crate::memory::people::forget_people_by_display(home, topic)
+            .context("erase matching people.json rows after SQLite forget commit")?,
         None => 0,
     };
 
@@ -341,6 +560,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         relation_rows,
         link_rows,
         contradiction_rows,
+        foreign_event_rows,
         people_rows,
         topic: topic.to_string(),
     })
@@ -348,25 +568,23 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
 
 /// Concern-2 fix (Session 24) — sentinel-redaction name prefix.
 ///
-/// `forget_by_topic_with_cluster_propagation` writes a row into
+/// Every `forget_by_topic` transaction writes a row into
 /// `idx_profile_redactions` with `field = "{TOMBSTONE_SENTINEL_PREFIX}{topic_lowercase}"`
-/// alongside the SQLite wipe + 0xF1 WAL frame. This sentinel row:
+/// alongside the SQLite wipe. This sentinel row:
 ///
 /// - Is NOT a real profile field — the `_tombstone.` namespace
 ///   never collides with operator dot-paths like `identity.name`
 ///   or `skills.rust`.
-/// - Carries `never_recreate = true` so the existing claim-guard
-///   path (`ProfileClaimGuard::check_all`) hard-rejects any future
-///   extraction that mentions the topic, even on this node.
-/// - Will be the source of truth the gossip-receive path consults
-///   when the cluster ships (Phase 5+): an inbound episode/profile
-///   frame whose text matches an active `_tombstone.<topic>` row
-///   gets dropped instead of replayed.
+/// - Carries `never_recreate = true`; both Stage 5 and the final apply-time
+///   race recheck hard-reject future claims whose field or value mentions the
+///   topic.
+/// - Is consulted by the live raw-gossip persistence boundary, so a buffered
+///   peer frame containing the topic is dropped instead of restoring it to the
+///   queryable foreign ledger.
 ///
 /// Choosing the sentinel namespace (rather than a new table)
-/// reuses the existing redaction registry's UNIQUE-active index +
-/// the cluster-replication that `idx_profile_redactions` gets for
-/// free when cluster gossip lands.
+/// reuses the existing redaction registry's UNIQUE-active index. It is a local
+/// anti-resurrection policy; it does not authorize a peer to delete local data.
 pub const TOMBSTONE_SENTINEL_PREFIX: &str = "_tombstone.";
 
 /// Concern-2 fix (Session 24) — derive the canonical sentinel
@@ -384,9 +602,8 @@ pub fn tombstone_sentinel_field(topic: &str) -> String {
 
 /// Concern-2 fix (Session 24) — true iff `field` is a tombstone
 /// sentinel row (i.e. a `_tombstone.<topic>` entry in
-/// `idx_profile_redactions`). The cluster gossip-receive path will
-/// pre-filter inbound frames by checking every active redaction's
-/// `is_tombstone_sentinel(field)` flag before replaying.
+/// `idx_profile_redactions`). The profile and raw-gossip boundaries use this
+/// discriminator to select topic-based matching rather than exact-field matching.
 pub fn is_tombstone_sentinel(field: &str) -> bool {
     field.starts_with(TOMBSTONE_SENTINEL_PREFIX)
 }
@@ -399,9 +616,144 @@ pub fn topic_from_sentinel(field: &str) -> Option<&str> {
     field.strip_prefix(TOMBSTONE_SENTINEL_PREFIX)
 }
 
+/// Case-insensitive topic match used by every anti-resurrection boundary.
+/// Empty topics never match. Unicode lowercasing mirrors the canonical
+/// lowercase sentinel and is strictly stronger than SQLite's ASCII-only
+/// `NOCASE` collation for newly arriving data.
+pub(crate) fn text_contains_topic(text: &str, topic: &str) -> bool {
+    let topic = topic.trim();
+    !topic.is_empty() && text.to_lowercase().contains(&topic.to_lowercase())
+}
+
+fn json_contains_topic(value: &serde_json::Value, topic: &str) -> bool {
+    match value {
+        serde_json::Value::String(text) => text_contains_topic(text, topic),
+        serde_json::Value::Array(values) => {
+            values.iter().any(|value| json_contains_topic(value, topic))
+        }
+        serde_json::Value::Object(values) => values.iter().any(|(key, value)| {
+            text_contains_topic(key, topic) || json_contains_topic(value, topic)
+        }),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            false
+        }
+    }
+}
+
+/// Match a topic against structured JSON without being fooled by JSON escape
+/// sequences. Non-JSON payloads fall back to a lossy UTF-8 text match because
+/// RAW_TEXT historically also existed as a plain byte payload.
+pub(crate) fn payload_contains_topic(payload: &[u8], topic: &str) -> bool {
+    match serde_json::from_slice::<serde_json::Value>(payload) {
+        Ok(value) => json_contains_topic(&value, topic),
+        Err(_) => text_contains_topic(&String::from_utf8_lossy(payload), topic),
+    }
+}
+
+/// Does an active redaction field block this profile claim? Normal redactions
+/// match the exact profile field. `_tombstone.<topic>` sentinels instead match
+/// the topic in either the claim's field or its structured value.
+pub(crate) fn redaction_blocks_claim(
+    redacted_field: &str,
+    claim_field: &str,
+    claim_value: &serde_json::Value,
+) -> bool {
+    if !is_tombstone_sentinel(redacted_field) {
+        return redacted_field == claim_field;
+    }
+    let Some(topic) = topic_from_sentinel(redacted_field) else {
+        return false;
+    };
+    !topic.is_empty()
+        && (text_contains_topic(claim_field, topic) || json_contains_topic(claim_value, topic))
+}
+
+/// Active local forget topics. Receive-side raw gossip consults this registry
+/// before writing a peer frame back into the queryable backup surface.
+pub(crate) fn active_tombstone_topics(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT field FROM idx_profile_redactions \
+             WHERE revoked_at IS NULL AND never_recreate = 1 \
+               AND field GLOB '_tombstone.*' \
+             ORDER BY field ASC",
+        )
+        .context("prepare active tombstone lookup")?;
+    stmt.query_map([], |row| row.get::<_, String>(0))
+        .context("query active tombstones")?
+        .filter_map(|row| match row {
+            Ok(field) => topic_from_sentinel(&field)
+                .filter(|topic| !topic.is_empty())
+                .map(|topic| Ok(topic.to_string())),
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect active tombstones")
+}
+
+/// Decode one canonical foreign WAL frame and match only its logical payload.
+/// The stored outer event type must agree with the CRC-checked inner header.
+pub(crate) fn foreign_frame_contains_topic(
+    frame: &[u8],
+    event_type: u8,
+    topic: &str,
+) -> Result<bool> {
+    let decoded = crate::wal::frame::decode_frame(frame)
+        .map_err(|error| anyhow::anyhow!("decode foreign WAL frame: {error}"))?;
+    anyhow::ensure!(
+        decoded.header.total_len as usize == frame.len(),
+        "foreign WAL frame has trailing bytes"
+    );
+    anyhow::ensure!(
+        decoded.header.event_type == event_type,
+        "foreign WAL frame event type mismatch: outer=0x{event_type:02X}, inner=0x{:02X}",
+        decoded.header.event_type
+    );
+    Ok(payload_contains_topic(decoded.payload, topic))
+}
+
+/// IDs in the foreign backup ledger that the forget cascade must delete.
+/// Invalid event-type values or malformed raw frames are included
+/// conservatively because their opaque bytes cannot be proven unrelated.
+pub(crate) fn matching_foreign_event_ids(conn: &Connection, topic: &str) -> Result<Vec<i64>> {
+    let mut stmt = conn
+        .prepare("SELECT id, event_type, payload FROM idx_foreign_events")
+        .context("prepare foreign-event forget scan")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })
+        .context("query foreign-event forget scan")?;
+    let mut matches = Vec::new();
+    for row in rows {
+        let (id, raw_event_type, frame) = row.context("read foreign-event forget candidate")?;
+        let Ok(event_type) = u8::try_from(raw_event_type) else {
+            matches.push(id);
+            continue;
+        };
+        if crate::cluster::wal_sync::classify_event(event_type)
+            != crate::cluster::wal_sync::ReplicationClass::RawIngressGated
+        {
+            continue;
+        }
+        match foreign_frame_contains_topic(&frame, event_type, topic) {
+            Ok(true) | Err(_) => matches.push(id),
+            Ok(false) => {}
+        }
+    }
+    Ok(matches)
+}
+
 /// Like [`forget_by_topic`] but additionally emits a
 /// `EVENT_TYPE_TOMBSTONE_REQUESTED` (0xF1) WAL frame recording the
-/// erasure intent + scope. This is the audit-anchor that survives
+/// erasure intent + expected scope. The frame is durably appended before the
+/// mutation starts, so an audit failure cannot produce an unaudited erasure and
+/// a later mutation failure still leaves a truthful record of the request. This
+/// is the audit-anchor that survives
 /// even if Phase-2 physical recompaction replaces the original
 /// payload bytes — the tombstone frame proves "operator requested
 /// erasure of topic X at time T, affecting N rows" and remains in
@@ -416,19 +768,18 @@ pub async fn forget_by_topic_with_audit(
     source: &str,
     writer: &crate::wal::writer::WalWriterHandle,
 ) -> Result<ForgetReport> {
-    let report = forget_by_topic(conn, topic, now_unix)?;
-    // F67 — serialize the WHOLE ForgetReport so the tombstone audit frame
-    // proves erasure across EVERY counted category (the old hand-built payload
-    // listed only 6 of the 12 — profile_pending/outbox, entity, relation, link,
-    // contradiction, people were omitted, understating the erasure scope). The
-    // report derives serde::Serialize, so any future field is captured too.
+    let preview = preview_forget_by_topic(conn, topic)?;
+    // F67 — serialize the WHOLE preview so the tombstone intent covers EVERY
+    // counted category. The actual cascade runs only after this frame has been
+    // fsynced by `append`; any future report field is captured automatically.
     let payload = {
-        let mut v = serde_json::to_value(&report).context("serialize ForgetReport")?;
+        let mut v = serde_json::to_value(&preview).context("serialize ForgetReport preview")?;
         let obj = v
             .as_object_mut()
             .expect("ForgetReport serializes to a JSON object");
         obj.insert("ts_unix".into(), serde_json::json!(now_unix));
         obj.insert("source".into(), serde_json::json!(source));
+        obj.insert("phase".into(), serde_json::json!("intent"));
         serde_json::to_vec(&v).context("serialize TOMBSTONE_REQUESTED payload")?
     };
     let header = crate::wal::HeaderBuilder::new(
@@ -440,32 +791,14 @@ pub async fn forget_by_topic_with_audit(
         .append(header, payload)
         .await
         .context("append TOMBSTONE_REQUESTED WAL frame")?;
-    Ok(report)
+    forget_by_topic_as_source(conn, topic, now_unix, source)
 }
 
-/// Concern-2 fix (Session 24) — cluster-aware variant of
-/// [`forget_by_topic_with_audit`]. Same SQLite wipe + 0xF1 WAL
-/// emit, PLUS writes a sentinel redaction row
-/// `_tombstone.<topic>` (via [`crate::profile::redaction::add`])
-/// with `never_recreate = true`. The sentinel:
-///
-/// 1. Blocks LOCAL re-extraction immediately — the existing
-///    `ProfileClaimGuard::check_all` rejects any future delta
-///    containing the topic.
-/// 2. Will be the source of truth the cluster gossip-receive
-///    path checks (Phase 5+) before replaying any inbound
-///    episode/profile frame. A `_tombstone.berlin` row on
-///    node A prevents node B's buffered "Berlin" episodes
-///    from being re-applied when B reconnects.
-///
-/// The pre-existing `forget_by_topic_with_audit` stays for the
-/// pure-local path; this new variant is the right choice anywhere
-/// the operator may be running cluster mode (now or in future).
-///
-/// Idempotency: a repeat call against the same topic is a no-op
-/// for the sentinel (the UNIQUE active-redaction index drops the
-/// duplicate insert silently) but still re-wipes any new SQLite
-/// rows that match + still emits a fresh 0xF1 audit frame.
+/// Compatibility name for the cluster-aware forget path. Every forget now
+/// installs the local anti-resurrection sentinel atomically with the cascade,
+/// and raw peer-ingest consults it before persisting a future frame. Keep this
+/// wrapper for callers compiled against the earlier API; there is no longer a
+/// weaker public path that omits the replay guard.
 pub async fn forget_by_topic_with_cluster_propagation(
     conn: &Connection,
     topic: &str,
@@ -473,55 +806,7 @@ pub async fn forget_by_topic_with_cluster_propagation(
     source: &str,
     writer: &crate::wal::writer::WalWriterHandle,
 ) -> Result<ForgetReport> {
-    // 1. Local wipe + 0xF1 WAL frame — the existing audit-anchored path.
-    let report = forget_by_topic_with_audit(conn, topic, now_unix, source, writer).await?;
-
-    // 2. Sentinel redaction. Idempotent via the UNIQUE active-redaction
-    //    index; a duplicate insert returns an Err that we deliberately
-    //    swallow because "tombstone already present" is the desired
-    //    end-state. Any OTHER error (e.g. schema missing) propagates
-    //    so the caller sees a real problem.
-    let field = tombstone_sentinel_field(topic);
-    let reason =
-        format!("forget_by_topic_with_cluster_propagation at ts_unix={now_unix} (source={source})");
-    match crate::profile::redaction::add(
-        conn,
-        &field,
-        /*never_recreate=*/ true,
-        Some(&reason),
-        source,
-        now_unix,
-    ) {
-        Ok(_id) => {
-            tracing::info!(
-                topic = %topic,
-                field = %field,
-                "Concern-2: tombstone sentinel redaction written; future re-extraction blocked",
-            );
-        }
-        Err(e) => {
-            // The UNIQUE active-redaction index path. Distinguish
-            // "already present" (fine) from any other DB error.
-            // anyhow wraps the rusqlite error in a `with_context`
-            // chain — walk the chain so the UNIQUE-violation match
-            // catches the underlying SQLite error message regardless
-            // of how many context layers anyhow added on top.
-            let is_unique_violation = e.chain().any(|err| {
-                let msg = err.to_string();
-                msg.contains("UNIQUE") || msg.contains("constraint failed")
-            });
-            if !is_unique_violation {
-                return Err(e).context("write tombstone sentinel redaction");
-            }
-            tracing::debug!(
-                topic = %topic,
-                field = %field,
-                "Concern-2: tombstone sentinel already active (repeat forget) — no-op",
-            );
-        }
-    }
-
-    Ok(report)
+    forget_by_topic_with_audit(conn, topic, now_unix, source, writer).await
 }
 
 #[cfg(test)]
@@ -636,6 +921,7 @@ mod tests {
             "relation_rows",
             "link_rows",
             "contradiction_rows",
+            "foreign_event_rows",
             "people_rows",
             "topic",
         ] {
@@ -664,15 +950,27 @@ mod tests {
             }],
         };
         crate::memory::people::save_people(dir.path(), &people).unwrap();
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.people_rows, 1);
         let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
-        assert_eq!(report.people_rows, 1, "people.json row erased via the cascade");
-        assert!(crate::memory::people::load_people(dir.path()).rows.is_empty());
+        assert_eq!(preview, report, "preview must match confirmed cascade");
+        assert_eq!(
+            report.people_rows, 1,
+            "people.json row erased via the cascade"
+        );
+        assert!(
+            crate::memory::people::load_people(dir.path())
+                .rows
+                .is_empty()
+        );
     }
 
     #[test]
     fn forget_topic_wipes_all_tiers_plus_revokes_groundtruth() {
         let conn = seed_db();
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
         let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
+        assert_eq!(preview, report, "preview must match confirmed cascade");
         assert_eq!(report.episode_rows, 1, "exactly the AcmeCorp episode");
         assert_eq!(report.consolidated_rows, 1);
         assert_eq!(report.longterm_rows, 1);
@@ -708,6 +1006,8 @@ mod tests {
         // Different sender on another channel — must survive.
         embeddings::upsert(&conn, "image", "telegram:1:555:1717000001", "clip", &v).unwrap();
 
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.embedding_rows, 2);
         let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
         assert_eq!(
             report.embedding_rows, 2,
@@ -728,10 +1028,26 @@ mod tests {
         // raw_turns_fts in sync, so the FTS search stops surfacing it too.
         use crate::memory::transcript_store::{insert_turn, search_turns};
         let conn = seed_db();
-        insert_turn(&conn, "sess-1", "operator", 1, "tell me about AcmeCorp earnings").unwrap();
-        insert_turn(&conn, "sess-1", "agent", 2, "AcmeCorp posted a loss last quarter").unwrap();
+        insert_turn(
+            &conn,
+            "sess-1",
+            "operator",
+            1,
+            "tell me about AcmeCorp earnings",
+        )
+        .unwrap();
+        insert_turn(
+            &conn,
+            "sess-1",
+            "agent",
+            2,
+            "AcmeCorp posted a loss last quarter",
+        )
+        .unwrap();
         insert_turn(&conn, "sess-1", "operator", 3, "what's for lunch today").unwrap();
 
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.raw_turn_rows, 2);
         let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
         assert_eq!(report.raw_turn_rows, 2, "both AcmeCorp turns wiped");
 
@@ -822,6 +1138,8 @@ mod tests {
             [],
         )
         .unwrap();
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.profile_rows, 1);
         let report = forget_by_topic(&conn, "AcmeCorp", 0).unwrap();
         assert_eq!(
             report.profile_rows, 1,
@@ -866,6 +1184,9 @@ mod tests {
         )
         .unwrap();
 
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.profile_pending_rows, 1);
+        assert_eq!(preview.profile_outbox_rows, 1);
         let report = forget_by_topic(&conn, "AcmeCorp", 0).unwrap();
         assert_eq!(
             report.profile_pending_rows, 1,
@@ -894,6 +1215,104 @@ mod tests {
         assert_eq!(
             acme_pending, 0,
             "no AcmeCorp pending delta survives erasure"
+        );
+    }
+
+    #[test]
+    fn forget_purges_matching_raw_foreign_frames_and_installs_sentinel() {
+        let conn = seed_db();
+        let insert_frame = |seq: i64, event_type: u8, payload: serde_json::Value| {
+            let payload = serde_json::to_vec(&payload).unwrap();
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            let frame = crate::wal::frame::encode_frame(&header, &payload);
+            conn.execute(
+                "INSERT INTO idx_foreign_events \
+                 (origin_peer_pk, origin_seq, event_type, payload, received_at) \
+                 VALUES ('peer', ?1, ?2, ?3, 1)",
+                rusqlite::params![seq, event_type as i64, frame],
+            )
+            .unwrap();
+        };
+        insert_frame(
+            1,
+            crate::wal::events::EVENT_TYPE_RAW_TEXT,
+            serde_json::json!({"text": "AcmeCorp peer memory"}),
+        );
+        insert_frame(
+            2,
+            crate::wal::events::EVENT_TYPE_RAW_TEXT,
+            serde_json::json!({"text": "unrelated peer memory"}),
+        );
+        // A metadata-only replication event is not arbitrary text and must not
+        // be deleted merely because a crafted test payload contains the topic.
+        insert_frame(
+            3,
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            serde_json::json!({"note": "AcmeCorp", "event_id": 1, "importance": 0.8}),
+        );
+
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.foreign_event_rows, 1);
+        let report = forget_by_topic(&conn, "AcmeCorp", 1_700).unwrap();
+        assert_eq!(report.foreign_event_rows, 1);
+        let remaining: i64 = conn
+            .query_row("SELECT count(*) FROM idx_foreign_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(remaining, 2);
+        let sentinel =
+            crate::profile::redaction::lookup_active(&conn, &tombstone_sentinel_field("AcmeCorp"))
+                .unwrap()
+                .expect("every forget installs its anti-resurrection sentinel");
+        assert!(sentinel.never_recreate);
+    }
+
+    #[test]
+    fn forget_preview_matches_graph_cascades_without_mutating() {
+        let conn = seed_db();
+        conn.execute(
+            "INSERT INTO idx_entities (id, name, entity_type, attributes) VALUES \
+             (100, 'AcmeCorp', 'company', '{}'), (101, 'Alice', 'person', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_relations (id, src_id, dst_id, relation) \
+             VALUES (200, 101, 100, 'works_at')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access) \
+             VALUES (1, 2, 1.0, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_contradictions (fact_a_id, fact_b_id, confidence, detected_at) \
+             VALUES (1, 2, 0.9, 0)",
+            [],
+        )
+        .unwrap();
+
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.entity_rows, 1);
+        assert_eq!(preview.relation_rows, 1);
+        assert_eq!(preview.link_rows, 1);
+        assert_eq!(preview.contradiction_rows, 1);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM idx_entities", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            2,
+            "preview must be read-only"
+        );
+
+        let report = forget_by_topic(&conn, "AcmeCorp", 1_700).unwrap();
+        assert_eq!(
+            preview, report,
+            "preview must match confirmed graph cascade"
         );
     }
 
@@ -940,7 +1359,47 @@ mod tests {
         assert_eq!(payload["topic"], "AcmeCorp");
         assert_eq!(payload["source"], "cli");
         assert_eq!(payload["ts_unix"], 1700);
+        assert_eq!(payload["phase"], "intent");
         assert!(payload["episode_rows"].as_i64().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn audit_failure_prevents_the_forget_mutation() {
+        use crate::wal::writer::spawn;
+
+        let conn = seed_db();
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode WHERE text LIKE '%AcmeCorp%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(before > 0);
+
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, join) = spawn(dir.path().join("closed.wal")).unwrap();
+        join.abort();
+        let _ = join.await;
+
+        let error = forget_by_topic_with_audit(&conn, "AcmeCorp", 1700, "cli", &writer)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("append TOMBSTONE_REQUESTED"),
+            "unexpected error: {error:#}"
+        );
+        let after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode WHERE text LIKE '%AcmeCorp%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            after, before,
+            "no row may be erased without its audit intent"
+        );
     }
 
     // ── Concern-2 (Session 24) tombstone sentinel + cluster path ──────

@@ -155,7 +155,8 @@ fn render(r: &ParityRunResult, output: &OutputFormat) {
             });
             println!(
                 "{}",
-                serde_json::to_string_pretty(&body).unwrap_or_default()
+                serde_json::to_string_pretty(&body)
+                    .expect("recall score report is infallible JSON")
             );
         }
         OutputFormat::Table => {

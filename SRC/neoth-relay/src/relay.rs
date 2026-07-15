@@ -1,9 +1,8 @@
-//! Inline copy of the `neothd::cluster::relay` primitives.
+//! Canonical in-process peer-registry model for the standalone relay API.
 //!
-//! Duplicated intentionally per Rule of Three — two callers today,
-//! factor into a shared `neoth-cluster-types` crate when the third
-//! lands. Wire shape is pinned by serde so both sides round-trip
-//! identically; structural drift surfaces at deserialise time.
+//! The daemon crate deliberately does not expose a dormant client-side copy.
+//! External clients use the documented JSON request shape served by this
+//! binary; the serde tests pin that wire contract.
 
 use std::collections::HashMap;
 
@@ -138,8 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_pinned_to_neothd_shape() {
-        // Match neothd::cluster::relay constants — drift surfaces here.
+    fn safety_caps_are_pinned() {
         assert_eq!(DEFAULT_MAX_PEERS_PER_KEY, 5);
         assert_eq!(MAX_PEERS_PER_KEY_CEILING, 50);
     }
@@ -204,10 +202,9 @@ mod tests {
     }
 
     #[test]
-    fn serde_round_trip_matches_neothd_wire_shape() {
-        // Pin the JSON wire form — drift between this and
-        // neothd::cluster::relay::RelayRegistration would break
-        // operator-deployed relays after a daemon upgrade.
+    fn serde_round_trip_pins_public_registration_shape() {
+        // Pin the public JSON wire form so relay upgrades cannot silently
+        // rename fields used by deployed clients.
         let reg = fixture(&hex64(0xaa), &hex64(0x01), 4242);
         let json = serde_json::to_string(&reg).unwrap();
         // Field names match snake_case wire form.

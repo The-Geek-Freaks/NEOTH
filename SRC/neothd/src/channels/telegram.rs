@@ -10,11 +10,12 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use std::future::Future;
 use std::sync::Arc;
 
 use teloxide::net::Download;
 use teloxide::prelude::*;
-use teloxide::types::{FileId, ParseMode, PhotoSize};
+use teloxide::types::{FileId, InputFile, ParseMode, PhotoSize};
 
 use super::{
     Channel, ChannelError, ChannelKind, InboundMessage, MediaKind, MediaPayload, MessageId,
@@ -27,12 +28,21 @@ use crate::secret::SecretString;
 /// exceed downstream payload budgets.
 const MAX_INBOUND_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
 
+/// Outbound media is held in memory by `InputFile::memory`, so keep the
+/// project-wide 16 MiB ceiling even though some Telegram endpoints currently
+/// accept larger uploads. Photos and stickers have stricter Bot API limits.
+const MAX_OUTBOUND_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_OUTBOUND_PHOTO_BYTES: usize = 10 * 1024 * 1024;
+const MAX_OUTBOUND_STICKER_BYTES: usize = 512 * 1024;
+const MAX_TELEGRAM_CAPTION_CHARS: usize = 1024;
+const MAX_INLINE_RETRY_AFTER_SECS: u32 = 5;
+
 pub struct TelegramChannel {
     token: SecretString,
     /// Optional allowlist. `None` = open to anyone (DO NOT do this in
     /// production). `Some(id)` = only that single Telegram user_id may
-    /// interact. Group chats are rejected unless the bot is explicitly
-    /// mentioned (deferred to V2).
+    /// interact, including in group chats. There is currently no separate
+    /// mention-only group mode; the sender allowlist remains authoritative.
     allowed_user_id: Option<u64>,
     /// SF-03: optional daemon WAL writer so the allowlist gate can emit a
     /// `0x3B CHANNEL_GATE_REJECTED` audit frame when it drops a
@@ -71,18 +81,191 @@ impl TelegramChannel {
         let me = bot
             .get_me()
             .await
-            .map_err(|e| ChannelError::Transport(format!("Telegram getMe: {e}")))?;
+            .map_err(|e| self.map_request_error("getMe", e))?;
         Ok(me
             .username
             .clone()
             .unwrap_or_else(|| "(unknown)".to_string()))
     }
+
+    fn map_request_error(
+        &self,
+        operation: &'static str,
+        error: teloxide::RequestError,
+    ) -> ChannelError {
+        map_request_error(self.token.expose(), operation, error)
+    }
+}
+
+fn map_request_error(
+    token: &str,
+    operation: &'static str,
+    error: teloxide::RequestError,
+) -> ChannelError {
+    match error {
+        teloxide::RequestError::RetryAfter(wait) => ChannelError::RateLimited {
+            retry_after_secs: u64::from(wait.seconds()),
+        },
+        error => ChannelError::Transport(format!(
+            "telegram {operation}: {}",
+            redact_token(&error.to_string(), token)
+        )),
+    }
+}
+
+/// Retry exactly once only when Telegram explicitly says the request was
+/// rejected for a short flood-control interval. Network failures are not
+/// retried here because the server may already have accepted the upload and a
+/// blind retry could duplicate operator-visible media.
+async fn request_with_short_rate_limit_retry<F, Fut, T>(
+    mut request: F,
+) -> std::result::Result<T, teloxide::RequestError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::result::Result<T, teloxide::RequestError>>,
+{
+    match request().await {
+        Err(teloxide::RequestError::RetryAfter(wait))
+            if wait.seconds() <= MAX_INLINE_RETRY_AFTER_SECS =>
+        {
+            tokio::time::sleep(wait.duration()).await;
+            request().await
+        }
+        result => result,
+    }
+}
+
+async fn send_bot_text(
+    bot: &Bot,
+    chat_id: teloxide::types::ChatId,
+    text: &str,
+) -> std::result::Result<teloxide::types::Message, ChannelError> {
+    let send = request_with_short_rate_limit_retry(|| {
+        let request = bot
+            .send_message(chat_id, text.to_string())
+            .parse_mode(ParseMode::MarkdownV2);
+        async move { request.await }
+    })
+    .await;
+    match send {
+        Ok(message) => Ok(message),
+        Err(teloxide::RequestError::Api(teloxide::ApiError::CantParseEntities(_))) => {
+            request_with_short_rate_limit_retry(|| {
+                let request = bot.send_message(chat_id, text.to_string());
+                async move { request.await }
+            })
+            .await
+            .map_err(|error| map_request_error(bot.token(), "sendMessage", error))
+        }
+        Err(error) => Err(map_request_error(bot.token(), "sendMessage", error)),
+    }
+}
+
+fn redact_token(message: &str, token: &str) -> String {
+    if token.is_empty() {
+        return message.to_string();
+    }
+    message.replace(token, "[REDACTED]")
+}
+
+fn default_outbound_filename(media: &MediaPayload) -> &'static str {
+    match (media.kind, media.mime.trim().to_ascii_lowercase().as_str()) {
+        (MediaKind::Image, "image/png") => "image.png",
+        (MediaKind::Image, _) => "image.jpg",
+        (MediaKind::Video, _) => "video.mp4",
+        (MediaKind::Audio, "audio/mp4" | "audio/m4a" | "audio/x-m4a") => "audio.m4a",
+        (MediaKind::Audio, _) => "audio.mp3",
+        (MediaKind::Document, _) => "document.bin",
+        (MediaKind::Sticker, "video/webm") => "sticker.webm",
+        (MediaKind::Sticker, "application/x-tgsticker") => "sticker.tgs",
+        (MediaKind::Sticker, _) => "sticker.webp",
+    }
+}
+
+fn safe_outbound_filename(media: &MediaPayload) -> std::result::Result<String, ChannelError> {
+    let raw = media
+        .filename
+        .as_deref()
+        .unwrap_or_else(|| default_outbound_filename(media));
+    let name = raw.rsplit(['/', '\\']).next().unwrap_or_default().trim();
+    if name.is_empty() || name.chars().count() > 255 || name.chars().any(|ch| ch.is_control()) {
+        return Err(ChannelError::Transport(
+            "telegram outbound media has an invalid filename".to_string(),
+        ));
+    }
+    Ok(name.to_string())
+}
+
+fn valid_document_mime(mime: &str) -> bool {
+    mime.len() <= 127
+        && mime.is_ascii()
+        && !mime.chars().any(char::is_whitespace)
+        && mime
+            .split_once('/')
+            .is_some_and(|(top, sub)| !top.is_empty() && !sub.is_empty())
+}
+
+fn validate_outbound_media(media: &MediaPayload) -> std::result::Result<String, ChannelError> {
+    if media.data.is_empty() {
+        return Err(ChannelError::Transport(
+            "telegram outbound media payload is empty".to_string(),
+        ));
+    }
+    let size_cap = match media.kind {
+        MediaKind::Image => MAX_OUTBOUND_PHOTO_BYTES,
+        MediaKind::Sticker => MAX_OUTBOUND_STICKER_BYTES,
+        MediaKind::Video | MediaKind::Audio | MediaKind::Document => MAX_OUTBOUND_ATTACHMENT_BYTES,
+    };
+    if media.data.len() > size_cap {
+        return Err(ChannelError::Transport(format!(
+            "telegram outbound media is {} bytes; limit for {:?} is {size_cap}",
+            media.data.len(),
+            media.kind
+        )));
+    }
+
+    let mime = media.mime.trim().to_ascii_lowercase();
+    let mime_ok = match media.kind {
+        MediaKind::Image => matches!(mime.as_str(), "image/jpeg" | "image/png"),
+        MediaKind::Video => mime == "video/mp4",
+        MediaKind::Audio => matches!(
+            mime.as_str(),
+            "audio/mpeg" | "audio/mp4" | "audio/m4a" | "audio/x-m4a"
+        ),
+        MediaKind::Document => valid_document_mime(&mime),
+        MediaKind::Sticker => matches!(
+            mime.as_str(),
+            "image/webp" | "application/x-tgsticker" | "video/webm"
+        ),
+    };
+    if !mime_ok {
+        return Err(ChannelError::Transport(format!(
+            "telegram outbound {:?} rejects MIME type {mime:?}",
+            media.kind
+        )));
+    }
+    safe_outbound_filename(media)
+}
+
+fn plan_caption(kind: MediaKind, caption: Option<&str>) -> (Option<String>, Option<String>) {
+    let caption = caption.filter(|value| !value.is_empty());
+    let attached = caption
+        .filter(|value| {
+            kind != MediaKind::Sticker && value.chars().count() <= MAX_TELEGRAM_CAPTION_CHARS
+        })
+        .map(str::to_string);
+    let follow_up = caption.filter(|_| attached.is_none()).map(str::to_string);
+    (attached, follow_up)
 }
 
 #[async_trait]
 impl Channel for TelegramChannel {
     fn name(&self) -> &'static str {
         "telegram"
+    }
+
+    fn supports_message_edits(&self) -> bool {
+        true
     }
 
     /// SP-5 C-prime: send a plain text message via Telegram `sendMessage`.
@@ -100,18 +283,7 @@ impl Channel for TelegramChannel {
             ChannelError::Transport(format!("chat_id parse: {e}"))
         })?;
         let bot = Bot::new(self.token.expose());
-
-        let send = bot
-            .send_message(ChatId(id), text)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await;
-        let msg = match send {
-            Ok(m) => m,
-            Err(_) => bot
-                .send_message(ChatId(id), text)
-                .await
-                .map_err(|e| ChannelError::Transport(format!("telegram sendMessage: {e}")))?,
-        };
+        let msg = send_bot_text(&bot, ChatId(id), text).await?;
         Ok(MessageId(msg.id.0.to_string()))
     }
 
@@ -128,18 +300,131 @@ impl Channel for TelegramChannel {
         self.send_text(chat_id, text).await
     }
 
-    /// SP-5 C-prime: media send. Not wired through teloxide yet (no operator
-    /// pressure for proactive media at v0.1.x); explicit `NotSupported` keeps
-    /// the pipeline honest until R-9 multimodal lands.
+    /// Outbound Telegram media is uploaded from bounded in-memory bytes. Every
+    /// `MediaKind` maps to its native Bot API method; MIME, filename and size
+    /// are validated before the first network byte. Captions that do not fit
+    /// Telegram's 1024-character media limit (and sticker captions, which the
+    /// API does not support) are delivered as formatted follow-up messages.
     async fn send_media(
         &self,
-        _chat_id: &str,
-        _media: &MediaPayload,
-        _caption: Option<&str>,
+        chat_id: &str,
+        media: &MediaPayload,
+        caption: Option<&str>,
     ) -> std::result::Result<MessageId, ChannelError> {
-        Err(ChannelError::NotSupported {
-            feature: "telegram.send_media",
-        })
+        use teloxide::types::ChatId;
+
+        let id: i64 = chat_id.parse().map_err(|e: std::num::ParseIntError| {
+            ChannelError::Transport(format!("chat_id parse: {e}"))
+        })?;
+        let filename = validate_outbound_media(media)?;
+        let (attach_caption, follow_up_caption) = plan_caption(media.kind, caption);
+        let bot = Bot::new(self.token.expose());
+
+        let message = match media.kind {
+            MediaKind::Image => {
+                request_with_short_rate_limit_retry(|| {
+                    let request = bot.send_photo(
+                        ChatId(id),
+                        InputFile::memory(media.data.clone()).file_name(filename.clone()),
+                    );
+                    let caption = attach_caption.clone();
+                    async move {
+                        match caption {
+                            Some(caption) => request.caption(caption).await,
+                            None => request.await,
+                        }
+                    }
+                })
+                .await
+            }
+            MediaKind::Video => {
+                request_with_short_rate_limit_retry(|| {
+                    let request = bot.send_video(
+                        ChatId(id),
+                        InputFile::memory(media.data.clone()).file_name(filename.clone()),
+                    );
+                    let caption = attach_caption.clone();
+                    async move {
+                        match caption {
+                            Some(caption) => request.caption(caption).await,
+                            None => request.await,
+                        }
+                    }
+                })
+                .await
+            }
+            MediaKind::Audio => {
+                request_with_short_rate_limit_retry(|| {
+                    let request = bot.send_audio(
+                        ChatId(id),
+                        InputFile::memory(media.data.clone()).file_name(filename.clone()),
+                    );
+                    let caption = attach_caption.clone();
+                    async move {
+                        match caption {
+                            Some(caption) => request.caption(caption).await,
+                            None => request.await,
+                        }
+                    }
+                })
+                .await
+            }
+            MediaKind::Document => {
+                request_with_short_rate_limit_retry(|| {
+                    let request = bot.send_document(
+                        ChatId(id),
+                        InputFile::memory(media.data.clone()).file_name(filename.clone()),
+                    );
+                    let caption = attach_caption.clone();
+                    async move {
+                        match caption {
+                            Some(caption) => request.caption(caption).await,
+                            None => request.await,
+                        }
+                    }
+                })
+                .await
+            }
+            MediaKind::Sticker => {
+                request_with_short_rate_limit_retry(|| {
+                    let request = bot.send_sticker(
+                        ChatId(id),
+                        InputFile::memory(media.data.clone()).file_name(filename.clone()),
+                    );
+                    async move { request.await }
+                })
+                .await
+            }
+        }
+        .map_err(|e| self.map_request_error("sendMedia", e))?;
+
+        if let Some(caption) = follow_up_caption {
+            let reply = super::formatter::CanonicalReply {
+                text: caption,
+                code_blocks: Vec::new(),
+                length_hint: Some(super::formatter::LengthHint::Long),
+            };
+            // Build every chunk before the first await. `Formatter` is a
+            // synchronous trait object and deliberately need not be `Send`;
+            // retaining it across the network await would make this
+            // `async_trait` future non-Send.
+            let chunks = super::formatter::for_channel(ChannelKind::Telegram)
+                .map(|formatter| formatter.format(&reply))
+                .unwrap_or_else(|| vec![reply.text]);
+            for chunk in chunks {
+                // The media is already delivered. Surfacing a caption error
+                // would make callers retry and duplicate the attachment.
+                if let Err(error) = self.send_text(chat_id, &chunk).await {
+                    tracing::warn!(
+                        error = %error,
+                        "telegram caption follow-up failed after media delivery (dropped)"
+                    );
+                    break;
+                }
+            }
+        }
+
+        Ok(MessageId(message.id.0.to_string()))
     }
 
     /// SPEC-11: edit a previously-sent message via Telegram `editMessageText`.
@@ -166,14 +451,25 @@ impl Channel for TelegramChannel {
         let bot = Bot::new(self.token.expose());
         // Try MarkdownV2 first (matches send_text), fall back to plain text on a
         // parse rejection so a strict-markdown body still lands the edit.
-        let edit = bot
-            .edit_message_text(ChatId(id), TgMessageId(mid), new_text)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await;
-        if edit.is_err() {
-            bot.edit_message_text(ChatId(id), TgMessageId(mid), new_text)
+        let edit = request_with_short_rate_limit_retry(|| {
+            let request = bot
+                .edit_message_text(ChatId(id), TgMessageId(mid), new_text.to_string())
+                .parse_mode(ParseMode::MarkdownV2);
+            async move { request.await }
+        })
+        .await;
+        match edit {
+            Ok(_) => {}
+            Err(teloxide::RequestError::Api(teloxide::ApiError::CantParseEntities(_))) => {
+                request_with_short_rate_limit_retry(|| {
+                    let request =
+                        bot.edit_message_text(ChatId(id), TgMessageId(mid), new_text.to_string());
+                    async move { request.await }
+                })
                 .await
-                .map_err(|e| ChannelError::Transport(format!("telegram editMessageText: {e}")))?;
+                .map_err(|e| self.map_request_error("editMessageText", e))?;
+            }
+            Err(e) => return Err(self.map_request_error("editMessageText", e)),
         }
         Ok(())
     }
@@ -380,7 +676,7 @@ async fn handle_one_message(
         Err(e) => {
             tracing::warn!(error = %e, "Telegram attachment download failed");
             let notice = format!("[NEOTH] could not download attachment: {e}");
-            let _ = bot.send_message(msg.chat.id, notice.clone()).await;
+            let _ = send_bot_text(&bot, msg.chat.id, &notice).await;
             audit_notice_egress(gate_writer.as_ref(), &msg.chat.id.to_string(), &notice).await;
             return Ok(());
         }
@@ -392,14 +688,11 @@ async fn handle_one_message(
         .or_else(|| msg.caption().map(|s| s.to_string()));
 
     if text.is_none() && media.is_none() {
-        // Sticker / location / poll / service event. Acknowledge so
+        // Location / poll / service event. Acknowledge so
         // the operator knows their message hit NEOTH but the type
-        // isn't supported in v0.1.x.
-        let notice =
-            "[NEOTH] message kind not supported in v0.1.x (no text, no photo/voice/audio).";
-        bot.send_message(msg.chat.id, notice)
-            .await
-            .context("Telegram sendMessage (unsupported-kind reply)")?;
+        // is not silently discarded.
+        let notice = "[NEOTH] message kind not supported (no text or supported media).";
+        send_bot_text(&bot, msg.chat.id, notice).await?;
         audit_notice_egress(gate_writer.as_ref(), &msg.chat.id.to_string(), notice).await;
         return Ok(());
     }
@@ -429,18 +722,10 @@ async fn handle_one_message(
 
     match handler(inbound).await {
         Ok(Some(out)) => {
-            // Reply via Markdown so basic code blocks render. teloxide may
-            // reject malformed Markdown — fall back to plain text on error.
-            let send_result = bot
-                .send_message(msg.chat.id, &out.text)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await;
-            if send_result.is_err() {
-                // Markdown parser is strict; retry as plain.
-                bot.send_message(msg.chat.id, &out.text)
-                    .await
-                    .context("Telegram sendMessage (plain retry)")?;
-            }
+            // Reply via Markdown. Plain fallback is restricted to Telegram's
+            // explicit parse rejection; ambiguous transport errors are never
+            // retried because the first send may already have landed.
+            send_bot_text(&bot, msg.chat.id, &out.text).await?;
         }
         Ok(None) => {
             // Pipeline chose to drop silently. No reply, no error.
@@ -450,9 +735,7 @@ async fn handle_one_message(
             // went wrong without leaking internals.
             tracing::warn!(error = %e, "pipeline error for Telegram message");
             let notice = "[NEOTH] internal error; see daemon logs.";
-            bot.send_message(msg.chat.id, notice)
-                .await
-                .context("Telegram sendMessage (error notice)")?;
+            send_bot_text(&bot, msg.chat.id, notice).await?;
             audit_notice_egress(gate_writer.as_ref(), &msg.chat.id.to_string(), notice).await;
         }
     }
@@ -571,9 +854,8 @@ async fn handle_edited_message(
 /// attachment type (sticker, location, …). On real download failures
 /// returns `Err` so the handler can surface the issue to the operator.
 ///
-/// Supported today: `photo` (largest variant), `voice`, `audio`.
-/// Documents are deferred — we'd need to honor mime + extension
-/// detection before routing them.
+/// Supported today: `photo` (largest variant), `voice`, `audio`, `video`,
+/// `document`, and `sticker`.
 async fn download_attachment_if_any(bot: &Bot, msg: &Message) -> Result<Option<MediaPayload>> {
     if let Some(photos) = msg.photo() {
         let Some(largest) = pick_largest_photo(photos) else {
@@ -610,6 +892,48 @@ async fn download_attachment_if_any(bot: &Bot, msg: &Message) -> Result<Option<M
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "audio/mpeg".to_string()),
             filename: audio.file_name.clone(),
+            data: bytes,
+        }));
+    }
+    if let Some(video) = msg.video() {
+        let bytes = download_telegram_file(bot, &video.file.id.0).await?;
+        return Ok(Some(MediaPayload {
+            kind: MediaKind::Video,
+            mime: video
+                .mime_type
+                .as_ref()
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "video/mp4".to_string()),
+            filename: video.file_name.clone(),
+            data: bytes,
+        }));
+    }
+    if let Some(document) = msg.document() {
+        let bytes = download_telegram_file(bot, &document.file.id.0).await?;
+        return Ok(Some(MediaPayload {
+            kind: MediaKind::Document,
+            mime: document
+                .mime_type
+                .as_ref()
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "application/octet-stream".to_string()),
+            filename: document.file_name.clone(),
+            data: bytes,
+        }));
+    }
+    if let Some(sticker) = msg.sticker() {
+        let bytes = download_telegram_file(bot, &sticker.file.id.0).await?;
+        let (mime, filename) = if sticker.flags.is_video {
+            ("video/webm", "sticker.webm")
+        } else if sticker.flags.is_animated {
+            ("application/x-tgsticker", "sticker.tgs")
+        } else {
+            ("image/webp", "sticker.webp")
+        };
+        return Ok(Some(MediaPayload {
+            kind: MediaKind::Sticker,
+            mime: mime.to_string(),
+            filename: Some(filename.to_string()),
             data: bytes,
         }));
     }
@@ -673,6 +997,140 @@ mod tests {
     fn channel_reports_name() {
         let t = TelegramChannel::new(SecretString::from("dummy"), Some(123));
         assert_eq!(t.name(), "telegram");
+    }
+
+    #[test]
+    fn outbound_media_validation_covers_every_native_mapping() {
+        let cases = [
+            (MediaKind::Image, "image/jpeg", "image.jpg"),
+            (MediaKind::Video, "video/mp4", "video.mp4"),
+            (MediaKind::Audio, "audio/m4a", "audio.m4a"),
+            (
+                MediaKind::Document,
+                "application/octet-stream",
+                "document.bin",
+            ),
+            (MediaKind::Sticker, "video/webm", "sticker.webm"),
+        ];
+        for (kind, mime, expected_name) in cases {
+            let media = MediaPayload {
+                kind,
+                data: vec![1, 2, 3],
+                mime: mime.to_string(),
+                filename: None,
+            };
+            assert_eq!(validate_outbound_media(&media).unwrap(), expected_name);
+        }
+
+        let named = MediaPayload {
+            kind: MediaKind::Image,
+            data: vec![1],
+            mime: "image/png".to_string(),
+            filename: Some("../../safe-name.png".to_string()),
+        };
+        assert_eq!(validate_outbound_media(&named).unwrap(), "safe-name.png");
+    }
+
+    #[test]
+    fn outbound_media_validation_rejects_empty_oversized_and_mismatched_payloads() {
+        let empty = MediaPayload {
+            kind: MediaKind::Image,
+            data: Vec::new(),
+            mime: "image/jpeg".to_string(),
+            filename: None,
+        };
+        assert!(validate_outbound_media(&empty).is_err());
+
+        let oversized_sticker = MediaPayload {
+            kind: MediaKind::Sticker,
+            data: vec![0; MAX_OUTBOUND_STICKER_BYTES + 1],
+            mime: "image/webp".to_string(),
+            filename: None,
+        };
+        assert!(validate_outbound_media(&oversized_sticker).is_err());
+
+        let mismatched = MediaPayload {
+            kind: MediaKind::Audio,
+            data: vec![1],
+            mime: "image/jpeg".to_string(),
+            filename: None,
+        };
+        assert!(validate_outbound_media(&mismatched).is_err());
+
+        let control_filename = MediaPayload {
+            kind: MediaKind::Document,
+            data: vec![1],
+            mime: "application/pdf".to_string(),
+            filename: Some("invoice\nsecret.pdf".to_string()),
+        };
+        assert!(validate_outbound_media(&control_filename).is_err());
+    }
+
+    #[test]
+    fn caption_plan_attaches_short_text_and_falls_back_losslessly() {
+        let short = "hello";
+        assert_eq!(
+            plan_caption(MediaKind::Image, Some(short)),
+            (Some(short.to_string()), None)
+        );
+
+        let long = "ü".repeat(MAX_TELEGRAM_CAPTION_CHARS + 1);
+        assert_eq!(
+            plan_caption(MediaKind::Document, Some(&long)),
+            (None, Some(long))
+        );
+        assert_eq!(
+            plan_caption(MediaKind::Sticker, Some(short)),
+            (None, Some(short.to_string()))
+        );
+        assert_eq!(plan_caption(MediaKind::Audio, Some("")), (None, None));
+    }
+
+    #[test]
+    fn telegram_transport_errors_redact_the_bot_token() {
+        let token = "123456:super-secret-token";
+        let message =
+            format!("request https://api.telegram.org/bot{token}/sendDocument failed: {token}");
+        let redacted = redact_token(&message, token);
+        assert!(!redacted.contains(token));
+        assert_eq!(redacted.matches("[REDACTED]").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn short_retry_after_is_retried_once_and_long_delay_is_surfaced() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&attempts);
+        let result = request_with_short_rate_limit_retry(|| {
+            let attempt = seen.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if attempt == 0 {
+                    Err(teloxide::RequestError::RetryAfter(
+                        teloxide::types::Seconds::from_seconds(0),
+                    ))
+                } else {
+                    Ok(7_u8)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&attempts);
+        let result: std::result::Result<(), _> = request_with_short_rate_limit_retry(|| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            async {
+                Err(teloxide::RequestError::RetryAfter(
+                    teloxide::types::Seconds::from_seconds(MAX_INLINE_RETRY_AFTER_SECS + 1),
+                ))
+            }
+        })
+        .await;
+        assert!(matches!(result, Err(teloxide::RequestError::RetryAfter(_))));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

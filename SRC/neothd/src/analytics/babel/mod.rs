@@ -32,11 +32,12 @@ pub mod collapse;
 pub mod config;
 pub mod cron;
 pub mod export;
-pub mod khist;
 pub mod feature;
 pub mod federation;
+pub mod khist;
 pub mod norm;
 pub mod score;
+pub mod signals;
 pub mod store;
 pub mod window;
 

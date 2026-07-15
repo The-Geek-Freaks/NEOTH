@@ -139,17 +139,18 @@ pub fn compact_directives(blocks: &[MoralCoreBlock]) -> String {
 /// GOLD-FEAT-07 — one-shot load of the default moral-core directory into the
 /// compact injectable string for the enrichment pipeline. Returns `None` when
 /// the directory is absent or holds no directives (so the enrichment layer is
-/// simply skipped). Best-effort: a load error yields `None` (never breaks a
-/// turn).
+/// simply skipped). A config load error also yields `None` and is logged: the
+/// injection fails closed instead of assuming the enabled default.
 pub fn compact_for_injection() -> Option<String> {
-    // GOLD-FEAT-07 — operator kill-switch. Best-effort config read; a default or
-    // unreadable freedom.yaml keeps injection ON (backward-compatible). When
-    // `moral_core.enabled = false`, return None so neither the CLI (chat.rs) nor
-    // the channel (serve_pipeline) injection site emits the moral core — gated
-    // once here so both call sites stay untouched.
-    let enabled = crate::config::FreedomConfig::load_from_default_path()
-        .map(|c| c.moral_core.enabled)
-        .unwrap_or(true);
+    // GOLD-FEAT-07 — operator kill-switch. A genuinely missing config keeps the
+    // compiled enabled default. Existing malformed policy cannot be reinterpreted.
+    let enabled = match crate::config::FreedomConfig::load_from_default_path_or_default() {
+        Ok(config) => config.moral_core.enabled,
+        Err(error) => {
+            tracing::warn!(error = %error, "moral-core injection blocked: freedom.yaml invalid");
+            return None;
+        }
+    };
     if !enabled {
         return None;
     }

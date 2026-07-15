@@ -8,9 +8,6 @@
 //!
 //! Model ids are caller-overridable (`MultimodalRequest::model_id`) — NEOTH is
 //! model-version-agnostic, so the per-provider defaults below are only fallbacks.
-//!
-//! Deferred: `LocalLlava` (llama.cpp / vLLM subprocess) — `make_multimodal_synth`
-//! returns a clear error for it.
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -324,8 +321,7 @@ impl MultimodalSynthesizer for GeminiVisionClient {
     }
 }
 
-/// MM-02b bridge: build a live vision synthesizer for `provider` from creds.
-/// `LocalLlava` is deferred (subprocess engine).
+/// MM-02b bridge: build a live cloud-vision synthesizer for `provider` from creds.
 pub fn make_multimodal_synth(
     provider: MultimodalProvider,
     api_key: Option<SecretString>,
@@ -334,8 +330,8 @@ pub fn make_multimodal_synth(
     // P0 ENFORCEMENT — a CLOUD vision synthesizer ships frames (image bytes) to
     // a third-party provider. It may only be constructed when the operator opted
     // in (`media.cloud_vision_enabled`). The safe-mode rail makes this visible;
-    // this gate makes it REAL. `LocalLlava` is local (and separately deferred).
-    if !matches!(provider, MultimodalProvider::LocalLlava) && !media_cfg.cloud_vision_enabled {
+    // this gate makes it REAL. Every offered provider is cloud-backed.
+    if !media_cfg.cloud_vision_enabled {
         return Err(format!(
             "cloud vision ({}) is disabled — set media.cloud_vision_enabled: true to send \
              image frames to a cloud model (those frames then LEAVE the device)",
@@ -351,10 +347,6 @@ pub fn make_multimodal_synth(
         MultimodalProvider::AnthropicClaude => Ok(Box::new(AnthropicVisionClient::new(key()?))),
         MultimodalProvider::OpenAiGpt4o => Ok(Box::new(OpenAiVisionClient::new(key()?))),
         MultimodalProvider::GoogleGemini => Ok(Box::new(GeminiVisionClient::new(key()?))),
-        MultimodalProvider::LocalLlava => Err(
-            "local LLaVA vision is deferred — needs a llama.cpp / vLLM subprocess engine"
-                .to_string(),
-        ),
     }
 }
 
@@ -464,20 +456,12 @@ mod tests {
             MultimodalProvider::AnthropicClaude
         );
         assert!(make_multimodal_synth(MultimodalProvider::OpenAiGpt4o, None, &on).is_err());
-        assert!(
-            make_multimodal_synth(
-                MultimodalProvider::LocalLlava,
-                Some(SecretString::from("k")),
-                &on
-            )
-            .is_err()
-        );
     }
 
     #[test]
     fn cloud_vision_refused_when_flag_off() {
         // P0 — cloud_vision_enabled OFF (default): no cloud vision synth even with
-        // creds. LocalLlava stays deferred (a different error), never a privacy gate.
+        // credentials.
         let off = crate::config::MediaConfig::default();
         let err = make_multimodal_synth(
             MultimodalProvider::AnthropicClaude,
@@ -489,14 +473,6 @@ mod tests {
         assert!(
             err.contains("cloud vision") && err.contains("LEAVE the device"),
             "got: {err}"
-        );
-        // LocalLlava: deferred error, not the cloud-vision gate.
-        let local = make_multimodal_synth(MultimodalProvider::LocalLlava, None, &off)
-            .err()
-            .unwrap();
-        assert!(
-            local.contains("deferred") && !local.contains("cloud vision"),
-            "got: {local}"
         );
     }
 

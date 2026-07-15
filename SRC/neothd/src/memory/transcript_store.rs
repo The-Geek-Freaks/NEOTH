@@ -83,13 +83,18 @@ pub fn insert_turn(
 /// Sanitise a raw query string so it is safe to pass to FTS5 MATCH.
 ///
 /// Keeps alphanumerics, space, `_`, and `-`; strips everything else
-/// (especially `"`, `*`, `(`, `)` which crash the FTS5 parser). Collapses
-/// whitespace so the result is a clean multi-term query.
+/// (especially `"`, `*`, `(`, `)`). Every remaining term is emitted as an
+/// FTS5 phrase, so bareword operators (`AND`, `OR`, `NOT`, `NEAR`) and hyphens
+/// are searched literally instead of being parsed as query syntax. Tokens
+/// without an alphanumeric character are dropped because they cannot produce
+/// an FTS token. Adjacent phrases retain the previous implicit-AND behaviour.
 fn sanitize_fts_query(q: &str) -> String {
     q.chars()
         .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-')
         .collect::<String>()
         .split_whitespace()
+        .filter(|term| term.chars().any(char::is_alphanumeric))
+        .map(|term| format!("\"{term}\""))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -276,10 +281,38 @@ mod tests {
     fn recall_transcript_surfaces_match_with_before_after_context() {
         let (_dir, conn) = open_test_db();
 
-        insert_turn(&conn, "sess-abc", "operator", 100, "how do I configure the webhook manager").unwrap();
-        insert_turn(&conn, "sess-abc", "agent",    101, "set webhook.enabled to true in freedom.yaml").unwrap();
-        insert_turn(&conn, "sess-abc", "operator", 102, "what about the SSRF guard").unwrap(); // match target
-        insert_turn(&conn, "sess-abc", "agent",    103, "it blocks RFC-1918 and CGNAT ranges").unwrap();
+        insert_turn(
+            &conn,
+            "sess-abc",
+            "operator",
+            100,
+            "how do I configure the webhook manager",
+        )
+        .unwrap();
+        insert_turn(
+            &conn,
+            "sess-abc",
+            "agent",
+            101,
+            "set webhook.enabled to true in freedom.yaml",
+        )
+        .unwrap();
+        insert_turn(
+            &conn,
+            "sess-abc",
+            "operator",
+            102,
+            "what about the SSRF guard",
+        )
+        .unwrap(); // match target
+        insert_turn(
+            &conn,
+            "sess-abc",
+            "agent",
+            103,
+            "it blocks RFC-1918 and CGNAT ranges",
+        )
+        .unwrap();
         insert_turn(&conn, "sess-abc", "operator", 104, "thanks").unwrap();
 
         let results = search_turns(&conn, "SSRF guard", 2, 10).unwrap();
@@ -365,9 +398,16 @@ mod tests {
         let (_dir, conn) = open_test_db();
         // Two sessions; context rows must not cross the session boundary.
         insert_turn(&conn, "sess-A", "operator", 10, "session A row 1").unwrap();
-        insert_turn(&conn, "sess-A", "agent",    11, "session A row 2").unwrap();
-        insert_turn(&conn, "sess-B", "operator", 12, "session B unique target quux").unwrap();
-        insert_turn(&conn, "sess-B", "agent",    13, "session B row 2").unwrap();
+        insert_turn(&conn, "sess-A", "agent", 11, "session A row 2").unwrap();
+        insert_turn(
+            &conn,
+            "sess-B",
+            "operator",
+            12,
+            "session B unique target quux",
+        )
+        .unwrap();
+        insert_turn(&conn, "sess-B", "agent", 13, "session B row 2").unwrap();
 
         let results = search_turns(&conn, "quux", 5, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -382,7 +422,14 @@ mod tests {
     #[test]
     fn insert_turn_fts_is_searchable_immediately() {
         let (_dir, conn) = open_test_db();
-        insert_turn(&conn, "s3", "agent", 500, "the FTS5 trigger fires immediately").unwrap();
+        insert_turn(
+            &conn,
+            "s3",
+            "agent",
+            500,
+            "the FTS5 trigger fires immediately",
+        )
+        .unwrap();
         let r = search_turns(&conn, "trigger fires", 0, 5).unwrap();
         assert_eq!(r.len(), 1, "FTS index must be available right after insert");
     }
@@ -401,12 +448,36 @@ mod tests {
     #[test]
     fn sanitize_strips_fts_special_chars() {
         let clean = sanitize_fts_query("hello \"world\" AND (foo OR bar)*");
-        // Special chars removed; alphanumeric + space retained.
-        assert!(!clean.contains('"'));
+        // User-provided syntax is removed; generated quotes make every token
+        // literal, including FTS5's uppercase bareword operators.
         assert!(!clean.contains('*'));
         assert!(!clean.contains('('));
         assert!(!clean.contains(')'));
-        assert!(clean.contains("hello"));
-        assert!(clean.contains("world"));
+        assert_eq!(clean, "\"hello\" \"world\" \"AND\" \"foo\" \"OR\" \"bar\"");
+    }
+
+    #[test]
+    fn fts_bareword_operators_and_hyphens_never_raise_match_errors() {
+        let (_dir, conn) = open_test_db();
+        insert_turn(
+            &conn,
+            "fts-operators",
+            "operator",
+            1,
+            "not near foo and bar alpha beta",
+        )
+        .unwrap();
+
+        for query in ["NOT", "OR", "NEAR", "foo AND", "alpha-beta", "-"] {
+            let result = search_turns(&conn, query, 0, 10);
+            assert!(
+                result.is_ok(),
+                "query {query:?} must not reach FTS as syntax: {result:?}"
+            );
+        }
+        assert!(
+            search_turns(&conn, "-", 0, 10).unwrap().is_empty(),
+            "a punctuation-only query sanitises to an empty result"
+        );
     }
 }

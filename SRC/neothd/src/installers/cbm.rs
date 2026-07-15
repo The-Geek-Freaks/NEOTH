@@ -70,11 +70,7 @@ impl InstallPath {
                 "-c".into(),
                 format!("curl -fsSL {CBM_INSTALL_SCRIPT_URL} | bash"),
             ],
-            Self::Winget => vec![
-                "winget".into(),
-                "install".into(),
-                CBM_WINGET_ID.into(),
-            ],
+            Self::Winget => vec!["winget".into(), "install".into(), CBM_WINGET_ID.into()],
             Self::Brew => vec![
                 "brew".into(),
                 "install".into(),
@@ -301,9 +297,10 @@ mod tests {
 
     #[test]
     fn install_script_url_is_official_github_raw() {
-        assert!(CBM_INSTALL_SCRIPT_URL.starts_with(
-            "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/"
-        ));
+        assert!(
+            CBM_INSTALL_SCRIPT_URL
+                .starts_with("https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/")
+        );
     }
 
     #[test]

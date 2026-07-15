@@ -1,6 +1,6 @@
 <svg width="960" height="420" viewBox="0 0 960 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d">
   <title id="t">NEOTH first run</title>
-  <desc id="d">A terminal installs NEOTH from the source bootstrap script, launches the GUI, and the wizard asks plain setup questions.</desc>
+  <desc id="d">A terminal installs NEOTH from a source checkout, launches the GUI, and the wizard asks plain setup questions.</desc>
   <defs>
     <style>
       .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -20,11 +20,11 @@
 
   <g class="mono" font-size="14">
     <!-- command 1 -->
-    <text x="56" y="120" fill="#00ff80">$ <tspan fill="#e8e8e8">curl -fsSL raw.githubusercontent.com/…/SRC/install.sh | bash</tspan>
+    <text x="56" y="120" fill="#00ff80">$ <tspan fill="#e8e8e8">git clone github.com/The-Geek-Freaks/NEOTH &amp;&amp; cd NEOTH/SRC</tspan>
       <animate attributeName="opacity" dur="12s" values="0;1;1;1;1;1" keyTimes="0;.04;.5;.9;.95;1" repeatCount="indefinite"/>
     </text>
-    <text x="56" y="148" fill="#6f6f6f">resolving latest source · building neothd …</text>
-    <text x="56" y="176" fill="#00ff80">✓ <tspan fill="#b8b8b8">neothd + neothd-gui installed</tspan>
+    <text x="56" y="148" fill="#6f6f6f">cargo install --path neothd --features release-desktop</text>
+    <text x="56" y="176" fill="#00ff80">✓ <tspan fill="#b8b8b8">neoth + neothd compatibility + neothd-gui installed</tspan>
       <animate attributeName="opacity" dur="12s" values="0;0;1;1;1;1" keyTimes="0;.16;.2;.9;.95;1" repeatCount="indefinite"/>
     </text>
     <text x="56" y="148" fill="#6f6f6f" opacity="0">

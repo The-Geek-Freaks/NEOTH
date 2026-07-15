@@ -219,10 +219,7 @@ fn run_review(home: &Path, min_confidence: f64, output: crate::cli::OutputFormat
     let active: Vec<&StoredProposal> = store
         .entries
         .iter()
-        .filter(|e| {
-            e.status != ProposalStatus::Declined
-                && e.proposal.confidence >= min_confidence
-        })
+        .filter(|e| e.status != ProposalStatus::Declined && e.proposal.confidence >= min_confidence)
         .collect();
     if matches!(
         output,
@@ -504,10 +501,9 @@ async fn run_scan(home: &Path) -> Result<()> {
     use crate::daemon::capability_evolver::run_evolver_pass;
     use crate::daemon::self_improvement_collector::run_self_improvement_collector_tick;
 
-    // Load config; fall back to defaults when freedom.yaml is absent (fresh install).
-    let cfg = FreedomConfig::load_from_default_path()
-        .map(|c| c.self_improvement_collector)
-        .unwrap_or_default();
+    // Missing freedom.yaml uses first-run defaults; malformed existing policy
+    // blocks the scan instead of silently changing collector behaviour.
+    let cfg = FreedomConfig::load_from_default_path_or_default()?.self_improvement_collector;
 
     let db_path = crate::memory::store::default_path();
     let ts = crate::time::now_unix_i64();
@@ -519,8 +515,7 @@ async fn run_scan(home: &Path) -> Result<()> {
     let (tmp_writer, tmp_join) = crate::wal::writer::spawn(tmp_seg.clone())
         .context("spawn temporary WAL writer for self-dev scan")?;
 
-    let report =
-        run_self_improvement_collector_tick(&db_path, home, cfg, &tmp_writer).await;
+    let report = run_self_improvement_collector_tick(&db_path, home, cfg, &tmp_writer).await;
 
     let evolver = run_evolver_pass(home, &report, ts, Some(&tmp_writer)).await;
 
@@ -611,7 +606,9 @@ mod tests {
                 min_confidence: 0.0,
             },
         };
-        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -630,7 +627,10 @@ mod tests {
         assert_eq!(r["id"], "switch_preset-aabbccdd");
         assert_eq!(r["status"], "pending");
         assert_eq!(r["confidence"], 0.83);
-        assert!(r["kind"].is_string(), "kind must be string for unit variants");
+        assert!(
+            r["kind"].is_string(),
+            "kind must be string for unit variants"
+        );
         assert!(r["target"].is_string());
         assert!(r["reason"].is_string());
         assert!(r["patch_path"].is_null());
@@ -698,7 +698,9 @@ mod tests {
                 id: "ghost-12345678".into(),
             },
         };
-        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap_err();
+        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("ghost"));
     }
 
@@ -718,7 +720,9 @@ mod tests {
                 id: "switch_preset-aabbccdd".into(),
             },
         };
-        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap();
         let back = load_store(dir.path()).unwrap();
         assert_eq!(back.entries[0].status, ProposalStatus::Accepted);
         assert!(back.entries[0].status_at_unix > 0);
@@ -738,7 +742,9 @@ mod tests {
         let args = SelfDevArgs {
             action: SelfDevAction::Accept { id: "x".into() },
         };
-        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -758,7 +764,9 @@ mod tests {
                 reason: "garbage".into(),
             },
         };
-        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap_err();
+        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("declined"));
     }
 
@@ -779,7 +787,9 @@ mod tests {
                 reason: "timeout".into(),
             },
         };
-        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap();
         let back = load_store(dir.path()).unwrap();
         assert_eq!(back.entries[0].status, ProposalStatus::Declined);
         assert_eq!(back.entries[0].decline_reason, "timeout");
@@ -802,7 +812,9 @@ mod tests {
                 reason: "declined".into(),
             },
         };
-        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap_err();
+        let err = run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("previously accepted"));
     }
 
@@ -835,7 +847,9 @@ mod tests {
                 current_preset: "lowkey".into(),
             },
         };
-        run(dir.path(), args, None, crate::cli::OutputFormat::Table).await.unwrap();
+        run(dir.path(), args, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap();
         let back = load_store(dir.path()).unwrap();
         assert!(!back.entries.is_empty());
         assert!(
@@ -930,7 +944,9 @@ mod tests {
                 current_preset: "lowkey".into(),
             },
         };
-        run(dir.path(), args1, None, crate::cli::OutputFormat::Table).await.unwrap();
+        run(dir.path(), args1, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap();
         let first = load_store(dir.path()).unwrap();
 
         let args2 = SelfDevArgs {
@@ -939,7 +955,9 @@ mod tests {
                 current_preset: "lowkey".into(),
             },
         };
-        run(dir.path(), args2, None, crate::cli::OutputFormat::Table).await.unwrap();
+        run(dir.path(), args2, None, crate::cli::OutputFormat::Table)
+            .await
+            .unwrap();
         let second = load_store(dir.path()).unwrap();
 
         assert_eq!(first.entries.len(), second.entries.len());

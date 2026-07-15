@@ -108,7 +108,7 @@ pub async fn run_keys(args: KeysArgs) -> Result<()> {
         .unwrap_or_else(FreedomConfig::default_neoth_home);
     match args.action {
         KeysAction::Show => show(&key_path, args.output),
-        KeysAction::Rotate { dry_run } => rotate(&key_path, dry_run, args.output),
+        KeysAction::Rotate { dry_run } => rotate(&home, &key_path, dry_run, args.output).await,
         KeysAction::Archives => archives(&key_path, args.output),
         KeysAction::ApiToken(sub) => api_token(sub, &home, args.output),
     }
@@ -139,10 +139,11 @@ fn api_token_create(
     let (record, plaintext) =
         api_tokens::create_token(label, scopes, expires_at).context("create API token")?;
 
-    // Load + append + save.
-    let mut records = api_tokens::load_store(home).context("load api_tokens.json")?;
-    records.push(record.clone());
-    api_tokens::save_store(home, &records).context("save api_tokens.json")?;
+    api_tokens::mutate_store(home, |records| {
+        records.push(record.clone());
+        Ok(())
+    })
+    .context("append to api_tokens.json")?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -207,7 +208,10 @@ fn api_token_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
                     })
                 })
                 .collect();
-            println!("{}", serde_json::json!({ "count": rows.len(), "tokens": rows }));
+            println!(
+                "{}",
+                serde_json::json!({ "count": rows.len(), "tokens": rows })
+            );
         }
         OutputFormat::Table => {
             if records.is_empty() {
@@ -243,12 +247,11 @@ fn api_token_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
 }
 
 fn api_token_revoke(id: &str, home: &std::path::Path, output: OutputFormat) -> Result<()> {
-    let mut records = api_tokens::load_store(home).context("load api_tokens.json")?;
-    let found = api_tokens::revoke_token(&mut records, id);
+    let found = api_tokens::mutate_store(home, |records| Ok(api_tokens::revoke_token(records, id)))
+        .context("update api_tokens.json")?;
     if !found {
         anyhow::bail!("no token with id {id:?} found");
     }
-    api_tokens::save_store(home, &records).context("save api_tokens.json")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!("{}", serde_json::json!({ "revoked": true, "id": id }));
@@ -305,9 +308,27 @@ fn show(path: &std::path::Path, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn rotate(path: &std::path::Path, dry_run: bool, output: OutputFormat) -> Result<()> {
+async fn rotate(
+    home: &std::path::Path,
+    path: &std::path::Path,
+    dry_run: bool,
+    output: OutputFormat,
+) -> Result<()> {
     let ts = crate::time::now_unix_secs();
-    let archive_path = path.with_extension(format!("key.{ts}.archive"));
+    let mut archive_ts = ts;
+    let archive_for = |archive_ts| {
+        let mut name = path
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or_else(|| "hmac.key".into());
+        name.push(format!(".{archive_ts}.archive"));
+        path.with_file_name(name)
+    };
+    let mut archive_path = archive_for(archive_ts);
+    while archive_path.exists() {
+        archive_ts = archive_ts.saturating_add(1);
+        archive_path = archive_for(archive_ts);
+    }
 
     if dry_run {
         let exists = path.exists();
@@ -341,18 +362,22 @@ fn rotate(path: &std::path::Path, dry_run: bool, output: OutputFormat) -> Result
         return Ok(());
     }
 
-    // Move current key (if any) to archive path. Rename is atomic on the
-    // same filesystem.
-    if path.exists() {
-        std::fs::rename(path, &archive_path)
-            .with_context(|| format!("archive {} -> {}", path.display(), archive_path.display()))?;
-    }
-
-    // Generate a fresh key via the OS RNG. `load_or_init_key` handles the
-    // mode-0600 / DACL write path AND fails closed if the OS RNG is
-    // unavailable — exactly the behaviour we want during rotation.
-    let _new_key = compaction::load_or_init_key(path)
-        .context("generate replacement HMAC key after rotation")?;
+    let had_current = path.exists();
+    let mut new_key = zeroize::Zeroizing::new([0u8; 32]);
+    getrandom::getrandom(new_key.as_mut())
+        .context("OS RNG unavailable — refusing to generate a weak HMAC key")?;
+    let rotation = crate::cli::security::rotate_hmac_key_with_audit(
+        home,
+        path,
+        new_key.as_ref(),
+        "rotate",
+        had_current.then_some(archive_path),
+    )
+    .await?;
+    let archived_at = rotation
+        .archive_path
+        .as_ref()
+        .map(|path| path.display().to_string());
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -360,16 +385,24 @@ fn rotate(path: &std::path::Path, dry_run: bool, output: OutputFormat) -> Result
                 "{}",
                 serde_json::json!({
                     "rotated": true,
+                    "recovered": rotation.recovered,
                     "new_key_path": path.display().to_string(),
-                    "archived_at": archive_path.display().to_string(),
-                    "ts_unix": ts,
+                    "archived_at": archived_at,
+                    "ts_unix": rotation.ts_unix(),
                 })
             );
         }
         OutputFormat::Table => {
             println!("rotated HMAC key:");
-            println!("  archived old → {}", archive_path.display());
+            if let Some(archive) = &rotation.archive_path {
+                println!("  archived old → {}", archive.display());
+            } else {
+                println!("  archived old → (no previous key)");
+            }
             println!("  new key      → {}", path.display());
+            if rotation.recovered {
+                println!("  state        → recovered interrupted audited rotation");
+            }
             println!(
                 "(historical compaction markers still verify via the archived \
                  key — pass it to `neoth verify --key <path>`)"
@@ -482,7 +515,7 @@ mod tests {
             std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
         let args = KeysArgs {
-            home: None,
+            home: Some(dir.path().to_path_buf()),
             action: KeysAction::Rotate { dry_run: false },
             key: Some(key_path.clone()),
             output: OutputFormat::Table,
@@ -537,7 +570,7 @@ mod tests {
         let key_path = dir.path().join("hmac.key");
         std::fs::write(&key_path, vec![0x77u8; 32]).unwrap();
         let args = KeysArgs {
-            home: None,
+            home: Some(dir.path().to_path_buf()),
             action: KeysAction::Rotate { dry_run: true },
             key: Some(key_path.clone()),
             output: OutputFormat::Table,
@@ -553,7 +586,7 @@ mod tests {
         let key_path = dir.path().join("hmac.key");
         assert!(!key_path.exists());
         let args = KeysArgs {
-            home: None,
+            home: Some(dir.path().to_path_buf()),
             action: KeysAction::Rotate { dry_run: false },
             key: Some(key_path.clone()),
             output: OutputFormat::Table,

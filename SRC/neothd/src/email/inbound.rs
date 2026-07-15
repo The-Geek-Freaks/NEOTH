@@ -2,9 +2,9 @@
 //!
 //! Ties the already-shipped defence layers into ONE decision that every
 //! inbound email runs through before NEOTH acts on it — regardless of the
-//! source (live IMAP fetch via [`super::imap_fetch`], or a future API/webhook
-//! ingress). Before EM-01b, [`crate::security::email_threat::assess_email_threat`]
-//! had no caller; this is its consumer.
+//! source (live feature-gated IMAP fetch via `email::imap_fetch`, or another
+//! ingress adapter). [`crate::security::email_threat::assess_email_threat`]
+//! is consumed here rather than being called ad hoc by individual transports.
 //!
 //! The pipeline, in order (each stage is a shipped, tested module):
 //!

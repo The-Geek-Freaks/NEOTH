@@ -78,8 +78,8 @@ pub const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 64;
 /// retries via its own client logic.
 pub const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// P0 — governance inputs for the outbound channel send. The daemon evaluates
-/// the channel-send permission ONCE (at config build) + threads its WAL writer
+/// P0 — governance inputs for the outbound channel send. The daemon resolves
+/// the active policy at each send leaf + threads its WAL writer
 /// so every WhatsApp webhook reply is gated + audited via
 /// [`crate::channels::send_gate`]. `Default` is the writerless, permissive
 /// posture used by tests / non-sending listeners.
@@ -88,7 +88,11 @@ pub struct SendGovernance {
     /// `None` ⇒ no audit is written (and a `required_audit` send fails closed).
     pub wal_writer: Option<crate::wal::writer::WalWriterHandle>,
     /// Pre-evaluated `Action::ChannelSend` decision under the active autonomy.
+    /// Used only by tests/non-daemon callers without a reload controller.
     pub decision: crate::permissions::Decision,
+    /// Live daemon policy source. When present it supersedes `decision` and a
+    /// fresh immutable snapshot is evaluated for every outbound reply.
+    pub reload_controller: Option<std::sync::Arc<crate::config::reload::ReloadController>>,
     /// When true, a send that cannot be audited is REFUSED (fail-closed).
     pub required_audit: bool,
     /// When true, skip the real API call — emit a dry-run audit only.
@@ -100,9 +104,20 @@ impl Default for SendGovernance {
         Self {
             wal_writer: None,
             decision: crate::permissions::Decision::Allow,
+            reload_controller: None,
             required_audit: false,
             dry_run: false,
         }
+    }
+}
+
+impl SendGovernance {
+    fn current_decision(&self) -> crate::permissions::Decision {
+        let Some(controller) = &self.reload_controller else {
+            return self.decision.clone();
+        };
+        let policy = controller.autonomy_policy();
+        crate::permissions::evaluate(&crate::permissions::Action::ChannelSend, &policy)
     }
 }
 
@@ -855,9 +870,10 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                     // number / text in the clear).
                     use crate::channels::send_gate::{self, ChannelSendVerdict};
                     let gov = &cfg.send_governance;
+                    let decision = gov.current_decision();
                     let now = crate::time::now_unix_secs();
                     let verdict = send_gate::decide_channel_send(
-                        &gov.decision,
+                        &decision,
                         gov.dry_run,
                         // `is_some()` would pass a Some-but-crashed writer; probe
                         // liveness so required_audit fails closed on a dead sink.
@@ -1086,9 +1102,10 @@ async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMe
                     xxhash_rust::xxh3::xxh3_64(outbound.recipient_id.as_bytes())
                 );
                 let gov = &cfg.send_governance;
+                let decision = gov.current_decision();
                 let now = crate::time::now_unix_secs();
                 let verdict = send_gate::decide_channel_send(
-                    &gov.decision,
+                    &decision,
                     gov.dry_run,
                     gov.wal_writer.as_ref().is_some_and(|w| w.is_alive()),
                     gov.required_audit,
@@ -1430,6 +1447,7 @@ mod tests {
             SendGovernance {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Deny("test-deny".into()),
+                reload_controller: None,
                 required_audit: false,
                 dry_run: false,
             },
@@ -1472,6 +1490,7 @@ mod tests {
             SendGovernance {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Allow,
+                reload_controller: None,
                 required_audit: false,
                 dry_run: true,
             },
@@ -1519,6 +1538,7 @@ mod tests {
             SendGovernance {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Allow,
+                reload_controller: None,
                 required_audit: false,
                 dry_run: false,
             },
@@ -1583,6 +1603,7 @@ mod tests {
             SendGovernance {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Deny("test-deny".into()),
+                reload_controller: None,
                 required_audit: false,
                 dry_run: false,
             },
@@ -1633,6 +1654,7 @@ mod tests {
             SendGovernance {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Allow,
+                reload_controller: None,
                 required_audit: false,
                 dry_run: false,
             },
