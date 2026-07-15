@@ -370,4 +370,1078 @@ fn compute_frequency_and_temporal(
 /// For each active, non-revoked groundtruth row, compute Jaccard shingle
 /// overlap with each top topic. Return the top correlating pairs.
 fn compute_domain_correlations(
-    conn: &rusqlite::Connectioó4¶‰ËkºwµçQ”…Ì„¡Õµ…¸µÉ•…‘…‰±”=‰Í¥‘¥…¸µ…É­‘½İ¸™¥±”¸)™¸‰Õ¥±‘}Íå¹Ñ¡•Í¥Í}µ…É­‘½İ¸¡¹½Ñ”è€™Må¹Ñ¡•Í¥Í9½Ñ”°¹½İ}Õ¹¥àè¤ØĞ¤€´øMÑÉ¥¹œì(€€€±•ĞµÕĞµ€ô™½Éµ…Ğ„ (€€€€€€€€ˆ´´µq¹İ••¬èíõq¹•¹•É…Ñ•‘}Õ¹¥àèíõq¹Í½ÕÉ”èÍå¹Ñ¡•Í¥ÌµÉ½¹q¸´´µq¹q¹p(€€€€€€€€€Œ]••­±äMå¹Ñ¡•Í¥ÌƒŠPíõq¹q¸ˆ°(€€€€€€€¹½Ñ”¹İ••­}¥Í¼°¹½İ}Õ¹¥à°¹½Ñ”¹İ••­}¥Í¼(€€€€¤ì((€€€µ¹ÁÕÍ¡}ÍÑÈ ˆŒŒÉ•ÅÕ•¹äA•…­Íq¹q¸ˆ¤ì(€€€¥˜¹½Ñ”¹™É•ÅÕ•¹å}Á•…­Ì¹¥Í}•µÁÑä ¤ì(€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ‰|¡¹¼Ñ½Á¥ÌÑ¡¥Ìİ••¬¥}q¸ˆ¤ì(€€€ô•±Í”ì(€€€€€€€™½ÈÀ¥¸€™¹½Ñ”¹™É•ÅÕ•¹å}Á•…­Ìì(€€€€€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ™™½Éµ…Ğ„ ˆ´€¨©íô¨¨èíôµ•¹Ñ¥½¸¡Ì¥q¸ˆ°À¹Ñ½Á¥Œ°À¹½Õ¹Ğ¤¤ì(€€€€€€€ô(€€€ô((€€€µ¹ÁÕÍ¡}ÍÑÈ ‰q¸ŒŒQ•µÁ½É…°±ÕÍÑ•ÉÍq¹q¸ˆ¤ì(€€€¥˜¹½Ñ”¹Ñ•µÁ½É…±}±ÕÍÑ•ÉÌ¹¥Í}•µÁÑä ¤ì(€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ‰|¡¹¼‘•¹Í”±ÕÍÑ•ÉÌ‘•Ñ•Ñ•¥}q¸ˆ¤ì(€€€ô•±Í”ì(€€€€€€€™½ÈŒ¥¸€™¹½Ñ”¹Ñ•µÁ½É…±}±ÕÍÑ•ÉÌì(€€€€€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ™™½Éµ…Ğ„ (€€€€€€€€€€€€€€€€ˆ´…ä€­íô°íô‘…ä¡Ì¤èíõq¸ˆ°(€€€€€€€€€€€€€€€Œ¹İ¥¹‘½İ}ÍÑ…ÉÑ}‘…ä°(€€€€€€€€€€€€€€€Œ¹İ¥¹‘½İ}‘…åÌ°(€€€€€€€€€€€€€€€Œ¹Ñ½Á¥Ì¹©½¥¸ ˆ°€ˆ¤(€€€€€€€€€€€€¤¤ì(€€€€€€€ô(€€€ô((€€€µ¹ÁÕÍ¡}ÍÑÈ ‰q¸ŒŒ½µ…¥¸½ÉÉ•±…Ñ¥½¹Íq¹q¸ˆ¤ì(€€€¥˜¹½Ñ”¹‘½µ…¥¹}½ÉÉ•±…Ñ¥½¹Ì¹¥Í}•µÁÑä ¤ì(€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ‰|¡¹¼É½Õ¹‘ÑÉÕÑ ½ÉÉ•±…Ñ¥½¹Ì¥}q¸ˆ¤ì(€€€ô•±Í”ì(€€€€€€€™½È‘Œ¥¸€™¹½Ñ”¹‘½µ…¥¹}½ÉÉ•±…Ñ¥½¹Ìì(€€€€€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ™™½Éµ…Ğ„ (€€€€€€€€€€€€€€€€ˆ´Ğíôèíõ€€¡½Ù•É±…Àèìè¸Éô¥q¸ˆ°(€€€€€€€€€€€€€€€‘Œ¹Ñ}¥°‘Œ¹Ñ½Á¥Œ°‘Œ¹½Ù•É±…À(€€€€€€€€€€€€¤¤ì(€€€€€€€ô(€€€ô((€€€µ¹ÁÕÍ¡}ÍÑÈ ‰q¸ŒŒ½¹ÑÉ…‘¥Ñ¥½¸±…Íq¹q¸ˆ¤ì(€€€¥˜¹½Ñ”¹½¹ÑÉ…‘¥Ñ¥½¹}™±…Ì¹¥Í}•µÁÑä ¤ì(€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ‰|¡¹¼Á•¹‘¥¹œ½¹ÑÉ…‘¥Ñ¥½¹Ì½Ù•É±…ÀÑ½ÀÑ½Á¥Ì¥}q¸ˆ¤ì(€€€ô•±Í”ì(€€€€€€€™½È˜¥¸€™¹½Ñ”¹½¹ÑÉ…‘¥Ñ¥½¹}™±…Ìì(€€€€€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ™™½Éµ…Ğ„ ˆ´±•‘•Èíôèíõq¸ˆ°˜¹¥°˜¹ÍÑ…Ñ•µ•¹Ğ¤¤ì(€€€€€€€ô(€€€ô((€€€µ¹ÁÕÍ¡}ÍÑÈ ‰q¸ŒŒÉ½ÍÌµÕÑÑ¥¹œQ½Á¥Íq¹q¸ˆ¤ì(€€€¥˜¹½Ñ”¹É½ÍÍ}ÕÑÑ¥¹œ¹¥Í}•µÁÑä ¤ì(€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ‰|¡¹¼É½ÍÌµÕÑÑ¥¹œÑ½Á¥Ì‘•Ñ•Ñ•¥}q¸ˆ¤ì(€€€ô•±Í”ì(€€€€€€€™½ÈŒ¥¸€™¹½Ñ”¹É½ÍÍ}ÕÑÑ¥¹œì(€€€€€€€€€€€µ¹ÁÕÍ¡}ÍÑÈ ™™½Éµ…Ğ„ ˆ´€¨©íô¨¨èíõq¸ˆ°Œ¹Ñ½Á¥Œ°Œ¹‘½µ…¥¹Ì¹©½¥¸ ˆ€¬€ˆ¤¤¤ì(€€€€€€€ô(€€€ô((€€€µ)ô((¼¼€´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´(¼¼MÁ…İ¸¡•±Á•È((¼¼¼MÁ…İ¸Ñ¡”Íå¹Ñ¡•Í¥ÌÁ…ÑÑ•É¸µÉ•½¹¥Ñ¥½¸É½¸±½½À…Ì„‰…­É½Õ¹Ñ½­¥¼Ñ…Í¬¸(¼¼¼(¼¼¼I•ÑÕÉ¹Ì9½¹•€İ¡•¸½¹™¥œ¹•¹…‰±•€ôô™…±Í•€ƒŠP½ÁĞµ½ÕĞ½Á•É…Ñ½ÉÌ…ÉÉä¹¼(¼¼¼¥‘±”Ñ…Í¬¸5¥ÉÉ½ÉÌmÍÕÁ•Èèé½¹ÑÉ…‘¥Ñ¥½¹}É•Í½±Ù•}É½¸èéÍÁ…İ¹}½¹ÑÉ…‘¥Ñ¥½¹}É•Í½±Ù•}É½¹}±½½Át¸(¼¼¼(¼¼¼‘‰}Á…Ñ¡€¥ÌÑåÁ¥…±±äø¼¹¹•½Ñ ½Ù¥•İÌ¹‘‰€€¡ÕÍ”µ•µ½ÉäèéÍÑ½É”èé‘•™…Õ±Ñ}Á…Ñ  ¥€¤¸(¼¼¼¡½µ•€¥Ìø¼¹¹•½Ñ ½€€¡ÕÍ”É••‘½µ½¹™¥œèé‘•™…Õ±Ñ}¹•½Ñ¡}¡½µ” ¥€¤¸)ÁÕˆ™¸ÍÁ…İ¹}Íå¹Ñ¡•Í¥Í}É½¹}±½½À (€€€½¹™¥œèMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œ°(€€€‘‰}Á…Ñ èA…Ñ¡	Õ˜°(€€€¡½µ”èA…Ñ¡	Õ˜°(¤€´ø=ÁÑ¥½¸ñÑ½­¥¼èéÑ…Í¬èé)½¥¹!…¹‘±”ğ ¤øøì(€€€¥˜€…½¹™¥œ¹•¹…‰±•ì(€€€€€€€É•ÑÕÉ¸9½¹”ì(€€€ô(€€€±•Ğ¥¹Ñ•ÉÙ…°€ô½¹™¥œ¹¥¹Ñ•ÉÙ…±}‘ÕÉ…Ñ¥½¸ ¤ì(€€€M½µ”¡Ñ½­¥¼èéÍÁ…İ¸¡…Íå¹Œµ½Ù”ì(€€€€€€€±•ĞµÕĞÑ¥­•È€ôÑ½­¥¼èéÑ¥µ”èé¥¹Ñ•ÉÙ…°¡¥¹Ñ•ÉÙ…°¤ì(€€€€€€€Ñ¥­•È¹Í•Ñ}µ¥ÍÍ•‘}Ñ¥­}‰•¡…Ù¥½È¡Ñ½­¥¼èéÑ¥µ”èé5¥ÍÍ•‘Q¥­	•¡…Ù¥½ÈèéM­¥À¤ì(€€€€€€€ÑÉ…¥¹œèé¥¹™¼„ (€€€€€€€€€€€¥¹Ñ•ÉÙ…±}Í•Ì€ô¥¹Ñ•ÉÙ…°¹…Í}Í•Ì ¤°(€€€€€€€€€€€İ¥¹‘½İ}‘…åÌ€ô½¹™¥œ¹İ¥¹‘½İ}‘…åÌ°(€€€€€€€€€€€€‰Íå¹Ñ¡•Í¥ÌÁ…ÑÑ•É¸µÉ•½¹¥Ñ¥½¸É½¸½¹±¥¹”€¡98µ54´ÀÈ¤ˆ°(€€€€€€€€¤ì(€€€€€€€±½½Àì(€€€€€€€€€€€Ñ¥­•È¹Ñ¥¬ ¤¹…İ…¥Ğì(€€€€€€€€€€€±•Ğ‘ˆÈ€ô‘‰}Á…Ñ ¹±½¹” ¤ì(€€€€€€€€€€€±•Ğ¡½µ”È€ô¡½µ”¹±½¹” ¤ì(€€€€€€€€€€€±•Ğ™œÈ€ô½¹™¥œì(€€€€€€€€€€€±•Ğ|€ôÑ½­¥¼èéÑ…Í¬èéÍÁ…İ¹}‰±½­¥¹œ¡µ½Ù”ñğì(€€€€€€€€€€€€€€€µ…Ñ ÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}½¹” ™‘ˆÈ°€™¡½µ”È°€™™œÈ¤ì(€€€€€€€€€€€€€€€€€€€=¬¡É•Á½ÉĞ¤€ôøÑÉ…¥¹œèé¥¹™¼„ (€€€€€€€€€€€€€€€€€€€€€€€Ñ½Á¥Í}…¹…±åé•€ôÉ•Á½ÉĞ¹Ñ½Á¥Í}…¹…±åé•°(€€€€€€€€€€€€€€€€€€€€€€€½ÉÉ•±…Ñ¥½¹Í}™½Õ¹€ôÉ•Á½ÉĞ¹½ÉÉ•±…Ñ¥½¹Í}™½Õ¹°(€€€€€€€€€€€€€€€€€€€€€€€½¹ÑÉ…‘¥Ñ¥½¹Í}™±…•€ôÉ•Á½ÉĞ¹½¹ÑÉ…‘¥Ñ¥½¹Í}™±…•°(€€€€€€€€€€€€€€€€€€€€€€€¹½Ñ•}İÉ¥ÑÑ•¸€ôÉ•Á½ÉĞ¹¹½Ñ•}İÉ¥ÑÑ•¸°(€€€€€€€€€€€€€€€€€€€€€€€Í­¥±±}ÍÕ•ÍÑ¥½¹Í}İÉ¥ÑÑ•¸€ôÉ•Á½ÉĞ¹Í­¥±±}ÍÕ•ÍÑ¥½¹Í}İÉ¥ÑÑ•¸°(€€€€€€€€€€€€€€€€€€€€€€€Í­¥±±}ÁÉ½Á½Í…±Í}ÍÑ…•€ôÉ•Á½ÉĞ¹Í­¥±±}ÁÉ½Á½Í…±Í}ÍÑ…•°(€€€€€€€€€€€€€€€€€€€€€€€€‰98µ54´ÀÈ½98µ54´ÀÔ½!I5L´ÀØèÍå¹Ñ¡•Í¥ÌÉ½¸Ñ¥¬½µÁ±•Ñ”ˆ°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€ÉÈ¡”¤€ôøÑÉ…¥¹œèé•ÉÉ½È„ (€€€€€€€€€€€€€€€€€€€€€€€•ÉÉ½È€ô€•”°(€€€€€€€€€€€€€€€€€€€€€€€€‰Íå¹Ñ¡•Í¥ÌÉ½¸Ñ¥¬™…¥±•€¡98µ54´ÀÈ¤ˆ°(€€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€ô¤(€€€€€€€€€€€€¹…İ…¥Ğì(€€€€€€€ô(€€€ô¤¤)ô((¼¼€´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´´(¼¼Q•ÍÑÌ((m™œ¡Ñ•ÍĞ¥t)µ½Ñ•ÍÑÌì(€€€ÕÍ”ÍÕÁ•Èèè¨ì(€€€ÕÍ”É…Ñ”èéµ•µ½ÉäèéÍÑ½É”ì(€€€ÕÍ”ÍÑèéÑ¥µ”èéÕÉ…Ñ¥½¸ì((€€€€¼¼ƒŠRŠR Q•ÍĞ€Äè‘¥Í…‰±•ƒŠHÍÁ…İ¸É•ÑÕÉ¹Ì9½¹”ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸ÍÁ…İ¹}Íå¹Ñ¡•Í¥Í}É½¹}±½½Á}É•ÑÕÉ¹Í}¹½¹•}İ¡•¹}‘¥Í…‰±• ¤ì(€€€€€€€±•Ğ™œ€ôMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œèé‘•™…Õ±Ğ ¤ì(€€€€€€€…ÍÍ•ÉĞ„ …™œ¹•¹…‰±•°€‰µÕÍĞ‰”½™˜‰ä‘•™…Õ±Ğˆ¤ì(€€€€€€€±•Ğ¡…¹‘±”€ôÍÁ…İ¹}Íå¹Ñ¡•Í¥Í}É½¹}±½½À¡™œ°€ˆ½¹½¹•á¥ÍÑ•¹Ğˆ¹¥¹Ñ¼ ¤°€ˆ½¹½¹•á¥ÍÑ•¹Ğˆ¹¥¹Ñ¼ ¤¤ì(€€€€€€€…ÍÍ•ÉĞ„¡¡…¹‘±”¹¥Í}¹½¹” ¤°€‰‘¥Í…‰±•½¹™¥œµÕÍĞÉ•ÑÕÉ¸9½¹”ˆ¤ì(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€Èè•¹…‰±•ƒŠHÍÁ…İ¸É•ÑÕÉ¹ÌM½µ”ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ½­¥¼èéÑ•ÍÑt(€€€…Íå¹Œ™¸ÍÁ…İ¹}Íå¹Ñ¡•Í¥Í}É½¹}±½½Á}É•ÑÕÉ¹Í}Í½µ•}İ¡•¹}•¹…‰±• ¤ì(€€€€€€€±•Ğ™œ€ôMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œì(€€€€€€€€€€€•¹…‰±•èÑÉÕ”°(€€€€€€€€€€€¥¹Ñ•ÉÙ…±}Í•Ìè€ØÀÑ|àÀÀ°(€€€€€€€€€€€İ¥¹‘½İ}‘…åÌè€ÌÀ°(€€€€€€€€€€€•¹…‰±•}Í­¥±±}Á•É™}Á…ÍÌè™…±Í”°(€€€€€€€€€€€ÁÉ½Á½Í•}Í­¥±±Í}™É½µ}Á•É˜è™…±Í”°(€€€€€€€ôì(€€€€€€€±•Ğ¡…¹‘±”€ôÍÁ…İ¹}Íå¹Ñ¡•Í¥Í}É½¹}±½½À¡™œ°€ˆ½¹½¹•á¥ÍÑ•¹Ğˆ¹¥¹Ñ¼ ¤°€ˆ½¹½¹•á¥ÍÑ•¹Ğˆ¹¥¹Ñ¼ ¤¤(€€€€€€€€€€€€¹•áÁ•Ğ ‰¡…¹‘±”İ¡•¸•¹…‰±•ˆ¤ì(€€€€€€€¡…¹‘±”¹…‰½ÉĞ ¤ì(€€€€€€€±•Ğ|€ô¡…¹‘±”¹…İ…¥Ğì€¼¼)½¥¹ÉÉ½È½¸…‰½ÉĞ•áÁ•Ñ•(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€Ìè¹¼Ù¥•İÌ¹‘ˆƒŠHÉ…•™Õ°¹¼µ½ÀƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸ÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}½¹•}¹½}‘‰}É•ÑÕÉ¹Í}½¬ ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ™¥±”èéÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ™œ€ôMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œèé‘•™…Õ±Ğ ¤ì(€€€€€€€±•ĞÉ•ÍÕ±Ğ€ôÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}½¹” ™‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰Ù¥•İÌ¹‘ˆˆ¤°‘¥È¹Á…Ñ  ¤°€™™œ¤ì(€€€€€€€…ÍÍ•ÉĞ„¡É•ÍÕ±Ğ¹¥Í}½¬ ¤°€‰µÕÍĞ¹½Ğ•ÉÉ½Èİ¡•¸Ù¥•İÌ¹‘ˆ…‰Í•¹Ğˆ¤ì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉ•ÍÕ±Ğ¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉĞ„ …É•Á½ÉĞ¹¹½Ñ•}İÉ¥ÑÑ•¸°€‰¹¼¹½Ñ”İ¡•¸‘ˆ…‰Í•¹Ğˆ¤ì(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€ĞèÍ••‘•‘ˆƒŠHİÉ¥Ñ•ÌÉ½Õ¹‘ÑÉÕÑ É½Ü€¡½¹ÍÕµ•ÈÁÉ½½˜¤ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸ÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}İÉ¥Ñ•Í}É½Õ¹‘ÑÉÕÑ¡}É½Ü ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ™¥±”èéÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ‘‰}Á…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰Ù¥•İÌ¹‘ˆˆ¤ì(€€€€€€€±•Ğ½¹¸€ôÍÑ½É”èé½Á•¸ ™‘‰}Á…Ñ ¤¹Õ¹İÉ…À ¤ì((€€€€€€€€¼¼M••€ØI]}QaP•Á¥Í½‘•Ìİ¥Ñ¡¥¸Ñ¡”€ÌÀµ‘…ä±½½¬µ‰…¬İ¥¹‘½Ü¸(€€€€€€€€¼¼UÍ”É•…°ÕÉÉ•¹ĞÑ¥µ”µ¥¹ÕÌÍµ…±°½™™Í•ÑÌÍ¼Ñ¡•ä™…±°¥¹Í¥‘”Ñ¡”İ¥¹‘½Ü¸(€€€€€€€±•Ğ¹½İ}¹Ì€ôÉ…Ñ”èéÑ¥µ”èé¹½İ}Õ¹¥á}¹Í}¤ØĞ ¤ì(€€€€€€€™½È¤¥¸€Á¤ØĞ¸¸Øì(€€€€€€€€€€€€¼¼MÁ…”•Á¥Í½‘•Ì€Ä‘…ä…Á…ÉĞ°…±°İ¥Ñ¡¥¸Ñ¡”±…ÍĞ€Ø‘…åÌ€¡İ•±°¥¹Í¥‘”€ÌÁİ¥¹‘½Ü¤¸(€€€€€€€€€€€±•ĞÑÌ€ô¹½İ}¹Ì€´¤€¨€àÙ|ĞÀÀ€¨€Å|ÀÀÁ|ÀÀÁ|ÀÀÁ}¤ØĞì(€€€€€€€€€€€½¹¸¹•á•ÕÑ” (€€€€€€€€€€€€€€€€‰%9MIP%9Q<¥‘á}•Á¥Í½‘”p(€€€€€€€€€€€€€€€€€¡•Ù•¹Ñ}¥°•Ù•¹Ñ}ÑåÁ”°ÑÍ}¹Ì°Ñ•áĞ°Ñ•áÑ}¡…Í °¥µÁ½ÉÑ…¹”°±…ÍÑ}…•ÍÍ}ÑÌ¤p(€€€€€€€€€€€€€€€€Y1UL€ üÄ°€Ä°€üÈ°€­Õ‰•É¹•Ñ•Ì‘•Á±½åµ•¹ĞÁ¥Á•±¥¹”ÉÕÍĞ…É¼‰Õ¥±œ°€üÌ°€À¸Ü°€üÈ¤ˆ°(€€€€€€€€€€€€€€€ÉÕÍÅ±¥Ñ”èéÁ…É…µÌ…l(€€€€€€€€€€€€€€€€€€€¤°(€€€€€€€€€€€€€€€€€€€ÑÌ°(€€€€€€€€€€€€€€€€€€€™½Éµ…Ğ„ ‰¡…Í¡í¥ôˆ¤°(€€€€€€€€€€€€€€€t°(€€€€€€€€€€€€¤(€€€€€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€ô(€€€€€€€‘É½À¡½¹¸¤ì((€€€€€€€±•Ğ™œ€ôMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œì(€€€€€€€€€€€•¹…‰±•èÑÉÕ”°(€€€€€€€€€€€¥¹Ñ•ÉÙ…±}Í•Ìè€ØÀÑ|àÀÀ°(€€€€€€€€€€€İ¥¹‘½İ}‘…åÌè€ÌÀ°(€€€€€€€€€€€•¹…‰±•}Í­¥±±}Á•É™}Á…ÍÌè™…±Í”°(€€€€€€€€€€€ÁÉ½Á½Í•}Í­¥±±Í}™É½µ}Á•É˜è™…±Í”°(€€€€€€€ôì(€€€€€€€±•ĞÉ•Á½ÉĞ€ô(€€€€€€€€€€€ÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}½¹” ™‘‰}Á…Ñ °‘¥È¹Á…Ñ  ¤°€™™œ¤¹•áÁ•Ğ ‰Ñ¥¬µÕÍĞÍÕ••ˆ¤ì((€€€€€€€€¼¼5ÕÍĞ¡…Ù”…¹…±åé•Í½µ”Ñ½Á¥Ì¸(€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€É•Á½ÉĞ¹Ñ½Á¥Í}…¹…±åé•€ø€À°(€€€€€€€€€€€€‰µÕÍĞ…¹…±åé”Ñ½Á¥Ì™É½´Í••‘••Á¥Í½‘•Ìˆ(€€€€€€€€¤ì((€€€€€€€€¼¼½¹ÍÕµ•ÈÁÉ½½˜è•á…Ñ±ä½¹”Íå¹Ñ¡•Í¥ÌµÉ½¸É½Ü¥¸¥‘á}É½Õ¹‘ÑÉÕÑ ¸(€€€€€€€±•Ğ½¹¸È€ôÍÑ½É”èé½Á•¸ ™‘‰}Á…Ñ ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ½Õ¹Ğè¤ØĞ€ô½¹¸È(€€€€€€€€€€€€¹ÅÕ•Éå}É½Ü (€€€€€€€€€€€€€€€€‰M1P=U9P ¨¤I=4¥‘á}É½Õ¹‘ÑÉÕÑ ]!IÍ½ÕÉ”€ô€Íå¹Ñ¡•Í¥ÌµÉ½¸œˆ°(€€€€€€€€€€€€€€€mt°(€€€€€€€€€€€€€€€ñÉğÈ¹•Ğ À¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€½Õ¹Ğ°€Ä°(€€€€€€€€€€€€‰Íå¹Ñ¡•Í¥ÌÉ½¸µÕÍĞİÉ¥Ñ”•á…Ñ±ä½¹”É½Õ¹‘ÑÉÕÑ É½ÜÁ•ÈÑ¥¬ˆ(€€€€€€€€¤ì((€€€€€€€€¼¼Q¡”É½ÜµÕÍĞ¡…Ù”Í½Á”€ô€µ•Ñ„œ¸(€€€€€€€±•Ğ€¡Í½Á”°•Ù¥‘•¹”¤è€¡MÑÉ¥¹œ°MÑÉ¥¹œ¤€ô½¹¸È(€€€€€€€€€€€€¹ÅÕ•Éå}É½Ü (€€€€€€€€€€€€€€€€‰M1PÍ½Á”°•Ù¥‘•¹”I=4¥‘á}É½Õ¹‘ÑÉÕÑ ]!IÍ½ÕÉ”€ô€Íå¹Ñ¡•Í¥ÌµÉ½¸œˆ°(€€€€€€€€€€€€€€€mt°(€€€€€€€€€€€€€€€ñÉğ=¬ ¡È¹•Ğ À¤ü°È¹•Ğ Ä¤ü¤¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Í½Á”°€‰µ•Ñ„ˆ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€Í•É‘•}©Í½¸èé™É½µ}ÍÑÈèèñY•Œñ¤ØĞøø ™•Ù¥‘•¹”¤¹Õ¹İÉ…À ¤°(€€€€€€€€€€€Ù•Œ…lÔ°€Ğ°€Ì°€È°€Ä°€Át°(€€€€€€€€€€€€‰Ñ¡”Íå¹Ñ¡•Í¥Ì¹½Ñ”µÕÍĞÉ•Ñ…¥¸•Ù•Éä½¹ÑÉ¥‰ÕÑ¥¹œ•Á¥Í½‘”¥¸¡É½¹½±½¥…°½É‘•Èˆ(€€€€€€€€¤ì(€€€ô((€€€€mÑ•ÍÑt(€€€™¸ÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}É•™ÕÍ•Í}½ÉÁ¡…¹}¹½Ñ•}İ¥Ñ¡½ÕÑ}•Á¥Í½‘•Ì ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ™¥±”èéÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ‘‰}Á…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰Ù¥•İÌ¹‘ˆˆ¤ì(€€€€€€€ÍÑ½É”èé½Á•¸ ™‘‰}Á…Ñ ¤¹Õ¹İÉ…À ¤ì((€€€€€€€±•Ğ™œ€ôMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œì(€€€€€€€€€€€•¹…‰±•èÑÉÕ”°(€€€€€€€€€€€¥¹Ñ•ÉÙ…±}Í•Ìè€ØÀÑ|àÀÀ°(€€€€€€€€€€€İ¥¹‘½İ}‘…åÌè€ÌÀ°(€€€€€€€€€€€•¹…‰±•}Í­¥±±}Á•É™}Á…ÍÌè™…±Í”°(€€€€€€€€€€€ÁÉ½Á½Í•}Í­¥±±Í}™É½µ}Á•É˜è™…±Í”°(€€€€€€€ôì(€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}½¹” ™‘‰}Á…Ñ °‘¥È¹Á…Ñ  ¤°€™™œ¤¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉĞ„ …É•Á½ÉĞ¹¹½Ñ•}İÉ¥ÑÑ•¸¤ì((€€€€€€€±•Ğ½¹¸€ôÍÑ½É”èé½Á•¸ ™‘‰}Á…Ñ ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ½Õ¹Ğè¤ØĞ€ô½¹¸(€€€€€€€€€€€€¹ÅÕ•Éå}É½Ü (€€€€€€€€€€€€€€€€‰M1P=U9P ¨¤I=4¥‘á}É½Õ¹‘ÑÉÕÑ ]!IÍ½ÕÉ”€ô€Íå¹Ñ¡•Í¥ÌµÉ½¸œˆ°(€€€€€€€€€€€€€€€mt°(€€€€€€€€€€€€€€€ñÉğÈ¹•Ğ À¤°(€€€€€€€€€€€€¤(€€€€€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡½Õ¹Ğ°€À°€‰•µÁÑäÍå¹Ñ¡•Í¥ÌµÕÍĞ¹½Ğ‰•½µ”½ÉÁ¡…¸İ¥Í‘½´ˆ¤ì(€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€€…‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰Íå¹Ñ¡•Í¥Ìˆ¤¹•á¥ÍÑÌ ¤°(€€€€€€€€€€€€‰Ù…Õ±ĞÍå¹Ñ¡•Í¥Ì¥ÌÍ­¥ÁÁ•İ¡•¸¥Ğ¡…Ì¹¼•Á¥Í½‘”ÁÉ½Ù•¹…¹”ˆ(€€€€€€€€¤ì(€€€ô((€€€€mÑ•ÍÑt(€€€™¸ÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}‘½•Í}¹½Ñ}İÉ¥Ñ•}Ù…Õ±Ñ}İ¡•¹}•Ù¥‘•¹•}¥¹Í•ÉÑ}™…¥±Ì ¤ì(€€€€€€€±•Ğ‘¥È€ôÑ•µÁ™¥±”èéÑ•µÁ‘¥È ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ‘‰}Á…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰Ù¥•İÌ¹‘ˆˆ¤ì(€€€€€€€±•Ğ½¹¸€ôÍÑ½É”èé½Á•¸ ™‘‰}Á…Ñ ¤¹Õ¹İÉ…À ¤ì(€€€€€€€±•Ğ¹½İ}¹Ì€ôÉ…Ñ”èéÑ¥µ”èé¹½İ}Õ¹¥á}¹Í}¤ØĞ ¤ì(€€€€€€€½¹¸¹•á•ÕÑ” (€€€€€€€€€€€€‰%9MIP%9Q<¥‘á}•Á¥Í½‘”p(€€€€€€€€€€€€€¡•Ù•¹Ñ}¥°•Ù•¹Ñ}ÑåÁ”°ÑÍ}¹Ì°Ñ•áĞ°Ñ•áÑ}¡…Í °¥µÁ½ÉÑ…¹”°±…ÍÑ}…•ÍÍ}ÑÌ¤p(€€€€€€€€€€€€Y1UL€ äÄ°€Ä°€üÄ°€ÉÕÍĞ‘•Á±½åµ•¹ĞÍå¹Ñ¡•Í¥Ì•Ù¥‘•¹”œ°€Íå¹Ñ µ•Ù¥‘•¹”œ°€À¸Ü°€üÄ¤ˆ°(€€€€€€€€€€€ÉÕÍÅ±¥Ñ”èéÁ…É…µÌ…m¹½İ}¹Ít°(€€€€€€€€¤(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€½¹¸¹•á•ÕÑ•}‰…Ñ  (€€€€€€€€€€€€‰IQQI%HÉ•©•Ñ}Íå¹Ñ¡•Í¥Í}É½Õ¹‘ÑÉÕÑ p(€€€€€€€€€€€€	=I%9MIP=8¥‘á}É½Õ¹‘ÑÉÕÑ p(€€€€€€€€€€€€]!89\¹Í½ÕÉ”€ô€Íå¹Ñ¡•Í¥ÌµÉ½¸œp(€€€€€€€€€€€€	%8M1PI%M¡%0°€Ñ•ÍĞ¥¹Í•ÉĞ™…¥±ÕÉ”œ¤ì9ìˆ°(€€€€€€€€¤(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€‘É½À¡½¹¸¤ì((€€€€€€€±•ĞÉ•Á½ÉĞ€ôÉÕ¹}Íå¹Ñ¡•Í¥Í}Ñ¥­}½¹” (€€€€€€€€€€€€™‘‰}Á…Ñ °(€€€€€€€€€€€‘¥È¹Á…Ñ  ¤°(€€€€€€€€€€€€™Må¹Ñ¡•Í¥ÍÉ½¹½¹™¥œì(€€€€€€€€€€€€€€€•¹…‰±•èÑÉÕ”°(€€€€€€€€€€€€€€€¥¹Ñ•ÉÙ…±}Í•Ìè€ØÀÑ|àÀÀ°(€€€€€€€€€€€€€€€İ¥¹‘½İ}‘…åÌè€ÌÀ°(€€€€€€€€€€€€€€€•¹…‰±•}Í­¥±±}Á•É™}Á…ÍÌè™…±Í”°(€€€€€€€€€€€€€€€ÁÉ½Á½Í•}Í­¥±±Í}™É½µ}Á•É˜è™…±Í”°(€€€€€€€€€€€ô°(€€€€€€€€¤(€€€€€€€€¹Õ¹İÉ…À ¤ì(€€€€€€€…ÍÍ•ÉĞ„ …É•Á½ÉĞ¹¹½Ñ•}İÉ¥ÑÑ•¸¤ì(€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€€…‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰Íå¹Ñ¡•Í¥Ìˆ¤¹•á¥ÍÑÌ ¤°(€€€€€€€€€€€€‰„Ù…Õ±Ğ™¥±”µÕÍĞ¹•Ù•È½ÕÑ±¥Ù”„™…¥±••Ù¥‘•¹”µ‰½Õ¹¥¹Í•ÉĞˆ(€€€€€€€€¤ì(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€Ôè½¹™¥œ‘•™…Õ±ÑÌƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸½¹™¥}‘•™…Õ±ÑÌ ¤ì(€€€€€€€±•Ğ™œ€ôMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œèé‘•™…Õ±Ğ ¤ì(€€€€€€€…ÍÍ•ÉĞ„ …™œ¹•¹…‰±•°€‰½™˜‰ä‘•™…Õ±Ğˆ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€™œ¹¥¹Ñ•ÉÙ…±}Í•Ì°(€€€€€€€€€€€ÍÕÁ•ÈèéÍÕÁ•ÈèéÍÕÁ•Èèé½¹™¥œèé…ÕÑ½µ…Ñ¥½¸èéU1Q}Me9Q!M%M}I=9}%9QIY1}ML(€€€€€€€€¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€™œ¹İ¥¹‘½İ}‘…åÌ°(€€€€€€€€€€€ÍÕÁ•ÈèéÍÕÁ•ÈèéÍÕÁ•Èèé½¹™¥œèé…ÕÑ½µ…Ñ¥½¸èéU1Q}Me9Q!M%M}]%9=]}eL(€€€€€€€€¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ (€€€€€€€€€€€™œ¹¥¹Ñ•ÉÙ…±}‘ÕÉ…Ñ¥½¸ ¤°(€€€€€€€€€€€ÕÉ…Ñ¥½¸èé™É½µ}Í•Ì (€€€€€€€€€€€€€€€ÍÕÁ•ÈèéÍÕÁ•ÈèéÍÕÁ•Èèé½¹™¥œèé…ÕÑ½µ…Ñ¥½¸èéU1Q}Me9Q!M%M}I=9}%9QIY1}ML(€€€€€€€€€€€€¤(€€€€€€€€¤ì(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€Øè¥¹Ñ•ÉÙ…°™±½½È±…µÁÌé•É¼ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸¥¹Ñ•ÉÙ…±}™±½½É}±…µÁÍ}é•É¼ ¤ì(€€€€€€€±•Ğ™œ€ôMå¹Ñ¡•Í¥ÍÉ½¹½¹™¥œì(€€€€€€€€€€€•¹…‰±•èÑÉÕ”°(€€€€€€€€€€€¥¹Ñ•ÉÙ…±}Í•Ìè€À°(€€€€€€€€€€€İ¥¹‘½İ}‘…åÌè€ÌÀ°(€€€€€€€€€€€•¹…‰±•}Í­¥±±}Á•É™}Á…ÍÌè™…±Í”°(€€€€€€€€€€€ÁÉ½Á½Í•}Í­¥±±Í}™É½µ}Á•É˜è™…±Í”°(€€€€€€€ôì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡™œ¹¥¹Ñ•ÉÙ…±}‘ÕÉ…Ñ¥½¸ ¤°ÕÉ…Ñ¥½¸èé™É½µ}Í•Ì ØÀ¤¤ì(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€ÜèM½ÕÉ”èéMå¹Ñ¡•Í¥ÌÉ½Õ¹µÑÉ¥ÁÌ½ÉÉ•Ñ±äƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸Íå¹Ñ¡•Í¥Í}Í½ÕÉ•}…Í}ÍÑÈ ¤ì(€€€€€€€ÕÍ”É…Ñ”èéµ•µ½ÉäèéÉ½Õ¹‘ÑÉÕÑ èéM½ÕÉ”ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡M½ÕÉ”èéMå¹Ñ¡•Í¥Ì¹…Í}ÍÑÈ ¤°€‰Íå¹Ñ¡•Í¥ÌµÉ½¸ˆ¤ì(€€€€€€€…ÍÍ•ÉĞ„ …M½ÕÉ”èéMå¹Ñ¡•Í¥Ì¹¥Í}½Á•É…Ñ½É}…ÑÑ•ÍÑ• ¤¤ì(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€àè¥Í½}İ••­}±…‰•°Í…¹¥ÑäƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸¥Í½}İ••­}±…‰•±}™½Éµ…Ğ ¤ì(€€€€€€€€¼¼U¹¥à•Á½ €À€ô€ÄäÜÀ´ÀÄ´ÀÄ€¡Q¡ÕÉÍ‘…ä¤¸]••¬€Ä¸(€€€€€€€±•Ğ±…‰•°€ô¥Í½}İ••­}±…‰•° À¤ì(€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€±…‰•°¹ÍÑ…ÉÑÍ}İ¥Ñ  ˆÄäÜÀµ\ˆ¤°(€€€€€€€€€€€€‰±…‰•°µÕÍĞÍÑ…ÉĞİ¥Ñ å•…Èµ\èí±…‰•±ôˆ(€€€€€€€€¤ì(€€€€€€€€¼¼­¹½İ¸Ñ¥µ•ÍÑ…µÀè€ÈÀÈØ´ÀØ´ÈÈƒŠ& U¹¥à€ÄÜÔÀÔÔÀĞÀÀ¸(€€€€€€€±•Ğ±…‰•°È€ô¥Í½}İ••­}±…‰•° Å|ÜÔÁ|ÔÔÁ|ĞÀÀ¤ì(€€€€€€€…ÍÍ•ÉĞ„¡±…‰•°È¹ÍÑ…ÉÑÍ}İ¥Ñ  ˆÈÀÈˆ¤°€‰å•…È€ÈÀÈØ±…‰•°èí±…‰•°Éôˆ¤ì(€€€ô((€€€€¼¼ƒŠRŠR Q•ÍĞ€äèµ…É­‘½İ¸•¹•É…Ñ¥½¸Íµ½­”Ñ•ÍĞƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€mÑ•ÍÑt(€€€™¸‰Õ¥±‘}Íå¹Ñ¡•Í¥Í}µ…É­‘½İ¹}½¹Ñ…¥¹Í}İ••­}±…‰•° ¤ì(€€€€€€€±•Ğ¹½Ñ”€ôMå¹Ñ¡•Í¥Í9½Ñ”ì(€€€€€€€€€€€İ••­}¥Í¼è€ˆÈÀÈØµ\ÈÔˆ¹Ñ½}ÍÑÉ¥¹œ ¤°(€€€€€€€€€€€™É•ÅÕ•¹å}Á•…­ÌèÙ•Œ…mÉ•ÅÕ•¹åA•…¬ì(€€€€€€€€€€€€€€€Ñ½Á¥Œè€‰­Õ‰•É¹•Ñ•Ìˆ¹Ñ½}ÍÑÉ¥¹œ ¤°(€€€€€€€€€€€€€€€½Õ¹Ğè€Ô°(€€€€€€€€€€€õt°(€€€€€€€€€€€Ñ•µÁ½É…±}±ÕÍÑ•ÉÌèÙ•Œ…mt°(€€€€€€€€€€€‘½µ…¥¹}½ÉÉ•±…Ñ¥½¹ÌèÙ•Œ…mt°(€€€€€€€€€€€½¹ÑÉ…‘¥Ñ¥½¹}™±…ÌèÙ•Œ…mt°(€€€€€€€€€€€É½ÍÍ}ÕÑÑ¥¹œèÙ•Œ…mt°(€€€€€€€€€€€Í­¥±±}Á•É™}ÍÕ•ÍÑ¥½¹ÌèÙ•Œ…mt°(€€€€€€€ôì(€€€€€€€±•Ğµ€ô‰Õ¥±‘}Íå¹Ñ¡•Í¥Í}µ…É­‘½İ¸ ™¹½Ñ”°€Å|ÜÔÁ|ÀÀÁ|ÀÀÀ¤ì(€€€€€€€…ÍÍ•ÉĞ„¡µ¹½¹Ñ…¥¹Ì ˆÈÀÈØµ\ÈÔˆ¤°€‰µÕÍĞ½¹Ñ…¥¸İ••¬±…‰•°ˆ¤ì(€€€€€€€…ÍÍ•ÉĞ„¡µ¹½¹Ñ…¥¹Ì ‰­Õ‰•É¹•Ñ•Ìˆ¤°€‰µÕÍĞ½¹Ñ…¥¸Ñ½Á¥Œˆ¤ì(€€€€€€€…ÍÍ•ÉĞ„ (€€€€€€€€€€€µ¹½¹Ñ…¥¹Ì ‰Íå¹Ñ¡•Í¥ÌµÉ½¸ˆ¤°(€€€€€€€€€€€€‰µÕÍĞ¡…Ù”Í½ÕÉ”¥¸™É½¹Ñµ…ÑÑ•Èˆ(€€€€€€€€¤ì(€€€ô)ô
+    conn: &rusqlite::Connection,
+    top_topics: &[FrequencyPeak],
+) -> Vec<DomainCorrelation> {
+    if top_topics.is_empty() {
+        return vec![];
+    }
+
+    let gt_rows: Vec<(i64, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, statement FROM idx_groundtruth \
+             WHERE revoked_at IS NULL AND fact_state = 'verified' \
+             ORDER BY asserted_at DESC LIMIT 200",
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        match stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+        {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        }
+    };
+
+    let mut correlations: Vec<DomainCorrelation> = Vec::new();
+    let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    for peak in top_topics.iter().take(10) {
+        let topic_shingles = shingle_set(&peak.topic);
+        if topic_shingles.is_empty() {
+            continue;
+        }
+        for (gt_id, statement) in &gt_rows {
+            if seen.contains(gt_id) {
+                continue;
+            }
+            let gt_shingles = shingle_set(statement);
+            let overlap = jaccard_shingles(&topic_shingles, &gt_shingles);
+            if overlap >= DOMAIN_CORRELATION_THRESHOLD {
+                seen.insert(*gt_id);
+                correlations.push(DomainCorrelation {
+                    gt_id: *gt_id,
+                    topic: peak.topic.clone(),
+                    overlap,
+                });
+                if correlations.len() >= MAX_CORRELATIONS {
+                    return correlations;
+                }
+            }
+        }
+    }
+
+    correlations
+}
+
+/// Dimension 4 â€” contradiction flags: pending ledger rows whose statement
+/// overlaps with the top topics.
+fn compute_contradiction_flags(
+    conn: &rusqlite::Connection,
+    top_topics: &[FrequencyPeak],
+) -> Vec<ContradictionFlag> {
+    if top_topics.is_empty() {
+        return vec![];
+    }
+
+    // Fetch pending contradictions (decision = 'pending').
+    let ledger_rows: Vec<(i64, i64, i64)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, fact_a_id, fact_b_id FROM idx_contradictions \
+             WHERE decision = 'pending' ORDER BY detected_at DESC LIMIT 100",
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        match stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+        {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        }
+    };
+
+    let top_set: std::collections::HashSet<&str> = top_topics
+        .iter()
+        .take(10)
+        .map(|p| p.topic.as_str())
+        .collect();
+
+    let mut flags: Vec<ContradictionFlag> = Vec::new();
+
+    for (ledger_id, fact_a_id, _fact_b_id) in ledger_rows {
+        let statement: Option<String> = conn
+            .query_row(
+                "SELECT statement FROM idx_groundtruth WHERE id = ?1",
+                rusqlite::params![fact_a_id],
+                |r| r.get(0),
+            )
+            .ok();
+        let Some(stmt_text) = statement else { continue };
+
+        // Check if any top topic appears in the statement.
+        let lower_stmt = stmt_text.to_lowercase();
+        let overlaps = top_set.iter().any(|t| lower_stmt.contains(*t));
+        if overlaps {
+            let truncated = if stmt_text.chars().count() > 120 {
+                stmt_text.chars().take(120).collect::<String>() + "â€¦"
+            } else {
+                stmt_text.clone()
+            };
+            flags.push(ContradictionFlag {
+                id: ledger_id,
+                statement: truncated,
+            });
+            if flags.len() >= MAX_CONTRADICTION_FLAGS {
+                break;
+            }
+        }
+    }
+
+    flags
+}
+
+/// Dimension 5 â€” cross-cutting meta: topics appearing in both "technical"
+/// and "personal" domain partitions.
+///
+/// Domain classification is heuristic: episodes whose text contains terms
+/// from a technical-keyword list land in "technical"; all others go to
+/// "personal". Topics appearing in both sets are cross-cutting.
+fn compute_cross_cutting(
+    conn: &rusqlite::Connection,
+    window_start_ns: i64,
+    now_ns: i64,
+    top_topics: &[FrequencyPeak],
+) -> Vec<CrossCuttingTopic> {
+    if top_topics.is_empty() {
+        return vec![];
+    }
+
+    // Heuristic technical keywords (any match â†’ "technical" domain).
+    const TECH_KEYWORDS: &[&str] = &[
+        "rust",
+        "cargo",
+        "tokio",
+        "async",
+        "server",
+        "daemon",
+        "build",
+        "docker",
+        "deploy",
+        "github",
+        "git",
+        "code",
+        "compile",
+        "debug",
+        "kubernetes",
+        "pipeline",
+        "database",
+        "sqlite",
+        "http",
+        "tcp",
+        "memory",
+        "config",
+        "yaml",
+        "json",
+        "api",
+        "test",
+        "error",
+    ];
+
+    let domain_episodes: Vec<(i64, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT ts_ns, text FROM idx_episode \
+             WHERE ts_ns >= ?1 AND ts_ns <= ?2 AND event_type = ?3",
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        match stmt
+            .query_map(
+                rusqlite::params![window_start_ns, now_ns, RAW_TEXT_EVENT_TYPE],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+        {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        }
+    };
+
+    let mut tech_texts: Vec<String> = Vec::new();
+    let mut personal_texts: Vec<String> = Vec::new();
+
+    for (_ts, text) in &domain_episodes {
+        let lower = text.to_lowercase();
+        let is_tech = TECH_KEYWORDS.iter().any(|kw| lower.contains(kw));
+        if is_tech {
+            tech_texts.push(text.clone());
+        } else {
+            personal_texts.push(text.clone());
+        }
+    }
+
+    let tech_counts = crate::reflection::topic_counts(&tech_texts);
+    let personal_counts = crate::reflection::topic_counts(&personal_texts);
+
+    let top_set: std::collections::HashSet<&str> =
+        top_topics.iter().map(|p| p.topic.as_str()).collect();
+
+    let mut cross: Vec<CrossCuttingTopic> = Vec::new();
+    for topic in top_set {
+        let in_tech = tech_counts.contains_key(topic);
+        let in_personal = personal_counts.contains_key(topic);
+        if in_tech && in_personal {
+            let mut domains = Vec::new();
+            if in_tech {
+                domains.push("technical".to_string());
+            }
+            if in_personal {
+                domains.push("personal".to_string());
+            }
+            cross.push(CrossCuttingTopic {
+                topic: topic.to_string(),
+                domains,
+            });
+            if cross.len() >= MAX_CROSS_CUTTING {
+                break;
+            }
+        }
+    }
+    // Sort for determinism.
+    cross.sort_by(|a, b| a.topic.cmp(&b.topic));
+    cross
+}
+
+/// ISO week label for a Unix second timestamp: `"YYYY-Www"`.
+fn iso_week_label(unix_secs: i64) -> String {
+    // Days since Unix epoch â†’ weekday offset + week number.
+    // Simplified ISO 8601 week: week 1 contains the first Thursday.
+    let days = unix_secs / 86_400;
+    // Jan 1 1970 was a Thursday (ISO weekday 4). Days since Monday of week 1:
+    // The ISO week number can be approximated as:
+    //   week = (days + 3) / 7 + 1   â€” close enough for labelling purposes.
+    // For a label we use: year derived from days + ISO week.
+    // Since this is just a label (not scheduling logic), we keep it simple.
+    let approx_year = 1970 + (days / 365);
+    let day_of_year = days % 365;
+    let week_num = (day_of_year / 7) + 1;
+    format!("{:04}-W{:02}", approx_year, week_num.clamp(1, 53))
+}
+
+// ---------------------------------------------------------------------------
+// Dimension 6 â€” NN-MEM-05 SWIRL-style skill-performance pass
+
+/// Per-skill aggregated stats computed from the SkillOpt ledger.
+struct SkillStats {
+    total: usize,
+    rejected: usize,
+    /// Deltas from accepted proposals only (`score_after - score_before`).
+    accepted_deltas: Vec<f64>,
+}
+
+/// Dimension 6 â€” SWIRL-style skill-performance pass (NN-MEM-05).
+///
+/// Reads `~/.neoth/self_improve_log.json` (the SkillOpt ledger), groups
+/// records by skill id, and flags skills whose SkillOpt proposals consistently
+/// show low improvement (mean `score_after - score_before < 0.05`) or high
+/// rejection rate (`rejected / total > 0.5`).
+///
+/// For each flagged skill (capped at `MAX_SKILL_SUGGESTIONS`), a natural-language
+/// suggestion string is generated that references the operator's top frequency
+/// topics from dimension 1, grounding the hint in current work context â€”
+/// the SWIRL "what the operator is doing right now should inform how skills are
+/// tuned" principle.
+///
+/// Pure and synchronous â€” runs inside `spawn_blocking` alongside dimensions 1â€“5.
+/// A missing ledger is a valid empty first-run store. Malformed or unreadable
+/// state is returned so synthesis cannot misreport corruption as "no history".
+pub(crate) fn compute_skill_perf_pass(
+    home: &Path,
+    window_start_unix: i64,
+    top_topics: &[FrequencyPeak],
+) -> Result<Vec<SkillPerfSuggestion>, String> {
+    let records = crate::self_improve::load_ledger(home)
+        .map_err(|e| format!("synthesis cron: self-improvement ledger: {e:#}"))?;
+    if records.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Group into per-skill stats, filtering to the synthesis window.
+    let mut by_skill: HashMap<String, SkillStats> = HashMap::new();
+    for rec in &records {
+        if rec.at_unix < window_start_unix {
+            continue;
+        }
+        let entry = by_skill.entry(rec.skill.clone()).or_insert(SkillStats {
+            total: 0,
+            rejected: 0,
+            accepted_deltas: Vec::new(),
+        });
+        entry.total += 1;
+        if rec.accepted {
+            entry
+                .accepted_deltas
+                .push(rec.score_after - rec.score_before);
+        } else {
+            entry.rejected += 1;
+        }
+    }
+
+    if by_skill.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build context string from top frequency topics.
+    let topic_ctx: String = top_topics
+        .iter()
+        .take(SUGGESTION_CONTEXT_TOPICS)
+        .map(|p| p.topic.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let topic_phrase = if topic_ctx.is_empty() {
+        "recent operator work".to_string()
+    } else {
+        format!("recent focus on {topic_ctx}")
+    };
+
+    // Flag skills below thresholds; deterministic order by skill id.
+    let mut skill_ids: Vec<&String> = by_skill.keys().collect();
+    skill_ids.sort_unstable();
+
+    let mut suggestions: Vec<SkillPerfSuggestion> = Vec::new();
+
+    for skill_id in skill_ids {
+        if suggestions.len() >= MAX_SKILL_SUGGESTIONS {
+            break;
+        }
+        let stats = &by_skill[skill_id];
+        if stats.total == 0 {
+            continue;
+        }
+
+        let rejection_rate = stats.rejected as f64 / stats.total as f64;
+        let score_delta_mean = if stats.accepted_deltas.is_empty() {
+            0.0
+        } else {
+            stats.accepted_deltas.iter().sum::<f64>() / stats.accepted_deltas.len() as f64
+        };
+
+        let low_delta =
+            !stats.accepted_deltas.is_empty() && score_delta_mean < SKILL_PERF_MIN_SCORE_DELTA;
+        let high_rejection = rejection_rate > SKILL_PERF_MAX_REJECTION_RATE;
+
+        if !low_delta && !high_rejection {
+            continue;
+        }
+
+        let signal_kind = if low_delta && high_rejection {
+            "low_score_delta+high_rejection_rate".to_string()
+        } else if low_delta {
+            "low_score_delta".to_string()
+        } else {
+            "high_rejection_rate".to_string()
+        };
+
+        let suggestion = if high_rejection && !low_delta {
+            format!(
+                "Skill `{skill_id}` had {:.0}% of SkillOpt proposals rejected in this synthesis \
+                 window. Given {topic_phrase}, review whether the skill's system prompt \
+                 accurately reflects the operator's current priorities and task patterns. \
+                 Consider broadening its framing or clarifying its scope.",
+                rejection_rate * 100.0,
+            )
+        } else {
+            format!(
+                "Skill `{skill_id}` accepted proposals show a mean score improvement of only \
+                 {score_delta_mean:.3} (threshold {SKILL_PERF_MIN_SCORE_DELTA}). Given \
+                 {topic_phrase}, the skill prompt may not be aligned with current work patterns. \
+                 Consider refining its system prompt to better match these topics.",
+            )
+        };
+
+        suggestions.push(SkillPerfSuggestion {
+            skill_id: skill_id.clone(),
+            signal_kind,
+            score_delta_mean,
+            rejection_rate,
+            suggestion,
+        });
+    }
+
+    Ok(suggestions)
+}
+
+// ---------------------------------------------------------------------------
+// Main tick function
+
+/// One synthesis tick. Opens `db_path`, runs all 5 dimensions, writes the
+/// result as an evidence-bound `idx_groundtruth` row (`source =
+/// "synthesis-cron"`, `scope = "meta"`), and optionally writes
+/// `home/synthesis/YYYY-WW.md` via atomic tempfile rename. With no contributing
+/// episode the tick still reports its analysis but persists neither output.
+///
+/// Returns `Ok(SynthesisReport)` on success. A missing `db_path` (fresh
+/// install with no views.db yet) is treated as a graceful no-op â†’ `Ok` with
+/// all-zero counts, `note_written = false`. Any other error is returned as
+/// `Err(String)`.
+///
+/// Pure + synchronous â€” intended to be called inside `tokio::task::spawn_blocking`.
+pub fn run_synthesis_tick_once(
+    db_path: &Path,
+    home: &Path,
+    config: &SynthesisCronConfig,
+) -> Result<SynthesisReport, String> {
+    // Fresh install: no views.db yet â†’ graceful no-op.
+    if !db_path.exists() {
+        tracing::debug!(
+            path = %db_path.display(),
+            "synthesis cron: views.db absent â€” skipping tick (NN-MEM-02)"
+        );
+        return Ok(SynthesisReport::default());
+    }
+
+    let conn =
+        crate::memory::store::open(db_path).map_err(|e| format!("synthesis cron: open db: {e}"))?;
+
+    let now_ns = crate::time::now_unix_ns_i64();
+    let now_unix = now_ns / 1_000_000_000;
+    // Look-back window in nanoseconds.
+    let window_ns = (config.window_days as i64)
+        .saturating_mul(86_400)
+        .saturating_mul(1_000_000_000);
+    let window_start_ns = now_ns.saturating_sub(window_ns);
+
+    // â”€â”€ Dimension 1+2: frequency peaks + temporal clusters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let (frequency_peaks, temporal_clusters, evidence_ids) =
+        compute_frequency_and_temporal(&conn, window_start_ns, now_ns);
+
+    // â”€â”€ Dimension 3: domain correlations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let domain_correlations = compute_domain_correlations(&conn, &frequency_peaks);
+
+    // â”€â”€ Dimension 4: contradiction flags â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let contradiction_flags = compute_contradiction_flags(&conn, &frequency_peaks);
+
+    // â”€â”€ Dimension 5: cross-cutting topics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let cross_cutting = compute_cross_cutting(&conn, window_start_ns, now_ns, &frequency_peaks);
+
+    // â”€â”€ Dimension 6 (NN-MEM-05): SWIRL-style skill-perf pass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let window_start_unix = window_start_ns / 1_000_000_000;
+    let skill_perf_suggestions = if config.enable_skill_perf_pass {
+        compute_skill_perf_pass(home, window_start_unix, &frequency_peaks)?
+    } else {
+        vec![]
+    };
+    let skill_suggestions_written = skill_perf_suggestions.len();
+
+    // â”€â”€ HERMES-06 GAP-B: SkillPerfSuggestion â†’ staged ConfigTweak proposals â”€â”€
+    // Runs after the perf pass so `skill_perf_suggestions` is fully populated.
+    // Best-effort: staging errors are logged at warn level, never propagated.
+    let skill_proposals_staged = if config.propose_skills_from_perf {
+        stage_skill_perf_proposals(home, &skill_perf_suggestions, now_unix)
+    } else {
+        0
+    };
+    if skill_proposals_staged > 0 {
+        tracing::info!(
+            skill_proposals_staged,
+            "HERMES-06 GAP-B: staged SkillPerfSuggestion proposal(s) for operator review"
+        );
+    }
+
+    let topics_analyzed = frequency_peaks.len();
+    let correlations_found = domain_correlations.len();
+    let contradictions_flagged = contradiction_flags.len();
+
+    // â”€â”€ Build the synthesis note â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let week_iso = iso_week_label(now_unix);
+    let note = SynthesisNote {
+        week_iso: week_iso.clone(),
+        frequency_peaks,
+        temporal_clusters,
+        domain_correlations,
+        contradiction_flags,
+        cross_cutting,
+        skill_perf_suggestions,
+    };
+
+    let statement =
+        serde_json::to_string(&note).map_err(|e| format!("synthesis cron: serialise note: {e}"))?;
+
+    // â”€â”€ Write to idx_groundtruth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Use the `Synthesis` source variant (â†’ as_str() = "synthesis-cron").
+    // scope = "meta" so operators can query with `neoth groundtruth list --scope meta`.
+    let note_written = if evidence_ids.is_empty() {
+        tracing::debug!(
+            week = %week_iso,
+            "synthesis cron: no contributing episodes; refusing to write orphan synthesis"
+        );
+        false
+    } else {
+        match crate::memory::groundtruth::insert_with_evidence(
+            &conn,
+            &statement,
+            &crate::memory::groundtruth::Source::Synthesis,
+            "meta",
+            now_ns,
+            &evidence_ids,
+        ) {
+            Ok(id) => {
+                tracing::info!(
+                    id,
+                    week = %week_iso,
+                    topics = topics_analyzed,
+                    correlations = correlations_found,
+                    contradictions = contradictions_flagged,
+                    evidence_episodes = evidence_ids.len(),
+                    skill_suggestions = skill_suggestions_written,
+                    "NN-MEM-02/NN-MEM-03/NN-MEM-05: synthesis note written to idx_groundtruth"
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "synthesis cron: evidence-bound groundtruth insert failed (non-fatal)"
+                );
+                false
+            }
+        }
+    };
+
+    // â”€â”€ Optional vault write (~/.neoth/synthesis/YYYY-WW.md) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Atomic tmpâ†’rename to avoid race with JV-IMP-05 vault writer.
+    let synthesis_dir = home.join("synthesis");
+    let vault_path = synthesis_dir.join(format!("{week_iso}.md"));
+    let tmp_path = synthesis_dir.join(format!(".{week_iso}.md.tmp"));
+
+    if !note_written {
+        tracing::debug!(
+            evidence_episodes = evidence_ids.len(),
+            "synthesis cron: vault note skipped because no evidence-bound groundtruth row committed"
+        );
+    } else if let Err(e) = std::fs::create_dir_all(&synthesis_dir) {
+        tracing::debug!(error = %e, "synthesis cron: could not create synthesis dir (non-fatal)");
+    } else {
+        let md = build_synthesis_markdown(&note, now_unix);
+        match std::fs::write(&tmp_path, md.as_bytes()) {
+            Ok(()) => {
+                if let Err(e) = std::fs::rename(&tmp_path, &vault_path) {
+                    tracing::debug!(
+                        error = %e,
+                        "synthesis cron: vault file rename failed (non-fatal)"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "synthesis cron: vault file write failed (non-fatal)"
+                );
+            }
+        }
+    }
+
+    Ok(SynthesisReport {
+        topics_analyzed,
+        correlations_found,
+        contradictions_flagged,
+        note_written,
+        skill_suggestions_written,
+        skill_proposals_staged,
+    })
+}
+
+// â”€â”€ HERMES-06 GAP-B: SkillPerfSuggestion â†’ staged proposal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/// For each [`SkillPerfSuggestion`] from the SWIRL pass, forge a
+/// `ProposalKind::ConfigTweak` candidate and stage it in the OB-03 proactive
+/// review queue.
+///
+/// Called synchronously from within `spawn_blocking` (already off the async
+/// executor) so blocking FS ops are correct here. Best-effort â€” every error is
+/// logged at `warn` level; staging continues for the remaining suggestions.
+///
+/// Returns the count of newly enqueued proposals.
+fn stage_skill_perf_proposals(
+    home: &Path,
+    suggestions: &[SkillPerfSuggestion],
+    tick_ts_unix: i64,
+) -> usize {
+    use crate::proactive::ProactiveQueue;
+    use crate::proactive::action_staging::{
+        ProposalKind, ProposalStatus, ProposedAction, make_proposal_id, stage_and_enqueue,
+    };
+
+    if suggestions.is_empty() {
+        return 0;
+    }
+
+    let queue_path = home.join("proactive_queue.json");
+    // Locked loadâ†’mutateâ†’save; tolerates a corrupt file (same as the old
+    // `unwrap_or_default()`) by logging + returning 0.
+    match ProactiveQueue::modify(&queue_path, |queue| {
+        let mut staged = 0usize;
+
+        for s in suggestions {
+            // Produce a minimal YAML block describing what the operator should
+            // review. The `ConfigTweak` kind signals "this is about a config or
+            // skill prompt change", not a new skill file.
+            let draft_yaml = format!(
+                "# HERMES-06 SkillPerfSuggestion\nskill_id: {skill_id}\nsignal_kind: {signal_kind}\n\
+                 score_delta_mean: {score_delta_mean:.4}\nrejection_rate: {rejection_rate:.4}\n\
+                 suggestion: |\n  {suggestion}\n",
+                skill_id = s.skill_id,
+                signal_kind = s.signal_kind,
+                score_delta_mean = s.score_delta_mean,
+                rejection_rate = s.rejection_rate,
+                suggestion = s.suggestion.replace('\n', "\n  "),
+            );
+            let title = format!("Skill prompt review: {}", s.skill_id);
+            let rationale = format!(
+                "The weekly synthesis SWIRL pass detected a performance concern for skill `{}`.\n\n\
+                 Signal: **{}** (score delta mean: {:.3}, rejection rate: {:.1}%).\n\n\
+                 Suggestion: {}\n\n\
+                 Review the YAML draft; `accept` acknowledges the suggestion and logs it, \
+                 `reject` discards it. No files are modified automatically.",
+                s.skill_id,
+                s.signal_kind,
+                s.score_delta_mean,
+                s.rejection_rate * 100.0,
+                s.suggestion,
+            );
+            let proposal_id =
+                make_proposal_id(ProposalKind::ConfigTweak, &title, &draft_yaml, tick_ts_unix);
+            let proposal = ProposedAction {
+                id: proposal_id,
+                kind: ProposalKind::ConfigTweak,
+                title,
+                rationale,
+                draft_yaml,
+                generated_ts_unix: tick_ts_unix,
+                status: ProposalStatus::Pending,
+                operator_note: String::new(),
+            };
+            match stage_and_enqueue(home, proposal, queue) {
+                Ok((_, true)) => staged += 1,
+                Ok((_, false)) => {} // dedup: already in queue from a prior tick
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        skill_id = %s.skill_id,
+                        "synthesis cron: SkillPerfSuggestion proposal staging failed"
+                    );
+                }
+            }
+        }
+
+        // Persist only when at least one new proposal was staged.
+        (staged > 0, staged)
+    }) {
+        Ok(staged) => staged,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "synthesis cron: queue load/save failed, HERMES-06 GAP-B staging skipped"
+            );
+            0
+        }
+    }
+}
+
+/// Render the synthesis note as a human-readable Obsidian markdown file.
+fn build_synthesis_markdown(note: &SynthesisNote, now_unix: i64) -> String {
+    let mut md = format!(
+        "---\nweek: {}\ngenerated_unix: {}\nsource: synthesis-cron\n---\n\n\
+         # Weekly Synthesis â€” {}\n\n",
+        note.week_iso, now_unix, note.week_iso
+    );
+
+    md.push_str("## Frequency Peaks\n\n");
+    if note.frequency_peaks.is_empty() {
+        md.push_str("_(no topics this week)_\n");
+    } else {
+        for p in &note.frequency_peaks {
+            md.push_str(&format!("- **{}**: {} mention(s)\n", p.topic, p.count));
+        }
+    }
+
+    md.push_str("\n## Temporal Clusters\n\n");
+    if note.temporal_clusters.is_empty() {
+        md.push_str("_(no dense clusters detected)_\n");
+    } else {
+        for c in &note.temporal_clusters {
+            md.push_str(&format!(
+                "- Day +{}, {} day(s): {}\n",
+                c.window_start_day,
+                c.window_days,
+                c.topics.join(", ")
+            ));
+        }
+    }
+
+    md.push_str("\n## Domain Correlations\n\n");
+    if note.domain_correlations.is_empty() {
+        md.push_str("_(no groundtruth correlations)_\n");
+    } else {
+        for dc in &note.domain_correlations {
+            md.push_str(&format!(
+                "- gt#{}: `{}` (overlap: {:.2})\n",
+                dc.gt_id, dc.topic, dc.overlap
+            ));
+        }
+    }
+
+    md.push_str("\n## Contradiction Flags\n\n");
+    if note.contradiction_flags.is_empty() {
+        md.push_str("_(no pending contradictions overlap top topics)_\n");
+    } else {
+        for f in &note.contradiction_flags {
+            md.push_str(&format!("- ledger#{}: {}\n", f.id, f.statement));
+        }
+    }
+
+    md.push_str("\n## Cross-Cutting Topics\n\n");
+    if note.cross_cutting.is_empty() {
+        md.push_str("_(no cross-cutting topics detected)_\n");
+    } else {
+        for cc in &note.cross_cutting {
+            md.push_str(&format!("- **{}**: {}\n", cc.topic, cc.domains.join(" + ")));
+        }
+    }
+
+    md
+}
+
+// ---------------------------------------------------------------------------
+// Spawn helper
+
+/// Spawn the synthesis pattern-recognition cron loop as a background tokio task.
+///
+/// Returns `None` when `config.enabled == false` â€” opt-out operators carry no
+/// idle task. Mirrors [`super::contradiction_resolve_cron::spawn_contradiction_resolve_cron_loop`].
+///
+/// `db_path` is typically `~/.neoth/views.db` (use `memory::store::default_path()`).
+/// `home` is `~/.neoth/` (use `FreedomConfig::default_neoth_home()`).
+pub fn spawn_synthesis_cron_loop(
+    config: SynthesisCronConfig,
+    db_path: PathBuf,
+    home: PathBuf,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !config.enabled {
+        return None;
+    }
+    let interval = config.interval_duration();
+    Some(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = interval.as_secs(),
+            window_days = config.window_days,
+            "synthesis pattern-recognition cron online (NN-MEM-02)",
+        );
+        loop {
+            ticker.tick().await;
+            let db2 = db_path.clone();
+            let home2 = home.clone();
+            let cfg2 = config;
+            let _ = tokio::task::spawn_blocking(move || {
+                match run_synthesis_tick_once(&db2, &home2, &cfg2) {
+                    Ok(report) => tracing::info!(
+                        topics_analyzed = report.topics_analyzed,
+                        correlations_found = report.correlations_found,
+                        contradictions_flagged = report.contradictions_flagged,
+                        note_written = report.note_written,
+                        skill_suggestions_written = report.skill_suggestions_written,
+                        skill_proposals_staged = report.skill_proposals_staged,
+                        "NN-MEM-02/NN-MEM-05/HERMES-06: synthesis cron tick complete",
+                    ),
+                    Err(e) => tracing::error!(
+                        error = %e,
+                        "synthesis cron tick failed (NN-MEM-02)",
+                    ),
+                }
+            })
+            .await;
+        }
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::store;
+    use std::time::Duration;
+
+    // â”€â”€ Test 1: disabled â†’ spawn returns None â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn spawn_synthesis_cron_loop_returns_none_when_disabled() {
+        let cfg = SynthesisCronConfig::default();
+        assert!(!cfg.enabled, "must be off by default");
+        let handle = spawn_synthesis_cron_loop(cfg, "/nonexistent".into(), "/nonexistent".into());
+        assert!(handle.is_none(), "disabled config must return None");
+    }
+
+    // â”€â”€ Test 2: enabled â†’ spawn returns Some â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[tokio::test]
+    async fn spawn_synthesis_cron_loop_returns_some_when_enabled() {
+        let cfg = SynthesisCronConfig {
+            enabled: true,
+            interval_secs: 604_800,
+            window_days: 30,
+            enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
+        };
+        let handle = spawn_synthesis_cron_loop(cfg, "/nonexistent".into(), "/nonexistent".into())
+            .expect("handle when enabled");
+        handle.abort();
+        let _ = handle.await; // JoinError on abort expected
+    }
+
+    // â”€â”€ Test 3: no views.db â†’ graceful no-op â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn run_synthesis_tick_once_no_db_returns_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = SynthesisCronConfig::default();
+        let result = run_synthesis_tick_once(&dir.path().join("views.db"), dir.path(), &cfg);
+        assert!(result.is_ok(), "must not error when views.db absent");
+        let report = result.unwrap();
+        assert!(!report.note_written, "no note when db absent");
+    }
+
+    // â”€â”€ Test 4: seeded db â†’ writes groundtruth row (consumer proof) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn run_synthesis_tick_writes_groundtruth_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let conn = store::open(&db_path).unwrap();
+
+        // Seed 6 RAW_TEXT episodes within the 30-day look-back window.
+        // Use real current time minus small offsets so they fall inside the window.
+        let now_ns = crate::time::now_unix_ns_i64();
+        for i in 0i64..6 {
+            // Space episodes 1 day apart, all within the last 6 days (well inside 30d window).
+            let ts = now_ns - i * 86_400 * 1_000_000_000_i64;
+            conn.execute(
+                "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+                 VALUES (?1, 1, ?2, 'kubernetes deployment pipeline rust cargo build', ?3, 0.7, ?2)",
+                rusqlite::params![
+                    i,
+                    ts,
+                    format!("hash{i}"),
+                ],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let cfg = SynthesisCronConfig {
+            enabled: true,
+            interval_secs: 604_800,
+            window_days: 30,
+            enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
+        };
+        let report =
+            run_synthesis_tick_once(&db_path, dir.path(), &cfg).expect("tick must succeed");
+
+        // Must have analyzed some topics.
+        assert!(
+            report.topics_analyzed > 0,
+            "must analyze topics from seeded episodes"
+        );
+
+        // Consumer proof: exactly one synthesis-cron row in idx_groundtruth.
+        let conn2 = store::open(&db_path).unwrap();
+        let count: i64 = conn2
+            .query_row(
+                "SELECT COUNT(*) FROM idx_groundtruth WHERE source = 'synthesis-cron'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "synthesis cron must write exactly one groundtruth row per tick"
+        );
+
+        // The row must have scope = 'meta'.
+        let (scope, evidence): (String, String) = conn2
+            .query_row(
+                "SELECT scope, evidence FROM idx_groundtruth WHERE source = 'synthesis-cron'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(scope, "meta");
+        assert_eq!(
+            serde_json::from_str::<Vec<i64>>(&evidence).unwrap(),
+            vec![5, 4, 3, 2, 1, 0],
+            "the synthesis note must retain every contributing episode in chronological order"
+        );
+    }
+
+    #[test]
+    fn run_synthesis_tick_refuses_orphan_note_without_episodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        store::open(&db_path).unwrap();
+
+        let cfg = SynthesisCronConfig {
+            enabled: true,
+            interval_secs: 604_800,
+            window_days: 30,
+            enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
+        };
+        let report = run_synthesis_tick_once(&db_path, dir.path(), &cfg).unwrap();
+        assert!(!report.note_written);
+
+        let conn = store::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_groundtruth WHERE source = 'synthesis-cron'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "empty synthesis must not become orphan wisdom");
+        assert!(
+            !dir.path().join("synthesis").exists(),
+            "vault synthesis is skipped when it has no episode provenance"
+        );
+    }
+
+    #[test]
+    fn run_synthesis_tick_does_not_write_vault_when_evidence_insert_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let conn = store::open(&db_path).unwrap();
+        let now_ns = crate::time::now_unix_ns_i64();
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (91, 1, ?1, 'rust deployment synthesis evidence', 'synth-evidence', 0.7, ?1)",
+            rusqlite::params![now_ns],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_synthesis_groundtruth \
+             BEFORE INSERT ON idx_groundtruth \
+             WHEN NEW.source = 'synthesis-cron' \
+             BEGIN SELECT RAISE(FAIL, 'test insert failure'); END;",
+        )
+        .unwrap();
+        drop(conn);
+
+        let report = run_synthesis_tick_once(
+            &db_path,
+            dir.path(),
+            &SynthesisCronConfig {
+                enabled: true,
+                interval_secs: 604_800,
+                window_days: 30,
+                enable_skill_perf_pass: false,
+                propose_skills_from_perf: false,
+            },
+        )
+        .unwrap();
+        assert!(!report.note_written);
+        assert!(
+            !dir.path().join("synthesis").exists(),
+            "a vault file must never outlive a failed evidence-bound DB insert"
+        );
+    }
+
+    // â”€â”€ Test 5: config defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn config_defaults() {
+        let cfg = SynthesisCronConfig::default();
+        assert!(!cfg.enabled, "off by default");
+        assert_eq!(
+            cfg.interval_secs,
+            super::super::super::config::automation::DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS
+        );
+        assert_eq!(
+            cfg.window_days,
+            super::super::super::config::automation::DEFAULT_SYNTHESIS_WINDOW_DAYS
+        );
+        assert_eq!(
+            cfg.interval_duration(),
+            Duration::from_secs(
+                super::super::super::config::automation::DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS
+            )
+        );
+    }
+
+    // â”€â”€ Test 6: interval floor clamps zero â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn interval_floor_clamps_zero() {
+        let cfg = SynthesisCronConfig {
+            enabled: true,
+            interval_secs: 0,
+            window_days: 30,
+            enable_skill_perf_pass: false,
+            propose_skills_from_perf: false,
+        };
+        assert_eq!(cfg.interval_duration(), Duration::from_secs(60));
+    }
+
+    // â”€â”€ Test 7: Source::Synthesis round-trips correctly â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn synthesis_source_as_str() {
+        use crate::memory::groundtruth::Source;
+        assert_eq!(Source::Synthesis.as_str(), "synthesis-cron");
+        assert!(!Source::Synthesis.is_operator_attested());
+    }
+
+    // â”€â”€ Test 8: iso_week_label sanity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn iso_week_label_format() {
+        // Unix epoch 0 = 1970-01-01 (Thursday). Week 1.
+        let label = iso_week_label(0);
+        assert!(
+            label.starts_with("1970-W"),
+            "label must start with year-W: {label}"
+        );
+        // A known timestamp: 2026-06-22 â‰ˆ Unix 1750550400.
+        let label2 = iso_week_label(1_750_550_400);
+        assert!(label2.starts_with("202"), "year 2026 label: {label2}");
+    }
+
+    // â”€â”€ Test 9: markdown generation smoke test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #[test]
+    fn build_synthesis_markdown_contains_week_label() {
+        let note = SynthesisNote {
+            week_iso: "2026-W25".to_string(),
+            frequency_peaks: vec![FrequencyPeak {
+                topic: "kubernetes".to_string(),
+                count: 5,
+            }],
+            temporal_clusters: vec![],
+            domain_correlations: vec![],
+            contradiction_flags: vec![],
+            cross_cutting: vec![],
+            skill_perf_suggestions: vec![],
+        };
+        let md = build_synthesis_markdown(&note, 1_750_000_000);
+        assert!(md.contains("2026-W25"), "must contain week label");
+        assert!(md.contains("kubernetes"), "must contain topic");
+        assert!(
+            md.contains("synthesis-cron"),
+            "must have source in frontmatter"
+        );
+    }
+}

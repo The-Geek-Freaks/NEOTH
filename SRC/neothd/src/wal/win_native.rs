@@ -328,4 +328,515 @@ fn verify_private_dacl_for_sid(path: &Path, expected_sid: &[u8]) -> io::Result<(
             ));
         }
 
-        let mut ace_ptr: *mut std::ffi::c_void = std::ptr::null_mut();ÛŽx¶‰žËkºwµçI•ÍÕ±Ðð ¤øì(€€€±•Ð½Ý¹•‘}Á…Ñ €ôÁ…Ñ ¹Ñ½}Á…Ñ¡}‰Õ˜ ¤ì(€€€±•Ð½Ý¹•‘}…½Õ¹Ð€ô…½Õ¹Ð¹Ñ½}½Ý¹• ¤ì(€€€Ñ½­¥¼èéÑ…Í¬èéÍÁ…Ý¹}‰±½­¥¹œ¡µ½Ù”ñðÍ•Ñ}½Ý¹•É}‘…° ™½Ý¹•‘}Á…Ñ °€™½Ý¹•‘}…½Õ¹Ð¤¤(€€€€€€€€¹…Ý…¥Ð(€€€€€€€€¹Õ¹ÝÉ…Á}½É}•±Í”¡ñ©½¥¹}•ÉÉðì(€€€€€€€€€€€Ý…É¸„¡•ÉÉ½È€ô€•©½¥¹}•ÉÈ°€‰Í•Ñ}½Ý¹•É}‘…°Ñ…Í¬Á…¹¥­•ˆ¤ì(€€€€€€€€€€€=¬  ¤¤(€€€€€€€ô¤)ô((¼¼ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR (¼¼´ÄÈè±ÕÍ¡¥±•	Õ™™•ÉÌ™½È]0‘ÕÉ…‰¥±¥Ñä(¼¼ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((¼¼¼±ÕÍ …±°=Lµ‰Õ™™•É•ÝÉ¥Ñ•Ì™½È™¥±•€Ñ¼Ñ¡”Õ¹‘•É±å¥¹œÍÑ½É…”‘•Ù¥”(¼¼¼Ù¥„±ÕÍ¡¥±•	Õ™™•ÉÍ€¸Q¡¥Ì¥ÌÑ¡”]¥¹‘½ÝÌ•ÅÕ¥Ù…±•¹Ð½˜™Íå¹Œ È¥€¸(¼¼¼(¼¼¼U¹±¥­”ÍÑèé™Ìèé¥±”èéÍå¹}…±° ¥€€¡Ý¡¥ …±Í¼…±±Ì±ÕÍ¡¥±•	Õ™™•ÉÍ€(¼¼¼¥¹Ñ•É¹…±±ä¤°Ñ¡¥Ì™Õ¹Ñ¥½¸ÍÕÉ™…•ÌÑ¡”]¥¸ÌÈ•ÉÉ½È½‘”¥¸Ñ¡”ÉÉ€(¼¼¼Ù…É¥…¹ÐÑ½•Ñ¡•ÈÝ¥Ñ …¸½Á•É…Ñ½ÈµÉ•…‘…‰±”½¹Ñ•áÐÍÑÉ¥¹œ°µ…­¥¹œ]0(¼¼¼ÝÉ¥Ñ”™…¥±ÕÉ•Ì…Ñ¥½¹…‰±”¥¸Ñ¡”ÑÉ…¥¹œ½ÕÑÁÕÐ¸(¼¼¼(¼¼¼€ŒÀÀàµ]%9=]Lµ]0´ÀÄƒŠP]0ÝÉ¥Ñ•È¡½ÐµÁ…Ñ Ý¥É¥¹œ¹½Ñ”(¼¼¼(¼¼¼Q¡”]0ÝÉ¥Ñ•È¡½ÐÁ…Ñ €¡ÝÉ¥Ñ•}…¹‘}Íå¹€¥¸ÝÉ¥Ñ•È¹ÉÍ€¤‘½•Ì€¨©¹½Ð¨¨(¼¼¼…±°Ñ¡¥Ì™Õ¹Ñ¥½¸‘¥É•Ñ±ä¸€=¸]¥¹‘½ÝÌ°Ñ½­¥¼èé™Ìèé¥±”èéÍå¹}‘…Ñ„ ¥€(¼¼¼¥Ì‰…­•€¡Ù¥„Ñ¡”‰±½­¥¹œÁ½½°¤‰äÍÑèé™Ìèé¥±”èéÍå¹}‘…Ñ„ ¥€°Ý¡¥ (¼¼¼Ñ¡”IÕÍÐÍÑ…¹‘…É±¥‰É…Éä¥µÁ±•µ•¹ÑÌ‰ä…±±¥¹œ±ÕÍ¡¥±•	Õ™™•ÉÍ€½¸Ñ¡”(¼¼¼Õ¹‘•É±å¥¹œ!91€¸€]¥É¥¹œÑ¡¥ÌÝÉ…ÁÁ•È¥¸…‘‘¥Ñ¥½¸Ñ¼Íå¹}‘…Ñ…€(¼¼¼Ý½Õ±Ñ¡•É•™½É”¥ÍÍÕ”±ÕÍ¡¥±•	Õ™™•ÉÍ€€¨©ÑÝ¥”¨¨Á•È™É…µ”ƒŠP„(¼¼¼‘½Õ‰±”µ™±ÕÍ Ñ¡…Ð…‘‘Ì±…Ñ•¹äÝ¥Ñ ¹¼…‘‘¥Ñ¥½¹…°‘ÕÉ…‰¥±¥Ñä‰•¹•™¥Ð¸(¼¼¼(¼¼¼Q¡¥ÌÝÉ…ÁÁ•È¥ÌÁÉ½Ù¥‘•™½È‘¥…¹½ÍÑ¥Œ…¹…‘µ¥¸Á…Ñ¡ÌÑ¡…Ð¹••Ñ¡”É…Ü(¼¼¼]¥¸ÌÈ•ÉÉ½È½‘”ÍÕÉ™…•‘¥É•Ñ±äÉ…Ñ¡•ÈÑ¡…¸Ñ¡É½Õ Ñ¡”ÍÑ¥¼èéÉÉ½É€(¼¼¼µ…ÁÁ¥¹œ¸€M•”™±ÕÍ¡}ÙÍ}Íå¹}‘…Ñ…}±…Ñ•¹å}½µÁ…É¥Í½¹€€¡Ñ¡”€m¥¹½É•u(¼¼¼Ñ•ÍÐ‰•±½Ü¤™½Èµ•…ÍÕÉ•±…Ñ•¹ä‘…Ñ„½¹™¥Éµ¥¹œÑ¡”™Õ¹Ñ¥½¹…°•ÅÕ¥Ù…±•¹”(¼¼¼½˜‰½Ñ Á…Ñ¡Ì°…¹Ñ¡”%1}1}]I%Q}Q!I=U!€Ñ¡É•Í¡½±É…Ñ¥½¹…±”(¼¼¼‘½Õµ•¹Ñ•Ñ¡•É”¸(¼¼¼(¼¼¼€ŒÉÉ½ÉÌ(¼¼¼I•ÑÕÉ¹ÌÉÉ€Ý¡•¸±ÕÍ¡¥±•	Õ™™•ÉÍ€É•ÑÕÉ¹Ì€Á€€¡1M¤¸)ÁÕˆ™¸™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌ¡™¥±”è€™¥±”¤€´ø¥¼èéI•ÍÕ±Ðð ¤øì(€€€€¼¼MQdè(€€€€¼¼€€´™¥±”¹…Í}É…Ý}¡…¹‘±” ¥€É•ÑÕÉ¹Ì„Ù…±¥°½Á•¸!91Ñ¡…Ð¥Ì½Ý¹•(€€€€¼¼€€€…¹­•ÁÐ…±¥Ù”‰äÑ¡”¥±•€É•™•É•¹”™½È…Ð±•…ÍÐÑ¡”‘ÕÉ…Ñ¥½¸½˜(€€€€¼¼€€€Ñ¡¥Ì…±°¸(€€€€¼¼€€´±ÕÍ¡¥±•	Õ™™•ÉÍ€…•ÁÑÌÑ¡”!91‰äÙ…±Õ”€¡¥¹Ñ••È½Áä¤…¹(€€€€¼¼€€€‘½•Ì¹½ÐÍÑ½É”½È…±¥…Ì¥Ð¸(€€€€¼¼€€´Q¡”É•ÑÕÉ¸Ù…±Õ”¥Ì„]¥¸ÌÈ	==0è¹½¸µé•É¼µ•…¹ÌÍÕ•ÍÌ°€Àµ•…¹Ì(€€€€¼¼€€€™…¥±ÕÉ”€¡…±±•ÈµÕÍÐ¡•¬•Ñ1…ÍÑÉÉ½É€™½ÈÑ¡”½‘”¤¸(€€€±•ÐÉŒ€ôÕ¹Í…™”ì±ÕÍ¡¥±•	Õ™™•ÉÌ¡™¥±”¹…Í}É…Ý}¡…¹‘±” ¤…Ì!91¤ôì((€€€¥˜ÉŒ€„ô€Àì(€€€€€€€=¬  ¤¤(€€€ô•±Í”ì(€€€€€€€€¼¼MQdè(€€€€€€€€¼¼€€´•Ñ1…ÍÑÉÉ½É€¥ÌÑ¡É•…µ±½…°…¹Ù…±¥Ñ¼…±°¥µµ•‘¥…Ñ•±ä(€€€€€€€€¼¼€€€…™Ñ•È„™…¥±¥¹œ]¥¸ÌÈ™Õ¹Ñ¥½¸½¸Ñ¡”Í…µ”Ñ¡É•…¸9¼½Ñ¡•È(€€€€€€€€¼¼€€€]¥¸ÌÈ…±°½ÕÉÌ‰•ÑÝ••¸Ñ¡”™…¥±¥¹œ±ÕÍ¡¥±•	Õ™™•ÉÍ€…¹(€€€€€€€€¼¼€€€Ñ¡¥Ì•Ñ1…ÍÑÉÉ½É€¸(€€€€€€€±•Ð½‘”€ôÕ¹Í…™”ìÝ¥¹‘½ÝÍ}ÍåÌèé]¥¸ÌÈèé½Õ¹‘…Ñ¥½¸èé•Ñ1…ÍÑÉÉ½È ¤ôì(€€€€€€€ÉÈ¡¥¼èéÉÉ½Èèé½Ñ¡•È¡™½Éµ…Ð„ (€€€€€€€€€€€€‰±ÕÍ¡¥±•	Õ™™•ÉÌè]¥¸ÌÈ•ÉÉ½Èí½‘”èŒÀÄÁáô€¡íô¤ˆ°(€€€€€€€€€€€Ý¥¸ÌÉ}¥½}•ÉÈ¡½‘”¤(€€€€€€€€¤¤¤(€€€ô)ô((¼¼¼Íå¹ŒÝÉ…ÁÁ•ÈèÉÕ¹Ìm™±ÕÍ¡}™¥±•}‰Õ™™•ÉÍt½¸„ÍÁ…Ý¹}‰±½­¥¹€Ñ¡É•…(¼¼¼…¹É•ÑÕÉ¹ÌÑ¡”¥±•€½¸ÍÕ•ÍÌ€¡Í¼…±±•ÉÌ…¸½¹Ñ¥¹Õ”ÕÍ¥¹œ¥Ð¤¸)ÁÕˆ…Íå¹Œ™¸™±ÕÍ¡}™¥±•}‰Õ™™•ÉÍ}…Íå¹Œ¡™¥±”è¥±”¤€´ø¥¼èéI•ÍÕ±Ðñ¥±”øì(€€€Ñ½­¥¼èéÑ…Í¬èéÍÁ…Ý¹}‰±½­¥¹œ¡µ½Ù”ñð™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌ ™™¥±”¤¹µ…À¡ð ¥ð™¥±”¤¤(€€€€€€€€¹…Ý…¥Ð(€€€€€€€€¹µ…Á}•ÉÈ¡ñ©½¥¹}•ÉÉðì(€€€€€€€€€€€¥¼èéÉÉ½Èèé½Ñ¡•È¡™½Éµ…Ð„ ‰™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌÑ…Í¬Á…¹¥­•èí©½¥¹}•ÉÉôˆ¤¤(€€€€€€€ô¤ü)ô((¼¼ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR (¼¼Q•ÍÑÌ(¼¼ƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((m™œ¡Ñ•ÍÐ¥t)µ½Ñ•ÍÑÌì(€€€ÕÍ”ÍÕÁ•Èèè¨ì(€€€ÕÍ”ÍÑèé™Ìèé¥±”ì(€€€ÕÍ”ÍÑèé¥¼èé]É¥Ñ”ì(€€€ÕÍ”Ñ•µÁ™¥±”èéÑ•µÁ‘¥Èì((€€€€¼¼ƒŠRŠR Í¡…É•¡•±Á•ÈƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€¼¼¼•Ñ Ñ¡”ÕÉÉ•¹ÐÕÍ•ÈÌ…½Õ¹Ð¹…µ”™É½´UMI95•¹ØÙ…È¸(€€€€¼¼¼Q•ÍÑÌÑ¡…Ð¹••„Ù…±¥…½Õ¹Ð¹…µ”Í­¥ÀÉ…•™Õ±±ä¥˜Õ¹Í•Ð¸(€€€™¸ÕÉÉ•¹Ñ}ÕÍ•É¹…µ” ¤€´ø=ÁÑ¥½¸ñMÑÉ¥¹œøì(€€€€€€€ÍÑèé•¹ØèéÙ…È ‰UMI95ˆ¤¹½¬ ¤¹™¥±Ñ•È¡ñÕð€…Ô¹¥Í}•µÁÑä ¤¤(€€€ô((€€€€¼¼ƒŠRŠR ´ÄÄè0Í•ÐÉ½Õ¹µÑÉ¥ÀƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€¼¼¼M•ÑÑ¥¹œÑ¡”0½¸…¸•á¥ÍÑ¥¹œ™¥±”Ý¥Ñ Ñ¡”ÕÉÉ•¹ÐÕÍ•É¹…µ”µÕÍÐ(€€€€¼¼¼ÍÕ••Ý¥Ñ¡½ÕÐ•ÉÉ½È¸(€€€€mÑ•ÍÑt(€€€™¸‘…±}É½Õ¹‘}ÑÉ¥Á}Í•ÑÍ}Ý¥Ñ¡½ÕÑ}•ÉÉ½È ¤ì(€€€€€€€±•ÐM½µ”¡ÕÍ•É¹…µ”¤€ôÕÉÉ•¹Ñ}ÕÍ•É¹…µ” ¤•±Í”ì(€€€€€€€€€€€•ÁÉ¥¹Ñ±¸„ ‰M-%@‘…±}É½Õ¹‘}ÑÉ¥Á}Í•ÑÍ}Ý¥Ñ¡½ÕÑ}•ÉÉ½ÈèUMI95¹½ÐÍ•Ðˆ¤ì(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€ôì(€€€€€€€±•Ð‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÁ…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰‘…±}Ñ•ÍÐ¹Ý…°ˆ¤ì(€€€€€€€¥±”èéÉ•…Ñ” ™Á…Ñ ¤¹Õ¹ÝÉ…À ¤ì((€€€€€€€±•ÐÉ•ÍÕ±Ð€ôÍ•Ñ}½Ý¹•É}‘…° ™Á…Ñ °€™ÕÍ•É¹…µ”¤ì(€€€€€€€…ÍÍ•ÉÐ„ (€€€€€€€€€€€É•ÍÕ±Ð¹¥Í}½¬ ¤°(€€€€€€€€€€€€‰Í•Ñ}½Ý¹•É}‘…°™…¥±•èìèýôˆ°(€€€€€€€€€€€É•ÍÕ±Ð¹Õ¹ÝÉ…Á}•ÉÈ ¤(€€€€€€€€¤ì(€€€ô((€€€€mÑ•ÍÑt(€€€™¸ÁÉ¥Ù…Ñ•}‘…±}É½Õ¹‘}ÑÉ¥Á}ÕÍ•Í}•á…Ñ}ÁÉ½•ÍÍ}Ñ½­•¹}Í¥ ¤ì(€€€€€€€±•Ð‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÁ…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰ÁÉ¥Ù…Ñ•}ÍÑ…Ñ”¹©Í½¸ˆ¤ì(€€€€€€€¥±”èéÉ•…Ñ” ™Á…Ñ ¤¹Õ¹ÝÉ…À ¤ì((€€€€€€€Í•Ñ}ÁÉ¥Ù…Ñ•}ÕÉÉ•¹Ñ}ÕÍ•É}‘…° ™Á…Ñ ¤¹•áÁ•Ð ‰Í•ÐÁÉ½Ñ•Ñ•Ñ½­•¸µM%0ˆ¤ì(€€€€€€€Ù•É¥™å}ÁÉ¥Ù…Ñ•}‘…° ™Á…Ñ ¤¹•áÁ•Ð ‰É•…µ‰…¬µÕÍÐµ…Ñ ÁÉ½•ÍÌQ½­•¹UÍ•ÈM%ˆ¤ì(€€€ô((€€€€¼¼¼…±±¥¹œÍ•Ñ}½Ý¹•É}‘…°ÑÝ¥”½¸Ñ¡”Í…µ”™¥±”µÕÍÐ‰”¥‘•µÁ½Ñ•¹Ð(€€€€¼¼¼€¡Í•½¹…±°…±Í¼ÍÕ••‘Ì¤¸(€€€€mÑ•ÍÑt(€€€™¸‘…±}¥‘•µÁ½Ñ•¹Ñ}‘½Õ‰±•}Í•Ð ¤ì(€€€€€€€±•ÐM½µ”¡ÕÍ•É¹…µ”¤€ôÕÉÉ•¹Ñ}ÕÍ•É¹…µ” ¤•±Í”ì(€€€€€€€€€€€•ÁÉ¥¹Ñ±¸„ ‰M-%@‘…±}¥‘•µÁ½Ñ•¹Ñ}‘½Õ‰±•}Í•ÐèUMI95¹½ÐÍ•Ðˆ¤ì(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€ôì(€€€€€€€±•Ð‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÁ…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰‘…±}¥‘•µÁ½Ñ•¹Ð¹Ý…°ˆ¤ì(€€€€€€€¥±”èéÉ•…Ñ” ™Á…Ñ ¤¹Õ¹ÝÉ…À ¤ì((€€€€€€€Í•Ñ}½Ý¹•É}‘…° ™Á…Ñ °€™ÕÍ•É¹…µ”¤¹•áÁ•Ð ‰™¥ÉÍÐ…±°ˆ¤ì(€€€€€€€Í•Ñ}½Ý¹•É}‘…° ™Á…Ñ °€™ÕÍ•É¹…µ”¤¹•áÁ•Ð ‰Í•½¹…±°€¡¥‘•µÁ½Ñ•¹Ð¤ˆ¤ì(€€€ô((€€€€¼¼¼¹½¹•á¥ÍÑ•¹ÐÁ…Ñ µÕÍÐÉ•ÑÕÉ¸ÉÉ€€¡]¥¸ÌÈ…¹¹½ÐÍ•Ð0½¸„™¥±”(€€€€¼¼¼Ñ¡…Ð‘½•Ì¹½Ð•á¥ÍÐ¤¸(€€€€mÑ•ÍÑt(€€€™¸‘…±}¹½¹•á¥ÍÑ•¹Ñ}Á…Ñ¡}É•ÑÕÉ¹Í}•ÉÈ ¤ì(€€€€€€€±•Ð‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÁ…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰‘½•Í}¹½Ñ}•á¥ÍÐ¹Ý…°ˆ¤ì(€€€€€€€€¼¼¥±”‘½•Ì¹½Ð•á¥ÍÐƒŠPM•Ñ9…µ•‘M•ÕÉ¥Ñå%¹™½\É•ÑÕÉ¹Ì…¸•ÉÉ½È¸(€€€€€€€±•ÐÉ•ÍÕ±Ð€ôÍ•Ñ}½Ý¹•É}‘…° ™Á…Ñ °€‰¹å½Õ¹Ðˆ¤ì(€€€€€€€…ÍÍ•ÉÐ„¡É•ÍÕ±Ð¹¥Í}•ÉÈ ¤°€‰•áÁ•Ñ•ÉÈ™½È¹½¹•á¥ÍÑ•¹ÐÁ…Ñ °½Ð=¬ˆ¤ì(€€€ô((€€€€¼¼ƒŠRŠR ´ÄÈè±ÕÍ¡¥±•	Õ™™•ÉÌƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€¼¼¼±ÕÍ¡¥±•	Õ™™•ÉÌ½¸„™É•Í¡±äÉ•…Ñ•™¥±”µÕÍÐÍÕ••¸(€€€€mÑ•ÍÑt(€€€™¸™±ÕÍ¡}Íµ½­•}½Á•¹}™¥±” ¤ì(€€€€€€€±•Ð‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÁ…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰™±ÕÍ¡}Íµ½­”¹Ý…°ˆ¤ì(€€€€€€€±•Ð™¥±”€ô¥±”èéÉ•…Ñ” ™Á…Ñ ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÉ•ÍÕ±Ð€ô™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌ ™™¥±”¤ì(€€€€€€€…ÍÍ•ÉÐ„ (€€€€€€€€€€€É•ÍÕ±Ð¹¥Í}½¬ ¤°(€€€€€€€€€€€€‰™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌ™…¥±•½¸½Á•¸™¥±”èìèýôˆ°(€€€€€€€€€€€É•ÍÕ±Ð¹Õ¹ÝÉ…Á}•ÉÈ ¤(€€€€€€€€¤ì(€€€ô((€€€€¼¼¼]É¥Ñ”‰åÑ•ÌÑ¡•¸™±ÕÍ ƒŠPµÕÍÐÍÕ••…¹‘…Ñ„µÕÍÐ‰”½¸‘¥Í¬¸(€€€€mÑ•ÍÑt(€€€™¸™±ÕÍ¡}…™Ñ•É}ÝÉ¥Ñ•}ÍÕ••‘Ì ¤ì(€€€€€€€±•Ð‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÁ…Ñ €ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰™±ÕÍ¡}ÝÉ¥Ñ”¹Ý…°ˆ¤ì(€€€€€€€±•ÐµÕÐ™¥±”€ô¥±”èéÉ•…Ñ” ™Á…Ñ ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€™¥±”¹ÝÉ¥Ñ•}…±°¡ˆ‰¹•½Ñ µÝ…°µÍ•µ•¹Ðµ¡•…‘•Éq¸ˆ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€±•ÐÉ•ÍÕ±Ð€ô™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌ ™™¥±”¤ì(€€€€€€€…ÍÍ•ÉÐ„ (€€€€€€€€€€€É•ÍÕ±Ð¹¥Í}½¬ ¤°(€€€€€€€€€€€€‰™±ÕÍ …™Ñ•ÈÝÉ¥Ñ”™…¥±•èìèýôˆ°(€€€€€€€€€€€É•ÍÕ±Ð¹Õ¹ÝÉ…Á}•ÉÈ ¤(€€€€€€€€¤ì(€€€ô((€€€€¼¼ƒŠRŠR ÉÉ½Èµ…ÁÁ¥¹œ¡•±Á•ÉÌƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR ((€€€€¼¼¼II=I}MUML€ À¤µÕÍÐµ…ÀÑ¼=¬¸(€€€€mÑ•ÍÑt(€€€™¸µ…Á}Ý¥¸ÌÉ}½­}½¹}•ÉÉ½É}ÍÕ•ÍÌ ¤ì(€€€€€€€…ÍÍ•ÉÐ„¡µ…Á}Ý¥¸ÌÈ À°€‰Ñ•ÍÑ}Ñàˆ¤¹¥Í}½¬ ¤¤ì(€€€ô((€€€€¼¼¼9½¸µé•É¼]¥¸ÌÈ½‘”µÕÍÐµ…ÀÑ¼ÉÈ½¹Ñ…¥¹¥¹œÑ¡”½¹Ñ•áÐ±…‰•°…¹(€€€€¼¼¼Ñ¡”¡•à•ÉÉ½È½‘”¸(€€€€mÑ•ÍÑt(€€€™¸µ…Á}Ý¥¸ÌÉ}•ÉÉ}½¹Ñ…¥¹Í}½¹Ñ•áÑ}…¹‘}½‘” ¤ì(€€€€€€€€¼¼€Ô€ôII=I}MM}9%ƒŠPÁÉ•‘¥Ñ…‰±”°Ý•±°µ­¹½Ý¸½‘”¸(€€€€€€€±•Ð•ÉÈ€ôµ…Á}Ý¥¸ÌÈ Ô°€‰µå}Ñàˆ¤¹Õ¹ÝÉ…Á}•ÉÈ ¤ì(€€€€€€€±•ÐµÍœ€ô•ÉÈ¹Ñ½}ÍÑÉ¥¹œ ¤ì(€€€€€€€…ÍÍ•ÉÐ„ (€€€€€€€€€€€µÍœ¹½¹Ñ…¥¹Ì ‰µå}Ñàˆ¤°(€€€€€€€€€€€€‰•ÉÉ½Èµ•ÍÍ…”Í¡½Õ±½¹Ñ…¥¸½¹Ñ•áÐ±…‰•°èíµÍôˆ(€€€€€€€€¤ì(€€€€€€€…ÍÍ•ÉÐ„ (€€€€€€€€€€€µÍœ¹½¹Ñ…¥¹Ì ˆÁàÀÀÀÀÀÀÀÔˆ¤°(€€€€€€€€€€€€‰•ÉÉ½Èµ•ÍÍ…”Í¡½Õ±½¹Ñ…¥¸¡•à•ÉÉ½È½‘”èíµÍôˆ(€€€€€€€€¤ì(€€€ô((€€€€¼¼¼Ñ½}Ý¥‘•}¹Õ±€µÕÍÐÁÉ½‘Õ”•á…Ñ±ä±•¸¬ÄÔÄØÙ…±Õ•ÌÝ¥Ñ „¹Õ±°(€€€€¼¼¼Ñ•Éµ¥¹…Ñ½È…ÐÑ¡”•¹¸(€€€€mÑ•ÍÑt(€€€™¸Ý¥‘•}¹Õ±}•¹½‘¥¹}½ÉÉ•Ð ¤ì(€€€€€€€±•ÐÝ¥‘”€ôÑ½}Ý¥‘•}¹Õ° ‰…‰Œˆ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„¡Ý¥‘”¹±•¸ ¤°€Ð°€ˆÌ¡…ÉÌ€¬€Ä¹Õ±°Ñ•Éµ¥¹…Ñ½Èˆ¤ì(€€€€€€€…ÍÍ•ÉÑ}•Ä„ ©Ý¥‘”¹±…ÍÐ ¤¹Õ¹ÝÉ…À ¤°€ÁÔÄØ°€‰±…ÍÐ•±•µ•¹ÐµÕÍÐ‰”¹Õ±°ˆ¤ì(€€€ô((€€€€¼¼ƒŠRŠR ÀÀàµ]%9=]Lµ]0´ÀÄƒŠP±ÕÍ¡¥±•	Õ™™•ÉÌÙÌÍå¹}‘…Ñ„±…Ñ•¹äƒŠRŠRŠRŠRŠRŠRŠRŠR (€€€€¼¼(€€€€¼¼½µÁ…É•ÌÑ¡”•áÁ±¥¥Ð™±ÕÍ¡}™¥±•}‰Õ™™•ÉÍ€€¡´ÄÈÝÉ…ÁÁ•È¤Á…Ñ ……¥¹ÍÐ(€€€€¼¼ÍÑèé™Ìèé¥±”èéÍå¹}‘…Ñ„ ¥€€¡Ñ¡”]0ÝÉ¥Ñ•ÈÌÕÉÉ•¹Ð¡½ÐÁ…Ñ ¤¸(€€€€¼¼(€€€€¼¼	½Ñ Á…Ñ¡Ì…±°±ÕÍ¡¥±•	Õ™™•ÉÍ€½¹”ìÑ¡¥Ì‰•¹ ÁÉ½‘Õ•Ì5MUI(€€€€¼¼•Ù¥‘•¹”Ñ¡…ÐÑ¡”´ÄÈÝÉ…ÁÁ•È…‘‘Ì¹¼±…Ñ•¹ä‰•¹•™¥ÐÝ¡•¸Ý¥É•(€€€€¼¼…±½¹Í¥‘”Íå¹}‘…Ñ…€°½¹™¥Éµ¥¹œÑ¡”‘½Õ‰±”µ™±ÕÍ …¹…±åÍ¥Ì¥¸(€€€€¼¼ÝÉ¥Ñ•}…¹‘}Íå¹€€¡ÝÉ¥Ñ•È¹ÉÌ¤¸(€€€€¼¼(€€€€¼¼€ŒŒ%1}1}]I%Q}Q!I=U Ñ¡É•Í¡½±(€€€€¼¼(€€€€¼¼%1}1}]I%Q}Q!I=U!€‰åÁ…ÍÍ•ÌÑ¡”=LÝÉ¥Ñ”…¡”Í¼•… ÝÉ¥Ñ”(€€€€¼¼½•Ì‘¥É•Ñ±äÑ¼ÍÑ½É…”Ý¥Ñ¡½ÕÐ„ÍÕ‰Í•ÅÕ•¹Ð±ÕÍ¡¥±•	Õ™™•ÉÍ€…±°¸(€€€€¼¼A½ÍÍ¥‰±”‰•¹•™¥ÐèÍÕˆµµ¥±±¥Í•½¹É•‘ÕÑ¥½¸¥¸Me9}=9}]I%Q±…Ñ•¹ä½¸(€€€€¼¼‘É¥Ù•ÌÝ¥Ñ ™¥ÉµÝ…É”ÝÉ¥Ñ”µ‰…¬…¡•Ì¸€½ÍÐèÉ•ÅÕ¥É•Ì½Á•¹¥¹œÑ¡”]0(€€€€¼¼™¥±”Ý¥Ñ É•…Ñ•¥±•\¡%1}1}]I%Q}Q!I=U ¥€ƒŠP„]¥¹‘½ÝÌµ½¹±ä½‘”(€€€€¼¼Á…Ñ ƒŠP9%1}1}9=}	UI%9€™½È™Õ±°=Lµ…¡”‰åÁ…ÍÌ°Ý¡¥ (€€€€¼¼µ…¹‘…Ñ•Ì€ÔÄÈ€¼€ÐÀäØµ‰åÑ”Í•Ñ½Èµ…±¥¹•ÝÉ¥Ñ•Ì€¡…±¥¹µ•¹Ðµ‰Õ™™•ÈÉ•™…Ñ½È¤¸(€€€€¼¼(€€€€¼¼%¹Ù•ÍÑ¥…Ñ”ÝÉ¥Ñ”µÑ¡É½Õ Ý¡•¸%Q!Hµ•…ÍÕÉ•µ•ÑÉ¥Œ•á••‘Ìè(€€€€¼¼€€ƒŠˆÀÔÀ€€ø€ÔµÌ€ƒŠP™Íå¹ŒÁ•É•ÁÑ¥‰±”¥¸Me9}=9}]I%Q¡…ÐÉ½Õ¹µÑÉ¥À(€€€€¼¼€€ƒŠˆÀää€€ø€ÔÀµÌƒŠPÍÑ½É…”…¹½µ…±äì¡•¬M5IP€¼9Y5”¡•…±Ñ ±½Ì(€€€€¼¼(€€€€¼¼	•±½ÜÑ¡½Í”Ñ¡É•Í¡½±‘ÌÑ¡”…±¥¹µ•¹Ðµ±…å•È½µÁ±•á¥Ñä½ÕÑÝ•¥¡ÌÑ¡”(€€€€¼¼±…Ñ•¹ä…¥¸½¸9Y5”ÍÑ½É…”Ý¥Ñ ÍÑ…‰±”™¥ÉµÝ…É”…¡•Ì¸(€€€€¼¼(€€€€¼¼IÕ¸½¸‘•µ…¹è(€€€€¼¼(€€€€¼¼€€…É¼Ñ•ÍÐ€µÀ¹•½Ñ €´µ±¥ˆ™±ÕÍ¡}ÙÍ}Íå¹}±…Ñ•¹ä€´´€´µ¥¹½É•€´µ¹½…ÁÑÕÉ”€´µÑ•ÍÐµÑ¡É•…‘ÌôÄ((€€€€mÑ•ÍÑt(€€€€m¥¹½É”€ô€‰ÀÀà±…Ñ•¹ä‰•¹ ƒŠPÉÕ¸Ý¥Ñ è…É¼Ñ•ÍÐ€µÀ¹•½Ñ €´µ±¥ˆ™±ÕÍ¡}ÙÍ}Íå¹}±…Ñ•¹ä€´´€´µ¥¹½É•€´µ¹½…ÁÑÕÉ”€´µÑ•ÍÐµÑ¡É•…‘ÌôÄ‰t(€€€™¸™±ÕÍ¡}ÙÍ}Íå¹}‘…Ñ…}±…Ñ•¹å}½µÁ…É¥Í½¸ ¤ì(€€€€€€€ÕÍ”ÍÑèé¥¼èé]É¥Ñ”ì(€€€€€€€ÕÍ”ÍÑèéÑ¥µ”èé%¹ÍÑ…¹Ðì((€€€€€€€½¹ÍÐ%QILèÕÍ¥é”€ô€ÈÀÀì(€€€€€€€€¼¼I•ÁÉ•Í•¹Ñ…Ñ¥Ù”]0™É…µ”Í¥é”èÍ¡½ÉÐAI=Y%I}IMA=9M•Ù•¹Ð¸(€€€€€€€½¹ÍÐI5}	eQLèÕÍ¥é”€ô€ÔÄÈì(€€€€€€€±•Ð™É…µ”€ôÙ•Œ…lÁÔàìI5}	eQMtì((€€€€€€€±•Ð‘¥È€ôÑ•µÁ‘¥È ¤¹Õ¹ÝÉ…À ¤ì((€€€€€€€€¼¼ƒŠRŠR A…Ñ è•áÁ±¥¥Ð±ÕÍ¡¥±•	Õ™™•ÉÌÙ¥„´ÄÈÝÉ…ÁÁ•ÈƒŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠRŠR (€€€€€€€±•ÐÁ…Ñ¡}„€ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰±…Ñ}™±ÕÍ¡}„¹Ý…°ˆ¤ì(€€€€€€€±•ÐµÕÐ™¥±•}„€ô¥±”èéÉ•…Ñ” ™Á…Ñ¡}„¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€€¼¼]…É´µÕÀèÁÉ¥µ”Ñ¡”L€¼9QL©½ÕÉ¹…°‰•™½É”Í…µÁ±¥¹œ¸(€€€€€€€™½È|¥¸€À¸¸ÄÀì(€€€€€€€€€€€™¥±•}„¹ÝÉ¥Ñ•}…±° ™™É…µ”¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€€€€€™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌ ™™¥±•}„¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€ô(€€€€€€€±•ÐµÕÐÍ…µÁ±•Í}„èY•ŒñÔØÐø€ôY•ŒèéÝ¥Ñ¡}…Á…¥Ñä¡%QIL¤ì(€€€€€€€™½È|¥¸€À¸¹%QILì(€€€€€€€€€€€±•ÐÐÀ€ô%¹ÍÑ…¹Ðèé¹½Ü ¤ì(€€€€€€€€€€€™¥±•}„¹ÝÉ¥Ñ•}…±° ™™É…µ”¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€€€€€™±ÕÍ¡}™¥±•}‰Õ™™•ÉÌ ™™¥±•}„¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€€€€€Í…µÁ±•Í}„¹ÁÕÍ ¡ÐÀ¹•±…ÁÍ• ¤¹…Í}¹…¹½Ì ¤…ÌÔØÐ¤ì(€€€€€€€ô((€€€€€€€€¼¼ƒŠRŠR A…Ñ èÍÑèé™Ìèé¥±”èéÍå¹}‘…Ñ„€¡]0ÝÉ¥Ñ•È¡½ÐÁ…Ñ ¤ƒŠRŠRŠRŠRŠRŠRŠRŠRŠR (€€€€€€€±•ÐÁ…Ñ¡}ˆ€ô‘¥È¹Á…Ñ  ¤¹©½¥¸ ‰±…Ñ}Íå¹}ˆ¹Ý…°ˆ¤ì(€€€€€€€±•ÐµÕÐ™¥±•}ˆ€ô¥±”èéÉ•…Ñ” ™Á…Ñ¡}ˆ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€™½È|¥¸€À¸¸ÄÀì(€€€€€€€€€€€™¥±•}ˆ¹ÝÉ¥Ñ•}…±° ™™É…µ”¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€€€€€™¥±•}ˆ¹Íå¹}‘…Ñ„ ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€ô(€€€€€€€±•ÐµÕÐÍ…µÁ±•Í}ˆèY•ŒñÔØÐø€ôY•ŒèéÝ¥Ñ¡}…Á…¥Ñä¡%QIL¤ì(€€€€€€€™½È|¥¸€À¸¹%QILì(€€€€€€€€€€€±•ÐÐÀ€ô%¹ÍÑ…¹Ðèé¹½Ü ¤ì(€€€€€€€€€€€™¥±•}ˆ¹ÝÉ¥Ñ•}…±° ™™É…µ”¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€€€€€™¥±•}ˆ¹Íå¹}‘…Ñ„ ¤¹Õ¹ÝÉ…À ¤ì(€€€€€€€€€€€Í…µÁ±•Í}ˆ¹ÁÕÍ ¡ÐÀ¹•±…ÁÍ• ¤¹…Í}¹…¹½Ì ¤…ÌÔØÐ¤ì(€€€€€€€ô((€€€€€€€Í…µÁ±•Í}„¹Í½ÉÑ}Õ¹ÍÑ…‰±” ¤ì(€€€€€€€Í…µÁ±•Í}ˆ¹Í½ÉÑ}Õ¹ÍÑ…‰±” ¤ì((€€€€€€€±•ÐÀÔÁ}„€ôÍ…µÁ±•Í}…m%QIL€¼€Étì(€€€€€€€±•ÐÀÔÁ}ˆ€ôÍ…µÁ±•Í}‰m%QIL€¼€Étì(€€€€€€€±•ÐÀäÕ}„€ôÍ…µÁ±•Í}…m%QIL€¨€äÔ€¼€ÄÀÁtì(€€€€€€€±•ÐÀäÕ}ˆ€ôÍ…µÁ±•Í}‰m%QIL€¨€äÔ€¼€ÄÀÁtì(€€€€€€€±•ÐÀäå}„€ôÍ…µÁ±•Í}…m%QIL€¨€ää€¼€ÄÀÁtì(€€€€€€€±•ÐÀäå}ˆ€ôÍ…µÁ±•Í}‰m%QIL€¨€ää€¼€ÄÀÁtì((€€€€€€€ÁÉ¥¹Ñ±¸„ (€€€€€€€€€€€€‰q¹ÀÀàµ]%9=]Lµ]0´ÀÄ€±ÕÍ¡¥±•	Õ™™•ÉÌÙÌÍå¹}‘…Ñ„€€¡¸õíô€™É…µ”õíõ¥q¹p(€€€€€€€€€€€€qàÈÀm´ÄÈ±ÕÍ¡¥±•	Õ™™•ÉÍt€ÀÔÀõìè¸ÍõµÌ€ÀäÔõìè¸ÍõµÌ€Àääõìè¸ÍõµÍq¹p(€€€€€€€€€€€€qàÈÀmÍÑ€Íå¹}‘…Ñ„€€€€€€€t€ÀÔÀõìè¸ÍõµÌ€ÀäÔõìè¸ÍõµÌ€Àääõìè¸ÍõµÍq¹p(€€€€€€€€€€€€q¹p(€€€€€€€€€€€€qàÈÀY•É‘¥Ðè¥˜ñÀÔÁ}„€´ÀÔÁ}‰ð€ð€ÅµÌÑ¡”´ÄÈÝÉ…ÁÁ•È…‘‘Ì¹¼µ•…ÍÕÉ…‰±•q¹p(€€€€€€€€€€€€qàÈÀ‰•¹•™¥ÐÝ¡•¸Ý¥É•…±½¹Í¥‘”Íå¹}‘…Ñ„€¡‰½Ñ …±°±ÕÍ¡¥±•	Õ™™•ÉÌ½¹”¤¹q¹p(€€€€€€€€€€€€qàÈÀQ!IM!=1è¥¹Ù•ÍÑ¥…Ñ”%1}1}]I%Q}Q!I=U Ý¡•¸ÀÔÀ€ø€ÕµÌ½ÈÀää€ø€ÔÁµÌ¸ˆ°(€€€€€€€€€€€%QIL°(€€€€€€€€€€€I5}	eQL°(€€€€€€€€€€€ÀÔÁ}„…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À°(€€€€€€€€€€€ÀäÕ}„…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À°(€€€€€€€€€€€Àäå}„…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À°(€€€€€€€€€€€ÀÔÁ}ˆ…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À°(€€€€€€€€€€€ÀäÕ}ˆ…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À°(€€€€€€€€€€€Àäå}ˆ…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À°(€€€€€€€€¤ì((€€€€€€€€¼¼I•É•ÍÍ¥½¸Õ…É‘Ìè•¹•É½ÕÌ€ÈµÍ•½¹Àää•¥±¥¹œ½¸…¹ä]¥¹‘½ÝÌÍÑ½É…”¸(€€€€€€€€¼¼Y…±Õ•Ì…‰½Ù”Ñ¡¥Ì¥¹‘¥…Ñ”„ÍÑ½É…”…¹½µ…±äƒŠP¡•¬M5IP€¼9Y5”±½Ì¸(€€€€€€€½¹ÍÐ@äå}%1%9}9LèÔØÐ€ô€É|ÀÀÀ€¨€Å|ÀÀÁ|ÀÀÀì(€€€€€€€…ÍÍ•ÉÐ„ (€€€€€€€€€€€Àäå}„€ð@äå}%1%9}9L°(€€€€€€€€€€€€‰´ÄÈ±ÕÍ¡¥±•	Õ™™•ÉÌÀääìè¸ÅõµÌ€ø€ÈÀÀÁµÌƒŠPÍÑ½É…”…¹½µ…±äˆ°(€€€€€€€€€€€Àäå}„…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À(€€€€€€€€¤ì(€€€€€€€…ÍÍ•ÉÐ„ (€€€€€€€€€€€Àäå}ˆ€ð@äå}%1%9}9L°(€€€€€€€€€€€€‰Íå¹}‘…Ñ„Àääìè¸ÅõµÌ€ø€ÈÀÀÁµÌƒŠPÍÑ½É…”…¹½µ…±äˆ°(€€€€€€€€€€€Àäå}ˆ…Ì˜ØÐ€¼€Å|ÀÀÁ|ÀÀÀ¸À(€€€€€€€€¤ì(€€€ô)ô(
+        let mut ace_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+        // SAFETY: `dacl` is valid and contains exactly one ACE, so index 0 is
+        // in bounds; `ace_ptr` is a valid out-pointer.
+        if unsafe { GetAce(dacl, 0, &mut ace_ptr) } == 0 {
+            return Err(last_win32_error("GetAce"));
+        }
+        if ace_ptr.is_null() {
+            return Err(io::Error::other("GetAce returned a null ACE"));
+        }
+        // SAFETY: GetAce returned an ACE header. We inspect the header before
+        // relying on ACCESS_ALLOWED_ACE-specific fields.
+        let ace = unsafe { &*(ace_ptr as *const ACCESS_ALLOWED_ACE) };
+        // Win32 ACE_TYPE value for ACCESS_ALLOWED_ACE. Keep this local so the
+        // ACL primitive does not pull in the unrelated SystemServices feature.
+        const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+        if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private file's only ACE is not an allow ACE",
+            ));
+        }
+        if ace.Header.AceFlags as u32 & INHERITED_ACE != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private file's only ACE is inherited",
+            ));
+        }
+        const GENERIC_ALL: u32 = 0x1000_0000;
+        let has_generic_all = ace.Mask & GENERIC_ALL == GENERIC_ALL;
+        // Windows may map GENERIC_ALL into the object-specific access mask
+        // when the DACL is stored. Both encodings represent full file control.
+        let has_file_all_access = ace.Mask & FILE_ALL_ACCESS == FILE_ALL_ACCESS;
+        if !has_generic_all && !has_file_all_access {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "private file's only ACE does not grant Full Control (mask {:#010x})",
+                    ace.Mask
+                ),
+            ));
+        }
+        let ace_sid = std::ptr::addr_of!(ace.SidStart) as *mut std::ffi::c_void;
+        // SAFETY: ACCESS_ALLOWED_ACE stores its variable-length SID beginning
+        // at SidStart; the descriptor and ACE buffer remain live here.
+        if unsafe { IsValidSid(ace_sid) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "private file's allow ACE contains an invalid SID",
+            ));
+        }
+        // SAFETY: the ACE SID is valid above and `expected_sid` was copied from
+        // the current process TokenUser SID; EqualSid only reads both buffers.
+        if unsafe { EqualSid(ace_sid, expected_sid.as_ptr() as *mut std::ffi::c_void) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private file's only ACE does not belong to the current user",
+            ));
+        }
+        Ok(())
+    })();
+
+    // SAFETY: successful GetNamedSecurityInfoW returned this descriptor from
+    // LocalAlloc. It is released exactly once after all borrowed ACL/ACE data
+    // is no longer used.
+    unsafe { LocalFree(descriptor as HLOCAL) };
+    verification
+}
+
+fn last_win32_error(context: &'static str) -> io::Error {
+    // SAFETY: GetLastError has no arguments and reads the calling thread's
+    // last-error slot immediately after the failed Win32 call.
+    let code = unsafe { GetLastError() };
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "{context}: Win32 error {code:#010x} ({})",
+            win32_io_err(code)
+        ),
+    )
+}
+
+struct OwnedHandle(HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: this wrapper owns the successful OpenProcessToken handle
+            // and closes it exactly once when the guard leaves scope.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+fn current_process_token_sid() -> io::Result<Vec<u8>> {
+    let mut raw_token: HANDLE = std::ptr::null_mut();
+    // SAFETY: GetCurrentProcess returns the caller's pseudo-handle and
+    // `raw_token` is a valid out-pointer for a TOKEN_QUERY handle.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw_token) } == 0 {
+        return Err(last_win32_error("OpenProcessToken"));
+    }
+    let token = OwnedHandle(raw_token);
+
+    let mut required = 0u32;
+    // SAFETY: this is the documented sizing call; a null output buffer with
+    // length zero makes Win32 return the required TokenUser byte count.
+    let first =
+        unsafe { GetTokenInformation(token.0, TokenUser, std::ptr::null_mut(), 0, &mut required) };
+    let first_error = if first == 0 {
+        // SAFETY: no Win32 call intervened after GetTokenInformation.
+        unsafe { GetLastError() }
+    } else {
+        ERROR_SUCCESS
+    };
+    if first != 0 || first_error != ERROR_INSUFFICIENT_BUFFER {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "GetTokenInformation(size): Win32 error {first_error:#010x} ({})",
+                win32_io_err(first_error)
+            ),
+        ));
+    }
+    if required < std::mem::size_of::<TOKEN_USER>() as u32 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "GetTokenInformation returned an undersized TokenUser buffer",
+        ));
+    }
+
+    let mut buffer = vec![0u8; required as usize];
+    // SAFETY: `buffer` is writable for exactly `required` bytes and the return
+    // length out-pointer is valid. TokenUser is the requested layout.
+    if unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            buffer.as_mut_ptr() as *mut std::ffi::c_void,
+            required,
+            &mut required,
+        )
+    } == 0
+    {
+        return Err(last_win32_error("GetTokenInformation(TokenUser)"));
+    }
+    // SAFETY: Win32 initialized the leading TOKEN_USER structure. `read_unaligned`
+    // avoids assuming Vec<u8> has TOKEN_USER alignment; its SID pointer targets
+    // storage inside `buffer`, which remains live until after the copy below.
+    let token_user = unsafe { std::ptr::read_unaligned(buffer.as_ptr() as *const TOKEN_USER) };
+    let sid = token_user.User.Sid;
+    // SAFETY: `sid` is the TokenUser SID returned by GetTokenInformation.
+    if sid.is_null() || unsafe { IsValidSid(sid) } == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "current process token contains an invalid user SID",
+        ));
+    }
+    // SAFETY: IsValidSid succeeded, so GetLengthSid can read its header.
+    let sid_len = unsafe { GetLengthSid(sid) } as usize;
+    if sid_len == 0 || sid_len > buffer.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "current process token returned an invalid user SID length",
+        ));
+    }
+    // SAFETY: valid SID storage contains exactly sid_len readable bytes and is
+    // still owned by the live TokenUser buffer. Copying detaches it from both
+    // the buffer and token handle.
+    Ok(unsafe { std::slice::from_raw_parts(sid as *const u8, sid_len) }.to_vec())
+}
+
+/// Async wrapper: runs [`set_owner_dacl`] on a `spawn_blocking` thread so
+/// the calling tokio task is not stalled during the Win32 ACL write.
+pub async fn set_owner_dacl_async(path: &Path, account: &str) -> io::Result<()> {
+    let owned_path = path.to_path_buf();
+    let owned_account = account.to_owned();
+    tokio::task::spawn_blocking(move || set_owner_dacl(&owned_path, &owned_account))
+        .await
+        .unwrap_or_else(|join_err| {
+            warn!(error = %join_err, "set_owner_dacl task panicked");
+            Ok(())
+        })
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// E-12: FlushFileBuffers for WAL durability
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/// Flush all OS-buffered writes for `file` to the underlying storage device
+/// via `FlushFileBuffers`. This is the Windows equivalent of `fsync(2)`.
+///
+/// Unlike `std::fs::File::sync_all()` (which also calls `FlushFileBuffers`
+/// internally), this function surfaces the Win32 error code in the `Err`
+/// variant together with an operator-readable context string, making WAL
+/// write failures actionable in the tracing output.
+///
+/// # D008-WINDOWS-WAL-01 â€” WAL writer hot-path wiring note
+///
+/// The WAL writer hot path (`write_and_sync` in `writer.rs`) does **not**
+/// call this function directly.  On Windows, `tokio::fs::File::sync_data()`
+/// is backed (via the blocking pool) by `std::fs::File::sync_data()`, which
+/// the Rust standard library implements by calling `FlushFileBuffers` on the
+/// underlying `HANDLE`.  Wiring this wrapper in addition to `sync_data`
+/// would therefore issue `FlushFileBuffers` **twice** per frame â€” a
+/// double-flush that adds latency with no additional durability benefit.
+///
+/// This wrapper is provided for diagnostic and admin paths that need the raw
+/// Win32 error code surfaced directly rather than through the std `io::Error`
+/// mapping.  See `flush_vs_sync_data_latency_comparison` (the `#[ignore]`d
+/// test below) for measured latency data confirming the functional equivalence
+/// of both paths, and the `FILE_FLAG_WRITE_THROUGH` threshold rationale
+/// documented there.
+///
+/// # Errors
+/// Returns `Err` when `FlushFileBuffers` returns `0` (FALSE).
+pub fn flush_file_buffers(file: &File) -> io::Result<()> {
+    // SAFETY:
+    //  - `file.as_raw_handle()` returns a valid, open HANDLE that is owned
+    //    and kept alive by the `File` reference for at least the duration of
+    //    this call.
+    //  - `FlushFileBuffers` accepts the HANDLE by value (integer copy) and
+    //    does not store or alias it.
+    //  - The return value is a Win32 BOOL: non-zero means success, 0 means
+    //    failure (caller must check `GetLastError` for the code).
+    let rc = unsafe { FlushFileBuffers(file.as_raw_handle() as HANDLE) };
+
+    if rc != 0 {
+        Ok(())
+    } else {
+        // SAFETY:
+        //  - `GetLastError` is thread-local and valid to call immediately
+        //    after a failing Win32 function on the same thread. No other
+        //    Win32 call occurs between the failing `FlushFileBuffers` and
+        //    this `GetLastError`.
+        let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+        Err(io::Error::other(format!(
+            "FlushFileBuffers: Win32 error {code:#010x} ({})",
+            win32_io_err(code)
+        )))
+    }
+}
+
+/// Async wrapper: runs [`flush_file_buffers`] on a `spawn_blocking` thread
+/// and returns the `File` on success (so callers can continue using it).
+pub async fn flush_file_buffers_async(file: File) -> io::Result<File> {
+    tokio::task::spawn_blocking(move || flush_file_buffers(&file).map(|()| file))
+        .await
+        .map_err(|join_err| {
+            io::Error::other(format!("flush_file_buffers task panicked: {join_err}"))
+        })?
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Tests
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    // â”€â”€ shared helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    /// Fetch the current user's account name from USERNAME env var.
+    /// Tests that need a valid account name skip gracefully if unset.
+    fn current_username() -> Option<String> {
+        std::env::var("USERNAME").ok().filter(|u| !u.is_empty())
+    }
+
+    // â”€â”€ E-11: DACL set round-trip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    /// Setting the DACL on an existing file with the current username must
+    /// succeed without error.
+    #[test]
+    fn dacl_round_trip_sets_without_error() {
+        let Some(username) = current_username() else {
+            eprintln!("SKIP dacl_round_trip_sets_without_error: USERNAME not set");
+            return;
+        };
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("dacl_test.wal");
+        File::create(&path).unwrap();
+
+        let result = set_owner_dacl(&path, &username);
+        assert!(
+            result.is_ok(),
+            "set_owner_dacl failed: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    #[test]
+    fn private_dacl_round_trip_uses_exact_process_token_sid() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("private_state.json");
+        File::create(&path).unwrap();
+
+        set_private_current_user_dacl(&path).expect("set protected token-SID DACL");
+        verify_private_dacl(&path).expect("read-back must match process TokenUser SID");
+    }
+
+    /// Calling set_owner_dacl twice on the same file must be idempotent
+    /// (second call also succeeds).
+    #[test]
+    fn dacl_idempotent_double_set() {
+        let Some(username) = current_username() else {
+            eprintln!("SKIP dacl_idempotent_double_set: USERNAME not set");
+            return;
+        };
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("dacl_idempotent.wal");
+        File::create(&path).unwrap();
+
+        set_owner_dacl(&path, &username).expect("first call");
+        set_owner_dacl(&path, &username).expect("second call (idempotent)");
+    }
+
+    /// A nonexistent path must return `Err` (Win32 cannot set DACL on a file
+    /// that does not exist).
+    #[test]
+    fn dacl_nonexistent_path_returns_err() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("does_not_exist.wal");
+        // File does not exist â€” SetNamedSecurityInfoW returns an error.
+        let result = set_owner_dacl(&path, "AnyAccount");
+        assert!(result.is_err(), "expected Err for nonexistent path, got Ok");
+    }
+
+    // â”€â”€ E-12: FlushFileBuffers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    /// FlushFileBuffers on a freshly created file must succeed.
+    #[test]
+    fn flush_smoke_open_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("flush_smoke.wal");
+        let file = File::create(&path).unwrap();
+        let result = flush_file_buffers(&file);
+        assert!(
+            result.is_ok(),
+            "flush_file_buffers failed on open file: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    /// Write bytes then flush â€” must succeed and data must be on disk.
+    #[test]
+    fn flush_after_write_succeeds() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("flush_write.wal");
+        let mut file = File::create(&path).unwrap();
+        file.write_all(b"neoth-wal-segment-header\n").unwrap();
+        let result = flush_file_buffers(&file);
+        assert!(
+            result.is_ok(),
+            "flush after write failed: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    // â”€â”€ Error mapping helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    /// ERROR_SUCCESS (0) must map to Ok.
+    #[test]
+    fn map_win32_ok_on_error_success() {
+        assert!(map_win32(0, "test_ctx").is_ok());
+    }
+
+    /// Non-zero Win32 code must map to Err containing the context label and
+    /// the hex error code.
+    #[test]
+    fn map_win32_err_contains_context_and_code() {
+        // 5 = ERROR_ACCESS_DENIED â€” predictable, well-known code.
+        let err = map_win32(5, "my_ctx").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("my_ctx"),
+            "error message should contain context label: {msg}"
+        );
+        assert!(
+            msg.contains("0x00000005"),
+            "error message should contain hex error code: {msg}"
+        );
+    }
+
+    /// `to_wide_nul` must produce exactly len+1 u16 values with a null
+    /// terminator at the end.
+    #[test]
+    fn wide_nul_encoding_correct() {
+        let wide = to_wide_nul("abc");
+        assert_eq!(wide.len(), 4, "3 chars + 1 null terminator");
+        assert_eq!(*wide.last().unwrap(), 0u16, "last element must be null");
+    }
+
+    // â”€â”€ D008-WINDOWS-WAL-01 â€” FlushFileBuffers vs sync_data latency â”€â”€â”€â”€â”€â”€â”€â”€
+    //
+    // Compares the explicit `flush_file_buffers` (E-12 wrapper) path against
+    // `std::fs::File::sync_data()` (the WAL writer's current hot path).
+    //
+    // Both paths call `FlushFileBuffers` once; this bench produces MEASURED
+    // evidence that the E-12 wrapper adds no latency benefit when wired
+    // alongside `sync_data`, confirming the double-flush analysis in
+    // `write_and_sync` (writer.rs).
+    //
+    // ## FILE_FLAG_WRITE_THROUGH threshold
+    //
+    // `FILE_FLAG_WRITE_THROUGH` bypasses the OS write cache so each write
+    // goes directly to storage without a subsequent `FlushFileBuffers` call.
+    // Possible benefit: sub-millisecond reduction in SYNC_ON_WRITE latency on
+    // drives with firmware write-back caches.  Cost: requires opening the WAL
+    // file with `CreateFileW(FILE_FLAG_WRITE_THROUGH)` â€” a Windows-only code
+    // path â€” AND `FILE_FLAG_NO_BUFFERING` for full OS-cache bypass, which
+    // mandates 512 / 4096-byte sector-aligned writes (alignment-buffer refactor).
+    //
+    // Investigate write-through when EITHER measured metric exceeds:
+    //   â€¢ p50  > 5 ms  â€” fsync perceptible in SYNC_ON_WRITE chat round-trip
+    //   â€¢ p99  > 50 ms â€” storage anomaly; check SMART / NVMe health logs
+    //
+    // Below those thresholds the alignment-layer complexity outweighs the
+    // latency gain on NVMe storage with stable firmware caches.
+    //
+    // Run on demand:
+    //
+    //   cargo test -p neoth --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1
+
+    #[test]
+    #[ignore = "D008 latency bench â€” run with: cargo test -p neoth --lib flush_vs_sync_latency -- --ignored --nocapture --test-threads=1"]
+    fn flush_vs_sync_data_latency_comparison() {
+        use std::io::Write;
+        use std::time::Instant;
+
+        const ITERS: usize = 200;
+        // Representative WAL frame size: short PROVIDER_RESPONSE event.
+        const FRAME_BYTES: usize = 512;
+        let frame = vec![0u8; FRAME_BYTES];
+
+        let dir = tempdir().unwrap();
+
+        // â”€â”€ Path A: explicit FlushFileBuffers via E-12 wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        let path_a = dir.path().join("lat_flush_a.wal");
+        let mut file_a = File::create(&path_a).unwrap();
+        // Warm-up: prime the FS / NTFS journal before sampling.
+        for _ in 0..10 {
+            file_a.write_all(&frame).unwrap();
+            flush_file_buffers(&file_a).unwrap();
+        }
+        let mut samples_a: Vec<u64> = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            let t0 = Instant::now();
+            file_a.write_all(&frame).unwrap();
+            flush_file_buffers(&file_a).unwrap();
+            samples_a.push(t0.elapsed().as_nanos() as u64);
+        }
+
+        // â”€â”€ Path B: std::fs::File::sync_data (WAL writer hot path) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        let path_b = dir.path().join("lat_sync_b.wal");
+        let mut file_b = File::create(&path_b).unwrap();
+        for _ in 0..10 {
+            file_b.write_all(&frame).unwrap();
+            file_b.sync_data().unwrap();
+        }
+        let mut samples_b: Vec<u64> = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            let t0 = Instant::now();
+            file_b.write_all(&frame).unwrap();
+            file_b.sync_data().unwrap();
+            samples_b.push(t0.elapsed().as_nanos() as u64);
+        }
+
+        samples_a.sort_unstable();
+        samples_b.sort_unstable();
+
+        let p50_a = samples_a[ITERS / 2];
+        let p50_b = samples_b[ITERS / 2];
+        let p95_a = samples_a[ITERS * 95 / 100];
+        let p95_b = samples_b[ITERS * 95 / 100];
+        let p99_a = samples_a[ITERS * 99 / 100];
+        let p99_b = samples_b[ITERS * 99 / 100];
+
+        println!(
+            "\nD008-WINDOWS-WAL-01  FlushFileBuffers vs sync_data  (n={}  frame={}B)\n\
+             \x20 [E-12 FlushFileBuffers]  p50={:.3}ms  p95={:.3}ms  p99={:.3}ms\n\
+             \x20 [std  sync_data        ]  p50={:.3}ms  p95={:.3}ms  p99={:.3}ms\n\
+             \n\
+             \x20 Verdict: if |p50_a - p50_b| < 1ms the E-12 wrapper adds no measurable\n\
+             \x20 benefit when wired alongside sync_data (both call FlushFileBuffers once).\n\
+             \x20 THRESHOLD: investigate FILE_FLAG_WRITE_THROUGH when p50 > 5ms or p99 > 50ms.",
+            ITERS,
+            FRAME_BYTES,
+            p50_a as f64 / 1_000_000.0,
+            p95_a as f64 / 1_000_000.0,
+            p99_a as f64 / 1_000_000.0,
+            p50_b as f64 / 1_000_000.0,
+            p95_b as f64 / 1_000_000.0,
+            p99_b as f64 / 1_000_000.0,
+        );
+
+        // Regression guards: generous 2-second p99 ceiling on any Windows storage.
+        // Values above this indicate a storage anomaly â€” check SMART / NVMe logs.
+        const P99_CEILING_NS: u64 = 2_000 * 1_000_000;
+        assert!(
+            p99_a < P99_CEILING_NS,
+            "E-12 FlushFileBuffers p99 {:.1}ms > 2000ms â€” storage anomaly",
+            p99_a as f64 / 1_000_000.0
+        );
+        assert!(
+            p99_b < P99_CEILING_NS,
+            "sync_data p99 {:.1}ms > 2000ms â€” storage anomaly",
+            p99_b as f64 / 1_000_000.0
+        );
+    }
+}
