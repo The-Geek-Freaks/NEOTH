@@ -131,7 +131,7 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
                     // durable audit anchor instead of vanishing into the error
                     // chain. `{e:#}` is the full chain (URL + HTTP status, never
                     // credentials).
-                    emit_calendar_write_failed("caldav_calendar", "add", &uid, &format!("{e:#}"))
+                    emit_calendar_write_failed("caldav_calendar", "add", &uid, &e.to_string())
                         .await;
                     return Err(e);
                 }
@@ -213,9 +213,9 @@ fn now_unix() -> u64 {
     crate::time::now_unix_secs()
 }
 
-/// `0xCA CALENDAR_WRITE` audit payload. Metadata only — the title is HASHED
-/// (xxh3-64 hex), never stored verbatim, so an external proof bundle never
-/// leaks the event text; no credentials. Pure so it is unit-testable.
+/// `0xCA CALENDAR_WRITE` audit payload. Metadata only — title and resource UID
+/// are HASHED (xxh3-64 hex), never stored verbatim, so an external proof bundle
+/// never leaks event text or a server identifier; no credentials.
 fn calendar_write_payload(
     provider: &str,
     action: &str,
@@ -228,13 +228,17 @@ fn calendar_write_payload(
     serde_json::to_vec(&serde_json::json!({
         "provider": provider,
         "action": action,
-        "uid": uid,
-        "summary_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(summary.as_bytes())),
+        "uid_hash": calendar_value_hash(uid),
+        "summary_hash": calendar_value_hash(summary),
         "start": start,
         "end": end,
         "ts_unix": now,
     }))
     .unwrap_or_default()
+}
+
+fn calendar_value_hash(value: &str) -> String {
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(value.as_bytes()))
 }
 
 /// Emit `0xCA CALENDAR_WRITE` via the shared external-write audit path
@@ -275,9 +279,9 @@ async fn emit_calendar_write_denied(provider: &str, action: &str, reason: &str) 
 }
 
 /// `0xCE CALENDAR_WRITE_FAILED` audit payload. Metadata only — provider,
-/// action, uid, and the formatted error chain (`reason`). The CalDAV error
-/// carries the URL + HTTP status but never the basic-auth credentials, so this
-/// is safe to persist. Pure so it is unit-testable without a network.
+/// action, a hashed UID, and the top-level error (`reason`). The caller does not
+/// persist the anyhow source chain because reqwest sources can contain the full
+/// resource URL. Pure so it is unit-testable without a network.
 fn calendar_write_failed_payload(
     provider: &str,
     action: &str,
@@ -288,7 +292,7 @@ fn calendar_write_failed_payload(
     serde_json::to_vec(&serde_json::json!({
         "provider": provider,
         "action": action,
-        "uid": uid,
+        "uid_hash": calendar_value_hash(uid),
         "reason": reason,
         "ts_unix": now,
     }))
@@ -328,7 +332,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&p).unwrap();
         assert_eq!(v["provider"], "caldav_calendar");
         assert_eq!(v["action"], "add");
-        assert_eq!(v["uid"], "neoth-evt-001");
+        assert_eq!(v["uid_hash"], calendar_value_hash("neoth-evt-001"));
         assert_eq!(v["start"], "2026-05-30T09:00:00Z");
         assert_eq!(v["end"], "2026-05-30T10:00:00Z");
         assert_eq!(v["ts_unix"], 1_700_000_000u64);
@@ -366,7 +370,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&p).unwrap();
         assert_eq!(v["provider"], "caldav_calendar");
         assert_eq!(v["action"], "add");
-        assert_eq!(v["uid"], "neoth-evt-002");
+        assert_eq!(v["uid_hash"], calendar_value_hash("neoth-evt-002"));
         assert_eq!(v["ts_unix"], 1_700_000_000u64);
         assert!(
             v["reason"]

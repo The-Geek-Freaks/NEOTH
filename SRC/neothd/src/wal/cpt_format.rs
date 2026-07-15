@@ -91,10 +91,10 @@ pub fn write_cpt_pair(
     // 7: best-effort parent-dir fsync (unix only — Windows has no
     // equivalent API; the file renames are already durable on NTFS).
     #[cfg(unix)]
-    if let Some(parent) = cpt_path.parent() {
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
+    if let Some(parent) = cpt_path.parent()
+        && let Ok(dir) = fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
     }
 
     Ok(())

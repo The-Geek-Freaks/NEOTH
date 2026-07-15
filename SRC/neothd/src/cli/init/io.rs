@@ -1206,14 +1206,13 @@ fn sync_parent_best_effort(target: &Path) {
     if let Some(parent) = target
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
+        && let Err(error) = std::fs::File::open(parent).and_then(|dir| dir.sync_all())
     {
-        if let Err(error) = std::fs::File::open(parent).and_then(|dir| dir.sync_all()) {
-            warn!(
-                %error,
-                path = %parent.display(),
-                "visible private-state directory fsync was best-effort"
-            );
-        }
+        warn!(
+            %error,
+            path = %parent.display(),
+            "visible private-state directory fsync was best-effort"
+        );
     }
     #[cfg(not(unix))]
     let _ = target;

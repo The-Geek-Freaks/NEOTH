@@ -231,12 +231,11 @@ fn run_interactive_loop(session: &PtySession, _timeout: Duration) -> Option<i32>
                     &mut tv,
                 )
             };
-            if ready > 0 {
-                if let Ok(n) = stdin.lock().read(&mut ibuf) {
-                    if n > 0 {
-                        let _ = session.write_bytes(&ibuf[..n]);
-                    }
-                }
+            if ready > 0
+                && let Ok(n) = stdin.lock().read(&mut ibuf)
+                && n > 0
+            {
+                let _ = session.write_bytes(&ibuf[..n]);
             }
         }
         #[cfg(not(unix))]

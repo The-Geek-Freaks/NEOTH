@@ -34,7 +34,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
 
       - name: Cache Cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -61,10 +61,11 @@ jobs:
         # with CI's audit step. deny.toml [advisories].ignore is the hand-synced
         # mirror carrying the full reason + plan-to-resolve per entry; keep the
         # two files in sync in the same commit.
-        # SX-04: `set -eo pipefail` is the GHA bash default, so the
-        # pipe propagates cargo-audit's non-zero exit on RUSTSEC
-        # findings instead of silently swallowing CVEs.
+        # SX-04: enable pipefail explicitly so the tee pipeline propagates
+        # cargo-audit's non-zero exit on RUSTSEC findings instead of silently
+        # swallowing CVEs even if the runner's default shell changes.
         run: |
+          set -euo pipefail
           cargo audit --json 2>/dev/null | tee /tmp/audit-result.json
           cargo audit
 
@@ -83,7 +84,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
 
       - name: Verify exact shipped Rust license notices
         run: python3 packaging/generate_rust_notices.py --check
@@ -94,16 +95,19 @@ jobs:
           manifest-path: SRC/neothd/Cargo.toml
           command: check
           arguments: --all-features
-          rust-version: '1.90'
+          rust-version: '1.91'
 
       - name: Run cargo-deny for isolated release signer
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: .github/release-tools/neoth-release-signer/Cargo.toml
           command: check
-          arguments: --all-features
-          command-arguments: --config SRC/deny.toml
-          rust-version: '1.90'
+          # `--config` is a cargo-deny global option. The action places
+          # `arguments` before `check` and `command-arguments` after it, so
+          # putting this in command-arguments makes cargo-deny reject the
+          # otherwise valid shared policy as an unexpected check argument.
+          arguments: --all-features --config SRC/deny.toml
+          rust-version: '1.91'
 
   bridge-audit:
     name: pnpm audit / ${{ matrix.bridge }}
@@ -178,7 +182,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
 
       # Rust supports CodeQL's build-mode none: rust-analyzer evaluates build
       # scripts and macros while the scanner covers every Rust source file,
@@ -199,12 +203,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          alert_count=$(gh api --paginate --slurp -X GET \
+          set -euo pipefail
+          # GitHub-hosted runner images can carry a gh version without
+          # `gh api --slurp`. Emit every page as JSON and let the runner's jq
+          # combine them instead; an API or parse failure still fails closed
+          # under the workflow shell's `set -eo pipefail` contract.
+          alert_count=$(gh api --paginate -X GET \
             "repos/${GITHUB_REPOSITORY}/code-scanning/alerts" \
             -f state=open \
             -f tool_name=CodeQL \
-            -f per_page=100 \
-            --jq '[.[][] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")] | length')
+            -f per_page=100 | \
+            jq -s '[.[][] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")] | length')
           if [[ "$alert_count" -ne 0 ]]; then
             echo "::error::$alert_count unresolved high/critical CodeQL alert(s) block Gold"
             exit 1
@@ -240,12 +249,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          alert_count=$(gh api --paginate --slurp -X GET \
+          set -euo pipefail
+          alert_count=$(gh api --paginate -X GET \
             "repos/${GITHUB_REPOSITORY}/code-scanning/alerts" \
             -f state=open \
             -f tool_name=CodeQL \
-            -f per_page=100 \
-            --jq '[.[][] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")] | length')
+            -f per_page=100 | \
+            jq -s '[.[][] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")] | length')
           if [[ "$alert_count" -ne 0 ]]; then
             echo "::error::$alert_count unresolved high/critical CodeQL alert(s) block Gold"
             exit 1

@@ -156,10 +156,10 @@ pub fn import_config(
             other => vec![other],
         };
         for rec in records {
-            if let Ok(profile) = serde_json::from_value::<AuthProfile>(rec) {
-                if let Some(kind) = profile.provider {
-                    process_kind(&kind, None, &mut seen_providers, &mut stanzas, &mut skipped);
-                }
+            if let Ok(profile) = serde_json::from_value::<AuthProfile>(rec)
+                && let Some(kind) = profile.provider
+            {
+                process_kind(&kind, None, &mut seen_providers, &mut stanzas, &mut skipped);
             }
         }
     }

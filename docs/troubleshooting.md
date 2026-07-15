@@ -56,14 +56,14 @@ neoth serve
 **Rust version too old:**
 
 ```
-error: package `neoth v1.0.0` cannot be built because it requires rustc 1.90.0 or newer
+error: package `neoth v1.0.0` cannot be built because it requires rustc 1.91.0 or newer
 ```
 
 Fix:
 
 ```
 rustup update stable
-rustc --version    # verify 1.90+
+rustc --version    # verify 1.91+
 cargo build --release
 ```
 

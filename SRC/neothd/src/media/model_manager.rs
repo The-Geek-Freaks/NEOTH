@@ -1149,10 +1149,9 @@ fn sync_parent_directory(path: &Path) {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
+        && let Ok(directory) = std::fs::File::open(parent)
     {
-        if let Ok(directory) = std::fs::File::open(parent) {
-            let _ = directory.sync_all();
-        }
+        let _ = directory.sync_all();
     }
     #[cfg(not(unix))]
     let _ = path;

@@ -21,6 +21,37 @@ under `~/.neoth/migrations/plans/`. `apply` requires explicit `--confirm` and
 accepts only the exact SHA-256 plan produced by dry-run. A source change creates
 a different plan hash and fails closed before imported data is changed.
 
+## OpenClaw channel configuration
+
+`detect` reports an OpenClaw `openclaw.json` separately from memory sources and
+prints the exact inspection command. The file is never parsed as conversation
+history or inserted into ground truth:
+
+```text
+neoth-migrate import-openclaw --config ~/.openclaw/openclaw.json
+neoth-migrate import-openclaw --config ~/.openclaw/openclaw.json --json
+```
+
+This command is a read-only migration plan. It accepts OpenClaw's JSON5 syntax,
+resolves `$include` files only inside the canonical configuration directory,
+and rejects traversal, symlink escapes, cycles, duplicate keys, excessive
+depth, excessive file count and oversized inputs. Include paths are resolved
+relative to the file that contains them.
+
+Every effective configuration leaf after include/merge resolution is listed
+exactly once without its value. The report marks a leaf as `mapped`,
+`needs_secret`, `needs_relink`, `needs_runtime`,
+`unsupported`, or `unknown`. Secret-shaped fields and OpenClaw secret
+references are always redacted. `unknown`, `unsupported`, `needs_relink` and
+`needs_runtime` are hard apply blockers; `needs_secret` blocks activation until
+the credential is supplied through NEOTH's credential flow.
+
+OpenClaw's `channels.whatsapp` is explicitly mapped to NEOTH's
+`whatsapp_baileys` adapter, not the Meta Business adapter. Its Baileys auth
+directory is device/session state and therefore requires a guided QR relink.
+The current command does not write live channel configuration; its ledger is
+the fail-closed contract for the subsequent consent-gated apply step.
+
 Memory, Markdown and supported SQL text are preflighted and committed in one
 SQLite transaction. Foreign config, cron, agent and skill definitions are not
 activated: they are sanitised and staged under the plan-specific review

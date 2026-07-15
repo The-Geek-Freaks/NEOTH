@@ -393,10 +393,10 @@ where
     // claiming erasure. Unix only — NTFS journals metadata, so the rename is
     // durable without an explicit directory flush.
     #[cfg(unix)]
-    if let Some(parent) = segment_path.parent() {
-        if let Ok(dir) = std::fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
+    if let Some(parent) = segment_path.parent()
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
     }
     Ok(report)
 }

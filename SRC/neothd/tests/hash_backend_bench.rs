@@ -13,7 +13,7 @@
 //! cargo test --features hash-bench -- bench_hash_backends --ignored --nocapture
 //! ```
 //!
-//! Opthash itself requires rustc >= 1.88; NEOTH's package MSRV is 1.90.
+//! Opthash itself requires rustc >= 1.88; NEOTH's package MSRV is 1.91.
 //! Cargo enforces the same floor for both normal and opt-in benchmark builds.
 //!
 //! # Default build

@@ -15,7 +15,7 @@
 //! `flock`/`share_mode` code per module.
 //!
 //! No new dependencies: `libc` is already a `cfg(unix)` dep and
-//! `std::os::windows::fs::OpenOptionsExt` is std. Built on the MSRV-1.90-safe
+//! `std::os::windows::fs::OpenOptionsExt` is std. Built on the MSRV-1.91-safe
 //! primitives used by `daemon::pidfile` (std `File::lock` needs 1.89):
 //! non-blocking acquire retried every 50 ms, failing loudly after 5 s instead
 //! of deadlocking on a stuck holder.

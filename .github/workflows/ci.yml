@@ -111,7 +111,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
 
       - name: Verify all locked release-target notices
         run: python3 packaging/generate_rust_notices.py --check
@@ -129,7 +129,7 @@ jobs:
       - name: Setup Rust stable with rustfmt
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
           components: rustfmt
 
       - name: Cache signer dependencies
@@ -380,7 +380,7 @@ jobs:
       - name: Install Rust + wasm32 target
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
           targets: wasm32-unknown-unknown
 
       - name: Cache wasm32 build
@@ -484,7 +484,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -531,7 +531,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.90.0'
+          toolchain: '1.91.0'
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

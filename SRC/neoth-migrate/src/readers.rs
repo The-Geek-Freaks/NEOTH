@@ -250,10 +250,11 @@ fn scan_lance_inventory(name: &str, path: &std::path::Path, kind: ImportKind) ->
         // A Lance dataset is conventionally `<name>.lance/` with a
         // `_versions/` subdirectory inside. Use the latter as the
         // tell so we don't false-positive on operator-named dirs.
-        if p.extension().and_then(|s| s.to_str()) == Some("lance") && p.join("_versions").is_dir() {
-            if let Some(n) = p.file_name().and_then(|s| s.to_str()) {
-                datasets.push(n.to_string());
-            }
+        if p.extension().and_then(|s| s.to_str()) == Some("lance")
+            && p.join("_versions").is_dir()
+            && let Some(n) = p.file_name().and_then(|s| s.to_str())
+        {
+            datasets.push(n.to_string());
         }
     }
     datasets.sort();
@@ -298,10 +299,10 @@ fn scan_git_inventory(name: &str, path: &std::path::Path, kind: ImportKind) -> S
         if !p.is_dir() {
             continue;
         }
-        if p.join(".git").join("HEAD").is_file() {
-            if let Some(n) = p.file_name().and_then(|s| s.to_str()) {
-                repos.push(n.to_string());
-            }
+        if p.join(".git").join("HEAD").is_file()
+            && let Some(n) = p.file_name().and_then(|s| s.to_str())
+        {
+            repos.push(n.to_string());
         }
     }
     repos.sort();
@@ -809,7 +810,10 @@ fn noise_dir(path: &Path) -> bool {
 /// GOLD-R3-08 stages these paths in a plan-bound review quarantine instead of
 /// injecting prompts/config into recall or activating them implicitly.
 fn review_only_runtime_path(path: &Path) -> bool {
-    if lower_file_name(path) == "config.toml" {
+    if matches!(
+        lower_file_name(path).as_str(),
+        "config.toml" | "openclaw.json"
+    ) {
         return true;
     }
     let mut in_agents = false;
@@ -1135,15 +1139,16 @@ pub fn validate_sources_not_target(
                 target_db.display()
             );
         }
-        if source.kind == ImportKind::Sqlite && path.is_dir() {
-            if let Ok(actual_db) = resolve_sqlite_source(&path) {
-                anyhow::ensure!(
-                    !is_excluded(&actual_db, &target_exclusions(target_db)),
-                    "sqlite source directory '{}' selects an alias of target database {}; refusing self-migration",
-                    path.display(),
-                    target_db.display()
-                );
-            }
+        if source.kind == ImportKind::Sqlite
+            && path.is_dir()
+            && let Ok(actual_db) = resolve_sqlite_source(&path)
+        {
+            anyhow::ensure!(
+                !is_excluded(&actual_db, &target_exclusions(target_db)),
+                "sqlite source directory '{}' selects an alias of target database {}; refusing self-migration",
+                path.display(),
+                target_db.display()
+            );
         }
     }
     Ok(())
@@ -1858,6 +1863,27 @@ sources:
         assert!(m.sources.is_empty());
         let m2: ImportManifest = serde_yaml::from_str("{}").unwrap();
         assert!(m2.sources.is_empty());
+    }
+
+    #[test]
+    fn openclaw_json_is_review_only_and_never_a_memory_artifact() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("openclaw.json");
+        std::fs::write(
+            &config,
+            "{ channels: { telegram: { botToken: 'must-not-become-memory' } } }",
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("memory.json"),
+            r#"{"statement":"real imported memory statement"}"#,
+        )
+        .unwrap();
+
+        assert!(review_only_runtime_path(&config));
+        let artifacts = assistant_home_inventory(temp.path(), &[]).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert!(artifacts[0].path.ends_with("memory.json"));
     }
 
     #[test]

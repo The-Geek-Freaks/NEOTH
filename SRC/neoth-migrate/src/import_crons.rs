@@ -447,10 +447,10 @@ fn parse_suffix(s: &str, suffixes: &[&str]) -> Option<u64> {
     }
     // Also try "<N> <suffix>" with a space
     for suffix in suffixes {
-        if let Some(num_part) = s.strip_suffix(&format!(" {suffix}")) {
-            if let Ok(n) = num_part.trim().parse::<u64>() {
-                return Some(n);
-            }
+        if let Some(num_part) = s.strip_suffix(&format!(" {suffix}"))
+            && let Ok(n) = num_part.trim().parse::<u64>()
+        {
+            return Some(n);
         }
         // Plural variant already covered above
     }

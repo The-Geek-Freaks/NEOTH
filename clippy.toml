@@ -6,7 +6,7 @@
 
 # Minimum Supported Rust Version — clippy uses this to suppress lints for
 # features not available on the MSRV.
-msrv = "1.90"
+msrv = "1.91"
 
 # Function argument count before clippy warns
 too-many-arguments-threshold = 8

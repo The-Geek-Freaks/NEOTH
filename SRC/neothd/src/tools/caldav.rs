@@ -22,10 +22,9 @@ use crate::providers::http_client;
 /// A CalDAV collection URL whose transport boundary has already been checked.
 ///
 /// Credentials and calendar/task bodies may only leave the machine over HTTPS.
-/// Plain HTTP remains available for an explicitly loopback-hosted CalDAV
-/// server, which is useful for local deployments and deterministic tests. The
-/// loopback client bypasses proxies and every client rejects redirects so Basic
-/// credentials cannot be bounced onto a different origin.
+/// Unit tests may use a loopback HTTP stub, but production builds reject every
+/// cleartext endpoint, including loopback. Every client also rejects redirects
+/// so Basic credentials cannot be bounced onto a different origin.
 pub(super) struct CaldavEndpoint {
     collection: reqwest::Url,
     loopback: bool,
@@ -47,11 +46,8 @@ impl CaldavEndpoint {
             .host()
             .context("CalDAV URL must contain a host")?;
         let loopback = http_client::url_has_loopback_host(&collection);
-        match collection.scheme() {
-            "https" => {}
-            "http" if loopback => {}
-            "http" => anyhow::bail!("remote CalDAV URLs must use HTTPS; HTTP is loopback-only"),
-            scheme => anyhow::bail!("CalDAV URL must use HTTPS or loopback HTTP, got `{scheme}`"),
+        if !caldav_transport_allowed(&collection, loopback) {
+            anyhow::bail!("CalDAV URL must use HTTPS (loopback HTTP exists only in unit tests)");
         }
         Ok(Self {
             collection,
@@ -81,6 +77,16 @@ impl CaldavEndpoint {
             http_client::build_client_no_redirect()
         }
     }
+}
+
+#[cfg(not(test))]
+fn caldav_transport_allowed(collection: &reqwest::Url, _loopback: bool) -> bool {
+    collection.scheme() == "https"
+}
+
+#[cfg(test)]
+fn caldav_transport_allowed(collection: &reqwest::Url, loopback: bool) -> bool {
+    collection.scheme() == "https" || (collection.scheme() == "http" && loopback)
 }
 
 /// The `REPORT` body: a `calendar-query` filtering for `VTODO`, asking for the
@@ -312,12 +318,11 @@ pub async fn list_tasks(base_url: &str, username: &str, password: &str) -> Resul
         .body(CALENDAR_QUERY_VTODO)
         .send()
         .await
-        .with_context(|| format!("CalDAV REPORT request to {base_url}"))?;
+        .context("send CalDAV VTODO REPORT request")?;
     let status = resp.status();
     let text = resp.text().await.context("read CalDAV response body")?;
     if !status.is_success() {
-        let snippet: String = text.chars().take(200).collect();
-        anyhow::bail!("CalDAV REPORT failed: HTTP {status} — {snippet}");
+        anyhow::bail!("CalDAV REPORT failed: HTTP {status}");
     }
     Ok(parse_open_tasks(&text))
 }
@@ -468,20 +473,13 @@ pub async fn create_task(
         .body(body)
         .send()
         .await
-        .with_context(|| format!("CalDAV PUT to {url}"))?;
+        .context("send CalDAV VTODO PUT request")?;
     let status = resp.status();
     if status == reqwest::StatusCode::PRECONDITION_FAILED {
         return Ok((uid, CreateOutcome::AlreadyExists));
     }
     if !status.is_success() {
-        let snippet: String = resp
-            .text()
-            .await
-            .unwrap_or_default()
-            .chars()
-            .take(200)
-            .collect();
-        anyhow::bail!("CalDAV PUT failed: HTTP {status} — {snippet}");
+        anyhow::bail!("CalDAV PUT failed: HTTP {status}");
     }
     Ok((uid, CreateOutcome::Created))
 }
@@ -506,7 +504,7 @@ pub async fn close_task(
         .basic_auth(username, Some(password))
         .send()
         .await
-        .with_context(|| format!("CalDAV GET {url}"))?;
+        .context("send CalDAV VTODO GET request")?;
     if get.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(CloseOutcome::NotFound);
     }
@@ -535,7 +533,7 @@ pub async fn close_task(
     let resp = put
         .send()
         .await
-        .with_context(|| format!("CalDAV PUT {url}"))?;
+        .context("send CalDAV VTODO completion PUT request")?;
     if resp.status() == reqwest::StatusCode::PRECONDITION_FAILED {
         return Ok(CloseOutcome::Conflict);
     }
@@ -742,7 +740,8 @@ END:VCALENDAR</cal:calendar-data>
             )
             .mount(&source)
             .await;
-        let error = list_tasks(&source.uri(), "private-user", "private-password")
+        let ephemeral_password = uuid::Uuid::new_v4().to_string();
+        let error = list_tasks(&source.uri(), "private-user", &ephemeral_password)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("HTTP 307"), "got: {error}");

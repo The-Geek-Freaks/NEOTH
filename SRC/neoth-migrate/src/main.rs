@@ -43,6 +43,11 @@
 //!     extracted — the output YAML contains a comment instructing the
 //!     operator to add keys to `credentials.yaml` separately.
 //!
+//! neoth-migrate import-openclaw --config <PATH> [--json]
+//!     Strict read-only JSON5/$include inspection of every effective OpenClaw
+//!     config leaf. Emits explicit mappings and fail-closed migration blockers;
+//!     secret values are never included in output.
+//!
 //! neoth-migrate import-crons [--timer <PATH>]... [--crontab <PATH>] [--json]
 //!     Convert systemd `.timer` units and/or a crontab file into NEOTH
 //!     `jobs.yaml` Job entries.  Recognises OnCalendar / OnUnitActiveSec /
@@ -58,6 +63,7 @@ mod detect;
 mod import_config;
 mod import_crons;
 mod migration_plan;
+mod openclaw_channels;
 mod readers;
 mod wal_emit;
 
@@ -98,6 +104,10 @@ enum Command {
     /// to credentials.yaml separately. At least one of --auth-profiles
     /// or --models-providers is required.
     ImportConfig(ImportConfigArgs),
+    /// Strict read-only OpenClaw JSON5 channel/config migration plan. Resolves
+    /// safe in-root $include files, redacts secrets and reports every effective
+    /// config leaf as mapped or as an explicit fail-closed blocker.
+    ImportOpenclaw(ImportOpenclawArgs),
     /// Convert systemd .timer unit files and/or a crontab file into
     /// NEOTH jobs.yaml Job entries. Parses OnCalendar / OnUnitActiveSec /
     /// ExecStart in timer units and 5-field + @shorthand crontab syntax.
@@ -179,6 +189,17 @@ struct ImportConfigArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct ImportOpenclawArgs {
+    /// Path to `~/.openclaw/openclaw.json`. The basename is checked so an
+    /// arbitrary JSON document cannot be mistaken for an OpenClaw config.
+    #[arg(long, value_name = "PATH")]
+    config: std::path::PathBuf,
+    /// Emit the machine-readable field ledger instead of the human report.
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct ImportCronsArgs {
     /// Path to a systemd `.timer` unit file. May be repeated for multiple
     /// timer units: `--timer foo.timer --timer bar.timer`.
@@ -205,6 +226,7 @@ fn main() -> Result<()> {
         Command::Apply(args) => run_apply(args),
         Command::Status(args) => run_status(args),
         Command::ImportConfig(args) => run_import_config(args),
+        Command::ImportOpenclaw(args) => run_import_openclaw(args),
         Command::ImportCrons(args) => run_import_crons(args),
     }
 }
@@ -217,6 +239,7 @@ fn run_detect(args: DetectArgs) -> Result<()> {
         let report = serde_json::json!({
             "sources": detection.manifest.sources,
             "scans": detection.scans,
+            "openclaw_configs": detection.openclaw_configs,
         });
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -664,6 +687,31 @@ fn run_import_config(args: ImportConfigArgs) -> Result<()> {
         eprintln!(
             "info: {} sensitive field(s) stripped from input (no key material in output)",
             result.sensitive_fields_dropped
+        );
+    }
+    Ok(())
+}
+
+fn run_import_openclaw(args: ImportOpenclawArgs) -> Result<()> {
+    tracing::info!(
+        config = %args.config.display(),
+        "neoth-migrate import-openclaw dry-run"
+    );
+    let report = openclaw_channels::inspect_openclaw_config(&args.config)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", openclaw_channels::render_human(&report));
+    }
+    if report.apply_blocked {
+        eprintln!(
+            "blocked: {} unknown/unsupported/relink/runtime field(s); no target files were changed",
+            report.summary.hard_blockers
+        );
+    } else if report.activation_blocked {
+        eprintln!(
+            "needs action: {} secret field(s) must be supplied through NEOTH credentials before activation",
+            report.summary.needs_secret
         );
     }
     Ok(())

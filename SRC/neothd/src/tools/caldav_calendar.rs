@@ -147,12 +147,11 @@ pub async fn list_events_against(
         .body(CALENDAR_QUERY_VEVENT)
         .send()
         .await
-        .with_context(|| format!("CalDAV REPORT request to {calendar_url}"))?;
+        .context("send CalDAV VEVENT REPORT request")?;
     let status = resp.status();
     let text = resp.text().await.context("read CalDAV response body")?;
     if !status.is_success() {
-        let snippet: String = text.chars().take(200).collect();
-        anyhow::bail!("CalDAV REPORT failed: HTTP {status} — {snippet}");
+        anyhow::bail!("CalDAV REPORT failed: HTTP {status}");
     }
     Ok(parse_events_multistatus(&text))
 }
@@ -207,15 +206,13 @@ pub async fn create_event_against(
         .body(body)
         .send()
         .await
-        .with_context(|| format!("CalDAV PUT request to {url}"))?;
+        .context("send CalDAV VEVENT PUT request")?;
     let status = resp.status();
     if status == reqwest::StatusCode::PRECONDITION_FAILED {
         return Ok(CreateOutcome::AlreadyExists);
     }
     if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        let snippet: String = text.chars().take(200).collect();
-        anyhow::bail!("CalDAV PUT failed: HTTP {status} — {snippet}");
+        anyhow::bail!("CalDAV PUT failed: HTTP {status}");
     }
     Ok(CreateOutcome::Created)
 }
@@ -333,10 +330,11 @@ mod tests {
 
     #[tokio::test]
     async fn event_network_paths_reject_remote_plain_http_before_dispatch() {
+        let ephemeral_password = uuid::Uuid::new_v4().to_string();
         let list_error = list_events_against(
             "http://calendar.example/dav/events",
             "private-user",
-            "private-password",
+            &ephemeral_password,
         )
         .await
         .unwrap_err();
@@ -355,7 +353,7 @@ mod tests {
         let create_error = create_event_against(
             "http://calendar.example/dav/events",
             "private-user",
-            "private-password",
+            &ephemeral_password,
             &event,
         )
         .await

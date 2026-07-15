@@ -166,10 +166,10 @@ fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Resul
     // (on Windows the rename is journalled, and opening a directory as a File to
     // fsync it isn't valid).
     #[cfg(unix)]
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        if let Ok(dir) = std::fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty())
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
     }
     Ok(())
 }

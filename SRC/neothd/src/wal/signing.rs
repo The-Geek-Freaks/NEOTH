@@ -325,10 +325,10 @@ fn remove_if_present(path: &Path) -> Result<()> {
 
 fn sync_parent_dir(path: &Path) {
     #[cfg(unix)]
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = std::fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
+    if let Some(parent) = path.parent()
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
     }
     #[cfg(not(unix))]
     let _ = path;

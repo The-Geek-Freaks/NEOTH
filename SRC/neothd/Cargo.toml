@@ -2,7 +2,7 @@
 name = "neoth"
 version = "1.0.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.91"
 default-run = "neoth"
 autobins = false
 license = "MIT OR Apache-2.0"
@@ -217,7 +217,7 @@ recursive-mas = []
 # Council verdict: NO production default; evaluation only. The dep and all
 # bench code are completely absent from the default build.
 #
-# Opthash 0.10.x itself requires rustc >= 1.88, below NEOTH's 1.90 package
+# Opthash 0.10.x itself requires rustc >= 1.88, below NEOTH's 1.91 package
 # MSRV, so enabling the bench adds no separate toolchain-floor requirement.
 #
 # Run the bench:
@@ -227,7 +227,7 @@ hash-bench = ["dep:opthash"]
 [dependencies]
 # GOLD-ADAPT-HASH-01 — ElasticHashMap + FunnelHashMap bench spike.
 # Optional, default-OFF; never present in a release binary. Pulled only when
-# the `hash-bench` feature is active. Its 1.88 MSRV remains below NEOTH's 1.90
+# the `hash-bench` feature is active. Its 1.88 MSRV remains below NEOTH's 1.91
 # package floor; the separation here is about release size, not compatibility.
 # default-features keeps the `foldhash` DefaultHashBuilder active (realistic
 # production hasher; disabling it would skew the bench toward a slower fallback).

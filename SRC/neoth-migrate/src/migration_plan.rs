@@ -624,7 +624,7 @@ fn plan_assistant_home(
             )?);
             continue;
         }
-        if file_name(&path) == "config.toml" {
+        if matches!(file_name(&path).as_str(), "config.toml" | "openclaw.json") {
             artifacts.push(make_file_artifact(
                 source,
                 root,
@@ -1679,6 +1679,40 @@ mod tests {
         let current = build_plan(&manifest, temp.path(), &target).unwrap();
         assert_ne!(reviewed.plan_sha256, current.plan_sha256);
         assert!(require_checkpoint(temp.path(), &current).is_err());
+    }
+
+    #[test]
+    fn openclaw_json_is_staged_as_config_not_transactional_memory() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join(".openclaw");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("openclaw.json"),
+            "{ channels: { telegram: { enabled: false } } }",
+        )
+        .unwrap();
+        let manifest = ImportManifest {
+            sources: vec![source(
+                "openclaw-home",
+                &root,
+                ImportKind::AssistantHome,
+                Some("openclaw"),
+            )],
+            acknowledge_unsupported: false,
+        };
+        let plan =
+            build_plan(&manifest, temp.path(), &temp.path().join(".neoth/views.db")).unwrap();
+        let artifact = plan.sources[0]
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.relative_path == "openclaw.json")
+            .unwrap();
+        assert_eq!(artifact.category, ArtifactCategory::Config);
+        assert_eq!(artifact.disposition, ArtifactDisposition::StageReview);
+        assert!(!plan.sources[0].artifacts.iter().any(|artifact| {
+            artifact.relative_path == "openclaw.json"
+                && artifact.disposition == ArtifactDisposition::ImportTransactional
+        }));
     }
 
     #[test]
