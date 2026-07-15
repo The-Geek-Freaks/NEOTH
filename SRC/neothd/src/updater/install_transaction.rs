@@ -1004,14 +1004,12 @@ fn nearest_existing_path(mut path: &Path) -> Result<&Path> {
 }
 
 fn path_identity_hash(path: &Path) -> Result<String> {
-    let mut identity = path
+    let identity = path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("installation root must be valid Unicode"))?
         .replace('\\', "/");
     #[cfg(windows)]
-    {
-        identity = identity.to_lowercase();
-    }
+    let identity = identity.to_lowercase();
     Ok(hex::encode(Sha256::digest(identity.as_bytes())))
 }
 
