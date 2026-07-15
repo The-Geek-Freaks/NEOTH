@@ -137,11 +137,12 @@ fn copy_binary(source: &str, destination: &Path) {
 
 fn write_marker(install: &Path) {
     let canonical = fs::canonicalize(install).unwrap();
-    let mut rendered = canonical.to_string_lossy().into_owned();
+    let rendered = canonical.to_string_lossy().into_owned();
     #[cfg(windows)]
-    if let Some(without_prefix) = rendered.strip_prefix(r"\\?\") {
-        rendered = without_prefix.to_string();
-    }
+    let rendered = rendered
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&rendered)
+        .to_string();
     let marker = serde_json::json!({
         "schema_version": 2,
         "owner": "neoth_portable_release",
