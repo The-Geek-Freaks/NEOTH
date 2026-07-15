@@ -6,7 +6,7 @@
 //! `stream` invocation is authorized from the exact final system, prompt,
 //! provider, model and streaming mode immediately before the inner call runs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -26,6 +26,33 @@ use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
 use crate::wal::writer::WalWriterHandle;
 
 static AUTHORIZATION_ID_NONCE: AtomicU64 = AtomicU64::new(0);
+
+tokio::task_local! {
+    static USAGE_AUTOMATED_OVERRIDE: bool;
+}
+
+/// Attribute nested model-driven work (council leaves, MCP iterations) without
+/// changing provider-wire request fields or weakening the authorization bind.
+pub(crate) async fn automated_usage_scope<F: std::future::Future>(future: F) -> F::Output {
+    USAGE_AUTOMATED_OVERRIDE.scope(true, future).await
+}
+
+fn current_usage_automated(default: bool) -> bool {
+    USAGE_AUTOMATED_OVERRIDE
+        .try_with(|automated| *automated)
+        .unwrap_or(default)
+}
+
+fn default_usage_home() -> Option<PathBuf> {
+    #[cfg(not(test))]
+    {
+        Some(crate::config::FreedomConfig::default_neoth_home())
+    }
+    #[cfg(test)]
+    {
+        None
+    }
+}
 
 fn hash_binding_field(hasher: &mut Sha256, name: &str, value: &[u8]) {
     hasher.update((name.len() as u64).to_be_bytes());
@@ -317,6 +344,8 @@ struct ProviderCallAuditTicket {
     system_bytes: usize,
     prompt_bytes: usize,
     context: ProviderCallAuditContext,
+    usage_home: Option<PathBuf>,
+    usage_automated: bool,
     started: Instant,
 }
 
@@ -324,6 +353,10 @@ impl ProviderCallAuditTicket {
     fn base_payload(&self) -> serde_json::Map<String, serde_json::Value> {
         let mut payload = serde_json::Map::from_iter([
             ("schema".into(), "neoth.provider-lifecycle.v1".into()),
+            (
+                "usage_projection_schema".into(),
+                "neoth.provider-usage.v2".into(),
+            ),
             ("invocation_id".into(), self.invocation_id.clone().into()),
             (
                 "request_binding_sha256".into(),
@@ -336,6 +369,7 @@ impl ProviderCallAuditTicket {
             ("model".into(), self.wire_model.clone().into()),
             ("streaming".into(), self.streaming.into()),
             ("streamed".into(), self.streaming.into()),
+            ("automated".into(), self.usage_automated.into()),
             ("local".into(), self.local.into()),
             ("system_hash_xxh3".into(), self.system_hash_xxh3.into()),
             ("prompt_hash_xxh3".into(), self.prompt_hash_xxh3.into()),
@@ -347,6 +381,70 @@ impl ProviderCallAuditTicket {
         payload
     }
 
+    fn usage_event(&self, terminal: &ProviderCallTerminal) -> crate::daemon::usage_log::UsageEvent {
+        let (
+            ok,
+            outcome,
+            latency_ns,
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+        ) = match terminal {
+            ProviderCallTerminal::Success {
+                latency_ns,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+                terminal_kind,
+                ..
+            } => (
+                true,
+                *terminal_kind,
+                *latency_ns,
+                *input_tokens,
+                *output_tokens,
+                *cache_creation_tokens,
+                *cache_read_tokens,
+            ),
+            ProviderCallTerminal::Failure {
+                error_kind,
+                latency_ns,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            } => (
+                false,
+                *error_kind,
+                *latency_ns,
+                *input_tokens,
+                *output_tokens,
+                *cache_creation_tokens,
+                *cache_read_tokens,
+            ),
+        };
+        crate::daemon::usage_log::provider_terminal_event(
+            crate::time::now_unix_i64(),
+            self.provider,
+            &self.wire_model,
+            input_tokens,
+            output_tokens,
+            latency_ns / 1_000_000,
+            ok,
+            cache_creation_tokens,
+            cache_read_tokens,
+            self.usage_automated,
+            &self.invocation_id,
+            outcome,
+            self.call_scope,
+            self.context.source,
+            self.context.call_type,
+            self.streaming,
+        )
+    }
+
     async fn append_terminal(self, terminal: ProviderCallTerminal) -> Result<()> {
         #[cfg(not(test))]
         let ProviderCallAuditSink::Wal(writer) = &self.audit_sink;
@@ -355,6 +453,7 @@ impl ProviderCallAuditTicket {
             ProviderCallAuditSink::Wal(writer) => writer,
             ProviderCallAuditSink::Disabled => return Ok(()),
         };
+        let usage_event = self.usage_event(&terminal);
         let mut payload = self.base_payload();
         let event_type = match terminal {
             ProviderCallTerminal::Success {
@@ -388,6 +487,10 @@ impl ProviderCallAuditTicket {
             ProviderCallTerminal::Failure {
                 error_kind,
                 latency_ns,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
             } => {
                 payload.insert("ok".into(), false.into());
                 payload.insert("error_kind".into(), error_kind.into());
@@ -395,6 +498,11 @@ impl ProviderCallAuditTicket {
                 // the raw provider/transport error string.
                 payload.insert("error".into(), error_kind.into());
                 payload.insert("latency_ns".into(), latency_ns.into());
+                payload.insert("latency_ms".into(), (latency_ns / 1_000_000).into());
+                payload.insert("input_tokens".into(), input_tokens.into());
+                payload.insert("output_tokens".into(), output_tokens.into());
+                payload.insert("cache_creation_tokens".into(), cache_creation_tokens.into());
+                payload.insert("cache_read_tokens".into(), cache_read_tokens.into());
                 crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
             }
         };
@@ -405,16 +513,28 @@ impl ProviderCallAuditTicket {
             )))
         })?;
         let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-        writer
-            .append(header, payload)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                anyhow::anyhow!(ProviderAuthorizationError(format!(
-                    "provider terminal WAL append failed for `{}`: {error}",
-                    self.call_scope
-                )))
-            })
+        writer.append(header, payload).await.map_err(|error| {
+            anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "provider terminal WAL append failed for `{}`: {error}",
+                self.call_scope
+            )))
+        })?;
+        if let Some(home) = self.usage_home {
+            if let Err(error) = crate::daemon::usage_log::append(&home, &usage_event) {
+                // The fsync-acknowledged 0x21/0x22 frame above is the canonical
+                // usage row. Failing the already-paid provider result here
+                // could trigger a duplicate retry; aggregate/repair instead
+                // projects this invocation id exactly once from the WAL.
+                tracing::warn!(
+                    error = %error,
+                    invocation_id = %self.invocation_id,
+                    provider = self.provider,
+                    model = %self.wire_model,
+                    "provider usage projection append failed; durable terminal WAL retained for idempotent repair"
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -434,6 +554,10 @@ enum ProviderCallTerminal {
     Failure {
         error_kind: &'static str,
         latency_ns: u64,
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cache_creation_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
     },
 }
 
@@ -471,6 +595,10 @@ impl AuthorizedLeafCall {
         self.ticket.started = Instant::now();
         Ok(ProviderCallAuditGuard {
             ticket: Some(self.ticket),
+            input_tokens: None,
+            output_tokens: None,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
         })
     }
 }
@@ -479,6 +607,10 @@ impl AuthorizedLeafCall {
 /// detached, fsync-acknowledged 0x22 append so timeouts cannot orphan intent.
 pub(crate) struct ProviderCallAuditGuard {
     ticket: Option<ProviderCallAuditTicket>,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    cache_creation_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
 }
 
 impl ProviderCallAuditGuard {
@@ -535,6 +667,10 @@ impl ProviderCallAuditGuard {
         let terminal = ProviderCallTerminal::Failure {
             error_kind,
             latency_ns: Self::elapsed_ns(ticket),
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cache_creation_tokens: self.cache_creation_tokens,
+            cache_read_tokens: self.cache_read_tokens,
         };
         self.finish(terminal).await
     }
@@ -550,11 +686,6 @@ impl ProviderCallAuditGuard {
             let mut response_hasher = Sha256::new();
             let mut response_bytes = 0usize;
             let mut response_xxh3 = xxhash_rust::xxh3::Xxh3::new();
-            let mut input_tokens = None;
-            let mut output_tokens = None;
-            let mut cache_creation_tokens = None;
-            let mut cache_read_tokens = None;
-
             while let Some(item) = inner.next().await {
                 match item {
                     Ok(chunk) => {
@@ -564,10 +695,12 @@ impl ProviderCallAuditGuard {
                         response_hasher.update(chunk.delta.as_bytes());
                         response_xxh3.update(chunk.delta.as_bytes());
                         response_bytes = response_bytes.saturating_add(chunk.delta.len());
-                        input_tokens = chunk.input_tokens.or(input_tokens);
-                        output_tokens = chunk.output_tokens.or(output_tokens);
-                        cache_creation_tokens = chunk.cache_creation_tokens.or(cache_creation_tokens);
-                        cache_read_tokens = chunk.cache_read_tokens.or(cache_read_tokens);
+                        audit.input_tokens = chunk.input_tokens.or(audit.input_tokens);
+                        audit.output_tokens = chunk.output_tokens.or(audit.output_tokens);
+                        audit.cache_creation_tokens =
+                            chunk.cache_creation_tokens.or(audit.cache_creation_tokens);
+                        audit.cache_read_tokens =
+                            chunk.cache_read_tokens.or(audit.cache_read_tokens);
                         if chunk.done {
                             let ticket = audit.ticket.as_ref().expect("unsettled provider stream audit");
                             let terminal = ProviderCallTerminal::Success {
@@ -576,10 +709,10 @@ impl ProviderCallAuditGuard {
                                 response_bytes,
                                 latency_ns: Self::elapsed_ns(ticket),
                                 provider_latency_ns: 0,
-                                input_tokens,
-                                output_tokens,
-                                cache_creation_tokens,
-                                cache_read_tokens,
+                                input_tokens: audit.input_tokens,
+                                output_tokens: audit.output_tokens,
+                                cache_creation_tokens: audit.cache_creation_tokens,
+                                cache_read_tokens: audit.cache_read_tokens,
                                 terminal_kind: "stream_done",
                             };
                             audit.finish(terminal).await?;
@@ -612,10 +745,10 @@ impl ProviderCallAuditGuard {
                 response_bytes,
                 latency_ns: Self::elapsed_ns(ticket),
                 provider_latency_ns: 0,
-                input_tokens,
-                output_tokens,
-                cache_creation_tokens,
-                cache_read_tokens,
+                input_tokens: audit.input_tokens,
+                output_tokens: audit.output_tokens,
+                cache_creation_tokens: audit.cache_creation_tokens,
+                cache_read_tokens: audit.cache_read_tokens,
                 terminal_kind: "stream_eof",
             };
             audit.finish(terminal).await?;
@@ -645,6 +778,10 @@ impl Drop for ProviderCallAuditGuard {
                 "provider_call_cancelled"
             },
             latency_ns: Self::elapsed_ns(&ticket),
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cache_creation_tokens: self.cache_creation_tokens,
+            cache_read_tokens: self.cache_read_tokens,
         };
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
@@ -670,6 +807,8 @@ pub struct ProviderCallAuthorizer {
     writer: Option<WalWriterHandle>,
     confirm: CostConfirm,
     audit_context: ProviderCallAuditContext,
+    usage_home: Option<PathBuf>,
+    usage_automated: bool,
     #[cfg(test)]
     allow_missing_writer: bool,
     #[cfg(test)]
@@ -707,10 +846,14 @@ impl ProviderCallAuthorizer {
         // Each append awaits the writer's fsync acknowledgement. Detaching the
         // task is safe: the authorizer owns the sending handle for its lifetime.
         drop(join);
-        Ok(Self::interactive(
-            policy.into_provider_policy(),
-            Some(writer),
-        ))
+        Ok(
+            Self::interactive(policy.into_provider_policy(), Some(writer)).with_usage_home(
+                wal_dir
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf(),
+            ),
+        )
     }
 
     pub fn interactive(policy: impl ProviderPolicyInput, writer: Option<WalWriterHandle>) -> Self {
@@ -719,6 +862,8 @@ impl ProviderCallAuthorizer {
             writer,
             confirm: CostConfirm::Interactive,
             audit_context: ProviderCallAuditContext::default(),
+            usage_home: default_usage_home(),
+            usage_automated: false,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -732,6 +877,8 @@ impl ProviderCallAuthorizer {
             writer,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
+            usage_home: default_usage_home(),
+            usage_automated: true,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -749,6 +896,8 @@ impl ProviderCallAuthorizer {
             writer,
             confirm: CostConfirm::Channel(asker),
             audit_context: ProviderCallAuditContext::default(),
+            usage_home: default_usage_home(),
+            usage_automated: true,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -762,12 +911,15 @@ impl ProviderCallAuthorizer {
     pub fn fail_closed_reload(
         reload: Arc<crate::config::reload::ReloadController>,
         writer: Option<WalWriterHandle>,
+        usage_home: impl Into<PathBuf>,
     ) -> Self {
         Self {
             autonomy: AutonomySource::Reload(reload),
             writer,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
+            usage_home: Some(usage_home.into()),
+            usage_automated: true,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -781,12 +933,15 @@ impl ProviderCallAuthorizer {
         reload: Arc<crate::config::reload::ReloadController>,
         writer: Option<WalWriterHandle>,
         asker: Arc<dyn ChannelAsker>,
+        usage_home: impl Into<PathBuf>,
     ) -> Self {
         Self {
             autonomy: AutonomySource::Reload(reload),
             writer,
             confirm: CostConfirm::Channel(asker),
             audit_context: ProviderCallAuditContext::default(),
+            usage_home: Some(usage_home.into()),
+            usage_automated: true,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -805,6 +960,8 @@ impl ProviderCallAuthorizer {
             writer: None,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
+            usage_home: None,
+            usage_automated: false,
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
@@ -817,6 +974,8 @@ impl ProviderCallAuthorizer {
             writer: None,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
+            usage_home: None,
+            usage_automated: false,
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
@@ -839,6 +998,21 @@ impl ProviderCallAuthorizer {
     /// this authorizer. Only the typed content-free fields above are accepted.
     pub fn with_audit_context(mut self, context: ProviderCallAuditContext) -> Self {
         self.audit_context = context;
+        self
+    }
+
+    /// Bind persistent usage to the same explicit instance home as the caller.
+    /// This is also the hermetic test seam for terminal metering.
+    pub fn with_usage_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.usage_home = Some(home.into());
+        self
+    }
+
+    /// Override caller attribution without weakening the authorization policy.
+    /// Daemon/channel constructors default to automated; interactive CLI
+    /// defaults to human. Nested agentic rounds opt in at their exact leaf.
+    pub fn with_usage_automated(mut self, automated: bool) -> Self {
+        self.usage_automated = automated;
         self
     }
 
@@ -928,6 +1102,8 @@ impl ProviderCallAuthorizer {
                     system_bytes: req.system.as_deref().map_or(0, str::len),
                     prompt_bytes: req.prompt.len(),
                     context: self.audit_context.clone(),
+                    usage_home: self.usage_home.clone(),
+                    usage_automated: current_usage_automated(self.usage_automated),
                     started: Instant::now(),
                 },
             });
@@ -1089,6 +1265,8 @@ impl ProviderCallAuthorizer {
                 system_bytes: req.system.as_deref().map_or(0, str::len),
                 prompt_bytes: req.prompt.len(),
                 context: self.audit_context.clone(),
+                usage_home: self.usage_home.clone(),
+                usage_automated: current_usage_automated(self.usage_automated),
                 started: Instant::now(),
             },
         })
@@ -2414,12 +2592,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_lifecycle_settles_done_eof_error_and_drop_exactly_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("stream-lifecycle.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+    async fn terminal_usage_records_success_and_unknown_failure_exactly_once() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("terminal-usage.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
         let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Strict, Some(writer.clone()));
+            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()))
+                .with_usage_home(home.path())
+                .with_audit_context(ProviderCallAuditContext {
+                    source: Some("daemon_test"),
+                    call_type: Some("scheduled_test"),
+                    ..Default::default()
+                });
+
+        let success = SensitiveSuccessProvider {
+            calls: AtomicUsize::new(0),
+        };
+        CostAuthorizingProvider::new(&success, authorizer.clone(), None, "usage.success")
+            .complete(Request::default())
+            .await
+            .unwrap();
+
+        let failure = FailingProvider {
+            name: "openai_api",
+            calls: AtomicUsize::new(0),
+        };
+        CostAuthorizingProvider::new(&failure, authorizer, None, "usage.failure")
+            .complete(Request::default())
+            .await
+            .unwrap_err();
+
+        drop(writer);
+        join.await.unwrap();
+        let events = usage_events(home.path());
+        assert_eq!(events.len(), 2, "one usage row per concrete leaf attempt");
+        assert_ne!(events[0].invocation_id, events[1].invocation_id);
+
+        let success = &events[0];
+        assert_eq!(success.provider, "local_ouro");
+        assert_eq!(success.model, "ouro-test");
+        assert_eq!(success.input_tokens, Some(11));
+        assert_eq!(success.output_tokens, Some(5));
+        assert_eq!(success.cost_usd, Some(0.0));
+        assert_eq!(success.outcome.as_deref(), Some("complete"));
+        assert_eq!(success.source.as_deref(), Some("daemon_test"));
+        assert_eq!(success.call_type.as_deref(), Some("scheduled_test"));
+        assert!(success.automated);
+
+        let failure = &events[1];
+        assert_eq!(failure.provider, "openai_api");
+        assert_eq!(failure.model, "qwen-test");
+        assert_eq!(failure.input_tokens, None);
+        assert_eq!(failure.output_tokens, None);
+        assert_eq!(failure.cache_creation_tokens, None);
+        assert_eq!(failure.cache_read_tokens, None);
+        assert_eq!(failure.cost_usd, None);
+        assert_eq!(failure.outcome.as_deref(), Some("provider_call_failed"));
+        assert!(failure.automated);
+    }
+
+    #[tokio::test]
+    async fn stream_terminal_usage_records_done_error_and_cancellation_exactly_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("stream-lifecycle.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
+        let authorizer =
+            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Strict, Some(writer.clone()))
+                .with_usage_home(dir.path());
 
         for behavior in [StreamBehavior::Done, StreamBehavior::Eof] {
             let inner = ScriptedStreamProvider { behavior };
@@ -2482,6 +2727,78 @@ mod tests {
         assert!(!serialized.contains("secret-stream-body"));
         assert!(!serialized.contains("raw stream error"));
         assert!(!serialized.contains("secret-token"));
+
+        let events = usage_events(dir.path());
+        assert_eq!(events.len(), 4, "one usage row per stream leaf attempt");
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.outcome.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "stream_done",
+                "stream_eof",
+                "stream_error",
+                "stream_dropped"
+            ]
+        );
+        assert!(events.iter().all(|event| event.streaming));
+        assert!(events.iter().all(|event| event.automated));
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| event.invocation_id.as_deref())
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            4
+        );
+        assert_eq!(events[0].input_tokens, Some(7));
+        assert_eq!(events[0].output_tokens, Some(3));
+        assert_eq!(events[2].input_tokens, None);
+        assert_eq!(events[3].input_tokens, None);
+    }
+
+    #[tokio::test]
+    async fn terminal_wal_repairs_missing_usage_projection_idempotently() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let usage_blocker = crate::daemon::usage_log::usage_dir(home.path());
+        std::fs::write(&usage_blocker, b"not a directory").unwrap();
+        let segment = wal_dir.join("repair-usage.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+        let provider = SensitiveSuccessProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let authorized = CostAuthorizingProvider::new(
+            &provider,
+            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()))
+                .with_usage_home(home.path()),
+            None,
+            "usage.repair",
+        );
+
+        authorized.complete(Request::default()).await.unwrap();
+        drop(authorized);
+        drop(writer);
+        join.await.unwrap();
+        assert!(usage_blocker.is_file());
+
+        std::fs::remove_file(&usage_blocker).unwrap();
+        assert_eq!(
+            crate::daemon::usage_log::repair_from_terminal_wal(home.path()).unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::daemon::usage_log::repair_from_terminal_wal(home.path()).unwrap(),
+            0,
+            "replaying the same terminal WAL must not duplicate usage"
+        );
+        let events = usage_events(home.path());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].outcome.as_deref(), Some("complete"));
+        assert_eq!(events[0].provider, "local_ouro");
     }
 
     fn wal_frames(segment: &std::path::Path) -> Vec<(u8, serde_json::Value)> {
@@ -2502,6 +2819,30 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         frames
+    }
+
+    fn usage_events(home: &std::path::Path) -> Vec<crate::daemon::usage_log::UsageEvent> {
+        let dir = crate::daemon::usage_log::usage_dir(home);
+        if !dir.exists() {
+            return Vec::new();
+        }
+        let mut paths = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+            .into_iter()
+            .flat_map(|path| {
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     fn cost_payloads(segment: &std::path::Path) -> Vec<serde_json::Value> {
@@ -2909,6 +3250,34 @@ mod tests {
     }
 
     #[test]
+    fn reload_authorizers_bind_usage_to_the_explicit_instance_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            config_path,
+        ));
+        let daemon_home = dir.path().join("daemon-instance");
+        let daemon = ProviderCallAuthorizer::fail_closed_reload(
+            controller.clone(),
+            None,
+            daemon_home.clone(),
+        );
+        assert_eq!(daemon.usage_home.as_deref(), Some(daemon_home.as_path()));
+        assert!(daemon.usage_automated);
+
+        let channel_home = dir.path().join("channel-instance");
+        let channel = ProviderCallAuthorizer::channel_reload(
+            controller,
+            None,
+            Arc::new(ApprovingAsker),
+            channel_home.clone(),
+        );
+        assert_eq!(channel.usage_home.as_deref(), Some(channel_home.as_path()));
+        assert!(channel.usage_automated);
+    }
+
+    #[test]
     fn production_transports_cannot_override_the_safe_dispatch_entry() {
         fn production_prefix(source: &str) -> &str {
             source
@@ -3183,7 +3552,7 @@ mod tests {
             (
                 "cli/chat.rs",
                 4,
-                "18572e38504f96127275153ff8ddc45c04594a7e4cc836a8ce07cbf9b317fedf",
+                "52d9c5d586ebb480528a4568c3fbd26c08e51dd3aa5dde9cf8b14c1f9a973033",
             ),
             (
                 "cli/clarify_chat.rs",
@@ -3207,8 +3576,8 @@ mod tests {
             ),
             (
                 "cli/serve_pipeline.rs",
-                4,
-                "28ff0d668aa42a58de0f4b864301cdc8f17de4208f7e00ef4e1f7bad8889fea4",
+                5,
+                "e40ddccb850086dfeccf3805c24fea8a70242c05ad2adfb0314920c639d656f1",
             ),
             (
                 "cli/serve_tasks.rs",
@@ -3247,8 +3616,8 @@ mod tests {
             ),
             (
                 "cron/runner.rs",
-                1,
-                "d2e0210d08842997e1c3fd53c1c0cfc8148587bb6b8104dc20c0248d4cd031f9",
+                3,
+                "3f50cf36eb2cdbc5611b5a256bee6ffb74266caf898ec80b73d1b2d8d556b546",
             ),
             (
                 "daemon/arxiv_skill_scan_cron.rs",
@@ -3303,7 +3672,7 @@ mod tests {
             (
                 "n8n_api/handlers.rs",
                 1,
-                "b2e9872e4362336a8160589c76e8c9ba9abbcf5074598898fde9c98484414144",
+                "ce04a4c8a3960d940221d34d9d272b3b3a68aad8a4e26bc671594560185b5ca5",
             ),
             (
                 "profile/extract.rs",
@@ -3349,6 +3718,11 @@ mod tests {
                 "sub_agents/review.rs",
                 1,
                 "7fc2062a37c4b30a2c596b80599986da8dc18ddbe06736569a907d7fafabce2b",
+            ),
+            (
+                "sub_agents/runtime.rs",
+                2,
+                "d79a1dd97ccefa4848d6c439cb1997a24dfe14e2889f2abb4d74cc4859d5d03e",
             ),
             (
                 "tools/deep_research.rs",

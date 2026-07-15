@@ -19,7 +19,7 @@ that may have moved since:
 
 | If you want... | Pick |
 | :-- | :-- |
-| Maximum channel breadth and a Gateway-centric local assistant | OpenClaw |
+| Maximum ecosystem breadth and a Gateway-centric local assistant | OpenClaw |
 | A loyal buddy with evidence-backed memory, coding canvas/Kanban, fail-closed privacy, plugin caps, and private mesh | NEOTH |
 
 ## Capability comparison
@@ -28,7 +28,7 @@ that may have moved since:
 | :-- | :-- | :-- |
 | Product center | Buddy plus local operator runtime | Gateway plus channel-rich assistant |
 | Normal-user onboarding | GUI wizard and Doctor runbooks | CLI wizard plus companion apps (Windows Hub, macOS menu bar) |
-| Channel breadth | Focused 1.0 set: GUI, CLI, Telegram, WhatsApp, Slack, Discord | Very broad channel list |
+| Channel breadth | Canonical 15-adapter messaging registry shared by GUI and CLI: Telegram, Slack, WhatsApp Business, WhatsApp Web/Baileys, Keet-identity private topics, Discord, Signal, iMessage/BlueBubbles, Matrix, LINE, IRC, Mattermost, Twitch, Nostr, and Google Chat; plus CalDAV and source-build IMAP surfaces | Very broad channel list; capability details remain a point-in-time snapshot |
 | Memory | Five-tier memory + vault, with evidence, profile review, redaction semantics | Local workspace and memory files |
 | Coding workflow | Planning canvas, Kanban, repo memory, check loop | Canvas and agent actions |
 | Privacy proof | WAL, provider destinations, plugin hostcalls, profile evidence | Local-first control, but less memory-proof focused |

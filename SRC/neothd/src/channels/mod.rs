@@ -43,6 +43,11 @@ pub mod irc;
 /// compiled (carries no `irc` dependency); the connection adapter (`irc`) is
 /// behind the `irc-channel` feature.
 pub mod irc_api;
+/// Keet through the repository-owned, authenticated local companion. The
+/// adapter is always compiled; runtime capability negotiation rejects a
+/// missing, incompatible, or outbound-only companion.
+pub mod keet;
+pub mod keet_bridge;
 /// GOLD-FEAT-10 — LINE Messaging API adapter. Inbound rides the shared webhook
 /// listener (LINE pushes events to a public URL); outbound goes through the
 /// push REST endpoint. Zero extra deps (pure reqwest + serde) → always
@@ -73,6 +78,7 @@ pub mod nostr;
 pub mod nostr_api;
 pub mod probe;
 pub mod rate_limit;
+pub(crate) mod readiness;
 pub mod routing;
 pub mod send_gate;
 pub mod signal;
@@ -509,11 +515,6 @@ pub async fn send_canonical(
     chat_id: &str,
     reply: &formatter::CanonicalReply,
 ) -> std::result::Result<Vec<MessageId>, ChannelError> {
-    if kind == ChannelKind::Keet {
-        return Err(ChannelError::NotSupported {
-            feature: "keet (no supported public chat API)",
-        });
-    }
     match formatter::for_channel(kind) {
         Some(fmt) => {
             let chunks = fmt.format(reply);
@@ -1043,7 +1044,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_canonical_rejects_unavailable_keet_transport() {
+    async fn send_canonical_routes_through_keet_formatter() {
         let c = CapturingChannel {
             sent: std::sync::Mutex::new(Vec::new()),
         };
@@ -1055,11 +1056,13 @@ mod tests {
             }],
             length_hint: None,
         };
-        let error = send_canonical(&c, ChannelKind::Keet, "chat-1", &reply)
+        let ids = send_canonical(&c, ChannelKind::Keet, "chat-1", &reply)
             .await
-            .unwrap_err();
-        assert!(error.to_string().contains("no supported public chat API"));
-        assert!(c.sent.lock().unwrap().is_empty());
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+        let sent = c.sent.lock().unwrap();
+        assert!(sent[0].contains("plain *unescaped* body"));
+        assert!(sent[0].contains("```rust\nfn x() {}\n```"));
     }
 
     #[tokio::test]

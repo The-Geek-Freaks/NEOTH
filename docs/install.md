@@ -22,14 +22,14 @@ the verified release installer; Rust users may use
 > source checkout:
 
 ```bash
-git clone https://github.com/The-Geek-Freaks/NEOTH && cd NEOTH/SRC
-cargo install --locked --path neothd --features release-desktop
-cargo install --locked --path neothd-gui
-cargo install --locked --path neoth-migrate
-cargo install --locked --path neoth-relay
+git clone https://github.com/The-Geek-Freaks/NEOTH && cd NEOTH
+NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
 neoth --version
 neoth gui
 ```
+
+This all-components source path needs Node.js 22.16+ to compile the Keet
+standalone. Signed desktop archives already contain it and need no Node.js.
 
 If you only want the CLI/daemon path after install:
 
@@ -68,24 +68,32 @@ neoth doctor
 neoth gui
 ```
 
-Typical Linux/macOS layout:
+Typical Linux/macOS layout (the target-aware branch keeps the headless musl
+contract intact):
 
 ```bash
 mkdir -p ~/.local/bin
 TARGET=x86_64-unknown-linux-gnu  # choose the archive for your platform
 tar -xzf "neoth-v1.0.0-$TARGET.tar.gz"
-install -m 0755 "neoth-v1.0.0-$TARGET/neoth" ~/.local/bin/neoth
-install -m 0755 "neoth-v1.0.0-$TARGET/neothd" ~/.local/bin/neothd
-install -m 0755 "neoth-v1.0.0-$TARGET/neothd-gui" ~/.local/bin/neothd-gui
-install -m 0755 "neoth-v1.0.0-$TARGET/neoth-migrate" ~/.local/bin/neoth-migrate
-install -m 0755 "neoth-v1.0.0-$TARGET/neoth-relay" ~/.local/bin/neoth-relay
+for name in neoth neothd neoth-migrate neoth-relay; do
+  install -m 0755 "neoth-v1.0.0-$TARGET/$name" "$HOME/.local/bin/$name"
+done
+case "$TARGET" in
+  *-unknown-linux-musl) ;;
+  *)
+    for name in neothd-gui neoth-keet-bridge; do
+      install -m 0755 "neoth-v1.0.0-$TARGET/$name" "$HOME/.local/bin/$name"
+    done
+    ;;
+esac
 export PATH="$HOME/.local/bin:$PATH"
 neoth --version
 ```
 
-Desktop archives for GNU Linux, macOS, and Windows include all five
-executables. The static musl server archive is deliberately headless and omits
-only `neothd-gui`; use the CLI wizard there with `neoth init`.
+Desktop archives for GNU Linux, macOS, and Windows include all six executables,
+including the self-contained Keet companion. The static musl server archive is
+deliberately headless and omits `neothd-gui` plus the glibc-linked Keet
+companion; use the CLI wizard there with `neoth init`.
 
 ## Path C: Linux/macOS installer
 
@@ -102,29 +110,41 @@ NEOTH_VERSION=v1.0.0 bash <(curl -fsSL https://raw.githubusercontent.com/The-Gee
 ```
 
 The installer downloads the matching release archive, verifies its checksum,
-requires authenticity through installed `minisign` or `cosign`, requires
+and authenticates it through installed `minisign`, installed `cosign`, or a
+temporary Cosign verifier whose platform digest is pinned to the immutable
+official Sigstore source recorded in `packaging/cosign-bootstrap.json`. It requires
 `neoth`, the `neothd` compatibility launcher, `neoth-migrate`,
-`neoth-relay`, `freedom.yaml.example`, and `neothd-gui` on desktop targets,
-installs the complete set transactionally, wires the install directory into the
-detected user shell profile, and avoids sudo. The profile change applies to new
+`neoth-relay`, `freedom.yaml.example`, and `neothd-gui` plus
+`neoth-keet-bridge` on desktop targets, validates the companion against the
+exact release version before mutation, installs the complete set transactionally,
+wires the install directory into the detected user shell profile, and avoids
+sudo. The profile change applies to new
 shells; for the current shell run:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-With neither verifier installed the installer refuses to proceed. The explicit
-`NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` override is only for an archive whose
-authenticity you verified out of band; it never disables SHA-256 checking and
-cannot bypass a failed signature. The minisign path also requires the globally
+No verifier has to be preinstalled. A wrong bootstrap-verifier digest blocks
+execution and cannot be overridden. The explicit
+`NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` override is only for the case where the
+temporary verifier cannot be downloaded and the archive was authenticated out
+of band; it never disables archive SHA-256 checking and cannot bypass a failed
+signature. The minisign path also requires the globally
 signed trusted comment to equal `file:<downloaded-archive>` exactly, preventing
 a valid signature from being replayed under another release asset name.
 
 ## Path D: Windows installer
 
-> Available only after the first compatible signed Windows archive exists.
+> Available only after the first compatible signed Windows release exists.
 
-PowerShell:
+Recommended: download and double-click `NEOTH-1.0.0-x64-Setup.exe` (or
+`NEOTH-1.0.0-arm64-Setup.exe`) from the GitHub Releases page. The installer is
+Authenticode-signed by the release pipeline, validates its payload before any
+mutation, installs the CLI, GUI, migration, relay, and Keet companions, wires
+the user PATH, and supports clean rollback/uninstall.
+
+Non-interactive PowerShell alternative:
 
 ```powershell
 irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
@@ -138,10 +158,13 @@ neoth doctor
 neoth gui
 ```
 
-The PowerShell installer applies the install directory to both the real user
+The PowerShell installer needs no preinstalled signature utility. It applies the install directory to both the real user
 PATH and the current process PATH, without copying system PATH entries into the
 user value. It enforces the same minisign/cosign and transactional replacement
 contract as the Unix installer.
+It also starts the packaged Keet standalone in a hidden console for an exact
+pre-install version check; a missing, broken, or mixed-version companion blocks
+the transaction before the public `neoth.exe` commit point.
 
 ## Path E: build from source
 
@@ -153,6 +176,15 @@ cargo install --locked --path neothd --features release-desktop
 cargo install --locked --path neothd-gui
 cargo install --locked --path neoth-migrate
 cargo install --locked --path neoth-relay
+cd ../bridges/keet
+corepack prepare pnpm@10.32.1 --activate
+corepack pnpm install --frozen-lockfile
+corepack pnpm run check
+corepack pnpm test
+corepack pnpm run make
+KEET_HOST="$(node -p "process.platform === 'darwin' ? 'darwin-' + (process.arch === 'x64' ? 'x64' : 'arm64') : 'linux-' + (process.arch === 'x64' ? 'x64' : 'arm64')")"
+mkdir -p ~/.local/bin
+install -m 0755 "out/$KEET_HOST/neoth-keet-bridge" ~/.local/bin/neoth-keet-bridge
 ```
 
 The named `release-desktop` / `release-server` bundles intentionally omit the
@@ -191,11 +223,12 @@ If `cargo` uses the GNU target, plugin registration can compile but fail at runt
 | :-- | :-- | :-- |
 | OS | Linux, macOS, Windows | Recent Linux/macOS/Windows 11 |
 | Rust | 1.86+ for source builds | Latest stable |
+| Node.js | 22.16+ only for building the Keet companion from source | 22 LTS; release archives need no Node.js |
 | Disk | 2 GB | 10+ GB if using local models and document indexes |
 | RAM | 4 GB | 8-32 GB depending on local models |
 | GPU | Optional | NVIDIA/CUDA, ROCm, or Apple Silicon for local model speed |
 | Network | Optional for local-only memory | Required for cloud providers, updates, channels, mesh |
-| Release verifier | `minisign` or `cosign` for binary installers | `minisign` |
+| Release verifier | None; binary installers bootstrap a digest-pinned temporary Cosign if needed | Optional installed `minisign` or `cosign` |
 
 ## Optional dependencies
 
@@ -252,7 +285,8 @@ cargo uninstall neothd-gui || true
 cargo uninstall neoth-migrate || true
 cargo uninstall neoth-relay || true
 rm -f ~/.local/bin/neoth ~/.local/bin/neothd ~/.local/bin/neothd-gui \
-  ~/.local/bin/neoth-migrate ~/.local/bin/neoth-relay
+  ~/.local/bin/neoth-migrate ~/.local/bin/neoth-relay \
+  ~/.local/bin/neoth-keet-bridge
 ```
 
 Remove local state only if you intentionally want to delete memory:

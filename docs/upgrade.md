@@ -2,8 +2,9 @@
 
 The `neoth` core is self-contained; desktop release archives also ship the
 `neothd` compatibility launcher, `neothd-gui`, `neoth-migrate`, and
-`neoth-relay`. State lives under `~/.neoth/`. Upgrades are designed to be safe
-and in-place: your memory, config, and audit log survive across versions.
+`neoth-relay`, plus the self-contained `neoth-keet-bridge`. State lives under
+`~/.neoth/`. Upgrades are designed to be safe and in-place: your memory, config,
+and audit log survive across versions.
 
 > New install instead? See [install.md](install.md) /
 > [getting-started.md](getting-started.md).
@@ -34,7 +35,8 @@ neoth doctor
    action for a trusted non-release build.
 4. **Bundle preflight** — every companion currently installed beside `neoth`
    must exist in the same verified archive before any executable is touched.
-   Source-only core installations remain core-only.
+   This includes `neoth-keet-bridge`; source-only core installations remain
+   core-only.
 5. **Transactional replace** — companions are backed up and replaced first;
    `neoth` is the commit point and moves last. A partial failure restores prior
    executables in reverse order. Backups use `*.bak.<timestamp>` names.
@@ -49,7 +51,8 @@ any of them invalidates a previously staged artifact and forces a fresh fetch.
 
 ## Manual upgrade (download yourself)
 
-1. Stop the daemon (`neoth serve` → Ctrl-C, or your service manager).
+1. Stop the daemon (`neoth serve` → Ctrl-C, or your service manager) and any
+   running `neoth-keet-bridge` process so every executable can be replaced.
 2. Prefer the current binary installer, which verifies and replaces the whole
    installed bundle. If replacing manually, update `neoth` and every installed
    companion from the **same** platform archive; never mix release versions.

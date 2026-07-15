@@ -15,6 +15,7 @@ use super::SubAgent;
 use super::parallel::SubAgentWorker;
 use super::schema::{SubAgentProviderCall, SubAgentRequest, SubAgentResult};
 use crate::council::qa_verdict::QaVerdict;
+use crate::providers::cost_authorization::AuthorizedProvider;
 use crate::providers::{Completion, Provider, Request};
 use crate::wal::writer::WalWriterHandle;
 
@@ -36,7 +37,7 @@ pub struct QaCallOutcome {
 /// Host tools are deliberately absent on this bounded CLI path; the system
 /// prompt says so explicitly instead of letting a model fabricate tool use.
 pub struct ProviderSubAgentWorker {
-    provider: Arc<dyn Provider>,
+    provider: Arc<AuthorizedProvider>,
     agents: HashMap<String, SubAgent>,
     retry_failed: bool,
     writer: WalWriterHandle,
@@ -44,7 +45,7 @@ pub struct ProviderSubAgentWorker {
 
 impl ProviderSubAgentWorker {
     pub fn new(
-        provider: Arc<dyn Provider>,
+        provider: Arc<AuthorizedProvider>,
         agents: impl IntoIterator<Item = SubAgent>,
         retry_failed: bool,
         writer: WalWriterHandle,
@@ -287,7 +288,7 @@ fn qa_prompt(request: &SubAgentRequest, candidate: &str) -> Result<String> {
 }
 
 pub async fn request_qa_verdict(
-    provider: &dyn Provider,
+    provider: &AuthorizedProvider,
     request: &SubAgentRequest,
     candidate: &str,
     model: Option<String>,
@@ -566,7 +567,7 @@ mod tests {
         writer
     }
 
-    fn authorized(raw: Arc<QaScriptProvider>) -> Arc<dyn Provider> {
+    fn authorized(raw: Arc<QaScriptProvider>) -> Arc<AuthorizedProvider> {
         Arc::new(AuthorizedProvider::from_arc(
             raw,
             ProviderCallAuthorizer::test_only(crate::permissions::AutonomyLevel::Full),

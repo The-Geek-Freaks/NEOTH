@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
 use super::{
-    InitArgs, OnboardingMode, WizardModeChoice, WizardState, WizardStep, print_gui_handoff_banner,
+    InitArgs, OnboardingMode, WizardModeChoice, WizardState, WizardStep,
     write_detect_complete_sidecar,
 };
 
@@ -21,18 +21,47 @@ use super::{
 /// always pick CLI silently — there's no operator to ask, and the
 /// scripted flow IS the API surface they want. Operators who want
 /// to script the GUI install pass `--gui` to skip the prompt.
-pub(crate) fn step0_mode_selection(args: &InitArgs, interactive: bool) -> Result<WizardModeChoice> {
+pub(crate) fn step0_mode_selection(
+    args: &InitArgs,
+    interactive: bool,
+    neoth_home: &std::path::Path,
+) -> Result<WizardModeChoice> {
+    let explicit_env = explicit_interface_from_env()?;
+    let headless = crate::wizard::env_probe::probe_and_classify().is_headless();
+    step0_mode_selection_with_env(args, interactive, neoth_home, explicit_env, headless)
+}
+
+fn step0_mode_selection_with_env(
+    args: &InitArgs,
+    interactive: bool,
+    neoth_home: &std::path::Path,
+    explicit_env: Option<crate::interface_preference::InterfacePreference>,
+    headless: bool,
+) -> Result<WizardModeChoice> {
     debug!("wizard step 0: mode selection");
     if args.gui {
-        print_gui_handoff_banner();
         return Ok(WizardModeChoice::Gui);
     }
     if args.cli {
-        // Operator explicitly opted out of the mode picker.
+        persist_cli_choice_unless_dry_run(args, neoth_home)?;
         return Ok(WizardModeChoice::Cli);
     }
-    if !interactive {
+    if let Some(preferred) = explicit_env {
+        if preferred == crate::interface_preference::InterfacePreference::Cli {
+            persist_cli_choice_unless_dry_run(args, neoth_home)?;
+        }
+        return Ok(preferred.into());
+    }
+    if !interactive || headless {
+        // Headless and scripted installs never block on a UI question. This is
+        // an execution fallback, not an operator choice, so it deliberately
+        // ignores a stored desktop GUI default and does not consume the one-
+        // time prompt. `--gui` / `NEOTH_INTERFACE=gui` remain explicit escape
+        // hatches for controlled display-bearing automation.
         return Ok(WizardModeChoice::Cli);
+    }
+    if let Some(preferred) = crate::interface_preference::load_at(neoth_home)? {
+        return Ok(preferred.into());
     }
 
     println!();
@@ -60,11 +89,11 @@ pub(crate) fn step0_mode_selection(args: &InitArgs, interactive: bool) -> Result
             .interact()
             .context("mode-selection prompt")?;
         match picked {
-            0 => {
-                print_gui_handoff_banner();
-                Ok(WizardModeChoice::Gui)
+            0 => Ok(WizardModeChoice::Gui),
+            _ => {
+                persist_cli_choice_unless_dry_run(args, neoth_home)?;
+                Ok(WizardModeChoice::Cli)
             }
-            _ => Ok(WizardModeChoice::Cli),
         }
     }
     #[cfg(not(feature = "wizard"))]
@@ -74,6 +103,25 @@ pub(crate) fn step0_mode_selection(args: &InitArgs, interactive: bool) -> Result
         let _ = args;
         Ok(WizardModeChoice::Cli)
     }
+}
+
+fn explicit_interface_from_env() -> Result<Option<crate::interface_preference::InterfacePreference>>
+{
+    match std::env::var("NEOTH_INTERFACE") {
+        Ok(raw) if !raw.trim().is_empty() => raw.parse().map(Some),
+        Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error).context("read NEOTH_INTERFACE"),
+    }
+}
+
+fn persist_cli_choice_unless_dry_run(args: &InitArgs, neoth_home: &std::path::Path) -> Result<()> {
+    if !args.dry_run {
+        crate::interface_preference::save_at(
+            neoth_home,
+            crate::interface_preference::InterfacePreference::Cli,
+        )?;
+    }
+    Ok(())
 }
 
 pub(crate) fn step1_license(
@@ -380,4 +428,131 @@ pub(crate) fn step1d_onboarding_mode(
         (OnboardingMode::New, false) => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod interface_tests {
+    use super::*;
+    use crate::interface_preference::InterfacePreference;
+
+    #[test]
+    fn explicit_cli_is_persisted_and_reused_without_a_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = InitArgs {
+            cli: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            step0_mode_selection_with_env(&args, false, dir.path(), None, false).unwrap(),
+            WizardModeChoice::Cli
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(dir.path()).unwrap(),
+            Some(InterfacePreference::Cli)
+        );
+
+        let args = InitArgs::default();
+        assert_eq!(
+            step0_mode_selection_with_env(&args, false, dir.path(), None, false).unwrap(),
+            WizardModeChoice::Cli
+        );
+    }
+
+    #[test]
+    fn stored_gui_choice_is_reused_on_desktop_but_headless_stays_cli() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::interface_preference::save_at(dir.path(), InterfacePreference::Gui).unwrap();
+        assert_eq!(
+            step0_mode_selection_with_env(&InitArgs::default(), true, dir.path(), None, false)
+                .unwrap(),
+            WizardModeChoice::Gui
+        );
+
+        assert_eq!(
+            step0_mode_selection_with_env(&InitArgs::default(), false, dir.path(), None, false)
+                .unwrap(),
+            WizardModeChoice::Cli
+        );
+        assert_eq!(
+            step0_mode_selection_with_env(&InitArgs::default(), true, dir.path(), None, true)
+                .unwrap(),
+            WizardModeChoice::Cli,
+            "an SSH/headless TTY must not launch the stored GUI default"
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(dir.path()).unwrap(),
+            Some(InterfacePreference::Gui),
+            "headless fallback must not overwrite the desktop preference"
+        );
+
+        let fresh = tempfile::tempdir().unwrap();
+        assert_eq!(
+            step0_mode_selection_with_env(&InitArgs::default(), false, fresh.path(), None, false)
+                .unwrap(),
+            WizardModeChoice::Cli
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(fresh.path()).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn environment_override_is_explicit_and_dry_run_never_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let dry = InitArgs {
+            dry_run: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            step0_mode_selection_with_env(
+                &dry,
+                false,
+                dir.path(),
+                Some(InterfacePreference::Cli),
+                false,
+            )
+            .unwrap(),
+            WizardModeChoice::Cli
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(dir.path()).unwrap(),
+            None
+        );
+
+        let real = InitArgs::default();
+        assert_eq!(
+            step0_mode_selection_with_env(
+                &real,
+                false,
+                dir.path(),
+                Some(InterfacePreference::Cli),
+                false,
+            )
+            .unwrap(),
+            WizardModeChoice::Cli
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(dir.path()).unwrap(),
+            Some(InterfacePreference::Cli)
+        );
+    }
+
+    #[test]
+    fn gui_choice_is_committed_only_by_the_successful_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = InitArgs {
+            gui: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            step0_mode_selection_with_env(&args, false, dir.path(), None, false).unwrap(),
+            WizardModeChoice::Gui
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(dir.path()).unwrap(),
+            None
+        );
+    }
 }

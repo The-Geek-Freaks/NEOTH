@@ -41,6 +41,9 @@ pub fn render_cli_reference(root: &Command) -> String {
     for sub in subs {
         render_command(&mut out, "neoth", sub, 2);
     }
+    let content_len = out.trim_end_matches('\n').len();
+    out.truncate(content_len);
+    out.push('\n');
     out
 }
 
@@ -236,6 +239,13 @@ mod tests {
         // Two renders must be byte-identical (the drift test relies on
         // this). Catches any HashMap-iteration-order leak.
         assert_eq!(reference(), reference());
+    }
+
+    #[test]
+    fn reference_ends_with_exactly_one_newline() {
+        let md = reference();
+        assert!(md.ends_with('\n'));
+        assert!(!md.ends_with("\n\n"));
     }
 
     /// DOC-01 anti-drift guard. The committed `docs/cli-commands.md` MUST

@@ -3,11 +3,14 @@
 # install.sh — NEOTH bootstrap installer for Linux + macOS
 # ─────────────────────────────────────────────────────────────────────────────
 # Downloads the published `neoth` binary from the GitHub Releases page,
-# verifies its SHA256 and mandatory release authenticity via minisign or cosign,
+# verifies its SHA256 and mandatory release authenticity via minisign or a
+# temporary, digest-pinned cosign bootstrap,
 # installs to `~/.local/bin/neoth` (or
 # `$NEOTH_INSTALL_DIR` if set), copies `freedom.yaml.example` next to it,
-# installs the `neothd` compatibility executable, migration/relay companion
-# tools, installs `neothd-gui` on desktop release targets, and prints next steps.
+# installs the `neothd` compatibility executable, migration/relay/Keet
+# companions, installs `neothd-gui` on desktop release targets, and prints next
+# steps. The explicitly headless musl archive omits GUI and Keet because the
+# standalone Bare runtime is glibc-linked.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
@@ -34,6 +37,15 @@ RELEASES_URL="https://github.com/The-Geek-Freaks/NEOTH/releases"
 RELEASES_API_URL="https://api.github.com/repos/The-Geek-Freaks/NEOTH/releases"
 PINNED_MINISIGN_PUBKEY="RWQa0n4hqyE1huqkKoU+4aUs+YjbMiWabY4MwnwIafb79dWiSLV7qGBi"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+# Digests are copied from sigstore/cosign-installer action.yml at the immutable
+# source commit recorded in packaging/cosign-bootstrap.json. The downloaded
+# verifier lives only in this installer's temporary directory.
+COSIGN_BOOTSTRAP_VERSION="v3.0.6"
+COSIGN_BOOTSTRAP_LINUX_AMD64_SHA256="c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74"
+COSIGN_BOOTSTRAP_LINUX_ARM64_SHA256="bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8"
+COSIGN_BOOTSTRAP_DARWIN_AMD64_SHA256="4c3e7af8372d3ca3296e62fa56f23fcbb5721cc6ac1827900d398f110d7cd280"
+COSIGN_BOOTSTRAP_DARWIN_ARM64_SHA256="5fadd012ae6381a6a29ff86a7d39aa873878852f1073fc90b15995961ecfb084"
+COSIGN_VERIFIER=""
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -60,12 +72,82 @@ validate_release_tag() {
     fi
 }
 
+sha256_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        err "neither sha256sum nor shasum found — cannot verify downloaded bytes"
+    fi
+}
+
+resolve_cosign_verifier() {
+    local os arch filename expected path got
+
+    if command -v cosign >/dev/null 2>&1; then
+        COSIGN_VERIFIER="$(command -v cosign)"
+        return
+    fi
+
+    os="$(uname -s)"
+    arch="$(uname -m)"
+    case "$os-$arch" in
+        Linux-x86_64)
+            filename="cosign-linux-amd64"
+            expected="$COSIGN_BOOTSTRAP_LINUX_AMD64_SHA256"
+            ;;
+        Linux-aarch64|Linux-arm64)
+            filename="cosign-linux-arm64"
+            expected="$COSIGN_BOOTSTRAP_LINUX_ARM64_SHA256"
+            ;;
+        Darwin-x86_64)
+            filename="cosign-darwin-amd64"
+            expected="$COSIGN_BOOTSTRAP_DARWIN_AMD64_SHA256"
+            ;;
+        Darwin-arm64|Darwin-aarch64)
+            filename="cosign-darwin-arm64"
+            expected="$COSIGN_BOOTSTRAP_DARWIN_ARM64_SHA256"
+            ;;
+        *)
+            err "no digest-pinned cosign bootstrap for $os-$arch"
+            ;;
+    esac
+
+    path="$TMP/$filename"
+    info "→ downloading digest-pinned cosign $COSIGN_BOOTSTRAP_VERSION verifier"
+    if ! curl --retry 3 --retry-delay 1 --connect-timeout 20 \
+        --proto '=https' --proto-redir '=https' -fsSL \
+        "https://github.com/sigstore/cosign/releases/download/$COSIGN_BOOTSTRAP_VERSION/$filename" \
+        -o "$path"; then
+        if [ "$NEOTH_ALLOW_UNVERIFIED_RECOVERY" = "1" ]; then
+            printf '\nWARNING: NEOTH_ALLOW_UNVERIFIED_RECOVERY=1\n' >&2
+            printf 'The digest-pinned cosign verifier could not be downloaded. Authenticity was NOT verified.\n' >&2
+            printf 'Use this recovery path only for an archive you authenticated out of band.\n\n' >&2
+            COSIGN_VERIFIER=""
+            return
+        fi
+        err "failed to download digest-pinned cosign verifier"
+    fi
+
+    got="$(sha256_file "$path")"
+    if [ "$got" != "$expected" ]; then
+        err "bootstrap cosign SHA256 mismatch: expected $expected, got $got — refusing to execute it"
+    fi
+    chmod 700 "$path"
+    COSIGN_VERIFIER="$path"
+    info "✓ digest-pinned cosign verifier ready ($got)"
+}
+
 verify_release_authenticity() {
     local archive_path="$1" signature_path="$2" bundle_path="$3"
     local certificate_identity trusted_count
     certificate_identity="https://github.com/The-Geek-Freaks/NEOTH/.github/workflows/release.yml@refs/tags/$VERSION"
 
-    curl -fsSL "$BASE_URL/$SIGNATURE" -o "$signature_path" \
+    curl --retry 3 --retry-delay 1 --connect-timeout 20 \
+        --proto '=https' --proto-redir '=https' -fsSL \
+        "$BASE_URL/$SIGNATURE" -o "$signature_path" \
         || err "failed to download mandatory signature $BASE_URL/$SIGNATURE"
 
     if command -v minisign >/dev/null 2>&1; then
@@ -82,11 +164,14 @@ verify_release_authenticity() {
         return
     fi
 
-    if command -v cosign >/dev/null 2>&1; then
-        curl -fsSL "$BASE_URL/$COSIGN_BUNDLE" -o "$bundle_path" \
+    resolve_cosign_verifier
+    if [ -n "$COSIGN_VERIFIER" ]; then
+        curl --retry 3 --retry-delay 1 --connect-timeout 20 \
+            --proto '=https' --proto-redir '=https' -fsSL \
+            "$BASE_URL/$COSIGN_BUNDLE" -o "$bundle_path" \
             || err "failed to download $BASE_URL/$COSIGN_BUNDLE"
         info "→ verifying exact cosign workflow identity"
-        cosign verify-blob \
+        "$COSIGN_VERIFIER" verify-blob \
             --bundle "$bundle_path" \
             --certificate-identity "$certificate_identity" \
             --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
@@ -97,13 +182,10 @@ verify_release_authenticity() {
     fi
 
     if [ "$NEOTH_ALLOW_UNVERIFIED_RECOVERY" = "1" ]; then
-        printf '\nWARNING: NEOTH_ALLOW_UNVERIFIED_RECOVERY=1\n' >&2
-        printf 'No minisign or cosign executable is available. Authenticity was NOT verified.\n' >&2
-        printf 'Use this recovery path only for an archive you authenticated out of band.\n\n' >&2
         return
     fi
 
-    err "no authenticity verifier found; install minisign or cosign (emergency only: NEOTH_ALLOW_UNVERIFIED_RECOVERY=1)"
+    err "digest-pinned cosign verifier was not available (emergency only: NEOTH_ALLOW_UNVERIFIED_RECOVERY=1)"
 }
 
 detect_target() {
@@ -146,13 +228,7 @@ verify_sha256_sidecar() {
     [ "${BASH_REMATCH[2]}" = "$expected_asset" ] \
         || err "checksum sidecar names '${BASH_REMATCH[2]}', expected '$expected_asset'"
 
-    if command -v sha256sum >/dev/null 2>&1; then
-        got="$(sha256sum "$file" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-        got="$(shasum -a 256 "$file" | awk '{print $1}')"
-    else
-        err "neither sha256sum nor shasum found — cannot verify checksum"
-    fi
+    got="$(sha256_file "$file")"
     if [ "$got" != "$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')" ]; then
         err "SHA256 mismatch: expected $expected, got $got — refusing to install"
     fi
@@ -167,11 +243,14 @@ require_cmd install
 require_cmd sed
 require_cmd awk
 require_cmd tr
+require_cmd chmod
 
 TARGET="$(detect_target)"
 if [ "$NEOTH_VERSION" = "latest" ]; then
     info "→ resolving latest published release"
-    VERSION="$(curl -fsSL "$RELEASES_API_URL/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+    VERSION="$(curl --retry 3 --retry-delay 1 --connect-timeout 20 \
+        --proto '=https' --proto-redir '=https' -fsSL "$RELEASES_API_URL/latest" \
+        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
     [ -n "$VERSION" ] || err "could not resolve the latest GitHub release tag"
 else
     VERSION="$NEOTH_VERSION"
@@ -184,7 +263,7 @@ info "→ install dir: $NEOTH_INSTALL_DIR"
 # Release workflow naming (see .github/workflows/release.yml):
 #   neoth-<version>-<target>.tar.gz
 #   neoth-<version>-<target>.tar.gz.sha256
-#   neoth-<version>-<target>.tar.gz.cosign.bundle  (optional verify)
+#   neoth-<version>-<target>.tar.gz.cosign.bundle  (mandatory without minisign)
 BASE_URL="$RELEASES_URL/download/$VERSION"
 ARCHIVE="neoth-$VERSION-$TARGET.tar.gz"
 CHECKSUM="$ARCHIVE.sha256"
@@ -195,9 +274,13 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 info "→ downloading $ARCHIVE"
-curl -fsSL "$BASE_URL/$ARCHIVE" -o "$TMP/$ARCHIVE" \
+curl --retry 3 --retry-delay 1 --connect-timeout 20 \
+    --proto '=https' --proto-redir '=https' -fsSL \
+    "$BASE_URL/$ARCHIVE" -o "$TMP/$ARCHIVE" \
     || err "failed to download $BASE_URL/$ARCHIVE"
-curl -fsSL "$BASE_URL/$CHECKSUM" -o "$TMP/$CHECKSUM" \
+curl --retry 3 --retry-delay 1 --connect-timeout 20 \
+    --proto '=https' --proto-redir '=https' -fsSL \
+    "$BASE_URL/$CHECKSUM" -o "$TMP/$CHECKSUM" \
     || err "failed to download $BASE_URL/$CHECKSUM"
 
 verify_sha256_sidecar "$TMP/$ARCHIVE" "$TMP/$CHECKSUM" "$ARCHIVE"
@@ -223,14 +306,34 @@ MIGRATE_SRC="$TMP/$ARCHIVE_NAME/neoth-migrate"
 RELAY_SRC="$TMP/$ARCHIVE_NAME/neoth-relay"
 [ -f "$RELAY_SRC" ] || RELAY_SRC="$TMP/neoth-relay"
 [ -f "$RELAY_SRC" ] || err "release archive is missing neoth-relay"
+KEET_SRC="$TMP/$ARCHIVE_NAME/neoth-keet-bridge"
+[ -f "$KEET_SRC" ] || KEET_SRC="$TMP/neoth-keet-bridge"
 GUI_SRC="$TMP/$ARCHIVE_NAME/neothd-gui"
 [ -f "$GUI_SRC" ] || GUI_SRC="$TMP/neothd-gui"
 GUI_REQUIRED=1
+KEET_REQUIRED=1
 case "$TARGET" in
-    *-unknown-linux-musl) GUI_REQUIRED=0 ;;
+    *-unknown-linux-musl)
+        GUI_REQUIRED=0
+        KEET_REQUIRED=0
+        # The musl contract is deliberately headless. Ignore even an
+        # unexpected companion file so a malformed archive cannot smuggle a
+        # glibc-linked executable past the target preflight.
+        KEET_SRC=""
+        ;;
 esac
 if [ "$GUI_REQUIRED" = "1" ] && [ ! -f "$GUI_SRC" ]; then
     err "desktop release archive is missing neothd-gui"
+fi
+if [ "$KEET_REQUIRED" = "1" ] && [ ! -f "$KEET_SRC" ]; then
+    err "desktop release archive is missing neoth-keet-bridge"
+fi
+if [ "$KEET_REQUIRED" = "1" ]; then
+    [ -x "$KEET_SRC" ] || err "neoth-keet-bridge in release archive is not executable"
+    KEET_VERSION="$("$KEET_SRC" --version)" \
+        || err "could not execute neoth-keet-bridge version preflight"
+    [ "$KEET_VERSION" = "${VERSION#v}" ] \
+        || err "neoth-keet-bridge version $KEET_VERSION does not match release ${VERSION#v}"
 fi
 
 # The example config is part of the release contract. A missing source is a
@@ -241,6 +344,9 @@ EXAMPLE_SRC="$TMP/$ARCHIVE_NAME/freedom.yaml.example"
 IMPORT_EXAMPLE_SRC="$TMP/$ARCHIVE_NAME/import-manifest.example.yaml"
 [ -f "$IMPORT_EXAMPLE_SRC" ] || IMPORT_EXAMPLE_SRC="$TMP/import-manifest.example.yaml"
 [ -f "$IMPORT_EXAMPLE_SRC" ] || err "release archive is missing import-manifest.example.yaml"
+THIRD_PARTY_SRC="$TMP/$ARCHIVE_NAME/THIRD_PARTY_LICENSES"
+[ -f "$THIRD_PARTY_SRC" ] || THIRD_PARTY_SRC="$TMP/THIRD_PARTY_LICENSES"
+[ -f "$THIRD_PARTY_SRC" ] || err "release archive is missing THIRD_PARTY_LICENSES"
 
 # Stage the complete payload on the destination filesystem, replace companions
 # before the public entrypoint, and roll back in reverse order on any failure.
@@ -257,9 +363,14 @@ transactional_install() {
     backup="$stage/backup"
     mkdir -p "$payload" "$backup"
 
-    names=("neothd" "neoth-migrate" "neoth-relay")
-    sources=("$COMPAT_SRC" "$MIGRATE_SRC" "$RELAY_SRC")
-    modes=("0755" "0755" "0755")
+    names=("neothd" "neoth-migrate" "neoth-relay" "THIRD_PARTY_LICENSES")
+    sources=("$COMPAT_SRC" "$MIGRATE_SRC" "$RELAY_SRC" "$THIRD_PARTY_SRC")
+    modes=("0755" "0755" "0755" "0644")
+    if [ -f "$KEET_SRC" ]; then
+        names+=("neoth-keet-bridge")
+        sources+=("$KEET_SRC")
+        modes+=("0755")
+    fi
     if [ -f "$GUI_SRC" ]; then
         names+=("neothd-gui")
         sources+=("$GUI_SRC")
@@ -344,8 +455,18 @@ else
     info "→ this Linux server target is CLI-only; build neothd-gui from source for a desktop session"
 fi
 
+KEET_INSTALLED=0
+if [ -f "$KEET_SRC" ]; then
+    KEET_INSTALLED=1
+else
+    info "→ this musl server target omits the glibc-linked Keet companion"
+fi
+
 info ""
 info "✓ neoth installed: $NEOTH_INSTALL_DIR/neoth"
+if [ "$KEET_INSTALLED" = "1" ]; then
+    info "✓ Keet companion installed: $NEOTH_INSTALL_DIR/neoth-keet-bridge"
+fi
 info ""
 
 # Wire a durable user-shell PATH entry idempotently. A piped installer cannot
@@ -381,3 +502,6 @@ else
 fi
 info "  2. Or copy the example config: cp $NEOTH_INSTALL_DIR/freedom.yaml.example ~/.neoth/freedom.yaml"
 info "  3. Start the daemon:           $NEOTH_INSTALL_DIR/neoth serve"
+if [ "$KEET_INSTALLED" = "1" ]; then
+    info "  4. To enable the Keet channel: $NEOTH_INSTALL_DIR/neoth-keet-bridge setup"
+fi

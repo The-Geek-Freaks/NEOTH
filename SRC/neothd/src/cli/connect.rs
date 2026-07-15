@@ -1,22 +1,15 @@
 //! UX-01 — `neoth connect`: operator-facing channel on-ramp discovery.
 //!
 //! The post-wizard "how do I hook up Telegram / Slack / WhatsApp?"
-//! entry point. Read-only: loads `~/.neoth/credentials.yaml`, reports
-//! each credential-backed channel's connection status + the one-line
-//! steps to connect the ones that aren't wired yet. `neoth channel`
-//! (hidden) stays the operational add/test/remove surface; this is the
-//! friendly discovery layer a fresh operator reaches for.
-//!
-//! Status classification mirrors `cli::doctor::check_channels_wiring`
-//! exactly (same credential fields) so the two never disagree — the
-//! difference is that `connect` ALSO lists not-yet-configured channels
-//! with their on-ramp, whereas doctor stays silent on those.
+//! entry point. It is intentionally a presentation-only adapter over the
+//! canonical `neoth channel list/add/test/remove` contract; it owns no second
+//! channel registry or readiness predicates.
 
 use anyhow::Result;
 use clap::Args;
 
+use crate::channels::probe::{ALL_CHANNELS, ProbeStatus};
 use crate::cli::OutputFormat;
-use crate::config::credentials::Credentials;
 
 #[derive(Args, Debug, Clone)]
 pub struct ConnectArgs {
@@ -28,35 +21,32 @@ pub struct ConnectArgs {
     pub output: OutputFormat,
 }
 
-/// Connection state of one channel, derived purely from which
-/// credentials are present.
+/// Friendly projection of the canonical static channel probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectStatus {
-    /// All credentials for full send + receive are present.
+    /// All static requirements are present. Live reachability still requires
+    /// `neoth channel test <name>`.
     Connected,
     /// Some credentials present but not enough for live inbound
     /// (e.g. WhatsApp outbound-only, Slack missing one token).
     Partial,
     /// No credentials configured for this channel.
     NotConnected,
-    /// Channel implementation exists but is not credentials.yaml-backed yet.
-    Experimental,
-    /// Known product name, but no supported upstream API/adapter exists.
+    /// The canonical registry explicitly marks this adapter unavailable.
     Unavailable,
 }
 
 impl ConnectStatus {
     pub fn label(self) -> &'static str {
         match self {
-            ConnectStatus::Connected => "connected",
-            ConnectStatus::Partial => "partial",
-            ConnectStatus::NotConnected => "not connected",
-            ConnectStatus::Experimental => "experimental",
+            ConnectStatus::Connected => "configured",
+            ConnectStatus::Partial => "needs_attention",
+            ConnectStatus::NotConnected => "not_configured",
             ConnectStatus::Unavailable => "unavailable",
         }
     }
 
-    /// Counts toward the "N of M connected" summary.
+    /// Counts toward the "N of M statically ready" summary.
     fn is_connected(self) -> bool {
         matches!(self, ConnectStatus::Connected)
     }
@@ -67,189 +57,104 @@ impl ConnectStatus {
 pub struct ChannelRow {
     pub name: &'static str,
     pub status: ConnectStatus,
-    /// Short status note (what works / what's missing).
+    /// Canonical probe detail (what is set / missing; never a secret value).
     pub note: String,
     /// One-line on-ramp shown in the table.
-    pub onramp: &'static str,
+    pub onramp: String,
 }
 
-/// Build the channel discovery rows from the operator's credentials.
-/// Pure — no IO, no secret material copied out (only `.is_some()`
-/// presence checks, matching doctor's policy).
-pub fn connect_rows(creds: &Credentials) -> Vec<ChannelRow> {
-    vec![
-        telegram_row(creds),
-        slack_row(creds),
-        whatsapp_row(creds),
-        ChannelRow {
-            name: "discord",
-            status: ConnectStatus::Experimental,
-            note: "gateway loop ships, but no credentials.yaml field yet".to_string(),
-            onramp: "experimental — wire via `neoth channel add discord`",
-        },
-        ChannelRow {
-            name: "keet",
-            status: ConnectStatus::Unavailable,
-            note: "no supported public Keet chat API; legacy credentials are ignored".to_string(),
-            onramp: "unavailable — `neoth channel remove keet` clears legacy state",
-        },
-    ]
+/// Build the friendly discovery rows directly from canonical channel-list rows.
+fn connect_rows(statuses: &[crate::cli::channel::ChannelStatus]) -> Vec<ChannelRow> {
+    statuses
+        .iter()
+        .map(|row| ChannelRow {
+            name: row.name,
+            status: match row.status {
+                ProbeStatus::Ok => ConnectStatus::Connected,
+                ProbeStatus::Warn | ProbeStatus::Error => ConnectStatus::Partial,
+                ProbeStatus::NotConfigured => ConnectStatus::NotConnected,
+                ProbeStatus::Unavailable => ConnectStatus::Unavailable,
+            },
+            note: row.detail.clone(),
+            onramp: format!(
+                "run `neoth channel add {0}`, then `neoth channel test {0}`",
+                row.name
+            ),
+        })
+        .collect()
 }
 
-fn telegram_row(creds: &Credentials) -> ChannelRow {
-    let (status, note) = if creds.telegram_token.is_some() {
-        (
-            ConnectStatus::Connected,
-            "polling loop spawned by serve — send + receive both live".to_string(),
-        )
-    } else {
-        (
-            ConnectStatus::NotConnected,
-            "no telegram_token in credentials.yaml".to_string(),
-        )
+fn canonical_channel_name(name: &str) -> Option<&'static str> {
+    let normalized = name.trim().to_ascii_lowercase();
+    let normalized = match normalized.as_str() {
+        "whatsapp" => "whatsapp_business",
+        "imessage" | "bluebubbles" => "imessage_bluebubbles",
+        "google_chat" => "gchat",
+        other => other,
     };
-    ChannelRow {
-        name: "telegram",
-        status,
-        note,
-        onramp: "create a bot via @BotFather → set telegram_token (run `neoth init`)",
-    }
+    ALL_CHANNELS
+        .iter()
+        .find(|kind| kind.as_str() == normalized)
+        .map(|kind| kind.as_str())
 }
 
-fn slack_row(creds: &Credentials) -> ChannelRow {
-    let (status, note) = match (
-        creds.slack_bot_token.is_some(),
-        creds.slack_app_token.is_some(),
-    ) {
-        (true, true) => (
-            ConnectStatus::Connected,
-            "socket-mode loop spawned by serve — send + receive both live".to_string(),
+/// Detailed on-ramp shown by `neoth connect <channel>`. Membership is resolved
+/// from the canonical registry; the friendly command never maintains its own
+/// supported-channel list.
+pub fn channel_details(name: &str) -> Option<String> {
+    let channel = canonical_channel_name(name)?;
+    Some(match channel {
+        "telegram" => "Telegram on-ramp:\n\
+             1. Create a bot with @BotFather and copy its HTTP API token.\n\
+             2. Obtain your exact numeric Telegram user ID.\n\
+             3. Run `neoth channel add telegram --token <token> \
+             --telegram-user-id <numeric-id>`.\n\
+             4. Run `neoth channel test telegram`; `neoth serve` hot-reloads the \
+             complete token + sender policy."
+            .to_string(),
+        "keet" => "Keet on-ramp (repository-owned local companion):\n\
+             1. Run `neoth-keet-bridge setup`, then start it on loopback.\n\
+             2. Exchange peer self IDs and join the same private topic.\n\
+             3. Run `neoth channel add keet`; supply URL, bearer, topic, and \
+             exact allowed sender IDs when prompted.\n\
+             4. Run `neoth channel test keet`; only a versioned authenticated \
+             companion proving full-duplex readiness is accepted. Existing \
+             Keet application rooms are not accessed."
+            .to_string(),
+        _ => format!(
+            "{channel} on-ramp:\n\
+             1. Run `neoth channel add {channel}` and follow the typed prompts.\n\
+             2. Run `neoth channel test {channel}` for the adapter's read-only \
+             live or explicitly unavailable verdict.\n\
+             3. Run `neoth serve`; a running daemon reconciles changed channel \
+             credentials without restarting unrelated adapters."
         ),
-        (true, false) | (false, true) => (
-            ConnectStatus::Partial,
-            "socket mode needs BOTH bot_token (xoxb-) and app_token (xapp-); send still works"
-                .to_string(),
-        ),
-        (false, false) => (
-            ConnectStatus::NotConnected,
-            "no slack tokens in credentials.yaml".to_string(),
-        ),
-    };
-    ChannelRow {
-        name: "slack",
-        status,
-        note,
-        onramp: "create a Slack app (Socket Mode) → set slack_bot_token + slack_app_token",
-    }
-}
-
-fn whatsapp_row(creds: &Credentials) -> ChannelRow {
-    let any = creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some();
-    let inbound_ready = creds.whatsapp_verify_token.is_some()
-        && creds.whatsapp_app_secret.is_some()
-        && creds.whatsapp_phone_id.is_some();
-    let (status, note) = if !any {
-        (
-            ConnectStatus::NotConnected,
-            "no whatsapp credentials in credentials.yaml".to_string(),
-        )
-    } else if inbound_ready {
-        (
-            ConnectStatus::Connected,
-            "Meta webhook listener spawned by serve — send + receive both live".to_string(),
-        )
-    } else {
-        (
-            ConnectStatus::Partial,
-            "outbound-only; inbound needs whatsapp_verify_token + whatsapp_app_secret + \
-             whatsapp_phone_id"
-                .to_string(),
-        )
-    };
-    ChannelRow {
-        name: "whatsapp",
-        status,
-        note,
-        onramp: "Meta WhatsApp Cloud API → set whatsapp_token + whatsapp_phone_id \
-                 (+ verify_token + app_secret for inbound)",
-    }
-}
-
-/// Detailed, multi-line on-ramp shown by `neoth connect <channel>`.
-/// `None` for an unknown channel name.
-pub fn channel_details(name: &str) -> Option<&'static str> {
-    match name {
-        "telegram" => Some(
-            "Telegram on-ramp:\n\
-             1. Open @BotFather in Telegram, send /newbot, follow the prompts.\n\
-             2. Copy the HTTP API token it gives you.\n\
-             3. Run `neoth init` and paste the token, OR add\n\
-             \x20  `telegram_token: <token>` to ~/.neoth/credentials.yaml.\n\
-             4. Restart the daemon — `serve` spawns the polling loop.",
-        ),
-        "slack" => Some(
-            "Slack on-ramp (Socket Mode — no public URL needed):\n\
-             1. Create an app at api.slack.com/apps → enable Socket Mode.\n\
-             2. Bot token (xoxb-) under OAuth & Permissions → slack_bot_token.\n\
-             3. App-level token (xapp-, connections:write) → slack_app_token.\n\
-             4. Put both in ~/.neoth/credentials.yaml + restart the daemon.\n\
-             Outbound send works with just the bot token; live inbound\n\
-             needs BOTH.",
-        ),
-        "whatsapp" => Some(
-            "WhatsApp on-ramp (Meta Cloud API):\n\
-             1. Create a Meta app + WhatsApp product; note the phone number id.\n\
-             2. credentials.yaml: whatsapp_token + whatsapp_phone_id (outbound).\n\
-             3. For inbound, also set whatsapp_verify_token + whatsapp_app_secret\n\
-             \x20  and point the Meta webhook at your reverse proxy → the\n\
-             \x20  daemon's listener (binds 127.0.0.1, TLS terminates upstream).",
-        ),
-        "discord" => Some(
-            "Discord is experimental: the gateway loop ships but there is no\n\
-             credentials.yaml field yet. Track via `neoth channel add discord`.",
-        ),
-        "keet" => Some(
-            "Keet integration is unavailable: Keet exposes no supported public\n\
-             room/message API. NEOTH does not store a seed or call a guessed\n\
-             Pear endpoint. `neoth channel remove keet` clears legacy state.",
-        ),
-        _ => None,
-    }
+    })
 }
 
 /// `neoth connect` entry point. Read-only.
 pub fn run_connect(args: ConnectArgs) -> Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
     let cred_path = home.join("credentials.yaml");
-    // B17: classify the credential store before loading so we can expose the
-    // status to the operator instead of silently defaulting to empty creds.
-    let mut cred_status = Credentials::credential_store_status(&cred_path);
-    let creds = match cred_status {
-        crate::config::credentials::CredentialStoreStatus::Ok
-        | crate::config::credentials::CredentialStoreStatus::Missing => {
-            // B17: downgrade to Invalid on a mid-command corruption race rather
-            // than silently returning default creds under a healthy `Ok`.
-            match Credentials::load_or_default(&cred_path) {
-                Ok(c) => c,
-                Err(_) => {
-                    cred_status = crate::config::credentials::CredentialStoreStatus::Invalid;
-                    Credentials::default()
-                }
-            }
-        }
-        _ => Credentials::default(),
-    };
-    let rows = connect_rows(&creds);
+    let cred_status = crate::config::credentials::Credentials::credential_store_status(&cred_path);
+    // Canonical loader: same config/secret backend, strict corruption handling,
+    // registry order, and readiness predicates as `neoth channel list`.
+    let statuses = crate::cli::channel::load_channel_statuses_at(&home)?;
+    let rows = connect_rows(&statuses);
 
     // Single-channel detail view.
     if let Some(name) = args.channel.as_deref() {
-        let name = name.to_lowercase();
-        let Some(row) = rows.iter().find(|r| r.name == name) else {
+        let requested = name.to_lowercase();
+        let Some(name) = canonical_channel_name(&requested) else {
             anyhow::bail!(
-                "unknown channel `{name}` — known: {}",
+                "unknown channel `{requested}` — known: {}",
                 rows.iter().map(|r| r.name).collect::<Vec<_>>().join(", ")
             );
         };
+        let row = rows
+            .iter()
+            .find(|row| row.name == name)
+            .expect("canonical channel registry and connect rows must stay identical");
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 println!("{}", row_json_with_cred_status(row, cred_status.as_str()));
@@ -268,7 +173,7 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
                 }
                 println!("{} — {}", row.name, row.status.label());
                 println!("  {}", row.note);
-                if let Some(detail) = channel_details(&name) {
+                if let Some(detail) = channel_details(name) {
                     println!();
                     println!("{detail}");
                 }
@@ -289,7 +194,7 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
                         "channel": r.name,
                         "status": r.status.label(),
                         "note": r.note,
-                        "onramp": r.onramp,
+                        "onramp": r.onramp.as_str(),
                     })
                 })
                 .collect();
@@ -314,9 +219,12 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
                 );
             }
             let connected = rows.iter().filter(|r| r.status.is_connected()).count();
-            println!("Channels — {connected} of {} connected\n", rows.len());
+            println!(
+                "Channels — {connected} of {} statically ready\n",
+                rows.len()
+            );
             for r in &rows {
-                println!("  {:<9} {:<14} {}", r.name, r.status.label(), r.note);
+                println!("  {:<22} {:<18} {}", r.name, r.status.label(), r.note);
             }
             println!("\nRun `neoth connect <channel>` for the step-by-step on-ramp.");
         }
@@ -330,7 +238,7 @@ fn row_json(r: &ChannelRow) -> String {
         "channel": r.name,
         "status": r.status.label(),
         "note": r.note,
-        "onramp": r.onramp,
+        "onramp": r.onramp.as_str(),
     })
     .to_string()
 }
@@ -341,7 +249,7 @@ fn row_json_with_cred_status(r: &ChannelRow, cred_status: &str) -> String {
         "channel": r.name,
         "status": r.status.label(),
         "note": r.note,
-        "onramp": r.onramp,
+        "onramp": r.onramp.as_str(),
         "credential_store_status": cred_status,
     })
     .to_string()
@@ -350,10 +258,13 @@ fn row_json_with_cred_status(r: &ChannelRow, cred_status: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::FreedomConfig;
+    use crate::config::credentials::Credentials;
     use crate::secret::SecretString;
 
-    fn creds() -> Credentials {
-        Credentials::default()
+    fn rows(config: &FreedomConfig, credentials: &Credentials) -> Vec<ChannelRow> {
+        let statuses = crate::cli::channel::channel_statuses(config, credentials);
+        connect_rows(&statuses)
     }
 
     fn find<'a>(rows: &'a [ChannelRow], name: &str) -> &'a ChannelRow {
@@ -361,75 +272,100 @@ mod tests {
     }
 
     #[test]
-    fn empty_credentials_no_channel_connected() {
-        let rows = connect_rows(&creds());
-        assert_eq!(find(&rows, "telegram").status, ConnectStatus::NotConnected);
-        assert_eq!(find(&rows, "slack").status, ConnectStatus::NotConnected);
-        assert_eq!(find(&rows, "whatsapp").status, ConnectStatus::NotConnected);
-        // Discord is experimental; Keet is explicitly unavailable.
-        assert_eq!(find(&rows, "discord").status, ConnectStatus::Experimental);
-        assert_eq!(find(&rows, "keet").status, ConnectStatus::Unavailable);
+    fn empty_config_uses_the_complete_canonical_registry() {
+        let rows = rows(&FreedomConfig::default(), &Credentials::default());
+        assert_eq!(rows.len(), ALL_CHANNELS.len());
+        assert!(
+            rows.iter()
+                .all(|row| row.status == ConnectStatus::NotConnected)
+        );
+        assert_eq!(find(&rows, "discord").status, ConnectStatus::NotConnected);
+        let names: Vec<_> = rows.iter().map(|row| row.name).collect();
+        let canonical: Vec<_> = ALL_CHANNELS.iter().map(|kind| kind.as_str()).collect();
+        assert_eq!(names, canonical);
     }
 
     #[test]
-    fn telegram_token_present_is_connected() {
-        let mut c = creds();
-        c.telegram_token = Some(SecretString::from("123:abc"));
+    fn telegram_requires_token_and_exact_sender_policy() {
+        let mut credentials = Credentials::default();
+        credentials.telegram_token = Some(SecretString::from("123:abc"));
         assert_eq!(
-            find(&connect_rows(&c), "telegram").status,
+            find(&rows(&FreedomConfig::default(), &credentials), "telegram").status,
+            ConnectStatus::Partial
+        );
+        let config = FreedomConfig {
+            telegram_user_id: Some(42),
+            ..Default::default()
+        };
+        assert_eq!(
+            find(&rows(&config, &credentials), "telegram").status,
             ConnectStatus::Connected
         );
     }
 
     #[test]
     fn slack_needs_both_tokens_else_partial() {
-        let mut c = creds();
-        c.slack_bot_token = Some(SecretString::from("xoxb-1"));
+        let config = FreedomConfig::default();
+        let mut credentials = Credentials::default();
+        credentials.slack_bot_token = Some(SecretString::from("xoxb-1"));
         assert_eq!(
-            find(&connect_rows(&c), "slack").status,
+            find(&rows(&config, &credentials), "slack").status,
             ConnectStatus::Partial,
             "bot token alone is partial"
         );
-        c.slack_app_token = Some(SecretString::from("xapp-1"));
+        credentials.slack_app_token = Some(SecretString::from("xapp-1"));
         assert_eq!(
-            find(&connect_rows(&c), "slack").status,
+            find(&rows(&config, &credentials), "slack").status,
             ConnectStatus::Connected,
-            "both tokens → connected"
+            "both tokens are statically ready"
         );
     }
 
     #[test]
-    fn whatsapp_outbound_only_is_partial_full_is_connected() {
-        let mut c = creds();
-        c.whatsapp_token = Some(SecretString::from("EAA..."));
+    fn whatsapp_and_discord_follow_canonical_probe_status() {
+        let config = FreedomConfig::default();
+        let mut credentials = Credentials::default();
+        credentials.whatsapp_token = Some(SecretString::from("EAA..."));
         assert_eq!(
-            find(&connect_rows(&c), "whatsapp").status,
+            find(&rows(&config, &credentials), "whatsapp_business").status,
             ConnectStatus::Partial,
-            "token alone = outbound-only = partial"
+            "token alone is incomplete"
         );
-        c.whatsapp_phone_id = Some("100000000000000".to_string());
-        c.whatsapp_verify_token = Some(SecretString::from("verify"));
-        c.whatsapp_app_secret = Some(SecretString::from("secret"));
+        credentials.whatsapp_phone_id = Some("100000000000000".to_string());
+        credentials.whatsapp_verify_token = Some(SecretString::from("verify"));
+        credentials.whatsapp_app_secret = Some(SecretString::from("secret"));
         assert_eq!(
-            find(&connect_rows(&c), "whatsapp").status,
+            find(&rows(&config, &credentials), "whatsapp_business").status,
             ConnectStatus::Connected,
-            "full inbound set → connected"
+            "full inbound set is statically ready"
+        );
+        credentials.discord_bot_token = Some(SecretString::from("discord-token"));
+        assert_eq!(
+            find(&rows(&config, &credentials), "discord").status,
+            ConnectStatus::Connected
         );
     }
 
     #[test]
-    fn channel_details_known_and_unknown() {
-        assert!(channel_details("telegram").is_some());
-        assert!(channel_details("slack").is_some());
+    fn channel_details_cover_registry_and_supported_aliases() {
+        for kind in ALL_CHANNELS {
+            assert!(
+                channel_details(kind.as_str()).is_some(),
+                "missing on-ramp for {}",
+                kind.as_str()
+            );
+        }
         assert!(channel_details("whatsapp").is_some());
+        assert!(channel_details("bluebubbles").is_some());
+        assert!(channel_details("google_chat").is_some());
         assert!(channel_details("nonsense").is_none());
     }
 
     #[test]
     fn row_json_carries_channel_and_status() {
-        let rows = connect_rows(&creds());
+        let rows = rows(&FreedomConfig::default(), &Credentials::default());
         let j = row_json(find(&rows, "telegram"));
         assert!(j.contains("\"channel\":\"telegram\""));
-        assert!(j.contains("\"status\":\"not connected\""));
+        assert!(j.contains("\"status\":\"not_configured\""));
     }
 }

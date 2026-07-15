@@ -10,7 +10,7 @@
 //! ## Why not just include secrets
 //!
 //! `provider_key`, `telegram_token`, `omi_developer_api_key`,
-//! `omi_ingest_token`, `keet_seed_phrase`, and `pears_bearer_token` are all
+//! `omi_ingest_token`, `keet_seed_phrase`, and `keet_bridge_bearer_token` are all
 //! wrapped in [`crate::secret::SecretString`]
 //! with `mlock` + `zeroize` for in-memory protection. Persisting them to
 //! `wizard_checkpoint.json` would defeat that — even with mode 0600 the

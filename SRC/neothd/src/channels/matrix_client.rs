@@ -23,7 +23,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use futures_util::StreamExt;
 use matrix_sdk::{
     Client, SessionMeta, SessionTokens, authentication::matrix::MatrixSession,
     config::SyncSettings, ruma::UserId,
@@ -180,41 +179,79 @@ async fn restore_configured_access_token(
     configured_user_id: &str,
     access_token: &str,
 ) -> Result<()> {
-    let configured_user = UserId::parse(configured_user_id)
-        .with_context(|| format!("invalid matrix_user_id `{configured_user_id}`"))?;
     let whoami_url = client
         .homeserver()
         .join("/_matrix/client/v3/account/whoami")
         .context("build Matrix /account/whoami URL")?;
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .context("build Matrix token-bootstrap HTTP client")?;
+    let (returned_user, device_id) =
+        request_whoami(whoami_url, configured_user_id, access_token).await?;
+    let returned_user = UserId::parse(returned_user)
+        .context("Matrix /account/whoami returned an invalid user_id")?;
+    let session = MatrixSession {
+        meta: SessionMeta {
+            user_id: returned_user,
+            device_id: device_id.clone().into(),
+        },
+        tokens: SessionTokens {
+            access_token: access_token.to_string(),
+            refresh_token: None,
+        },
+    };
+    client
+        .matrix_auth()
+        .restore_session(session, matrix_sdk::store::RoomLoadSettings::default())
+        .await
+        .context("restore Matrix access-token session")?;
+    persist_session(client, store_path).await?;
+    info!(user = %configured_user_id, device = %device_id, "matrix: configured access token restored and session persisted");
+    Ok(())
+}
+
+/// Read-only Matrix credential probe. Password-only auth is deliberately not
+/// handled here because a login creates/rotates device state; callers surface a
+/// typed unavailable result instead. A configured access token can be checked
+/// safely through `/account/whoami`.
+pub async fn probe_access_token(
+    homeserver: &str,
+    configured_user_id: &str,
+    access_token: &crate::secret::SecretString,
+) -> Result<String> {
+    let base = super::readiness::parse_base_url(homeserver, "Matrix")?;
+    let whoami_url = super::readiness::append_path(base, "/_matrix/client/v3/account/whoami");
+    let (user_id, device_id) =
+        request_whoami(whoami_url, configured_user_id, access_token.expose()).await?;
+    Ok(format!(
+        "Matrix access token authenticated as {user_id} on device {device_id}"
+    ))
+}
+
+async fn request_whoami(
+    whoami_url: reqwest::Url,
+    configured_user_id: &str,
+    access_token: &str,
+) -> Result<(String, String)> {
+    let configured_user = UserId::parse(configured_user_id)
+        .with_context(|| format!("invalid matrix_user_id `{configured_user_id}`"))?;
+    let http = super::readiness::probe_client(&whoami_url)?;
     let response = http
         .get(whoami_url)
         .bearer_auth(access_token)
+        .timeout(super::readiness::PROBE_TIMEOUT)
         .send()
         .await
-        .context("Matrix access-token /account/whoami request failed")?;
-    if !response.status().is_success() {
+        .map_err(|_| anyhow::anyhow!("Matrix /account/whoami request failed"))?;
+    let (status, body) = super::readiness::bounded_body(response, "Matrix /account/whoami").await?;
+    if !status.is_success() {
         anyhow::bail!(
             "Matrix access token rejected by /account/whoami (HTTP {})",
-            response.status().as_u16()
+            status.as_u16()
         );
     }
-
-    let mut body = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("read Matrix /account/whoami response")?;
-        if body.len().saturating_add(chunk.len()) > MAX_WHOAMI_BYTES {
-            anyhow::bail!(
-                "Matrix /account/whoami response exceeded {} bytes",
-                MAX_WHOAMI_BYTES
-            );
-        }
-        body.extend_from_slice(&chunk);
+    if body.len() > MAX_WHOAMI_BYTES {
+        anyhow::bail!(
+            "Matrix /account/whoami response exceeded {} bytes",
+            MAX_WHOAMI_BYTES
+        );
     }
     let whoami: WhoAmIResponse = serde_json::from_slice(&body)
         .context("parse Matrix /account/whoami response (token value not logged)")?;
@@ -234,24 +271,7 @@ async fn restore_configured_access_token(
             "Matrix /account/whoami omitted device_id; this token cannot safely anchor E2EE \
          continuity — issue a device-bound token or use matrix_password once",
         )?;
-    let session = MatrixSession {
-        meta: SessionMeta {
-            user_id: returned_user,
-            device_id: device_id.clone().into(),
-        },
-        tokens: SessionTokens {
-            access_token: access_token.to_string(),
-            refresh_token: None,
-        },
-    };
-    client
-        .matrix_auth()
-        .restore_session(session, matrix_sdk::store::RoomLoadSettings::default())
-        .await
-        .context("restore Matrix access-token session")?;
-    persist_session(client, store_path).await?;
-    info!(user = %configured_user_id, device = %device_id, "matrix: configured access token restored and session persisted");
-    Ok(())
+    Ok((returned_user.to_string(), device_id))
 }
 
 /// Serialize the active session to `<store>/neoth-matrix-session.json`.

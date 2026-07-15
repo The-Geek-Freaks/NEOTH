@@ -19,8 +19,9 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::cli::OutputFormat;
+use crate::interface_preference::{self, InterfacePreference};
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub struct GuiArgs {
     /// Resolve + print the `neothd-gui` binary path (and whether it was found
     /// beside `neoth`) WITHOUT launching it. Diagnostic / scriptable /
@@ -57,6 +58,17 @@ fn resolved_label(resolved: &Option<PathBuf>) -> String {
 }
 
 pub fn run_gui(args: GuiArgs, output: OutputFormat) -> Result<()> {
+    launch_gui(args, output, true)
+}
+
+/// Open the packaged GUI for the product's first desktop launch without
+/// pre-selecting GUI. The GUI owns the exactly-once GUI-vs-CLI chooser and
+/// persists the operator's answer only after they click a choice.
+pub(crate) fn run_first_launch_chooser() -> Result<()> {
+    launch_gui(GuiArgs::default(), OutputFormat::Table, false)
+}
+
+fn launch_gui(args: GuiArgs, output: OutputFormat, commit_gui_preference: bool) -> Result<()> {
     let resolved = sibling_gui_path();
 
     if args.locate {
@@ -90,8 +102,26 @@ pub fn run_gui(args: GuiArgs, output: OutputFormat) -> Result<()> {
     // `neoth gui` returns immediately and the OS reparents the window.
     let program = resolved.unwrap_or_else(|| PathBuf::from(GUI_BIN_STEM));
     match Command::new(&program).spawn() {
-        Ok(child) => {
+        Ok(mut child) => {
             let pid = child.id();
+            // Launch success is the commit point for an explicit CLI -> GUI
+            // switch. The first-launch chooser is deliberately different: it
+            // must observe a missing preference and records only the button the
+            // operator actually selects inside the GUI.
+            let preference_path = if commit_gui_preference {
+                match interface_preference::save_default(InterfacePreference::Gui) {
+                    Ok(path) => Some(path),
+                    Err(error) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(error).context(
+                            "GUI launch rolled back because the interface preference could not be persisted",
+                        );
+                    }
+                }
+            } else {
+                None
+            };
             drop(child);
             match output {
                 OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -100,6 +130,9 @@ pub fn run_gui(args: GuiArgs, output: OutputFormat) -> Result<()> {
                         "launched": true,
                         "pid": pid,
                         "binary": program.display().to_string(),
+                        "preferred": commit_gui_preference.then_some("gui"),
+                        "choice_required": !commit_gui_preference,
+                        "preference_path": preference_path,
                     })
                 ),
                 OutputFormat::Table => println!("Launched {} (pid {pid}).", program.display()),

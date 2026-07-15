@@ -3,7 +3,7 @@
 #
 # Triggered by tags matching vMAJOR.MINOR.PATCH (e.g., v1.0.0).
 # Builds release binaries for Linux, macOS, and Windows (x86_64 + ARM64 where supported).
-# Signing: cosign keyless provenance + mandatory minisign authenticity for self-update.
+# Signing: Sigstore keyless signature/transparency bundles + mandatory minisign authenticity for self-update.
 # Release Engineer review (OPEN_DECISIONS.md D-001): cargo-dist rejected;
 # the matrix below already implements the chosen pipeline.
 # =============================================================================
@@ -20,8 +20,10 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false    # never cancel an in-progress release
 
-# Job-level permissions — see release job for additional id-token: write.
+# Job-level permissions — only the isolated Cosign job receives id-token: write.
 permissions:
+  actions: read
+  checks: read
   contents: read
 
 env:
@@ -37,6 +39,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Match tag to package manifests
         shell: python
@@ -93,6 +99,10 @@ jobs:
           versions["whatsapp-baileys-bridge"] = json.loads(
               pathlib.Path("bridges/whatsapp-baileys/package.json").read_text(encoding="utf-8")
           )["version"]
+          keet_bridge = json.loads(
+              pathlib.Path("bridges/keet/package.json").read_text(encoding="utf-8")
+          )
+          versions["keet-bridge"] = keet_bridge["version"]
           mismatches = [
               f"{package}={version}"
               for package, version in versions.items()
@@ -151,6 +161,12 @@ jobs:
               )
           if core.get("lib", {}).get("name") != "neothd":
               raise SystemExit("::error::Compatibility library target must remain neothd")
+          if keet_bridge.get("name") != "@neoth/keet-bridge":
+              raise SystemExit("::error::Keet companion package name drifted")
+          if keet_bridge.get("packageManager") != "pnpm@10.32.1":
+              raise SystemExit("::error::Keet companion must pin pnpm@10.32.1")
+          if keet_bridge.get("bin") != {"neoth-keet-bridge": "bin.mjs"}:
+              raise SystemExit("::error::Keet companion executable contract drifted")
 
           repository_key = pathlib.Path(
               "NEOTH_RELEASE_MINISIGN_PUBKEY.txt"
@@ -173,15 +189,179 @@ jobs:
           print(
               f"Release contract OK: {ref_name} == neoth == neothd-gui "
               f"== neoth-migrate == neoth-relay == whatsapp-baileys-bridge "
+              f"== keet-bridge "
               f"== {tag_version}; neoth-plugin-sdk={sdk['package']['version']}"
           )
+
+      - name: Verify release key and artifact isolation contracts
+        run: python .github/release-tools/test-release-isolation.py
+
+      - name: Verify clean-machine authenticity bootstrap contract
+        run: python packaging/test_bootstrap_verifier.py
+
+      - name: Verify exact Rust third-party notice graph
+        run: python packaging/generate_rust_notices.py --check
+
+      - name: Require exact main and successful CI, Security and CodeQL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          RELEASE_SHA=$(git rev-parse HEAD)
+          MAIN_SHA=$(git rev-parse refs/remotes/origin/main)
+          if [[ "$RELEASE_SHA" != "$MAIN_SHA" ]]; then
+            echo "::error::release tag points to $RELEASE_SHA, but exact main is $MAIN_SHA"
+            exit 1
+          fi
+
+          successful_run() {
+            local workflow=$1
+            gh api -X GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs" \
+              -f branch=main \
+              -f event=push \
+              -f head_sha="$RELEASE_SHA" \
+              -f status=completed \
+              -f per_page=100 \
+              --jq '.workflow_runs | map(select(.conclusion == "success")) | sort_by(.run_attempt) | last | .id // empty'
+          }
+
+          CI_RUN=$(successful_run ci.yml)
+          SECURITY_RUN=$(successful_run security.yml)
+          if [[ -z "$CI_RUN" || -z "$SECURITY_RUN" ]]; then
+            echo "::error::exact-head CI and Security must both be completed successfully before tagging"
+            echo "CI run: ${CI_RUN:-missing}; Security run: ${SECURITY_RUN:-missing}"
+            exit 1
+          fi
+          CODEQL_SUCCESS=$(gh api -X GET \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SECURITY_RUN}/jobs" \
+            -f per_page=100 \
+            --jq '[.jobs[] | select(
+              (.name == "CodeQL / Rust" or .name == "CodeQL / JavaScript")
+              and .conclusion == "success"
+            ) | .name] | unique | length')
+          if [[ "$CODEQL_SUCCESS" != 2 ]]; then
+            echo "::error::exact-head Security run $SECURITY_RUN needs successful CodeQL / Rust and CodeQL / JavaScript jobs"
+            exit 1
+          fi
+          echo "Exact-head release gates: main=$RELEASE_SHA CI=$CI_RUN Security=$SECURITY_RUN CodeQL-Rust/JavaScript=success"
+
+  # The repository-owned Keet companion has a separate JavaScript/Bare
+  # toolchain. Prove its frozen dependency graph, tests, standalone packaging,
+  # authenticated HTTP boundary, cursor path, and idempotent send before the
+  # Rust release matrix can start.
+  verify-keet-bridge:
+    name: Verify Keet companion
+    needs: verify-release-version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+
+      - name: Frozen install, checks, tests, and standalone build
+        working-directory: bridges/keet
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run check
+          pnpm run check:notices
+          pnpm test
+          pnpm run make:linux-x64
+          test -x out/linux-x64/neoth-keet-bridge
+          test "$(out/linux-x64/neoth-keet-bridge --version)" = "${GITHUB_REF_NAME#v}"
+
+      - name: Standalone authenticated round-trip
+        working-directory: bridges/keet
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRIDGE="$PWD/out/linux-x64/neoth-keet-bridge"
+          STORAGE="$RUNNER_TEMP/neoth-keet-release-smoke"
+          SETUP="$RUNNER_TEMP/neoth-keet-setup.json"
+          HEALTH="$RUNNER_TEMP/neoth-keet-health.json"
+          TOPIC_STATE="$RUNNER_TEMP/neoth-keet-topic.json"
+          POST_ONE="$RUNNER_TEMP/neoth-keet-post-one.json"
+          POST_TWO="$RUNNER_TEMP/neoth-keet-post-two.json"
+          PAGE="$RUNNER_TEMP/neoth-keet-page.json"
+
+          umask 077
+          "$BRIDGE" setup --storage "$STORAGE" --display-name NEOTH-Release-Smoke > "$SETUP"
+          TOKEN="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["bearer_token"])' "$SETUP")"
+          TOPIC="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["topic"])' "$SETUP")"
+
+          "$BRIDGE" serve --storage "$STORAGE" --port 19130 > "$RUNNER_TEMP/neoth-keet.log" 2>&1 &
+          BRIDGE_PID=$!
+          trap 'kill "$BRIDGE_PID" 2>/dev/null || true; wait "$BRIDGE_PID" 2>/dev/null || true' EXIT
+
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -H "Authorization: Bearer $TOKEN" \
+              http://127.0.0.1:19130/v1/health -o "$HEALTH"; then
+              ready=1
+              break
+            fi
+            kill -0 "$BRIDGE_PID" 2>/dev/null || {
+              cat "$RUNNER_TEMP/neoth-keet.log" >&2
+              exit 1
+            }
+            sleep 0.5
+          done
+          test "$ready" = 1 || {
+            cat "$RUNNER_TEMP/neoth-keet.log" >&2
+            exit 1
+          }
+
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:19130/v1/health)" = 401
+          curl -fsS -H "Authorization: Bearer $TOKEN" \
+            "http://127.0.0.1:19130/v1/topics/$TOPIC" -o "$TOPIC_STATE"
+          BODY='{"text":"release round-trip","idempotency_key":"release-smoke-1"}'
+          curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            --data "$BODY" "http://127.0.0.1:19130/v1/topics/$TOPIC/messages" -o "$POST_ONE"
+          curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            --data "$BODY" "http://127.0.0.1:19130/v1/topics/$TOPIC/messages" -o "$POST_TWO"
+          curl -fsS -H "Authorization: Bearer $TOKEN" \
+            "http://127.0.0.1:19130/v1/topics/$TOPIC/messages?after=c%3A0&wait_ms=0&limit=50" -o "$PAGE"
+
+          python - "$HEALTH" "$TOPIC_STATE" "$POST_ONE" "$POST_TWO" "$PAGE" "${GITHUB_REF_NAME#v}" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          health, topic, first, second, page = (
+              json.loads(pathlib.Path(name).read_text(encoding="utf-8"))
+              for name in sys.argv[1:6]
+          )
+          expected_version = sys.argv[6]
+          assert health == {
+              "protocol": "neoth-keet-bridge",
+              "protocol_version": 1,
+              "bridge_version": expected_version,
+              "ready": True,
+              "capabilities": ["send_text", "receive_text"],
+          }
+          assert topic["joined"] is True and topic["latest_cursor"] == "c:0"
+          assert first == second
+          assert len(page["messages"]) == 1
+          assert page["messages"][0]["message_id"] == first["message_id"]
+          assert page["next_cursor"] == "c:1"
+          PY
 
   # ---------------------------------------------------------------------------
   # Build matrix
   # ---------------------------------------------------------------------------
   build:
     name: Build ${{ matrix.target }}
-    needs: verify-release-version
+    needs: [verify-release-version, verify-keet-bridge]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -192,6 +372,9 @@ jobs:
             os: ubuntu-24.04
             use_cross: false
             include_gui: true
+            include_keet: true
+            keet_host: linux-x64
+            keet_binary: neoth-keet-bridge
             archive_ext: tar.gz
 
           # Linux x86_64 musl — static binary, no libc dependency
@@ -199,6 +382,9 @@ jobs:
             os: ubuntu-24.04
             use_cross: true
             include_gui: false
+            include_keet: false
+            keet_host: none
+            keet_binary: none
             archive_ext: tar.gz
 
           # Linux aarch64 GNU — native public ARM runner. Keeping this native
@@ -208,6 +394,9 @@ jobs:
             os: ubuntu-24.04-arm
             use_cross: false
             include_gui: true
+            include_keet: true
+            keet_host: linux-arm64
+            keet_binary: neoth-keet-bridge
             archive_ext: tar.gz
 
           # macOS x86_64 (Intel). GitHub's current standard Intel labels are
@@ -216,6 +405,9 @@ jobs:
             os: macos-15-intel
             use_cross: false
             include_gui: true
+            include_keet: true
+            keet_host: darwin-x64
+            keet_binary: neoth-keet-bridge
             archive_ext: tar.gz
 
           # macOS aarch64 (Apple Silicon)
@@ -223,6 +415,9 @@ jobs:
             os: macos-15
             use_cross: false
             include_gui: true
+            include_keet: true
+            keet_host: darwin-arm64
+            keet_binary: neoth-keet-bridge
             archive_ext: tar.gz
 
           # Windows x86_64 — R-08 Session 28: zero-install Windows
@@ -234,6 +429,9 @@ jobs:
             os: windows-2022
             use_cross: false
             include_gui: true
+            include_keet: true
+            keet_host: win32-x64
+            keet_binary: neoth-keet-bridge.exe
             archive_ext: zip
 
           # Windows aarch64 (ARM laptops — Surface Pro X, Snapdragon
@@ -242,6 +440,9 @@ jobs:
             os: windows-2022
             use_cross: false
             include_gui: true
+            include_keet: true
+            keet_host: win32-arm64
+            keet_binary: neoth-keet-bridge.exe
             archive_ext: zip
 
     steps:
@@ -251,6 +452,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
+          toolchain: '1.86.0'
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo
@@ -335,6 +537,23 @@ jobs:
         working-directory: SRC
         run: cargo build --release --locked -p neothd-gui --target ${{ matrix.target }}
 
+      - name: Setup Node.js for Keet companion
+        if: matrix.include_keet
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Build version-locked Keet standalone
+        if: matrix.include_keet
+        working-directory: bridges/keet
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+          pnpm install --frozen-lockfile
+          pnpm run "make:${{ matrix.keet_host }}"
+          test -s "out/${{ matrix.keet_host }}/${{ matrix.keet_binary }}"
+
       - name: Extract version from tag
         id: version
         shell: bash
@@ -348,6 +567,7 @@ jobs:
           TARGET="${{ matrix.target }}"
           ARCHIVE_EXT="${{ matrix.archive_ext }}"
           INCLUDE_GUI="${{ matrix.include_gui }}"
+          INCLUDE_KEET="${{ matrix.include_keet }}"
           ARCHIVE_NAME="neoth-${VERSION}-${TARGET}"
 
           # Binary name + extension differ on Windows. R-08 (Session
@@ -359,18 +579,21 @@ jobs:
             GUI_BINARY_NAME="neothd-gui.exe"
             MIGRATE_BINARY_NAME="neoth-migrate.exe"
             RELAY_BINARY_NAME="neoth-relay.exe"
+            KEET_BINARY_NAME="neoth-keet-bridge.exe"
           else
             BINARY_NAME="neoth"
             COMPAT_BINARY_NAME="neothd"
             GUI_BINARY_NAME="neothd-gui"
             MIGRATE_BINARY_NAME="neoth-migrate"
             RELAY_BINARY_NAME="neoth-relay"
+            KEET_BINARY_NAME="neoth-keet-bridge"
           fi
           BINARY_PATH="SRC/target/${TARGET}/release/${BINARY_NAME}"
           COMPAT_BINARY_PATH="SRC/target/${TARGET}/release/${COMPAT_BINARY_NAME}"
           GUI_BINARY_PATH="SRC/target/${TARGET}/release/${GUI_BINARY_NAME}"
           MIGRATE_BINARY_PATH="SRC/target/${TARGET}/release/${MIGRATE_BINARY_NAME}"
           RELAY_BINARY_PATH="SRC/target/${TARGET}/release/${RELAY_BINARY_NAME}"
+          KEET_BINARY_PATH="bridges/keet/out/${{ matrix.keet_host }}/${{ matrix.keet_binary }}"
 
           mkdir -p "dist/${ARCHIVE_NAME}"
           cp "${BINARY_PATH}" "dist/${ARCHIVE_NAME}/${BINARY_NAME}"
@@ -380,9 +603,13 @@ jobs:
           if [[ "$INCLUDE_GUI" == "true" ]]; then
             cp "${GUI_BINARY_PATH}" "dist/${ARCHIVE_NAME}/${GUI_BINARY_NAME}"
           fi
+          if [[ "$INCLUDE_KEET" == "true" ]]; then
+            cp "${KEET_BINARY_PATH}" "dist/${ARCHIVE_NAME}/${KEET_BINARY_NAME}"
+          fi
           cp README.md "dist/${ARCHIVE_NAME}/"
           cp LICENSE-MIT "dist/${ARCHIVE_NAME}/"
           cp LICENSE-APACHE "dist/${ARCHIVE_NAME}/"
+          cp THIRD_PARTY_LICENSES "dist/${ARCHIVE_NAME}/"
           cp SRC/freedom.yaml.example "dist/${ARCHIVE_NAME}/"
           cp SRC/neoth-migrate/examples/import-manifest.example.yaml "dist/${ARCHIVE_NAME}/"
 
@@ -395,11 +622,15 @@ jobs:
             README.md
             LICENSE-MIT
             LICENSE-APACHE
+            THIRD_PARTY_LICENSES
             freedom.yaml.example
             import-manifest.example.yaml
           )
           if [[ "$INCLUDE_GUI" == "true" ]]; then
             required_files+=("${GUI_BINARY_NAME}")
+          fi
+          if [[ "$INCLUDE_KEET" == "true" ]]; then
+            required_files+=("${KEET_BINARY_NAME}")
           fi
           for required in "${required_files[@]}"; do
             test -s "dist/${ARCHIVE_NAME}/${required}" || {
@@ -460,6 +691,870 @@ jobs:
             dist/${{ steps.archive.outputs.checksum }}
           retention-days: 1
 
+  # The musl archive is the zero-dependency portable Linux fallback. Prove the
+  # immutable uploaded bytes on a fresh keyless runner: exact sidecar, exact
+  # headless archive shape, static x86_64 executables, and the real compatibility
+  # launcher. No signing environment or repository checkout is present here.
+  smoke-linux-musl-portable:
+    name: Linux musl portable clean-machine smoke
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    steps:
+      - name: Download immutable musl portable archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-x86_64-unknown-linux-musl
+          path: dist
+
+      - name: Verify exact transferred archive and SHA-256 sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="neoth-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
+          archive="dist/${root}.tar.gz"
+          checksum="${archive}.sha256"
+          shopt -s dotglob nullglob
+          transferred=(dist/*)
+          [[ ${#transferred[@]} -eq 2 ]] || {
+            echo "::error::musl artifact transfer must contain exactly archive + sidecar"
+            exit 1
+          }
+          for path in "$archive" "$checksum"; do
+            [[ -f "$path" && ! -L "$path" ]] || {
+              echo "::error::musl transfer contains a missing or non-regular file: $path"
+              exit 1
+            }
+          done
+          mapfile -t checksum_rows < "$checksum"
+          [[ ${#checksum_rows[@]} -eq 1 ]] || {
+            echo "::error::musl SHA-256 sidecar must contain exactly one row"
+            exit 1
+          }
+          digest=$(sha256sum "$archive" | awk '{print $1}')
+          [[ "${checksum_rows[0]}" == "$digest  ${archive##*/}" ]] || {
+            echo "::error::musl SHA-256 sidecar is not bound to the expected archive name"
+            exit 1
+          }
+          (cd dist && sha256sum --check --strict "${checksum##*/}")
+
+      - name: Validate and safely extract exact headless archive set
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import tarfile
+
+          root = f"neoth-{os.environ['GITHUB_REF_NAME']}-x86_64-unknown-linux-musl"
+          archive = pathlib.Path("dist") / f"{root}.tar.gz"
+          destination = pathlib.Path("dist/extracted")
+          expected_files = {
+              "neoth",
+              "neothd",
+              "neoth-migrate",
+              "neoth-relay",
+              "README.md",
+              "LICENSE-MIT",
+              "LICENSE-APACHE",
+              "THIRD_PARTY_LICENSES",
+              "freedom.yaml.example",
+              "import-manifest.example.yaml",
+          }
+          expected_names = {root} | {
+              f"{root}/{name}" for name in expected_files
+          }
+          with tarfile.open(archive, mode="r:gz") as bundle:
+              members = bundle.getmembers()
+              names = [member.name.rstrip("/") for member in members]
+              if len(names) != len(set(names)) or set(names) != expected_names:
+                  raise SystemExit("musl archive does not contain the exact headless file set")
+              for member, name in zip(members, names, strict=True):
+                  if name == root:
+                      if not member.isdir():
+                          raise SystemExit("musl archive root is not a directory")
+                  elif not member.isreg():
+                      raise SystemExit(f"musl archive member is not a regular file: {name}")
+              destination.mkdir()
+              bundle.extractall(destination, members=members, filter="data")
+
+      - name: Execute every shipped musl binary against the tag version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          root="dist/extracted/neoth-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
+          expected_files=(
+            neoth neothd neoth-migrate neoth-relay
+            README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES
+            freedom.yaml.example import-manifest.example.yaml
+          )
+          [[ -d "$root" && ! -L "$root" ]]
+          for name in "${expected_files[@]}"; do
+            [[ -f "$root/$name" && ! -L "$root/$name" && -s "$root/$name" ]] || {
+              echo "::error::extracted musl member is missing or non-regular: $name"
+              exit 1
+            }
+          done
+          [[ -z "$(find "$root" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]]
+          [[ "$(find "$root" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq ${#expected_files[@]} ]]
+          for forbidden in neothd-gui neoth-keet-bridge; do
+            [[ ! -e "$root/$forbidden" && ! -L "$root/$forbidden" ]] || {
+              echo "::error::headless musl archive unexpectedly contains $forbidden"
+              exit 1
+            }
+          done
+          for binary in neoth neothd neoth-migrate neoth-relay; do
+            [[ -x "$root/$binary" ]]
+            elf_header=$(readelf -h "$root/$binary")
+            grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' <<<"$elf_header"
+            program_headers=$(readelf -l "$root/$binary")
+            if grep -q 'INTERP' <<<"$program_headers"; then
+              echo "::error::$binary is dynamically linked; portable musl binaries must be static"
+              exit 1
+            fi
+            output=$(timeout 30 "$root/$binary" --version 2>&1) || {
+              echo "::error::$binary --version failed or timed out"
+              exit 1
+            }
+            version_tokens=$(tr -cs '0-9A-Za-z.+-' '\n' <<<"$output")
+            grep -Fqx -- "$version" <<<"$version_tokens" || {
+              echo "::error::$binary does not report release version $version"
+              exit 1
+            }
+          done
+
+  # Build a normal double-clickable Windows installer from the exact archive
+  # that passed the release matrix. Stable tags are fail-closed on an
+  # Authenticode certificate; pre-releases may be unsigned, but still pass the
+  # same native clean-machine install/upgrade/uninstall smoke.
+  package-windows-installer:
+    name: Windows installer ${{ matrix.architecture }}
+    needs: build
+    environment: release-signing
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-2022
+          - architecture: arm64
+            target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download version-locked Windows bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/archive
+
+      - name: Install immutable official Inno Setup toolchain
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./packaging/windows/install-inno.ps1 `
+            -Destination "$env:RUNNER_TEMP/inno-6.7.3" `
+            -Version 6.7.3 `
+            -Tag is-6_7_3
+
+      - name: Import ephemeral Authenticode certificate
+        id: certificate
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.NEOTH_WINDOWS_SIGNING_CERT_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.NEOTH_WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $stable = $env:GITHUB_REF_NAME -notmatch '-'
+          $certificateBaseline = Join-Path $env:RUNNER_TEMP 'neoth-windows-cert-baseline.txt'
+          @(Get-ChildItem Cert:\CurrentUser\My).Thumbprint | Set-Content `
+            -LiteralPath $certificateBaseline -Encoding ascii
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) {
+            if ($stable) {
+              throw 'Stable releases require NEOTH_WINDOWS_SIGNING_CERT_BASE64 and NEOTH_WINDOWS_SIGNING_CERT_PASSWORD.'
+            }
+            'thumbprint=' >> $env:GITHUB_OUTPUT
+            'imported_thumbprints=' >> $env:GITHUB_OUTPUT
+            'certificate_path=' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'neoth-windows-signing.pfx'
+          [IO.File]::WriteAllBytes(
+            $certificatePath,
+            [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+          $importedCertificates = @(Import-PfxCertificate `
+            -FilePath $certificatePath `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -Password $password `
+            -ErrorAction Stop `
+            -Exportable:$false)
+          "imported_thumbprints=$(($importedCertificates.Thumbprint -join ';'))" >> $env:GITHUB_OUTPUT
+          $signingCertificates = @($importedCertificates | Where-Object HasPrivateKey)
+          if ($signingCertificates.Count -ne 1) {
+            throw "Expected one private-key certificate, found $($signingCertificates.Count)."
+          }
+          $certificate = $signingCertificates[0]
+          if ($certificate.NotBefore -gt [DateTime]::UtcNow -or
+              $certificate.NotAfter -le [DateTime]::UtcNow) {
+            throw 'Authenticode certificate is not currently valid.'
+          }
+          $ekuOids = @($certificate.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId.Value })
+          if ($ekuOids -notcontains '1.3.6.1.5.5.7.3.3') {
+            throw 'Certificate is not valid for code signing.'
+          }
+          "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+          "certificate_path=$certificatePath" >> $env:GITHUB_OUTPUT
+
+      - name: Build Windows Setup executable
+        shell: pwsh
+        run: |
+          $stable = $env:GITHUB_REF_NAME -notmatch '-'
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $archive = "dist/archive/neoth-$env:GITHUB_REF_NAME-${{ matrix.target }}.zip"
+          ./packaging/windows/build-installer.ps1 `
+            -Archive $archive `
+            -Checksum "$archive.sha256" `
+            -Version $version `
+            -Architecture '${{ matrix.architecture }}' `
+            -Iscc "$env:RUNNER_TEMP/inno-6.7.3/ISCC.exe" `
+            -OutputDirectory dist/installer `
+            -SigningThumbprint '${{ steps.certificate.outputs.thumbprint }}' `
+            -RequireSigning:$stable
+
+      - name: Remove ephemeral signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          $certificateBaseline = Join-Path $env:RUNNER_TEMP 'neoth-windows-cert-baseline.txt'
+          if (Test-Path -LiteralPath $certificateBaseline) {
+            $existingThumbprints = @(Get-Content -LiteralPath $certificateBaseline)
+            foreach ($certificate in @(Get-ChildItem Cert:\CurrentUser\My)) {
+              if ($existingThumbprints -notcontains $certificate.Thumbprint) {
+                Remove-Item -LiteralPath $certificate.PSPath -DeleteKey -Force -ErrorAction Stop
+              }
+            }
+            $remainingThumbprints = @(Get-ChildItem Cert:\CurrentUser\My).Thumbprint
+            $difference = @(Compare-Object `
+              -ReferenceObject @($existingThumbprints | Sort-Object) `
+              -DifferenceObject @($remainingThumbprints | Sort-Object))
+            if ($difference.Count -ne 0) {
+              throw 'Ephemeral Authenticode certificate cleanup did not restore the certificate baseline.'
+            }
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'neoth-windows-signing.pfx'
+          if (Test-Path -LiteralPath $certificatePath) {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction Stop
+          }
+          if (Test-Path -LiteralPath $certificatePath) {
+            throw 'Ephemeral Authenticode PFX cleanup failed.'
+          }
+          if (Test-Path -LiteralPath $certificateBaseline) {
+            Remove-Item -LiteralPath $certificateBaseline -Force -ErrorAction Stop
+          }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-windows-${{ matrix.architecture }}-setup
+          path: |
+            dist/installer/*.exe
+            dist/installer/*.exe.sha256
+            dist/installer/*.exe.json
+            dist/installer/*.zip
+            dist/installer/*.zip.sha256
+            dist/installer/*.zip.json
+          retention-days: 1
+
+  # Execute installed Windows products only on a fresh runner which never saw
+  # the Authenticode PFX or imported private key.
+  smoke-windows-installer:
+    name: Windows clean-machine smoke ${{ matrix.architecture }}
+    needs: package-windows-installer
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            runner: windows-2022
+          - architecture: arm64
+            runner: windows-11-arm
+    steps:
+      - name: Checkout smoke harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download signed Windows installer
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-windows-${{ matrix.architecture }}-setup
+          path: dist/installer
+
+      - name: Native clean-machine installer smoke
+        shell: pwsh
+        run: |
+          $stable = $env:GITHUB_REF_NAME -notmatch '-'
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          ./packaging/windows/smoke-installer.ps1 `
+            -Installer "dist/installer/NEOTH-$version-${{ matrix.architecture }}-Setup.exe" `
+            -Version $version `
+            -RequireSignature:$stable
+
+  # Execute runtime/version probes on keyless native runners, then bind every
+  # Linux bundle byte to a receipt. Package construction consumes the receipt
+  # on a fresh runner and therefore never executes product code.
+  preflight-linux-native:
+    name: Linux keyless preflight ${{ matrix.architecture }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - architecture: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout preflight harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download version-locked Linux bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/archive
+
+      - name: Verify package-builder contracts
+        shell: bash
+        run: bash packaging/linux/test-contracts.sh
+
+      - name: Execute runtime preflight and bind exact bytes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="dist/archive/neoth-${GITHUB_REF_NAME}-${TARGET}.tar.gz"
+          BUNDLE="$PWD/dist/bundle/neoth-v${VERSION}-${TARGET}"
+          RECEIPT="$PWD/dist/preflight/neoth-${GITHUB_REF_NAME}-${TARGET}.receipt"
+          test -s "$ARCHIVE"
+          mkdir -p dist/bundle dist/preflight
+          tar -xzf "$ARCHIVE" -C dist/bundle
+          test -d "$BUNDLE"
+          packaging/linux/build-packages.sh \
+            --bundle "$BUNDLE" \
+            --version "$VERSION" \
+            --arch '${{ matrix.architecture }}' \
+            --validate-only \
+            --write-preflight-receipt "$RECEIPT"
+          test -s "$RECEIPT"
+
+      - name: Upload byte-bound preflight receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-linux-${{ matrix.architecture }}-preflight
+          path: dist/preflight/*.receipt
+          if-no-files-found: error
+          retention-days: 1
+
+  # Consume the exact GNU/Linux desktop bundles built above and exercise both
+  # package-manager transactions. DEB gets a native apt install/removal smoke;
+  # RPM gets an isolated RPM database transaction in addition to the builder's
+  # byte-for-byte payload and dependency-contract verification.
+  package-linux-native:
+    name: Linux native packages ${{ matrix.architecture }}
+    needs: [build, preflight-linux-native]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - architecture: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download version-locked Linux bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/archive
+
+      - name: Download byte-bound keyless preflight receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-linux-${{ matrix.architecture }}-preflight
+          path: dist/preflight
+
+      - name: Install native packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cpio \
+            dpkg-dev \
+            rpm \
+            rpm2cpio
+
+      - name: Build DEB and RPM from receipt-bound bytes without product execution
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="dist/archive/neoth-${GITHUB_REF_NAME}-${TARGET}.tar.gz"
+          test -s "$ARCHIVE"
+          mkdir -p dist/bundle dist/packages
+          tar -xzf "$ARCHIVE" -C dist/bundle
+          BUNDLE="dist/bundle/neoth-v${VERSION}-${TARGET}"
+          RECEIPT="$PWD/dist/preflight/neoth-${GITHUB_REF_NAME}-${TARGET}.receipt"
+          test -d "$BUNDLE"
+          test -s "$RECEIPT"
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")
+          packaging/linux/build-packages.sh \
+            --bundle "$BUNDLE" \
+            --version "$VERSION" \
+            --arch '${{ matrix.architecture }}' \
+            --output dist/packages \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --preflight-receipt "$RECEIPT"
+
+      - name: Upload Linux native packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-linux-${{ matrix.architecture }}-native
+          path: |
+            dist/packages/*.deb
+            dist/packages/*.deb.sha256
+            dist/packages/*.deb.json
+            dist/packages/*.rpm
+            dist/packages/*.rpm.sha256
+            dist/packages/*.rpm.json
+          retention-days: 1
+
+  # Install and execute native Linux packages only after the exact package
+  # bytes are immutable workflow artifacts. This runner never contributes bytes
+  # to the later release-signing input.
+  smoke-linux-native:
+    name: Linux clean-machine smoke ${{ matrix.architecture }}
+    needs: package-linux-native
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - architecture: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Download immutable native Linux packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-linux-${{ matrix.architecture }}-native
+          path: dist/packages
+
+      - name: Install RPM tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+
+      - name: Native DEB install, upgrade and removal smoke
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARGET="${{ matrix.target }}"
+          DEB="$PWD/dist/packages/NEOTH-${VERSION}-${TARGET}.deb"
+          STATE_MARKER="$HOME/.neoth/package-smoke-${GITHUB_RUN_ID}-${{ matrix.architecture }}"
+          mkdir -p "$HOME/.neoth"
+          printf 'preserve\n' > "$STATE_MARKER"
+          cleanup() {
+            sudo dpkg --remove neoth >/dev/null 2>&1 || true
+            rm -f "$STATE_MARKER"
+          }
+          trap cleanup EXIT
+          sudo apt-get install -y "$DEB"
+          sudo apt-get install --reinstall -y "$DEB"
+          for name in neoth neothd neoth-migrate neoth-relay; do
+            output=$(/usr/bin/$name --version 2>&1)
+            tr -cs '0-9A-Za-z.+-' '\n' <<<"$output" | grep -Fqx "$VERSION"
+          done
+          test "$(/usr/bin/neoth-keet-bridge --version)" = "$VERSION"
+          sudo apt-get remove -y neoth
+          test -f "$STATE_MARKER"
+          test ! -e /usr/bin/neoth
+
+      - name: Isolated RPM install, upgrade and removal smoke
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARGET="${{ matrix.target }}"
+          RPM="$PWD/dist/packages/NEOTH-${VERSION}-${TARGET}.rpm"
+          ROOT="$RUNNER_TEMP/neoth-rpm-root-${{ matrix.architecture }}"
+          mkdir -p "$ROOT"
+          sudo rpm --root "$ROOT" --initdb
+          sudo rpm --root "$ROOT" --nodeps --nosignature -i "$RPM"
+          sudo rpm --root "$ROOT" --nodeps --nosignature -U --replacepkgs "$RPM"
+          for name in neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge; do
+            test -x "$ROOT/usr/bin/$name"
+          done
+          sudo rpm --root "$ROOT" --nodeps -e neoth
+          test ! -e "$ROOT/usr/bin/neoth"
+
+  # Runtime-probe each macOS payload on a keyless runner and bind the exact
+  # bytes to a receipt. The later signing runner is fresh and never executes
+  # product code while Developer ID/notarization credentials exist.
+  preflight-macos-native:
+    name: macOS keyless preflight ${{ matrix.architecture }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - architecture: arm64
+            target: aarch64-apple-darwin
+            runner: macos-15
+    steps:
+      - name: Checkout preflight harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download version-locked macOS bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/archive
+
+      - name: Verify package-builder contracts
+        shell: bash
+        run: bash packaging/macos/test-contracts.sh
+
+      - name: Execute runtime preflight and bind exact bytes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="dist/archive/neoth-${GITHUB_REF_NAME}-${TARGET}.tar.gz"
+          BUNDLE="$PWD/dist/bundle/neoth-v${VERSION}-${TARGET}"
+          RECEIPT="$PWD/dist/preflight/neoth-${GITHUB_REF_NAME}-${TARGET}.receipt"
+          test -s "$ARCHIVE"
+          mkdir -p dist/bundle dist/preflight
+          tar -xzf "$ARCHIVE" -C dist/bundle
+          test -d "$BUNDLE"
+          packaging/macos/build-packages.sh \
+            --bundle "$BUNDLE" \
+            --version "$VERSION" \
+            --arch '${{ matrix.architecture }}' \
+            --validate-only \
+            --write-preflight-receipt "$RECEIPT"
+          test -s "$RECEIPT"
+
+      - name: Upload byte-bound preflight receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-macos-${{ matrix.architecture }}-preflight
+          path: dist/preflight/*.receipt
+          if-no-files-found: error
+          retention-days: 1
+
+  # Produce a normal drag-and-drop app, a native PKG and a DMG on each native
+  # Mac architecture. Stable tags require Developer ID signing plus Apple
+  # notarization. Product execution happens later on another keyless runner.
+  package-macos-native:
+    name: macOS native packages ${{ matrix.architecture }}
+    needs: [build, preflight-macos-native]
+    environment: release-signing
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - architecture: arm64
+            target: aarch64-apple-darwin
+            runner: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download version-locked macOS bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/archive
+
+      - name: Download byte-bound keyless preflight receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-macos-${{ matrix.architecture }}-preflight
+          path: dist/preflight
+
+      - name: Import ephemeral Apple signing identities
+        id: apple_signing
+        shell: bash
+        env:
+          CERTIFICATES_BASE64: ${{ secrets.NEOTH_APPLE_SIGNING_CERTIFICATES_BASE64 }}
+          CERTIFICATES_PASSWORD: ${{ secrets.NEOTH_APPLE_SIGNING_CERTIFICATES_PASSWORD }}
+          APPLICATION_IDENTITY: ${{ secrets.NEOTH_MACOS_APPLICATION_IDENTITY }}
+          INSTALLER_IDENTITY: ${{ secrets.NEOTH_MACOS_INSTALLER_IDENTITY }}
+          NOTARY_KEY_BASE64: ${{ secrets.NEOTH_APPLE_NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NEOTH_APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NEOTH_APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          umask 077
+          stable=true
+          [[ "$GITHUB_REF_NAME" == *-* ]] && stable=false
+          signing_fields=0
+          for value in "$CERTIFICATES_BASE64" "$CERTIFICATES_PASSWORD" \
+            "$APPLICATION_IDENTITY" "$INSTALLER_IDENTITY"; do
+            [[ -n "$value" ]] && signing_fields=$((signing_fields + 1))
+          done
+          notary_fields=0
+          for value in "$NOTARY_KEY_BASE64" "$NOTARY_KEY_ID" "$NOTARY_ISSUER_ID"; do
+            [[ -n "$value" ]] && notary_fields=$((notary_fields + 1))
+          done
+          [[ $signing_fields -eq 0 || $signing_fields -eq 4 ]] || {
+            echo '::error::Apple signing configuration is incomplete'; exit 1;
+          }
+          [[ $notary_fields -eq 0 || $notary_fields -eq 3 ]] || {
+            echo '::error::Apple notarization configuration is incomplete'; exit 1;
+          }
+          [[ $notary_fields -eq 0 || $signing_fields -eq 4 ]] || {
+            echo '::error::Apple notarization requires signing identities'; exit 1;
+          }
+          if $stable && { [[ $signing_fields -ne 4 ]] || [[ $notary_fields -ne 3 ]]; }; then
+            echo '::error::Stable macOS releases require Developer ID signing and notarization secrets.'
+            exit 1
+          fi
+          if [[ $signing_fields -eq 0 ]]; then
+            echo 'signing=false' >> "$GITHUB_OUTPUT"
+            echo 'notarization=false' >> "$GITHUB_OUTPUT"
+            echo 'keychain=' >> "$GITHUB_OUTPUT"
+            echo 'p12=' >> "$GITHUB_OUTPUT"
+            echo 'notary_key=' >> "$GITHUB_OUTPUT"
+            echo 'notary_profile=' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/neoth-signing-${{ matrix.architecture }}.keychain-db"
+          P12="$RUNNER_TEMP/neoth-signing-${{ matrix.architecture }}.p12"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 32)
+          python3 - "$P12" <<'PY'
+          import base64
+          import os
+          import pathlib
+          import sys
+          pathlib.Path(sys.argv[1]).write_bytes(
+              base64.b64decode(os.environ["CERTIFICATES_BASE64"], validate=True)
+          )
+          PY
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$CERTIFICATES_PASSWORD" -x \
+            -T /usr/bin/codesign -T /usr/bin/productsign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+          security default-keychain -d user -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "$APPLICATION_IDENTITY"
+          security find-certificate -a -c "$INSTALLER_IDENTITY" -Z "$KEYCHAIN" | grep -Eq '^SHA-(1|256) hash:'
+          echo 'signing=true' >> "$GITHUB_OUTPUT"
+          if [[ $notary_fields -eq 3 ]]; then
+            NOTARY_KEY="$RUNNER_TEMP/neoth-notary-${{ matrix.architecture }}.p8"
+            python3 - "$NOTARY_KEY" <<'PY'
+          import base64
+          import os
+          import pathlib
+          import sys
+          pathlib.Path(sys.argv[1]).write_bytes(
+              base64.b64decode(os.environ["NOTARY_KEY_BASE64"], validate=True)
+          )
+          PY
+            chmod 600 "$NOTARY_KEY"
+            NOTARY_PROFILE="neoth-release-${GITHUB_RUN_ID}-${{ matrix.architecture }}"
+            xcrun notarytool store-credentials "$NOTARY_PROFILE" \
+              --key "$NOTARY_KEY" \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID" \
+              --keychain "$KEYCHAIN"
+            echo 'notarization=true' >> "$GITHUB_OUTPUT"
+            echo "notary_key=$NOTARY_KEY" >> "$GITHUB_OUTPUT"
+            echo "notary_profile=$NOTARY_PROFILE" >> "$GITHUB_OUTPUT"
+          else
+            echo 'notarization=false' >> "$GITHUB_OUTPUT"
+            echo 'notary_key=' >> "$GITHUB_OUTPUT"
+            echo 'notary_profile=' >> "$GITHUB_OUTPUT"
+          fi
+          echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+          echo "p12=$P12" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed native app, PKG and DMG
+        shell: bash
+        env:
+          NEOTH_APPLICATION_IDENTITY: ${{ secrets.NEOTH_MACOS_APPLICATION_IDENTITY }}
+          NEOTH_INSTALLER_IDENTITY: ${{ secrets.NEOTH_MACOS_INSTALLER_IDENTITY }}
+          NEOTH_NOTARY_PROFILE: ${{ steps.apple_signing.outputs.notary_profile }}
+          NEOTH_NOTARY_KEYCHAIN: ${{ steps.apple_signing.outputs.keychain }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="dist/archive/neoth-${GITHUB_REF_NAME}-${TARGET}.tar.gz"
+          BUNDLE="$PWD/dist/bundle/neoth-v${VERSION}-${TARGET}"
+          RECEIPT="$PWD/dist/preflight/neoth-${GITHUB_REF_NAME}-${TARGET}.receipt"
+          test -s "$ARCHIVE"
+          rm -rf dist/bundle
+          mkdir -p dist/bundle dist/packages
+          tar -xzf "$ARCHIVE" -C dist/bundle
+          test -d "$BUNDLE"
+          test -s "$RECEIPT"
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")
+          args=(
+            --bundle "$BUNDLE"
+            --version "$VERSION"
+            --arch '${{ matrix.architecture }}'
+            --output dist/packages
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+            --preflight-receipt "$RECEIPT"
+          )
+          if [[ '${{ steps.apple_signing.outputs.signing }}' != true ]]; then
+            unset NEOTH_APPLICATION_IDENTITY NEOTH_INSTALLER_IDENTITY
+          fi
+          if [[ '${{ steps.apple_signing.outputs.notarization }}' != true ]]; then
+            unset NEOTH_NOTARY_PROFILE NEOTH_NOTARY_KEYCHAIN
+          fi
+          if [[ "$GITHUB_REF_NAME" != *-* ]]; then
+            args+=(--require-signing --require-notarization)
+          fi
+          packaging/macos/build-packages.sh "${args[@]}"
+
+      - name: Remove ephemeral Apple signing identities
+        if: always()
+        shell: bash
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/neoth-signing-${{ matrix.architecture }}.keychain-db"
+          P12="$RUNNER_TEMP/neoth-signing-${{ matrix.architecture }}.p12"
+          NOTARY_KEY="$RUNNER_TEMP/neoth-notary-${{ matrix.architecture }}.p8"
+          if [[ -e "$KEYCHAIN" ]]; then
+            security delete-keychain "$KEYCHAIN"
+          fi
+          security default-keychain -d user -s login.keychain-db
+          security list-keychains -d user -s login.keychain-db
+          rm -f "$P12" "$NOTARY_KEY"
+          test ! -e "$KEYCHAIN"
+          test ! -e "$P12"
+          test ! -e "$NOTARY_KEY"
+
+      - name: Upload macOS native packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-macos-${{ matrix.architecture }}-native
+          path: |
+            dist/packages/*.app
+            dist/packages/*.tar.gz
+            dist/packages/*.tar.gz.sha256
+            dist/packages/*.tar.gz.json
+            dist/packages/*.pkg
+            dist/packages/*.pkg.sha256
+            dist/packages/*.pkg.json
+            dist/packages/*.dmg
+            dist/packages/*.dmg.sha256
+            dist/packages/*.dmg.json
+          retention-days: 1
+
+  # Install and execute signed macOS products on a separate runner with no
+  # Developer ID P12, unlocked signing keychain, or notarization API key.
+  smoke-macos-native:
+    name: macOS clean-machine smoke ${{ matrix.architecture }}
+    needs: package-macos-native
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - architecture: arm64
+            target: aarch64-apple-darwin
+            runner: macos-15
+    steps:
+      - name: Download signed macOS packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-macos-${{ matrix.architecture }}-native
+          path: dist/packages
+
+      - name: Native PKG install, upgrade and removal smoke
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARGET="${{ matrix.target }}"
+          PKG="$PWD/dist/packages/NEOTH-${VERSION}-${TARGET}.pkg"
+          DMG="$PWD/dist/packages/NEOTH-${VERSION}-${TARGET}.dmg"
+          STATE_MARKER="$HOME/.neoth/package-smoke-${GITHUB_RUN_ID}-${{ matrix.architecture }}"
+          mkdir -p "$HOME/.neoth"
+          printf 'preserve\n' > "$STATE_MARKER"
+          cleanup() {
+            if [[ -x /usr/local/bin/neoth-uninstall ]]; then
+              sudo /usr/local/bin/neoth-uninstall >/dev/null 2>&1 || true
+            fi
+            rm -f "$STATE_MARKER"
+          }
+          trap cleanup EXIT
+          sudo installer -pkg "$PKG" -target /
+          sudo installer -pkg "$PKG" -target /
+          test -d /Applications/NEOTH.app
+          for name in neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge; do
+            test -L "/usr/local/bin/$name"
+          done
+          for name in neoth neothd neoth-migrate neoth-relay; do
+            output=$(/usr/local/bin/$name --version 2>&1)
+            tr -cs '0-9A-Za-z.+-' '\n' <<<"$output" | grep -Fqx "$VERSION"
+          done
+          test "$(/usr/local/bin/neoth-keet-bridge --version)" = "$VERSION"
+          if [[ "$GITHUB_REF_NAME" != *-* ]]; then
+            codesign --verify --strict --verbose=2 /Applications/NEOTH.app
+            pkgutil --check-signature "$PKG"
+            xcrun stapler validate /Applications/NEOTH.app
+            xcrun stapler validate "$PKG"
+            xcrun stapler validate "$DMG"
+            spctl --assess --type execute --verbose=2 /Applications/NEOTH.app
+          fi
+          sudo /usr/local/bin/neoth-uninstall
+          test -f "$STATE_MARKER"
+          test ! -e /Applications/NEOTH.app
+          test ! -e /usr/local/bin/neoth
+
   # The optional Node sidecar is a first-class release artifact, not something
   # operators must recover from a source checkout. Its exact lockfile is tested
   # before the source-only archive is produced; node_modules and account state
@@ -501,7 +1596,7 @@ jobs:
           cp bridges/whatsapp-baileys/pnpm-lock.yaml "$ROOT/"
           cp bridges/whatsapp-baileys/README.md "$ROOT/"
           cp bridges/whatsapp-baileys/neoth-whatsapp-baileys.service "$ROOT/"
-          cp LICENSE-MIT LICENSE-APACHE "$ROOT/"
+          cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES "$ROOT/"
           tar -C dist -czf "dist/$ARCHIVE" whatsapp-baileys
           sha256sum "dist/$ARCHIVE" | sed 's#dist/##' > "dist/$ARCHIVE.sha256"
           echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
@@ -515,181 +1610,784 @@ jobs:
             dist/${{ steps.archive.outputs.archive }}.sha256
           retention-days: 1
 
-  # ---------------------------------------------------------------------------
-  # Create GitHub Release + upload all assets
-  # ---------------------------------------------------------------------------
-  release:
-    name: Create GitHub Release
-    needs: [build, package-whatsapp-baileys]
+  # Generate package-manager submissions only from the complete, already
+  # verified workflow artifacts. Every URL and checksum is therefore bound to
+  # the bytes that the same release job will publish.
+  generate-package-manifests:
+    name: Generate package-manager manifests
+    needs:
+      - build
+      - package-windows-installer
+      - smoke-windows-installer
+      - package-linux-native
+      - smoke-linux-native
+      - smoke-linux-musl-portable
+      - package-macos-native
+      - smoke-macos-native
+      - package-whatsapp-baileys
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write       # create release + upload assets
-      id-token: write       # cosign keyless OIDC signing
-
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Download all build artifacts
+      - name: Download every verified release payload
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: dist/
-          merge-multiple: true
+          path: incoming
+
+      - name: Assemble the canonical public asset set
+        shell: bash
+        run: |
+          mkdir -p dist/release-assets
+          stage_artifact() {
+            local artifact_name=$1
+            local source="incoming/$artifact_name"
+            test -d "$source" || {
+              echo "::error::missing workflow artifact $artifact_name"; exit 1;
+            }
+            while IFS= read -r -d '' file; do
+              destination="dist/release-assets/$(basename "$file")"
+              if [[ -e "$destination" ]]; then
+                echo "::error::duplicate canonical release asset $(basename "$file")"
+                exit 1
+              fi
+              cp "$file" "$destination"
+            done < <(find "$source" -maxdepth 1 -type f -print0)
+          }
+
+          # Raw macOS and Windows archives are unsigned matrix inputs. Their
+          # native packaging jobs emit signed canonical replacements with the
+          # same public names; only those replacements are promoted here.
+          stage_artifact "neoth-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-aarch64-unknown-linux-gnu"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-windows-x64-setup"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-windows-arm64-setup"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-linux-x86_64-native"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-linux-aarch64-native"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-macos-x86_64-native"
+          stage_artifact "neoth-${GITHUB_REF_NAME}-macos-arm64-native"
+          stage_artifact "neoth-whatsapp-baileys-${GITHUB_REF_NAME}"
+          test -s "dist/release-assets/neoth-${GITHUB_REF_NAME}-x86_64-pc-windows-msvc.zip"
+          test -s "dist/release-assets/neoth-${GITHUB_REF_NAME}-aarch64-pc-windows-msvc.zip"
+          test -s "dist/release-assets/neoth-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz"
+          test -s "dist/release-assets/neoth-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz"
+
+      - name: Test and generate exact-hash manifests
+        shell: bash
+        run: |
+          python3 packaging/tests/test_generate_release_manifests.py
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 packaging/generate_release_manifests.py \
+            --dist dist/release-assets \
+            --output dist/generated \
+            --repository The-Geek-Freaks/NEOTH \
+            --version "$VERSION"
+          unzip -t "dist/generated/neoth-package-manifests-v${VERSION}.zip"
+          test -s "dist/generated/neoth-package-manifests-v${VERSION}.zip.sha256"
+          cp "dist/generated/neoth-package-manifests-v${VERSION}.zip" dist/release-assets/
+          cp "dist/generated/neoth-package-manifests-v${VERSION}.zip.sha256" dist/release-assets/
+
+      - name: Upload canonical release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-release-assets
+          path: dist/release-assets/*
+          retention-days: 1
+
+  # Validate the canonical assets and aggregate exact checksums without any
+  # signing authority. This immutable artifact is the only input to the two
+  # independent signer jobs.
+  prepare-release-assets:
+    name: Prepare exact release assets
+    needs: generate-package-manifests
+    runs-on: ubuntu-24.04
+    outputs:
+      signing_inputs_sha256: ${{ steps.bind_signing_inputs.outputs.manifest_sha256 }}
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download canonical release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-release-assets
+          path: dist
 
       - name: Aggregate checksums
+        shell: python
+        run: |
+          import hashlib
+          import pathlib
+          import re
+
+          dist = pathlib.Path("dist")
+          checksum_line = re.compile(r"([0-9a-f]{64})  ([^/\\\r\n]+)")
+          rows = []
+          names = set()
+          for sidecar in sorted(dist.glob("*.sha256")):
+              lines = sidecar.read_text(encoding="utf-8").splitlines()
+              if len(lines) != 1:
+                  raise SystemExit(f"{sidecar.name}: expected exactly one checksum row")
+              match = checksum_line.fullmatch(lines[0])
+              if not match:
+                  raise SystemExit(f"{sidecar.name}: invalid checksum row")
+              expected_hash, name = match.groups()
+              if name != sidecar.name.removesuffix(".sha256"):
+                  raise SystemExit(
+                      f"{sidecar.name}: checksum names {name}, expected "
+                      f"{sidecar.name.removesuffix('.sha256')}"
+                  )
+              if name in names:
+                  raise SystemExit(f"duplicate checksum name: {name}")
+              artifact = dist / name
+              if not artifact.is_file():
+                  raise SystemExit(f"{sidecar.name}: missing artifact {name}")
+              actual_hash = hashlib.sha256(artifact.read_bytes()).hexdigest()
+              if actual_hash != expected_hash:
+                  raise SystemExit(
+                      f"{sidecar.name}: digest mismatch {actual_hash} != {expected_hash}"
+                  )
+              names.add(name)
+              rows.append(f"{expected_hash}  {name}\n")
+          if not rows:
+              raise SystemExit("no artifact checksum sidecars found")
+          dist.joinpath("SHA256SUMS").write_text(
+              "".join(rows), encoding="utf-8", newline="\n"
+          )
+          print(f"validated and aggregated {len(rows)} artifact checksums")
+
+      - name: Verify aggregate checksum contract
+        shell: bash
         run: |
           cd dist
-          cat *.sha256 > SHA256SUMS
-          echo "--- SHA256SUMS ---"
-          cat SHA256SUMS
+          sha256sum --check SHA256SUMS
 
-      # Keyless cosign signing via Sigstore OIDC — no secret keys required.
-      # Verification: `cosign verify-blob --bundle <file>.cosign.bundle <file>`
-      # Identity bound to the GitHub Actions workflow URL; transparency log entry
-      # on Rekor (https://rekor.sigstore.dev).
-      - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Stage the pinned self-update public key
+        run: cp NEOTH_RELEASE_MINISIGN_PUBKEY.txt dist/NEOTH_RELEASE_MINISIGN_PUBKEY.txt
 
-      - name: Sign archives (cosign keyless — public-download provenance)
-        env:
-          COSIGN_EXPERIMENTAL: "1"
+      - name: Bind every signing input for cross-job transfer
+        id: bind_signing_inputs
+        shell: bash
         run: |
           cd dist
-          # Sign BOTH the Unix tarballs AND the Windows .zip archives —
-          # the prior loop covered only *.tar.gz, leaving every Windows
-          # release artifact unsigned (gremium quality-lens v1.0 blocker).
           shopt -s nullglob
-          archive_count=0
-          for f in *.tar.gz *.zip; do
-            archive_count=$((archive_count + 1))
-            cosign sign-blob --yes "$f" --bundle "${f}.cosign.bundle"
-          done
-          if [ "$archive_count" -eq 0 ]; then
-            echo "::error::no release archives found for cosign"; exit 1
-          fi
-          bundle_count=$(find . -maxdepth 1 -type f -name '*.cosign.bundle' | wc -l)
-          if [ "$bundle_count" -ne "$archive_count" ]; then
-            echo "::error::expected $archive_count cosign bundles, found $bundle_count"; exit 1
-          fi
+          files=(
+            *.tar.gz *.zip *.exe *.deb *.rpm *.pkg *.dmg *.json *.sha256
+            SHA256SUMS NEOTH_RELEASE_MINISIGN_PUBKEY.txt
+          )
+          ((${#files[@]} > 0))
+          printf '%s\n' "${files[@]}" | LC_ALL=C sort -u > /tmp/neoth-signing-input-names
+          [[ $(wc -l < /tmp/neoth-signing-input-names) -eq ${#files[@]} ]]
+          while IFS= read -r name; do
+            [[ -f "$name" && ! -L "$name" ]]
+            sha256sum "$name"
+          done < /tmp/neoth-signing-input-names > NEOTH_INTERNAL_SIGNING_INPUTS.SHA256
+          manifest_sha256=$(sha256sum NEOTH_INTERNAL_SIGNING_INPUTS.SHA256 | awk '{print $1}')
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+          echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
 
-      # Session 28f release-drift fix — TWO complementary signing schemes:
-      #   1. cosign (above) → public-download PROVENANCE (Sigstore
-      #      transparency log; anyone downloading verifies the artifact was
-      #      built by this exact workflow). No key management.
-      #   2. minisign (below) → self-update VERIFY path (the daemon's
-      #      `updater::sig_verify` has a compile-time pinned pubkey + reads
-      #      a `<asset>.minisig` companion; ed25519, offline, rustls/no-ring
-      #      friendly). MV-01b prereq #2.
-      #
-      # Provisioning (Alex action, one-time — DAU-friendly, NO `minisign` tool,
-      # no install, no password). MAR-02: the keygen + signing are BUILT INTO
-      # neoth itself (`updater::sig_keygen`):
-      #   1. Run `neoth release keygen` locally — NEOTH mints the keypair
-      #      IN-PROCESS and prints the PUBLIC key + the SECRET (base64) with
-      #      step-by-step instructions.
-      #   2. Repo Settings → Secrets → Actions → add:
-      #        NEOTH_RELEASE_MINISIGN_SECRET = the SECRET line from keygen.
-      #   3. Bake the PUBLIC key into the release builds: set
-      #      `NEOTH_RELEASE_MINISIGN_PUBKEY=<public key from keygen>` on the
-      #      `cargo build --release` steps (working-directory: SRC/neothd, above).
-      # Missing/mismatched key material is fatal: a stable v1 release must not
-      # publish binaries that its default self-updater cannot authenticate.
-      - name: Sign archives (neoth release sign — in-process, self-update verify)
+      - name: Upload immutable signing inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-signing-inputs
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.exe
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg
+            dist/*.dmg
+            dist/*.json
+            dist/*.sha256
+            dist/SHA256SUMS
+            dist/NEOTH_RELEASE_MINISIGN_PUBKEY.txt
+            dist/NEOTH_INTERNAL_SIGNING_INPUTS.SHA256
+          if-no-files-found: error
+          retention-days: 1
+
+  # Compile/test the narrow signer on a keyless runner. The secret-bearing job
+  # below starts fresh, so no Cargo build script or test process can persist
+  # until the long-lived release key is exposed.
+  build-release-signer:
+    name: Build isolated self-update signer
+    needs: prepare-release-assets
+    runs-on: ubuntu-24.04
+    outputs:
+      signer_sha256: ${{ steps.bind_signer.outputs.signer_sha256 }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout signer source without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust for isolated signer
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
+          components: rustfmt
+
+      - name: Validate, test, and build isolated signer
+        shell: bash
+        run: |
+          test -f .github/release-tools/neoth-release-signer/Cargo.lock
+          cargo metadata --locked --no-deps --format-version 1 \
+            --manifest-path .github/release-tools/neoth-release-signer/Cargo.toml \
+            >/dev/null
+          cargo fmt --check \
+            --manifest-path .github/release-tools/neoth-release-signer/Cargo.toml
+          cargo test --locked \
+            --manifest-path .github/release-tools/neoth-release-signer/Cargo.toml
+          cargo build --release --locked \
+            --manifest-path .github/release-tools/neoth-release-signer/Cargo.toml
+          mkdir -p dist
+          install -m 0755 \
+            .github/release-tools/neoth-release-signer/target/release/neoth-release-signer \
+            dist/neoth-release-signer
+
+      - name: Bind isolated signer binary
+        id: bind_signer
+        shell: bash
+        run: |
+          signer_sha256=$(sha256sum dist/neoth-release-signer | awk '{print $1}')
+          [[ "$signer_sha256" =~ ^[0-9a-f]{64}$ ]]
+          echo "signer_sha256=$signer_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload isolated signer binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-release-signer
+          path: dist/neoth-release-signer
+          if-no-files-found: error
+          retention-days: 1
+
+  # Self-update authenticity signer. Only this fresh job sees the long-lived
+  # NEOTH release secret. It has no write token, no OIDC token, no checkout,
+  # and never executes any product artifact.
+  minisign-release-assets:
+    name: Sign self-update assets
+    needs: [prepare-release-assets, build-release-signer]
+    environment: release-signing
+    runs-on: ubuntu-24.04
+    outputs:
+      minisign_signatures_sha256: ${{ steps.bind_minisign_signatures.outputs.manifest_sha256 }}
+    permissions:
+      actions: read
+    steps:
+      - name: Download isolated signer binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-release-signer
+          path: signer
+
+      - name: Verify isolated signer transfer
+        shell: bash
+        env:
+          SIGNER_SHA256: ${{ needs.build-release-signer.outputs.signer_sha256 }}
+        run: |
+          [[ "$SIGNER_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$SIGNER_SHA256" signer/neoth-release-signer | sha256sum --check
+          chmod 0755 signer/neoth-release-signer
+
+      - name: Download exact signing inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-signing-inputs
+          path: dist
+
+      - name: Verify exact signing-input transfer
+        shell: bash
+        env:
+          MANIFEST_SHA256: ${{ needs.prepare-release-assets.outputs.signing_inputs_sha256 }}
+        run: |
+          [[ "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$MANIFEST_SHA256" \
+            dist/NEOTH_INTERNAL_SIGNING_INPUTS.SHA256 | sha256sum --check
+          (cd dist && sha256sum --check NEOTH_INTERNAL_SIGNING_INPUTS.SHA256)
+
+      - name: Sign exact self-update asset set
+        shell: bash
         env:
           NEOTH_RELEASE_MINISIGN_SECRET: ${{ secrets.NEOTH_RELEASE_MINISIGN_SECRET }}
           NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
         run: |
-          if [ -z "$NEOTH_RELEASE_MINISIGN_SECRET" ] || [ -z "$NEOTH_RELEASE_MINISIGN_PUBKEY" ]; then
-            echo "::error::release minisign secret/public key is missing; refusing an unsigned release."
-            exit 1
-          fi
-          # Dogfood: sign with NEOTH's OWN in-process signer — the linux neoth
-          # binary from this very release. No external minisign tool, no password.
-          LINUX_TARBALL=$(ls dist/*x86_64-unknown-linux-gnu*.tar.gz 2>/dev/null | head -1)
-          if [ -z "$LINUX_TARBALL" ]; then
-            echo "::error::no linux x86_64 tarball in dist/ to source the signer binary"; exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/signer"
-          tar xzf "$LINUX_TARBALL" -C "$RUNNER_TEMP/signer"
-          NEOTH=$(find "$RUNNER_TEMP/signer" -name neoth -type f | head -1)
-          if [ -z "$NEOTH" ]; then
-            echo "::error::neoth binary not found inside $LINUX_TARBALL"; exit 1
-          fi
-          chmod +x "$NEOTH"
-          cp NEOTH_RELEASE_MINISIGN_PUBKEY.txt dist/NEOTH_RELEASE_MINISIGN_PUBKEY.txt
+          [[ -n "$NEOTH_RELEASE_MINISIGN_SECRET" ]]
+          [[ -n "$NEOTH_RELEASE_MINISIGN_PUBKEY" ]]
+          [[ "$(tr -d '\r\n' < dist/NEOTH_RELEASE_MINISIGN_PUBKEY.txt)" \
+            == "$NEOTH_RELEASE_MINISIGN_PUBKEY" ]]
+          shopt -s nullglob
+          assets=(
+            dist/*.tar.gz dist/*.zip dist/*.exe dist/*.deb dist/*.rpm
+            dist/*.pkg dist/*.dmg dist/*.json dist/*.sha256 dist/SHA256SUMS
+          )
+          ((${#assets[@]} > 0))
+          for asset in "${assets[@]}"; do
+            [[ -f "$asset" && ! -L "$asset" ]]
+          done
+          "$GITHUB_WORKSPACE/signer/neoth-release-signer" "${assets[@]}"
+          [[ $(find dist -maxdepth 1 -type f -name '*.minisig' | wc -l) \
+            -eq ${#assets[@]} ]]
+
+      - name: Bind every self-update signature for cross-job transfer
+        id: bind_minisign_signatures
+        shell: bash
+        run: |
           cd dist
           shopt -s nullglob
-          archive_count=0
-          for f in *.tar.gz *.zip; do
-            archive_count=$((archive_count + 1))
-            "$NEOTH" release sign "$f" \
-              || { echo "::error::neoth release sign failed for $f"; exit 1; }
-            trusted_count=$(grep -c '^trusted comment:' "$f.minisig" || true)
-            if [ "$trusted_count" -ne 1 ] \
-                || ! grep -Fqx "trusted comment: file:$f" "$f.minisig"; then
-              echo "::error::minisign trusted comment is not bound to file:$f"
+          signatures=( *.minisig )
+          ((${#signatures[@]} > 0))
+          printf '%s\n' "${signatures[@]}" | LC_ALL=C sort -u > /tmp/neoth-minisign-names
+          while IFS= read -r name; do
+            [[ -f "$name" && ! -L "$name" ]]
+            sha256sum "$name"
+          done < /tmp/neoth-minisign-names > NEOTH_INTERNAL_MINISIGN_SIGNATURES.SHA256
+          manifest_sha256=$(sha256sum NEOTH_INTERNAL_MINISIGN_SIGNATURES.SHA256 | awk '{print $1}')
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+          echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload self-update signatures
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-minisign-signatures
+          path: |
+            dist/*.minisig
+            dist/NEOTH_INTERNAL_MINISIGN_SIGNATURES.SHA256
+          if-no-files-found: error
+          retention-days: 1
+
+  # Independent Sigstore keyless signature/transparency bundles. This job has
+  # OIDC but no long-lived minisign secret and no release-write token.
+  cosign-release-assets:
+    name: Sign Sigstore transparency bundles
+    needs: prepare-release-assets
+    runs-on: ubuntu-24.04
+    outputs:
+      cosign_bundles_sha256: ${{ steps.bind_cosign_bundles.outputs.manifest_sha256 }}
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download exact signing inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-signing-inputs
+          path: dist
+
+      - name: Verify exact signing-input transfer
+        shell: bash
+        env:
+          MANIFEST_SHA256: ${{ needs.prepare-release-assets.outputs.signing_inputs_sha256 }}
+        run: |
+          [[ "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$MANIFEST_SHA256" \
+            dist/NEOTH_INTERNAL_SIGNING_INPUTS.SHA256 | sha256sum --check
+          (cd dist && sha256sum --check NEOTH_INTERNAL_SIGNING_INPUTS.SHA256)
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@3094a48ba06382e0e6cfa5a4af4fcc55fc6942b9 # v4 maintenance line
+        with:
+          cosign-release: 'v3.0.6'
+
+      - name: Create and verify keyless signature bundles
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cd dist
+          shopt -s nullglob
+          assets=(
+            *.tar.gz *.zip *.exe *.deb *.rpm *.pkg *.dmg *.json *.sha256
+            SHA256SUMS NEOTH_RELEASE_MINISIGN_PUBKEY.txt
+          )
+          ((${#assets[@]} > 0))
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}"
+          issuer="https://token.actions.githubusercontent.com"
+          for asset in "${assets[@]}"; do
+            [[ -f "$asset" && ! -L "$asset" ]]
+            cosign sign-blob --yes "$asset" --bundle "${asset}.cosign.bundle"
+            cosign verify-blob \
+              --bundle "${asset}.cosign.bundle" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "$issuer" \
+              "$asset"
+          done
+          [[ $(find . -maxdepth 1 -type f -name '*.cosign.bundle' | wc -l) \
+            -eq ${#assets[@]} ]]
+
+      - name: Bind every Sigstore bundle for cross-job transfer
+        id: bind_cosign_bundles
+        shell: bash
+        run: |
+          cd dist
+          shopt -s nullglob
+          bundles=( *.cosign.bundle )
+          ((${#bundles[@]} > 0))
+          printf '%s\n' "${bundles[@]}" | LC_ALL=C sort -u > /tmp/neoth-cosign-names
+          while IFS= read -r name; do
+            [[ -f "$name" && ! -L "$name" ]]
+            sha256sum "$name"
+          done < /tmp/neoth-cosign-names > NEOTH_INTERNAL_COSIGN_BUNDLES.SHA256
+          manifest_sha256=$(sha256sum NEOTH_INTERNAL_COSIGN_BUNDLES.SHA256 | awk '{print $1}')
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+          echo "manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Sigstore bundles
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-cosign-bundles
+          path: |
+            dist/*.cosign.bundle
+            dist/NEOTH_INTERNAL_COSIGN_BUNDLES.SHA256
+          if-no-files-found: error
+          retention-days: 1
+
+  # Only this job can mutate GitHub Releases. It has no OIDC token, no signing
+  # secret, no checkout, and never executes a product binary. Draft publication
+  # remains the atomic commit point after exact local/remote asset verification.
+  release:
+    name: Publish verified GitHub Release
+    needs:
+      - prepare-release-assets
+      - minisign-release-assets
+      - cosign-release-assets
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download exact release payloads
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-signing-inputs
+          path: dist
+
+      - name: Download self-update signatures
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-minisign-signatures
+          path: dist
+
+      - name: Download Sigstore bundles
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: neoth-${{ github.ref_name }}-cosign-bundles
+          path: dist
+
+      - name: Verify every cross-job transfer byte
+        shell: bash
+        env:
+          INPUTS_SHA256: ${{ needs.prepare-release-assets.outputs.signing_inputs_sha256 }}
+          MINISIGN_SHA256: ${{ needs.minisign-release-assets.outputs.minisign_signatures_sha256 }}
+          COSIGN_SHA256: ${{ needs.cosign-release-assets.outputs.cosign_bundles_sha256 }}
+        run: |
+          for value in "$INPUTS_SHA256" "$MINISIGN_SHA256" "$COSIGN_SHA256"; do
+            [[ "$value" =~ ^[0-9a-f]{64}$ ]]
+          done
+          printf '%s  %s\n' "$INPUTS_SHA256" \
+            dist/NEOTH_INTERNAL_SIGNING_INPUTS.SHA256 | sha256sum --check
+          printf '%s  %s\n' "$MINISIGN_SHA256" \
+            dist/NEOTH_INTERNAL_MINISIGN_SIGNATURES.SHA256 | sha256sum --check
+          printf '%s  %s\n' "$COSIGN_SHA256" \
+            dist/NEOTH_INTERNAL_COSIGN_BUNDLES.SHA256 | sha256sum --check
+          (
+            cd dist
+            sha256sum --check NEOTH_INTERNAL_SIGNING_INPUTS.SHA256
+            sha256sum --check NEOTH_INTERNAL_MINISIGN_SIGNATURES.SHA256
+            sha256sum --check NEOTH_INTERNAL_COSIGN_BUNDLES.SHA256
+          )
+
+      - name: Verify exact transferred signature sets
+        shell: python
+        run: |
+          import hashlib
+          import pathlib
+          import re
+
+          dist = pathlib.Path("dist")
+          if any(path.is_symlink() for path in dist.iterdir()):
+              raise SystemExit("release transfer contains a symlink")
+          names = {path.name for path in dist.iterdir() if path.is_file()}
+          internal_manifests = {
+              "NEOTH_INTERNAL_SIGNING_INPUTS.SHA256",
+              "NEOTH_INTERNAL_MINISIGN_SIGNATURES.SHA256",
+              "NEOTH_INTERNAL_COSIGN_BUNDLES.SHA256",
+          }
+          if not internal_manifests <= names:
+              raise SystemExit("release transfer is missing an internal binding manifest")
+          names -= internal_manifests
+          payload_suffixes = (
+              ".tar.gz", ".zip", ".exe", ".deb", ".rpm", ".pkg", ".dmg",
+              ".json", ".sha256",
+          )
+          payloads = {
+              name for name in names
+              if name == "SHA256SUMS" or name.endswith(payload_suffixes)
+          }
+          payloads -= {
+              name for name in payloads
+              if name.endswith(".cosign.bundle") or name.endswith(".minisig")
+          }
+          public_key = "NEOTH_RELEASE_MINISIGN_PUBKEY.txt"
+          expected_minisign = {f"{name}.minisig" for name in payloads}
+          expected_cosign = {
+              f"{name}.cosign.bundle" for name in payloads | {public_key}
+          }
+          actual_minisign = {name for name in names if name.endswith(".minisig")}
+          actual_cosign = {name for name in names if name.endswith(".cosign.bundle")}
+          expected_all = payloads | {public_key} | expected_minisign | expected_cosign
+          if not payloads:
+              raise SystemExit("no release payloads transferred")
+          if actual_minisign != expected_minisign:
+              raise SystemExit("minisign signature set does not exactly match payloads")
+          if actual_cosign != expected_cosign:
+              raise SystemExit("Sigstore bundle set does not exactly match payloads and public key")
+          if names != expected_all:
+              raise SystemExit("unexpected or missing release transfer files")
+
+          checksum_line = re.compile(r"([0-9a-f]{64})  ([^/\\\r\n]+)")
+          rows = []
+          for sidecar in sorted(dist.glob("*.sha256")):
+              lines = sidecar.read_text(encoding="utf-8").splitlines()
+              if len(lines) != 1 or not (match := checksum_line.fullmatch(lines[0])):
+                  raise SystemExit(f"invalid checksum sidecar: {sidecar.name}")
+              expected_hash, name = match.groups()
+              if name != sidecar.name.removesuffix(".sha256"):
+                  raise SystemExit(f"checksum filename mismatch: {sidecar.name}")
+              actual_hash = hashlib.sha256(dist.joinpath(name).read_bytes()).hexdigest()
+              if actual_hash != expected_hash:
+                  raise SystemExit(f"checksum mismatch: {name}")
+              rows.append(f"{expected_hash}  {name}\n")
+          if dist.joinpath("SHA256SUMS").read_text(encoding="utf-8") != "".join(rows):
+              raise SystemExit("SHA256SUMS differs from validated sidecars")
+          print(f"verified {len(payloads)} payloads and exact independent signature sets")
+
+      - name: Write zero-friction release notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > dist/release-body.md <<EOF
+          ## Install NEOTH
+
+          **Windows:** download and double-click \`NEOTH-${VERSION}-x64-Setup.exe\`
+          (or \`arm64\` on Snapdragon Windows). The stable installer and every
+          installed executable are Authenticode-signed.
+
+          **macOS:** open the matching \`NEOTH-${VERSION}-*-apple-darwin.dmg\`,
+          drag \`NEOTH.app\` to Applications, or run the included PKG. Stable
+          artifacts are Developer ID-signed and notarized; prerelease trust
+          state is recorded in each adjacent JSON metadata file.
+
+          **Debian / Ubuntu:**
+
+          \`sudo apt install ./NEOTH-${VERSION}-x86_64-unknown-linux-gnu.deb\`
+
+          **Fedora / RHEL:**
+
+          \`sudo dnf install ./NEOTH-${VERSION}-x86_64-unknown-linux-gnu.rpm\`
+
+          Run \`neoth\` once. NEOTH asks whether this machine should start in
+          the GUI or CLI; \`neoth interface set gui|cli\` switches at any time.
+          Uninstallers preserve \`~/.neoth\` operator state.
+
+          Every desktop installer contains \`neoth\`, the \`neothd\`
+          compatibility launcher, the GUI, migration and relay tools, and the
+          version-locked \`neoth-keet-bridge\`. The Keet companion is NEOTH's
+          authenticated private Pear/Hyperswarm channel; it does not access
+          existing Keet application rooms. The headless musl archive omits GUI
+          and Keet deliberately.
+
+          Advanced portable archives, exact SHA-256 sidecars, signed package
+          metadata, Sigstore keyless signature/transparency bundles and NEOTH
+          minisign companions are attached. Verify any Sigstore bundle with:
+
+          \`cosign verify-blob --bundle <FILE>.cosign.bundle --certificate-identity=https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME} --certificate-oidc-issuer=https://token.actions.githubusercontent.com <FILE>\`
+
+          The package-manager manifest bundle contains exact hashes
+          for WinGet and Homebrew submission; it does not claim those community
+          indexes have accepted the release yet.
+
+          The optional WhatsApp Web bridge is
+          \`neoth-whatsapp-baileys-${GITHUB_REF_NAME}.tar.gz\`; follow its bundled
+          README after extraction.
+
+          See the [v1.0 release notes](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/release-notes-v1.0.md)
+          and [installation guide](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/install.md).
+          EOF
+
+      - name: Create or reconcile private draft release
+        id: draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          resolve_remote_tag_commit() {
+            local object type sha depth=0
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")
+            type=$(jq -r '.object.type' <<<"$object")
+            sha=$(jq -r '.object.sha' <<<"$object")
+            while [[ "$type" == tag ]]; do
+              depth=$((depth + 1))
+              [[ $depth -le 16 ]] || {
+                echo '::error::release tag indirection exceeds 16 objects'; return 1;
+              }
+              object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${sha}")
+              type=$(jq -r '.object.type' <<<"$object")
+              sha=$(jq -r '.object.sha' <<<"$object")
+            done
+            [[ "$type" == commit && "$sha" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "::error::release tag resolves to invalid $type object $sha"; return 1;
+            }
+            printf '%s\n' "$sha"
+          }
+          remote_tag_sha=$(resolve_remote_tag_commit)
+          if [[ "$remote_tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::release tag moved to $remote_tag_sha after build; expected $GITHUB_SHA"
+            exit 1
+          fi
+          prerelease=false
+          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=true
+          if release=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" 2>/dev/null); then
+            draft=$(jq -r '.draft' <<<"$release")
+            if [[ "$draft" != true ]]; then
+              echo "::error::release ${GITHUB_REF_NAME} is already public; refusing to mutate it"
               exit 1
             fi
-            # This binary contains the public key baked during the matrix build.
-            # Verification here detects a mismatched secret/variable before any
-            # asset is made public.
-            "$NEOTH" release verify "$f" --signature "$f.minisig" \
-              || { echo "::error::release signature self-check failed for $f"; exit 1; }
-          done
-          if [ "$archive_count" -eq 0 ]; then
-            echo "::error::no release archives found to sign"; exit 1
+            release_id=$(jq -r '.id' <<<"$release")
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              -f name="NEOTH ${GITHUB_REF_NAME}" \
+              -f body="$(cat dist/release-body.md)" \
+              -F draft=true \
+              -F prerelease="$prerelease" >/dev/null
+          else
+            release=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="NEOTH ${GITHUB_REF_NAME}" \
+              -f body="$(cat dist/release-body.md)" \
+              -F draft=true \
+              -F prerelease="$prerelease" \
+              -F generate_release_notes=true)
+            release_id=$(jq -r '.id' <<<"$release")
           fi
-          sig_count=$(find . -maxdepth 1 -type f -name '*.minisig' | wc -l)
-          if [ "$sig_count" -ne "$archive_count" ]; then
-            echo "::error::expected $archive_count minisign companions, found $sig_count"; exit 1
-          fi
-          echo "minisign companions produced (in-process, no minisign tool):"
-          ls -la *.minisig NEOTH_RELEASE_MINISIGN_PUBKEY.txt
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
-        # SHA-pinned to immutable release tag (mutable @v2 tag is hijack risk).
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/*.sha256
-            dist/SHA256SUMS
-            dist/*.cosign.bundle
-            dist/*.minisig
+      - name: Upload and verify the exact draft asset set
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          shopt -s nullglob
+          files=(
+            dist/*.tar.gz dist/*.zip dist/*.exe dist/*.deb dist/*.rpm
+            dist/*.pkg dist/*.dmg dist/*.json dist/*.sha256
+            dist/SHA256SUMS dist/*.cosign.bundle dist/*.minisig
             dist/NEOTH_RELEASE_MINISIGN_PUBKEY.txt
-          body: |
-            ## Installation
+          )
+          ((${#files[@]} > 0))
+          printf '%s\n' "${files[@]##*/}" | LC_ALL=C sort -u > dist/expected-assets.txt
+          [[ $(wc -l < dist/expected-assets.txt) -eq ${#files[@]} ]] || {
+            echo '::error::duplicate local release asset names'; exit 1;
+          }
 
-            Download the binary for your platform, verify the SHA-256 checksum,
-            and place `neoth` on your PATH.
+          # Retried runs reconcile an existing draft: stale partial uploads are
+          # deleted from a materialized snapshot, then current files are
+          # uploaded with replacement semantics. Snapshot-before-mutation keeps
+          # page boundaries stable when a draft has more than 100 assets.
+          gh api --paginate --slurp -X GET \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+            -f per_page=100 > dist/existing-assets.json
+          while IFS=$'\t' read -r asset_id asset_name; do
+            if ! grep -Fqx "$asset_name" dist/expected-assets.txt; then
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            fi
+          done < <(jq -r '.[][] | [.id, .name] | @tsv' dist/existing-assets.json)
+          gh release upload --repo "$GITHUB_REPOSITORY" \
+            "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          verified=false
+          for attempt in {1..10}; do
+            gh api --paginate --slurp -X GET \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+              -f per_page=100 > dist/remote-assets.json
+            if python3 - <<'PY'
+          import hashlib
+          import json
+          import pathlib
 
-            ```sh
-            # Verify checksum (Linux example)
-            sha256sum -c neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
+          dist = pathlib.Path("dist")
+          expected = dist.joinpath("expected-assets.txt").read_text().splitlines()
+          pages = json.loads(dist.joinpath("remote-assets.json").read_text())
+          remote_rows = [row for page in pages for row in page]
+          remote = {row["name"]: row for row in remote_rows}
+          if len(remote) != len(remote_rows) or set(remote) != set(expected):
+              raise SystemExit("remote draft asset set does not exactly match local assets")
+          for name in expected:
+              path = dist / name
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              row = remote[name]
+              if row.get("state") != "uploaded" or row.get("size") != path.stat().st_size:
+                  raise SystemExit(f"remote asset state/size mismatch: {name}")
+              if row.get("digest") != f"sha256:{digest}":
+                  raise SystemExit(f"remote asset digest mismatch: {name}")
+          print(f"verified {len(expected)} private draft assets byte-for-byte")
+          PY
+            then
+              verified=true
+              break
+            fi
+            echo "release asset digests not settled yet (attempt $attempt/10)"
+            sleep 3
+          done
+          $verified || {
+            echo '::error::private draft asset verification did not converge'; exit 1;
+          }
 
-            # Verify cosign signature (public-download provenance — proves
-            # the binary was built by this GitHub Actions workflow):
-            cosign verify-blob \
-              --bundle neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.cosign.bundle \
-              --certificate-identity-regexp "^https://github\\.com/The-Geek-Freaks/NEOTH/\\.github/workflows/release\\.yml@refs/tags/v.*$" \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
-
-            # Verify minisign signature (mandatory; used by the daemon's
-            # default `neoth update --self` verification path):
-            minisign -V -P "$(cat NEOTH_RELEASE_MINISIGN_PUBKEY.txt)" \
-              -m neoth-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
-            ```
-
-            The optional WhatsApp Web bridge is the signed
-            `neoth-whatsapp-baileys-${{ github.ref_name }}.tar.gz` asset. Extract
-            its `whatsapp-baileys/` directory to
-            `~/.local/share/neoth/whatsapp-baileys`, run
-            `pnpm install --frozen-lockfile`, and follow its bundled README.
-
-            See the [1.0 release notes](docs/release-notes-v1.0.md) and
-            [architecture guide](docs/architecture.md) for the complete contract.
+      - name: Publish verified draft as the release commit point
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+          PRERELEASE: ${{ steps.draft.outputs.prerelease }}
+        run: |
+          resolve_remote_tag_commit() {
+            local object type sha depth=0
+            object=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")
+            type=$(jq -r '.object.type' <<<"$object")
+            sha=$(jq -r '.object.sha' <<<"$object")
+            while [[ "$type" == tag ]]; do
+              depth=$((depth + 1))
+              [[ $depth -le 16 ]] || {
+                echo '::error::release tag indirection exceeds 16 objects'; return 1;
+              }
+              object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${sha}")
+              type=$(jq -r '.object.type' <<<"$object")
+              sha=$(jq -r '.object.sha' <<<"$object")
+            done
+            [[ "$type" == commit && "$sha" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "::error::release tag resolves to invalid $type object $sha"; return 1;
+            }
+            printf '%s\n' "$sha"
+          }
+          remote_tag_sha=$(resolve_remote_tag_commit)
+          if [[ "$remote_tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::release tag moved to $remote_tag_sha before publish; expected $GITHUB_SHA"
+            exit 1
+          fi
+          release=$(gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F draft=false \
+            -F prerelease="$PRERELEASE")
+          [[ $(jq -r '.draft' <<<"$release") == false ]]
+          [[ $(jq -r '.tag_name' <<<"$release") == "$GITHUB_REF_NAME" ]]
+          echo "Published $(jq -r '.html_url' <<<"$release")"

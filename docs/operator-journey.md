@@ -7,9 +7,10 @@
 NEOTH is a **self-contained sovereign-AI daemon**: the `neoth` core binary runs on your
 hardware, keeps an append-only audit log (the WAL) for its governed core paths, and routes your
 messages through the LLM provider *you* choose — including a free local model. Release
-archives also include separate GUI, migration, relay, and compatibility executables; the
-daemon does not depend on them to run. There is no cloud account, no telemetry, and no
-per-token bill unless you deliberately pick a metered API provider.
+archives also include separate GUI, migration, relay, compatibility, and Keet/Pear
+companion executables; the daemon does not depend on them to run. There is no cloud
+account, no telemetry, and no per-token bill unless you deliberately pick a metered API
+provider.
 
 This guide is the map. You do not need to read it all at once — jump to the stage you are in.
 
@@ -34,7 +35,8 @@ The wizard (`neoth init`) walks you through, in plain language, every choice tha
   one only if you specifically have an API key and no subscription.
 - **Autonomy.** `Standard` is the safe default: NEOTH confirms before any paid call or
   destructive action. You can raise it later.
-- **Channels** (optional). Telegram / Slack / WhatsApp — skip them for now; add them in stage 5.
+- **Channels** (optional). Telegram / Slack / WhatsApp / private Keet-identity
+  topics — skip them for now; add them in stage 5.
 
 After the wizard, `neoth chat` is interactive. The first session prints a one-line
 **"I remember N things from last time"** signal so you know the memory layer is live, and a
@@ -147,17 +149,19 @@ documents paths whose audit is best-effort or log-only.
 **Goal:** reach NEOTH from your phone, and share memory across your machines.
 
 - **Channels.** `neoth connect` lists the supported messaging on-ramps (Telegram / Slack /
-  WhatsApp) and walks you through wiring each. Inbound messages flow through the same
+  WhatsApp plus the repository-owned Keet-identity Pear/Hyperswarm companion) and walks you
+  through wiring each. Inbound messages flow through the same
   prompt-injection sanitizer and consent gate as the CLI; a destructive command from a
   channel (raising autonomy, granting consent) is refused — those stay CLI + local-auth only.
 - **Cluster.** `neoth cluster discover` finds your other NEOTH nodes over mDNS / Tailscale
   magic-DNS; `neoth cluster confirm` pairs them behind a consent gate, and
-  `neoth cluster status` shows node health + the channel mesh. **Cross-device memory sync
-  is not shipped yet:** matching the README's feature matrix, the private mesh today is
-  **Partial** — discovery, pairing, the consent gate, and transport config work, but live
-  shared memory across devices (tracked as SL-01) is still in progress. Until it lands each
-  node keeps its own local memory; the cluster shares the channel mesh + node health, not
-  recall.
+  `neoth cluster status` shows node health + the channel mesh. Cross-device memory and
+  ground-truth synchronization uses a durable per-peer state machine: persisted cursors,
+  authenticated content-bound ACKs, byte-exact restart replay, transactional receiver
+  materialization, and explicit conflict records. Credentials, permissions, consent,
+  operator profiles, and provider secrets are not part of canonical snapshots; raw/private
+  event replication stays opt-in. Inspect progress with `neoth cluster sync-state` and see
+  the full [durable mesh contract](mesh-sync.md).
 - **Transport.** Optional Hysteria2 / Tailscale tunnels keep cluster + channel traffic
   private (`neoth hysteria`, the wizard's VPN step).
 
@@ -213,9 +217,9 @@ coverage contract rather than inferring coverage from chain integrity alone.
   them.
 - **Make it yours, permanently.** ADRs (`neoth adr`), a tweakable theme, settings parity
   between the CLI and the GUI (GU-01 — all 10 post-onboarding settings tabs are real panels;
-  a few stay thin and defer live actions like channel connect/disconnect and the chat composer
-  to the CLI/wizard), and the model-version-agnostic provider layer mean NEOTH keeps working as
-  models and your needs evolve — without you hand-patching anything.
+  Channels uses the canonical 15-adapter add/reconfigure/test/remove registry while a few
+  other panels remain intentionally thin), and the model-version-agnostic provider layer mean
+  NEOTH keeps working as models and your needs evolve — without you hand-patching anything.
 
 By this stage the relationship is the point: NEOTH anticipates what you want,
 you can audit its governed core paths and their documented exceptions, and you

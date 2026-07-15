@@ -12,11 +12,8 @@ Follow it in order. Do not edit YAML unless you choose the operator path.
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH
-cd NEOTH/SRC
-cargo install --locked --path neothd --features release-desktop
-cargo install --locked --path neothd-gui
-cargo install --locked --path neoth-migrate
-cargo install --locked --path neoth-relay
+cd NEOTH
+NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
 neoth gui
 neoth doctor
 ```
@@ -33,12 +30,9 @@ Windows (PowerShell): `irm https://raw.githubusercontent.com/The-Geek-Freaks/NEO
 ## Rebuild or update from source
 
 ```bash
-git clone https://github.com/The-Geek-Freaks/NEOTH
-cd NEOTH/SRC
-cargo install --locked --path neothd --features release-desktop
-cargo install --locked --path neothd-gui
-cargo install --locked --path neoth-migrate
-cargo install --locked --path neoth-relay
+cd NEOTH
+git pull --ff-only
+NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
 neoth gui
 ```
 

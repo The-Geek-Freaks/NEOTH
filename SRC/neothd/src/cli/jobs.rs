@@ -494,10 +494,12 @@ mod tests {
                 // Every day at 07:00 UTC — yields a definite "next 3 fires".
                 cron: "0 7 * * *".into(),
                 tz: None,
+                ..Default::default()
             },
             prompt: prompt.into(),
             timeout_seconds: 600,
             delivery: None,
+            execution: Default::default(),
             depends_on: vec![],
         }
     }

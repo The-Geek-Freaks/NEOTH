@@ -9,7 +9,7 @@ NEOTH is a Rust-first, local-first operator runtime. The visible product is a lo
 ```text
 Operator
   |
-  | GUI / CLI / Telegram / WhatsApp / Slack / Discord / CalDAV / optional IMAP
+  | GUI / CLI / canonical 15-channel registry / CalDAV / optional IMAP
   v
 Channel + Surface Adapters
   |
@@ -52,7 +52,7 @@ per-surface controls and documented best-effort/log-only exceptions are in the
 
 | Component | Job |
 | :-- | :-- |
-| **Surface adapters** | Normalize GUI, CLI, chat apps, CalDAV, source-build IMAP triage, n8n, cron, and coding sessions into a shared request shape. |
+| **Surface adapters** | Normalize GUI, CLI, the canonical messaging registry (Telegram, Slack, both WhatsApp transports, Keet-identity private topics, Discord, Signal, iMessage/BlueBubbles, Matrix, LINE, IRC, Mattermost, Twitch, Nostr, and Google Chat), CalDAV, source-build IMAP triage, n8n, cron, and coding sessions into shared governed request shapes. |
 | **Ingress sanitizer** | Blocks prompt-injection surfaces, quoted content, hostile markup, and unsafe inbound payloads before memory or profile learning. |
 | **Pipeline router** | Builds the enriched request: profile, recall, skills, tools, operator rules, channel context, and active task state. |
 | **Provider router** | Picks cloud/local providers by role, cost, latency, privacy, model capability, and circuit-breaker state. |
@@ -62,7 +62,7 @@ per-surface controls and documented best-effort/log-only exceptions are in the
 | **Babel-Index observer** | Async, content-free collapse scoring over the WAL stream: seven variables per rolling window, pre-registered failure labels, early warning before degradation ([babel-index.md](babel-index.md)). |
 | **Obsidian mirror** | Human-readable knowledge layer for decisions, notes, reflections, project memory, and operator inspection. |
 | **Plugin runtime** | Skills as data, WASM plugins as sandboxed code with capability gates. |
-| **Private mesh** | LAN/mDNS, Tailscale, Hysteria, peeroxide/Hyperswarm, and consent-gated cluster nodes. This is a NEOTH protocol, not Keet interop. |
+| **Private mesh** | LAN/mDNS, Tailscale, Hysteria, peeroxide/Hyperswarm, and consent-gated cluster nodes. This cluster protocol is distinct from the separately shipped Keet-identity channel companion; neither path claims access to existing Keet app rooms. |
 
 ## WAL source of truth
 
@@ -186,7 +186,7 @@ NEOTH can run as one node or as a consent-gated private mesh.
 | LAN/mDNS | Local discovery at home or office. |
 | Tailscale/WireGuard | Private cross-device mesh. |
 | Hysteria | Restricted-network relay path. |
-| peeroxide/Hyperswarm | Optional transport for NEOTH's own authenticated cluster protocol; not a Keet room/message adapter. |
+| peeroxide/Hyperswarm | Optional transport for NEOTH's own authenticated cluster protocol; separate from the `neoth-keet-bridge` channel companion and not an adapter for existing Keet app rooms. |
 | Cluster policy | Node pairing, capability leases, topology view, health and resource state. |
 
 Keys identify peers; operator approval grants membership and capabilities.

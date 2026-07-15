@@ -86,8 +86,9 @@ pub const SECRET_FIELD_KEYS: &[&str] = &[
     "twitch_oauth_token",
     "nostr_secret_key",
     "bluebubbles_password",
+    "keet_topic",
     "keet_seed_phrase",
-    "pears_bearer_token",
+    "keet_bridge_bearer_token",
     "todoist_token",
     "google_oauth_client_secret",
     "google_oauth_refresh_token",
@@ -98,6 +99,31 @@ pub const SECRET_FIELD_KEYS: &[&str] = &[
     "tududi_api_token",
     "paperless_token",
 ];
+
+/// Canonical field -> legacy OS-store key. Serde aliases cover YAML, but OS
+/// credential managers are keyed independently and need an explicit read
+/// fallback so upgrading cannot strand an existing secret.
+fn legacy_store_key(field: &str) -> Option<&'static str> {
+    match field {
+        "keet_bridge_bearer_token" => Some("pears_bearer_token"),
+        _ => None,
+    }
+}
+
+fn get_with_legacy_fallback(
+    store: &dyn SecretStore,
+    field: &str,
+) -> Result<(Option<SecretString>, String)> {
+    if let Some(secret) = store.get(field)? {
+        return Ok((Some(secret), field.to_string()));
+    }
+    if let Some(legacy) = legacy_store_key(field) {
+        if let Some(secret) = store.get(legacy)? {
+            return Ok((Some(secret), legacy.to_string()));
+        }
+    }
+    Ok((None, field.to_string()))
+}
 
 /// Namespace prefix prepended to every OS store entry key to avoid collisions
 /// with other applications.
@@ -686,14 +712,14 @@ pub fn migrate_to_file(
         .context("Credentials serialised to a non-mapping value")?;
 
     for &field in SECRET_FIELD_KEYS {
-        match store.get(field) {
+        match get_with_legacy_fallback(store, field) {
             Err(e) => {
                 failed.push((field.to_string(), e.to_string()));
             }
-            Ok(None) => {
+            Ok((None, _)) => {
                 skipped.push(field.to_string());
             }
-            Ok(Some(secret)) => {
+            Ok((Some(secret), source_key)) => {
                 if !dry_run {
                     // Populate the field in the file result. NO delete here —
                     // the keychain is purged later, only after the file lands.
@@ -703,7 +729,9 @@ pub fn migrate_to_file(
                         serde_yaml::Value::String(secret.expose().to_string()),
                     );
                 }
-                moved.push(field.to_string());
+                // Purge the actual OS-store key after the file is durable. For
+                // upgraded installs this may be the legacy alias.
+                moved.push(source_key);
             }
         }
     }
@@ -776,9 +804,9 @@ pub fn supplement_from_store(
         if already_set {
             continue;
         }
-        match store.get(field) {
-            Ok(None) => {} // not in store either — leave as None
-            Ok(Some(secret)) => {
+        match get_with_legacy_fallback(store, field) {
+            Ok((None, _)) => {} // not in store either — leave as None
+            Ok((Some(secret), _)) => {
                 mapping.insert(
                     yaml_key,
                     serde_yaml::Value::String(secret.expose().to_string()),
@@ -1106,6 +1134,9 @@ mod tests {
         assert!(SECRET_FIELD_KEYS.contains(&"azure_tts_api_key"));
         assert!(SECRET_FIELD_KEYS.contains(&"omi_developer_api_key"));
         assert!(SECRET_FIELD_KEYS.contains(&"omi_ingest_token"));
+        assert!(SECRET_FIELD_KEYS.contains(&"keet_topic"));
+        assert!(SECRET_FIELD_KEYS.contains(&"keet_bridge_bearer_token"));
+        assert!(!SECRET_FIELD_KEYS.contains(&"pears_bearer_token"));
         let unique = SECRET_FIELD_KEYS
             .iter()
             .copied()
@@ -1173,5 +1204,58 @@ mod tests {
         assert!(purge_from_keychain(&store, &to_file.moved).is_empty());
         assert!(store.get("omi_developer_api_key").unwrap().is_none());
         assert!(store.get("omi_ingest_token").unwrap().is_none());
+    }
+
+    #[test]
+    fn keet_capability_and_bearer_use_canonical_keychain_keys() {
+        let store = InMemorySecretStore::default();
+        let original = Credentials {
+            keet_topic: Some(SecretString::from(
+                "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            )),
+            keet_bridge_bearer_token: Some(SecretString::from("0123456789abcdef0123456789abcdef")),
+            ..Default::default()
+        };
+        let (blanked, report) = migrate_to_keychain(&original, &store, false).unwrap();
+        assert!(report.is_clean());
+        assert!(blanked.keet_topic.is_none());
+        assert!(blanked.keet_bridge_bearer_token.is_none());
+        assert!(store.get("keet_topic").unwrap().is_some());
+        assert!(store.get("keet_bridge_bearer_token").unwrap().is_some());
+        assert!(store.get("pears_bearer_token").unwrap().is_none());
+    }
+
+    #[test]
+    fn legacy_pear_keychain_entry_loads_and_migrates_without_loss() {
+        let store = InMemorySecretStore::default();
+        store
+            .set(
+                "pears_bearer_token",
+                &SecretString::from("legacy-bridge-bearer"),
+            )
+            .unwrap();
+
+        let mut supplemented = Credentials::default();
+        supplement_from_store(&mut supplemented, &store).unwrap();
+        assert_eq!(
+            supplemented
+                .keet_bridge_bearer_token
+                .as_ref()
+                .map(SecretString::expose),
+            Some("legacy-bridge-bearer")
+        );
+
+        let (restored, report) = migrate_to_file(&Credentials::default(), &store, false).unwrap();
+        assert!(report.is_clean());
+        assert!(report.moved.contains(&"pears_bearer_token".to_string()));
+        assert_eq!(
+            restored
+                .keet_bridge_bearer_token
+                .as_ref()
+                .map(SecretString::expose),
+            Some("legacy-bridge-bearer")
+        );
+        assert!(purge_from_keychain(&store, &report.moved).is_empty());
+        assert!(store.get("pears_bearer_token").unwrap().is_none());
     }
 }

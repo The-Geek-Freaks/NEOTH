@@ -96,6 +96,7 @@ Source: "{#SourceDir}\import-manifest.example.yaml"; DestDir: "{app}"; Flags: ig
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\THIRD_PARTY_LICENSES"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\NEOTH"; Filename: "{app}\neoth.exe"; WorkingDir: "{app}"; Comment: "Open NEOTH"

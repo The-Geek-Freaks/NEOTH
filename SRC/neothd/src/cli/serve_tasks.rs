@@ -21,7 +21,7 @@ use anyhow::Context;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::channels::{Channel, PipelineHandler};
+use crate::channels::{Channel, ChannelKind, PipelineHandler};
 use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
 use crate::config::FreedomConfig;
 use crate::config::reload::ReloadController;
@@ -785,6 +785,7 @@ pub(crate) fn spawn_arxiv_ingest(
                         crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                             Arc::clone(reload_controller),
                             Some(writer.clone()),
+                            home.to_path_buf(),
                         ),
                         None,
                         "arxiv.ingest.summary",
@@ -836,6 +837,7 @@ pub(crate) fn spawn_arxiv_skill_scan(
                 crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                     Arc::clone(reload_controller),
                     Some(writer.clone()),
+                    home.to_path_buf(),
                 ),
                 None,
                 "arxiv.skill_scan.extract",
@@ -1382,6 +1384,7 @@ pub(crate) async fn spawn_checkin_cron(
                 crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                     Arc::clone(reload_controller),
                     Some(writer.clone()),
+                    home.to_path_buf(),
                 ),
                 None,
                 "checkin.cron",
@@ -2308,6 +2311,7 @@ async fn start_omi_runtime(
                                 crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                                     Arc::clone(reload_controller),
                                     Some(writer.clone()),
+                                    neoth_home.to_path_buf(),
                                 ),
                                 None,
                                 "omi.native_summary",
@@ -3796,6 +3800,7 @@ pub(crate) async fn spawn_dreaming(
                     crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                         Arc::clone(reload_controller),
                         Some(writer.clone()),
+                        home.to_path_buf(),
                     ),
                     None,
                     "dreaming.theme_summary",
@@ -3867,6 +3872,7 @@ pub(crate) async fn spawn_cron_scheduler(
                     crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                         Arc::clone(reload_controller),
                         Some(writer.clone()),
+                        home.to_path_buf(),
                     ),
                     None,
                     "cron.job",
@@ -4078,6 +4084,7 @@ pub(crate) async fn spawn_regression_cron(
                         crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                             Arc::clone(reload_controller),
                             Some(writer.clone()),
+                            home.to_path_buf(),
                         ),
                         None,
                         "regression.anchor",
@@ -4284,18 +4291,21 @@ pub(crate) fn spawn_foreign_indexer(
 /// `#[async_trait]` boxes a `Send` future), so the generic spawn is sound.
 /// Pure relocation of the identical `tokio::spawn(channel.run(handler))` +
 /// `channel_tasks.push(task)` block the adapters inlined.
+pub(crate) type ChannelFleet = std::collections::HashMap<ChannelKind, Vec<JoinHandle<()>>>;
+
 pub(crate) fn spawn_channel_run<C: Channel + 'static>(
     channel: C,
     handler: PipelineHandler,
+    kind: ChannelKind,
     label: &'static str,
-    channel_tasks: &mut Vec<JoinHandle<()>>,
+    channel_tasks: &mut ChannelFleet,
 ) {
     let task = tokio::spawn(async move {
         if let Err(e) = channel.run(handler).await {
             tracing::error!(error = %e, "{label} channel task exited with error");
         }
     });
-    channel_tasks.push(task);
+    channel_tasks.entry(kind).or_default().push(task);
 }
 
 /// Shared-ownership twin used by edit-capable adapters. The receive loop and
@@ -4305,15 +4315,205 @@ pub(crate) fn spawn_channel_run<C: Channel + 'static>(
 pub(crate) fn spawn_shared_channel_run<C: Channel + 'static>(
     channel: Arc<C>,
     handler: PipelineHandler,
+    kind: ChannelKind,
     label: &'static str,
-    channel_tasks: &mut Vec<JoinHandle<()>>,
+    channel_tasks: &mut ChannelFleet,
 ) {
     let task = tokio::spawn(async move {
         if let Err(error) = channel.run(handler).await {
             tracing::error!(error = %error, "{label} channel task exited with error");
         }
     });
-    channel_tasks.push(task);
+    channel_tasks.entry(kind).or_default().push(task);
+}
+
+/// Clone only one adapter's credential surface. Reconciliation can then reuse
+/// the canonical bootstrap function without allowing an unrelated adapter to
+/// spawn or log during a targeted restart.
+fn credentials_for_channel(
+    credentials: &crate::config::credentials::Credentials,
+    kind: ChannelKind,
+) -> crate::config::credentials::Credentials {
+    let mut selected = crate::config::credentials::Credentials::default();
+    match kind {
+        ChannelKind::Telegram => selected.telegram_token = credentials.telegram_token.clone(),
+        ChannelKind::Slack => {
+            selected.slack_bot_token = credentials.slack_bot_token.clone();
+            selected.slack_app_token = credentials.slack_app_token.clone();
+        }
+        ChannelKind::WhatsAppBusiness => {
+            selected.whatsapp_token = credentials.whatsapp_token.clone();
+            selected.whatsapp_phone_id = credentials.whatsapp_phone_id.clone();
+            selected.whatsapp_verify_token = credentials.whatsapp_verify_token.clone();
+            selected.whatsapp_app_secret = credentials.whatsapp_app_secret.clone();
+        }
+        ChannelKind::WhatsAppBaileys => {
+            selected.whatsapp_baileys_url = credentials.whatsapp_baileys_url.clone();
+            selected.whatsapp_baileys_token = credentials.whatsapp_baileys_token.clone();
+            selected.whatsapp_baileys_allowed_senders =
+                credentials.whatsapp_baileys_allowed_senders.clone();
+            selected.whatsapp_baileys_allowed_groups =
+                credentials.whatsapp_baileys_allowed_groups.clone();
+        }
+        ChannelKind::Keet => {
+            selected.keet_bridge_url = credentials.keet_bridge_url.clone();
+            selected.keet_bridge_bearer_token = credentials.keet_bridge_bearer_token.clone();
+            selected.keet_topic = credentials.keet_topic.clone();
+            selected.keet_allowed_senders = credentials.keet_allowed_senders.clone();
+            selected.keet_seed_phrase = credentials.keet_seed_phrase.clone();
+        }
+        ChannelKind::Discord => {
+            selected.discord_bot_token = credentials.discord_bot_token.clone();
+        }
+        ChannelKind::Signal => {
+            selected.signal_cli_url = credentials.signal_cli_url.clone();
+            selected.signal_phone_number = credentials.signal_phone_number.clone();
+        }
+        ChannelKind::IMessageBlueBubbles => {
+            selected.bluebubbles_url = credentials.bluebubbles_url.clone();
+            selected.bluebubbles_password = credentials.bluebubbles_password.clone();
+            selected.bluebubbles_chat_guid = credentials.bluebubbles_chat_guid.clone();
+            selected.imessage_allowed_sender = credentials.imessage_allowed_sender.clone();
+        }
+        ChannelKind::Matrix => {
+            selected.matrix_homeserver = credentials.matrix_homeserver.clone();
+            selected.matrix_user_id = credentials.matrix_user_id.clone();
+            selected.matrix_password = credentials.matrix_password.clone();
+            selected.matrix_access_token = credentials.matrix_access_token.clone();
+            selected.matrix_store_path = credentials.matrix_store_path.clone();
+            selected.matrix_allowed_user_id = credentials.matrix_allowed_user_id.clone();
+            selected.matrix_allowed_room_ids = credentials.matrix_allowed_room_ids.clone();
+            selected.matrix_require_encryption = credentials.matrix_require_encryption;
+        }
+        ChannelKind::Line => {
+            selected.line_channel_access_token = credentials.line_channel_access_token.clone();
+            selected.line_channel_secret = credentials.line_channel_secret.clone();
+            selected.line_webhook_port = credentials.line_webhook_port;
+        }
+        ChannelKind::Irc => {
+            selected.irc_server = credentials.irc_server.clone();
+            selected.irc_port = credentials.irc_port;
+            selected.irc_nick = credentials.irc_nick.clone();
+            selected.irc_password = credentials.irc_password.clone();
+            selected.irc_channels = credentials.irc_channels.clone();
+            selected.irc_tls = credentials.irc_tls;
+            selected.irc_allowed_nick = credentials.irc_allowed_nick.clone();
+            selected.irc_allowed_account = credentials.irc_allowed_account.clone();
+        }
+        ChannelKind::Mattermost => {
+            selected.mattermost_url = credentials.mattermost_url.clone();
+            selected.mattermost_token = credentials.mattermost_token.clone();
+            selected.mattermost_allowed_user_id = credentials.mattermost_allowed_user_id.clone();
+        }
+        ChannelKind::Twitch => {
+            selected.twitch_username = credentials.twitch_username.clone();
+            selected.twitch_oauth_token = credentials.twitch_oauth_token.clone();
+            selected.twitch_channels = credentials.twitch_channels.clone();
+        }
+        ChannelKind::Nostr => {
+            selected.nostr_secret_key = credentials.nostr_secret_key.clone();
+            selected.nostr_relays = credentials.nostr_relays.clone();
+            selected.nostr_allowed_pubkey = credentials.nostr_allowed_pubkey.clone();
+        }
+        ChannelKind::GoogleChat => {
+            selected.gchat_service_account_json = credentials.gchat_service_account_json.clone();
+            selected.gchat_subscription = credentials.gchat_subscription.clone();
+            selected.gchat_allowed_sender = credentials.gchat_allowed_sender.clone();
+        }
+    }
+    selected
+}
+
+/// Non-secret equality key for each adapter's effective credential inputs.
+/// Secret values are hashed in-memory and never logged or persisted. Google
+/// Chat additionally fingerprints the service-account file contents so an
+/// in-place key rotation is observed even when its configured path is stable.
+pub(crate) fn channel_credential_fingerprints(
+    config: &FreedomConfig,
+    credentials: &crate::config::credentials::Credentials,
+    neoth_home: &std::path::Path,
+) -> std::collections::HashMap<ChannelKind, u64> {
+    use std::hash::Hasher as _;
+    use zeroize::Zeroize as _;
+
+    crate::channels::probe::ALL_CHANNELS
+        .into_iter()
+        .map(|kind| {
+            let mut selected = credentials_for_channel(credentials, kind);
+            if kind == ChannelKind::Telegram && config.telegram_token.is_some() {
+                // freedom.yaml wins at runtime; do not restart Telegram for a
+                // shadowed credentials.yaml token change.
+                selected.telegram_token = None;
+            }
+            let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+            let mut encoded = serde_json::to_vec(&selected)
+                .expect("Credentials serialization is infallible for fingerprinting");
+            hasher.write(&encoded);
+            encoded.zeroize();
+            match kind {
+                ChannelKind::Telegram => {
+                    let mut config_binding = serde_json::to_vec(&(
+                        config.telegram_token.as_ref().map(|token| token.expose()),
+                        config.telegram_user_id,
+                    ))
+                    .expect("Telegram config serialization is infallible");
+                    hasher.write(&config_binding);
+                    config_binding.zeroize();
+                }
+                ChannelKind::WhatsAppBusiness => {
+                    hasher.write_u16(config.whatsapp_webhook_port.unwrap_or(8443));
+                }
+                ChannelKind::GoogleChat => {
+                    if let Some(path) = selected.gchat_service_account_json.as_deref() {
+                        let path = std::path::Path::new(path);
+                        let resolved = if path.is_absolute() {
+                            path.to_path_buf()
+                        } else {
+                            neoth_home.join(path)
+                        };
+                        match std::fs::read(resolved) {
+                            Ok(mut bytes) => {
+                                hasher.write(&bytes);
+                                bytes.zeroize();
+                            }
+                            Err(error) => {
+                                hasher.write(b"<gchat-key-unreadable>");
+                                hasher.write_i32(error.raw_os_error().unwrap_or_default());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            (kind, hasher.finish())
+        })
+        .collect()
+}
+
+pub(crate) fn changed_channel_credentials(
+    old: &std::collections::HashMap<ChannelKind, u64>,
+    new: &std::collections::HashMap<ChannelKind, u64>,
+) -> Vec<ChannelKind> {
+    crate::channels::probe::ALL_CHANNELS
+        .into_iter()
+        .filter(|kind| old.get(kind) != new.get(kind))
+        .collect()
+}
+
+pub(crate) fn channel_runtime_expected(
+    config: &FreedomConfig,
+    credentials: &crate::config::credentials::Credentials,
+    kind: ChannelKind,
+) -> bool {
+    use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_channel};
+
+    let status = probe_channel(
+        kind,
+        &ChannelCredsView::from_config(Some(config), credentials),
+    )
+    .status;
+    status == ProbeStatus::Ok
+        || (status == ProbeStatus::Warn && matches!(kind, ChannelKind::Keet | ChannelKind::Matrix))
 }
 
 /// Spawn the configured inbound channel adapters (Telegram polling, Slack
@@ -4338,7 +4538,8 @@ pub(crate) fn spawn_channel_adapters(
     reload_controller: &Arc<crate::config::reload::ReloadController>,
     dispatch_join: &Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     creds: &crate::config::credentials::Credentials,
-    channel_tasks: &mut Vec<JoinHandle<()>>,
+    channel_tasks: &mut ChannelFleet,
+    only: Option<ChannelKind>,
     // GOLD-ADAPT-GOOSE-03: shared approval bus passed into every channel handler.
     // When `Some`, channel permission gates switch to Channel confirm strategy
     // (suspend/resume via UUID elicitation). `None` = fail-closed (pre-GOOSE-03).
@@ -4347,17 +4548,24 @@ pub(crate) fn spawn_channel_adapters(
     // calls in channel handlers use a pool reader (non-serialising).
     views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) {
-    if let (Some(telegram_token), Some(provider)) =
-        (config.telegram_token.clone(), shared_provider.as_ref())
+    let selected_credentials = only.map(|kind| credentials_for_channel(creds, kind));
+    let creds = selected_credentials.as_ref().unwrap_or(creds);
+    let telegram_token = config
+        .telegram_token
+        .clone()
+        .or_else(|| creds.telegram_token.clone());
+    if only.is_none_or(|kind| kind == ChannelKind::Telegram)
+        && let (Some(telegram_token), Some(user_id), Some(provider)) = (
+            telegram_token.clone(),
+            config.telegram_user_id,
+            shared_provider.as_ref(),
+        )
     {
         // SF-03: hand the adapter the daemon's WAL writer so allowlist-rejected
         // senders are audited via `0x3B CHANNEL_GATE_REJECTED`.
         let channel = Arc::new(
-            crate::channels::telegram::TelegramChannel::new(
-                telegram_token,
-                config.telegram_user_id,
-            )
-            .with_gate_writer(writer.clone()),
+            crate::channels::telegram::TelegramChannel::new(telegram_token, Some(user_id))
+                .with_gate_writer(writer.clone()),
         );
         let live_channel: Arc<dyn Channel> = channel.clone();
         let handler: PipelineHandler = build_live_channel_handler(
@@ -4374,13 +4582,31 @@ pub(crate) fn spawn_channel_adapters(
             confirm_bus.clone(),
             views_executor.clone(),
         );
-        spawn_shared_channel_run(channel, handler, "Telegram", channel_tasks);
+        spawn_shared_channel_run(
+            channel,
+            handler,
+            ChannelKind::Telegram,
+            "Telegram",
+            channel_tasks,
+        );
         info!(
             channel = "telegram",
             status = "LIVE",
             "channel: spawned (polling loop)"
         );
-    } else if config.telegram_token.is_some() && shared_provider.is_none() {
+    } else if only.is_none_or(|kind| kind == ChannelKind::Telegram)
+        && telegram_token.is_some()
+        && config.telegram_user_id.is_none()
+    {
+        warn!(
+            channel = "telegram",
+            status = "CONFIGURED-NOT-STARTED",
+            "Telegram token configured but telegram_user_id is missing; refusing an open inbound adapter"
+        );
+    } else if only.is_none_or(|kind| kind == ChannelKind::Telegram)
+        && telegram_token.is_some()
+        && shared_provider.is_none()
+    {
         warn!(
             channel = "telegram",
             status = "CONFIGURED-NOT-STARTED",
@@ -4415,7 +4641,7 @@ pub(crate) fn spawn_channel_adapters(
                 confirm_bus.clone(),
                 views_executor.clone(),
             );
-            spawn_shared_channel_run(channel, handler, "Slack", channel_tasks);
+            spawn_shared_channel_run(channel, handler, ChannelKind::Slack, "Slack", channel_tasks);
             info!(
                 channel = "slack",
                 status = "LIVE",
@@ -4460,7 +4686,13 @@ pub(crate) fn spawn_channel_adapters(
                         confirm_bus.clone(),
                         views_executor.clone(),
                     );
-                    spawn_channel_run(channel, handler, "Discord", channel_tasks);
+                    spawn_channel_run(
+                        channel,
+                        handler,
+                        ChannelKind::Discord,
+                        "Discord",
+                        channel_tasks,
+                    );
                     info!(
                         channel = "discord",
                         status = "LIVE",
@@ -4506,7 +4738,13 @@ pub(crate) fn spawn_channel_adapters(
                         confirm_bus.clone(),
                         views_executor.clone(),
                     );
-                    spawn_channel_run(channel, handler, "Signal", channel_tasks);
+                    spawn_channel_run(
+                        channel,
+                        handler,
+                        ChannelKind::Signal,
+                        "Signal",
+                        channel_tasks,
+                    );
                     info!(
                         channel = "signal",
                         status = "LIVE",
@@ -4572,7 +4810,13 @@ pub(crate) fn spawn_channel_adapters(
                         confirm_bus.clone(),
                         views_executor.clone(),
                     );
-                    spawn_channel_run(channel, handler, "BlueBubbles", channel_tasks);
+                    spawn_channel_run(
+                        channel,
+                        handler,
+                        ChannelKind::IMessageBlueBubbles,
+                        "BlueBubbles",
+                        channel_tasks,
+                    );
                     info!(
                         channel = "imessage_bluebubbles",
                         status = "LIVE",
@@ -4624,7 +4868,13 @@ pub(crate) fn spawn_channel_adapters(
                 confirm_bus.clone(),
                 views_executor.clone(),
             );
-            spawn_channel_run(channel, handler, "Mattermost", channel_tasks);
+            spawn_channel_run(
+                channel,
+                handler,
+                ChannelKind::Mattermost,
+                "Mattermost",
+                channel_tasks,
+            );
             info!(
                 channel = "mattermost",
                 status = "LIVE",
@@ -4712,7 +4962,13 @@ pub(crate) fn spawn_channel_adapters(
                     confirm_bus.clone(),
                     views_executor.clone(),
                 );
-                spawn_channel_run(channel, handler, "Matrix", channel_tasks);
+                spawn_channel_run(
+                    channel,
+                    handler,
+                    ChannelKind::Matrix,
+                    "Matrix",
+                    channel_tasks,
+                );
                 info!(
                     channel = "matrix",
                     status = "STARTING",
@@ -4803,7 +5059,7 @@ pub(crate) fn spawn_channel_adapters(
                     confirm_bus.clone(),
                     views_executor.clone(),
                 );
-                spawn_channel_run(channel, handler, "IRC", channel_tasks);
+                spawn_channel_run(channel, handler, ChannelKind::Irc, "IRC", channel_tasks);
                 info!(
                     channel = "irc",
                     status = "LIVE",
@@ -4834,20 +5090,22 @@ pub(crate) fn spawn_channel_adapters(
 
     // GOLD-FEAT-10 — Twitch chat via the IRC adapter (Twitch chat IS IRC). Same
     // `irc-channel` feature; NEOTH dials OUT to irc.chat.twitch.tv, no public URL.
-    // Starts when twitch_username + twitch_oauth_token + a provider are present.
+    // Starts when username + OAuth + at least one room + a provider are present.
     #[cfg(feature = "irc-channel")]
     {
+        let twitch_channels = creds
+            .twitch_channels
+            .clone()
+            .filter(|channels| !channels.trim().is_empty());
         match (
             creds.twitch_username.clone(),
             creds.twitch_oauth_token.clone(),
+            twitch_channels,
             shared_provider.as_ref(),
         ) {
-            (Some(username), Some(oauth), Some(provider)) => {
-                let channel = crate::channels::irc::IrcChannel::for_twitch(
-                    username,
-                    oauth,
-                    creds.twitch_channels.clone().unwrap_or_default(),
-                );
+            (Some(username), Some(oauth), Some(channels), Some(provider)) => {
+                let channel =
+                    crate::channels::irc::IrcChannel::for_twitch(username, oauth, channels);
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
                     config,
@@ -4861,28 +5119,37 @@ pub(crate) fn spawn_channel_adapters(
                     confirm_bus.clone(),
                     views_executor.clone(),
                 );
-                spawn_channel_run(channel, handler, "Twitch", channel_tasks);
+                spawn_channel_run(
+                    channel,
+                    handler,
+                    ChannelKind::Twitch,
+                    "Twitch",
+                    channel_tasks,
+                );
                 info!(
                     channel = "twitch",
                     status = "LIVE",
                     "channel: spawned (twitch IRC receive loop)"
                 );
             }
-            (Some(_), Some(_), None) => warn!(
+            (Some(_), Some(_), Some(_), None) => warn!(
                 channel = "twitch",
                 status = "CONFIGURED-NOT-STARTED",
                 "Twitch configured but provider unavailable; channel not started"
             ),
-            (Some(_), None, _) | (None, Some(_), _) => warn!(
+            (None, None, None, _) => {}
+            _ => warn!(
                 channel = "twitch",
                 status = "CONFIGURED-NOT-STARTED",
-                "Twitch needs BOTH twitch_username and twitch_oauth_token; only one supplied — not started"
+                "Twitch needs twitch_username, twitch_oauth_token, AND at least one twitch_channels room — not started"
             ),
-            (None, None, _) => {}
         }
     }
     #[cfg(not(feature = "irc-channel"))]
-    if creds.twitch_username.is_some() || creds.twitch_oauth_token.is_some() {
+    if creds.twitch_username.is_some()
+        || creds.twitch_oauth_token.is_some()
+        || creds.twitch_channels.is_some()
+    {
         warn!(
             channel = "twitch",
             status = "CONFIGURED-NOT-STARTED",
@@ -4917,7 +5184,7 @@ pub(crate) fn spawn_channel_adapters(
                     confirm_bus.clone(),
                     views_executor.clone(),
                 );
-                spawn_channel_run(channel, handler, "Nostr", channel_tasks);
+                spawn_channel_run(channel, handler, ChannelKind::Nostr, "Nostr", channel_tasks);
                 info!(
                     channel = "nostr",
                     status = "LIVE",
@@ -4978,7 +5245,13 @@ pub(crate) fn spawn_channel_adapters(
                             confirm_bus.clone(),
                             views_executor.clone(),
                         );
-                        spawn_channel_run(channel, handler, "GoogleChat", channel_tasks);
+                        spawn_channel_run(
+                            channel,
+                            handler,
+                            ChannelKind::GoogleChat,
+                            "GoogleChat",
+                            channel_tasks,
+                        );
                         info!(
                             channel = "gchat",
                             status = "LIVE",
@@ -5092,7 +5365,10 @@ pub(crate) fn spawn_channel_adapters(
                     tracing::error!(error = %e, "WhatsApp webhook listener exited with error");
                 }
             });
-            channel_tasks.push(task);
+            channel_tasks
+                .entry(ChannelKind::WhatsAppBusiness)
+                .or_default()
+                .push(task);
             info!(
                 channel = "whatsapp",
                 status = "LIVE",
@@ -5170,6 +5446,7 @@ pub(crate) fn spawn_channel_adapters(
                     spawn_channel_run(
                         channel.with_gate_writer(writer.clone()),
                         handler,
+                        ChannelKind::WhatsAppBaileys,
                         "WhatsApp Baileys",
                         channel_tasks,
                     );
@@ -5269,7 +5546,10 @@ pub(crate) fn spawn_channel_adapters(
                     tracing::error!(error = %e, "LINE webhook listener exited with error");
                 }
             });
-            channel_tasks.push(task);
+            channel_tasks
+                .entry(ChannelKind::Line)
+                .or_default()
+                .push(task);
             info!(
                 channel = "line",
                 status = "LIVE",
@@ -5296,12 +5576,91 @@ pub(crate) fn spawn_channel_adapters(
         (None, None, _) => {}
     }
 
-    if creds.keet_seed_phrase.is_some() || creds.pears_bearer_token.is_some() {
-        warn!(
+    // Keet through the repository-owned local companion. Construction proves
+    // static URL/token/topic/sender policy; `run()` performs the authenticated
+    // versioned full-duplex handshake before reading a single message.
+    let keet_url = creds
+        .keet_bridge_url
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let keet_token = creds
+        .keet_bridge_bearer_token
+        .clone()
+        .filter(|value| !value.expose().trim().is_empty());
+    let keet_topic = creds
+        .keet_topic
+        .clone()
+        .filter(|value| !value.expose().trim().is_empty());
+    let keet_senders = creds
+        .keet_allowed_senders
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let keet_any_configured = creds.keet_bridge_url.is_some()
+        || creds.keet_topic.is_some()
+        || creds.keet_allowed_senders.is_some()
+        || creds.keet_bridge_bearer_token.is_some()
+        || creds.keet_seed_phrase.is_some();
+    match (
+        keet_url,
+        keet_token,
+        keet_topic,
+        keet_senders,
+        shared_provider.as_ref(),
+    ) {
+        (Some(url), Some(token), Some(topic), Some(allowed_senders), Some(provider)) => {
+            match crate::channels::keet::KeetChannel::new(
+                &url,
+                token,
+                topic.expose(),
+                &allowed_senders,
+                neoth_home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
+            ) {
+                Ok(channel) => {
+                    let handler: PipelineHandler = build_channel_handler(
+                        provider.clone(),
+                        config,
+                        writer,
+                        provider_meter,
+                        rate_limiter,
+                        segment_path,
+                        neoth_home,
+                        shared_views_conn,
+                        reload_controller,
+                        confirm_bus.clone(),
+                        views_executor.clone(),
+                    );
+                    spawn_channel_run(
+                        channel.with_gate_writer(writer.clone()),
+                        handler,
+                        ChannelKind::Keet,
+                        "Keet",
+                        channel_tasks,
+                    );
+                    info!(
+                        channel = "keet",
+                        status = "STARTING",
+                        "channel: spawned; authenticated full-duplex companion proof pending"
+                    );
+                }
+                Err(error) => warn!(
+                    channel = "keet",
+                    status = "CONFIGURED-NOT-STARTED",
+                    error = %error,
+                    "Keet companion configuration rejected; channel not started"
+                ),
+            }
+        }
+        (Some(_), Some(_), Some(_), Some(_), None) => warn!(
             channel = "keet",
-            status = "UNAVAILABLE",
-            "legacy Keet/Pear credentials ignored; no supported public Keet chat API exists"
-        );
+            status = "CONFIGURED-NOT-STARTED",
+            "Keet companion configured but provider unavailable; channel not started"
+        ),
+        _ if keet_any_configured => warn!(
+            channel = "keet",
+            status = "CONFIGURED-NOT-STARTED",
+            "Keet needs keet_bridge_url, keet_bridge_bearer_token, keet_topic, and a non-empty keet_allowed_senders allowlist; legacy keet_seed_phrase is ignored"
+        ),
+        _ => {}
     }
 }
 
@@ -5739,9 +6098,9 @@ pub(crate) fn run_preflight_guards(
 /// separately (the idle-wait `select!` borrows `&mut writer_join` before the call).
 pub(crate) struct BackgroundHandles {
     pub worker_watch_handle: Option<JoinHandle<()>>,
-    /// Shared with the adapter-fleet reload supervisor, which swaps the
-    /// vec's contents on every successful `neoth reload`.
-    pub channel_tasks: Arc<std::sync::Mutex<Vec<JoinHandle<()>>>>,
+    /// Shared with the credential reconciler. Handles are keyed by channel so
+    /// one rotated credential never interrupts unrelated adapters.
+    pub channel_tasks: Arc<std::sync::Mutex<ChannelFleet>>,
     /// The fleet supervisor itself — aborted BEFORE the channel tasks
     /// so a reload racing shutdown can't respawn into a dying daemon.
     pub channel_supervisor_task: JoinHandle<()>,
@@ -5939,6 +6298,9 @@ pub(crate) async fn shutdown_background_tasks(
     let channel_tasks: Vec<JoinHandle<()>> = {
         let mut guard = channel_tasks.lock().expect("channel_tasks mutex poisoned");
         std::mem::take(&mut *guard)
+            .into_values()
+            .flatten()
+            .collect()
     };
     for task in &channel_tasks {
         task.abort();
@@ -7737,5 +8099,105 @@ mod vault_containment_tests {
             !vault_subdir_is_contained(&canonical_vault, &sibling),
             "a sibling directory sharing a raw name prefix must be refused"
         );
+    }
+}
+
+#[cfg(test)]
+mod channel_reconcile_tests {
+    use super::*;
+    use crate::secret::SecretString;
+
+    #[test]
+    fn fingerprints_restart_only_the_credential_owner() {
+        let home = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        let old = crate::config::credentials::Credentials::default();
+        let mut rotated = old.clone();
+        rotated.slack_bot_token = Some(SecretString::from("xoxb-rotated"));
+
+        let old = channel_credential_fingerprints(&config, &old, home.path());
+        let rotated = channel_credential_fingerprints(&config, &rotated, home.path());
+        assert_eq!(
+            changed_channel_credentials(&old, &rotated),
+            vec![ChannelKind::Slack]
+        );
+    }
+
+    #[test]
+    fn telegram_uses_effective_precedence_and_rebinds_user_id() {
+        let home = tempfile::tempdir().unwrap();
+        let mut config = FreedomConfig::default();
+        config.telegram_token = Some(SecretString::from("config-wins"));
+        config.telegram_user_id = Some(1);
+        let mut credentials = crate::config::credentials::Credentials {
+            telegram_token: Some(SecretString::from("shadowed-old")),
+            ..Default::default()
+        };
+        let first = channel_credential_fingerprints(&config, &credentials, home.path());
+        credentials.telegram_token = Some(SecretString::from("shadowed-new"));
+        let shadowed = channel_credential_fingerprints(&config, &credentials, home.path());
+        assert!(changed_channel_credentials(&first, &shadowed).is_empty());
+
+        config.telegram_user_id = Some(2);
+        let rebound = channel_credential_fingerprints(&config, &credentials, home.path());
+        assert_eq!(
+            changed_channel_credentials(&shadowed, &rebound),
+            vec![ChannelKind::Telegram]
+        );
+    }
+
+    #[test]
+    fn gchat_in_place_key_rotation_changes_only_gchat() {
+        let home = tempfile::tempdir().unwrap();
+        let key = home.path().join("gchat-key.json");
+        std::fs::write(&key, b"key-one").unwrap();
+        let credentials = crate::config::credentials::Credentials {
+            gchat_service_account_json: Some(key.display().to_string()),
+            gchat_subscription: Some("projects/p/subscriptions/s".into()),
+            ..Default::default()
+        };
+        let config = FreedomConfig::default();
+        let first = channel_credential_fingerprints(&config, &credentials, home.path());
+        std::fs::write(&key, b"key-two").unwrap();
+        let rotated = channel_credential_fingerprints(&config, &credentials, home.path());
+        assert_eq!(
+            changed_channel_credentials(&first, &rotated),
+            vec![ChannelKind::GoogleChat]
+        );
+    }
+
+    #[test]
+    fn runtime_expectation_distinguishes_secure_live_from_outbound_only() {
+        let mut config = FreedomConfig::default();
+        config.telegram_token = Some(SecretString::from("token"));
+        let mut credentials = crate::config::credentials::Credentials::default();
+        assert!(!channel_runtime_expected(
+            &config,
+            &credentials,
+            ChannelKind::Telegram
+        ));
+        config.telegram_user_id = Some(42);
+        assert!(channel_runtime_expected(
+            &config,
+            &credentials,
+            ChannelKind::Telegram
+        ));
+
+        credentials.line_channel_access_token = Some(SecretString::from("line-token"));
+        assert!(!channel_runtime_expected(
+            &config,
+            &credentials,
+            ChannelKind::Line
+        ));
+
+        credentials.keet_bridge_url = Some("http://127.0.0.1:9130".into());
+        credentials.keet_bridge_bearer_token = Some(SecretString::from("bearer"));
+        credentials.keet_topic = Some(SecretString::from("topic"));
+        credentials.keet_allowed_senders = Some("peer".into());
+        assert!(channel_runtime_expected(
+            &config,
+            &credentials,
+            ChannelKind::Keet
+        ));
     }
 }

@@ -177,16 +177,17 @@ async fn run_fan_out(
         .model
         .clone()
         .or_else(|| config.provider_model.clone());
-    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
-        raw_provider,
-        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-            config.autonomy_policy(),
-            Some(writer.clone()),
+    let provider = Arc::new(
+        crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            raw_provider,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                config.autonomy_policy(),
+                Some(writer.clone()),
+            ),
+            default_model,
+            "sub_agents.fan_out",
         ),
-        default_model,
-        "sub_agents.fan_out",
-    )
-    .into_arc();
+    );
     let worker = Arc::new(ProviderSubAgentWorker::new(
         provider,
         selected,

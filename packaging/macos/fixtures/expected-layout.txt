@@ -8,6 +8,7 @@
 /Applications/NEOTH.app/Contents/Resources/README.md
 /Applications/NEOTH.app/Contents/Resources/LICENSE-MIT
 /Applications/NEOTH.app/Contents/Resources/LICENSE-APACHE
+/Applications/NEOTH.app/Contents/Resources/THIRD_PARTY_LICENSES
 /Applications/NEOTH.app/Contents/Resources/examples/freedom.yaml.example
 /Applications/NEOTH.app/Contents/Resources/examples/import-manifest.example.yaml
 /Applications/NEOTH.app/Contents/Resources/uninstall-neoth.sh

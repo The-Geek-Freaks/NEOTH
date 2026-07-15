@@ -156,6 +156,27 @@ SlackChannel::new(
 - Redirects are disabled for authenticated REST calls, responses are bounded,
   and rate-limit responses surface as `ChannelError::RateLimited`.
 
+## channels/keet.rs + channels/keet_bridge.rs
+
+**Status:** Repository-owned full-duplex text channel through a local,
+authenticated companion.
+
+- `keet_bridge.rs` is the bounded HTTP client. It pins protocol version 1,
+  requires `send_text` and `receive_text`, rejects redirects, authenticates
+  every request, verifies the configured joined topic, sends with durable
+  idempotency keys, and long-polls monotonic cursors.
+- `keet.rs` implements the canonical `Channel` path. Startup first reads the
+  current high-water cursor, then polls forward; verified sender IDs must match
+  the exact configured allowlist before entering `PipelineHandler`.
+- `cli/serve_tasks.rs::spawn_channel_adapters` starts the adapter only when URL,
+  bearer token, topic, non-empty sender allowlist, and provider are complete.
+  Partial state is surfaced as `CONFIGURED-NOT-STARTED`.
+- `bridges/keet/` owns the Bare standalone and Pear/Hyperswarm peer protocol.
+  Release/CI freeze its pnpm graph, tests and standalone build.
+- Product boundary: topics are NEOTH-owned Keet-identity conversations. The
+  adapter does not read or write existing Keet desktop/mobile rooms because no
+  supported public room/message API exists.
+
 ## ChannelError Variants
 
 | Variant | When |
@@ -164,9 +185,27 @@ SlackChannel::new(
 | `Transport(String)` | Network or API error during send |
 | `Parse(String)` | Response decode failure |
 
+## Readiness and credential reconciliation
+
+- `channels/readiness.rs` owns the shared 10-second, no-redirect, bounded-body
+  primitives plus Twitch OAuth validation. Adapter modules expose their own
+  protocol-specific read-only probe so CLI and GUI consume the same semantics.
+- `cli/channel.rs::test_channel_at` routes every canonical registry entry. IRC
+  and Matrix password-only auth return typed `unavailable` rather than faking a
+  TCP/auth success with a stateful connection.
+- `cli/serve_tasks.rs::channel_credential_fingerprints` hashes each channel's
+  effective file/keychain inputs independently, including in-place Google Chat
+  service-account key rotation. Raw serialized secret bytes are zeroized after
+  hashing.
+- `cli/serve.rs` polls and debounces credential generations. It aborts and
+  drains the old task before starting only the changed adapter; a corrupt
+  effective credential store stops the whole fleet fail-closed. Finished tasks
+  remain unhealthy until a credential change or explicit reload retries them,
+  avoiding duplicate pollers and restart storms.
+
 ## Related Areas
 
 - `cli/serve.rs::handle_media_attachment` — calls `route_to_first_match` for channel-attached media
 - `channels/rate_limit.rs` — per-channel rate limiting (shared across all adapters)
-- Keet is intentionally absent: upstream exposes no supported public chat API; the removed guessed adapter is not part of the build.
+- `bridges/keet/` — repository-owned standalone, durable journal, identity and authenticated peer transport.
 - `config/credentials.rs` — credential field names referenced by the adapters

@@ -9,5 +9,6 @@
 /usr/share/doc/neoth/README.md
 /usr/share/doc/neoth/LICENSE-MIT
 /usr/share/doc/neoth/LICENSE-APACHE
+/usr/share/doc/neoth/THIRD_PARTY_LICENSES
 /usr/share/doc/neoth/examples/freedom.yaml.example
 /usr/share/doc/neoth/examples/import-manifest.example.yaml

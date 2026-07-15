@@ -7,9 +7,9 @@
 #
 # It will:
 #   - Download the published neoth.exe from the GitHub Releases page
-#   - Verify SHA256 plus mandatory minisign/cosign release authenticity
+#   - Verify SHA256 plus mandatory minisign or digest-pinned cosign authenticity
 #   - Install to "$env:LOCALAPPDATA\Programs\neoth" (or $env:NEOTH_INSTALL_DIR)
-#   - Copy freedom.yaml.example, compatibility, GUI, migration, and relay binaries
+#   - Copy freedom.yaml.example, compatibility, GUI, migration, relay, and Keet binaries
 #
 # Usage (PowerShell):
 #   irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
@@ -24,7 +24,8 @@
 #        cd SRC
 #        cargo build --release --locked -p neoth --bins --features release-desktop
 #        cargo build --release --locked -p neothd-gui -p neoth-migrate -p neoth-relay
-#   3. Copy the five binaries from SRC\target\release to your PATH.
+#   3. Build `bridges\keet` with its pinned pnpm toolchain, then copy all six
+#      executables to your PATH. `scripts\install.sh` automates this in WSL.
 # ─────────────────────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +42,11 @@ $ReleasesUrl = 'https://github.com/The-Geek-Freaks/NEOTH/releases'
 $ReleasesApiUrl = 'https://api.github.com/repos/The-Geek-Freaks/NEOTH/releases'
 $PinnedMinisignPubkey = 'RWQa0n4hqyE1huqkKoU+4aUs+YjbMiWabY4MwnwIafb79dWiSLV7qGBi'
 $CosignOidcIssuer = 'https://token.actions.githubusercontent.com'
+# Digest copied from sigstore/cosign-installer action.yml at the immutable
+# source commit recorded in packaging/cosign-bootstrap.json. Windows on ARM64
+# uses the OS-provided x64 compatibility layer for this temporary verifier.
+$CosignBootstrapVersion = 'v3.0.6'
+$CosignBootstrapWindowsAmd64Sha256 = '9b85a88ebff2d9dd30ff4984a6f61f2cedc232dd87d81fa7f2ff3c0ed96c241c'
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 function Write-Info {
@@ -101,6 +107,63 @@ $ResolvedVersion = if ($Version -eq 'latest') {
     $Version
 }
 
+function Invoke-Download {
+    param(
+        [string]$Uri,
+        [string]$OutFile
+    )
+    $lastError = $null
+    foreach ($attempt in 1..3) {
+        try {
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing
+            return
+        } catch {
+            $lastError = $_
+            if ($attempt -lt 3) {
+                Start-Sleep -Seconds $attempt
+            }
+        }
+    }
+    throw $lastError
+}
+
+function Get-StandaloneVersion {
+    param(
+        [string]$Path,
+        [string]$TemporaryDirectory
+    )
+    # Bare redirects stdout to NUL when started without an attached console.
+    # Start-Process supplies a hidden console and captures the exact output so
+    # GUI/bootstrap launches still enforce the release-version binding.
+    $suffix = [guid]::NewGuid().ToString('N')
+    $stdoutPath = Join-Path $TemporaryDirectory "keet-version-$suffix.stdout"
+    $stderrPath = Join-Path $TemporaryDirectory "keet-version-$suffix.stderr"
+    try {
+        $process = Start-Process `
+            -FilePath $Path `
+            -ArgumentList '--version' `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+        if ($process.ExitCode -ne 0) {
+            $stderr = if (Test-Path -LiteralPath $stderrPath) {
+                [System.IO.File]::ReadAllText($stderrPath).Trim()
+            } else { '' }
+            throw "neoth-keet-bridge --version exited $($process.ExitCode): $stderr"
+        }
+        $value = [System.IO.File]::ReadAllText($stdoutPath).Trim()
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            throw 'neoth-keet-bridge --version returned no version'
+        }
+        return $value
+    }
+    finally {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Assert-ReleaseTag {
     param([string]$Tag)
     $pattern = '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(?<pre>[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
@@ -116,6 +179,44 @@ function Assert-ReleaseTag {
     }
 }
 
+function Resolve-CosignVerifier {
+    param([string]$TemporaryDirectory)
+
+    $installed = Get-Command cosign -ErrorAction SilentlyContinue
+    if ($installed) {
+        return $installed.Source
+    }
+
+    $arch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+    if ($arch -ne 'X64' -and $arch -ne 'Arm64') {
+        Throw-Error "no digest-pinned cosign bootstrap for Windows architecture $arch"
+    }
+    if ($arch -eq 'Arm64') {
+        Write-Info '  using the Windows ARM64 x64-compatibility layer for the verifier'
+    }
+
+    $fileName = 'cosign-windows-amd64.exe'
+    $path = Join-Path $TemporaryDirectory $fileName
+    $uri = "https://github.com/sigstore/cosign/releases/download/$CosignBootstrapVersion/$fileName"
+    Write-Info "  downloading digest-pinned cosign $CosignBootstrapVersion verifier"
+    try {
+        Invoke-Download -Uri $uri -OutFile $path
+    } catch {
+        if ($AllowUnverifiedRecovery) {
+            Write-Warning "NEOTH_ALLOW_UNVERIFIED_RECOVERY=1: the digest-pinned cosign verifier could not be downloaded. Authenticity was NOT verified. Use only with an archive authenticated out of band."
+            return $null
+        }
+        Throw-Error "failed to download digest-pinned cosign verifier: $($_.Exception.Message)"
+    }
+
+    $got = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($got -cne $CosignBootstrapWindowsAmd64Sha256) {
+        Throw-Error "bootstrap cosign SHA256 mismatch: expected $CosignBootstrapWindowsAmd64Sha256, got $got — refusing to execute it"
+    }
+    Write-Info "  digest-pinned cosign verifier ready ($got)"
+    return $path
+}
+
 function Verify-ReleaseAuthenticity {
     param(
         [string]$ArchivePath,
@@ -127,7 +228,7 @@ function Verify-ReleaseAuthenticity {
     )
     $signatureName = "$ArchiveName.minisig"
     try {
-        Invoke-WebRequest -Uri "$BaseUrl/$signatureName" -OutFile $SignaturePath -UseBasicParsing
+        Invoke-Download -Uri "$BaseUrl/$signatureName" -OutFile $SignaturePath
     } catch {
         Throw-Error "mandatory release signature is missing: $($_.Exception.Message)"
     }
@@ -150,17 +251,17 @@ function Verify-ReleaseAuthenticity {
         return
     }
 
-    $cosign = Get-Command cosign -ErrorAction SilentlyContinue
-    if ($cosign) {
+    $cosignPath = Resolve-CosignVerifier -TemporaryDirectory (Split-Path -Parent $ArchivePath)
+    if ($cosignPath) {
         $bundleName = "$ArchiveName.cosign.bundle"
         try {
-            Invoke-WebRequest -Uri "$BaseUrl/$bundleName" -OutFile $BundlePath -UseBasicParsing
+            Invoke-Download -Uri "$BaseUrl/$bundleName" -OutFile $BundlePath
         } catch {
             Throw-Error "cosign bundle is missing: $($_.Exception.Message)"
         }
         $certificateIdentity = "https://github.com/The-Geek-Freaks/NEOTH/.github/workflows/release.yml@refs/tags/$ReleaseTag"
         Write-Info "  verifying exact cosign workflow identity"
-        & $cosign.Source verify-blob `
+        & $cosignPath verify-blob `
             --bundle $BundlePath `
             --certificate-identity $certificateIdentity `
             --certificate-oidc-issuer $CosignOidcIssuer `
@@ -176,7 +277,7 @@ function Verify-ReleaseAuthenticity {
         Write-Warning "NEOTH_ALLOW_UNVERIFIED_RECOVERY=1: authenticity was NOT verified. Use only with an archive authenticated out of band."
         return
     }
-    Throw-Error "no authenticity verifier found; install minisign or cosign (emergency only: NEOTH_ALLOW_UNVERIFIED_RECOVERY=1)"
+    Throw-Error "digest-pinned cosign verifier was not available (emergency only: NEOTH_ALLOW_UNVERIFIED_RECOVERY=1)"
 }
 
 function Install-FileSetTransaction {
@@ -285,10 +386,8 @@ $CosignBundle = "$Archive.cosign.bundle"
 $Tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "neoth-install-$([guid]::NewGuid())")
 try {
     Write-Info "  downloading $Archive"
-    Invoke-WebRequest -Uri "$BaseUrl/$Archive" -OutFile (Join-Path $Tmp $Archive) `
-        -UseBasicParsing
-    Invoke-WebRequest -Uri "$BaseUrl/$Checksum" -OutFile (Join-Path $Tmp $Checksum) `
-        -UseBasicParsing
+    Invoke-Download -Uri "$BaseUrl/$Archive" -OutFile (Join-Path $Tmp $Archive)
+    Invoke-Download -Uri "$BaseUrl/$Checksum" -OutFile (Join-Path $Tmp $Checksum)
 
     Verify-Sha256Sidecar `
         -Path (Join-Path $Tmp $Archive) `
@@ -345,6 +444,22 @@ try {
     if (-not (Test-Path $RelaySrc)) {
         Throw-Error "release archive is missing neoth-relay.exe"
     }
+    $KeetSrc = Join-Path (Join-Path $Tmp $ArchiveName) 'neoth-keet-bridge.exe'
+    if (-not (Test-Path $KeetSrc)) {
+        $KeetSrc = Join-Path $Tmp 'neoth-keet-bridge.exe'
+    }
+    if (-not (Test-Path $KeetSrc)) {
+        Throw-Error "desktop release archive is missing neoth-keet-bridge.exe"
+    }
+    try {
+        $KeetVersion = Get-StandaloneVersion -Path $KeetSrc -TemporaryDirectory $Tmp
+    } catch {
+        Throw-Error $_.Exception.Message
+    }
+    $ExpectedKeetVersion = $ResolvedVersion.Substring(1)
+    if ($KeetVersion -cne $ExpectedKeetVersion) {
+        Throw-Error "neoth-keet-bridge version $KeetVersion does not match release $ExpectedKeetVersion"
+    }
     $ExamplePath = Join-Path (Join-Path $Tmp $ArchiveName) 'freedom.yaml.example'
     if (-not (Test-Path $ExamplePath)) {
         $ExamplePath = Join-Path $Tmp 'freedom.yaml.example'
@@ -361,13 +476,22 @@ try {
         Throw-Error "release archive is missing import-manifest.example.yaml"
     }
     $TargetImportExample = Join-Path $InstallDir 'import-manifest.example.yaml'
+    $ThirdPartyPath = Join-Path (Join-Path $Tmp $ArchiveName) 'THIRD_PARTY_LICENSES'
+    if (-not (Test-Path $ThirdPartyPath)) {
+        $ThirdPartyPath = Join-Path $Tmp 'THIRD_PARTY_LICENSES'
+    }
+    if (-not (Test-Path $ThirdPartyPath)) {
+        Throw-Error "release archive is missing THIRD_PARTY_LICENSES"
+    }
     # Companions are replaced before the public core entrypoint. All files are
     # staged first; any failed move restores completed replacements in reverse.
     $installItems = @(
         [pscustomobject]@{ Name = 'neothd.exe'; Source = $CompatSrc },
         [pscustomobject]@{ Name = 'neothd-gui.exe'; Source = $GuiSrc },
         [pscustomobject]@{ Name = 'neoth-migrate.exe'; Source = $MigrateSrc },
-        [pscustomobject]@{ Name = 'neoth-relay.exe'; Source = $RelaySrc }
+        [pscustomobject]@{ Name = 'neoth-relay.exe'; Source = $RelaySrc },
+        [pscustomobject]@{ Name = 'neoth-keet-bridge.exe'; Source = $KeetSrc },
+        [pscustomobject]@{ Name = 'THIRD_PARTY_LICENSES'; Source = $ThirdPartyPath }
     )
     if (-not (Test-Path -LiteralPath $TargetExample)) {
         $installItems += [pscustomobject]@{ Name = 'freedom.yaml.example'; Source = $ExamplePath }
@@ -385,12 +509,14 @@ try {
 
     Write-Info ""
     Write-Info "  neoth installed: $(Join-Path $InstallDir 'neoth.exe')"
+    Write-Info "  Keet companion installed: $(Join-Path $InstallDir 'neoth-keet-bridge.exe')"
     Write-Info ""
 
     Write-Info "Next steps:"
     Write-Info "  1. Launch the GUI wizard:       neoth gui"
     Write-Info "  2. Or copy the example config: Copy-Item '$TargetExample' `"`$env:USERPROFILE\.neoth\freedom.yaml`""
     Write-Info "  3. Start the daemon:           neoth serve"
+    Write-Info "  4. To enable the Keet channel: neoth-keet-bridge setup"
 }
 finally {
     if (Test-Path $Tmp) { Remove-Item -Recurse -Force $Tmp }

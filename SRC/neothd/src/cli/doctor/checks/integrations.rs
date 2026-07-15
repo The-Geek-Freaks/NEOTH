@@ -643,11 +643,23 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
             ));
         }
     }
-    if creds.keet_seed_phrase.is_some() || creds.pears_bearer_token.is_some() {
+    let keet = crate::channels::probe::ChannelCredsView::from_config(None, &creds);
+    let keet_any = keet.keet_bridge_url
+        || keet.keet_topic
+        || keet.keet_allowed_senders
+        || keet.keet_bearer
+        || keet.keet_seed;
+    if keet.keet_bridge_url && keet.keet_topic && keet.keet_allowed_senders && keet.keet_bearer {
         rows.push((
             "keet",
-            "UNAVAILABLE",
-            "legacy credentials are ignored; Keet exposes no supported public chat API",
+            "CONFIGURED-NEEDS-LIVE-PROBE",
+            "run `neoth channel test keet`; only authenticated full-duplex companion v1 is accepted",
+        ));
+    } else if keet_any {
+        rows.push((
+            "keet",
+            "CONFIGURED-NOT-STARTED",
+            "needs keet_bridge_url + keet_bridge_bearer_token + keet_topic + keet_allowed_senders; legacy seed is ignored",
         ));
     }
 

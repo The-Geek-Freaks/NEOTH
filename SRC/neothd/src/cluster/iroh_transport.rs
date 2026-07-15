@@ -17,14 +17,16 @@
 //!   maps that request frame → the reply frame (the gossip protocol is
 //!   request/response: peer sends its frame, we reply with ours). This is the
 //!   seam the live gossip path wires into — the handler deserialises the
-//!   `GossipFrame`, runs `wal_sync::GossipState::accept_inbound`, and replies
-//!   with `build_outbound`.
+//!   `GossipFrame`, commits it through the shared durable sync state machine,
+//!   and replies only with the exact post-commit ACK.
 //! - [`IrohTransport::addr`] is the dial key (`EndpointAddr`) to share with
 //!   peers — the iroh equivalent of a Hyperswarm topic ticket.
 //! - [`IrohTransport::send_frame`] dials a peer by its `EndpointAddr` and does
 //!   one request/response round-trip.
 
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -36,8 +38,6 @@ use iroh::{
 
 use crate::cluster::discovery::ClusterKey;
 use crate::cluster::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
-use crate::cluster::swarm::{emit_peer_snapshot_to_wal, encode_snapshot_gossip_payload};
-use crate::daemon::resource_snapshot_cron::{new_system, resolve_node_id, sample_snapshot};
 use crate::wal::events::{
     EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED,
     EVENT_TYPE_CLUSTER_GOSSIP_SENT,
@@ -113,7 +113,7 @@ fn emit_gossip_sent(
 
 /// ALPN for NEOTH cluster gossip. Both ends must present the same bytestring or
 /// iroh aborts the handshake — a cheap protocol/version guard.
-pub const NEOTH_CLUSTER_ALPN: &[u8] = b"neoth/cluster/gossip/1";
+pub const NEOTH_CLUSTER_ALPN: &[u8] = b"neoth/cluster/gossip/2";
 
 /// Hard cap on a single gossip frame (DoS guard on the QUIC read). Gossip
 /// frames are small (a vector clock + a band of WAL frames); 4 MiB is generous.
@@ -122,7 +122,11 @@ pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 /// Maps an inbound request frame to the reply frame. Pure bytes in / bytes out
 /// so the transport stays gossip-agnostic; the cluster supplies the real
 /// `GossipFrame` decode → `accept_inbound` → `build_outbound` logic.
-pub type FrameHandler = Arc<dyn Fn(Vec<u8>) -> Vec<u8> + Send + Sync>;
+pub type FrameHandler = Arc<
+    dyn Fn(crate::cluster::PeerPubkey, Vec<u8>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>>
+        + Send
+        + Sync,
+>;
 
 #[derive(Clone)]
 struct GossipProtocol {
@@ -215,7 +219,8 @@ impl ProtocolHandler for GossipProtocol {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(peer_id);
-        let reply = (self.handler)(frame);
+        let reply =
+            (self.handler)(crate::cluster::PeerPubkey::new(authenticated_origin), frame).await;
         send.write_all(&reply)
             .await
             .map_err(AcceptError::from_err)?;
@@ -279,6 +284,18 @@ impl IrohTransport {
         self.peers.lock().unwrap_or_else(|p| p.into_inner()).len()
     }
 
+    pub fn known_peers(&self) -> Vec<EndpointId> {
+        let mut peers: Vec<_> = self
+            .peers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .copied()
+            .collect();
+        peers.sort_by_key(|peer| peer.to_string());
+        peers
+    }
+
     /// Seed a peer by its endpoint-id string (hex). Returns false if unparseable.
     pub fn add_peer_id(&self, id: &str) -> bool {
         match id.trim().parse::<EndpointId>() {
@@ -306,14 +323,7 @@ impl IrohTransport {
         let mut delivered = 0;
         for peer in targets {
             if let Ok(reply) = self.send_frame(peer, frame).await
-                && serde_json::from_slice::<serde_json::Value>(&reply)
-                    .ok()
-                    .and_then(|value| {
-                        value
-                            .get("accepted")
-                            .and_then(|accepted| accepted.as_bool())
-                    })
-                    == Some(true)
+                && serde_json::from_slice::<crate::cluster::gossip_wire::GossipAck>(&reply).is_ok()
             {
                 delivered += 1;
             }
@@ -419,16 +429,10 @@ impl IrohTransport {
 
 /// A gossip-aware [`FrameHandler`] — the iroh↔gossip bridge for the live-flip.
 ///
-/// It routes every inbound frame through the SAME security stack the peeroxide
-/// path uses, so flipping the transport to iroh preserves the cluster's
-/// guarantees:
-///   - **(2) frame acceptance + (4) replay** — `GossipState::accept_inbound`
-///     runs `evaluate_acceptance` (replicable tag / within replay budget / not
-///     a duplicate via the per-origin stable-identity set); the vector clock is
-///     merged only after durable persistence;
-///   - **(5) consent/policy band** — the canonical inner WAL frame is
-///     length/CRC decoded before the DoNotGossip re-check trusts its own
-///     event type/subtype, so a mistagged frame can't smuggle a private band.
+/// It routes every inbound frame through the SAME durable state machine the
+/// peeroxide path uses: authenticated origin binding, version/digest/CRC/ACL
+/// validation, contiguous sequence enforcement, transactional content and
+/// receipt persistence, then an exact ACK after COMMIT.
 ///
 /// **(1) node capabilities** are checked downstream as on the peeroxide path.
 ///
@@ -439,135 +443,135 @@ impl IrohTransport {
 /// audited as dropped gossip. Production and test transports both require an
 /// explicit cluster key at construction.
 pub fn gossip_handler(
-    state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
-    // DES-13 — foreign-event persistence handoff. `Some` → an accepted frame
-    // is submitted to the shared writer BEFORE the dedup identity is recorded
-    // (persist-then-commit parity with the peeroxide loop, so a dropped
-    // persist lets the sender re-deliver). `None` → VC-only (tests / a build
-    // without a live persist writer): commit immediately, legacy semantics.
+    _state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
     persist_tx: Option<crate::cluster::wal_sync::ForeignPersistTx>,
     writer: Option<Arc<WalWriterHandle>>,
 ) -> FrameHandler {
     use crate::cluster::gossip::GossipPolicy;
-    use crate::cluster::gossip_wire::{GossipAcceptance, GossipFrame};
+    use crate::cluster::gossip_wire::GossipFrame;
     let policy = GossipPolicy::default();
-    std::sync::Arc::new(move |req: Vec<u8>| -> Vec<u8> {
-        let reply = |accepted: bool, verdict: &str| {
-            serde_json::to_vec(&serde_json::json!({ "accepted": accepted, "verdict": verdict }))
+    std::sync::Arc::new(move |authenticated_peer, req: Vec<u8>| {
+        let persist_tx = persist_tx.clone();
+        let writer = writer.clone();
+        let policy = policy.clone();
+        Box::pin(async move {
+            let reject = |verdict: &str| {
+                serde_json::to_vec(&serde_json::json!({
+                    "accepted": false,
+                    "verdict": verdict,
+                }))
                 .unwrap_or_default()
-        };
-        let frame: GossipFrame = match serde_json::from_slice(&req) {
-            Ok(f) => f,
-            Err(_) => {
-                // F19 — a malformed inbound frame is a dropped gossip decision.
-                emit_gossip_audit(&writer, false, "malformed", "unknown");
-                return reply(false, "malformed");
+            };
+            let frame: GossipFrame = match serde_json::from_slice(&req) {
+                Ok(frame) => frame,
+                Err(_) => {
+                    emit_gossip_audit(&writer, false, "malformed", authenticated_peer.as_str());
+                    return reject("malformed");
+                }
+            };
+            if frame.origin != authenticated_peer {
+                emit_gossip_audit(
+                    &writer,
+                    false,
+                    "peer_origin_mismatch",
+                    authenticated_peer.as_str(),
+                );
+                return reject("peer_origin_mismatch");
             }
-        };
-        // Decode the complete canonical WAL frame before trusting its type for
-        // the receive ACL. Malformed length/CRC yields `(None, None)` and the
-        // default-deny acceptance path drops it.
-        let payload_timestamp =
-            crate::cluster::wal_sync::gossip_payload_timestamp_unix(&frame.payload);
-        let (payload_et, payload_sub) = match (
-            crate::cluster::wal_sync::gossip_payload_event_meta(&frame.payload),
-            payload_timestamp,
-        ) {
-            (Some((event_type, subtype)), Some(timestamp)) if timestamp == frame.timestamp_unix => {
-                (Some(event_type), Some(subtype))
-            }
-            _ => (None, None),
-        };
-        let now = crate::time::now_unix_i64();
-        let origin = frame.origin.as_str().to_string();
-        let (verdict, committed) = {
-            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
-            let v = g.accept_inbound(&frame, payload_et, payload_sub, &policy, now);
-            let mut committed = false;
-            if matches!(v, GossipAcceptance::Accept) {
-                // Swarm snapshots have a second durable consumer: the local
-                // WAL-backed dashboard. Persist that frame before advancing
-                // the gossip dedup identity, otherwise a WAL failure would make
-                // the peer's row unrecoverable as a deduplicated retry.
-                let dashboard_persisted = if payload_et == Some(0x00)
-                    && payload_sub == Some(crate::cluster::wal_sync::SWARM_SNAPSHOT_SUBTYPE)
-                {
-                    writer
-                        .as_deref()
-                        .is_none_or(|wal| emit_peer_snapshot_to_wal(wal, &frame.payload))
-                } else {
-                    true
-                };
-                if !dashboard_persisted {
-                    tracing::warn!(peer = %origin, seq = frame.event_seq,
-                        "iroh gossip: peer snapshot WAL append failed — not committing");
-                } else {
-                    match &persist_tx {
-                        // DES-13: persist-then-commit. Submit the accepted frame to
-                        // the shared writer; record the dedup identity ONLY on a
-                        // successful handoff. A full channel / closed writer → do NOT
-                        // commit, so the sender's replay budget re-delivers (a lost
-                        // backup event is worse than a duplicate — INSERT OR IGNORE
-                        // absorbs the duplicate).
-                        Some(tx) => {
-                            let job = crate::cluster::wal_sync::ForeignPersistJob {
-                                origin_peer_pk: origin.clone(),
-                                origin_seq: frame.event_seq,
-                                event_type: payload_et.unwrap_or(0),
-                                payload: frame.payload.clone(),
-                                received_at: now,
-                            };
-                            if tx.try_send(job).is_ok() {
-                                g.commit_inbound(&frame);
-                                committed = true;
-                            } else {
-                                tracing::warn!(peer = %origin, seq = frame.event_seq,
-                                "iroh gossip: foreign-persist channel unavailable — not committing (sender re-delivers)");
-                            }
-                        }
-                        // VC-only: no persist writer wired (tests). Commit immediately.
-                        None => {
-                            g.commit_inbound(&frame);
-                            committed = true;
-                        }
-                    }
+            let Some(tx) = persist_tx else {
+                emit_gossip_audit(
+                    &writer,
+                    false,
+                    "durable_writer_unavailable",
+                    authenticated_peer.as_str(),
+                );
+                return reject("durable_writer_unavailable");
+            };
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            let job = crate::cluster::wal_sync::ForeignPersistJob {
+                authenticated_peer: authenticated_peer.clone(),
+                frame,
+                policy,
+                reply: reply_tx,
+            };
+            match tx.try_send(job) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    emit_gossip_audit(
+                        &writer,
+                        false,
+                        "durable_writer_full",
+                        authenticated_peer.as_str(),
+                    );
+                    return reject("durable_writer_full");
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    emit_gossip_audit(
+                        &writer,
+                        false,
+                        "durable_writer_closed",
+                        authenticated_peer.as_str(),
+                    );
+                    return reject("durable_writer_closed");
                 }
             }
-            (v, committed)
-        };
-        let accepted = matches!(verdict, GossipAcceptance::Accept) && committed;
-        let verdict_str = format!("{verdict:?}");
-        // F19 — audit the inbound gossip decision (0xEE accepted / 0xEF dropped),
-        // matching the peeroxide path's WAL coverage.
-        emit_gossip_audit(&writer, accepted, &verdict_str, &origin);
-        reply(accepted, &verdict_str)
+            match reply_rx.await {
+                Ok(Ok(crate::cluster::durable_sync::InboundCommit::Committed(ack)))
+                | Ok(Ok(crate::cluster::durable_sync::InboundCommit::Duplicate(ack))) => {
+                    emit_gossip_audit(&writer, true, "committed", authenticated_peer.as_str());
+                    serde_json::to_vec(&ack).unwrap_or_default()
+                }
+                Ok(Ok(crate::cluster::durable_sync::InboundCommit::Gap { expected, received })) => {
+                    let verdict = format!("sequence_gap:{expected}:{received}");
+                    emit_gossip_audit(&writer, false, &verdict, authenticated_peer.as_str());
+                    reject(&verdict)
+                }
+                Ok(Ok(crate::cluster::durable_sync::InboundCommit::Dropped(verdict))) => {
+                    let verdict = format!("{verdict:?}");
+                    emit_gossip_audit(&writer, false, &verdict, authenticated_peer.as_str());
+                    reject(&verdict)
+                }
+                Ok(Err(error)) => {
+                    emit_gossip_audit(
+                        &writer,
+                        false,
+                        "db_commit_failed",
+                        authenticated_peer.as_str(),
+                    );
+                    tracing::warn!(%error, peer = %authenticated_peer.as_str(), "iroh durable mesh commit failed; ACK withheld");
+                    reject("db_commit_failed")
+                }
+                Err(_) => reject("durable_writer_reply_dropped"),
+            }
+        })
     })
 }
 
 /// Outbound gossip broadcast tick for iroh — the send-side counterpart to
 /// `wal_sync::spawn_gossip_tick` (which serves the peeroxide streams). Every 30s
-/// it cycles every live or sealed WAL segment, band-filters replicable frames
-/// with the SAME canonical reader + `build_outbound` the peeroxide path uses,
-/// and broadcasts each as a bare `GossipFrame` (JSON) to every known peer via
-/// `IrohTransport::broadcast` (dial-by-key). Stable event identities make
-/// wrap-around retries idempotent.
+/// it cycles every live or sealed WAL segment using the same per-peer durable
+/// cursor and pending-frame store as peeroxide, then sends one bare
+/// `GossipFrame` (JSON) per known peer. Only an exact authenticated ACK advances
+/// that peer's cursor.
 pub fn spawn_gossip_broadcast(
     transport: Arc<IrohTransport>,
     segment_path: std::path::PathBuf,
-    state: Arc<Mutex<crate::cluster::wal_sync::GossipState>>,
+    _state: Arc<Mutex<crate::cluster::wal_sync::GossipState>>,
     self_id: crate::cluster::PeerPubkey,
     writer: Option<Arc<WalWriterHandle>>,
 ) -> tokio::task::JoinHandle<()> {
     use crate::cluster::gossip::GossipPolicy;
-    use crate::cluster::wal_sync::{GossipWalCursor, read_gossipable_batch};
     tokio::spawn(async move {
         let policy = GossipPolicy::default();
-        let mut snapshot_system = new_system();
         let wal_dir = segment_path
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let mut cursor = GossipWalCursor::default();
+        let db_path = wal_dir
+            .parent()
+            .map(|home| home.join("views.db"))
+            .unwrap_or_else(|| std::path::PathBuf::from("views.db"));
+        let durable = crate::cluster::durable_sync::DurableMeshSync::new(db_path);
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -576,59 +580,75 @@ pub fn spawn_gossip_broadcast(
                 continue; // no peers ⇒ nothing to gossip
             }
 
-            // GOLD-FEAT-06: LocalSnapshot frames are deliberately excluded
-            // from WAL gossip, so iroh must emit its own 0x03 peer snapshot
-            // producer just like the peeroxide heartbeat path.
-            let snapshot = sample_snapshot(&resolve_node_id(), &mut snapshot_system);
-            if let Some(payload) = encode_snapshot_gossip_payload(&snapshot) {
-                let timestamp = crate::cluster::wal_sync::gossip_payload_timestamp_unix(&payload)
-                    .expect("snapshot encoder must produce a canonical WAL frame");
-                let outbound = {
-                    let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
-                    g.build_outbound(
-                        &self_id,
-                        crate::wal::events::EVENT_TYPE_EXTENDED,
-                        crate::cluster::wal_sync::SWARM_SNAPSHOT_SUBTYPE,
-                        payload,
-                        timestamp,
-                        &policy,
-                    )
-                };
-                if let Some(frame) = outbound {
-                    if let Ok(wire) = serde_json::to_vec(&frame) {
-                        let delivered = transport.broadcast(&wire).await;
-                        emit_gossip_sent(&writer, 1, delivered, transport.peer_count());
-                    }
-                }
-            }
-            let frames = read_gossipable_batch(&wal_dir, &mut cursor, &policy, 32).await;
-            let frame_count = frames.len();
             let mut delivered = 0usize;
-            for (event_type, raw) in frames {
-                let Some(ts) = crate::cluster::wal_sync::gossip_payload_timestamp_unix(&raw) else {
-                    continue;
-                };
-                // F56 — build_outbound ticks + reads the SHARED vector clock.
-                // Scope the std Mutex guard so it drops BEFORE the broadcast
-                // await (a std guard is !Send and must never cross an await).
-                let event_subtype = crate::cluster::wal_sync::gossip_payload_event_meta(&raw)
-                    .map(|(_, subtype)| subtype)
-                    .unwrap_or(0);
-                let gframe_opt = {
-                    let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
-                    g.build_outbound(&self_id, event_type, event_subtype, raw, ts, &policy)
-                };
-                if let Some(gframe) = gframe_opt {
-                    if let Ok(wire) = serde_json::to_vec(&gframe) {
-                        delivered += transport.broadcast(&wire).await;
+            for endpoint in transport.known_peers() {
+                let peer = crate::cluster::PeerPubkey::new(endpoint.to_string());
+                match durable
+                    .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy)
+                    .await
+                {
+                    Ok(Some(prepared)) => {
+                        let Ok(wire) = serde_json::to_vec(&prepared.frame) else {
+                            continue;
+                        };
+                        let attempt_store = durable.clone();
+                        let attempt_peer = peer.clone();
+                        match tokio::task::spawn_blocking(move || {
+                            attempt_store.record_send_attempt(&attempt_peer)
+                        })
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh attempt persistence failed closed");
+                                continue;
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh attempt task panicked");
+                                continue;
+                            }
+                        }
+                        match transport.send_frame(endpoint, &wire).await {
+                            Ok(reply) => {
+                                let Ok(ack) = serde_json::from_slice::<
+                                    crate::cluster::gossip_wire::GossipAck,
+                                >(&reply) else {
+                                    tracing::warn!(peer = %peer.as_str(), "iroh mesh peer withheld or returned malformed ACK");
+                                    continue;
+                                };
+                                let ack_store = durable.clone();
+                                let ack_peer = peer.clone();
+                                let ack_origin = self_id.clone();
+                                match tokio::task::spawn_blocking(move || {
+                                    ack_store.acknowledge_outbound(&ack_peer, &ack_origin, &ack)
+                                })
+                                .await
+                                {
+                                    Ok(Ok(_)) => delivered += 1,
+                                    Ok(Err(error)) => {
+                                        tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh ACK rejected")
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh ACK task panicked")
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                tracing::debug!(%error, peer = %peer.as_str(), "iroh mesh send failed; pending frame retained")
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, peer = %peer.as_str(), "iroh durable mesh prepare failed closed")
                     }
                 }
             }
             // Send-side audit (0xED), parity with the peeroxide gossip tick.
             // Only emit when frames actually went out so an idle tick leaves
             // no noise.
-            if frame_count > 0 {
-                emit_gossip_sent(&writer, frame_count, delivered, transport.peer_count());
+            if delivered > 0 {
+                emit_gossip_sent(&writer, delivered, delivered, transport.peer_count());
             }
         }
     })
@@ -651,25 +671,45 @@ mod tests {
     #[ignore = "real iroh endpoints — needs network (relay/discovery)"]
     async fn loopback_frame_round_trip() {
         // A echoes "<req>+ack".
-        let handler: FrameHandler = Arc::new(|req: Vec<u8>| {
-            let mut r = req;
-            r.extend_from_slice(b"+ack");
-            r
+        let handler: FrameHandler = Arc::new(|_, req: Vec<u8>| {
+            Box::pin(async move {
+                let mut reply = req;
+                reply.extend_from_slice(b"+ack");
+                reply
+            })
         });
         let a = IrohTransport::bind(handler, test_cluster_key(), None)
             .await
             .expect("bind A");
-        let b = IrohTransport::bind(Arc::new(|r| r), test_cluster_key(), None)
-            .await
-            .expect("bind B");
+        let b = IrohTransport::bind(
+            Arc::new(|_, bytes| Box::pin(async move { bytes })),
+            test_cluster_key(),
+            None,
+        )
+        .await
+        .expect("bind B");
 
+        let payload = vec![1, 2, 3];
+        let envelope = crate::cluster::gossip_wire::SyncEnvelope {
+            version: crate::cluster::gossip_wire::SYNC_ENVELOPE_VERSION,
+            content_id: "iroh-loopback".into(),
+            updated_at_unix: crate::time::now_unix_i64(),
+            content: crate::cluster::gossip_wire::SyncContent::Metadata {
+                event_type: 0x94,
+                event_subtype: 0,
+                wal_frame: payload.clone(),
+            },
+        };
         let request = crate::cluster::gossip_wire::GossipFrame {
+            protocol_version: crate::cluster::gossip_wire::SYNC_PROTOCOL_VERSION,
             vector_clock: crate::cluster::gossip_wire::VectorClock::new(),
             origin: crate::cluster::PeerPubkey::new(b.node_id()),
             event_seq: 1,
+            content_sha256: envelope.content_sha256(),
             timestamp_unix: crate::time::now_unix_i64(),
             tag: crate::cluster::gossip::GossipTag::Replicate,
-            payload: vec![1, 2, 3],
+            payload,
+            envelope,
         };
         let request = serde_json::to_vec(&request).unwrap();
         let reply = b.send_frame(a.addr(), &request).await.expect("round-trip");
@@ -683,17 +723,21 @@ mod tests {
 
     #[test]
     fn alpn_is_versioned() {
-        assert!(NEOTH_CLUSTER_ALPN.ends_with(b"/1"));
+        assert!(NEOTH_CLUSTER_ALPN.ends_with(b"/2"));
     }
 
-    #[test]
-    fn gossip_handler_rejects_malformed_and_replies_json() {
+    #[tokio::test]
+    async fn gossip_handler_rejects_malformed_and_replies_json() {
         use crate::cluster::wal_sync::GossipState;
         let state = std::sync::Arc::new(std::sync::Mutex::new(GossipState::new()));
         let handler = gossip_handler(state, None, None);
         // A non-GossipFrame byte blob must be rejected (decode failure), not
         // panic — and the reply is a parseable JSON verdict.
-        let reply = handler(b"not a gossip frame".to_vec());
+        let reply = handler(
+            crate::cluster::PeerPubkey::new("test-peer"),
+            b"not a gossip frame".to_vec(),
+        )
+        .await;
         let v: serde_json::Value = serde_json::from_slice(&reply).expect("json reply");
         assert_eq!(v["accepted"], false);
         assert_eq!(v["verdict"], "malformed");
@@ -706,11 +750,16 @@ mod tests {
         use crate::cluster::wal_sync::GossipState;
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join) =
+            crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let writer = Arc::new(writer);
         let state = Arc::new(Mutex::new(GossipState::new()));
         let handler = gossip_handler(Arc::clone(&state), None, Some(Arc::clone(&writer)));
-        let reply = handler(b"not a gossip frame".to_vec());
+        let reply = handler(
+            crate::cluster::PeerPubkey::new("test-peer"),
+            b"not a gossip frame".to_vec(),
+        )
+        .await;
         let v: serde_json::Value = serde_json::from_slice(&reply).expect("json reply");
         assert_eq!(v["accepted"], false);
         // Release every WalWriterHandle sender (the test's + the closure's), then
@@ -733,65 +782,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepted_iroh_peer_snapshot_is_visible_in_dashboard_wal() {
-        use crate::cluster::gossip::GossipPolicy;
-        use crate::cluster::swarm::NodeResourceSnapshot;
-        use crate::cluster::wal_sync::{GossipState, SWARM_SNAPSHOT_SUBTYPE};
-
+    async fn iroh_handler_ack_is_after_durable_commit() {
+        use crate::cluster::gossip_wire::{
+            GossipFrame, SYNC_ENVELOPE_VERSION, SYNC_PROTOCOL_VERSION, SyncContent, SyncEnvelope,
+            VectorClock,
+        };
+        use crate::cluster::wal_sync::GossipState;
+        use sha2::Digest as _;
         let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
-        let writer = Arc::new(writer);
-
-        let snapshot = NodeResourceSnapshot::new(
-            "iroh-peer".to_string(),
-            "peer-host".to_string(),
-            23.5,
-            2048,
-            8192,
-            Some(1024),
-            Some(4096),
-            crate::time::now_unix_i64(),
-        );
-        let payload = encode_snapshot_gossip_payload(&snapshot).expect("snapshot payload");
-        let timestamp = crate::cluster::wal_sync::gossip_payload_timestamp_unix(&payload)
-            .expect("canonical snapshot timestamp");
-        let frame = GossipState::new()
-            .build_outbound(
-                &crate::cluster::PeerPubkey::new("iroh-peer-pk"),
-                crate::wal::events::EVENT_TYPE_EXTENDED,
-                SWARM_SNAPSHOT_SUBTYPE,
-                payload,
-                timestamp,
-                &GossipPolicy::default(),
-            )
-            .expect("swarm snapshots are replicable");
-
+        let db_path = dir.path().join("views.db");
+        let (persist_tx, persist_join) =
+            crate::cluster::wal_sync::spawn_foreign_persist_writer(db_path.clone());
+        let inner = br#"{"event_count":1}"#;
+        let header = crate::wal::HeaderBuilder::new(0x94, inner).build();
+        let payload = crate::wal::frame::encode_frame(&header, inner);
+        let timestamp = crate::cluster::wal_sync::gossip_payload_timestamp_unix(&payload).unwrap();
+        let envelope = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: format!("metadata:{}", hex::encode(sha2::Sha256::digest(&payload))),
+            updated_at_unix: timestamp,
+            content: SyncContent::Metadata {
+                event_type: 0x94,
+                event_subtype: 0,
+                wal_frame: payload.clone(),
+            },
+        };
+        let origin = crate::cluster::PeerPubkey::new("iroh-peer-pk");
+        let frame = GossipFrame {
+            protocol_version: SYNC_PROTOCOL_VERSION,
+            vector_clock: VectorClock::new(),
+            origin: origin.clone(),
+            event_seq: 1,
+            content_sha256: envelope.content_sha256(),
+            timestamp_unix: timestamp,
+            tag: crate::cluster::gossip::GossipTag::Replicate,
+            payload,
+            envelope,
+        };
         let receiver = Arc::new(Mutex::new(GossipState::new()));
-        let handler = gossip_handler(receiver, None, Some(Arc::clone(&writer)));
-        let reply = handler(serde_json::to_vec(&frame).unwrap());
-        let verdict: serde_json::Value = serde_json::from_slice(&reply).unwrap();
-        assert_eq!(verdict["accepted"], true);
-
+        let handler = gossip_handler(receiver, Some(persist_tx.clone()), None);
+        let reply = handler(origin, serde_json::to_vec(&frame).unwrap()).await;
+        let ack: crate::cluster::gossip_wire::GossipAck =
+            serde_json::from_slice(&reply).expect("post-commit ACK");
+        assert_eq!(ack.origin_seq, 1);
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM idx_foreign_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            rows, 1,
+            "ACK is observable only after the foreign row committed"
+        );
+        drop(conn);
         drop(handler);
-        drop(writer);
-        let _ = join.await;
-
-        let bytes = std::fs::read(&seg).unwrap();
-        let mut dashboard_rows = Vec::new();
-        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
-            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
-                && decoded.header.event_subtype == SWARM_SNAPSHOT_SUBTYPE
-            {
-                dashboard_rows.push(
-                    serde_json::from_slice::<NodeResourceSnapshot>(decoded.payload)
-                        .expect("dashboard snapshot JSON"),
-                );
-            }
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(dashboard_rows, vec![snapshot]);
+        drop(persist_tx);
+        persist_join.await.unwrap();
     }
 
     // GR-RESID-IROH follow-up — the send-side broadcast tick writes a 0xED
@@ -800,7 +847,8 @@ mod tests {
     async fn emit_gossip_sent_writes_0xed_audit_frame() {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join) =
+            crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let writer = Arc::new(writer);
         emit_gossip_sent(&Some(Arc::clone(&writer)), 3, 2, 1);
         drop(writer);

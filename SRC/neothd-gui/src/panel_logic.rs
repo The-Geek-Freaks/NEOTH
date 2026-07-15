@@ -1158,92 +1158,173 @@ pub fn parse_memory_size(json: &str) -> MemorySnapshot {
     }
 }
 
-// ── GU-01 channels panel (credentials.yaml token PRESENCE, never the value) ──
+// ── GU-01 / GOLD-R3-04 channels panel (canonical CLI probe contract) ─────────
 
-/// One channel's connection state for the Channels panel. ONLY the connected
-/// bool is derived — a secret token is NEVER read into this struct.
+/// One channel row from `neoth channel list --output json`.
+///
+/// The GUI deliberately consumes the daemon's canonical probe result instead
+/// of reparsing `credentials.yaml`. That keeps file/keychain credentials,
+/// feature availability, partial configuration, and validation errors aligned
+/// across CLI and GUI without ever returning a secret value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelStatus {
     pub name: String,
-    pub connected: bool,
+    pub status: String,
+    pub configured: bool,
+    pub detail: String,
 }
 
-/// Derive per-channel connection state from the PRESENCE of credential fields
-/// in a `credentials.yaml` string. PURE + secret-safe: it deserialises each
-/// token into an `Option<String>` only to test `is_some() && !is_empty()`, and
-/// emits ONLY the boolean — token values never leave this function. A malformed
-/// file yields "all disconnected" (never panics, never partial-leaks).
-pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
-    // One row per messaging surface in the canonical `channels::ChannelKind`.
-    // Meta Cloud and Baileys remain separate rows because they use independent
-    // credentials, transports, and trust boundaries.
-    // Only the PRESENCE of each channel's required credential fields is derived —
-    // values are read into `Option<String>` solely to test emptiness and never
-    // leave this function. Matrix deliberately checks homeserver + user + auth,
-    // so a token-only partial adoption is not shown as connected.
-    #[derive(serde::Deserialize, Default)]
-    struct MinimalCreds {
-        telegram_token: Option<String>,
-        whatsapp_token: Option<String>,
-        whatsapp_baileys_url: Option<String>,
-        whatsapp_baileys_token: Option<String>,
-        whatsapp_baileys_allowed_senders: Option<String>,
-        slack_bot_token: Option<String>,
-        discord_bot_token: Option<String>,
-        signal_phone_number: Option<String>,
-        matrix_homeserver: Option<String>,
-        matrix_user_id: Option<String>,
-        matrix_access_token: Option<String>,
-        matrix_password: Option<String>,
-        line_channel_access_token: Option<String>,
-        irc_server: Option<String>,
-        mattermost_token: Option<String>,
-        twitch_oauth_token: Option<String>,
-        nostr_secret_key: Option<String>,
-        bluebubbles_url: Option<String>,
-        gchat_subscription: Option<String>,
+/// Stable daemon registry contract consumed by the GUI. Keeping the complete
+/// set here makes a partial/old CLI inventory fail visibly instead of silently
+/// dropping controls from the desktop surface.
+const CANONICAL_CHANNEL_IDS: [&str; 15] = [
+    "telegram",
+    "slack",
+    "whatsapp_business",
+    "whatsapp_baileys",
+    "keet",
+    "discord",
+    "signal",
+    "imessage_bluebubbles",
+    "matrix",
+    "line",
+    "irc",
+    "mattermost",
+    "twitch",
+    "nostr",
+    "gchat",
+];
+
+/// Parse the authoritative channel inventory. Malformed, empty, duplicated, or
+/// future-unknown status values are explicit errors; silently rendering them as
+/// "disconnected" would hide damaged operator state.
+pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
+    #[derive(serde::Deserialize)]
+    struct Payload {
+        channels: Vec<Row>,
+        total: usize,
     }
-    let creds: MinimalCreds = serde_yaml::from_str(yaml).unwrap_or_default();
-    let present = |o: &Option<String>| o.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
-    let row = |name: &str, connected: bool| ChannelStatus {
-        name: name.into(),
-        connected,
-    };
-    vec![
-        row("telegram", present(&creds.telegram_token)),
-        row("whatsapp", present(&creds.whatsapp_token)),
-        row(
-            "whatsapp_baileys",
-            present(&creds.whatsapp_baileys_url)
-                && present(&creds.whatsapp_baileys_token)
-                && present(&creds.whatsapp_baileys_allowed_senders),
-        ),
-        row("slack", present(&creds.slack_bot_token)),
-        row("discord", present(&creds.discord_bot_token)),
-        row("signal", present(&creds.signal_phone_number)),
-        row(
-            "matrix",
-            present(&creds.matrix_homeserver)
-                && present(&creds.matrix_user_id)
-                && (present(&creds.matrix_access_token) || present(&creds.matrix_password)),
-        ),
-        row("line", present(&creds.line_channel_access_token)),
-        row("irc", present(&creds.irc_server)),
-        row("mattermost", present(&creds.mattermost_token)),
-        row("twitch", present(&creds.twitch_oauth_token)),
-        row("nostr", present(&creds.nostr_secret_key)),
-        row("imessage", present(&creds.bluebubbles_url)),
-        row("gchat", present(&creds.gchat_subscription)),
-    ]
+    #[derive(serde::Deserialize)]
+    struct Row {
+        name: String,
+        status: String,
+        configured: bool,
+        detail: String,
+    }
+
+    let payload: Payload = serde_json::from_str(json)
+        .map_err(|error| format!("invalid channel inventory JSON: {error}"))?;
+    if payload.total != payload.channels.len() {
+        return Err(format!(
+            "channel inventory total {} does not match {} rows",
+            payload.total,
+            payload.channels.len()
+        ));
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut channels = Vec::with_capacity(payload.channels.len());
+    for row in payload.channels {
+        let name = row.name.trim();
+        if name.is_empty() {
+            return Err("channel inventory contains an empty channel id".to_string());
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(format!("channel inventory contains duplicate id `{name}`"));
+        }
+        if !matches!(
+            row.status.as_str(),
+            "ok" | "warn" | "error" | "unavailable" | "not_configured"
+        ) {
+            return Err(format!(
+                "channel `{name}` returned unknown status `{}`",
+                row.status
+            ));
+        }
+        channels.push(ChannelStatus {
+            name: name.to_string(),
+            status: row.status,
+            configured: row.configured,
+            detail: row.detail,
+        });
+    }
+
+    let expected = CANONICAL_CHANNEL_IDS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let actual = seen
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    if actual != expected {
+        let missing = expected.difference(&actual).copied().collect::<Vec<_>>();
+        let unknown = actual.difference(&expected).copied().collect::<Vec<_>>();
+        return Err(format!(
+            "channel registry drift (missing: {}; unknown: {})",
+            if missing.is_empty() {
+                "none".to_string()
+            } else {
+                missing.join(", ")
+            },
+            if unknown.is_empty() {
+                "none".to_string()
+            } else {
+                unknown.join(", ")
+            },
+        ));
+    }
+    Ok(channels)
 }
 
-/// Read `<neoth_home>/credentials.yaml` + derive channel connection state. A
-/// missing file yields "all disconnected". The fs read is the only impurity;
-/// the logic is the unit-tested [`channel_status_from_credentials_yaml`].
-pub fn read_channel_status(neoth_home: &std::path::Path) -> Vec<ChannelStatus> {
-    let path = neoth_home.join("credentials.yaml");
-    let yaml = std::fs::read_to_string(&path).unwrap_or_default();
-    channel_status_from_credentials_yaml(&yaml)
+/// Typed result from `neoth channel test <id> --output json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelTestStatus {
+    pub status: String,
+    pub detail: String,
+}
+
+/// Parse one canonical channel-test result and bind it to the channel the GUI
+/// requested. A process exit code alone is insufficient because the CLI emits
+/// typed `fail`, `skipped`, and `unavailable` results with structured detail.
+pub fn parse_channel_test_status(
+    json: &str,
+    expected_channel: &str,
+) -> Result<ChannelTestStatus, String> {
+    #[derive(serde::Deserialize)]
+    struct Payload {
+        channel: String,
+        status: String,
+        detail: String,
+    }
+
+    let result: Payload = serde_json::from_str(json)
+        .map_err(|error| format!("invalid channel test JSON: {error}"))?;
+    if result.channel != expected_channel {
+        return Err(format!(
+            "channel test returned `{}` while `{expected_channel}` was requested",
+            result.channel
+        ));
+    }
+    if !matches!(
+        result.status.as_str(),
+        "ok" | "fail" | "skipped" | "unavailable"
+    ) {
+        return Err(format!(
+            "channel `{expected_channel}` returned unknown test status `{}`",
+            result.status
+        ));
+    }
+    let detail = result.detail.trim();
+    if detail.is_empty() || detail.chars().any(char::is_control) {
+        return Err(format!(
+            "channel `{expected_channel}` returned invalid test detail"
+        ));
+    }
+    Ok(ChannelTestStatus {
+        status: result.status,
+        detail: detail.to_string(),
+    })
 }
 
 // ── SPEC-05 preset selector (parse `neoth preset list --json`) ───────────────
@@ -4311,112 +4392,154 @@ mod tests {
         assert_eq!(parse_memory_size("nope"), MemorySnapshot::default());
     }
 
-    // ── GU-01 channel status (secret-safe) ────────────────────────────────────
+    // ── GOLD-R3-04 canonical channel status ──────────────────────────────────
 
     #[test]
-    fn channel_status_reads_presence_not_values() {
-        let yaml = "telegram_token: \"123:abc\"\nslack_bot_token: \"xoxb-x\"\nirc_server: \"irc.libera.chat\"\n";
-        let rows = channel_status_from_credentials_yaml(yaml);
-        let by = |n: &str| rows.iter().find(|c| c.name == n).unwrap().connected;
-        assert!(by("telegram"));
-        assert!(by("slack"));
-        assert!(by("irc"), "irc_server presence -> connected");
-        assert!(!by("whatsapp"), "absent -> disconnected");
-        // Every canonical messaging ChannelKind has a row.
-        for ch in [
-            "telegram",
-            "whatsapp",
-            "whatsapp_baileys",
-            "slack",
-            "discord",
-            "signal",
-            "matrix",
-            "line",
-            "irc",
-            "mattermost",
-            "twitch",
-            "nostr",
-            "imessage",
-            "gchat",
-        ] {
-            assert!(
-                rows.iter().any(|c| c.name == ch),
-                "missing channel row: {ch}"
-            );
-        }
-        // The connected bool is all that's exposed — no token value in the struct.
-        assert_eq!(rows.len(), 14);
+    fn parse_channel_status_preserves_probe_states_and_detail() {
+        let states = ["ok", "warn", "error", "unavailable", "not_configured"];
+        let channel_rows = CANONICAL_CHANNEL_IDS
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                serde_json::json!({
+                    "name": name,
+                    "status": states[index % states.len()],
+                    "configured": index % states.len() < 3,
+                    "detail": format!("probe detail {index}"),
+                })
+            })
+            .collect::<Vec<_>>();
+        let payload = serde_json::json!({
+            "channels": channel_rows,
+            "configured": 9,
+            "total": CANONICAL_CHANNEL_IDS.len(),
+        });
+        let rows = parse_channel_status(&payload.to_string()).unwrap();
+        assert_eq!(rows.len(), CANONICAL_CHANNEL_IDS.len());
+        assert_eq!(rows[0].status, "ok");
+        assert_eq!(rows[1].status, "warn");
+        assert_eq!(rows[2].name, "whatsapp_business");
+        assert!(rows[2].configured);
+        assert_eq!(rows[2].detail, "probe detail 2");
+        assert_eq!(rows[3].status, "unavailable");
+        assert_eq!(rows[4].status, "not_configured");
     }
 
     #[test]
-    fn matrix_status_requires_homeserver_user_and_auth() {
-        let connected = |yaml: &str| {
-            channel_status_from_credentials_yaml(yaml)
-                .into_iter()
-                .find(|row| row.name == "matrix")
-                .unwrap()
-                .connected
-        };
-        assert!(!connected("matrix_access_token: syt_secret\n"));
-        assert!(!connected(
-            "matrix_homeserver: https://matrix.example.org\nmatrix_access_token: syt_secret\n"
-        ));
-        assert!(connected(
-            "matrix_homeserver: https://matrix.example.org\nmatrix_user_id: '@bot:example.org'\nmatrix_access_token: syt_secret\n"
-        ));
-        assert!(connected(
-            "matrix_homeserver: https://matrix.example.org\nmatrix_user_id: '@bot:example.org'\nmatrix_password: secret\n"
-        ));
-    }
-
-    #[test]
-    fn baileys_status_is_separate_from_meta_and_requires_policy() {
-        let connected = |name: &str, yaml: &str| {
-            channel_status_from_credentials_yaml(yaml)
-                .into_iter()
-                .find(|row| row.name == name)
-                .unwrap()
-                .connected
-        };
-        let meta = "whatsapp_token: meta\n";
-        assert!(connected("whatsapp", meta));
-        assert!(!connected("whatsapp_baileys", meta));
-        let partial = concat!(
-            "whatsapp_baileys_url: http://127.0.0.1:9120\n",
-            "whatsapp_baileys_token: 0123456789abcdef0123456789abcdef\n",
-        );
-        assert!(!connected("whatsapp_baileys", partial));
-        let complete = concat!(
-            "whatsapp_baileys_url: http://127.0.0.1:9120\n",
-            "whatsapp_baileys_token: 0123456789abcdef0123456789abcdef\n",
-            "whatsapp_baileys_allowed_senders: '+491701234567'\n",
-        );
-        assert!(connected("whatsapp_baileys", complete));
-        assert!(!connected("whatsapp", complete));
-    }
-
-    #[test]
-    fn channel_status_empty_token_is_disconnected_and_malformed_is_all_off() {
-        let rows = channel_status_from_credentials_yaml("telegram_token: \"  \"\n");
+    fn parse_channel_status_rejects_malformed_empty_duplicate_and_unknown() {
+        assert!(parse_channel_status("not json").is_err());
+        assert!(parse_channel_status(r#"{"channels":[],"total":0}"#).is_err());
         assert!(
-            !rows
-                .iter()
-                .find(|c| c.name == "telegram")
-                .unwrap()
-                .connected,
-            "whitespace-only token -> disconnected"
+            parse_channel_status(
+                r#"{"channels":[
+                {"name":"keet","status":"ok","configured":true,"detail":"a"},
+                {"name":"keet","status":"warn","configured":true,"detail":"b"}
+            ],"total":2}"#
+            )
+            .is_err()
         );
-        // Malformed YAML -> all disconnected, never a panic.
-        let all = channel_status_from_credentials_yaml("%%% not yaml %%%");
-        assert!(all.iter().all(|c| !c.connected));
+        assert!(parse_channel_status(
+            r#"{"channels":[{"name":"telegram","status":"maybe","configured":true,"detail":"?"}],"total":1}"#
+        )
+        .is_err());
     }
 
     #[test]
-    fn read_channel_status_missing_file_is_all_off() {
-        let dir = tempfile::tempdir().unwrap();
-        let rows = read_channel_status(dir.path());
-        assert_eq!(rows.len(), 15);
-        assert!(rows.iter().all(|c| !c.connected));
+    fn parse_channel_status_rejects_partial_unknown_and_mismatched_inventory() {
+        let partial = serde_json::json!({
+            "channels": [{
+                "name": "telegram",
+                "status": "ok",
+                "configured": true,
+                "detail": "live",
+            }],
+            "total": 1,
+        });
+        let error = parse_channel_status(&partial.to_string()).unwrap_err();
+        assert!(error.contains("registry drift"));
+        assert!(error.contains("slack"));
+
+        let mut ids = CANONICAL_CHANNEL_IDS.map(|name| name.to_string());
+        ids[14] = "future_chat".to_string();
+        let rows = ids
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "status": "not_configured",
+                    "configured": false,
+                    "detail": "off",
+                })
+            })
+            .collect::<Vec<_>>();
+        let total = rows.len();
+        let unknown = serde_json::json!({ "channels": rows, "total": total });
+        let error = parse_channel_status(&unknown.to_string()).unwrap_err();
+        assert!(error.contains("future_chat"));
+        assert!(error.contains("gchat"));
+
+        let mismatch = serde_json::json!({
+            "channels": [{
+                "name": "telegram",
+                "status": "ok",
+                "configured": true,
+                "detail": "live",
+            }],
+            "total": 15,
+        });
+        assert!(
+            parse_channel_status(&mismatch.to_string())
+                .unwrap_err()
+                .contains("does not match")
+        );
+    }
+
+    #[test]
+    fn parse_channel_test_status_preserves_non_success_verdicts() {
+        let failed = parse_channel_test_status(
+            r#"{"channel":"keet","status":"fail","detail":"bridge offline"}"#,
+            "keet",
+        )
+        .unwrap();
+        assert_eq!(failed.status, "fail");
+        assert_eq!(failed.detail, "bridge offline");
+
+        let skipped = parse_channel_test_status(
+            r#"{"channel":"matrix","status":"skipped","detail":"no live probe"}"#,
+            "matrix",
+        )
+        .unwrap();
+        assert_eq!(skipped.status, "skipped");
+
+        let unavailable = parse_channel_test_status(
+            r#"{"channel":"irc","status":"unavailable","detail":"no safe auth probe"}"#,
+            "irc",
+        )
+        .unwrap();
+        assert_eq!(unavailable.status, "unavailable");
+        assert_eq!(unavailable.detail, "no safe auth probe");
+    }
+
+    #[test]
+    fn parse_channel_test_status_rejects_mismatch_unknown_and_bad_detail() {
+        assert!(
+            parse_channel_test_status(
+                r#"{"channel":"slack","status":"ok","detail":"live"}"#,
+                "telegram"
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_test_status(
+                r#"{"channel":"keet","status":"maybe","detail":"live"}"#,
+                "keet"
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_test_status(r#"{"channel":"keet","status":"ok","detail":""}"#, "keet")
+                .is_err()
+        );
     }
 
     // ── SPEC-05 parse_presets ─────────────────────────────────────────────────

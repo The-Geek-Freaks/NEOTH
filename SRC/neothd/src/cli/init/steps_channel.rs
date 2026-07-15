@@ -1,5 +1,5 @@
 //! Wizard channel + integration steps (GOLD-ARCH-05): step6 channel,
-//! step6b legacy Keet migration marker, step6c/6d obsidian, step6e n8n, step6f memory
+//! step6b Keet companion on-ramp, step6c/6d obsidian, step6e n8n, step6f memory
 //! import, step6g credential import, step6h recommended installs.
 //! Split out of `cli/init.rs`.
 
@@ -55,8 +55,8 @@ pub(crate) async fn step6_channel(
         state.telegram_user_id = args.telegram_user_id;
     } else if interactive {
         println!(
-            "  [6/9] Telegram skipped. Add any channel later: `neoth channel add \
-             telegram|slack|whatsapp|discord|signal|line|irc|imessage|mattermost|gchat`"
+            "  [6/9] Telegram skipped. Run `neoth channel list` to see all 15 adapters, \
+             then `neoth channel add <name>` to connect one."
         );
     }
 
@@ -65,20 +65,19 @@ pub(crate) async fn step6_channel(
 }
 
 /// Legacy wizard-step marker retained so interrupted wizard state remains
-/// readable. Keet does not expose a supported public room/message API and Pear
-/// Runtime communicates with embedded apps over IPC, so NEOTH must not solicit
-/// or persist Keet credentials. The old guessed HTTP/DHT adapters were removed.
+/// readable. Direct Keet seed pairing remains unsupported; the real integration
+/// uses the repository-owned local companion and `neoth channel add keet`.
 pub(crate) async fn step6b_keet_pairing(
     _args: &InitArgs,
     interactive: bool,
     state: &mut WizardState,
 ) -> Result<()> {
-    debug!("wizard step 6b: unsupported Keet migration marker");
+    debug!("wizard step 6b: Keet companion on-ramp marker");
     state.keet_seed_phrase = None;
-    state.pears_bearer_token = None;
+    state.keet_bridge_bearer_token = None;
     if interactive {
         println!(
-            "[6b/9] Keet integration unavailable: Keet has no supported public chat API; no credentials were requested or stored."
+            "[6b/9] Keet: install/start the NEOTH Keet companion, then run `neoth channel add keet`. Direct seed pairing is not used."
         );
     }
     state.steps_completed.push(WizardStep::KeetPairing as u8);

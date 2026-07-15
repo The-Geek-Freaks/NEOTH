@@ -50,6 +50,10 @@ pub struct Job {
     pub timeout_seconds: u32,
     #[serde(default)]
     pub delivery: Option<Delivery>,
+    /// Per-job provider and tool scope. Empty uses the live freedom.yaml
+    /// provider while still crossing the normal cost/WAL/policy boundary.
+    #[serde(default)]
+    pub execution: ExecutionPolicy,
     /// Ids of jobs that must have completed (within the freshness window) before
     /// this job is considered READY. Absent in YAML → empty → independent job.
     /// JV-PRO-03
@@ -57,10 +61,22 @@ pub struct Job {
     pub depends_on: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Schedule {
     /// 5-field cron expression in standard syntax: `min hour dom mon dow`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cron: String,
+    /// Fixed interval in seconds, anchored at `anchor_unix` (or the Unix epoch
+    /// when omitted). Exactly one of cron/every_seconds/at must be configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub every_seconds: Option<u64>,
+    /// Optional stable interval anchor. Valid only with `every_seconds`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_unix: Option<i64>,
+    /// One-shot RFC3339 timestamp. A durable scheduler checkpoint prevents a
+    /// completed one-shot from firing again after restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<DateTime<Utc>>,
     /// IANA timezone name, e.g. "Europe/Berlin". Defaults to UTC when omitted.
     #[serde(default)]
     pub tz: Option<String>,
@@ -68,25 +84,124 @@ pub struct Schedule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
-    /// Channel name as recognized by `channels::Channel::name()`, for example
-    /// "telegram". The actual destination is always resolved from the
-    /// operator-owned channel routing configuration.
+    /// Explicit delivery behaviour. Old jobs that only contain `channel`
+    /// deserialize as `announce`.
+    #[serde(default)]
+    pub mode: DeliveryMode,
+    /// Channel name as recognized by `channels::Channel::name()`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub channel: String,
-    /// Backward-deserialization seam for pre-v1 jobs that embedded a recipient.
-    /// Item-controlled recipients violate proactive delivery's anti-spoof
-    /// invariant, so [`Job::validate`] rejects this field when present.
-    #[serde(default, rename = "recipient", skip_serializing_if = "Option::is_none")]
-    legacy_recipient: Option<String>,
+    /// Explicit operator-owned recipient/room/channel id. At runtime it must
+    /// match the configured channel route; Cron never invents a destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient: Option<String>,
+    /// Optional account selector. Adapters that do not expose multi-account
+    /// routing reject this before provider spend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// Optional thread/topic selector. Adapters without a reviewed thread wire
+    /// reject this before provider spend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// Registered HTTPS endpoint URL for webhook mode. The exact URL must
+    /// already exist in freedom.yaml webhook_manager.endpoints so its signing
+    /// secret and SSRF policy stay outside jobs.yaml.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_url: Option<String>,
+    /// If true, a terminal delivery failure is recorded but does not turn a
+    /// successful provider run into a failed job.
+    #[serde(default)]
+    pub best_effort: bool,
 }
 
 impl Delivery {
     /// Create a delivery request for an operator-configured channel route.
     pub fn new(channel: impl Into<String>) -> Self {
         Self {
+            mode: DeliveryMode::Announce,
             channel: channel.into(),
-            legacy_recipient: None,
+            recipient: None,
+            account: None,
+            thread: None,
+            webhook_url: None,
+            best_effort: false,
         }
     }
+
+    pub fn none() -> Self {
+        Self {
+            mode: DeliveryMode::None,
+            channel: String::new(),
+            recipient: None,
+            account: None,
+            thread: None,
+            webhook_url: None,
+            best_effort: false,
+        }
+    }
+
+    pub fn webhook(url: impl Into<String>, best_effort: bool) -> Self {
+        Self {
+            mode: DeliveryMode::Webhook,
+            channel: String::new(),
+            recipient: None,
+            account: None,
+            thread: None,
+            webhook_url: Some(url.into()),
+            best_effort,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryMode {
+    #[default]
+    Announce,
+    Webhook,
+    None,
+}
+
+impl DeliveryMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Announce => "announce",
+            Self::Webhook => "webhook",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Exact per-job provider target used for primary and 429 fallback leaves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderTarget {
+    pub provider: crate::config::inference::InferenceProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// All execution controls that may differ from the daemon default. Tool access
+/// is deny-by-default: both a server capability list and an exact tool list are
+/// required before the MCP dispatcher is enabled.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<crate::config::inference::InferenceProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// One of the built-in profile presets (lowkey/formal/deepdive/tutor/opsec).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback: Vec<ProviderTarget>,
+    /// Enabled MCP server ids available to this job.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    /// Exact MCP tool names available inside the selected capabilities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -575,17 +690,14 @@ impl Job {
         // Validates cron expression + tz
         self.schedule
             .validate()
-            .with_context(|| format!("invalid schedule on job `{}`", self.id))?;
+            .map_err(|error| anyhow::anyhow!("invalid schedule on job `{}`: {error:#}", self.id))?;
+        self.execution.validate().map_err(|error| {
+            anyhow::anyhow!("invalid execution policy on job `{}`: {error:#}", self.id)
+        })?;
         if let Some(delivery) = &self.delivery {
-            if delivery.channel.trim().is_empty() {
-                anyhow::bail!("delivery.channel must not be empty");
-            }
-            if delivery.legacy_recipient.is_some() {
-                anyhow::bail!(
-                    "delivery.recipient is no longer supported; configure the operator-owned \
-                     destination in channel_routing.yaml and keep only delivery.channel"
-                );
-            }
+            delivery.validate().map_err(|error| {
+                anyhow::anyhow!("invalid delivery on job `{}`: {error:#}", self.id)
+            })?;
         }
         Ok(())
     }
@@ -595,6 +707,9 @@ impl Schedule {
     /// Parse the cron expression once. Returns a `cron::Schedule` ready to
     /// produce next-fire timestamps.
     pub fn parse(&self) -> Result<cron::Schedule> {
+        if self.cron.trim().is_empty() {
+            anyhow::bail!("schedule is not a cron expression");
+        }
         // The `cron` crate expects a 6-or-7-field expression (with optional
         // seconds + year). Standard 5-field cron "0 7 * * *" needs a leading
         // "0 " for seconds so the crate accepts it.
@@ -608,12 +723,41 @@ impl Schedule {
     }
 
     pub fn validate(&self) -> Result<()> {
-        let _ = self.parse()?;
-        if let Some(tz) = &self.tz {
-            tz.parse::<Tz>()
-                .map_err(|e| anyhow::anyhow!("invalid tz `{tz}`: {e}"))?;
+        let variants = usize::from(!self.cron.trim().is_empty())
+            + usize::from(self.every_seconds.is_some())
+            + usize::from(self.at.is_some());
+        if variants != 1 {
+            anyhow::bail!("exactly one schedule field is required: cron, every_seconds, or at");
+        }
+        if !self.cron.trim().is_empty() {
+            let _ = self.parse()?;
+            if let Some(tz) = &self.tz {
+                tz.parse::<Tz>()
+                    .map_err(|e| anyhow::anyhow!("invalid tz `{tz}`: {e}"))?;
+            }
+        } else if self.tz.is_some() {
+            anyhow::bail!("schedule.tz is valid only with schedule.cron");
+        }
+        if let Some(every) = self.every_seconds {
+            if every < 30 {
+                anyhow::bail!("schedule.every_seconds must be at least 30");
+            }
+        } else if self.anchor_unix.is_some() {
+            anyhow::bail!("schedule.anchor_unix requires schedule.every_seconds");
         }
         Ok(())
+    }
+
+    pub fn label(&self) -> String {
+        if !self.cron.trim().is_empty() {
+            self.cron.clone()
+        } else if let Some(every) = self.every_seconds {
+            format!("every {every}s")
+        } else if let Some(at) = self.at {
+            format!("at {}", at.to_rfc3339())
+        } else {
+            "invalid".to_string()
+        }
     }
 
     /// Timezone resolution: explicit `tz` or UTC.
@@ -627,6 +771,21 @@ impl Schedule {
     /// Next firing time after `now`. None if the cron expression has no
     /// future match (e.g. "0 0 30 2 *" — Feb 30, never).
     pub fn next_after(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        if let Some(at) = self.at {
+            return (at > now).then_some(at);
+        }
+        if let Some(every) = self.every_seconds {
+            let every = i64::try_from(every).ok()?;
+            let anchor = self.anchor_unix.unwrap_or(0);
+            let elapsed = now.timestamp().saturating_sub(anchor);
+            let steps = if elapsed < 0 {
+                0
+            } else {
+                elapsed.div_euclid(every).saturating_add(1)
+            };
+            let next = anchor.saturating_add(steps.saturating_mul(every));
+            return DateTime::from_timestamp(next, 0);
+        }
         let sched = self.parse().ok()?;
         let tz = self.timezone();
         let now_local = now.with_timezone(&tz);
@@ -634,6 +793,136 @@ impl Schedule {
             .after(&now_local)
             .next()
             .map(|t| t.with_timezone(&Utc))
+    }
+
+    /// Most recent due instant inside `lookback`. Used by the scheduler for
+    /// cron, interval and one-shot schedules without silently widening the
+    /// catch-up window.
+    pub fn latest_due(&self, now: DateTime<Utc>, lookback: Duration) -> Option<DateTime<Utc>> {
+        let window_start = now - lookback;
+        if let Some(at) = self.at {
+            return (at <= now && at > window_start).then_some(at);
+        }
+        if let Some(every) = self.every_seconds {
+            let every = i64::try_from(every).ok()?;
+            let anchor = self.anchor_unix.unwrap_or(0);
+            if now.timestamp() < anchor {
+                return None;
+            }
+            let steps = now.timestamp().saturating_sub(anchor).div_euclid(every);
+            let due = anchor.saturating_add(steps.saturating_mul(every));
+            let due = DateTime::from_timestamp(due, 0)?;
+            return (due > window_start).then_some(due);
+        }
+        let sched = self.parse().ok()?;
+        let tz = self.timezone();
+        let start_local = window_start.with_timezone(&tz);
+        let now_local = now.with_timezone(&tz);
+        sched
+            .after(&start_local)
+            .take(128)
+            .filter(|t| *t <= now_local)
+            .last()
+            .map(|t| t.with_timezone(&Utc))
+    }
+}
+
+impl ExecutionPolicy {
+    fn validate(&self) -> Result<()> {
+        if self
+            .model
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            anyhow::bail!("execution.model must not be empty");
+        }
+        if let Some(profile) = &self.profile {
+            if crate::profile::presets::ProfilePreset::parse(profile).is_none() {
+                anyhow::bail!(
+                    "unknown execution.profile `{profile}` (expected lowkey, formal, deepdive, tutor, or opsec)"
+                );
+            }
+        }
+        if self.thinking_budget == Some(0) {
+            anyhow::bail!("execution.thinking_budget must be greater than zero");
+        }
+        for (kind, values) in [("capability", &self.capabilities), ("tool", &self.tools)] {
+            let mut unique = HashSet::new();
+            for value in values {
+                let value = value.trim();
+                if value.is_empty() {
+                    anyhow::bail!("execution.{kind} entries must not be empty");
+                }
+                if !unique.insert(value) {
+                    anyhow::bail!("duplicate execution.{kind} `{value}`");
+                }
+            }
+        }
+        if self.capabilities.is_empty() != self.tools.is_empty() {
+            anyhow::bail!(
+                "execution.capabilities and execution.tools must either both be empty or both be explicit"
+            );
+        }
+        if self.fallback.iter().any(|target| {
+            target
+                .model
+                .as_deref()
+                .is_some_and(|model| model.trim().is_empty())
+        }) {
+            anyhow::bail!("execution.fallback model must not be empty");
+        }
+        Ok(())
+    }
+}
+
+impl Delivery {
+    fn validate(&self) -> Result<()> {
+        for (field, value) in [
+            ("recipient", self.recipient.as_deref()),
+            ("account", self.account.as_deref()),
+            ("thread", self.thread.as_deref()),
+            ("webhook_url", self.webhook_url.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                anyhow::bail!("delivery.{field} must not be empty");
+            }
+        }
+        match self.mode {
+            DeliveryMode::Announce => {
+                if self.channel.trim().is_empty() {
+                    anyhow::bail!("delivery.channel is required for announce mode");
+                }
+                if !crate::channels::routing::is_known_channel(self.channel.trim()) {
+                    anyhow::bail!("unknown delivery channel `{}`", self.channel);
+                }
+                if self.webhook_url.is_some() {
+                    anyhow::bail!("delivery.webhook_url is valid only in webhook mode");
+                }
+            }
+            DeliveryMode::Webhook => {
+                if self.webhook_url.is_none() {
+                    anyhow::bail!("delivery.webhook_url is required for webhook mode");
+                }
+                if !self.channel.trim().is_empty()
+                    || self.recipient.is_some()
+                    || self.account.is_some()
+                    || self.thread.is_some()
+                {
+                    anyhow::bail!("webhook delivery cannot also declare a channel target");
+                }
+            }
+            DeliveryMode::None => {
+                if !self.channel.trim().is_empty()
+                    || self.recipient.is_some()
+                    || self.account.is_some()
+                    || self.thread.is_some()
+                    || self.webhook_url.is_some()
+                {
+                    anyhow::bail!("none delivery mode cannot declare a target");
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -748,6 +1037,7 @@ jobs:
         let s = Schedule {
             cron: "0 7 * * *".to_string(),
             tz: Some("UTC".to_string()),
+            ..Default::default()
         };
         let now = Utc::now();
         let next = s.next_after(now).unwrap();
@@ -764,10 +1054,12 @@ jobs:
             schedule: Schedule {
                 cron: cron.to_string(),
                 tz: None,
+                ..Default::default()
             },
             prompt: prompt.to_string(),
             timeout_seconds: 600,
             delivery: None,
+            execution: Default::default(),
             depends_on: vec![],
         }
     }
@@ -781,10 +1073,12 @@ jobs:
             schedule: Schedule {
                 cron: "0 7 * * *".to_string(),
                 tz: None,
+                ..Default::default()
             },
             prompt: "do something meaningful please".to_string(),
             timeout_seconds: 600,
             delivery: None,
+            execution: Default::default(),
             depends_on: deps.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -912,22 +1206,21 @@ jobs:
         let mut j = daily_job("x", "X", "0 7 * * *", "do stuff do stuff");
         j.delivery = Some(Delivery {
             channel: "".to_string(),
-            legacy_recipient: None,
+            ..Delivery::new("")
         });
         let err = j.validate().unwrap_err();
         assert!(err.to_string().contains("delivery.channel"));
     }
 
     #[test]
-    fn validation_rejects_legacy_item_controlled_recipient() {
+    fn validation_accepts_explicit_operator_recipient() {
         let mut j = daily_job("x", "X", "0 7 * * *", "send news send news");
         j.delivery = Some(Delivery {
             channel: "telegram".to_string(),
-            legacy_recipient: Some("123".to_string()),
+            recipient: Some("123".to_string()),
+            ..Delivery::new("telegram")
         });
-        let err = j.validate().unwrap_err();
-        assert!(err.to_string().contains("delivery.recipient"));
-        assert!(err.to_string().contains("channel_routing.yaml"));
+        j.validate().unwrap();
     }
 
     #[test]
@@ -1005,6 +1298,7 @@ jobs:
         let new_sched = Schedule {
             cron: "0 7 * * *".to_string(),
             tz: None,
+            ..Default::default()
         };
         let collisions = schedule_collides(&new_sched, &[existing], 48);
         assert!(
@@ -1020,6 +1314,7 @@ jobs:
         let new_sched = Schedule {
             cron: "5 7 * * *".to_string(),
             tz: None,
+            ..Default::default()
         };
         let collisions = schedule_collides(&new_sched, &[existing], 48);
         assert!(

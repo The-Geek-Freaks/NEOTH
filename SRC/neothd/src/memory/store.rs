@@ -66,7 +66,10 @@ use rusqlite::Connection;
 /// v28: persist scope-qualified, canonical bulk-text identities so repeated
 ///      imports remain idempotent across processes and restarts. The complete
 ///      normalised statement is the equality guard; xxh3 is lookup-only.
-pub const SCHEMA_VERSION: i64 = 28;
+/// v29: GOLD-R3-09 durable mesh synchronization state: per-peer ACK cursors,
+///      exact pending frames, monotonic local origin sequences, contiguous
+///      inbound high-water state, canonical foreign content and typed conflicts.
+pub const SCHEMA_VERSION: i64 = 29;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -1055,10 +1058,132 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             event_type      INTEGER NOT NULL,
             payload         BLOB    NOT NULL,
             received_at     INTEGER NOT NULL,
+            envelope_version INTEGER NOT NULL DEFAULT 0,
+            content_sha256  BLOB CHECK (content_sha256 IS NULL OR (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32)),
+            content_kind    TEXT,
+            content_payload BLOB,
             UNIQUE (origin_peer_pk, origin_seq)
         );
         CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
             ON idx_foreign_events (origin_peer_pk, received_at DESC);
+
+        CREATE TABLE IF NOT EXISTS mesh_sync_local_events (
+            peer_pk         TEXT NOT NULL,
+            origin_seq      INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256  BLOB NOT NULL
+                                  CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            envelope        BLOB NOT NULL,
+            created_at      INTEGER NOT NULL,
+            PRIMARY KEY (peer_pk, origin_seq),
+            UNIQUE (peer_pk, content_sha256)
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_outbound (
+            peer_pk              TEXT PRIMARY KEY,
+            cursor_segment       TEXT,
+            cursor_offset        INTEGER NOT NULL DEFAULT 0 CHECK (cursor_offset >= 0),
+            acked_origin_seq     INTEGER NOT NULL DEFAULT 0 CHECK (acked_origin_seq >= 0),
+            acked_content_sha256 BLOB,
+            updated_at           INTEGER NOT NULL,
+            CHECK ((acked_origin_seq = 0 AND acked_content_sha256 IS NULL) OR
+                   (acked_origin_seq > 0 AND typeof(acked_content_sha256) = 'blob' AND length(acked_content_sha256) = 32))
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_outbound_pending (
+            peer_pk             TEXT PRIMARY KEY,
+            origin_seq         INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256     BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            wire_frame         BLOB NOT NULL,
+            next_cursor_segment TEXT,
+            next_cursor_offset INTEGER NOT NULL CHECK (next_cursor_offset >= 0),
+            attempts           INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            created_at         INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_inbound (
+            origin_peer_pk       TEXT PRIMARY KEY,
+            next_expected_seq    INTEGER NOT NULL DEFAULT 1 CHECK (next_expected_seq > 0),
+            last_content_sha256  BLOB,
+            updated_at           INTEGER NOT NULL,
+            CHECK ((next_expected_seq = 1 AND last_content_sha256 IS NULL) OR
+                   (next_expected_seq > 1 AND typeof(last_content_sha256) = 'blob' AND length(last_content_sha256) = 32))
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_inbound_receipts (
+            origin_peer_pk TEXT NOT NULL,
+            origin_seq     INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256 BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            content_stored INTEGER NOT NULL CHECK (content_stored IN (0, 1)),
+            committed_at   INTEGER NOT NULL,
+            PRIMARY KEY (origin_peer_pk, origin_seq)
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_materialized (
+            origin_peer_pk  TEXT NOT NULL,
+            content_id      TEXT NOT NULL,
+            origin_seq      INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256  BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            content_kind    TEXT NOT NULL CHECK (content_kind IN ('memory', 'ground_truth', 'metadata', 'raw_private')),
+            content_payload BLOB NOT NULL,
+            updated_at      INTEGER NOT NULL,
+            PRIMARY KEY (origin_peer_pk, content_id)
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_conflicts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id      TEXT NOT NULL,
+            incumbent_origin TEXT NOT NULL,
+            incoming_origin TEXT NOT NULL,
+            incumbent_sha256 BLOB NOT NULL CHECK (length(incumbent_sha256) = 32),
+            incoming_sha256 BLOB NOT NULL CHECK (length(incoming_sha256) = 32),
+            policy          TEXT NOT NULL CHECK (policy IN ('ordered_origin_lww', 'cross_origin_typed_conflict')),
+            observed_at     INTEGER NOT NULL,
+            UNIQUE (content_id, incumbent_origin, incoming_origin, incumbent_sha256, incoming_sha256)
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_restore_map (
+            origin_peer_pk TEXT NOT NULL,
+            content_id     TEXT NOT NULL,
+            local_kind     TEXT NOT NULL CHECK (local_kind IN ('memory', 'ground_truth')),
+            local_row_id   INTEGER NOT NULL CHECK (local_row_id > 0),
+            last_origin_seq INTEGER NOT NULL CHECK (last_origin_seq > 0),
+            content_sha256 BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            restored_at    INTEGER NOT NULL,
+            PRIMARY KEY (origin_peer_pk, content_id),
+            UNIQUE (local_kind, local_row_id)
+        );
+        CREATE TABLE IF NOT EXISTS mesh_sync_restore_evidence (
+            origin_peer_pk         TEXT NOT NULL,
+            ground_truth_content_id TEXT NOT NULL,
+            evidence_position      INTEGER NOT NULL CHECK (evidence_position >= 0),
+            evidence_content_id    TEXT NOT NULL,
+            local_row_id           INTEGER CHECK (local_row_id IS NULL OR local_row_id > 0),
+            PRIMARY KEY (origin_peer_pk, ground_truth_content_id, evidence_position),
+            UNIQUE (origin_peer_pk, ground_truth_content_id, evidence_content_id)
+        );
+        CREATE INDEX IF NOT EXISTS mesh_sync_restore_evidence_content
+            ON mesh_sync_restore_evidence (origin_peer_pk, evidence_content_id);
+
+        CREATE TRIGGER IF NOT EXISTS mesh_foreign_content_insert_guard
+        BEFORE INSERT ON idx_foreign_events
+        WHEN NOT (
+            (NEW.envelope_version = 0 AND NEW.content_sha256 IS NULL AND
+             NEW.content_kind IS NULL AND NEW.content_payload IS NULL) OR
+            (NEW.envelope_version = 1 AND typeof(NEW.content_sha256) = 'blob' AND
+             length(NEW.content_sha256) = 32 AND
+             NEW.content_kind IN ('memory', 'ground_truth', 'metadata', 'raw_private') AND
+             typeof(NEW.content_payload) = 'blob')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'incomplete canonical foreign content');
+        END;
+        CREATE TRIGGER IF NOT EXISTS mesh_foreign_content_update_guard
+        BEFORE UPDATE OF envelope_version,content_sha256,content_kind,content_payload
+        ON idx_foreign_events
+        WHEN NOT (
+            (NEW.envelope_version = 0 AND NEW.content_sha256 IS NULL AND
+             NEW.content_kind IS NULL AND NEW.content_payload IS NULL) OR
+            (NEW.envelope_version = 1 AND typeof(NEW.content_sha256) = 'blob' AND
+             length(NEW.content_sha256) = 32 AND
+             NEW.content_kind IN ('memory', 'ground_truth', 'metadata', 'raw_private') AND
+             typeof(NEW.content_payload) = 'blob')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'incomplete canonical foreign content');
+        END;
         "#,
     )
     .context("create idx_foreign_events")?;

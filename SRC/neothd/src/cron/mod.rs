@@ -6,7 +6,7 @@
 //! runner. Each fire writes WAL events 0x40 (FIRED) → 0x41 (SUCCESS) or 0x42
 //! (FAILED). No system cron daemon involved — NEOTH is self-contained.
 //!
-//! YAML schema (kept deliberately small for v1):
+//! YAML schema (operator-owned v1 contract):
 //!
 //! ```yaml
 //! version: 1
@@ -20,15 +20,21 @@
 //!     prompt: |
 //!       You are NEOTH's morning news agent. ...
 //!     timeout_seconds: 1800
+//!     execution:
+//!       provider: anthropic_api
+//!       model: claude-sonnet-4-5
+//!       capabilities: [research]
+//!       tools: [web.search]
 //!     delivery:
+//!       mode: announce
 //!       channel: telegram         # destination comes from channel_routing.yaml
 //! ```
 //!
-//! Out of scope for v1 (deferred to 11c / later):
-//! - `interval:` schedule (e.g. every 30 min) — only `cron:` for now.
-//! - Per-job model overrides — uses freedom.yaml's configured provider.
-//! - Capability scoping like Jarvis (`exec`, `read`, `write`) — that comes
-//!   with the plugin SDK in Phase 17+.
+//! A schedule selects exactly one of `cron`, `every_seconds`, or `at`.
+//! Per-job provider/model/profile/thinking/fallback controls and exact MCP
+//! server/tool allow-lists cross the same cost, WAL, and permission boundaries
+//! as interactive calls. Delivery is tracked separately as queued, delivered,
+//! failed, or skipped; a provider result alone never proves channel delivery.
 
 pub mod briefing_prompt;
 pub mod error_retrospective;
@@ -37,5 +43,6 @@ pub mod quality_gate;
 pub mod runner;
 pub mod scheduler;
 pub mod schema;
+pub mod state;
 
 pub use schema::JobsFile;

@@ -35,6 +35,90 @@ use serde::{Deserialize, Serialize};
 use super::PeerPubkey;
 use super::gossip::GossipTag;
 
+/// Breaking durable-sync envelope version. Transport handshakes reject old
+/// peers before these fields can be decoded.
+pub const SYNC_PROTOCOL_VERSION: u16 = 5;
+pub const SYNC_ENVELOPE_VERSION: u16 = 1;
+
+/// Canonical restore content. The type intentionally has no representation
+/// for secrets, permissions, consent, or profile state.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SyncContent {
+    Memory(MemorySnapshot),
+    GroundTruth(GroundTruthSnapshot),
+    Metadata {
+        event_type: u8,
+        event_subtype: u8,
+        wal_frame: Vec<u8>,
+    },
+    RawPrivate {
+        event_type: u8,
+        wal_frame: Vec<u8>,
+    },
+}
+
+impl SyncContent {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Memory(_) => "memory",
+            Self::GroundTruth(_) => "ground_truth",
+            Self::Metadata { .. } => "metadata",
+            Self::RawPrivate { .. } => "raw_private",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MemorySnapshot {
+    pub stable_id: String,
+    pub text: String,
+    pub text_hash: String,
+    pub tier: String,
+    pub ts_ns: i64,
+    pub importance_micros: u32,
+    pub last_access_ts: i64,
+    pub access_count: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GroundTruthSnapshot {
+    pub stable_id: String,
+    pub statement: String,
+    pub source: String,
+    pub scope: String,
+    pub asserted_at: i64,
+    pub revoked_at: Option<i64>,
+    pub fact_state: String,
+    /// Deterministic provenance map. Receiver restore namespaces every source
+    /// by authenticated origin so foreign attestation cannot impersonate a
+    /// local operator source while retaining the corroboration cardinality.
+    pub source_weight: BTreeMap<String, u32>,
+    pub confidence_micros: u32,
+    /// Portable evidence references. Peer-local episode row ids never cross
+    /// the wire; each entry is the stable content id of a memory snapshot.
+    pub evidence_content_ids: Vec<String>,
+    pub maturity: String,
+    pub confirmed_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SyncEnvelope {
+    pub version: u16,
+    pub content_id: String,
+    pub updated_at_unix: i64,
+    pub content: SyncContent,
+}
+
+impl SyncEnvelope {
+    pub fn content_sha256(&self) -> [u8; 32] {
+        use sha2::{Digest as _, Sha256};
+        let canonical = serde_json::to_vec(self)
+            .expect("SyncEnvelope contains only deterministically serializable fields");
+        Sha256::digest(canonical).into()
+    }
+}
+
 /// One peer's logical-time view of the cluster. BTreeMap so serde
 /// + compare iterate in deterministic order — important for the
 /// reproducible event-hash gossip uses to dedupe replays.
@@ -127,6 +211,7 @@ impl VectorClock {
 /// indexer.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GossipFrame {
+    pub protocol_version: u16,
     /// Sender's logical-time view at emit. Recipient merges this
     /// into its own VC before applying the payload (or before
     /// deferring on concurrent / older-than-budget conflicts).
@@ -134,10 +219,10 @@ pub struct GossipFrame {
     /// Which peer emitted this frame. Stable identity tied to the
     /// cluster registry (`PairedPeer::pub_key_hex`).
     pub origin: PeerPubkey,
-    /// Stable origin event identity (first 64 bits of SHA-256 over the
-    /// canonical WAL frame). Retransmitting the same frame after a queue
-    /// failure or daemon restart therefore keeps the same dedup key.
+    /// Monotonic durable sequence allocated by the origin database.
     pub event_seq: u64,
+    /// Full canonical-content digest, independent from ordering.
+    pub content_sha256: [u8; 32],
     /// Unix-epoch seconds at emit. Used for the
     /// `cluster::gossip::ReplayBudget` window check.
     pub timestamp_unix: i64,
@@ -151,6 +236,9 @@ pub struct GossipFrame {
     /// applies + sources the event_id back to `origin / event_seq`
     /// for audit.
     pub payload: Vec<u8>,
+    /// Versioned materialized content; peer-local numeric ids are never used
+    /// to resolve this on the receiver.
+    pub envelope: SyncEnvelope,
 }
 
 impl GossipFrame {
@@ -170,6 +258,16 @@ impl GossipFrame {
         now_ts_unix: i64,
         already_seen: bool,
     ) -> GossipAcceptance {
+        if self.protocol_version != SYNC_PROTOCOL_VERSION
+            || self.envelope.version != SYNC_ENVELOPE_VERSION
+        {
+            return GossipAcceptance::DroppedProtocolVersion {
+                received: self.protocol_version,
+            };
+        }
+        if self.content_sha256 != self.envelope.content_sha256() {
+            return GossipAcceptance::DroppedContentDigest;
+        }
         if !self.tag.is_replicable() {
             return GossipAcceptance::DroppedDoNotGossipTag;
         }
@@ -198,7 +296,27 @@ pub enum GossipAcceptance {
     /// Receiver may ask the origin to re-pair fresh.
     DroppedOutsideReplayBudget,
     /// Already applied (event_seq ≤ last seen for this origin).
-    DroppedDuplicate { event_seq: u64 },
+    DroppedDuplicate {
+        event_seq: u64,
+    },
+    DroppedProtocolVersion {
+        received: u16,
+    },
+    DroppedContentDigest,
+    DroppedGap {
+        expected: u64,
+        received: u64,
+    },
+}
+
+/// Acknowledges an exact origin/sequence/content tuple only after the receiver
+/// commits its SQLite transaction.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GossipAck {
+    pub protocol_version: u16,
+    pub origin: PeerPubkey,
+    pub origin_seq: u64,
+    pub content_sha256: [u8; 32],
 }
 
 #[cfg(test)]
@@ -300,13 +418,27 @@ mod tests {
     // ── GossipFrame acceptance ──────────────────────────────────────
 
     fn fixture_frame(seq: u64, ts: i64, tag: GossipTag) -> GossipFrame {
+        let payload = vec![0x01, 0x02, 0x03];
+        let envelope = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: format!("fixture:{seq}"),
+            updated_at_unix: ts,
+            content: SyncContent::Metadata {
+                event_type: 0x94,
+                event_subtype: 0,
+                wal_frame: payload.clone(),
+            },
+        };
         GossipFrame {
+            protocol_version: SYNC_PROTOCOL_VERSION,
             vector_clock: vc(&[("sam-laptop", seq)]),
             origin: pid("sam-laptop"),
             event_seq: seq,
+            content_sha256: envelope.content_sha256(),
             timestamp_unix: ts,
             tag,
-            payload: vec![0x01, 0x02, 0x03],
+            payload,
+            envelope,
         }
     }
 

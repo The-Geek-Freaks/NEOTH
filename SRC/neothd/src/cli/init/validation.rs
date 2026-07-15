@@ -200,26 +200,6 @@ pub fn consume_first_tour_marker(neoth_dir: &std::path::Path) -> Option<String> 
     Some(body)
 }
 
-/// Render the operator-facing handoff message when the GUI surface
-/// is picked. Kept separate so non-interactive `--gui` runs and the
-/// interactive Select both print identical instructions.
-pub(crate) fn print_gui_handoff_banner() {
-    println!();
-    println!("=================================================================");
-    println!("  Launch the GUI wizard:");
-    println!();
-    println!("    neothd-gui");
-    println!();
-    println!("  The graphical wizard uses the same freedom.yaml + WAL backing");
-    println!("  store as the CLI, so anything you configure there is visible");
-    println!("  to `neoth chat` + `neoth serve` afterwards. To come back to");
-    println!("  this terminal wizard at any point, run:");
-    println!();
-    println!("    neoth init --cli");
-    println!("=================================================================");
-    println!();
-}
-
 /// W-04 follow-up (Session 26): write the
 /// [`DetectCompletePayload`](crate::wal::payloads_w08::DetectCompletePayload)
 /// to a sidecar file under `~/.neoth/`. The daemon's

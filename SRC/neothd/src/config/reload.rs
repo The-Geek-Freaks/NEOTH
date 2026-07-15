@@ -218,8 +218,8 @@ impl ReloadController {
 ///   - `provider_kind` — the provider Arc is built once at startup
 ///     from this kind; reloading would require rebuilding it +
 ///     re-issuing consent
-///   - `telegram_user_id` — restrictively-bound bot; changing
-///     mid-run would require restarting the Telegram adapter
+/// Channel-specific fields, including `telegram_user_id`, are mutable because
+/// the credential-aware adapter reconciler restarts only the affected adapter.
 fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<String> {
     if old.operator_id != new.operator_id {
         return Some(format!(
@@ -245,13 +245,6 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<String> {
             "sovereign_buddy cannot be enabled via reload — run              `neoth autonomy sovereign --enable` (consent ceremony required)"
                 .to_string(),
         );
-    }
-    if old.telegram_user_id != new.telegram_user_id {
-        return Some(format!(
-            "telegram_user_id is immutable post-init (old={:?}, new={:?}); restart \
-             to rebind the Telegram adapter",
-            old.telegram_user_id, new.telegram_user_id
-        ));
     }
     None
 }
@@ -366,12 +359,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_immutable_telegram_user_id_rejects() {
+    fn validate_mutable_telegram_user_id_allows_targeted_adapter_restart() {
         let old = fresh_config();
         let mut new = old.clone();
         new.telegram_user_id = Some(99);
-        let reason = validate_reload(&old, &new).expect("must reject");
-        assert!(reason.contains("telegram_user_id"));
+        assert!(validate_reload(&old, &new).is_none());
     }
 
     #[test]

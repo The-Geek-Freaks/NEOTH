@@ -21,11 +21,35 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Args, Subcommand};
+use chrono::{DateTime, Utc};
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::cron::schema::{Job, JobsFile, Schedule, classify_role, preflight, schedule_collides};
+use crate::config::inference::InferenceProvider;
+use crate::cron::schema::{
+    Delivery, DeliveryMode, ExecutionPolicy, Job, JobsFile, ProviderTarget, Schedule,
+    classify_role, preflight, schedule_collides,
+};
+use crate::cron::state::RuntimeState;
+
+#[derive(ValueEnum, Debug, Clone, Copy)]
+#[value(rename_all = "snake_case")]
+pub enum DeliveryModeArg {
+    Announce,
+    Webhook,
+    None,
+}
+
+impl From<DeliveryModeArg> for DeliveryMode {
+    fn from(value: DeliveryModeArg) -> Self {
+        match value {
+            DeliveryModeArg::Announce => Self::Announce,
+            DeliveryModeArg::Webhook => Self::Webhook,
+            DeliveryModeArg::None => Self::None,
+        }
+    }
+}
 
 #[derive(Args, Debug, Clone)]
 pub struct CronArgs {
@@ -49,6 +73,7 @@ pub enum CronAction {
 
     /// Add a new job to jobs.yaml. Validates the schedule and delivery channel,
     /// then surfaces advisory warnings. Rejects duplicate ids. HERMES-01 / JV-PRO-01/04/09.
+    #[command(alias = "create")]
     Add {
         /// Unique job id (slug, no spaces).
         #[arg(long)]
@@ -57,8 +82,14 @@ pub enum CronAction {
         #[arg(long)]
         name: String,
         /// 5-field cron expression, e.g. "0 7 * * *".
-        #[arg(long)]
-        cron: String,
+        #[arg(long, conflicts_with_all = ["every", "at"])]
+        cron: Option<String>,
+        /// Fixed interval such as `30s`, `5m`, `2h`, `1d`, or raw seconds.
+        #[arg(long, conflicts_with_all = ["cron", "at"])]
+        every: Option<String>,
+        /// One-shot RFC3339 timestamp, for example `2026-08-01T09:00:00Z`.
+        #[arg(long, conflicts_with_all = ["cron", "every"])]
+        at: Option<String>,
         /// Prompt sent to the configured provider when the job fires.
         #[arg(long)]
         prompt: String,
@@ -69,6 +100,49 @@ pub enum CronAction {
         /// read from the operator-owned channel routing configuration.
         #[arg(long)]
         channel: Option<String>,
+        /// Explicit recipient/room/channel id. Must match operator routing.
+        #[arg(long, requires = "channel")]
+        recipient: Option<String>,
+        /// Explicit account selector (rejected if the adapter lacks a wire).
+        #[arg(long)]
+        account: Option<String>,
+        /// Explicit thread/topic selector (rejected if the adapter lacks a wire).
+        #[arg(long)]
+        thread: Option<String>,
+        /// Delivery mode. Inferred as announce for --channel and webhook for
+        /// --webhook-url; omitted with no target means none.
+        #[arg(long, value_enum)]
+        delivery_mode: Option<DeliveryModeArg>,
+        /// Exact URL of a registered signed endpoint in freedom.yaml.
+        #[arg(long)]
+        webhook_url: Option<String>,
+        /// Record delivery failure without failing an otherwise successful job.
+        #[arg(long)]
+        best_effort: bool,
+        /// Per-job provider slug (e.g. openai_api, anthropic_api, local_qwen).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Final wire model for this job.
+        #[arg(long)]
+        model: Option<String>,
+        /// Built-in profile preset.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Exact thinking-token budget; unsupported providers fail before spend.
+        #[arg(long)]
+        thinking_budget: Option<u32>,
+        /// 429 fallback as PROVIDER or PROVIDER:MODEL. Repeat for ordering.
+        #[arg(long = "fallback")]
+        fallback: Vec<String>,
+        /// Enabled MCP server id available to the job. Repeat as needed.
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
+        /// Exact MCP tool name. Requires at least one --capability.
+        #[arg(long = "tool")]
+        tools: Vec<String>,
+        /// Successful prerequisite job id. Repeat to build a dependency wave.
+        #[arg(long = "depends-on")]
+        depends_on: Vec<String>,
         /// Timeout in seconds. Defaults to 600.
         #[arg(long)]
         timeout: Option<u32>,
@@ -79,6 +153,7 @@ pub enum CronAction {
 
     /// Edit an existing job by id. Only supplied flags are updated.
     /// Validates the result and surfaces warnings before saving. HERMES-01.
+    #[command(alias = "update")]
     Edit {
         /// The job `id` to modify.
         id: String,
@@ -88,16 +163,61 @@ pub enum CronAction {
         /// Replace the cron expression.
         #[arg(long)]
         cron: Option<String>,
+        #[arg(long, conflicts_with_all = ["cron", "at"])]
+        every: Option<String>,
+        #[arg(long, conflicts_with_all = ["cron", "every"])]
+        at: Option<String>,
         /// Replace the prompt.
         #[arg(long)]
         prompt: Option<String>,
-        /// Replace the timezone (pass "UTC" to clear).
-        #[arg(long)]
+        /// Replace the timezone.
+        #[arg(long, conflicts_with = "clear_timezone")]
         tz: Option<String>,
+        /// Clear the timezone and use UTC.
+        #[arg(long)]
+        clear_timezone: bool,
         /// Replace the delivery channel. The destination is read from the
         /// operator-owned channel routing configuration.
         #[arg(long)]
         channel: Option<String>,
+        #[arg(long)]
+        recipient: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+        #[arg(long)]
+        thread: Option<String>,
+        #[arg(long, value_enum)]
+        delivery_mode: Option<DeliveryModeArg>,
+        #[arg(long)]
+        webhook_url: Option<String>,
+        #[arg(long)]
+        best_effort: Option<bool>,
+        /// Clear the complete delivery target before applying supplied fields.
+        #[arg(long)]
+        clear_delivery: bool,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        thinking_budget: Option<u32>,
+        #[arg(long = "fallback")]
+        fallback: Vec<String>,
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
+        #[arg(long = "tool")]
+        tools: Vec<String>,
+        /// Clear provider/model/profile/thinking/fallback/MCP execution policy
+        /// before applying supplied execution fields.
+        #[arg(long)]
+        clear_execution: bool,
+        #[arg(long = "depends-on")]
+        depends_on: Vec<String>,
+        /// Clear all dependency edges before applying --depends-on values.
+        #[arg(long)]
+        clear_dependencies: bool,
         /// Replace the timeout in seconds.
         #[arg(long)]
         timeout: Option<u32>,
@@ -110,12 +230,37 @@ pub enum CronAction {
     },
 
     /// Remove a job by id from jobs.yaml. HERMES-01.
+    #[command(alias = "delete")]
     Remove {
         /// The job `id` to delete.
         id: String,
         /// Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`.
         #[arg(long)]
         file: Option<PathBuf>,
+    },
+
+    /// Pause a job without deleting its configuration.
+    Pause {
+        id: String,
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Resume a paused job. The live scheduler observes the atomic rewrite.
+    Resume {
+        id: String,
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Show durable delivery correlation and final/queued status.
+    Deliveries {
+        /// Optional job id filter.
+        #[arg(long)]
+        job: Option<String>,
+        /// Explicit NEOTH home. Defaults to the active instance home.
+        #[arg(long)]
+        home: Option<PathBuf>,
     },
 
     /// List all jobs with their schedule, role, and delivery. HERMES-01 / JV-PRO-05.
@@ -158,27 +303,170 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
             id,
             name,
             cron,
+            every,
+            at,
             prompt,
             tz,
             channel,
+            recipient,
+            account,
+            thread,
+            delivery_mode,
+            webhook_url,
+            best_effort,
+            provider,
+            model,
+            profile,
+            thinking_budget,
+            fallback,
+            capabilities,
+            tools,
+            depends_on,
             timeout,
             file,
-        } => cron_add(id, name, cron, prompt, tz, channel, timeout, file),
+        } => cron_add_full(
+            CronCreate {
+                id,
+                name,
+                schedule: build_schedule(cron, every, at, tz)?,
+                prompt,
+                delivery: build_delivery(
+                    delivery_mode,
+                    channel,
+                    recipient,
+                    account,
+                    thread,
+                    webhook_url,
+                    best_effort,
+                )?,
+                execution: build_execution(
+                    provider,
+                    model,
+                    profile,
+                    thinking_budget,
+                    fallback,
+                    capabilities,
+                    tools,
+                )?,
+                depends_on,
+                timeout_seconds: timeout.unwrap_or(600),
+            },
+            file,
+        ),
         CronAction::Edit {
             id,
             name,
             cron,
+            every,
+            at,
             prompt,
             tz,
+            clear_timezone,
             channel,
+            recipient,
+            account,
+            thread,
+            delivery_mode,
+            webhook_url,
+            best_effort,
+            clear_delivery,
+            provider,
+            model,
+            profile,
+            thinking_budget,
+            fallback,
+            capabilities,
+            tools,
+            clear_execution,
+            depends_on,
+            clear_dependencies,
             timeout,
             enabled,
             file,
-        } => cron_edit(id, name, cron, prompt, tz, channel, timeout, enabled, file),
+        } => cron_edit_full(
+            CronEditPatch {
+                id,
+                name,
+                cron,
+                every,
+                at,
+                prompt,
+                tz,
+                clear_timezone,
+                channel,
+                recipient,
+                account,
+                thread,
+                delivery_mode,
+                webhook_url,
+                best_effort,
+                clear_delivery,
+                provider,
+                model,
+                profile,
+                thinking_budget,
+                fallback,
+                capabilities,
+                tools,
+                clear_execution,
+                depends_on,
+                clear_dependencies,
+                timeout,
+                enabled,
+            },
+            file,
+        ),
         CronAction::Remove { id, file } => cron_remove(id, file),
+        CronAction::Pause { id, file } => cron_set_enabled(id, false, file),
+        CronAction::Resume { id, file } => cron_set_enabled(id, true, file),
+        CronAction::Deliveries { job, home } => cron_deliveries(job, home, output),
         CronAction::List { file } => cron_list(file, output),
         CronAction::Status { by_role, file } => cron_status(by_role, file, output),
     }
+}
+
+#[derive(Debug)]
+struct CronCreate {
+    id: String,
+    name: String,
+    schedule: Schedule,
+    prompt: String,
+    delivery: Option<Delivery>,
+    execution: ExecutionPolicy,
+    depends_on: Vec<String>,
+    timeout_seconds: u32,
+}
+
+#[derive(Debug)]
+struct CronEditPatch {
+    id: String,
+    name: Option<String>,
+    cron: Option<String>,
+    every: Option<String>,
+    at: Option<String>,
+    prompt: Option<String>,
+    tz: Option<String>,
+    clear_timezone: bool,
+    channel: Option<String>,
+    recipient: Option<String>,
+    account: Option<String>,
+    thread: Option<String>,
+    delivery_mode: Option<DeliveryModeArg>,
+    webhook_url: Option<String>,
+    best_effort: Option<bool>,
+    clear_delivery: bool,
+    provider: Option<String>,
+    model: Option<String>,
+    profile: Option<String>,
+    thinking_budget: Option<u32>,
+    fallback: Vec<String>,
+    capabilities: Vec<String>,
+    tools: Vec<String>,
+    clear_execution: bool,
+    depends_on: Vec<String>,
+    clear_dependencies: bool,
+    timeout: Option<u32>,
+    enabled: Option<bool>,
 }
 
 // ── HERMES-01: CRUD helpers ───────────────────────────────────────────────────
@@ -203,47 +491,158 @@ fn print_warnings(warnings: &[String], label: &str) {
     }
 }
 
-/// `neoth cron add` — append a new job. HERMES-01 + JV-PRO-01/04/09.
-fn cron_add(
-    id: String,
-    name: String,
-    cron: String,
-    prompt: String,
-    tz: Option<String>,
-    channel: Option<String>,
-    timeout: Option<u32>,
-    file: Option<PathBuf>,
-) -> Result<()> {
-    let path = jobs_path(file);
-    let delivery = channel.map(crate::cron::schema::Delivery::new);
+fn parse_interval(value: &str) -> Result<u64> {
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::bail!("--every must not be empty");
+    }
+    let (digits, multiplier) = match value.as_bytes().last().copied() {
+        Some(b's') | Some(b'S') => (&value[..value.len() - 1], 1_u64),
+        Some(b'm') | Some(b'M') => (&value[..value.len() - 1], 60),
+        Some(b'h') | Some(b'H') => (&value[..value.len() - 1], 60 * 60),
+        Some(b'd') | Some(b'D') => (&value[..value.len() - 1], 24 * 60 * 60),
+        _ => (value, 1),
+    };
+    let amount = digits
+        .parse::<u64>()
+        .with_context(|| format!("invalid --every interval `{value}`"))?;
+    amount
+        .checked_mul(multiplier)
+        .with_context(|| format!("--every interval `{value}` is too large"))
+}
 
+fn build_schedule(
+    cron: Option<String>,
+    every: Option<String>,
+    at: Option<String>,
+    tz: Option<String>,
+) -> Result<Schedule> {
+    let every_seconds = every.as_deref().map(parse_interval).transpose()?;
+    let at = at
+        .as_deref()
+        .map(|value| {
+            DateTime::parse_from_rfc3339(value)
+                .map(|value| value.with_timezone(&Utc))
+                .with_context(|| format!("invalid RFC3339 --at timestamp `{value}`"))
+        })
+        .transpose()?;
+    let schedule = Schedule {
+        cron: cron.unwrap_or_default(),
+        every_seconds,
+        anchor_unix: None,
+        at,
+        tz: tz.filter(|value| !value.is_empty()),
+    };
+    schedule.validate()?;
+    Ok(schedule)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_delivery(
+    mode: Option<DeliveryModeArg>,
+    channel: Option<String>,
+    recipient: Option<String>,
+    account: Option<String>,
+    thread: Option<String>,
+    webhook_url: Option<String>,
+    best_effort: bool,
+) -> Result<Option<Delivery>> {
+    if mode.is_none()
+        && channel.is_none()
+        && recipient.is_none()
+        && account.is_none()
+        && thread.is_none()
+        && webhook_url.is_none()
+    {
+        return Ok(None);
+    }
+    let mode = mode.map(DeliveryMode::from).unwrap_or_else(|| {
+        if webhook_url.is_some() {
+            DeliveryMode::Webhook
+        } else {
+            DeliveryMode::Announce
+        }
+    });
+    Ok(Some(Delivery {
+        mode,
+        channel: channel.unwrap_or_default(),
+        recipient,
+        account,
+        thread,
+        webhook_url,
+        best_effort,
+    }))
+}
+
+fn parse_provider(value: &str, flag: &str) -> Result<InferenceProvider> {
+    InferenceProvider::from_str(value).with_context(|| {
+        format!(
+            "unknown {flag} provider `{value}`; use a configured provider slug such as openai_api, anthropic_api, or local_ollama"
+        )
+    })
+}
+
+fn parse_fallback(value: String) -> Result<ProviderTarget> {
+    let (provider, model) = value
+        .split_once(':')
+        .map_or((value.as_str(), None), |(provider, model)| {
+            (provider, Some(model.to_string()))
+        });
+    Ok(ProviderTarget {
+        provider: parse_provider(provider, "fallback")?,
+        model,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_execution(
+    provider: Option<String>,
+    model: Option<String>,
+    profile: Option<String>,
+    thinking_budget: Option<u32>,
+    fallback: Vec<String>,
+    capabilities: Vec<String>,
+    tools: Vec<String>,
+) -> Result<ExecutionPolicy> {
+    Ok(ExecutionPolicy {
+        provider: provider
+            .as_deref()
+            .map(|value| parse_provider(value, "primary"))
+            .transpose()?,
+        model,
+        profile,
+        thinking_budget,
+        fallback: fallback
+            .into_iter()
+            .map(parse_fallback)
+            .collect::<Result<_>>()?,
+        capabilities,
+        tools,
+    })
+}
+
+fn cron_add_full(create: CronCreate, file: Option<PathBuf>) -> Result<()> {
+    let path = jobs_path(file);
+    let id = create.id.clone();
     let job = Job {
-        id: id.clone(),
-        name,
+        id: create.id,
+        name: create.name,
         enabled: true,
-        schedule: Schedule { cron, tz },
-        prompt,
-        timeout_seconds: timeout.unwrap_or(600),
-        delivery,
-        depends_on: vec![],
+        schedule: create.schedule,
+        prompt: create.prompt,
+        timeout_seconds: create.timeout_seconds,
+        delivery: create.delivery,
+        execution: create.execution,
+        depends_on: create.depends_on,
     };
 
-    // JV-PRO-01: validate before saving
     job.validate()?;
-
-    // JV-PRO-04: advisory pre-flight warnings.
-    let pf = preflight(&job);
-    print_warnings(&pf, "preflight");
-
+    print_warnings(&preflight(&job), "preflight");
     JobsFile::modify_at_path(&path, |jf| {
-        // JV-PRO-01: reject duplicate id after reloading under the lock.
         if jf.jobs.iter().any(|existing| existing.id == id) {
             anyhow::bail!("a job with id `{id}` already exists in {}", path.display());
         }
-
-        // JV-PRO-09: compare with the exact generation we will extend.
-        let collisions = schedule_collides(&job.schedule, &jf.jobs, 48);
-        print_warnings(&collisions, "collision");
+        print_warnings(&schedule_collides(&job.schedule, &jf.jobs, 48), "collision");
         jf.jobs.push(job);
         Ok(())
     })
@@ -252,19 +651,37 @@ fn cron_add(
     Ok(())
 }
 
-/// `neoth cron edit <id>` — patch fields of an existing job. HERMES-01.
-#[allow(clippy::too_many_arguments)]
-fn cron_edit(
-    id: String,
-    name: Option<String>,
-    cron: Option<String>,
-    prompt: Option<String>,
-    tz: Option<String>,
-    channel: Option<String>,
-    timeout: Option<u32>,
-    enabled: Option<bool>,
-    file: Option<PathBuf>,
-) -> Result<()> {
+fn cron_edit_full(patch: CronEditPatch, file: Option<PathBuf>) -> Result<()> {
+    let CronEditPatch {
+        id,
+        name,
+        cron,
+        every,
+        at,
+        prompt,
+        tz,
+        clear_timezone,
+        channel,
+        recipient,
+        account,
+        thread,
+        delivery_mode,
+        webhook_url,
+        best_effort,
+        clear_delivery,
+        provider,
+        model,
+        profile,
+        thinking_budget,
+        fallback,
+        capabilities,
+        tools,
+        clear_execution,
+        depends_on,
+        clear_dependencies,
+        timeout,
+        enabled,
+    } = patch;
     let path = jobs_path(file);
     JobsFile::modify_at_path(&path, |jf| {
         let job = jf
@@ -276,11 +693,13 @@ fn cron_edit(
         if let Some(n) = name {
             job.name = n;
         }
-        if let Some(c) = cron {
-            job.schedule.cron = c;
-        }
-        if let Some(t) = tz {
-            job.schedule.tz = if t.is_empty() { None } else { Some(t) };
+        let replaces_schedule = cron.is_some() || every.is_some() || at.is_some();
+        if replaces_schedule {
+            job.schedule = build_schedule(cron, every, at, if clear_timezone { None } else { tz })?;
+        } else if clear_timezone {
+            job.schedule.tz = None;
+        } else if let Some(tz) = tz {
+            job.schedule.tz = (!tz.is_empty()).then_some(tz);
         }
         if let Some(p) = prompt {
             job.prompt = p;
@@ -291,12 +710,99 @@ fn cron_edit(
         if let Some(e) = enabled {
             job.enabled = e;
         }
-        if let Some(ch) = channel {
-            job.delivery = if ch.is_empty() {
-                None
+
+        let delivery_fields_supplied = delivery_mode.is_some()
+            || channel.is_some()
+            || recipient.is_some()
+            || account.is_some()
+            || thread.is_some()
+            || webhook_url.is_some()
+            || best_effort.is_some();
+        if clear_delivery && !delivery_fields_supplied {
+            job.delivery = None;
+        } else if clear_delivery || delivery_fields_supplied {
+            let current = (!clear_delivery).then(|| job.delivery.clone()).flatten();
+            let inferred_mode = delivery_mode.map(DeliveryMode::from).unwrap_or_else(|| {
+                if webhook_url.is_some() {
+                    DeliveryMode::Webhook
+                } else if channel.is_some() {
+                    DeliveryMode::Announce
+                } else {
+                    current
+                        .as_ref()
+                        .map(|delivery| delivery.mode)
+                        .unwrap_or(DeliveryMode::Announce)
+                }
+            });
+            if inferred_mode == DeliveryMode::None {
+                let mut none = Delivery::none();
+                none.best_effort = best_effort.unwrap_or(false);
+                job.delivery = Some(none);
             } else {
-                Some(crate::cron::schema::Delivery::new(ch))
-            };
+                job.delivery = Some(Delivery {
+                    mode: inferred_mode,
+                    channel: channel
+                        .or_else(|| current.as_ref().map(|delivery| delivery.channel.clone()))
+                        .unwrap_or_default(),
+                    recipient: recipient.or_else(|| {
+                        current
+                            .as_ref()
+                            .and_then(|delivery| delivery.recipient.clone())
+                    }),
+                    account: account.or_else(|| {
+                        current
+                            .as_ref()
+                            .and_then(|delivery| delivery.account.clone())
+                    }),
+                    thread: thread.or_else(|| {
+                        current
+                            .as_ref()
+                            .and_then(|delivery| delivery.thread.clone())
+                    }),
+                    webhook_url: webhook_url.or_else(|| {
+                        current
+                            .as_ref()
+                            .and_then(|delivery| delivery.webhook_url.clone())
+                    }),
+                    best_effort: best_effort
+                        .or_else(|| current.as_ref().map(|delivery| delivery.best_effort))
+                        .unwrap_or(false),
+                });
+            }
+        }
+
+        if clear_execution {
+            job.execution = ExecutionPolicy::default();
+        }
+        if let Some(provider) = provider {
+            job.execution.provider = Some(parse_provider(&provider, "primary")?);
+        }
+        if let Some(model) = model {
+            job.execution.model = (!model.is_empty()).then_some(model);
+        }
+        if let Some(profile) = profile {
+            job.execution.profile = (!profile.is_empty()).then_some(profile);
+        }
+        if let Some(thinking_budget) = thinking_budget {
+            job.execution.thinking_budget = Some(thinking_budget);
+        }
+        if !fallback.is_empty() {
+            job.execution.fallback = fallback
+                .into_iter()
+                .map(parse_fallback)
+                .collect::<Result<_>>()?;
+        }
+        if !capabilities.is_empty() {
+            job.execution.capabilities = capabilities;
+        }
+        if !tools.is_empty() {
+            job.execution.tools = tools;
+        }
+        if clear_dependencies {
+            job.depends_on.clear();
+        }
+        if !depends_on.is_empty() {
+            job.depends_on = depends_on;
         }
 
         job.validate()?;
@@ -324,6 +830,80 @@ fn cron_remove(id: String, file: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+fn cron_set_enabled(id: String, enabled: bool, file: Option<PathBuf>) -> Result<()> {
+    let path = jobs_path(file);
+    JobsFile::modify_at_path(&path, |jf| {
+        let job = jf
+            .jobs
+            .iter_mut()
+            .find(|job| job.id == id)
+            .with_context(|| format!("no job with id `{id}` in {}", path.display()))?;
+        job.enabled = enabled;
+        job.validate()?;
+        Ok(())
+    })
+    .with_context(|| format!("update {}", path.display()))?;
+    println!(
+        "{} job `{id}` in {}",
+        if enabled { "resumed" } else { "paused" },
+        path.display()
+    );
+    Ok(())
+}
+
+fn cron_deliveries(
+    job_filter: Option<String>,
+    home: Option<PathBuf>,
+    output: OutputFormat,
+) -> Result<()> {
+    let home = home.unwrap_or_else(FreedomConfig::default_neoth_home);
+    let state = RuntimeState::load(&home)
+        .with_context(|| format!("load Cron runtime state from {}", home.display()))?;
+    let records: Vec<_> = state
+        .deliveries
+        .values()
+        .filter(|record| {
+            job_filter
+                .as_deref()
+                .map_or(true, |job_id| record.job_id == job_id)
+        })
+        .collect();
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        OutputFormat::Table => {
+            if records.is_empty() {
+                println!("no Cron delivery records in {}", home.display());
+                return Ok(());
+            }
+            println!(
+                "{:<18} {:<20} {:<10} {:<13} {:>8} UPDATED",
+                "DELIVERY", "JOB", "MODE", "STATUS", "ATTEMPTS"
+            );
+            println!("{}", "-".repeat(100));
+            for record in records {
+                let short_id = record.delivery_id.get(..16).unwrap_or(&record.delivery_id);
+                println!(
+                    "{short_id:<18} {:<20} {:<10} {:<13} {:>8} {}{}",
+                    record.job_id,
+                    record.mode.as_str(),
+                    record.status.as_str(),
+                    record.attempts,
+                    record.updated_at.to_rfc3339(),
+                    record
+                        .error
+                        .as_deref()
+                        .map(|error| format!(" error={error}"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `neoth cron list` — print all jobs. HERMES-01 / JV-PRO-05.
 fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
     let path = jobs_path(file);
@@ -345,11 +925,12 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
                         "id": j.id,
                         "name": j.name,
                         "enabled": j.enabled,
-                        "cron": j.schedule.cron,
-                        "tz": j.schedule.tz,
+                        "schedule": j.schedule,
                         "role": classify_role(j).to_string(),
                         "timeout_seconds": j.timeout_seconds,
-                        "channel": j.delivery.as_ref().map(|d| &d.channel),
+                        "delivery": j.delivery,
+                        "execution": j.execution,
+                        "depends_on": j.depends_on,
                     })
                 })
                 .collect();
@@ -357,8 +938,8 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
         }
         OutputFormat::Table => {
             println!(
-                "{:<20} {:<25} {:<16} {:<13} {:<12} DELIVERY",
-                "ID", "NAME", "CRON", "ROLE", "ENABLED"
+                "{:<20} {:<25} {:<22} {:<13} {:<9} DELIVERY",
+                "ID", "NAME", "SCHEDULE", "ROLE", "ENABLED"
             );
             println!("{}", "-".repeat(100));
             for j in &jf.jobs {
@@ -366,13 +947,21 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
                 let delivery = j
                     .delivery
                     .as_ref()
-                    .map(|d| d.channel.clone())
+                    .map(|delivery| match delivery.mode {
+                        DeliveryMode::Announce => format!(
+                            "announce:{}:{}",
+                            delivery.channel,
+                            delivery.recipient.as_deref().unwrap_or("configured-route")
+                        ),
+                        DeliveryMode::Webhook => "webhook:registered-url".to_string(),
+                        DeliveryMode::None => "none".to_string(),
+                    })
                     .unwrap_or_else(|| "-".to_string());
                 println!(
-                    "{:<20} {:<25} {:<16} {:<13} {:<12} {}",
+                    "{:<20} {:<25} {:<22} {:<13} {:<9} {}",
                     j.id,
                     j.name,
-                    j.schedule.cron,
+                    j.schedule.label(),
                     role,
                     if j.enabled { "yes" } else { "no" },
                     delivery,
@@ -422,7 +1011,9 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
-        ),
+        )
+        .with_usage_home(home.clone())
+        .with_usage_automated(true),
         config.provider_model.clone(),
         "cron.manual_run",
     );
@@ -440,17 +1031,22 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
                 "duration_ms": outcome.duration.as_millis(),
                 "output_bytes": outcome.output_bytes,
                 "delivery_queued": outcome.delivery_queued,
+                "delivery_id": outcome.delivery_id,
+                "delivery_status": outcome.delivery_status.map(|status| status.as_str()),
                 "error": outcome.error,
             })
         ),
         OutputFormat::Table => {
             if outcome.success {
                 println!(
-                    "✓ job `{}` ran in {} ms ({} output bytes, delivery queued: {})",
+                    "✓ job `{}` ran in {} ms ({} output bytes, delivery: {})",
                     job.id,
                     outcome.duration.as_millis(),
                     outcome.output_bytes,
-                    outcome.delivery_queued,
+                    outcome
+                        .delivery_status
+                        .map(|status| status.as_str())
+                        .unwrap_or("none"),
                 );
             } else {
                 println!(
@@ -599,18 +1195,30 @@ jobs:
         (dir, path)
     }
 
+    fn cron_create(id: &str, name: &str, cron: &str, prompt: &str) -> CronCreate {
+        CronCreate {
+            id: id.to_string(),
+            name: name.to_string(),
+            schedule: build_schedule(Some(cron.to_string()), None, None, None).expect("schedule"),
+            prompt: prompt.to_string(),
+            delivery: None,
+            execution: ExecutionPolicy::default(),
+            depends_on: Vec::new(),
+            timeout_seconds: 600,
+        }
+    }
+
     #[test]
     fn add_then_list_roundtrip() {
         let (_dir, path) = temp_jobs_yaml("version: 1\njobs: []\n");
 
-        cron_add(
-            "nightly-report".to_string(),
-            "Nightly Report".to_string(),
-            "0 23 * * *".to_string(),
-            "Summarise the day's activity in detail.".to_string(),
-            None,
-            None,
-            None,
+        cron_add_full(
+            cron_create(
+                "nightly-report",
+                "Nightly Report",
+                "0 23 * * *",
+                "Summarise the day's activity in detail.",
+            ),
             Some(path.clone()),
         )
         .expect("add should succeed");
@@ -625,31 +1233,19 @@ jobs:
     fn add_duplicate_id_is_rejected() {
         let (_dir, path) = temp_jobs_yaml("version: 1\njobs: []\n");
 
-        cron_add(
-            "dup".to_string(),
-            "Dup".to_string(),
-            "0 6 * * *".to_string(),
-            "Do something useful here.".to_string(),
-            None,
-            None,
-            None,
+        cron_add_full(
+            cron_create("dup", "Dup", "0 6 * * *", "Do something useful here."),
             Some(path.clone()),
         )
         .expect("first add ok");
 
-        let err = cron_add(
-            "dup".to_string(),
-            "Dup Again".to_string(),
-            "0 6 * * *".to_string(),
-            "Do something useful here.".to_string(),
-            None,
-            None,
-            None,
+        let err = cron_add_full(
+            cron_create("dup", "Dup Again", "0 6 * * *", "Do something useful here."),
             Some(path.clone()),
         )
         .unwrap_err();
 
-        assert!(err.to_string().contains("already exists"), "{err}");
+        assert!(format!("{err:#}").contains("already exists"), "{err:#}");
     }
 
     #[test]
@@ -673,7 +1269,7 @@ jobs:
     fn remove_nonexistent_id_errors() {
         let (_dir, path) = temp_jobs_yaml("version: 1\njobs: []\n");
         let err = cron_remove("ghost".to_string(), Some(path)).unwrap_err();
-        assert!(err.to_string().contains("ghost"), "{err}");
+        assert!(format!("{err:#}").contains("ghost"), "{err:#}");
     }
 
     #[test]
@@ -688,15 +1284,37 @@ jobs:
     prompt: \"do something meaningful here\"
 ";
         let (_dir, path) = temp_jobs_yaml(yaml);
-        cron_edit(
-            "editable".to_string(),
-            Some("New Name".to_string()),
-            None,
-            None,
-            None,
-            None,
-            Some(120),
-            None,
+        cron_edit_full(
+            CronEditPatch {
+                id: "editable".to_string(),
+                name: Some("New Name".to_string()),
+                cron: None,
+                every: None,
+                at: None,
+                prompt: None,
+                tz: None,
+                clear_timezone: false,
+                channel: None,
+                recipient: None,
+                account: None,
+                thread: None,
+                delivery_mode: None,
+                webhook_url: None,
+                best_effort: None,
+                clear_delivery: false,
+                provider: None,
+                model: None,
+                profile: None,
+                thinking_budget: None,
+                fallback: Vec::new(),
+                capabilities: Vec::new(),
+                tools: Vec::new(),
+                clear_execution: false,
+                depends_on: Vec::new(),
+                clear_dependencies: false,
+                timeout: Some(120),
+                enabled: None,
+            },
             Some(path.clone()),
         )
         .expect("edit ok");
@@ -704,6 +1322,144 @@ jobs:
         let jf = load_or_create(&path).expect("reload");
         assert_eq!(jf.jobs[0].name, "New Name");
         assert_eq!(jf.jobs[0].timeout_seconds, 120);
+    }
+
+    #[test]
+    fn full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field() {
+        let yaml = "\
+version: 1
+jobs:
+  - id: prerequisite
+    name: Prerequisite
+    schedule:
+      cron: \"0 6 * * *\"
+    prompt: \"produce the prerequisite result\"
+";
+        let (_dir, path) = temp_jobs_yaml(yaml);
+        let mut delivery = Delivery::new("telegram");
+        delivery.recipient = Some("operator-room".into());
+        delivery.account = Some("primary".into());
+        delivery.thread = Some("daily".into());
+        delivery.best_effort = true;
+        let execution = ExecutionPolicy {
+            provider: Some(InferenceProvider::LocalOllama),
+            model: Some("qwen3:8b".into()),
+            profile: Some("formal".into()),
+            thinking_budget: Some(2_048),
+            fallback: vec![ProviderTarget {
+                provider: InferenceProvider::LocalQwen,
+                model: Some("Qwen/Qwen3-4B".into()),
+            }],
+            capabilities: vec!["files".into()],
+            tools: vec!["read_file".into()],
+        };
+
+        cron_add_full(
+            CronCreate {
+                id: "gold-contract".into(),
+                name: "Gold Contract".into(),
+                schedule: build_schedule(None, Some("5m".into()), None, None).unwrap(),
+                prompt: "run the complete scheduled Gold contract".into(),
+                delivery: Some(delivery),
+                execution,
+                depends_on: vec!["prerequisite".into()],
+                timeout_seconds: 321,
+            },
+            Some(path.clone()),
+        )
+        .unwrap();
+
+        let created = load_or_create(&path).unwrap();
+        let job = created
+            .jobs
+            .iter()
+            .find(|job| job.id == "gold-contract")
+            .unwrap();
+        assert_eq!(job.schedule.every_seconds, Some(300));
+        assert_eq!(
+            job.delivery.as_ref().unwrap().recipient.as_deref(),
+            Some("operator-room")
+        );
+        assert_eq!(job.execution.provider, Some(InferenceProvider::LocalOllama));
+        assert_eq!(job.execution.fallback.len(), 1);
+        assert_eq!(job.execution.capabilities, ["files"]);
+        assert_eq!(job.execution.tools, ["read_file"]);
+        assert_eq!(job.depends_on, ["prerequisite"]);
+
+        cron_set_enabled("gold-contract".into(), false, Some(path.clone())).unwrap();
+        assert!(
+            !load_or_create(&path)
+                .unwrap()
+                .jobs
+                .iter()
+                .find(|job| job.id == "gold-contract")
+                .unwrap()
+                .enabled
+        );
+        cron_set_enabled("gold-contract".into(), true, Some(path.clone())).unwrap();
+
+        cron_edit_full(
+            CronEditPatch {
+                id: "gold-contract".into(),
+                name: None,
+                cron: None,
+                every: None,
+                at: Some("2099-01-02T03:04:05Z".into()),
+                prompt: None,
+                tz: None,
+                clear_timezone: true,
+                channel: None,
+                recipient: None,
+                account: None,
+                thread: None,
+                delivery_mode: None,
+                webhook_url: None,
+                best_effort: None,
+                clear_delivery: true,
+                provider: None,
+                model: None,
+                profile: None,
+                thinking_budget: None,
+                fallback: Vec::new(),
+                capabilities: Vec::new(),
+                tools: Vec::new(),
+                clear_execution: true,
+                depends_on: Vec::new(),
+                clear_dependencies: true,
+                timeout: None,
+                enabled: None,
+            },
+            Some(path.clone()),
+        )
+        .unwrap();
+
+        let edited = load_or_create(&path).unwrap();
+        let job = edited
+            .jobs
+            .iter()
+            .find(|job| job.id == "gold-contract")
+            .unwrap();
+        assert_eq!(
+            job.schedule.at.unwrap().to_rfc3339(),
+            "2099-01-02T03:04:05+00:00"
+        );
+        assert!(job.schedule.tz.is_none());
+        assert!(job.delivery.is_none());
+        assert_eq!(job.execution, ExecutionPolicy::default());
+        assert!(job.depends_on.is_empty());
+        assert!(
+            job.enabled,
+            "resume must persist before the edit generation"
+        );
+
+        cron_remove("gold-contract".into(), Some(path.clone())).unwrap();
+        assert!(
+            load_or_create(&path)
+                .unwrap()
+                .jobs
+                .iter()
+                .all(|job| job.id != "gold-contract")
+        );
     }
 
     // ── JV-PRO-05 cron status ────────────────────────────────────────────────

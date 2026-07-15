@@ -477,16 +477,17 @@ async fn execute(
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment).context("spawn self-improve QA WAL writer")?;
     let model = crate::providers::utility_model_for_config(&config);
-    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
-        raw_provider,
-        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-            crate::permissions::AutonomyPolicySnapshot::new(autonomy, &config.custom_autonomy),
-            Some(writer.clone()),
+    let provider = std::sync::Arc::new(
+        crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            raw_provider,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                crate::permissions::AutonomyPolicySnapshot::new(autonomy, &config.custom_autonomy),
+                Some(writer.clone()),
+            ),
+            model.clone(),
+            "self_improve.qa",
         ),
-        model.clone(),
-        "self_improve.qa",
-    )
-    .into_arc();
+    );
     let advisor = ProviderProposalAdvisor {
         provider,
         writer: writer.clone(),
@@ -531,7 +532,7 @@ async fn execute(
 }
 
 struct ProviderProposalAdvisor {
-    provider: std::sync::Arc<dyn crate::providers::Provider>,
+    provider: std::sync::Arc<crate::providers::cost_authorization::AuthorizedProvider>,
     writer: crate::wal::writer::WalWriterHandle,
     model: Option<String>,
     task_id: String,

@@ -163,6 +163,17 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
         roll.total_p50_latency_ms,
         roll.total_p90_latency_ms,
     );
+    if roll.total_unknown_input_token_count > 0
+        || roll.total_unknown_output_token_count > 0
+        || roll.total_unknown_cost_count > 0
+    {
+        println!(
+            "  unreported: input_tokens={} output_tokens={} cost={} (known totals above stay partial)",
+            roll.total_unknown_input_token_count,
+            roll.total_unknown_output_token_count,
+            roll.total_unknown_cost_count,
+        );
+    }
     // VIEW-06 — session-type split (shown only when post-VIEW-06 data present).
     if roll.total_automated_count + roll.total_human_count > 0 {
         println!(
@@ -256,9 +267,9 @@ mod tests {
                     ts_unix: ts,
                     provider: "openai_api".into(),
                     model: "gpt-5.5".into(),
-                    input_tokens: 1,
-                    output_tokens: 2,
-                    cost_usd: 0.001,
+                    input_tokens: Some(1),
+                    output_tokens: Some(2),
+                    cost_usd: Some(0.001),
                     latency_ms: 10,
                     ok: true,
                     ..Default::default()

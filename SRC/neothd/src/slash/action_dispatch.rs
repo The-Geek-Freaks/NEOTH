@@ -415,18 +415,13 @@ async fn handle_connect(args: &str, home: &Path) -> ActionOutcome {
         Ok(channel) => channel.to_ascii_lowercase(),
         Err(outcome) => return outcome,
     };
-    if channel == "keet" {
-        return ActionOutcome::InvalidArgs {
-            text: "/connect keet — unavailable: Keet exposes no supported public chat API; no credentials were collected.".into(),
-        };
-    }
     if !matches!(
         channel.as_str(),
-        "telegram" | "whatsapp" | "slack" | "discord"
+        "telegram" | "whatsapp" | "slack" | "discord" | "keet"
     ) {
         return ActionOutcome::InvalidArgs {
             text: format!(
-                "/connect {channel} — unknown channel. Available: telegram, whatsapp, slack, discord"
+                "/connect {channel} — unknown channel. Available: telegram, whatsapp, slack, discord, keet"
             ),
         };
     }
@@ -1055,13 +1050,6 @@ mod tests {
                 .unwrap()
                 .contains("sk-role-secret")
         );
-    }
-
-    #[tokio::test]
-    async fn keet_connect_is_explicitly_unavailable() {
-        let out = handle_connect("keet", Path::new(".")).await;
-        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
-        assert!(out.text().contains("no supported public chat API"));
     }
 
     #[test]

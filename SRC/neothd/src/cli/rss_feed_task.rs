@@ -400,7 +400,7 @@ mod tests {
     }
 
     fn make_wal(home: &Path) -> (WalWriterHandle, tokio::task::JoinHandle<()>) {
-        crate::wal::writer::spawn(home.join("000001.wal")).unwrap()
+        crate::wal::writer::spawn_for_home(home.join("000001.wal"), home.to_path_buf()).unwrap()
     }
 
     #[tokio::test]
@@ -639,7 +639,8 @@ entries:
         let dir = tempdir().unwrap();
         let server = mock_feed(RSS2_ONE_ITEM, 200).await;
         let wal_path = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(wal_path.clone(), dir.path().to_path_buf()).unwrap();
         let client = reqwest::Client::new();
         let entries = vec![FeedEntry {
             label: "wal_test".to_string(),

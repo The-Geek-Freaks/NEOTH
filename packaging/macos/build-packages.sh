@@ -8,14 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 readonly BINARIES=(neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge)
 readonly VERSIONED_BINARIES=(neoth neothd neoth-migrate neoth-relay neoth-keet-bridge)
-readonly SUPPORT_FILES=(README.md LICENSE-MIT LICENSE-APACHE freedom.yaml.example import-manifest.example.yaml)
+readonly SUPPORT_FILES=(README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES freedom.yaml.example import-manifest.example.yaml)
 readonly BUNDLE_ID=io.github.the-geek-freaks.neoth
 
 usage() {
   cat <<'EOF'
 Usage:
   build-packages.sh --bundle DIR --version X.Y.Z --arch x86_64|arm64 \
-    --output DIR --source-date-epoch UNIX_EPOCH [signing/notary options]
+    --output DIR --source-date-epoch UNIX_EPOCH [signing/notary options] \
+    [--preflight-receipt FILE]
+  build-packages.sh --bundle DIR --version X.Y.Z --arch x86_64|arm64 \
+    --validate-only --write-preflight-receipt FILE
   build-packages.sh --print-layout
 
 Signing options:
@@ -31,6 +34,13 @@ Notarization options:
 The corresponding NEOTH_* environment variables are also accepted. Passing
 identities enables signing; passing complete notary credentials enables
 notarization. Required modes never fall back to unsigned artifacts.
+
+Key-isolation options:
+  --write-preflight-receipt FILE
+      Validate architecture and execute version probes, then bind every input
+      byte to FILE. Only valid with --validate-only.
+  --preflight-receipt FILE
+      Verify the bound input bytes without executing any bundled product.
 EOF
 }
 
@@ -102,6 +112,46 @@ capture_version() {
   return "$status"
 }
 
+emit_preflight_receipt() {
+  local name checksum
+  printf '%s\n' 'NEOTH-MACOS-PREFLIGHT-V1'
+  printf 'version %s\n' "$version"
+  printf 'target %s\n' "$target"
+  printf 'architecture %s\n' "$arch"
+  for name in "${BINARIES[@]}" "${SUPPORT_FILES[@]}"; do
+    checksum=$(shasum -a 256 "$bundle/$name" | awk '{print $1}')
+    printf '%s  %s\n' "$checksum" "$name"
+  done
+}
+
+write_preflight_receipt_file() {
+  local destination=$1
+  local parent temporary
+  [[ ! -e $destination ]] || die "preflight receipt already exists: $destination"
+  parent=$(dirname "$destination")
+  [[ -d $parent ]] || die "preflight receipt directory not found: $parent"
+  temporary=$(mktemp "$parent/.release-preflight.XXXXXX")
+  if ! (umask 077; emit_preflight_receipt >"$temporary"); then
+    rm -f "$temporary"
+    die "could not write preflight receipt"
+  fi
+  mv "$temporary" "$destination"
+}
+
+verify_preflight_receipt_file() {
+  local receipt=$1
+  local temporary
+  [[ -f $receipt && ! -L $receipt ]] ||
+    die "preflight receipt must be a regular, non-symlink file: $receipt"
+  temporary=$(mktemp "${TMPDIR:-/tmp}/neoth-preflight-verify.XXXXXX")
+  emit_preflight_receipt >"$temporary"
+  if ! cmp -s "$temporary" "$receipt"; then
+    rm -f "$temporary"
+    die "preflight receipt does not match version, target, architecture, or bundle bytes"
+  fi
+  rm -f "$temporary"
+}
+
 print_layout() {
   cat <<'EOF'
 /Applications/NEOTH.app/Contents/MacOS/neoth
@@ -114,6 +164,7 @@ print_layout() {
 /Applications/NEOTH.app/Contents/Resources/README.md
 /Applications/NEOTH.app/Contents/Resources/LICENSE-MIT
 /Applications/NEOTH.app/Contents/Resources/LICENSE-APACHE
+/Applications/NEOTH.app/Contents/Resources/THIRD_PARTY_LICENSES
 /Applications/NEOTH.app/Contents/Resources/examples/freedom.yaml.example
 /Applications/NEOTH.app/Contents/Resources/examples/import-manifest.example.yaml
 /Applications/NEOTH.app/Contents/Resources/uninstall-neoth.sh
@@ -139,12 +190,14 @@ notary_keychain=${NEOTH_NOTARY_KEYCHAIN:-}
 require_signing=0
 require_notarization=0
 validate_only=0
+write_preflight_receipt=
+preflight_receipt=
 
 while (($#)); do
   case "$1" in
     --bundle | --version | --arch | --output | --source-date-epoch | \
       --application-identity | --installer-identity | --notary-profile | \
-      --notary-keychain)
+      --notary-keychain | --write-preflight-receipt | --preflight-receipt)
       (($# >= 2)) || die "$1 requires a value"
       case "$1" in
         --bundle) bundle=$2 ;;
@@ -156,6 +209,8 @@ while (($#)); do
         --installer-identity) installer_identity=$2 ;;
         --notary-profile) notary_profile=$2 ;;
         --notary-keychain) notary_keychain=$2 ;;
+        --write-preflight-receipt) write_preflight_receipt=$2 ;;
+        --preflight-receipt) preflight_receipt=$2 ;;
       esac
       shift 2
       ;;
@@ -176,6 +231,12 @@ done
 [[ -n $version ]] || die "--version is required"
 [[ -n $arch ]] || die "--arch is required"
 [[ -n $output || $validate_only == 1 ]] || die "--output is required"
+[[ -z $write_preflight_receipt || $validate_only == 1 ]] ||
+  die "--write-preflight-receipt requires --validate-only"
+[[ -z $preflight_receipt || $validate_only == 0 ]] ||
+  die "--preflight-receipt cannot be combined with --validate-only"
+[[ -z $write_preflight_receipt || -z $preflight_receipt ]] ||
+  die "preflight receipt write and consume modes are mutually exclusive"
 [[ $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] ||
   die "invalid semantic version: $version"
 IFS=. read -r -a prerelease_parts <<<"${version#*-}"
@@ -224,23 +285,36 @@ bundle="$(cd "$bundle" && pwd -P)"
   die "bundle directory must be named neoth-v${version}-${target}"
 
 need_cmd lipo
+if [[ -n $write_preflight_receipt || -n $preflight_receipt ]]; then
+  need_cmd cmp
+  need_cmd shasum
+fi
 for name in "${BINARIES[@]}"; do
   path="$bundle/$name"
-  [[ -f $path && -s $path && -x $path ]] || die "missing non-empty executable: $name"
+  [[ -f $path && ! -L $path && -s $path && -x $path ]] ||
+    die "missing regular non-empty executable: $name"
   binary_archs="$(lipo -archs "$path" 2>/dev/null)" || die "$name is not a readable Mach-O executable"
   [[ $binary_archs == "$arch" ]] || die "$name architecture is '$binary_archs', expected '$arch'"
 done
 for name in "${SUPPORT_FILES[@]}"; do
-  [[ -f $bundle/$name && -s $bundle/$name ]] || die "missing non-empty release file: $name"
+  [[ -f $bundle/$name && ! -L $bundle/$name && -s $bundle/$name ]] ||
+    die "missing regular non-empty release file: $name"
 done
-for name in "${VERSIONED_BINARIES[@]}"; do
-  version_output="$(capture_version "$bundle/$name")" ||
-    die "$name --version failed or timed out"
-  tr -cs '0-9A-Za-z.+-' '\n' <<<"$version_output" | grep -Fqx -- "$version" ||
-    die "$name version does not equal $version"
-done
+if [[ -n $preflight_receipt ]]; then
+  verify_preflight_receipt_file "$preflight_receipt"
+else
+  for name in "${VERSIONED_BINARIES[@]}"; do
+    version_output="$(capture_version "$bundle/$name")" ||
+      die "$name --version failed or timed out"
+    tr -cs '0-9A-Za-z.+-' '\n' <<<"$version_output" | grep -Fqx -- "$version" ||
+      die "$name version does not equal $version"
+  done
+fi
 
 if ((validate_only)); then
+  if [[ -n $write_preflight_receipt ]]; then
+    write_preflight_receipt_file "$write_preflight_receipt"
+  fi
   printf 'validated %s (%s, %s)\n' "$bundle" "$version" "$arch"
   exit 0
 fi
@@ -296,7 +370,7 @@ mkdir -p "$macos_dir" "$examples_dir"
 for name in "${BINARIES[@]}"; do
   install -m 0755 "$bundle/$name" "$macos_dir/$name"
 done
-for name in README.md LICENSE-MIT LICENSE-APACHE; do
+for name in README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES; do
   install -m 0644 "$bundle/$name" "$resources_dir/$name"
 done
 for name in freedom.yaml.example import-manifest.example.yaml; do
@@ -418,7 +492,7 @@ ditto "$app" "$app_output"
 for name in "${BINARIES[@]}"; do
   [[ -x $app_output/Contents/MacOS/$name ]] || die "built app is missing executable $name"
 done
-for name in README.md LICENSE-MIT LICENSE-APACHE; do
+for name in README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES; do
   [[ -s $app_output/Contents/Resources/$name ]] || die "built app is missing $name"
 done
 for name in freedom.yaml.example import-manifest.example.yaml; do

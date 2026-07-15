@@ -1,7 +1,8 @@
 # =============================================================================
 # NEOTH — Security Scanning
 #
-# Runs cargo-audit, cargo-deny, and trivy on a weekly schedule and on push to main.
+# Runs Rust and shipped JavaScript dependency audits, CodeQL, and Trivy on a
+# weekly schedule and on every push to main.
 # SARIF results are uploaded to GitHub Security tab (requires Advanced Security).
 # Fails on HIGH or CRITICAL severity findings.
 # =============================================================================
@@ -17,7 +18,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write        # required to upload SARIF
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,6 +33,8 @@ jobs:
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
 
       - name: Cache Cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -45,7 +47,7 @@ jobs:
           # neothd member crate. Fixed 2026-05-26 — prior key
           # SRC/neothd/Cargo.lock didn't exist, so cache never hit
           # and cargo-audit found no lockfile to scan.
-          key: security-audit-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: security-audit-cargo-${{ hashFiles('SRC/Cargo.lock', '.github/release-tools/neoth-release-signer/Cargo.lock') }}
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
@@ -66,6 +68,10 @@ jobs:
           cargo audit --json 2>/dev/null | tee /tmp/audit-result.json
           cargo audit
 
+      - name: Audit isolated release signer lockfile
+        working-directory: .github/release-tools/neoth-release-signer
+        run: cargo audit
+
   deny:
     name: cargo-deny (license + supply chain)
     runs-on: ubuntu-24.04
@@ -73,6 +79,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
+
+      - name: Verify exact shipped Rust license notices
+        run: python3 packaging/generate_rust_notices.py --check
 
       - name: Run cargo-deny
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
@@ -82,16 +96,163 @@ jobs:
           arguments: --all-features
           rust-version: '1.86'
 
+      - name: Run cargo-deny for isolated release signer
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: .github/release-tools/neoth-release-signer/Cargo.toml
+          command: check
+          arguments: --all-features
+          command-arguments: --config SRC/deny.toml
+          rust-version: '1.86'
+
+  bridge-audit:
+    name: pnpm audit / ${{ matrix.bridge }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        bridge:
+          - keet
+          - whatsapp-baileys
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.16.0
+
+      - name: Activate pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+          test "$(pnpm --version)" = 10.32.1
+
+      - name: Validate frozen dependency graph
+        working-directory: bridges/${{ matrix.bridge }}
+        # Keet's notice drift check also resolves the six pinned desktop
+        # bare-build runtime packages, which are build-time dependencies. Keep
+        # scripts disabled here; the vulnerability gate below remains scoped
+        # to the actually redistributed production graph.
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Verify redistributed Keet license notices
+        if: matrix.bridge == 'keet'
+        working-directory: bridges/keet
+        run: pnpm run check:notices
+
+      - name: Block high and critical Keet runtime-build findings
+        if: matrix.bridge == 'keet'
+        working-directory: bridges/keet
+        # bare-build and the pinned platform runtimes are build dependencies,
+        # but their native runtime payload is embedded in the redistributed
+        # standalone executable. They are therefore part of the shipped trust
+        # boundary and must not be hidden behind a production-only audit.
+        run: pnpm audit --audit-level high
+
+      - name: Block high and critical WhatsApp production findings
+        if: matrix.bridge == 'whatsapp-baileys'
+        working-directory: bridges/${{ matrix.bridge }}
+        run: pnpm audit --prod --audit-level high
+
+  codeql:
+    name: CodeQL / Rust
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
+
+      # Rust supports CodeQL's build-mode none: rust-analyzer evaluates build
+      # scripts and macros while the scanner covers every Rust source file,
+      # without relinking the already CI-gated workspace test binary.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze Rust
+        uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          category: /language:rust
+
+      - name: Block unresolved high or critical CodeQL alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          alert_count=$(gh api --paginate --slurp -X GET \
+            "repos/${GITHUB_REPOSITORY}/code-scanning/alerts" \
+            -f state=open \
+            -f tool_name=CodeQL \
+            -f per_page=100 \
+            --jq '[.[][] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")] | length')
+          if [[ "$alert_count" -ne 0 ]]; then
+            echo "::error::$alert_count unresolved high/critical CodeQL alert(s) block Gold"
+            exit 1
+          fi
+
+  codeql-javascript:
+    name: CodeQL / JavaScript
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # JavaScript and TypeScript are interpreted by CodeQL directly. This
+      # covers the shipped Keet and WhatsApp bridges without executing their
+      # dependency lifecycle scripts inside the privileged analysis job.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze JavaScript and TypeScript
+        uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          category: /language:javascript-typescript
+
+      - name: Block unresolved high or critical CodeQL alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          alert_count=$(gh api --paginate --slurp -X GET \
+            "repos/${GITHUB_REPOSITORY}/code-scanning/alerts" \
+            -f state=open \
+            -f tool_name=CodeQL \
+            -f per_page=100 \
+            --jq '[.[][] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")] | length')
+          if [[ "$alert_count" -ne 0 ]]; then
+            echo "::error::$alert_count unresolved high/critical CodeQL alert(s) block Gold"
+            exit 1
+          fi
+
   trivy:
     name: trivy (filesystem vuln scan)
     runs-on: ubuntu-24.04
-    # 2026-05-26: Trivy's CVE/GHSA identifiers don't map 1:1 to
-    # cargo-audit's RUSTSEC-* IDs in `.trivyignore`. Until the
-    # ignore-list translation is done (track via PROGRESS), surface
-    # findings as a table for human review but don't block the merge
-    # gate — cargo-audit + cargo-deny above already enforce the
-    # RUSTSEC ignore policy authoritatively for the Rust dep tree.
-    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write
+    # This is an independent fail-closed filesystem/dependency scanner. Its
+    # success is part of the exact-head Gold release gate; high/critical
+    # findings may not be converted into a green advisory-only run.
 
     steps:
       - name: Checkout
@@ -109,12 +270,13 @@ jobs:
           scan-ref: '.'
           format: 'table'
           severity: 'HIGH,CRITICAL'
-          exit-code: '0'
+          exit-code: '1'
           ignore-unfixed: false
           trivyignores: '.trivyignore'
 
       - name: Run Trivy filesystem scan (SARIF for Security tab)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        if: always()
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -126,7 +288,7 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Upload Trivy SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@02c5e83432fe5497fd85b873b6c9f16a8578e1d9 # v3
+        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
         if: always()             # upload even if scan found issues
         with:
           sarif_file: 'trivy-results.sarif'

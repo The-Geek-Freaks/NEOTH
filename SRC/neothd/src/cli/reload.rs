@@ -21,7 +21,7 @@
 //! — all supported). No SIGHUP dependency, no `notify` crate
 //! background thread.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -41,18 +41,23 @@ pub struct ReloadArgs {
     pub output: OutputFormat,
 }
 
-pub async fn run_reload(args: ReloadArgs) -> Result<()> {
-    let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
+/// Write the canonical reload sentinel for any CLI mutation that changes
+/// `freedom.yaml`. Returning the timestamp keeps the operator-facing command
+/// and non-interactive callers on the same filesystem contract.
+pub(crate) fn request_reload_at(home: &Path) -> Result<(PathBuf, u64)> {
     let sentinel = home.join(RELOAD_SENTINEL_NAME);
-
-    // Write a small payload — wall-clock ts so the daemon can log
-    // "reload requested at T, applied at T+Δ" if it wants. Content
-    // isn't load-bearing; the file's mere existence is the signal.
     let ts = crate::time::now_unix_secs();
-    std::fs::create_dir_all(&home)
+    std::fs::create_dir_all(home)
         .with_context(|| format!("create {} for sentinel", home.display()))?;
     std::fs::write(&sentinel, format!("ts_unix={ts}\n"))
         .with_context(|| format!("write reload sentinel at {}", sentinel.display()))?;
+    Ok((sentinel, ts))
+}
+
+pub async fn run_reload(args: ReloadArgs) -> Result<()> {
+    let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
+    // Content is diagnostic only; the file's existence is the signal.
+    let (sentinel, ts) = request_reload_at(&home)?;
 
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {

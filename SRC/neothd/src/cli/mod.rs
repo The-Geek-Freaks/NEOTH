@@ -7,6 +7,7 @@
 //! exposed here must have a production implementation rather than reserved
 //! placeholder variants.
 
+use anyhow::Context as _;
 use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod adr;
@@ -94,6 +95,7 @@ pub mod import;
 pub mod ingest;
 pub mod init;
 pub mod installer;
+pub mod interface;
 pub mod jobs;
 pub mod kanban;
 pub mod keys;
@@ -439,6 +441,11 @@ pub enum Commands {
     /// scheduler does. Refused while `neoth serve` owns the WAL.
     Cron(cron::CronArgs),
 
+    /// Inspect or change the instance-wide GUI/CLI default. The first
+    /// interactive launch records this once; explicit switches update the
+    /// same authoritative file under `NEOTH_HOME`.
+    Interface(interface::InterfaceArgs),
+
     /// Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves
     /// the separate GUI binary (next to `neoth`, else via PATH) and spawns it.
     /// `--locate` resolves + prints the path without launching. Prints the
@@ -582,12 +589,12 @@ pub enum Commands {
     /// running `neoth serve` daemon to re-read `freedom.yaml` and
     /// atomically swap its live `Arc<FreedomConfig>` via `arc-swap`.
     /// Touches a sentinel file `~/.neoth/.reload-requested`; the
-    /// daemon polls for it on every ingress tick. Immutable fields
-    /// (`operator_id`, `provider_kind`, `telegram_user_id`) cause a
-    /// `CONFIG_RELOAD_REJECTED` audit frame + the prior config stays
-    /// live. Tunable fields (`council.*`, `code_map.*`,
-    /// `claude_cli.tmux.*`, autonomy level, …) reload without a
-    /// daemon restart.
+    /// daemon polls for it on every ingress tick. Identity/provider fields
+    /// (`operator_id`, `provider_kind`) are immutable and cause a
+    /// `CONFIG_RELOAD_REJECTED` audit frame. Tunable fields and channel
+    /// bindings such as `telegram_user_id` reload without a daemon restart;
+    /// the credential-aware reconciler then restarts only the affected
+    /// adapter.
     Reload(reload::ReloadArgs),
 
     /// Restore a previously-written backup into `~/.neoth/`.
@@ -1106,8 +1113,8 @@ pub enum Commands {
     /// auto-reverser is a separate step.
     Undo(undo::UndoArgs),
 
-    /// Manage channels (Telegram, WhatsApp, etc.) (Day 7+).
-    #[command(hide = true, alias = "channels")]
+    /// Add, inspect, test, and remove messaging channels.
+    #[command(alias = "channels")]
     Channel {
         #[command(subcommand)]
         action: ChannelAction,
@@ -1146,12 +1153,12 @@ pub enum ChannelAction {
     /// Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts).
     ///
     /// Pass at least the flags the channel requires to skip all prompts:
-    ///   telegram:              --token
+    ///   telegram:              --token --telegram-user-id
     ///   slack:                 --bot-token --app-token
-    ///   whatsapp:              --token --phone-id
+    ///   whatsapp:              --token --phone-id --verify-token --app-secret
     ///   whatsapp_baileys:      --url --token --allowed-sender
     ///                           [--allowed-rooms-csv]
-    ///   keet:                  unavailable (legacy --seed is rejected)
+    ///   keet:                  --url --token --server --allowed-sender
     ///   discord:               --token
     ///   signal:                --url --phone
     ///   line:                  --token  [--password]
@@ -1162,13 +1169,20 @@ pub enum ChannelAction {
     ///   matrix:                --url --nick [--password | --token]
     ///                          [--allowed-sender] [--allowed-rooms-csv]
     ///                          [--allow-plaintext]
+    ///   twitch:                --nick --token --channels-csv
+    ///   nostr:                 --token --channels-csv
     Add {
-        /// Channel name (e.g. telegram, slack, whatsapp, whatsapp_baileys, discord,
+        /// Channel name (e.g. telegram, slack, whatsapp, whatsapp_baileys, keet, discord,
         /// signal, line, irc, imessage, bluebubbles, mattermost, gchat,
         /// matrix, twitch, nostr).
         channel: String,
-        /// Bot/access token (telegram, Meta WhatsApp, Baileys bridge, Discord,
-        /// LINE, Mattermost). Baileys uses its dedicated sidecar bearer token.
+        /// Numeric Telegram user ID allowed to drive the bot. Required with
+        /// Telegram so the inbound adapter never starts with an open sender
+        /// policy. Stored in freedom.yaml; the token remains in credentials.yaml.
+        #[arg(long)]
+        telegram_user_id: Option<u64>,
+        /// Bot/access token (telegram, Meta WhatsApp, Baileys/Keet companion,
+        /// Discord, LINE, Mattermost). Sidecars use dedicated bearer tokens.
         #[arg(long)]
         token: Option<String>,
         /// Slack bot token (xoxb-…).
@@ -1180,18 +1194,25 @@ pub enum ChannelAction {
         /// WhatsApp phone-number id (numeric, from Meta console).
         #[arg(long)]
         phone_id: Option<String>,
-        /// Deprecated legacy Keet field. Kept for CLI compatibility; always rejected.
+        /// WhatsApp webhook challenge verification token (inbound).
+        #[arg(long)]
+        verify_token: Option<String>,
+        /// WhatsApp Meta app secret used to verify inbound webhook HMAC.
+        #[arg(long)]
+        app_secret: Option<String>,
+        /// Deprecated speculative native-Keet seed. Kept for CLI compatibility;
+        /// the companion integration always rejects it.
         #[arg(long)]
         seed: Option<String>,
-        /// Base URL: Baileys bridge / signal-cli daemon / BlueBubbles server /
-        /// Mattermost / path to GCP service-account JSON key (gchat).
+        /// Base URL: Baileys/Keet companion / signal-cli daemon / BlueBubbles
+        /// server / Mattermost / path to GCP service-account JSON key (gchat).
         #[arg(long)]
         url: Option<String>,
         /// Signal phone number (E.164, e.g. +4917…).
         #[arg(long)]
         phone: Option<String>,
-        /// IRC server host (no scheme, e.g. irc.libera.chat) /
-        /// Pub/Sub subscription (gchat, projects/<p>/subscriptions/<s>).
+        /// IRC server host (no scheme), Keet `nk1_…` topic capability, or Pub/Sub subscription
+        /// (gchat, projects/<p>/subscriptions/<s>).
         #[arg(long)]
         server: Option<String>,
         /// IRC bot nick / Matrix bot user id (`@user:server`).
@@ -1201,11 +1222,12 @@ pub enum ChannelAction {
         /// password, or LINE channel secret.
         #[arg(long)]
         password: Option<String>,
-        /// IRC channels to join, comma-separated (e.g. #neoth,#dev).
+        /// IRC/Twitch rooms to join, or Nostr relay URLs, comma-separated.
         #[arg(long)]
         channels_csv: Option<String>,
-        /// Matrix inviter/inbound sender allowlist (`@user:server`) or Baileys
-        /// sender allowlist (comma-separated E.164/exact WhatsApp JIDs).
+        /// Matrix inviter/inbound sender allowlist (`@user:server`), Baileys
+        /// sender allowlist (E.164/JID), or exact Keet companion sender IDs.
+        /// Multiple values are comma-separated.
         #[arg(long)]
         allowed_sender: Option<String>,
         /// Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV.
@@ -1218,10 +1240,78 @@ pub enum ChannelAction {
     },
     /// List configured channels
     List,
-    /// Test a channel connection
+    /// Run a read-only live probe; returns typed skipped/unavailable when no safe probe exists
     Test { channel: String },
     /// Remove a channel
     Remove { channel: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DefaultInvocation {
+    GuiChoice,
+    Gui,
+    Init,
+    CliHome,
+}
+
+fn choose_default_invocation(
+    preferred: Option<crate::interface_preference::InterfacePreference>,
+    initialized: bool,
+    headless: bool,
+) -> DefaultInvocation {
+    use crate::interface_preference::InterfacePreference;
+
+    match (preferred, initialized, headless) {
+        (None, _, false) => DefaultInvocation::GuiChoice,
+        (Some(InterfacePreference::Gui), _, false) => DefaultInvocation::Gui,
+        // A stored desktop GUI preference must never make SSH/headless launch
+        // a window. An unfinished instance continues through the CLI-capable
+        // wizard without overwriting that desktop preference.
+        (Some(InterfacePreference::Gui), false, true) => DefaultInvocation::Init,
+        (Some(InterfacePreference::Gui), true, true) => DefaultInvocation::CliHome,
+        (Some(InterfacePreference::Cli), false, _) | (None, _, true) => DefaultInvocation::Init,
+        (Some(InterfacePreference::Cli), true, _) => DefaultInvocation::CliHome,
+    }
+}
+
+fn launcher_init_args() -> anyhow::Result<init::InitArgs> {
+    let parsed = Cli::try_parse_from(["neoth", "init"])?;
+    let Commands::Init(args) = parsed.command else {
+        unreachable!("synthetic `neoth init` must parse as Commands::Init")
+    };
+    Ok(args)
+}
+
+/// Product launcher used by a bare `neoth` invocation. This is the installed
+/// CLI/desktop entry point: first launch asks once, later launches honour the
+/// persisted interface, and headless sessions never attempt to open a GUI.
+pub async fn run_default_invocation() -> anyhow::Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let preferred = crate::interface_preference::load_at(&home)?;
+    let marker = home.join(".initialized");
+    let initialized = marker
+        .try_exists()
+        .with_context(|| format!("inspect initialization marker {}", marker.display()))?;
+    let headless = crate::wizard::env_probe::probe_and_classify().is_headless();
+
+    match choose_default_invocation(preferred, initialized, headless) {
+        DefaultInvocation::GuiChoice => gui::run_first_launch_chooser(),
+        DefaultInvocation::Gui => gui::run_gui(gui::GuiArgs::default(), OutputFormat::Table),
+        DefaultInvocation::Init => init::run_init(launcher_init_args()?).await,
+        DefaultInvocation::CliHome => {
+            println!("NEOTH CLI is ready.");
+            if preferred == Some(crate::interface_preference::InterfacePreference::Gui) {
+                println!(
+                    "The GUI remains your desktop default; this headless session is using CLI fallback."
+                );
+            }
+            println!("  Chat       neoth chat \"What should we work on?\"");
+            println!("  Health     neoth doctor");
+            println!("  Commands   neoth --help");
+            println!("  Open GUI   neoth gui");
+            Ok(())
+        }
+    }
 }
 
 /// Dispatch CLI commands.
@@ -1372,6 +1462,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Identity(args) => {
             identity::run_identity(args, global_output).await?;
+        }
+        Commands::Interface(args) => {
+            interface::run_interface(args, global_output)?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;
@@ -1774,10 +1867,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             ChannelAction::Test { channel: ch } => channel::run_test(&ch, &global_output).await?,
             ChannelAction::Add {
                 channel: ch,
+                telegram_user_id,
                 token,
                 bot_token,
                 app_token,
                 phone_id,
+                verify_token,
+                app_secret,
                 seed,
                 url,
                 phone,
@@ -1790,10 +1886,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 allow_plaintext,
             } => {
                 let flags = channel::ChannelAddFlags {
+                    telegram_user_id,
                     token,
                     bot_token,
                     app_token,
                     phone_id,
+                    verify_token,
+                    app_secret,
                     seed,
                     url,
                     phone,
@@ -1815,4 +1914,58 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod default_invocation_tests {
+    use super::*;
+    use crate::interface_preference::InterfacePreference;
+
+    #[test]
+    fn bare_launcher_honours_preference_without_opening_gui_headless() {
+        assert_eq!(
+            choose_default_invocation(None, false, false),
+            DefaultInvocation::GuiChoice,
+            "a fresh desktop launch opens the graphical chooser without pre-selecting a surface"
+        );
+        assert_eq!(
+            choose_default_invocation(None, true, false),
+            DefaultInvocation::GuiChoice,
+            "a legacy initialized desktop install still needs the graphical one-time choice"
+        );
+        assert_eq!(
+            choose_default_invocation(None, false, true),
+            DefaultInvocation::Init,
+            "a headless first launch must never attempt to open a window"
+        );
+        assert_eq!(
+            choose_default_invocation(Some(InterfacePreference::Gui), true, false),
+            DefaultInvocation::Gui
+        );
+        assert_eq!(
+            choose_default_invocation(Some(InterfacePreference::Gui), false, true),
+            DefaultInvocation::Init
+        );
+        assert_eq!(
+            choose_default_invocation(Some(InterfacePreference::Gui), true, true),
+            DefaultInvocation::CliHome
+        );
+        assert_eq!(
+            choose_default_invocation(Some(InterfacePreference::Cli), true, false),
+            DefaultInvocation::CliHome
+        );
+        assert_eq!(
+            choose_default_invocation(Some(InterfacePreference::Cli), false, false),
+            DefaultInvocation::Init
+        );
+    }
+
+    #[test]
+    fn bare_launcher_uses_real_clap_defaults_for_init() {
+        let args = launcher_init_args().unwrap();
+        assert_eq!(args.language, "en");
+        assert!(!args.non_interactive);
+        assert!(!args.gui);
+        assert!(!args.cli);
+    }
 }

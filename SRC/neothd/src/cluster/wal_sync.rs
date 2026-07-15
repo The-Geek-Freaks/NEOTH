@@ -9,37 +9,32 @@
 //!   **Default-deny** — any unrecognised code is `DoNotGossip`. This is what
 //!   keeps a gossip broadcast from ever leaking permissions, profile PII,
 //!   consent, raw conversation text, or WAL-structure events to a peer.
-//! - **Send** ([`GossipState::build_outbound`]): wrap a replicable local WAL
-//!   frame in a [`GossipFrame`] (VectorClock tick + stable frame identity). Returns
-//!   `None` for a non-replicable event — the ACL on the emit side.
-//! - **Receive** ([`GossipState::accept_inbound`]): `evaluate_acceptance`
-//!   (tag/budget/dedup) PLUS a defence-in-depth band re-check on the payload's
-//!   own event_type (a buggy/malicious sender could mis-tag a DoNotGossip
-//!   event), then dedup-update + VC merge.
-//!
-//! - **Persist** ([`ingest_foreign_event`], G02-CLUSTER-02): an accepted frame
-//!   is written to the `idx_foreign_events` table (`(origin_peer_pk,
-//!   origin_seq)` UNIQUE → idempotent), then [`GossipState::commit_inbound`]
-//!   records the dedup identity + merges the sender's VC only after the DB
-//!   write confirms. This is the failover backup-at-rest: a peer's replicable
-//!   events survive on this node if the peer's disk dies. Queryable via
-//!   [`list_foreign_events`] / `neoth cluster events`. Both peeroxide and the
-//!   opt-in iroh transport use the same persistence writer and only advance the
-//!   dedup state after a successful durable handoff.
-//! - **Restore** ([`apply_restore_frame`]): `neoth cluster restore` applies a
-//!   consent-gated same-origin export through an explicit conflict matrix.
-//!   Cross-peer local row ids are never guessed; multiplicative decay is bound
-//!   to durable `(origin_peer_pk, origin_seq)` markers for exactly-once replay.
+//! - **Production send/receive/persist** ([`super::durable_sync`]): both
+//!   peeroxide and iroh use one SQLite-backed state machine. It stages one exact
+//!   frame per destination, accepts only contiguous authenticated sequences,
+//!   commits canonical content and receipts atomically, and advances a cursor
+//!   only on the receiver's exact post-commit ACK.
+//! - **Legacy compatibility helpers** ([`GossipState`],
+//!   [`ingest_foreign_event`], [`apply_restore_frame`]) remain for old exports
+//!   and focused policy tests; production protocol-v5 transport does not use
+//!   their in-memory dedup state.
+//! - **Restore** ([`apply_restore_envelope`]): canonical memory and ground-truth
+//!   snapshots allocate receiver-local ids through a durable origin/content
+//!   map. A peer-local numeric id is never guessed.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use rusqlite::OptionalExtension as _;
 
 use super::PeerPubkey;
 use super::gossip::{GossipPolicy, GossipTag, ReplayBudget};
-use super::gossip_wire::{GossipAcceptance, GossipFrame, VectorClock};
+use super::gossip_wire::{
+    GossipAcceptance, GossipFrame, GroundTruthSnapshot, SYNC_ENVELOPE_VERSION,
+    SYNC_PROTOCOL_VERSION, SyncContent, SyncEnvelope, VectorClock,
+};
 use super::heartbeat::{FrameBody, FrameKind, WireFrame};
 use super::peer_streams::PeerStreamRegistry;
 use crate::wal::writer::WalWriterHandle;
@@ -47,10 +42,6 @@ use crate::wal::writer::WalWriterHandle;
 /// Gossip anti-entropy tick interval. A peer offline > ReplayBudget re-pairs;
 /// 30s keeps convergence prompt without flooding the bounded outbound queue.
 const GOSSIP_TICK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-/// Max replicable frames broadcast per tick — bounds a post-reconnect burst
-/// against the per-peer OUTBOUND_QUEUE_DEPTH (64).
-const GOSSIP_BATCH_MAX: usize = 32;
-
 /// How a WAL event_type may cross the cluster boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplicationClass {
@@ -235,22 +226,33 @@ impl GossipState {
         if !is_replicable_ext(event_type, event_subtype, policy) {
             return None;
         }
-        use sha2::{Digest as _, Sha256};
-
         self.vc.tick(self_id);
-        let digest = Sha256::digest(&payload);
-        let event_seq = u64::from_be_bytes(
-            digest[..8]
-                .try_into()
-                .expect("SHA-256 prefix is exactly eight bytes"),
-        );
+        let event_seq = self.vc.get(self_id);
+        use sha2::Digest as _;
+        let envelope = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: format!(
+                "metadata:{}",
+                restore_hex_digest(&sha2::Sha256::digest(&payload))
+            ),
+            updated_at_unix: timestamp_unix,
+            content: SyncContent::Metadata {
+                event_type,
+                event_subtype,
+                wal_frame: payload.clone(),
+            },
+        };
+        let content_sha256 = envelope.content_sha256();
         Some(GossipFrame {
+            protocol_version: SYNC_PROTOCOL_VERSION,
             vector_clock: self.vc.clone(),
             origin: self_id.clone(),
             event_seq,
+            content_sha256,
             timestamp_unix,
             tag: GossipTag::Replicate,
             payload,
+            envelope,
         })
     }
 
@@ -406,8 +408,8 @@ pub fn collect_gossipable_frames(
 /// identities make every wrap-around retry idempotent at the receiver.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GossipWalCursor {
-    segment: Option<PathBuf>,
-    offset: usize,
+    pub(crate) segment: Option<PathBuf>,
+    pub(crate) offset: usize,
 }
 
 /// Read the next bounded anti-entropy batch without blocking Tokio's executor
@@ -417,25 +419,19 @@ pub async fn read_gossipable_batch(
     cursor: &mut GossipWalCursor,
     policy: &GossipPolicy,
     max: usize,
-) -> Vec<(u8, Vec<u8>)> {
+) -> anyhow::Result<Vec<(u8, Vec<u8>)>> {
     let wal_dir = wal_dir.to_path_buf();
     let mut next_cursor = cursor.clone();
     let policy = policy.clone();
-    match tokio::task::spawn_blocking(move || {
+    let (frames, next_cursor) = tokio::task::spawn_blocking(move || {
         let frames = collect_gossipable_from_wal_dir(&wal_dir, &mut next_cursor, &policy, max);
         (frames, next_cursor)
     })
     .await
-    {
-        Ok((frames, next_cursor)) => {
-            *cursor = next_cursor;
-            frames
-        }
-        Err(error) => {
-            tracing::warn!(%error, "cluster anti-entropy WAL scan task failed");
-            Vec::new()
-        }
-    }
+    .context("cluster anti-entropy WAL scan task panicked")?;
+    let frames = frames?;
+    *cursor = next_cursor;
+    Ok(frames)
 }
 
 fn collect_gossipable_from_wal_dir(
@@ -443,34 +439,34 @@ fn collect_gossipable_from_wal_dir(
     cursor: &mut GossipWalCursor,
     policy: &GossipPolicy,
     max: usize,
-) -> Vec<(u8, Vec<u8>)> {
+) -> anyhow::Result<Vec<(u8, Vec<u8>)>> {
     if max == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let mut segments: Vec<PathBuf> = match std::fs::read_dir(wal_dir) {
-        Ok(entries) => entries
-            .filter_map(|entry| match entry {
-                Ok(entry) => Some(entry.path()),
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        path = %wal_dir.display(),
-                        "cluster anti-entropy could not enumerate a WAL directory entry"
-                    );
-                    None
-                }
-            })
-            .filter(|path| path.extension().is_some_and(|ext| ext == "wal"))
-            .collect(),
-        Err(error) => {
-            tracing::warn!(%error, path = %wal_dir.display(), "cluster anti-entropy WAL directory read failed");
-            return Vec::new();
+    let entries = std::fs::read_dir(wal_dir).with_context(|| {
+        format!(
+            "cluster anti-entropy cannot read WAL directory {}",
+            wal_dir.display()
+        )
+    })?;
+    let mut segments = Vec::new();
+    for entry in entries {
+        let path = entry
+            .with_context(|| {
+                format!(
+                    "cluster anti-entropy cannot enumerate WAL directory {}",
+                    wal_dir.display()
+                )
+            })?
+            .path();
+        if path.extension().is_some_and(|ext| ext == "wal") {
+            segments.push(path);
         }
-    };
+    }
     segments.sort();
     if segments.is_empty() {
         *cursor = GossipWalCursor::default();
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let start_index = cursor
@@ -489,60 +485,59 @@ fn collect_gossipable_from_wal_dir(
         let index = (start_index + visited) % segments.len();
         let path = &segments[index];
         let offset = if visited == 0 { start_offset } else { 0 };
-        let raw = match std::fs::read(path) {
-            Ok(raw) => raw,
-            Err(error) => {
-                tracing::warn!(%error, path = %path.display(), "cluster anti-entropy segment read failed");
-                continue;
-            }
-        };
-        if crate::wal::segment_header::parse_segment_header(&raw).is_err() {
-            tracing::warn!(path = %path.display(), "cluster anti-entropy rejected an invalid segment header");
-            continue;
-        }
-        let (header_len, logical) = match crate::wal::compaction::logical_segment_bytes(&raw) {
-            Ok(logical) => logical,
-            Err(error) => {
-                tracing::warn!(%error, path = %path.display(), "cluster anti-entropy could not reconstruct sealed segment");
-                continue;
-            }
-        };
-        let Some(body) = logical.get(header_len..) else {
-            tracing::warn!(
-                path = %path.display(),
-                header_len,
-                logical_len = logical.len(),
-                "cluster anti-entropy rejected a truncated logical segment"
-            );
-            continue;
-        };
+        let raw = std::fs::read(path).with_context(|| {
+            format!(
+                "cluster anti-entropy cannot read segment {}",
+                path.display()
+            )
+        })?;
+        crate::wal::segment_header::parse_segment_header(&raw).with_context(|| {
+            format!(
+                "cluster anti-entropy rejected segment header {}",
+                path.display()
+            )
+        })?;
+        let (header_len, logical) = crate::wal::compaction::logical_segment_bytes(&raw)
+            .with_context(|| {
+                format!(
+                    "cluster anti-entropy cannot reconstruct segment {}",
+                    path.display()
+                )
+            })?;
+        let body = logical.get(header_len..).with_context(|| {
+            format!(
+                "cluster anti-entropy segment {} is shorter than its header ({header_len} > {})",
+                path.display(),
+                logical.len()
+            )
+        })?;
         let remaining = max.saturating_sub(out.len());
         let (mut frames, next_offset) = collect_gossipable_frames(body, offset, policy, remaining);
         out.append(&mut frames);
 
-        if next_offset > offset && next_offset < body.len() && out.len() >= max {
+        if next_offset < body.len() {
+            // A live writer may currently have a torn tail; a sealed segment
+            // may be corrupt. In either case retain the exact unread offset.
             cursor.segment = Some(path.clone());
             cursor.offset = next_offset;
-            return out;
+            return Ok(out);
         }
 
-        // Tail reached, or a torn/corrupt frame stopped this segment. Advance
-        // to the next segment instead of permanently pinning anti-entropy; the
-        // next full cycle retries this path after the writer has completed it.
+        // A completely decoded segment can advance to the next sorted segment.
         let next_index = (index + 1) % segments.len();
         cursor.segment = Some(segments[next_index].clone());
         cursor.offset = 0;
         if out.len() >= max {
-            return out;
+            return Ok(out);
         }
     }
-    out
+    Ok(out)
 }
 
-/// SL-01b send path: spawn the anti-entropy gossip tick. Every
+/// Protocol-v5 peeroxide send path. Every
 /// [`GOSSIP_TICK_INTERVAL`] it cycles the complete WAL segment history,
-/// band-filters replicable frames, wraps them in [`GossipFrame`]s
-/// (VectorClock-tagged), and broadcasts to paired peers. Read-only consumer of
+/// band-filters replicable frames, stages one exact durable [`GossipFrame`] per
+/// destination, and queues it to paired peers. Read-only consumer of
 /// the WAL (NOT a write hook
 /// — the per-peer read loop is read-to-completion and can't take an append
 /// callback). Returns the task handle so the daemon can abort it on shutdown.
@@ -558,7 +553,6 @@ pub fn spawn_gossip_tick(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let policy = GossipPolicy::default();
-        let mut state = GossipState::new();
         // The seed path's parent is the segment directory. The shared cursor
         // cycles every live and sealed segment, so rollover cannot create an
         // unsynchronised historical gap.
@@ -566,10 +560,11 @@ pub fn spawn_gossip_tick(
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
-        let mut cursor = GossipWalCursor {
-            segment: Some(segment_path),
-            offset: 0,
-        };
+        let db_path = wal_dir
+            .parent()
+            .map(|home| home.join("views.db"))
+            .unwrap_or_else(|| PathBuf::from("views.db"));
+        let durable = super::durable_sync::DurableMeshSync::new(db_path);
         let mut ticker = tokio::time::interval(GOSSIP_TICK_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -578,33 +573,37 @@ pub fn spawn_gossip_tick(
             if peer_streams.peer_count() == 0 {
                 continue;
             }
-            let frames =
-                read_gossipable_batch(&wal_dir, &mut cursor, &policy, GOSSIP_BATCH_MAX).await;
-            if frames.is_empty() {
-                continue;
-            }
-            let frame_count = frames.len();
-            for (event_type, raw) in frames {
-                let Some(ts) = gossip_payload_timestamp_unix(&raw) else {
-                    continue;
-                };
-                let event_subtype = gossip_payload_event_meta(&raw)
-                    .map(|(_, subtype)| subtype)
-                    .unwrap_or(0);
-                if let Some(gframe) =
-                    state.build_outbound(&self_id, event_type, event_subtype, raw, ts, &policy)
+            let mut queued = 0usize;
+            for peer_pk in peer_streams.connected_peers() {
+                let peer = PeerPubkey::new(peer_pk.clone());
+                match durable
+                    .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy)
+                    .await
                 {
-                    let wf = WireFrame {
-                        kind: FrameKind::Gossip,
-                        sequence: gframe.event_seq,
-                        sent_unix_ms: now_unix_ms(),
-                        peer_id: self_id.as_str().to_string(),
-                        body: FrameBody::Gossip(gframe),
-                    };
-                    let _ = peer_streams.broadcast(&wf);
+                    Ok(Some(prepared)) => {
+                        let wf = WireFrame {
+                            kind: FrameKind::Gossip,
+                            sequence: prepared.frame.event_seq,
+                            sent_unix_ms: now_unix_ms(),
+                            peer_id: self_id.as_str().to_string(),
+                            body: FrameBody::Gossip(prepared.frame),
+                        };
+                        if peer_streams.send_to(&peer_pk, wf).is_ok() {
+                            queued += 1;
+                            if let Err(error) = durable.record_send_attempt(&peer) {
+                                tracing::warn!(%error, peer = %peer_pk, "mesh send queued but attempt counter could not be recorded");
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, peer = %peer_pk, "durable mesh prepare failed closed");
+                    }
                 }
             }
-            emit_gossip_sent_wal(&writer, frame_count, peer_streams.peer_count());
+            if queued > 0 {
+                emit_gossip_sent_wal(&writer, queued, peer_streams.peer_count());
+            }
         }
     })
 }
@@ -741,33 +740,33 @@ pub fn ingest_foreign_event(
 /// [`spawn_foreign_persist_writer`] task owns the DB connection and drains
 /// them. Keeps the blocking DB open OFF the transport hot-path (a sync
 /// `open`-per-frame inside a tokio task starves the runtime — panel finding).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ForeignPersistJob {
-    pub origin_peer_pk: String,
-    pub origin_seq: u64,
-    pub event_type: u8,
-    pub payload: Vec<u8>,
-    pub received_at: i64,
+    pub authenticated_peer: PeerPubkey,
+    pub frame: GossipFrame,
+    pub policy: GossipPolicy,
+    pub reply: tokio::sync::oneshot::Sender<
+        std::result::Result<super::durable_sync::InboundCommit, String>,
+    >,
 }
 
-/// Sender half handed to a transport's accept path. `try_send` is
-/// non-blocking; a full channel drops the job (gossip is best-effort — the
-/// sender re-delivers via its replay budget). The transport commits the
-/// dedup state ONLY on a successful send (persist-then-commit).
+/// Sender half handed to a transport's accept path. A full/closed channel
+/// returns a non-ACK verdict; the origin retains its exact pending frame and
+/// retries without advancing its cursor.
 pub type ForeignPersistTx = tokio::sync::mpsc::Sender<ForeignPersistJob>;
 
 /// DES-13 — spawn the single foreign-event DB writer. Returns the sender
 /// (give to the transport's `gossip_handler`) + the JoinHandle (the daemon
 /// keeps it alive and drops the sender on shutdown → the loop ends). The
 /// connection is opened lazily inside the blocking task (rusqlite
-/// `Connection` is `!Send`). A per-job insert failure is logged, not fatal —
-/// `INSERT OR IGNORE` also makes a re-delivered frame a no-op.
+/// `Connection` is `!Send`). Every job gets its commit result over a oneshot;
+/// transports emit an ACK only for a post-commit `Committed`/`Duplicate` result.
 pub fn spawn_foreign_persist_writer(
     db_path: std::path::PathBuf,
 ) -> (ForeignPersistTx, tokio::task::JoinHandle<()>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<ForeignPersistJob>(256);
     let handle = tokio::task::spawn_blocking(move || {
-        let conn = match crate::memory::store::open(&db_path) {
+        let mut conn = match crate::memory::store::open(&db_path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!(error = %e, db = %db_path.display(),
@@ -776,17 +775,18 @@ pub fn spawn_foreign_persist_writer(
             }
         };
         while let Some(job) = rx.blocking_recv() {
-            if let Err(e) = ingest_foreign_event(
-                &conn,
-                &job.origin_peer_pk,
-                job.origin_seq,
-                job.event_type,
-                &job.payload,
-                job.received_at,
-            ) {
-                tracing::warn!(error = %e, peer = %job.origin_peer_pk, seq = job.origin_seq,
-                    "foreign-persist writer: ingest failed (frame not backed up; sender may re-deliver)");
+            let result = super::durable_sync::persist_inbound_on_conn(
+                &mut conn,
+                &job.authenticated_peer,
+                &job.frame,
+                &job.policy,
+            )
+            .map_err(|error| error.to_string());
+            if result.is_err() {
+                tracing::warn!(peer = %job.authenticated_peer.as_str(), seq = job.frame.event_seq,
+                    "foreign-persist writer: durable commit failed (ACK withheld)");
             }
+            let _ = job.reply.send(result);
         }
         tracing::debug!("foreign-persist writer: sender dropped, loop exited");
     });
@@ -802,6 +802,9 @@ pub struct ForeignEventRow {
     pub event_type: u8,
     pub payload: Vec<u8>,
     pub received_at: i64,
+    pub envelope_version: u16,
+    pub content_sha256: Option<[u8; 32]>,
+    pub content_payload: Option<Vec<u8>>,
 }
 
 /// Query `idx_foreign_events` with an optional peer filter.
@@ -825,14 +828,16 @@ pub fn list_foreign_events(
 ) -> anyhow::Result<Vec<ForeignEventRow>> {
     let sql = match origin_filter {
         Some(_) => {
-            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at \
+            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at, \
+                    envelope_version, content_sha256, content_payload \
              FROM idx_foreign_events \
              WHERE origin_peer_pk = ?1 \
              ORDER BY received_at DESC \
              LIMIT ?2"
         }
         None => {
-            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at \
+            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at, \
+                    envelope_version, content_sha256, content_payload \
              FROM idx_foreign_events \
              ORDER BY received_at DESC \
              LIMIT ?1"
@@ -860,14 +865,42 @@ pub fn list_foreign_events(
 }
 
 fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ForeignEventRow> {
+    let origin_seq =
+        u64::try_from(r.get::<_, i64>(2)?).map_err(|error| foreign_row_conversion(2, error))?;
+    let event_type =
+        u8::try_from(r.get::<_, i64>(3)?).map_err(|error| foreign_row_conversion(3, error))?;
+    let envelope_version =
+        u16::try_from(r.get::<_, i64>(6)?).map_err(|error| foreign_row_conversion(6, error))?;
+    let content_sha256 = r
+        .get::<_, Option<Vec<u8>>>(7)?
+        .map(|digest| {
+            digest
+                .try_into()
+                .map_err(|_| foreign_row_conversion(7, "content digest is not 32 bytes"))
+        })
+        .transpose()?;
     Ok(ForeignEventRow {
         id: r.get(0)?,
         origin_peer_pk: r.get(1)?,
-        origin_seq: r.get::<_, i64>(2)? as u64,
-        event_type: r.get::<_, i64>(3)? as u8,
+        origin_seq,
+        event_type,
         payload: r.get(4)?,
         received_at: r.get(5)?,
+        envelope_version,
+        content_sha256,
+        content_payload: r.get(8)?,
     })
+}
+
+fn foreign_row_conversion(
+    column: usize,
+    error: impl std::fmt::Display + Send + Sync + 'static,
+) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        rusqlite::types::Type::Integer,
+        std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()).into(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -917,6 +950,553 @@ impl std::fmt::Display for RestoreSkipReason {
             Self::MalformedInnerPayload => f.write_str("malformed inner JSON payload"),
         }
     }
+}
+
+/// Restore one canonical v5 mesh envelope without interpreting a peer-local
+/// SQLite id. The durable `(origin, content_id) -> local row` map allocates a
+/// local id once and is the only route used for later updates.
+pub fn apply_restore_envelope(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    origin_seq: u64,
+    envelope: &SyncEnvelope,
+    expected_digest: [u8; 32],
+    dry_run: bool,
+) -> anyhow::Result<RestoreOutcome> {
+    use rusqlite::OptionalExtension as _;
+    use sha2::{Digest as _, Sha256};
+
+    anyhow::ensure!(
+        origin_seq > 0,
+        "canonical mesh restore sequence must be positive"
+    );
+    anyhow::ensure!(
+        envelope.version == SYNC_ENVELOPE_VERSION,
+        "unsupported canonical mesh envelope version {}",
+        envelope.version
+    );
+    anyhow::ensure!(
+        envelope.content_sha256() == expected_digest,
+        "canonical mesh restore digest mismatch"
+    );
+
+    let (kind, stable_id) = match &envelope.content {
+        SyncContent::Memory(snapshot) => {
+            anyhow::ensure!(
+                snapshot.importance_micros <= 1_000_000,
+                "invalid memory importance"
+            );
+            anyhow::ensure!(
+                snapshot.ts_ns >= 0 && snapshot.last_access_ts >= 0,
+                "invalid memory timestamp"
+            );
+            anyhow::ensure!(
+                matches!(snapshot.tier.as_str(), "hot" | "warm" | "cold"),
+                "invalid memory tier"
+            );
+            let expected = format!(
+                "memory:{}",
+                restore_hex_digest(&Sha256::digest(snapshot.text.as_bytes()))
+            );
+            anyhow::ensure!(
+                snapshot.stable_id == expected,
+                "canonical memory id mismatch"
+            );
+            ("memory", snapshot.stable_id.as_str())
+        }
+        SyncContent::GroundTruth(snapshot) => {
+            anyhow::ensure!(
+                !snapshot.statement.trim().is_empty()
+                    && !snapshot.source.trim().is_empty()
+                    && snapshot.source.len() <= 256
+                    && !snapshot.scope.trim().is_empty(),
+                "invalid ground-truth identity/provenance"
+            );
+            anyhow::ensure!(
+                snapshot.asserted_at >= 0
+                    && snapshot.revoked_at.is_none_or(|timestamp| timestamp >= 0),
+                "invalid ground-truth timestamp"
+            );
+            anyhow::ensure!(
+                snapshot.confidence_micros <= 1_000_000,
+                "invalid ground-truth confidence"
+            );
+            anyhow::ensure!(
+                matches!(
+                    snapshot.fact_state.as_str(),
+                    "raw" | "candidate" | "verified" | "superseded" | "contradicted" | "deprecated"
+                ),
+                "invalid ground-truth state"
+            );
+            anyhow::ensure!(
+                matches!(
+                    snapshot.maturity.as_str(),
+                    "emerging" | "working" | "stable"
+                ),
+                "invalid ground-truth maturity"
+            );
+            anyhow::ensure!(
+                snapshot.maturity
+                    == crate::memory::groundtruth::maturity_for(snapshot.confirmed_count),
+                "ground-truth maturity/confirmation count mismatch"
+            );
+            anyhow::ensure!(
+                snapshot.source_weight.len() <= 64
+                    && snapshot.source_weight.iter().all(|(source, count)| !source
+                        .trim()
+                        .is_empty()
+                        && source.len() <= 256
+                        && *count > 0),
+                "invalid ground-truth source provenance"
+            );
+            let evidence: HashSet<&str> = snapshot
+                .evidence_content_ids
+                .iter()
+                .map(String::as_str)
+                .collect();
+            anyhow::ensure!(
+                snapshot.evidence_content_ids.len()
+                    <= crate::memory::groundtruth::MAX_EVIDENCE_BACKLINKS
+                    && evidence.len() == snapshot.evidence_content_ids.len()
+                    && snapshot
+                        .evidence_content_ids
+                        .iter()
+                        .all(|content_id| restore_is_canonical_memory_id(content_id)),
+                "invalid ground-truth evidence provenance"
+            );
+            let mut identity = snapshot.scope.as_bytes().to_vec();
+            identity.push(0);
+            identity.extend_from_slice(snapshot.statement.as_bytes());
+            let expected = format!(
+                "ground_truth:{}",
+                restore_hex_digest(&Sha256::digest(identity))
+            );
+            anyhow::ensure!(
+                snapshot.stable_id == expected,
+                "canonical ground-truth id mismatch"
+            );
+            ("ground_truth", snapshot.stable_id.as_str())
+        }
+        SyncContent::Metadata { .. } => {
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::NoiseEventType));
+        }
+        SyncContent::RawPrivate { .. } => {
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::DoNotGossip));
+        }
+    };
+    anyhow::ensure!(
+        envelope.content_id == stable_id,
+        "canonical mesh content_id does not match stable snapshot id"
+    );
+
+    let mapping = conn
+        .query_row(
+            "SELECT local_kind,local_row_id,last_origin_seq,content_sha256 \
+             FROM mesh_sync_restore_map WHERE origin_peer_pk=?1 AND content_id=?2",
+            rusqlite::params![origin_peer_pk, envelope.content_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((mapped_kind, local_id, last_seq, last_digest)) = &mapping {
+        anyhow::ensure!(
+            mapped_kind == kind,
+            "canonical restore kind changed for stable id"
+        );
+        anyhow::ensure!(
+            *local_id > 0 && *last_seq > 0,
+            "corrupt canonical restore map"
+        );
+        if u64::try_from(*last_seq)? > origin_seq {
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent));
+        }
+        if u64::try_from(*last_seq)? == origin_seq {
+            anyhow::ensure!(
+                last_digest.as_slice() == expected_digest.as_slice(),
+                "same canonical restore sequence carries a different digest"
+            );
+            return Ok(RestoreOutcome::Skipped(RestoreSkipReason::Idempotent));
+        }
+    }
+    if dry_run {
+        return Ok(RestoreOutcome::Applied);
+    }
+
+    const SAVEPOINT: &str = "neoth_canonical_mesh_restore";
+    conn.execute_batch(&format!("SAVEPOINT {SAVEPOINT}"))?;
+    let result = (|| -> anyhow::Result<()> {
+        let ground_truth_fields = match &envelope.content {
+            SyncContent::GroundTruth(snapshot) => Some(prepare_ground_truth_restore_fields(
+                conn,
+                origin_peer_pk,
+                &envelope.content_id,
+                snapshot,
+            )?),
+            _ => None,
+        };
+        let local_row_id = match (&envelope.content, &mapping) {
+            (SyncContent::Memory(snapshot), existing) => {
+                let local_id = match existing {
+                    Some((_, local_id, _, _)) => *local_id,
+                    None => {
+                        let current_max: i64 = conn.query_row(
+                            "SELECT COALESCE(MAX(event_id),0) FROM ( \
+                                 SELECT event_id FROM idx_episode UNION ALL \
+                                 SELECT event_id FROM idx_consolidated WHERE event_id IS NOT NULL UNION ALL \
+                                 SELECT event_id FROM idx_longterm \
+                             )",
+                            [],
+                            |row| row.get(0),
+                        )?;
+                        current_max
+                            .checked_add(1)
+                            .filter(|next| *next > 0)
+                            .context("local memory id space exhausted")?
+                    }
+                };
+
+                // The stable mapping owns one receiver-local event id. Move it
+                // transactionally between tiers instead of flattening every
+                // restored snapshot into hot memory.
+                conn.execute("DELETE FROM idx_episode WHERE event_id=?1", [local_id])?;
+                conn.execute("DELETE FROM idx_consolidated WHERE event_id=?1", [local_id])?;
+                conn.execute("DELETE FROM idx_longterm WHERE event_id=?1", [local_id])?;
+                let importance = f64::from(snapshot.importance_micros) / 1_000_000.0;
+                let access_count = i64::try_from(snapshot.access_count)?;
+                match snapshot.tier.as_str() {
+                    "hot" => {
+                        conn.execute(
+                            "INSERT INTO idx_episode \
+                             (event_id,event_type,ts_ns,text,text_hash,importance,last_access_ts,access_count,trust) \
+                             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,2)",
+                            rusqlite::params![
+                                local_id,
+                                i64::from(crate::wal::events::EVENT_TYPE_RAW_TEXT),
+                                snapshot.ts_ns,
+                                snapshot.text,
+                                snapshot.text_hash,
+                                importance,
+                                snapshot.last_access_ts,
+                                access_count,
+                            ],
+                        )?;
+                    }
+                    "warm" => {
+                        use chrono::{DateTime, Utc};
+                        let day = DateTime::<Utc>::from_timestamp(
+                            snapshot.ts_ns.div_euclid(1_000_000_000),
+                            0,
+                        )
+                        .context("canonical warm-memory timestamp is out of range")?
+                        .format("%Y-%m-%d")
+                        .to_string();
+                        conn.execute(
+                            "INSERT INTO idx_consolidated \
+                             (kind,day,event_id,text,text_hash,importance,consolidated_ts,last_access_ts,access_count) \
+                             VALUES ('retained',?1,?2,?3,?4,?5,?6,?7,?8)",
+                            rusqlite::params![
+                                day,
+                                local_id,
+                                snapshot.text,
+                                snapshot.text_hash,
+                                importance,
+                                snapshot.ts_ns,
+                                snapshot.last_access_ts,
+                                access_count,
+                            ],
+                        )?;
+                    }
+                    "cold" => {
+                        conn.execute(
+                            "INSERT INTO idx_longterm \
+                             (event_id,text,text_hash,importance,promoted_ts,last_access_ts,archive_path,access_count) \
+                             VALUES (?1,?2,?3,?4,?5,?6,NULL,?7)",
+                            rusqlite::params![
+                                local_id,
+                                snapshot.text,
+                                snapshot.text_hash,
+                                importance,
+                                snapshot.ts_ns,
+                                snapshot.last_access_ts,
+                                access_count,
+                            ],
+                        )?;
+                    }
+                    _ => unreachable!("memory tier validated before restore"),
+                }
+                local_id
+            }
+            (SyncContent::GroundTruth(snapshot), Some((_, local_id, _, _))) => {
+                let (source, source_weight, evidence) = ground_truth_fields
+                    .as_ref()
+                    .context("missing canonical ground-truth restore fields")?;
+                let changed = conn.execute(
+                    "UPDATE idx_groundtruth SET statement=?2,source=?3,scope=?4,asserted_at=?5, \
+                     revoked_at=?6,fact_state=?7,source_weight=?8,confidence=?9,evidence=?10, \
+                     maturity=?11,confirmed_count=?12 WHERE id=?1",
+                    rusqlite::params![
+                        local_id,
+                        snapshot.statement,
+                        source,
+                        snapshot.scope,
+                        snapshot.asserted_at,
+                        snapshot.revoked_at,
+                        snapshot.fact_state,
+                        source_weight,
+                        f64::from(snapshot.confidence_micros) / 1_000_000.0,
+                        evidence,
+                        snapshot.maturity,
+                        i64::from(snapshot.confirmed_count),
+                    ],
+                )?;
+                anyhow::ensure!(changed == 1, "mapped local ground-truth row is missing");
+                *local_id
+            }
+            (SyncContent::GroundTruth(snapshot), None) => {
+                let (source, source_weight, evidence) = ground_truth_fields
+                    .as_ref()
+                    .context("missing canonical ground-truth restore fields")?;
+                conn.execute(
+                    "INSERT INTO idx_groundtruth \
+                     (statement,source,scope,asserted_at,revoked_at,fact_state,source_weight, \
+                      confidence,evidence,maturity,confirmed_count) \
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    rusqlite::params![
+                        snapshot.statement,
+                        source,
+                        snapshot.scope,
+                        snapshot.asserted_at,
+                        snapshot.revoked_at,
+                        snapshot.fact_state,
+                        source_weight,
+                        f64::from(snapshot.confidence_micros) / 1_000_000.0,
+                        evidence,
+                        snapshot.maturity,
+                        i64::from(snapshot.confirmed_count),
+                    ],
+                )?;
+                conn.last_insert_rowid()
+            }
+            (SyncContent::Metadata { .. } | SyncContent::RawPrivate { .. }, _) => unreachable!(),
+        };
+        conn.execute(
+            "INSERT INTO mesh_sync_restore_map \
+             (origin_peer_pk,content_id,local_kind,local_row_id,last_origin_seq,content_sha256,restored_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7) \
+             ON CONFLICT(origin_peer_pk,content_id) DO UPDATE SET \
+             local_kind=excluded.local_kind,local_row_id=excluded.local_row_id, \
+             last_origin_seq=excluded.last_origin_seq,content_sha256=excluded.content_sha256, \
+             restored_at=excluded.restored_at",
+            rusqlite::params![
+                origin_peer_pk,
+                envelope.content_id,
+                kind,
+                local_row_id,
+                i64::try_from(origin_seq)?,
+                expected_digest.as_slice(),
+                crate::time::now_unix_i64(),
+            ],
+        )?;
+        if matches!(&envelope.content, SyncContent::Memory(_)) {
+            resolve_restored_memory_evidence(
+                conn,
+                origin_peer_pk,
+                &envelope.content_id,
+                local_row_id,
+            )?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => {
+            conn.execute_batch(&format!("RELEASE SAVEPOINT {SAVEPOINT}"))?;
+            Ok(RestoreOutcome::Applied)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch(&format!("ROLLBACK TO SAVEPOINT {SAVEPOINT}"));
+            let _ = conn.execute_batch(&format!("RELEASE SAVEPOINT {SAVEPOINT}"));
+            Err(error)
+        }
+    }
+}
+
+fn prepare_ground_truth_restore_fields(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    ground_truth_content_id: &str,
+    snapshot: &GroundTruthSnapshot,
+) -> anyhow::Result<(String, String, String)> {
+    let source = format!("mesh:{origin_peer_pk}:{}", snapshot.source);
+    let source_weight: BTreeMap<String, u32> = snapshot
+        .source_weight
+        .iter()
+        .map(|(source, count)| (format!("mesh:{origin_peer_pk}:{source}"), *count))
+        .collect();
+    let source_weight = serde_json::to_string(&source_weight)
+        .context("serialize canonical ground-truth source provenance")?;
+
+    conn.execute(
+        "DELETE FROM mesh_sync_restore_evidence \
+         WHERE origin_peer_pk=?1 AND ground_truth_content_id=?2",
+        rusqlite::params![origin_peer_pk, ground_truth_content_id],
+    )?;
+    let mut local_evidence = Vec::with_capacity(snapshot.evidence_content_ids.len());
+    for (position, evidence_content_id) in snapshot.evidence_content_ids.iter().enumerate() {
+        let mapping = conn
+            .query_row(
+                "SELECT local_kind,local_row_id FROM mesh_sync_restore_map \
+                 WHERE origin_peer_pk=?1 AND content_id=?2",
+                rusqlite::params![origin_peer_pk, evidence_content_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        let local_row_id = match mapping {
+            Some((kind, local_row_id)) => {
+                anyhow::ensure!(
+                    kind == "memory" && local_row_id > 0,
+                    "canonical evidence mapping has the wrong kind or id"
+                );
+                anyhow::ensure!(
+                    local_memory_row_exists(conn, local_row_id)?,
+                    "canonical evidence mapping points to a missing memory row"
+                );
+                local_evidence.push(local_row_id);
+                Some(local_row_id)
+            }
+            None => None,
+        };
+        conn.execute(
+            "INSERT INTO mesh_sync_restore_evidence \
+             (origin_peer_pk,ground_truth_content_id,evidence_position,evidence_content_id,local_row_id) \
+             VALUES (?1,?2,?3,?4,?5)",
+            rusqlite::params![
+                origin_peer_pk,
+                ground_truth_content_id,
+                i64::try_from(position)?,
+                evidence_content_id,
+                local_row_id,
+            ],
+        )?;
+    }
+    let evidence = serde_json::to_string(&local_evidence)
+        .context("serialize receiver-local ground-truth evidence")?;
+    Ok((source, source_weight, evidence))
+}
+
+fn resolve_restored_memory_evidence(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    evidence_content_id: &str,
+    local_row_id: i64,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        local_memory_row_exists(conn, local_row_id)?,
+        "restored evidence mapping points to a missing memory row"
+    );
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT ground_truth_content_id FROM mesh_sync_restore_evidence \
+         WHERE origin_peer_pk=?1 AND evidence_content_id=?2 \
+         ORDER BY ground_truth_content_id",
+    )?;
+    let ground_truth_ids = statement
+        .query_map(
+            rusqlite::params![origin_peer_pk, evidence_content_id],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(statement);
+    if ground_truth_ids.is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE mesh_sync_restore_evidence SET local_row_id=?3 \
+         WHERE origin_peer_pk=?1 AND evidence_content_id=?2",
+        rusqlite::params![origin_peer_pk, evidence_content_id, local_row_id],
+    )?;
+    for ground_truth_content_id in ground_truth_ids {
+        refresh_restored_ground_truth_evidence(conn, origin_peer_pk, &ground_truth_content_id)?;
+    }
+    Ok(())
+}
+
+fn refresh_restored_ground_truth_evidence(
+    conn: &rusqlite::Connection,
+    origin_peer_pk: &str,
+    ground_truth_content_id: &str,
+) -> anyhow::Result<()> {
+    let (kind, local_ground_truth_id) = conn
+        .query_row(
+            "SELECT local_kind,local_row_id FROM mesh_sync_restore_map \
+             WHERE origin_peer_pk=?1 AND content_id=?2",
+            rusqlite::params![origin_peer_pk, ground_truth_content_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?
+        .context("canonical evidence references an unrestored ground-truth row")?;
+    anyhow::ensure!(
+        kind == "ground_truth" && local_ground_truth_id > 0,
+        "canonical evidence target mapping has the wrong kind or id"
+    );
+    let mut statement = conn.prepare(
+        "SELECT local_row_id FROM mesh_sync_restore_evidence \
+         WHERE origin_peer_pk=?1 AND ground_truth_content_id=?2 AND local_row_id IS NOT NULL \
+         ORDER BY evidence_position",
+    )?;
+    let evidence = statement
+        .query_map(
+            rusqlite::params![origin_peer_pk, ground_truth_content_id],
+            |row| row.get::<_, i64>(0),
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(statement);
+    let evidence = serde_json::to_string(&evidence)
+        .context("serialize resolved receiver-local ground-truth evidence")?;
+    let changed = conn.execute(
+        "UPDATE idx_groundtruth SET evidence=?2 WHERE id=?1",
+        rusqlite::params![local_ground_truth_id, evidence],
+    )?;
+    anyhow::ensure!(
+        changed == 1,
+        "canonical evidence target ground-truth row is missing"
+    );
+    Ok(())
+}
+
+fn local_memory_row_exists(conn: &rusqlite::Connection, local_row_id: i64) -> anyhow::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS( \
+             SELECT 1 FROM idx_episode WHERE event_id=?1 UNION ALL \
+             SELECT 1 FROM idx_consolidated WHERE event_id=?1 UNION ALL \
+             SELECT 1 FROM idx_longterm WHERE event_id=?1 \
+         )",
+        [local_row_id],
+        |row| row.get(0),
+    )
+    .context("validate receiver-local memory evidence row")
+}
+
+fn restore_hex_digest(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn restore_is_canonical_memory_id(content_id: &str) -> bool {
+    content_id.strip_prefix("memory:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 /// Apply a single restored foreign frame to local recall surfaces.
@@ -1406,13 +1986,57 @@ mod tests {
 
         let policy = GossipPolicy::default();
         let mut cursor = GossipWalCursor::default();
-        let first_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1).await;
-        let second_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1).await;
-        let retry_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1).await;
+        let first_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1)
+            .await
+            .unwrap();
+        let second_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1)
+            .await
+            .unwrap();
+        let retry_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1)
+            .await
+            .unwrap();
 
         assert_eq!(first_batch[0].0, 0x90);
         assert_eq!(second_batch[0].0, 0x91);
         assert_eq!(retry_batch[0].0, 0x90, "cursor must wrap for retries");
+    }
+
+    #[tokio::test]
+    async fn anti_entropy_corruption_fails_closed_without_cursor_advance() {
+        use crate::wal::segment_header::SegmentHeader;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("000001.wal");
+        std::fs::write(&path, b"not-a-segment").unwrap();
+        let policy = GossipPolicy::default();
+        let mut cursor = GossipWalCursor::default();
+        let before = cursor.clone();
+
+        let result = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1).await;
+        assert!(result.is_err());
+        assert_eq!(cursor, before, "invalid segment must not move the cursor");
+
+        let frame = fake_frame(0x90);
+        let mut torn = SegmentHeader::new(1, 1, 1, 1, [1; 16])
+            .to_le_bytes()
+            .to_vec();
+        torn.extend_from_slice(&frame);
+        torn.extend_from_slice(&[0_u8; 10]);
+        std::fs::write(&path, torn).unwrap();
+
+        let first = read_gossipable_batch(dir.path(), &mut cursor, &policy, 2)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        let stopped = cursor.clone();
+        let second = read_gossipable_batch(dir.path(), &mut cursor, &policy, 2)
+            .await
+            .unwrap();
+        assert!(second.is_empty());
+        assert_eq!(
+            cursor, stopped,
+            "torn tail must retain its exact unread offset"
+        );
     }
 
     #[test]
@@ -1444,6 +2068,36 @@ mod tests {
         PeerPubkey::new("aa11")
     }
 
+    fn test_gossip_frame(
+        vector_clock: VectorClock,
+        origin: PeerPubkey,
+        event_seq: u64,
+        timestamp_unix: i64,
+        payload: Vec<u8>,
+    ) -> GossipFrame {
+        let envelope = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: format!("test:{event_seq}"),
+            updated_at_unix: timestamp_unix,
+            content: SyncContent::Metadata {
+                event_type: 0x94,
+                event_subtype: 0,
+                wal_frame: payload.clone(),
+            },
+        };
+        GossipFrame {
+            protocol_version: SYNC_PROTOCOL_VERSION,
+            vector_clock,
+            origin,
+            event_seq,
+            content_sha256: envelope.content_sha256(),
+            timestamp_unix,
+            tag: GossipTag::Replicate,
+            payload,
+            envelope,
+        }
+    }
+
     #[test]
     fn build_outbound_drops_non_replicable_returns_some_for_safe() {
         let p = GossipPolicy::default();
@@ -1469,9 +2123,9 @@ mod tests {
         let retry = st
             .build_outbound(&self_pk(), 0x90, 0, vec![9], 1000, &p)
             .expect("same frame remains replicable");
-        assert_eq!(
-            retry.event_seq, f.event_seq,
-            "retries must keep a stable dedup identity"
+        assert!(
+            retry.event_seq > f.event_seq,
+            "ephemeral builder stays monotonic"
         );
     }
 
@@ -1524,14 +2178,7 @@ mod tests {
         let peer = PeerPubkey::new("bb22");
         let mut sender_vc = VectorClock::new();
         sender_vc.tick(&peer);
-        let frame = GossipFrame {
-            vector_clock: sender_vc,
-            origin: peer.clone(),
-            event_seq: 5,
-            timestamp_unix: 2_000_000_000, // within a fresh budget vs a near now
-            tag: GossipTag::Replicate,
-            payload: vec![0],
-        };
+        let frame = test_gossip_frame(sender_vc, peer.clone(), 5, 2_000_000_000, vec![0]);
         let now = 2_000_000_001;
         // First arrival of a replicable-band event ⇒ Accept. CHECK-ONLY:
         // nothing is recorded until the caller confirms persistence
@@ -1571,14 +2218,7 @@ mod tests {
         // band (mis-tagged) is dropped even though the GossipTag says Replicate.
         let mut vc2 = VectorClock::new();
         vc2.tick(&peer);
-        let smuggle = GossipFrame {
-            vector_clock: vc2,
-            origin: peer.clone(),
-            event_seq: 6,
-            timestamp_unix: 2_000_000_000,
-            tag: GossipTag::Replicate,
-            payload: vec![0],
-        };
+        let smuggle = test_gossip_frame(vc2, peer.clone(), 6, 2_000_000_000, vec![0]);
         assert_eq!(
             st.accept_inbound(&smuggle, Some(0xA0), None, &p, now),
             GossipAcceptance::DroppedDoNotGossipTag,
@@ -1588,14 +2228,7 @@ mod tests {
         // correctness assertion for GOLD-FEAT-06 gossip-piggyback.
         let mut vc3 = VectorClock::new();
         vc3.tick(&peer);
-        let snap_frame = GossipFrame {
-            vector_clock: vc3,
-            origin: peer.clone(),
-            event_seq: 7,
-            timestamp_unix: 2_000_000_000,
-            tag: GossipTag::Replicate,
-            payload: vec![0],
-        };
+        let snap_frame = test_gossip_frame(vc3, peer.clone(), 7, 2_000_000_000, vec![0]);
         assert_eq!(
             st.accept_inbound(
                 &snap_frame,
@@ -1610,14 +2243,7 @@ mod tests {
         // LocalSnapshot (0x00/0x04) must be dropped even from a trusted peer.
         let mut vc4 = VectorClock::new();
         vc4.tick(&peer);
-        let local_snap_frame = GossipFrame {
-            vector_clock: vc4,
-            origin: peer.clone(),
-            event_seq: 8,
-            timestamp_unix: 2_000_000_000,
-            tag: GossipTag::Replicate,
-            payload: vec![0],
-        };
+        let local_snap_frame = test_gossip_frame(vc4, peer.clone(), 8, 2_000_000_000, vec![0]);
         assert_eq!(
             st.accept_inbound(&local_snap_frame, Some(0x00), Some(0x04), &p, now),
             GossipAcceptance::DroppedDoNotGossipTag,
@@ -1653,14 +2279,7 @@ mod tests {
             frontier.tick(&pb);
         }
         frontier.tick(&pc);
-        let frame = GossipFrame {
-            vector_clock: frontier.clone(),
-            origin: pa.clone(),
-            event_seq: 7,
-            timestamp_unix: 2_000_000_000,
-            tag: GossipTag::Replicate,
-            payload: vec![0],
-        };
+        let frame = test_gossip_frame(frontier.clone(), pa.clone(), 7, 2_000_000_000, vec![0]);
         let now = 2_000_000_001;
         assert_eq!(
             st.accept_inbound(&frame, Some(0x90), None, &policy, now),
@@ -1696,6 +2315,10 @@ mod tests {
                 event_type      INTEGER NOT NULL,
                 payload         BLOB    NOT NULL,
                 received_at     INTEGER NOT NULL,
+                envelope_version INTEGER NOT NULL DEFAULT 0,
+                content_sha256  BLOB,
+                content_kind    TEXT,
+                content_payload BLOB,
                 UNIQUE (origin_peer_pk, origin_seq)
             );
             CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
@@ -1727,38 +2350,314 @@ mod tests {
 
     #[tokio::test]
     async fn foreign_persist_writer_ingests_submitted_jobs() {
+        use sha2::{Digest as _, Sha256};
+
         // DES-13: the channel-based writer opens a real views.db, drains jobs,
         // and persists them — verified end-to-end without a live cluster.
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("views.db");
         let (tx, handle) = spawn_foreign_persist_writer(db.clone());
+        let inner = br#"{"event_count":1}"#;
+        let header = crate::wal::HeaderBuilder::new(0x94, inner).build();
+        let payload = crate::wal::frame::encode_frame(&header, inner);
+        let timestamp = gossip_payload_timestamp_unix(&payload).unwrap();
+        let origin = PeerPubkey::new("aaaa1111");
+        let frame = test_gossip_frame(
+            VectorClock::new(),
+            origin.clone(),
+            1,
+            timestamp,
+            payload.clone(),
+        );
+        let envelope = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: format!("metadata:{}", restore_hex_digest(&Sha256::digest(&payload))),
+            updated_at_unix: timestamp,
+            content: SyncContent::Metadata {
+                event_type: 0x94,
+                event_subtype: 0,
+                wal_frame: payload,
+            },
+        };
+        let frame = GossipFrame {
+            content_sha256: envelope.content_sha256(),
+            envelope,
+            ..frame
+        };
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         tx.send(ForeignPersistJob {
-            origin_peer_pk: "aaaa1111".into(),
-            origin_seq: 7,
-            event_type: 0x90,
-            payload: vec![1, 2, 3, 0x90, 4],
-            received_at: crate::time::now_unix_i64(),
+            authenticated_peer: origin.clone(),
+            frame: frame.clone(),
+            policy: GossipPolicy::default(),
+            reply: reply_tx,
         })
         .await
         .unwrap();
+        assert!(matches!(
+            reply_rx.await.unwrap().unwrap(),
+            crate::cluster::durable_sync::InboundCommit::Committed(_)
+        ));
         // A re-delivered (duplicate) frame must be an idempotent no-op.
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         tx.send(ForeignPersistJob {
-            origin_peer_pk: "aaaa1111".into(),
-            origin_seq: 7,
-            event_type: 0x90,
-            payload: vec![1, 2, 3, 0x90, 4],
-            received_at: crate::time::now_unix_i64(),
+            authenticated_peer: origin,
+            frame,
+            policy: GossipPolicy::default(),
+            reply: reply_tx,
         })
         .await
         .unwrap();
+        assert!(matches!(
+            reply_rx.await.unwrap().unwrap(),
+            crate::cluster::durable_sync::InboundCommit::Duplicate(_)
+        ));
         drop(tx); // closes the channel → the blocking loop exits
         handle.await.unwrap();
 
         let conn = crate::memory::store::open(&db).unwrap();
         let rows = list_foreign_events(&conn, Some("aaaa1111"), 10).unwrap();
         assert_eq!(rows.len(), 1, "duplicate (pk,seq) collapses to one row");
-        assert_eq!(rows[0].origin_seq, 7);
-        assert_eq!(rows[0].event_type, 0x90);
+        assert_eq!(rows[0].origin_seq, 1);
+        assert_eq!(rows[0].event_type, 0x94);
+    }
+
+    #[test]
+    fn canonical_restore_allocates_and_reuses_local_ids_without_guessing() {
+        use sha2::{Digest as _, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let text = "restorable canonical memory".to_string();
+        let stable_id = format!(
+            "memory:{}",
+            restore_hex_digest(&Sha256::digest(text.as_bytes()))
+        );
+        let build = |tier: &str, importance_micros, last_access_ts| SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: stable_id.clone(),
+            updated_at_unix: 1_700_000_000,
+            content: SyncContent::Memory(crate::cluster::gossip_wire::MemorySnapshot {
+                stable_id: stable_id.clone(),
+                text: text.clone(),
+                text_hash: "restore-hash".into(),
+                tier: tier.into(),
+                ts_ns: 1_700_000_000_000_000_000,
+                importance_micros,
+                last_access_ts,
+                access_count: 9,
+            }),
+        };
+        let first = build("hot", 600_000, 1_699_000_000_000_000_000);
+        assert_eq!(
+            apply_restore_envelope(&conn, "origin-a", 1, &first, first.content_sha256(), false,)
+                .unwrap(),
+            RestoreOutcome::Applied
+        );
+        let local_id: i64 = conn
+            .query_row(
+                "SELECT local_row_id FROM mesh_sync_restore_map WHERE origin_peer_pk='origin-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            apply_restore_envelope(&conn, "origin-a", 1, &first, first.content_sha256(), false,)
+                .unwrap(),
+            RestoreOutcome::Skipped(RestoreSkipReason::Idempotent)
+        );
+        let second = build("warm", 900_000, 1_699_500_000_000_000_000);
+        assert_eq!(
+            apply_restore_envelope(
+                &conn,
+                "origin-a",
+                2,
+                &second,
+                second.content_sha256(),
+                false,
+            )
+            .unwrap(),
+            RestoreOutcome::Applied
+        );
+        let (mapped_id, importance, last_access): (i64, f64, i64) = conn
+            .query_row(
+                "SELECT m.local_row_id,e.importance,e.last_access_ts FROM mesh_sync_restore_map m \
+                 JOIN idx_consolidated e ON e.event_id=m.local_row_id WHERE m.origin_peer_pk='origin-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(mapped_id, local_id, "updates must use the durable mapping");
+        assert!((importance - 0.9).abs() < f64::EPSILON);
+        assert_eq!(last_access, 1_699_500_000_000_000_000);
+        let hot_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_episode WHERE event_id=?1",
+                [local_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hot_count, 0, "tier transition must remove the hot row");
+
+        let third = build("cold", 950_000, 1_699_900_000_000_000_000);
+        assert_eq!(
+            apply_restore_envelope(&conn, "origin-a", 3, &third, third.content_sha256(), false,)
+                .unwrap(),
+            RestoreOutcome::Applied
+        );
+        let (cold_id, cold_importance, cold_access): (i64, f64, i64) = conn
+            .query_row(
+                "SELECT event_id,importance,last_access_ts FROM idx_longterm WHERE event_id=?1",
+                [local_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(cold_id, local_id);
+        assert!((cold_importance - 0.95).abs() < f64::EPSILON);
+        assert_eq!(cold_access, 1_699_900_000_000_000_000);
+        let warm_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_consolidated WHERE event_id=?1",
+                [local_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(warm_count, 0, "tier transition must remove the warm row");
+    }
+
+    #[test]
+    fn canonical_ground_truth_restore_roundtrips_without_peer_local_id() {
+        use sha2::{Digest as _, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let statement = "The release contract is deterministic".to_string();
+        let scope = "global".to_string();
+        let mut identity = scope.as_bytes().to_vec();
+        identity.push(0);
+        identity.extend_from_slice(statement.as_bytes());
+        let stable_id = format!(
+            "ground_truth:{}",
+            restore_hex_digest(&Sha256::digest(identity))
+        );
+        let evidence_text = "portable evidence for the release contract".to_string();
+        let evidence_stable_id = format!(
+            "memory:{}",
+            restore_hex_digest(&Sha256::digest(evidence_text.as_bytes()))
+        );
+        let build = |revoked_at, confidence_micros| SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: stable_id.clone(),
+            updated_at_unix: 1_700_000_000,
+            content: SyncContent::GroundTruth(crate::cluster::gossip_wire::GroundTruthSnapshot {
+                stable_id: stable_id.clone(),
+                statement: statement.clone(),
+                source: "operator-runtime".into(),
+                scope: scope.clone(),
+                asserted_at: 1_699_000_000,
+                revoked_at,
+                fact_state: "verified".into(),
+                source_weight: BTreeMap::from([
+                    ("operator-runtime".to_string(), 2),
+                    ("nmap-scan".to_string(), 1),
+                ]),
+                confidence_micros,
+                evidence_content_ids: vec![evidence_stable_id.clone()],
+                maturity: "stable".into(),
+                confirmed_count: 5,
+            }),
+        };
+        let first = build(None, 800_000);
+        apply_restore_envelope(&conn, "origin-a", 1, &first, first.content_sha256(), false)
+            .unwrap();
+        let local_id: i64 = conn
+            .query_row(
+                "SELECT local_row_id FROM mesh_sync_restore_map WHERE origin_peer_pk='origin-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let unresolved_evidence: String = conn
+            .query_row(
+                "SELECT evidence FROM idx_groundtruth WHERE id=?1",
+                [local_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            unresolved_evidence, "[]",
+            "an unresolved stable evidence id must never be guessed as a peer-local row id"
+        );
+
+        let evidence = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: evidence_stable_id.clone(),
+            updated_at_unix: 1_700_000_001,
+            content: SyncContent::Memory(crate::cluster::gossip_wire::MemorySnapshot {
+                stable_id: evidence_stable_id.clone(),
+                text: evidence_text,
+                text_hash: "portable-evidence-hash".into(),
+                tier: "hot".into(),
+                ts_ns: 1_700_000_001_000_000_000,
+                importance_micros: 900_000,
+                last_access_ts: 1_700_000_001_000_000_000,
+                access_count: 1,
+            }),
+        };
+        apply_restore_envelope(
+            &conn,
+            "origin-a",
+            2,
+            &evidence,
+            evidence.content_sha256(),
+            false,
+        )
+        .unwrap();
+        let evidence_local_id: i64 = conn
+            .query_row(
+                "SELECT local_row_id FROM mesh_sync_restore_map \
+                 WHERE origin_peer_pk='origin-a' AND content_id=?1",
+                [&evidence.content_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let second = build(Some(1_701_000_000), 700_000);
+        apply_restore_envelope(
+            &conn,
+            "origin-a",
+            3,
+            &second,
+            second.content_sha256(),
+            false,
+        )
+        .unwrap();
+        let restored: (String, String, String, Option<i64>, f64, String, String, i64) = conn
+            .query_row(
+                "SELECT statement,source,scope,revoked_at,confidence,source_weight,evidence,confirmed_count \
+                 FROM idx_groundtruth WHERE id=?1",
+                [local_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(restored.0, statement);
+        assert_eq!(restored.1, "mesh:origin-a:operator-runtime");
+        assert_eq!(restored.2, scope);
+        assert_eq!(restored.3, Some(1_701_000_000));
+        assert!((restored.4 - 0.7).abs() < f64::EPSILON);
+        assert_eq!(
+            restored.5,
+            r#"{"mesh:origin-a:nmap-scan":1,"mesh:origin-a:operator-runtime":2}"#
+        );
+        assert_eq!(restored.6, format!("[{evidence_local_id}]"));
+        assert_eq!(restored.7, 5);
     }
 
     #[test]

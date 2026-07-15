@@ -1,104 +1,80 @@
-# When to use NEOTH's cron vs an n8n workflow
+# When to use NEOTH Cron vs an n8n workflow
 
-NEOTH ships two scheduling surfaces. They overlap on purpose: simple
-recurring tasks should live in `freedom.yaml` because the operator
-can read the schedule + tweak it without leaving NEOTH. Anything
-multi-step / cross-service belongs in n8n because the YAML cron
-intentionally has no "if this then that" syntax.
+NEOTH Cron is the native, audited agent scheduler. Jobs live in
+`~/.neoth/jobs.yaml`, are atomically live-reloaded by `neoth serve`, and may use
+a cron expression, a fixed interval, or a one-shot timestamp. n8n remains the
+better surface for visual, cross-service orchestration.
 
-This page is the rule-of-thumb. Skim it before adding a third
-cron entry that pulls data from three places and posts to four
-channels — that's the n8n threshold.
+## Use NEOTH Cron when
 
----
+| Shape | Example |
+| --- | --- |
+| One autonomous agent task | Prepare a 07:00 brief and announce it in Telegram |
+| Bounded tool use | Let one job call an exact allow-list of tools from selected MCP servers |
+| Provider-specific workload | Run a research job on one model with ordered 429 fallbacks |
+| Dependency wave | Run `publish` only after `collect` and `review` both succeeded |
+| Native delivery | Announce through one configured channel or call one registered signed webhook |
+| Durable one-shot | Execute once at an RFC3339 timestamp without duplicating after restart |
 
-## Use `freedom.yaml` cron when
+The job records operator intent only. Provider calls still cross the normal cost,
+WAL, and permission gates. Unknown cost or missing output ceilings are not turned
+into a cheap estimate. MCP access requires both explicit capability ids and exact
+tool names. Delivery targets are checked before provider spend, and the durable
+delivery ledger distinguishes queued from delivered.
 
-| Shape                                     | Example                                           |
-| ----------------------------------------- | ------------------------------------------------- |
-| One CLI command, no logic                 | `0 9 * * 1-5  →  neoth recall "today's standup"`  |
-| Cleanup / sweep                           | `0 3 * * *   →  neoth memory gc --tier cold`      |
-| Single-channel send                       | `0 21 * * *  →  neoth chat send daily-summary`    |
-| Operator-readable in 1 line               | Anything that fits the format above               |
+Useful commands:
 
-Schedule lives in `freedom.yaml::cron.entries[]` — every entry is
-5-field standard cron + a `command:` string. NEOTH's `cron` task
-picks them up on daemon start + on `neoth reload`. No external
-process. No webhook plane. No browser UI.
+```bash
+neoth cron create --id morning-brief --name "Morning brief" \
+  --cron "0 7 * * *" --tz Europe/Berlin \
+  --prompt "Prepare today's concise brief" --channel telegram
 
-**Strengths:**
-- Operator sees the full schedule by running `cat freedom.yaml`.
-- Survives reboot via the daemon's normal `neoth serve` start.
-- Same security envelope as the rest of NEOTH (consent gates,
-  autonomy level, WAL audit).
-- Zero extra processes — runs inside the daemon's tokio runtime.
+neoth cron create --id one-off-review --name "One-off review" \
+  --at 2026-08-01T09:00:00Z --prompt "Review the launch evidence" \
+  --delivery-mode none
 
-**Limitations:**
-- No `if X then Y else Z` branching.
-- No fan-out to multiple downstreams from one trigger.
-- No external service triggers (webhook in, GitHub push, etc.).
-- No retry-with-backoff envelope (you write the retry in the command).
-
----
-
-## Use an n8n workflow when
-
-| Shape                                     | Example                                                 |
-| ----------------------------------------- | ------------------------------------------------------- |
-| Multi-step pipeline                       | Recall → summarise via provider → send via channel      |
-| Fan-out from one trigger                  | One schedule fires write-to-archive AND send-to-channel |
-| Conditional logic                         | If "consent denied" count > 5 → escalate                |
-| External webhook in                       | GitHub push triggers a NEOTH summary                    |
-| Visual debugging needed                   | Operator wants to step through node-by-node             |
-
-The three bootstrap workflows (`daily_summary` / `morning_brief` /
-`weekly_stats`) shipped in `assets/n8n_workflows/` show the
-pattern: every node is an HTTP request against NEOTH's localhost
-API; n8n owns the orchestration.
-
-**Strengths:**
-- Visual flow + per-node debug view.
-- Branching, loops, fan-out built-in.
-- Triggers from external services (Webhook, GitHub, Calendar, ...).
-- Operator can hand a workflow to a non-developer collaborator.
-
-**Limitations:**
-- Extra process — operator must install + maintain n8n.
-- Schedule lives in n8n's database, not `freedom.yaml`.
-- More moving parts during an outage diagnosis.
-- Operator-facing UX is "open browser to n8n" — friction vs CLI.
-
----
-
-## Decision flow
-
-```
-                  ┌─ one CLI command? ──→ freedom.yaml cron
-                  │
-new recurring task ┤
-                  │
-                  └─ multi-step / branching / external trigger ──→ n8n workflow
+neoth cron pause morning-brief
+neoth cron resume morning-brief
+neoth cron deliveries --job morning-brief
 ```
 
-**Tiebreaker:** if the schedule is something an operator will tweak
-weekly ("change the morning brief from 07:30 to 08:00"), n8n is
-nicer — they edit in the UI without restarting NEOTH. If it's
-"fire and forget" (the sweep cleanup), `freedom.yaml` keeps the
-state visible.
+Strict and Custom autonomy disable scheduled execution fail-closed. Manual
+`neoth cron run <id>` is also refused while the daemon owns the WAL.
 
----
+## Use n8n when
+
+| Shape | Example |
+| --- | --- |
+| Visual branch-heavy workflow | Route an incident through several conditional service steps |
+| Broad fan-out | Write to multiple unrelated SaaS systems from one trigger |
+| External trigger catalogue | GitHub, CRM, calendar, and vendor-specific trigger nodes |
+| Human node-level debugging | A non-developer needs to inspect and replay individual steps |
+| Long integration workflow | Loops, joins, transformations, and service-specific retry policies |
+
+n8n owns those orchestration semantics and its database. NEOTH remains behind the
+localhost-authenticated integration boundary; do not copy provider or channel
+secrets into workflow nodes.
+
+## Decision rule
+
+Use NEOTH Cron when the unit of work is one governed agent job, optionally with a
+small exact MCP tool scope and prerequisite jobs. Use n8n when the workflow itself
+is the product: many service nodes, visible branching, fan-out, joins, or external
+event triggers.
+
+If you need three or more unrelated destinations or start encoding control flow
+inside a prompt, move the orchestration to n8n.
 
 ## Migration notes
 
-A `freedom.yaml` cron entry can be ported to n8n by:
+To move a NEOTH job to n8n:
 
-1. Create an n8n "Schedule Trigger" with the same cron expression.
-2. Add an "HTTP Request" node pointing at NEOTH's localhost API
-   (`http://127.0.0.1:9744/api/...`) with the bearer token from
-   `freedom.yaml::n8n.api_token`.
-3. Delete the `freedom.yaml::cron.entries[]` entry.
-4. Run `neoth reload` so NEOTH stops scheduling the local cron.
+1. Recreate its cron/interval trigger in n8n.
+2. Call NEOTH only through the authenticated localhost API.
+3. Pause the native job with `neoth cron pause <id>` and verify the n8n run.
+4. Delete it only after the replacement has produced the expected audited result.
 
-n8n → `freedom.yaml` migration goes the other way: when the n8n
-workflow simplifies down to a single HTTP call, copy the schedule
-into `freedom.yaml::cron.entries[]` + delete the n8n workflow.
+To move an n8n workflow to NEOTH, first reduce it to one governed agent task.
+Create and validate the job with `neoth cron create`, preview it, fire it once with
+`neoth cron run`, then disable the n8n trigger. Do not run both schedules during
+the cut-over.

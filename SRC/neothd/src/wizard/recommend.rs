@@ -101,8 +101,9 @@ pub fn operator_complexity_level(experience: ExperienceLevel) -> ComplexityLevel
 pub enum ChannelRecommendation {
     Cli,
     Telegram,
-    /// Legacy serialized value. The recommendation engine never emits it:
-    /// Keet has no supported public chat API.
+    /// Companion-backed option retained for serialized recommendation parity.
+    /// The engine does not emit it until installer-level companion discovery is
+    /// available, so recommendations never promise an unproven local service.
     Keet,
     Slack,
 }

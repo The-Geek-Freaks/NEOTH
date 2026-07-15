@@ -342,14 +342,24 @@ pub struct Credentials {
     /// open; set ⇒ only this Google-asserted user id is accepted (others
     /// dropped + audited 0x3B). Not a secret.
     pub gchat_allowed_sender: Option<String>,
-    /// Legacy value written by the removed guessed Keet transport. Retained
-    /// only so older credentials files round-trip and `channel remove keet`
-    /// can erase it. It is never treated as usable authentication material.
+    /// Local repository-owned Keet companion origin. Loopback HTTP(S) only;
+    /// validated again by the runtime before any request. Not a secret.
+    pub keet_bridge_url: Option<String>,
+    /// Keet topic capability handled by the companion. Possession grants room
+    /// access, so it is a secret: keep it out of Debug/log/audit surfaces and
+    /// migrate it through the configured secret backend like any bearer token.
+    pub keet_topic: Option<SecretString>,
+    /// Exact comma-separated companion sender IDs accepted from the topic.
+    /// Mandatory for inbound; all other senders are dropped + audited.
+    pub keet_allowed_senders: Option<String>,
+    /// Legacy seed written by the removed speculative native transport. It is
+    /// retained for migration cleanup but is never used as Keet authentication.
     pub keet_seed_phrase: Option<SecretString>,
-    /// Legacy value written by the removed guessed Pear HTTP bridge. Retained
-    /// only for backward-compatible parsing and explicit cleanup; never used
-    /// for a request.
-    pub pears_bearer_token: Option<SecretString>,
+    /// Mandatory bearer secret for the repository-owned Keet companion.
+    /// `pears_bearer_token` is accepted on read for existing installations;
+    /// all new writes use the transport-specific canonical name.
+    #[serde(alias = "pears_bearer_token")]
+    pub keet_bridge_bearer_token: Option<SecretString>,
     /// TD-01 (Session 30) — Todoist REST v2 API token (Settings →
     /// Integrations → Developer in the Todoist app). Used by
     /// `neoth todo {list,add,close}` via `tools::todoist`. Wrapped in
@@ -606,8 +616,11 @@ impl Credentials {
             gchat_service_account_json,
             gchat_subscription,
             gchat_allowed_sender,
+            keet_bridge_url,
+            keet_topic,
+            keet_allowed_senders,
             keet_seed_phrase,
-            pears_bearer_token,
+            keet_bridge_bearer_token,
             todoist_token,
             google_oauth_client_id,
             google_oauth_client_secret,
@@ -682,8 +695,11 @@ impl Credentials {
             && gchat_service_account_json.is_none()
             && gchat_subscription.is_none()
             && gchat_allowed_sender.is_none()
+            && keet_bridge_url.is_none()
+            && keet_topic.is_none()
+            && keet_allowed_senders.is_none()
             && keet_seed_phrase.is_none()
-            && pears_bearer_token.is_none()
+            && keet_bridge_bearer_token.is_none()
             && todoist_token.is_none()
             && google_oauth_client_id.is_none()
             && google_oauth_client_secret.is_none()
@@ -771,6 +787,160 @@ impl Credentials {
             .write(path)
             .with_context(|| format!("write credentials at {} after update", path.display()))?;
         Ok(result)
+    }
+
+    /// Cross-process-safe two-file mutation for configuration that spans
+    /// `freedom.yaml` and `credentials.yaml` (for example Telegram's public
+    /// sender allowlist plus its secret bot token).
+    ///
+    /// Both files are loaded strictly while their canonical process + OS locks
+    /// are held. The credential file is committed first, so a crash between the
+    /// two atomic renames leaves the old allowlist in force and the Telegram
+    /// runtime remains fail-closed. A normal second-write failure restores the
+    /// exact pre-transaction bytes of both files before returning an error.
+    pub(crate) fn update_with_freedom_at<F, R>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+    ) -> Result<R>
+    where
+        F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
+    {
+        Self::update_with_freedom_at_using(
+            freedom_path,
+            credentials_path,
+            mutation,
+            |path, body| {
+                crate::util::atomic_write::atomic_write_private(path, body)
+                    .with_context(|| format!("atomically write {}", path.display()))
+            },
+        )
+    }
+
+    fn update_with_freedom_at_using<F, R, W>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+        write_freedom: W,
+    ) -> Result<R>
+    where
+        F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
+        W: FnOnce(&Path, &[u8]) -> Result<()>,
+    {
+        // Global order for dual-file writers: freedom process lock, credential
+        // process lock, freedom file lock, credential file lock. Existing
+        // single-file writers take a strict prefix/subset of this order.
+        let _freedom_mutex = super::lock_freedom_update();
+        let _credentials_mutex = lock_cred();
+        let _freedom_file_lock = crate::util::locked_file::lock_file_blocking(
+            &freedom_path.with_extension("lock"),
+            "freedom config",
+        )
+        .with_context(|| format!("acquire freedom config lock for {}", freedom_path.display()))?;
+        let _credentials_file_lock = lock_cred_file(credentials_path).with_context(|| {
+            format!(
+                "acquire credentials lock for {}",
+                credentials_path.display()
+            )
+        })?;
+
+        let freedom_before = FileSnapshot::capture(freedom_path)?;
+        let credentials_before = FileSnapshot::capture(credentials_path)?;
+
+        // Strict loads happen before mutation. In particular, malformed
+        // freedom.yaml or credentials.yaml is preserved byte-for-byte.
+        let mut freedom = super::FreedomConfig::load_from_path(freedom_path)
+            .with_context(|| format!("load {} for dual-file update", freedom_path.display()))?;
+        let mut credentials = Self::load_or_default(credentials_path)
+            .with_context(|| format!("load {} for dual-file update", credentials_path.display()))?;
+        let value = mutation(&mut freedom, &mut credentials)?;
+
+        // Validate and serialize the public config before either commit. This
+        // catches invalid config values without touching the credential file.
+        let freedom_body = freedom.public_yaml()?;
+
+        if let Err(write_error) = credentials.write(credentials_path) {
+            let rollback = rollback_file_pair(
+                freedom_path,
+                &freedom_before,
+                credentials_path,
+                &credentials_before,
+            );
+            if let Err(rollback_error) = rollback {
+                anyhow::bail!(
+                    "credential phase failed ({write_error:#}); restoring the dual-file transaction also failed: {rollback_error:#}"
+                );
+            }
+            return Err(write_error).context("credential phase failed; prior bytes restored");
+        }
+
+        if let Err(write_error) = write_freedom(freedom_path, freedom_body.as_bytes()) {
+            let rollback = rollback_file_pair(
+                freedom_path,
+                &freedom_before,
+                credentials_path,
+                &credentials_before,
+            );
+            if let Err(rollback_error) = rollback {
+                anyhow::bail!(
+                    "freedom config phase failed ({write_error:#}); restoring the dual-file transaction also failed: {rollback_error:#}"
+                );
+            }
+            return Err(write_error)
+                .context("freedom config phase failed; credential and config bytes restored");
+        }
+
+        Ok(value)
+    }
+}
+
+enum FileSnapshot {
+    Missing,
+    Present(zeroize::Zeroizing<Vec<u8>>),
+}
+
+impl FileSnapshot {
+    fn capture(path: &Path) -> Result<Self> {
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(Self::Present(zeroize::Zeroizing::new(bytes))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::Missing),
+            Err(error) => Err(error).with_context(|| format!("snapshot {}", path.display())),
+        }
+    }
+
+    fn restore(&self, path: &Path) -> Result<()> {
+        match self {
+            Self::Present(bytes) => {
+                crate::util::atomic_write::atomic_write_private(path, bytes)
+                    .with_context(|| format!("restore {}", path.display()))?;
+            }
+            Self::Missing => match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| format!("remove {}", path.display()));
+                }
+            },
+        }
+        Ok(())
+    }
+}
+
+fn rollback_file_pair(
+    freedom_path: &Path,
+    freedom_before: &FileSnapshot,
+    credentials_path: &Path,
+    credentials_before: &FileSnapshot,
+) -> Result<()> {
+    let freedom_result = freedom_before.restore(freedom_path);
+    let credentials_result = credentials_before.restore(credentials_path);
+    match (freedom_result, credentials_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(freedom), Ok(())) => Err(freedom).context("restore freedom config"),
+        (Ok(()), Err(credentials)) => Err(credentials).context("restore credentials"),
+        (Err(freedom), Err(credentials)) => anyhow::bail!(
+            "restore freedom config failed: {freedom:#}; restore credentials failed: {credentials:#}"
+        ),
     }
 }
 
@@ -1030,6 +1200,32 @@ mod tests {
     }
 
     #[test]
+    fn keet_capability_and_bearer_are_redacted_and_legacy_bearer_alias_loads() {
+        const TOPIC: &str = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        const BEARER: &str = "0123456789abcdef0123456789abcdef";
+        let legacy = format!("keet_topic: {TOPIC}\npears_bearer_token: {BEARER}\n");
+        let credentials: Credentials = serde_yaml::from_str(&legacy).unwrap();
+        assert_eq!(
+            credentials.keet_topic.as_ref().map(SecretString::expose),
+            Some(TOPIC)
+        );
+        assert_eq!(
+            credentials
+                .keet_bridge_bearer_token
+                .as_ref()
+                .map(SecretString::expose),
+            Some(BEARER)
+        );
+        let debug = format!("{credentials:?}");
+        assert!(!debug.contains(TOPIC));
+        assert!(!debug.contains(BEARER));
+
+        let canonical = serde_yaml::to_string(&credentials).unwrap();
+        assert!(canonical.contains("keet_bridge_bearer_token:"));
+        assert!(!canonical.contains("pears_bearer_token:"));
+    }
+
+    #[test]
     fn tts_keys_round_trip_only_in_credentials_store() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("credentials.yaml");
@@ -1231,6 +1427,47 @@ mod tests {
         assert_eq!(
             original_bytes, after_bytes,
             "file bytes must be identical after a failed update_at"
+        );
+    }
+
+    #[test]
+    fn dual_file_update_rolls_back_both_files_when_second_write_fails() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut original_freedom = crate::config::FreedomConfig::default();
+        original_freedom.telegram_user_id = Some(111_111_111);
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&original_freedom).unwrap(),
+        )
+        .unwrap();
+        Credentials {
+            telegram_token: Some(SecretString::from("111111111:old-token")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let freedom_before = std::fs::read(&freedom_path).unwrap();
+        let credentials_before = std::fs::read(&credentials_path).unwrap();
+
+        let error = Credentials::update_with_freedom_at_using(
+            &freedom_path,
+            &credentials_path,
+            |freedom, credentials| {
+                freedom.telegram_user_id = Some(222_222_222);
+                credentials.telegram_token = Some(SecretString::from("222222222:new-token"));
+                Ok(())
+            },
+            |_, _| anyhow::bail!("injected second-file failure"),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("bytes restored"));
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
         );
     }
 

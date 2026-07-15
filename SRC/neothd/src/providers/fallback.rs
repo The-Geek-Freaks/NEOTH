@@ -583,10 +583,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorized_fallback_binds_and_logs_each_candidates_actual_model() {
+    async fn authorized_fallback_persists_one_usage_event_per_leaf_attempt() {
         let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("authorized-fallback.wal");
-        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("authorized-fallback.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let fallback_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let fallback = FallbackProvider::new_with_models(
@@ -618,7 +621,8 @@ mod tests {
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 crate::permissions::AutonomyLevel::Full,
                 Some(writer.clone()),
-            ),
+            )
+            .with_usage_home(dir.path()),
             None,
             "fallback.test",
         );
@@ -684,6 +688,39 @@ mod tests {
             lifecycle[0].1["invocation_id"],
             lifecycle[2].1["invocation_id"]
         );
+
+        let mut usage_paths = std::fs::read_dir(crate::daemon::usage_log::usage_dir(dir.path()))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+            .collect::<Vec<_>>();
+        usage_paths.sort();
+        let usage = usage_paths
+            .into_iter()
+            .flat_map(|path| {
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .lines()
+                    .map(|line| {
+                        serde_json::from_str::<crate::daemon::usage_log::UsageEvent>(line).unwrap()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            usage.len(),
+            2,
+            "primary 429 and fallback success are distinct leaf attempts"
+        );
+        assert_eq!(usage[0].provider, "primary_cloud");
+        assert_eq!(usage[0].model, "caller-primary-model");
+        assert!(!usage[0].ok);
+        assert_eq!(usage[0].input_tokens, None);
+        assert_eq!(usage[1].provider, "fallback_cloud");
+        assert_eq!(usage[1].model, "fallback-config");
+        assert!(usage[1].ok);
+        assert_ne!(usage[0].invocation_id, usage[1].invocation_id);
     }
 
     #[tokio::test]

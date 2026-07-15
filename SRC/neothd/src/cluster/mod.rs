@@ -53,6 +53,10 @@ pub mod executor;
 /// live on the transport.
 pub mod wal_sync;
 
+/// GOLD-R3-09 durable per-peer cursor/ACK state and canonical content ledger.
+/// Both peeroxide and iroh route through this module.
+pub mod durable_sync;
+
 /// Foreign-event indexer — drains accepted gossip rows from `idx_foreign_events`
 /// into narrow local recall effects without mutating the foreign backup table.
 pub mod foreign_indexer;

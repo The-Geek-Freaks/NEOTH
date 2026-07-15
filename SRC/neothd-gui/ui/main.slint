@@ -153,6 +153,9 @@ export component MainWindow inherits Window {
     /// `neoth init` command to stdout + exit so the operator runs
     /// the CLI wizard manually. Pick #29 contract.
     in-out property <bool> mode-cli-chosen: false;
+    /// Prevent duplicate launcher processes while the canonical preference
+    /// write / platform terminal spawn is in flight.
+    in-out property <bool> mode-choice-busy: false;
     in-out property <bool> license-accepted: false;
     in-out property <string> operator-id: "";
     in-out property <string> provider-choice: "claude_cli";
@@ -346,8 +349,12 @@ export component MainWindow inherits Window {
 
     callback finish-clicked;
     callback cancel-clicked;
-    /// Operator picked CLI on the mode screen. Rust side prints
-    /// `neoth init` instructions + exits the GUI.
+    /// Operator confirmed the graphical surface. Rust persists the canonical
+    /// instance preference before advancing the wizard.
+    callback gui-mode-chosen;
+    /// Operator picked CLI on the mode screen. Rust persists the preference,
+    /// opens a real terminal running `neoth init --cli`, then exits this first-
+    /// run window only after the terminal launch succeeds.
     callback cli-mode-chosen;
     /// Reviewer-3 P1-B (2026-05-20): operator typed in the Identity
     /// LineEdit. Rust validates against `^[a-z0-9-]{3,32}$` and
@@ -366,6 +373,8 @@ export component MainWindow inherits Window {
     /// state back to `mode-selection` so the operator walks the
     /// flow fresh.
     callback settings-wizard-rerun-clicked;
+    /// Settings offers a reversible GUI -> CLI switch at any time.
+    callback settings-open-cli-clicked;
     // SPEC-06 — forwarded from the Hemispheres rebind control; Rust shells
     // `neoth hemispheres set --role <r> --provider <p>` + refreshes the panel.
     callback hemisphere-set(string, string, string);
@@ -911,6 +920,8 @@ export component MainWindow inherits Window {
     in property <[SkillRow]> skills: [];
     in-out property <bool> skills-always-embed-route: true;
     in property <[ChannelRow]> channels: [];
+    in property <string> channel-status-error: "";
+    in-out property <int> channel-add-success-seq: 0;
     // DES-10 — live channel-activity feed (metadata only, no message bodies).
     in property <[ChannelActivityRow]> channel-activity: [];
     in property <[PluginRow]> plugins: [];
@@ -935,7 +946,7 @@ export component MainWindow inherits Window {
     callback channel-remove(string);
     /// GAP-19 — add a new channel credential from the GUI.
     /// Args: (channel_type, f1, f2, f3, f4) — field mapping per channel type.
-    callback channel-add(string, string, string, string, string);
+    callback channel-add(string, string, string, string, string, string, string, bool);
     callback memory-forget-preview(string);
     callback memory-forget-confirm(string);
     // GAP-04 — Memory search forwarding.
@@ -1009,6 +1020,7 @@ export component MainWindow inherits Window {
         // the mouse. Microcopy below the cards exposes the shortcuts.
         if root.step == WizardStep.mode-selection: FocusScope {
             key-pressed(e) => {
+                if (root.mode-choice-busy) { return accept; }
                 if (e.text == "g" || e.text == "G") {
                     root.mode-gui-chosen = true;
                     root.mode-cli-chosen = false;
@@ -1021,9 +1033,11 @@ export component MainWindow inherits Window {
                 }
                 if (e.text == "\n") {
                     if (root.mode-cli-chosen) {
+                        root.mode-choice-busy = true;
                         root.cli-mode-chosen();
                     } else if (root.mode-gui-chosen) {
-                        root.step = WizardStep.welcome;
+                        root.mode-choice-busy = true;
+                        root.gui-mode-chosen();
                     }
                     return accept;
                 }
@@ -1064,8 +1078,10 @@ export component MainWindow inherits Window {
                     selected: root.mode-gui-chosen;
                     glyph: @image-url("assets/glyph_gui.svg");
                     clicked => {
-                        root.mode-gui-chosen = true;
-                        root.mode-cli-chosen = false;
+                        if (!root.mode-choice-busy) {
+                            root.mode-gui-chosen = true;
+                            root.mode-cli-chosen = false;
+                        }
                     }
                 }
                 ModeCard {
@@ -1075,8 +1091,10 @@ export component MainWindow inherits Window {
                     selected: root.mode-cli-chosen;
                     glyph: @image-url("assets/glyph_cli.svg");
                     clicked => {
-                        root.mode-cli-chosen = true;
-                        root.mode-gui-chosen = false;
+                        if (!root.mode-choice-busy) {
+                            root.mode-cli-chosen = true;
+                            root.mode-gui-chosen = false;
+                        }
                     }
                 }
             }
@@ -1084,12 +1102,13 @@ export component MainWindow inherits Window {
                 alignment: center;
                 NeothButton {
                     label: "Continue →";
-                    enabled: root.mode-gui-chosen || root.mode-cli-chosen;
+                    enabled: (root.mode-gui-chosen || root.mode-cli-chosen) && !root.mode-choice-busy;
                     clicked => {
+                        root.mode-choice-busy = true;
                         if (root.mode-cli-chosen) {
                             root.cli-mode-chosen();
                         } else {
-                            root.step = WizardStep.welcome;
+                            root.gui-mode-chosen();
                         }
                     }
                 }
@@ -2952,12 +2971,17 @@ export component MainWindow inherits Window {
             plugin-detail-close => { root.plugin-detail-close(); }
             autonomy-set-clicked(level) => { root.autonomy-set(level); }
             channels: root.channels;
+            channel-status-error: root.channel-status-error;
+            channel-add-success-seq: root.channel-add-success-seq;
             channel-activity: root.channel-activity;
             plugins: root.plugins;
             memory-blocks: root.memory-blocks;
             memory-total: root.memory-total;
             wizard-rerun-clicked => {
                 root.settings-wizard-rerun-clicked();
+            }
+            open-cli-clicked => {
+                root.settings-open-cli-clicked();
             }
             open-chat-clicked => {
                 root.step = WizardStep.chat;
@@ -2979,7 +3003,9 @@ export component MainWindow inherits Window {
             }
             channel-test-clicked(name) => { root.channel-test(name); }
             channel-remove-clicked(name) => { root.channel-remove(name); }
-            channel-add-clicked(ctype, f1, f2, f3, f4) => { root.channel-add(ctype, f1, f2, f3, f4); }
+            channel-add-clicked(ctype, f1, f2, f3, f4, f5, f6, flag) => {
+                root.channel-add(ctype, f1, f2, f3, f4, f5, f6, flag);
+            }
             memory-forget-preview-clicked(t) => { root.memory-forget-preview(t); }
             memory-forget-confirm-clicked(t) => { root.memory-forget-confirm(t); }
             // GAP-04 — Memory search.

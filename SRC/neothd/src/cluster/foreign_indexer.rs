@@ -5,7 +5,10 @@
 //! keeps that contract: it records local processing state in
 //! `idx_foreign_indexed_events` and never deletes or mutates foreign rows.
 //!
-//! Applied effects are deliberately narrow:
+//! Protocol-v5 rows are already canonicalized transactionally by
+//! `cluster::durable_sync` into `mesh_sync_materialized`; this background
+//! indexer only marks those rows observed and never replays peer-local ids.
+//! Legacy effects are deliberately narrow:
 //! - `0x90` / `0x91`: NO-OP in the gossip path — peer `event_id` fields are the
 //!   peer's own local SQLite autoincrements and have no stable mapping to our
 //!   `idx_episode.event_id` (also a local autoincrement). `idx_episode` carries no
@@ -81,6 +84,8 @@ struct PendingRow {
     /// Peer that produced this event (`idx_foreign_events.origin_peer_pk`).
     /// Threaded through for log messages when skipping cross-peer episode ops.
     origin_peer_pk: String,
+    envelope_version: u16,
+    has_canonical_content: bool,
 }
 
 /// Apply up to 64 not-yet-indexed foreign events to local recall surfaces.
@@ -129,7 +134,8 @@ fn ensure_marker_table(conn: &Connection) -> Result<()> {
 fn fetch_pending(conn: &Connection) -> Result<Vec<PendingRow>> {
     let mut stmt = conn
         .prepare_cached(
-            "SELECT e.id, e.event_type, e.payload, e.origin_peer_pk \
+            "SELECT e.id, e.event_type, e.payload, e.origin_peer_pk, \
+                    e.envelope_version, e.content_payload IS NOT NULL \
              FROM idx_foreign_events e \
              LEFT JOIN idx_foreign_indexed_events i \
                ON i.foreign_event_id = e.id \
@@ -146,6 +152,8 @@ fn fetch_pending(conn: &Connection) -> Result<Vec<PendingRow>> {
             event_type: u8::try_from(raw_event_type).unwrap_or(u8::MAX),
             payload: r.get(2)?,
             origin_peer_pk: r.get(3)?,
+            envelope_version: u16::try_from(r.get::<_, i64>(4)?).unwrap_or(u16::MAX),
+            has_canonical_content: r.get::<_, i64>(5)? != 0,
         })
     })
     .context("foreign_indexer: query fetch_pending")?
@@ -204,6 +212,16 @@ fn marker_exists(conn: &Connection, foreign_event_id: i64) -> Result<bool> {
 }
 
 fn dispatch_foreign_row(conn: &Connection, row: &PendingRow) -> Result<()> {
+    if row.envelope_version == crate::cluster::gossip_wire::SYNC_ENVELOPE_VERSION
+        && row.has_canonical_content
+    {
+        trace!(
+            foreign_event_id = row.id,
+            origin_peer_pk = %row.origin_peer_pk,
+            "foreign_indexer: canonical v5 content already materialized transactionally"
+        );
+        return Ok(());
+    }
     match row.event_type {
         crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED => {
             handle_episode_consolidated(conn, row)
@@ -502,6 +520,10 @@ mod tests {
                 event_type      INTEGER NOT NULL,
                 payload         BLOB    NOT NULL,
                 received_at     INTEGER NOT NULL,
+                envelope_version INTEGER NOT NULL DEFAULT 0,
+                content_sha256  BLOB,
+                content_kind    TEXT,
+                content_payload BLOB,
                 UNIQUE (origin_peer_pk, origin_seq)
             );
             CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
@@ -872,6 +894,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn canonical_v5_row_is_already_materialized_and_only_marked_indexed() {
+        let conn = open_test_db();
+        let payload =
+            serde_json::json!({"event_id": 42, "importance": 0.9, "ts": 1000}).to_string();
+        let id = insert_foreign_event(
+            &conn,
+            crate::wal::events::EVENT_TYPE_EPISODE_CONSOLIDATED,
+            payload.as_bytes(),
+        );
+        conn.execute(
+            "UPDATE idx_foreign_events SET envelope_version=?2,content_payload=?3 WHERE id=?1",
+            rusqlite::params![
+                id,
+                i64::from(crate::cluster::gossip_wire::SYNC_ENVELOPE_VERSION),
+                b"canonical".as_slice(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(process_pending(&conn).unwrap(), 1);
+        assert_eq!(indexed_count(&conn), 1);
+    }
+
     /// Fix (b): a retryable error from process_one must leave the row in
     /// idx_foreign_events unprocessed so it is re-fetched on the next tick.
     ///
@@ -908,6 +954,8 @@ mod tests {
                 )
                 .unwrap(),
             origin_peer_pk: "peer1".to_string(),
+            envelope_version: 0,
+            has_canonical_content: false,
         };
 
         // process_one must return Err (marker table gone → Err propagates).

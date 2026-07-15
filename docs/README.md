@@ -29,11 +29,8 @@ normal users, explicit enough for pros.
 ```bash
 # Until the first signed release and ordered crates.io publish, install from source.
 git clone https://github.com/The-Geek-Freaks/NEOTH
-cd NEOTH/SRC
-cargo install --locked --path neothd --features release-desktop
-cargo install --locked --path neothd-gui
-cargo install --locked --path neoth-migrate
-cargo install --locked --path neoth-relay
+cd NEOTH
+NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
 neoth gui
 neoth doctor
 ```

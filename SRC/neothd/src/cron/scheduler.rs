@@ -26,8 +26,9 @@ use chrono::{DateTime, Utc};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
-use crate::cron::runner::run_job_at;
+use crate::cron::runner::{RunOutcome, run_job_at};
 use crate::cron::schema::{Job, JobsFile};
+use crate::cron::state::RuntimeState;
 use crate::permissions::AutonomyLevel;
 use crate::providers::cost_authorization::AuthorizedProvider;
 use crate::wal::writer::WalWriterHandle;
@@ -182,6 +183,22 @@ fn record_completion_if_current(
     true
 }
 
+/// Only a successful runner outcome may satisfy downstream dependencies.
+/// Runner-level provider, quality, hook, and delivery failures are returned as
+/// terminal `Ok(RunOutcome { success: false, .. })` values so their WAL audit
+/// can complete; treating every `Ok` as success would bypass the dependency
+/// contract.
+fn record_successful_outcome_if_current(
+    completed: &Mutex<HashMap<String, DateTime<Utc>>>,
+    retired_running: &Mutex<HashSet<String>>,
+    job_id: String,
+    completed_at: DateTime<Utc>,
+    outcome: &RunOutcome,
+) -> bool {
+    outcome.success
+        && record_completion_if_current(completed, retired_running, job_id, completed_at)
+}
+
 /// Run the scheduler loop until the future is dropped.
 pub async fn run_scheduler(
     home: PathBuf,
@@ -192,6 +209,21 @@ pub async fn run_scheduler(
     reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> Result<()> {
     let mut state = SchedulerState::new(jobs_file);
+    let durable = RuntimeState::modify(&home, |durable| {
+        durable.reconcile(&state.jobs_file.jobs)?;
+        Ok(durable.clone())
+    })
+    .map_err(|error| anyhow::anyhow!("load durable Cron runtime state: {error:#}"))?;
+    state.last_fired = durable
+        .jobs
+        .iter()
+        .filter_map(|(id, entry)| entry.last_fired.map(|at| (id.clone(), at)))
+        .collect();
+    *state.completed.lock().unwrap() = durable
+        .jobs
+        .iter()
+        .filter_map(|(id, entry)| entry.completed_at.map(|at| (id.clone(), at)))
+        .collect();
     let mut ticker = interval(DEFAULT_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dispatch_enabled = true;
@@ -222,13 +254,31 @@ pub async fn run_scheduler(
                 previous_jobs,
                 current_jobs,
                 recovered,
-            } => info!(
-                path = %jobs_path.display(),
-                previous_jobs,
-                current_jobs,
-                recovered,
-                "cron jobs snapshot reloaded"
-            ),
+            } => {
+                {
+                    let checkpoint = RuntimeState::modify(&home, |checkpoint| {
+                        checkpoint.reconcile(&state.jobs_file.jobs)?;
+                        Ok(checkpoint.clone())
+                    })?;
+                    state.last_fired = checkpoint
+                        .jobs
+                        .iter()
+                        .filter_map(|(id, entry)| entry.last_fired.map(|at| (id.clone(), at)))
+                        .collect();
+                    *state.completed.lock().unwrap() = checkpoint
+                        .jobs
+                        .iter()
+                        .filter_map(|(id, entry)| entry.completed_at.map(|at| (id.clone(), at)))
+                        .collect();
+                }
+                info!(
+                    path = %jobs_path.display(),
+                    previous_jobs,
+                    current_jobs,
+                    recovered,
+                    "cron jobs snapshot reloaded"
+                )
+            }
             ReloadOutcome::Unchanged { recovered: true } => info!(
                 path = %jobs_path.display(),
                 jobs = state.jobs_file.jobs.len(),
@@ -287,6 +337,19 @@ pub async fn run_scheduler(
                     debug!(job_id = %job.id, "cron job still running; skipping overlapping fire");
                     continue;
                 }
+                // Persist the fire cursor before spawning. If this write fails,
+                // no provider call occurs and a one-shot cannot duplicate after
+                // restart.
+                {
+                    if let Err(error) =
+                        RuntimeState::modify(&home, |checkpoint| checkpoint.record_fire(job, now))
+                    {
+                        state.running.lock().unwrap().remove(&job.id);
+                        warn!(job_id = %job.id, error = %error,
+                            "Cron fire checkpoint failed; dispatch blocked fail-closed");
+                        continue;
+                    }
+                }
                 state.last_fired.insert(job.id.clone(), now);
                 let writer_for_task = writer.clone();
                 let provider_for_task = provider.clone();
@@ -310,15 +373,35 @@ pub async fn run_scheduler(
                     )
                     .await
                     {
-                        Ok(_) => {
+                        Ok(outcome) => {
                             // Deleted generations may finish, but their result
                             // must not satisfy dependencies of a re-added ID.
-                            record_completion_if_current(
+                            let current_generation = record_successful_outcome_if_current(
                                 &completed_for_task,
                                 &retired_for_task,
                                 job_id,
                                 crate::time::utc_now(),
+                                &outcome,
                             );
+                            if current_generation {
+                                let completed_at = crate::time::utc_now();
+                                if let Err(error) =
+                                    RuntimeState::modify(&home_for_task, |checkpoint| {
+                                        checkpoint.record_completion(&job_for_task, completed_at)
+                                    })
+                                {
+                                    warn!(job_id = %job_for_task.id, error = %error,
+                                        "Cron completion checkpoint failed; downstream state may not survive restart");
+                                    completed_for_task.lock().unwrap().remove(&job_for_task.id);
+                                }
+                            }
+                            if !outcome.success {
+                                warn!(
+                                    job_id = %job_for_task.id,
+                                    error = outcome.error.as_deref().unwrap_or("job outcome marked unsuccessful"),
+                                    "cron job failed; downstream dependencies remain blocked"
+                                );
+                            }
                         }
                         Err(e) => {
                             warn!(job_id = %job_for_task.id, error = %e, "job dispatch error");
@@ -337,20 +420,7 @@ pub async fn run_scheduler(
 /// strictly after the last time we actually fired it. Within the same minute
 /// we therefore fire exactly once, even though the 30 s tick visits twice.
 pub fn should_fire_now(job: &Job, now: DateTime<Utc>, last_fired: Option<DateTime<Utc>>) -> bool {
-    let Ok(sched) = job.schedule.parse() else {
-        return false;
-    };
-    let tz = job.schedule.timezone();
-    let now_local = now.with_timezone(&tz);
-    // The cron crate doesn't expose `prev`. We walk forward from a window
-    // start (now - 2 min) and pick the latest fire <= now.
-    let window_start = (now_local - chrono::Duration::minutes(2)).with_timezone(&tz);
-    let latest_due = sched
-        .after(&window_start)
-        .take(5)
-        .filter(|t| *t <= now_local)
-        .last()
-        .map(|t| t.with_timezone(&Utc));
+    let latest_due = job.schedule.latest_due(now, chrono::Duration::minutes(2));
     let Some(due) = latest_due else {
         return false;
     };
@@ -374,10 +444,12 @@ mod tests {
             schedule: Schedule {
                 cron: cron.to_string(),
                 tz: Some("UTC".to_string()),
+                ..Default::default()
             },
             prompt: "hi".to_string(),
             timeout_seconds: 60,
             delivery: None,
+            execution: Default::default(),
             depends_on: vec![],
         }
     }
@@ -422,6 +494,66 @@ mod tests {
         let t0 = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
         let t1 = Utc.with_ymd_and_hms(2026, 5, 14, 12, 1, 5).unwrap();
         assert!(should_fire_now(&job, t1, Some(t0)));
+    }
+
+    #[test]
+    fn interval_schedule_fires_each_due_boundary_exactly_once() {
+        let anchor = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        let mut job = job_at("* * * * *");
+        job.schedule = Schedule {
+            cron: String::new(),
+            every_seconds: Some(60),
+            anchor_unix: Some(anchor.timestamp()),
+            at: None,
+            tz: None,
+        };
+
+        assert!(!should_fire_now(
+            &job,
+            anchor - chrono::Duration::seconds(1),
+            None
+        ));
+        assert!(should_fire_now(&job, anchor, None));
+        assert!(!should_fire_now(
+            &job,
+            anchor + chrono::Duration::seconds(20),
+            Some(anchor)
+        ));
+        assert!(should_fire_now(
+            &job,
+            anchor + chrono::Duration::seconds(60),
+            Some(anchor)
+        ));
+    }
+
+    #[test]
+    fn one_shot_schedule_fires_once_and_never_catches_up_outside_window() {
+        let due = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        let mut job = job_at("* * * * *");
+        job.schedule = Schedule {
+            cron: String::new(),
+            every_seconds: None,
+            anchor_unix: None,
+            at: Some(due),
+            tz: None,
+        };
+
+        assert!(!should_fire_now(
+            &job,
+            due - chrono::Duration::seconds(1),
+            None
+        ));
+        assert!(should_fire_now(&job, due, None));
+        assert!(!should_fire_now(
+            &job,
+            due + chrono::Duration::seconds(30),
+            Some(due)
+        ));
+        assert!(!should_fire_now(
+            &job,
+            due + chrono::Duration::minutes(3),
+            None
+        ));
     }
 
     #[test]
@@ -595,6 +727,30 @@ mod tests {
             &state.retired_running,
             "j".into(),
             fired_at,
+        ));
+        assert!(state.completed.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn unsuccessful_outcome_does_not_satisfy_dependencies() {
+        let state = SchedulerState::new(snapshot(vec![job_at("* * * * *")]));
+        let completed_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        let outcome = RunOutcome {
+            success: false,
+            duration: Duration::from_millis(1),
+            output_bytes: 0,
+            delivery_queued: false,
+            delivery_id: None,
+            delivery_status: None,
+            error: Some("provider failed".into()),
+        };
+
+        assert!(!record_successful_outcome_if_current(
+            &state.completed,
+            &state.retired_running,
+            "j".into(),
+            completed_at,
+            &outcome,
         ));
         assert!(state.completed.lock().unwrap().is_empty());
     }

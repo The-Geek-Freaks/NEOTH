@@ -33,9 +33,26 @@ List every ADR in number order
 
 Inspect sub-agents loaded from `~/.neoth/agents/*.toml` + built-ins (code-reviewer, security-reviewer, planner, critic)
 
+### `neoth agents history`
+
+List private run records, or show one by id
+
+- `<RUN_ID>`
+- `--limit <LIMIT>`
+
 ### `neoth agents list`
 
 Print every loaded sub-agent (built-in + operator), sorted by name
+
+### `neoth agents run`
+
+Run 2-8 independent provider-only agents concurrently. Every candidate receives a typed QA verdict; --retry-failed permits one correction
+
+- `--agent <AGENTS>` — Agent name. Repeat once per independent perspective/task
+- `<PROMPT>` — Operator task sent independently to every selected agent
+- `--max-concurrent <MAX_CONCURRENT>` — Bound concurrent provider work. Hard-capped at 4
+- `--timeout-secs <TIMEOUT_SECS>` — Per-agent wall-clock ceiling, including QA and optional retry
+- `--retry-failed` — Permit exactly one corrected answer after a structured QA Fail
 
 ### `neoth agents show`
 
@@ -120,19 +137,24 @@ Federation opt-in/out (`babel.federate`). Sharing anonymized window records is O
 Attach an operator-confirmed collapse label to a window
 
 - `<WINDOW_ID>` — The window id (`neoth babel windows` lists them)
+- `<LABEL>` — The collapse label to attach
 
 ### `neoth babel negative-control`
 
-Tag a deliberately stable window for falsification controls, or remove its tag:
+Tag or untag a deliberately stable window used as a negative control
 
-```bash
-neoth babel negative-control set <WINDOW_ID> <TYPE>
-neoth babel negative-control clear <WINDOW_ID>
-```
+#### `neoth babel negative-control clear`
 
-`TYPE` is one of `synthetic_stable`, `isolated_run`, or `replay_deterministic`.
-The typed tag is preserved in JSONL exports and federated records.
-- `<LABEL>` — The collapse label to attach
+Remove a negative-control tag from a window
+
+- `<WINDOW_ID>` — The window id (`neoth babel windows` lists them)
+
+#### `neoth babel negative-control set`
+
+Mark a window as an operator-declared negative control
+
+- `<WINDOW_ID>` — The window id (`neoth babel windows` lists them)
+- `<CONTROL_TYPE>` — One of: synthetic_stable, isolated_run, replay_deterministic
 
 ### `neoth babel status`
 
@@ -150,7 +172,7 @@ Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
 
 - `--out <PATH>` — Output path for the `.tar.gz`. Defaults to `~/.neoth/backups/neoth-<UTC-timestamp>.tar.gz`
 - `--no-wal` — Skip raw WAL segments. Default behaviour bundles them — the WAL is the source of truth + the operator-flow audit (2026-05-19) flagged "default-without-WAL produces inconsistent restores where views.db cursors reference segments that don't exist". Pass `--no-wal` to opt out (saves disk, but restored host needs to re-index from scratch)
-- `--include-credentials` — Explicitly include `credentials.yaml` (API keys and channel tokens) in the plaintext tarball. Credentials are excluded by default. Use this only when the archive itself is stored on encrypted media; the command prints a prominent plaintext-secret warning
+- `--include-credentials` — Include `credentials.yaml` (API keys, channel tokens) in the plaintext tarball. Excluded by default; use this only when the destination is operator-controlled encrypted storage. A complete credential restore requires this explicit opt-in
 - `--home <DIR>` — Override the ~/.neoth source dir (mostly for tests)
 
 ## `neoth buddy`
@@ -235,28 +257,32 @@ Print one provider's full catalog with metadata
 
 - `<PROVIDER>` — Provider key (`anthropic_api`, `openai_api`, `gemini_api`, `aws_bedrock`, `openai_compat`, …)
 
-## `neoth channel` _(hidden)_
+## `neoth channel`
 
-Manage channels (Telegram, WhatsApp, etc.) (Day 7+)
+Add, inspect, test, and remove messaging channels
 
 ### `neoth channel add`
 
 Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts)
 
-- `<CHANNEL>` — Channel name (e.g. telegram, slack, whatsapp, whatsapp_baileys, discord, signal, line, irc, imessage, bluebubbles, mattermost, gchat)
-- `--token <TOKEN>` — Bot/access token. For `whatsapp` this is Meta Cloud; for `whatsapp_baileys` it is a separate 32+ character bridge bearer token
+- `<CHANNEL>` — Channel name (e.g. telegram, slack, whatsapp, whatsapp_baileys, keet, discord, signal, line, irc, imessage, bluebubbles, mattermost, gchat, matrix, twitch, nostr)
+- `--telegram-user-id <TELEGRAM_USER_ID>` — Numeric Telegram user ID allowed to drive the bot. Required with Telegram so the inbound adapter never starts with an open sender policy. Stored in freedom.yaml; the token remains in credentials.yaml
+- `--token <TOKEN>` — Bot/access token (telegram, Meta WhatsApp, Baileys/Keet companion, Discord, LINE, Mattermost). Sidecars use dedicated bearer tokens
 - `--bot-token <BOT_TOKEN>` — Slack bot token (xoxb-…)
 - `--app-token <APP_TOKEN>` — Slack app token (xapp-…, socket mode)
 - `--phone-id <PHONE_ID>` — WhatsApp phone-number id (numeric, from Meta console)
-- `--seed <SEED>` — deprecated legacy Keet flag; retained for CLI compatibility and always rejected
-- `--url <URL>` — Base URL: Baileys bridge / signal-cli daemon / BlueBubbles server / Mattermost / path to GCP service-account JSON key (gchat). Baileys permits HTTP only on loopback
+- `--verify-token <VERIFY_TOKEN>` — WhatsApp webhook challenge verification token (inbound)
+- `--app-secret <APP_SECRET>` — WhatsApp Meta app secret used to verify inbound webhook HMAC
+- `--seed <SEED>` — Deprecated speculative native-Keet seed. Kept for CLI compatibility; the companion integration always rejects it
+- `--url <URL>` — Base URL: Baileys/Keet companion / signal-cli daemon / BlueBubbles server / Mattermost / path to GCP service-account JSON key (gchat)
 - `--phone <PHONE>` — Signal phone number (E.164, e.g. +4917…)
-- `--server <SERVER>` — IRC server host (no scheme, e.g. irc.libera.chat) / Pub/Sub subscription (gchat, projects/<p>/subscriptions/<s>)
-- `--nick <NICK>` — IRC bot nick
+- `--server <SERVER>` — IRC server host (no scheme), Keet `nk1_…` topic capability, or Pub/Sub subscription (gchat, projects/<p>/subscriptions/<s>)
+- `--nick <NICK>` — IRC bot nick / Matrix bot user id (`@user:server`)
 - `--password <PASSWORD>` — Password / secret: IRC NickServ password, BlueBubbles server password, or LINE channel secret
-- `--channels-csv <CHANNELS_CSV>` — IRC channels to join, comma-separated (e.g. #neoth,#dev)
-- `--allowed-sender <ALLOWED_SENDER>` — Required Baileys sender allowlist (comma-separated E.164 or exact JIDs); also used by channels with sender policy
-- `--allowed-rooms-csv <ALLOWED_ROOMS_CSV>` — Baileys exact `@g.us` group allowlist (groups denied when omitted), or Matrix room allowlist
+- `--channels-csv <CHANNELS_CSV>` — IRC/Twitch rooms to join, or Nostr relay URLs, comma-separated
+- `--allowed-sender <ALLOWED_SENDER>` — Matrix inviter/inbound sender allowlist (`@user:server`), Baileys sender allowlist (E.164/JID), or exact Keet companion sender IDs. Multiple values are comma-separated
+- `--allowed-rooms-csv <ALLOWED_ROOMS_CSV>` — Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV
+- `--allow-plaintext` — Matrix only: explicitly permit plaintext rooms. Encrypted rooms are required when this flag is absent
 
 ### `neoth channel list`
 
@@ -270,7 +296,7 @@ Remove a channel
 
 ### `neoth channel test`
 
-Test a channel connection
+Run a read-only live probe; returns typed skipped/unavailable when no safe probe exists
 
 - `<CHANNEL>`
 
@@ -288,7 +314,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `--temperature <T>` — Sampling temperature for providers that support it. Range [0.0, 2.0]; Cohere, Bedrock, and legacy Anthropic cap it at 1.0, while Anthropic models after Opus 4.6 accept only 1.0. An unsupported selected provider returns a clear error before transport
 - `--top-p <P>` — Top-p (nucleus) sampling cutoff. Range (0.0, 1.0]; `1.0` keeps every token. Anthropic models after Opus 4.6 accept only [0.99, 1.0]. An unsupported selected provider fails before transport
 - `--sampling-seed <SEED>` — Optional RNG seed for reproducible sampling. Portable range [0, 4294967295]. Pair with `--temperature > 0` for a replayable non-greedy call. Unsupported providers fail
-- `--resume-from <HASH>` — Round-3 v0.4 QU-11 / ARS-6 — resume a prior session from a `MODE_CHECKPOINT` (WAL `0x9A`) snapshot. Takes the 12-char checkpoint hash (or any unique prefix) printed by the prior session at checkpoint-emission time. NEOTH loads and verifies the snapshot, prints the resume banner, prepends a typed RESUME-CONTEXT block, and restricts the current MCP registry to the checkpoint's exact recorded server IDs. Newly enabled servers are excluded; missing/disabled IDs, duplicate IDs, and legacy checkpoints without an exact scope fail closed before provider dispatch
+- `--resume-from <HASH>` — Round-3 v0.4 QU-11 / ARS-6 — resume a prior session from a `MODE_CHECKPOINT` (WAL `0x9A`) snapshot. Takes the 12-char checkpoint hash (or any unique prefix) printed by the prior session at checkpoint-emission time. NEOTH looks up the snapshot via `recall::reconstruct::reconstruct_from_checkpoint`, prints a one-line resume banner ("resuming session X / phase Y / provider Z"), and prepends a typed RESUME-CONTEXT block to the chat's system prompt so the assistant knows the prior pipeline shape. The current MCP registry is then restricted to the checkpoint's exact recorded server IDs: newly enabled servers are excluded, while missing/disabled IDs and legacy checkpoints without an exact scope fail closed before provider dispatch
 - `--incognito` — ODY-09 — ephemeral/incognito turn: skip memory injection (Block::D recall), RAW_TEXT journaling, and every post-turn memory surface. The mandatory provider request/terminal lifecycle remains auditable with hashes and typed metadata only (`incognito: true`), never prompt or response plaintext. `INCOGNITO_TURN` (0xF7) records the privacy mode
 - `--loop` — GOLD-LOOP-01 — engage the multi-round loop engine instead of a single `run_mcp_dispatch_loop` call. Each round is one full dispatch; the engine evaluates `--until` criteria after each round and stops when all are satisfied or `--iterations` is hit. Requires MCP autoroute to be on (same gate as the existing dispatch path). Flag is `--loop` (the product name); `--loop-mode` stays accepted as an alias
 - `--iterations <N>` — GOLD-LOOP-01 — maximum outer loop rounds (overrides `freedom.yaml::loop_config.max_rounds`). Default: 3
@@ -372,7 +398,7 @@ GOLD-G02-CLUSTER-01 — list ingested foreign gossip events (`idx_foreign_events
 
 ### `neoth cluster export-foreign`
 
-DES-13 — export this node's backup-at-rest for a crashed peer: dump the raw foreign gossip frames (`idx_foreign_events`) to JSONL so an operator can pull a failed node's replicated data off a surviving peer. The resulting file is accepted by `neoth cluster restore`, which restores supported same-origin frames into local recall/memory with conflict checks, idempotency markers, dry-run, and operator consent. One JSON object per line: `{origin_peer_pk, origin_seq, event_type, payload_b64, received_at}`
+DES-13 — export this node's backup-at-rest for a crashed peer: dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL file so an operator can pull a failed node's replicated data off a surviving peer. This is the auditable input accepted by `neoth cluster restore`; restore still applies the replication allowlist, CRC checks, conflict policy, and dry-run gate. One JSON object per line: `{origin_peer_pk, origin_seq, event_type, payload_b64, received_at}`
 
 - `--peer <PEER_PK>` — Filter to one origin peer public key (hex)
 - `--out <FILE>` — Output file (or `-` for stdout)
@@ -415,11 +441,17 @@ Print the active policy + known peer state
 GOLD-FEAT-06 — exo-style swarm dashboard: per-node CPU/RAM/VRAM read from the `EXTENDED/LocalSnapshot` + `EXTENDED/SwarmResourceSnapshot` WAL frames the resource-snapshot cron emits. `--watch` refreshes live
 
 - `-w, --watch` — Continuously refresh the dashboard every 5 s. Exit with Ctrl-C
-- `--stale-secs <STALE_SECS>` — Drop nodes whose last snapshot is older than this many seconds. Defaults to `freedom.yaml::swarm.stale_after_secs` (300); an explicit positive value overrides it for this invocation
+- `--stale-secs <STALE_SECS>` — Drop nodes whose last snapshot is older than this many seconds. Defaults to `freedom.yaml::swarm.stale_after_secs` (300). Must be greater than zero; an explicit value overrides config
+
+### `neoth cluster sync-state`
+
+Inspect durable per-peer mesh cursors, pending exact replays, ACK high water marks and inbound sequence expectations
+
+- `--peer <PEER_PK>` — Filter to one authenticated peer public key
 
 ### `neoth cluster topology`
 
-SL-02: cluster topology view — confirmed peers + per-peer last-seen age, recent/stale/uncontacted status, last persisted heartbeat RTT, and stability score, as a table or `--output json`. The one-shot reads `~/.neoth/cluster.yaml`; instantaneous daemon-only health/TPS is outside this view.
+SL-02: cluster topology view — confirmed peers + per-peer last-seen age + a recent/stale/uncontacted status, table or `--output json`. Read-only over `~/.neoth/cluster.yaml`, including the last persisted heartbeat RTT and stability score. Instantaneous daemon-only health/TPS is intentionally outside this one-shot view
 
 ## `neoth code`
 
@@ -454,7 +486,7 @@ Phase 3a — read a previously persisted snapshot back from `~/.neoth/code_map.d
 
 ### `neoth code-map persist`
 
-Phase 3a (Session 14 Pick #22) — scan PATH (or cwd) and persist the resulting `RepoMap` into `~/.neoth/code_map.db`. Idempotent: a re-run against the same root replaces the prior snapshot atomically. Phase 3b consumes this DB for recall-time context injection
+Phase 3a (Session 14 Pick #22) — scan PATH (or cwd) and persist the resulting `RepoMap` into `~/.neoth/code_map.db`. Idempotent: a re-run against the same root replaces the prior snapshot atomically. Chat, coding, and MCP consumers read this DB for repo-context and architecture queries
 
 - `<PATH>` — Root directory to scan + persist. Defaults to cwd
 - `--max-files <N>` — Hard cap on total files counted. Defaults to 50000
@@ -464,7 +496,7 @@ Phase 3a (Session 14 Pick #22) — scan PATH (or cwd) and persist the resulting 
 
 ### `neoth code-map relevant`
 
-Phase 3b (Session 14 Pick #25) — given a free-text PROMPT, query the persisted code map for files that look relevant. Ranks by identifier-symbol matches first, path-keyword overlap second. Use this to inspect what Phase 3c would inject as a `<repo-context>` block without firing the actual chat
+Phase 3b (Session 14 Pick #25) — given a free-text PROMPT, query the persisted code map for files that look relevant. Ranks by identifier-symbol matches first, path-keyword overlap second. Use this to inspect what chat would inject as a `<repo-context>` block without firing a provider call
 
 - `<PROMPT>` — Free-text prompt to score against the persisted map
 - `--max <N>` — Max files to return. Default 5
@@ -488,7 +520,7 @@ Phase 3a — find every persisted file that declares a symbol matching NAME exac
 
 ## `neoth companion`
 
-GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a single-use phone-pairing invite (rendezvous topic + PSK), show it as a QR code with a URL fallback, and complete pairing over the Hyperswarm P2P mesh. The CLI can drive a transient listener or hand the invite atomically to a running daemon
+GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time phone-pairing invite (rendezvous topic + PSK) and show it as a QR code with a URL fallback. With the default `cluster` feature it drives the single-use Hyperswarm/Noise-XX P2P handshake; `--write-invite-for-serve` hands the invite to a configured running daemon for durable token use
 
 ### `neoth companion pair-phone`
 
@@ -654,10 +686,6 @@ Migrate secrets between storage backends
 - `--to <TO>` — Target backend: `keychain` or `file`
 - `--dry-run` — Report what would change without writing anything
 
-The `keychain` target is currently implemented on Windows through Credential
-Manager. macOS Keychain and Linux Secret Service builds fail closed with an
-explicit unsupported-backend error; use `--to file` on those platforms.
-
 ### `neoth credential scan`
 
 Scan a file or directory for committed secrets (AWS / GitHub / OpenAI / Slack / Google keys, PEM private keys, `api_key = "…"` assignments). Findings REDACT the matched value. Exits non-zero when any secret is found (CI-friendly). Directories are walked recursively; `.git`, `target`, `node_modules`, dotdirs, binary + >2 MB files are skipped
@@ -667,20 +695,43 @@ Scan a file or directory for committed secrets (AWS / GitHub / OpenAI / Slack / 
 
 ## `neoth cron`
 
-Fire a scheduled job NOW, out of band of the daemon scheduler: `cron run <id>` loads jobs.yaml, runs the job through the configured provider, and durably queues any configured delivery for the daemon dispatcher. It writes the same WAL frames the scheduler does and is refused while `neoth serve` owns the WAL
+Fire a scheduled job NOW, out of band of the daemon scheduler: `cron run <id>` loads jobs.yaml, runs the job through the configured provider (real call + delivery), writing the same WAL frames the scheduler does. Refused while `neoth serve` owns the WAL
 
 ### `neoth cron add`
 
-Add a new job to jobs.yaml. Validates the schedule and delivery channel, then surfaces advisory warnings before saving. Rejects duplicate ids. HERMES-01 / JV-PRO-01/04/09
+Add a new job to jobs.yaml. Validates the schedule and delivery channel, then surfaces advisory warnings. Rejects duplicate ids. HERMES-01 / JV-PRO-01/04/09
 
 - `--id <ID>` — Unique job id (slug, no spaces)
 - `--name <NAME>` — Human-readable job name
 - `--cron <CRON>` — 5-field cron expression, e.g. "0 7 * * *"
+- `--every <EVERY>` — Fixed interval such as `30s`, `5m`, `2h`, `1d`, or raw seconds
+- `--at <AT>` — One-shot RFC3339 timestamp, for example `2026-08-01T09:00:00Z`
 - `--prompt <PROMPT>` — Prompt sent to the configured provider when the job fires
 - `--tz <TZ>` — IANA timezone, e.g. "Europe/Berlin". Defaults to UTC
-- `--channel <CHANNEL>` — Delivery channel name ("telegram", "slack", …). The destination comes from operator-owned `channel_routing.yaml`
+- `--channel <CHANNEL>` — Delivery channel name ("telegram", "slack", …). The destination is read from the operator-owned channel routing configuration
+- `--recipient <RECIPIENT>` — Explicit recipient/room/channel id. Must match operator routing
+- `--account <ACCOUNT>` — Explicit account selector (rejected if the adapter lacks a wire)
+- `--thread <THREAD>` — Explicit thread/topic selector (rejected if the adapter lacks a wire)
+- `--delivery-mode <DELIVERY_MODE>` — Delivery mode. Inferred as announce for --channel and webhook for --webhook-url; omitted with no target means none
+- `--webhook-url <WEBHOOK_URL>` — Exact URL of a registered signed endpoint in freedom.yaml
+- `--best-effort` — Record delivery failure without failing an otherwise successful job
+- `--provider <PROVIDER>` — Per-job provider slug (e.g. openai_api, anthropic_api, local_qwen)
+- `--model <MODEL>` — Final wire model for this job
+- `--profile <PROFILE>` — Built-in profile preset
+- `--thinking-budget <THINKING_BUDGET>` — Exact thinking-token budget; unsupported providers fail before spend
+- `--fallback <FALLBACK>` — 429 fallback as PROVIDER or PROVIDER:MODEL. Repeat for ordering
+- `--capability <CAPABILITIES>` — Enabled MCP server id available to the job. Repeat as needed
+- `--tool <TOOLS>` — Exact MCP tool name. Requires at least one --capability
+- `--depends-on <DEPENDS_ON>` — Successful prerequisite job id. Repeat to build a dependency wave
 - `--timeout <TIMEOUT>` — Timeout in seconds. Defaults to 600
 - `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+
+### `neoth cron deliveries`
+
+Show durable delivery correlation and final/queued status
+
+- `--job <JOB>` — Optional job id filter
+- `--home <HOME>` — Explicit NEOTH home. Defaults to the active instance home
 
 ### `neoth cron edit`
 
@@ -689,9 +740,29 @@ Edit an existing job by id. Only supplied flags are updated. Validates the resul
 - `<ID>` — The job `id` to modify
 - `--name <NAME>` — Replace the job name
 - `--cron <CRON>` — Replace the cron expression
+- `--every <EVERY>`
+- `--at <AT>`
 - `--prompt <PROMPT>` — Replace the prompt
-- `--tz <TZ>` — Replace the timezone (pass "UTC" to clear)
-- `--channel <CHANNEL>` — Replace the delivery channel; pass an empty value to clear delivery. The destination comes from operator-owned `channel_routing.yaml`
+- `--tz <TZ>` — Replace the timezone
+- `--clear-timezone` — Clear the timezone and use UTC
+- `--channel <CHANNEL>` — Replace the delivery channel. The destination is read from the operator-owned channel routing configuration
+- `--recipient <RECIPIENT>`
+- `--account <ACCOUNT>`
+- `--thread <THREAD>`
+- `--delivery-mode <DELIVERY_MODE>`
+- `--webhook-url <WEBHOOK_URL>`
+- `--best-effort <BEST_EFFORT>`
+- `--clear-delivery` — Clear the complete delivery target before applying supplied fields
+- `--provider <PROVIDER>`
+- `--model <MODEL>`
+- `--profile <PROFILE>`
+- `--thinking-budget <THINKING_BUDGET>`
+- `--fallback <FALLBACK>`
+- `--capability <CAPABILITIES>`
+- `--tool <TOOLS>`
+- `--clear-execution` — Clear provider/model/profile/thinking/fallback/MCP execution policy before applying supplied execution fields
+- `--depends-on <DEPENDS_ON>`
+- `--clear-dependencies` — Clear all dependency edges before applying --depends-on values
 - `--timeout <TIMEOUT>` — Replace the timeout in seconds
 - `--enabled <ENABLED>` — Enable or disable the job
 - `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
@@ -702,6 +773,13 @@ List all jobs with their schedule, role, and delivery. HERMES-01 / JV-PRO-05
 
 - `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
 
+### `neoth cron pause`
+
+Pause a job without deleting its configuration
+
+- `<ID>`
+- `--file <FILE>`
+
 ### `neoth cron remove`
 
 Remove a job by id from jobs.yaml. HERMES-01
@@ -709,9 +787,16 @@ Remove a job by id from jobs.yaml. HERMES-01
 - `<ID>` — The job `id` to delete
 - `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
 
+### `neoth cron resume`
+
+Resume a paused job. The live scheduler observes the atomic rewrite
+
+- `<ID>`
+- `--file <FILE>`
+
 ### `neoth cron run`
 
-Fire one job by id immediately, out of band of the scheduler. Makes a real provider call and (if the job has a delivery channel) delivers the result. Refused while `neoth serve` is running
+Fire one job by id immediately, out of band of the scheduler. Makes a real provider call and (if the job has a delivery channel) queues the result for the daemon's gated proactive dispatcher. Refused while `neoth serve` is running
 
 - `<ID>` — The job `id` from jobs.yaml
 - `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
@@ -768,8 +853,9 @@ Transcribe an audio file via the configured STT dispatcher (GOLD-ADOPT-25; local
 
 GOLD-ADAPT-KB-03 — scan session trajectory files for repeated tool-call sequences and surface them as candidate skills to distill
 
-- `--min-occurrences <MIN_OCCURRENCES>` — Minimum number of times a sequence must appear to be reported
+- `--min-occurrences <MIN_OCCURRENCES>` — Minimum number of distinct sessions containing a sequence
 - `--min-len <MIN_LEN>` — Minimum sequence length (number of tool calls) to consider
+- `--min-confidence <MIN_CONFIDENCE>` — Required cross-session support. The comparison is strict (`>`), so the default implements the roadmap's confidence > 0.8 contract
 - `--json` — Emit JSON array instead of the default table
 
 ## `neoth doctor`
@@ -1290,7 +1376,7 @@ Multimodal asset ingest pipeline
 
 - `<PATH>` — File to ingest. Extension drives the kind: `.pdf` → pdf, `.png|.jpg|.jpeg|.webp|.gif` → image, `.wav|.mp3|.flac|.ogg|.m4a` → audio, `.mp4|.mov|.mkv|.webm` → video, `.docx|.pptx|.xlsx|.odt|.ods|.odp|.epub|.rtf` → document
 - `--db <PATH>` — Override the views.db path. Defaults to `~/.neoth/views.db`
-- `--wal-segment <PATH>` — Override the WAL segment path the audit events land in. Defaults to `~/.neoth/wal/000001.wal` — the same surface `neoth serve` writes to
+- `--wal-segment <PATH>` — Override the WAL segment path the audit events land in. Defaults to `~/.neoth/wal/000001.wal` — the same surface `neothd serve` writes to
 - `--no-persist` — Skip the embedding persistence pass — useful when running the pipeline against fixtures in tests or when the operator is just inspecting the metadata
 - `--no-audit` — Skip emitting `INGEST_EXTRACTED` / `EMBED_PERSISTED` WAL audit events. Useful for batch reprocessing where the audit trail is already known
 - `--no-index` — Skip writing extracted text chunks into the ctx/recall memory store (`views.db`). Useful when the operator just wants the extraction report or embedding persistence without indexing the text for recall
@@ -1311,17 +1397,37 @@ Interactive onboarding wizard. Sets up ~/.neoth/ config
 - `--provider <KIND>` — LLM provider kind
 - `--provider-binary <PATH>` — Path to CLI binary (for claude_cli)
 - `--provider-key <KEY>` — API key. Prefer env NEOTH_PROVIDER_KEY
-- `--provider-endpoint <URL>` — Custom API endpoint (for openai_compat)
+- `--provider-endpoint <URL>` — Custom API endpoint (OpenAI-compatible or Azure OpenAI resource URL)
 - `--provider-model <MODEL>` — Override default model
+- `--provider-region <REGION>` — AWS region for `aws_bedrock` (for example `eu-central-1`). Falls back to AWS_REGION/AWS_DEFAULT_REGION, then `us-east-1`
+- `--provider-api-version <VERSION>` — Azure OpenAI API version (for example `2024-10-21`)
+- `--auto-update` — Enable release checks in the daemon (check-only; no auto-apply)
+- `--auto-update-apply` — Enable release checks and automatically stage verified updates. Binary replacement remains an explicit `neoth update --self --apply`
+- `--no-auto-update` — Explicitly disable release checks during unattended reconfiguration
 - `--telegram-token <TOKEN>` — Telegram bot token. Prefer env NEOTH_TELEGRAM_TOKEN
 - `--telegram-user-id <USER_ID>` — Restrict Telegram bot to a single user ID
+- `--omi` — Enable OMI conversation/native ingest. OMI stays disabled unless this flag is present (or an existing `--force` configuration already has it enabled). Credentials are accepted only through the no-echo wizard prompts or `NEOTH_OMI_DEVELOPER_API_KEY` / `NEOTH_OMI_INGEST_TOKEN`
+- `--no-omi` — Explicitly disable OMI during a non-interactive reconfiguration
+- `--omi-mode <MODE>` — OMI ingest mode: developer_api, native_ingest, both, or legacy_memories
+- `--omi-endpoint <URL>` — OMI Developer API/backend base URL
+- `--omi-listen-addr <IP:PORT>` — Authenticated native OMI listener socket
+- `--omi-allow-cloud-api <BOOL>` — Permit Developer API polling to use a public HTTPS endpoint
+- `--omi-retention-days <DAYS>` — OMI-derived record retention window
+- `--omi-retain-transcripts <BOOL>` — Retain verbatim OMI transcript text locally
+- `--omi-audio <BOOL>` — Accept OMI audio in native ingest mode
+- `--omi-images <BOOL>` — Accept OMI still images in native ingest mode
+- `--omi-video <BOOL>` — Accept OMI video/call frames in native ingest mode. Requires images
+- `--omi-create-actions <BOOL>` — Promote OMI action items into the local task system
+- `--omi-seed-groundtruth <BOOL>` — Seed corroborated OMI statements into local ground truth
+- `--omi-summary <BOOL>` — Produce bounded local OMI conversation summaries
+- `--omi-allow-cloud-summary <BOOL>` — Permit native OMI summaries to use the configured cloud model
 - `--autonomy <LEVEL>` — Autonomy level non-interactive override (Phase 28b R-23). `strict | standard | elevated | full | custom`. Defaults to `standard` when the wizard runs without a TTY
 - `--inference-mode <MODE>` — Inference topology non-interactive override (D14b). `single | triplet | custom`. Defaults to `single` when the wizard runs without a TTY
 - `--zero-friction` — GOLD-FEAT-01b — one-click zero-friction onboarding. Applies the maximally-permissive preset (Full autonomy + single-provider inference + every bundled skill active), overriding the per-step autonomy/topology picks. Opt-in; interactive runs are also offered it as a y/n confirm
 - `--accelerator-override <ACCEL>` — Accelerator override (D14b). `cuda | metal | openvino | cpu`. Defaults to the auto-detected best fit; this flag bypasses detection
 - `--embedding-provider <PROVIDER>` — Embedding-provider non-interactive override (D14b). `local_qwen | openai_api | anthropic_api | gemini_api`
 - `--council-depth <N>` — E-2 Phase 4 (Session 14 Pick #23) — operator-pinned council recursion depth. `0`/`1` = flat (default). `2` = 3×3 = 9 leaf calls per user message. `3` = 27 leaf calls. `4` = 81 leaf calls (the `MAX_HEMISPHERE_COUNCIL_DEPTH` cap). Values above 4 clamp silently. Operators raising this above 1 in non- interactive mode get a one-line stderr warning instead of the interactive confirm screen — there's no terminal to draw it on
-- `--enable-plugin <ID>` — E-21 step 7c non-interactive override. Review and activate a discovered WASM plugin by id without the interactive multiselect — repeat the flag for each id. Each activation binds the approved permission plus the exact canonical manifest and WASM digests. Unknown ids are warned but don't fail the wizard
+- `--enable-plugin <ID>` — E-21 step 7c non-interactive override (D-102 deferred follow-up). Pre-activate a discovered WASM plugin by id without the interactive multiselect — repeat the flag for each id to activate. Unknown ids are warned but don't fail the wizard. CI / cloud-init operators use this to flip plugins to Active during scripted bring-up; everyone else uses the interactive step or `neoth plugin enable <id>` afterwards
 - `--download-qwen-weights` — NOOB-UX-6 (Workstream B) — pre-download the LocalQwen model weights inside the wizard. Without this flag the wizard surfaces the `huggingface-cli download …` command and lets the operator run it later; with it the wizard offers to spawn the download synchronously (interactive confirms once more before spawning; non-interactive records the opt-in + surfaces the command to run)
 - `--install-obsidian` — O-1 (Workstream B) — opt into the Obsidian-install wizard step. With no flag the wizard skips Obsidian in non-interactive mode; with the flag the wizard renders the OS-specific install command + records the opt-in. Interactive mode prompts independently of this flag
 - `--bootstrap-vault` — O-2 (Workstream B) — bootstrap a fresh NEOTH-Vault under the operator's `~/Documents/NEOTH-Vault/`. Writes the curated `.obsidian/` config + templates from `installers::obsidian_vault::bootstrap_files`. Non- interactive: skipped without this flag; with it, the vault is created at the default path. Interactive: prompted with operator-pickable path
@@ -1348,6 +1454,20 @@ Execute the fallback chain against `pkg`. Tries each handle in order until one r
 Print the install argv for every handle in the host's fallback chain. Pure-fn — no subprocess fires
 
 - `<PKG>` — Package id to render commands for (e.g. `Docker.Docker` on winget, `docker.io` on apt)
+
+## `neoth interface`
+
+Inspect or change the instance-wide GUI/CLI default. The first interactive launch records this once; explicit switches update the same authoritative file under `NEOTH_HOME`
+
+### `neoth interface set`
+
+Set the default surface used by onboarding and future launchers
+
+- `<PREFERRED>`
+
+### `neoth interface show`
+
+Show whether the one-time GUI/CLI choice has been recorded
 
 ## `neoth jobs`
 
@@ -1551,6 +1671,18 @@ Invoke a single tool. `--args` accepts a JSON object; defaults to `{}` when omit
 - `<TOOL>`
 - `--args <ARGS>`
 
+### `neoth mcp codegraph-install`
+
+Idempotently register the built-in codegraph stdio server in `~/.neoth/mcp_servers.yaml` with an exact tool allowlist
+
+- `--db <DB>` — Override the code-map database passed to the server process
+
+### `neoth mcp codegraph-serve`
+
+Serve NEOTH's six read-only codegraph tools over MCP stdio. Intended as a subprocess entrypoint for MCP hosts; stdout contains protocol messages only. Run `codegraph-install` to register it in NEOTH itself
+
+- `--db <DB>` — Override the persisted code-map database path
+
 ### `neoth mcp list`
 
 List configured MCP servers from `~/.neoth/mcp_servers.yaml`. Pure config read; no child processes are spawned
@@ -1580,8 +1712,15 @@ Inspect the assembled NEOTH.md operator context
 - `--rebuild-index` — V10-08 — rebuild the HNSW embedding index from scratch by scanning all rows in `idx_embedding`. Writes the snapshot to `<neoth_home>/embeddings.hnsw`. Use after a database restore or when the snapshot is missing or corrupted. Safe to interrupt: the snapshot is written atomically (temp-file + rename)
 - `--embed-backfill` — GOLD-ADAPT-MEMGRAPH-01 — backfill episode embeddings into idx_embedding for every hot-tier episode that has no embedding row yet. Runs outside the hot ingest path (which is sync-in-tx and cannot call async embed). Honours `--limit` (default 20; `--limit 0` = unbounded) and `--db`. No-ops cleanly when no embed provider is configured
 - `--pipeline-scorecard` — GOLD-ADAPT-MEM-11 — print the 15-point per-subsystem memory pipeline scorecard. Reads `~/.neoth/views.db` live; honours `--db` and `--output`. Exit 0 when overall grade is C or above; exit 1 when below healthy threshold so scripts can gate on memory health
-- `--limit <LIMIT>` — Max rows for `--tier` recall
-- `--db <PATH>` — Override the views.db path for `--tier`
+- `--limit <LIMIT>` — Max rows for `--tier` recall or `memory show` provenance inspection
+- `--db <PATH>` — Override the views.db path for tier/provenance inspection
+
+### `neoth memory show`
+
+Inspect verified facts and resolve their episode provenance across hot, warm, and cold tiers. Pass an id to inspect one row in any lifecycle state
+
+- `<ID>` — Ground-truth id. Omit to show recent rows in every active trust state
+- `--verified-only` — Restrict the default all-active operator inspection to verified rows
 
 ## `neoth memory-eval`
 
@@ -1670,7 +1809,7 @@ Print every known model + whether its artifacts are cached
 
 Delete a model's cache directory. No-op when the directory is absent
 
-- `<NAME>` — Model id. Known: `clip`, `whisper`
+- `<NAME>` — Model id. Known: `clip`, `whisper`, `whisper-candle`, `whisper-faster`
 
 ### `neoth models pull`
 
@@ -1678,8 +1817,8 @@ Download a model's artifacts into `~/.neoth/models/<flat>/`. `neoth model fetch 
 
 _Aliases:_ `neoth models fetch`
 
-- `<NAME>` — Model id. Known: `clip`, `whisper`
-- `--repo <REPO>` — Override the HF repo (otherwise the default for the chosen name is used)
+- `<NAME>` — Model id. Known: `clip`, `whisper`, `whisper-candle`, `whisper-faster`
+- `--repo <REPO>` — Override the HF repo for CLIP. Whisper repositories are pinned to the configured model size and reject overrides
 
 ### `neoth models recommend`
 
@@ -1881,91 +2020,45 @@ Export the OKF bundle straight into an Obsidian vault (under `<vault>/NEOTH-know
 
 ## `neoth omi`
 
-Operate the opt-in OMI conversation and native-media runtime. Status is read-only
-and does not initialize `views.db`; destructive privacy operations require an
-explicit confirmation. Use global `--output table|json|jsonl` for machine-readable
-status and outcomes.
+OMI conversation runtime status, sanitizer recovery, retention, and purge controls
 
-- `--home <DIR>` — Override the NEOTH home containing `freedom.yaml`,
-  `credentials.yaml`, and `views.db`.
-
-### `neoth omi status`
-
-Show configuration validity, credential presence, consent controls, ledger
-counts, pending crash-reconciliation intents, sanitizer/retention errors, and
-both persisted and effective runtime health without printing secrets or
-transcript content. Effective health verifies the live PID from the selected
-`--home`; a stale persisted `healthy` row is reported as `inactive`/`unknown`,
-never as a running daemon.
-
-### `neoth omi probe`
-
-Perform a two-second live TCP reachability probe for the configured local OMI
-endpoint and/or native listener. Public Developer API endpoints are deliberately
-reported as `not_probed_auth_required`: this command does not create an
-unaudited authenticated cloud request merely to test reachability.
-
-### `neoth omi set-credentials`
-
-Programmatic, non-interactive credential update used by the desktop Settings
-and onboarding surfaces. It accepts one bounded JSON object on standard input;
-supported keys are `developer_api_key` and `native_ingest_token`. Secret values
-never enter process arguments, output, or logs. The command validates formats,
-uses the cross-process credential lock, preserves every unrelated credential,
-retains at-rest encryption, and writes to the selected file/keychain backend.
-When the keychain backend is active, matching emergency-file overrides are
-cleared only after the new keychain values have committed.
-
-```bash
-printf '%s' '{"developer_api_key":"omi_dev_..."}' | neoth omi set-credentials
-```
-
-### `neoth omi purge`
-
-Transactionally delete one OMI conversation and all database derivatives, then
-retain an anti-reimport tombstone and remove its native journal/receipt. Database
-privacy deletion wins if the later filesystem or audit cleanup fails; the
-command returns a loud partial-commit error instead of claiming rollback.
-
-- `<CONVERSATION_ID>` — Exact OMI/native source conversation ID.
-- `--yes` — Confirm permanent local deletion.
-
-Native IDs require the daemon for the selected `--home` to be stopped. The
-check uses `<home>/neothd.pid`, not the default home, so an alternate-home
-daemon cannot be mistaken for a stopped runtime.
-
-### `neoth omi resume`
-
-Resume an SC-18-halted OMI stream after operator review. The note and prior
-finding set are retained as evidence.
-
-- `--review-note <NOTE>` — Required printable review evidence.
-
-### `neoth omi enforce-retention`
-
-Apply `omi.retention_days` immediately using the same transactional purge and
-tombstone path as the daemon worker. Receipt cleanup occurs after the database
-commit; failures are reported as potentially committed privacy deletion.
+- `--home <DIR>` — Override the NEOTH home containing freedom.yaml, credentials.yaml, and views.db
 
 ### `neoth omi allow-reimport`
 
-Remove one anti-resurrection tombstone so a future remote sync can explicitly
-restore the conversation.
+Remove stale recovery state and a purge tombstone after a durable operator intent
 
-- `<CONVERSATION_ID>` — Exact tombstoned conversation ID.
-- `--yes` — Confirm that remote re-import is allowed.
+- `<CONVERSATION_ID>`
+- `--yes` — Confirm that the remote source may restore previously deleted data
 
-Native re-import also requires the selected-home daemon to be stopped. It
-removes stale native receipts and both Developer/native reconciliation keys
-before clearing the tombstone.
+### `neoth omi enforce-retention`
 
-Every mutating OMI command writes metadata-only intent/result frames to a
-dedicated owner-private operator segment. Resume and allow-reimport use
-`fail_closed_before_mutation`; purge and retention use
-`privacy_deletion_wins`. New lifecycle frames are
-`extended/omi_lifecycle_audit`; historical `0x9C omi_action_promoted` frames
-retain their original decoder identity. Inspect the new stream with
-`neoth wal show --type omi_lifecycle_audit`.
+Apply the configured OMI retention window immediately (privacy deletion wins over audit failure)
+
+### `neoth omi probe`
+
+Probe configured local OMI endpoints without contacting a public cloud API
+
+### `neoth omi purge`
+
+Permanently delete one conversation and every local derivative (privacy deletion wins over audit failure)
+
+- `<CONVERSATION_ID>`
+- `--yes` — Confirm the privacy deletion and durable anti-reimport tombstone
+
+### `neoth omi resume`
+
+Resume an SC-18-halted stream after a durable operator intent and documented review
+
+- `--review-note <NOTE>` — Short review evidence retained with the last sanitizer finding set
+
+### `neoth omi set-credentials`
+
+Read a bounded JSON credential update from stdin. Secret values never enter argv
+
+### `neoth omi status`
+
+Show configuration validity, credentials posture, ledger counts, and halt state
 
 ## `neoth onboarding-status`
 
@@ -2072,7 +2165,7 @@ Print the active autonomy level, typed Custom override map, and the exhaustive d
 
 ## `neoth plugin`
 
-D-102 / SC-04 — WASM plugin activation management. Newly discovered plugins default to PENDING and never auto-instantiate. `enable <id>` persists the exact approved permission, canonical manifest digest, and WASM digest; any later semantic manifest, permission, or binary change is refused on the next load until explicit re-consent (the current daemon continues only its immutable validated snapshot). Historical scalar `active` entries are readable but fail closed as `reconsent_required`
+D-102 (Session 21) — WASM plugin activation management. Newly discovered plugins default to PENDING and don't auto-instantiate until the operator opts in. `list` shows discovered plugins + their state, `enable <id>` flips to Active, `disable <id>` to Disabled, `pending` lists only the Pending entries
 
 ### `neoth plugin disable`
 
@@ -2082,7 +2175,7 @@ Flip a plugin to `disabled`. Idempotent
 
 ### `neoth plugin enable`
 
-Review and flip a plugin to `active`. The command first applies the configured integrity policy, then binds the current requested permission, canonical manifest digest, and WASM digest in freedom.yaml. It is idempotent only while that complete approval record is unchanged; a legacy or changed plugin is deliberately rewritten as an explicit re-consent
+Review and activate a plugin, binding permission + manifest/WASM digests. Idempotent while that complete approval is unchanged
 
 - `<ID>` — Plugin manifest id (matches the directory name under `~/.neoth/plugins/<id>/`)
 
@@ -2095,7 +2188,7 @@ DES-12 — read-only WAL feed for a plugin's emitted events (0xC4 frames). Used 
 
 ### `neoth plugin install`
 
-Install a plugin from a local directory into `~/.neoth/plugins/<id>/`. The id is derived from the manifest `id` field inside `<path>/plugin.toml`. Only `plugin.toml` and `plugin.wasm` are copied — arbitrary extra files are never installed (mirrors the discovery contract). After copy the same integrity gate as `neoth plugin verify` is applied; if it fails the partial install is rolled back and the error is reported
+Install a plugin from a local directory into `~/.neoth/plugins/<id>/`. The id is derived from the manifest `id` field inside `<path>/plugin.toml`. Only `plugin.toml`, `plugin.wasm`, and the optional `plugin.wasm.minisig` companion are copied — arbitrary extra files are never installed (mirrors the discovery contract). Before activation the same integrity policy as `neoth plugin verify` and daemon startup is applied; a failed staged install leaves an existing version untouched
 
 - `<PATH>` — Directory containing `plugin.toml` + `plugin.wasm` to install
 - `--force` — Overwrite an already-installed plugin with the same id. Without this flag the command exits non-zero when the target directory already exists
@@ -2108,11 +2201,11 @@ KF-09 — per-plugin capability usage ledger. Scans the WAL for the plugin audit
 
 ### `neoth plugin list`
 
-List every discovered plugin + its effective operator activation state and current requested permission. Plugins not listed in `freedom.yaml::plugins.wasm.activations` show as `pending`. An Active legacy entry or a post-approval manifest/permission/WASM change shows as `reconsent_required` with a machine-readable `approval_error`; it will not run. JSON output also includes the canonical manifest digest, WASM digest, and approved permission when present
+List every discovered plugin + its operator activation state. Plugins NOT yet listed in freedom.yaml::plugins.wasm.activations show as `pending` (the default for any newly discovered id)
 
 ### `neoth plugin pending`
 
-Show the operator review queue: discovered Pending plugins plus Active entries that now require re-consent
+Show Pending plugins plus Active entries that require re-consent
 
 ### `neoth plugin remove`
 
@@ -2122,7 +2215,7 @@ Remove a plugin from `~/.neoth/plugins/<id>/`. Idempotent: if the plugin is not 
 
 ### `neoth plugin test`
 
-UX-07 — pre-deployment plugin verification. Reads `<path>/plugin.toml` + `<path>/plugin.wasm`, validates the manifest, and (when the daemon was built with the `wasm-plugin-host` feature) creates a fresh sandboxed wasmtime Store with the manifest's fuel + memory budgets applied. It first requires `neoth_abi_version() -> i32` to match the host ABI exactly, then invokes `neoth_run() -> i32`; missing/mismatched ABI or a non-zero run status is a failure. Reports the `InvocationOutcome` so the operator sees pass/fail without touching `~/.neoth/plugins/`
+UX-07 — pre-deployment plugin verification. Reads `<path>/plugin.toml` + `<path>/plugin.wasm`, validates the manifest, and (when the daemon was built with the `wasm-plugin-host` feature) runs a sandboxed `neoth_run` invocation in a fresh wasmtime Store with the manifest's fuel + memory budgets applied. Reports the `InvocationOutcome` so the operator sees pass/fail without touching `~/.neoth/plugins/`
 
 - `<PATH>` — Directory containing `plugin.toml` + `plugin.wasm`
 - `--capture-wal` — UX-07b — capture the WAL frames (`0xC4`/`0xC6`/`0xC7`) the invocation emits into a throwaway tempdir WAL and surface them in the report. Requires the `wasm-plugin-host` feature; without it the flag is inert (the slim build can't live-invoke). The live WAL is never touched
@@ -2217,8 +2310,8 @@ Mark a proposal Rejected. Stays on disk for the audit log
 GOLD-FEAT-13 — view or set per-purpose channel routing for proactive sends (`~/.neoth/channel_routing.json`). No flags → print the current routing. `--source X --channel Y` routes source X to channel Y; `--channel Y --dest Z` sets channel Y's destination id; `--default --channel Y` sets the default channel; `--failure --channel Y` sets the failure-alert channel
 
 - `--source <SOURCE>` — Source tag to route (e.g. `coding_session`). With `--channel`
-- `--channel <CHANNEL>` — Canonical channel name, including `matrix` (see `neoth channel list`)
-- `--dest <DEST>` — Per-channel destination id (use with `--channel`; Matrix requires `!room:server`)
+- `--channel <CHANNEL>` — Channel name (`telegram`/`slack`/`discord`/`whatsapp`/...)
+- `--dest <DEST>` — Per-channel destination id (use with `--channel`)
 - `--default` — Set `--channel` as the default proactive destination
 - `--failure` — Set `--channel` as the failure-alert destination
 
@@ -2381,13 +2474,9 @@ Revoke an existing redaction by id. The field becomes eligible for re-extraction
 
 ## `neoth provider`
 
-LLM provider catalogue (C-1 Session 13). `list` enumerates all supported `InferenceProvider` variants + their implementation status + the OpenAI-compatible endpoint examples that the `openai_compat` adapter covers. `show <id>` prints details for one provider. `add` / `test` / `remove` are reserved for a future session — operators configure providers via `neoth init` or `neoth hemispheres set` today
+LLM provider catalogue (C-1 Session 13). `list` enumerates all supported `InferenceProvider` variants + their implementation status + the OpenAI-compatible endpoint examples that the `openai_compat` adapter covers. `show <id>` prints details for one provider and `test <id>` checks its effective hemisphere wiring. Provider mutations use the fully implemented `neoth init` and `neoth hemispheres set` surfaces
 
 _Aliases:_ `neoth providers`
-
-### `neoth provider add`
-
-Add a new LLM provider (reserved — use `neoth init`)
 
 ### `neoth provider known`
 
@@ -2396,12 +2485,6 @@ List well-known OpenAI-compatible endpoints (DeepSeek, xAI Grok, Mistral, Moonsh
 ### `neoth provider list`
 
 List every supported LLM provider with status + compat-endpoint examples
-
-### `neoth provider remove`
-
-Remove a provider (reserved — use `neoth init`)
-
-- `<PROVIDER>`
 
 ### `neoth provider show`
 
@@ -2458,6 +2541,7 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--session-folders` — GOLD-ADAPT-ODY-26 — render past sessions grouped into topic folders (assigned by the session-sort cron; ungrouped sessions listed below). Read-only view over the hindsight cards
 - `--classify <TEXT>` — GOLD-ADAPT-MEM-09 — classify how much recall a query warrants (`skip` / `single` / `multi`) and print the verdict instead of searching. Lets an operator see why a trivial status/identity query would skip recall
 - `--downvote <EVENT_ID>` — GOLD-ADAPT-MEM-08 — operator negative feedback: weaken the importance of the memory with this `event_id` (asymmetric Hebbian −0.10, floored at 0) across whichever tier holds it. Bypasses search
+- `--upvote <EVENT_ID>` — GOLD-ADAPT-JV-MEM-08 — explicit operator positive feedback: reinforce this memory and mark every existing association touching it successful. Bypasses search. Unlike ordinary recall, merely showing a result is not treated as proof that it was useful
 - `--graph <ENTITY>` — GOLD-ADAPT-MEM-06 — knowledge-graph query: print the entities reachable from this entity name within `--graph-depth` hops (BFS over the extracted entity/relation graph). Bypasses search
 - `--graph-depth <GRAPH_DEPTH>` — Max BFS hops for `--graph`. Default 2
 - `--extract <TEXT>` — GOLD-ADAPT-MEM-06 — extract entities + relations from this text via the configured provider and persist them into the knowledge graph (the ingest path). Bypasses search
@@ -2653,7 +2737,7 @@ Print the saved key's PUBLIC key line (paste into CI build env)
 ONE-COMMAND DAU setup: generate the keypair AND provision it into the repo's CI via `gh` (sets the `NEOTH_RELEASE_MINISIGN_SECRET` secret + the `NEOTH_RELEASE_MINISIGN_PUBKEY` variable). No copy-paste, no GitHub UI. The secret never prints — it is piped straight to `gh` over stdin
 
 - `--repo <REPO>` — `owner/name`. Defaults to the `origin` git remote
-- `--force` — Rotate: replace an existing local key (then re-provision CI)
+- `--force` — Explicitly rotate the published trust root. Also updates the repository key pin and both bootstrap installers; commit those source changes before tagging a release
 
 ### `neoth release sign`
 
@@ -2662,9 +2746,16 @@ Sign a release artifact, writing `<file>.minisig` next to it. The secret is read
 - `<FILE>` — The artifact to sign (e.g. `neoth-x86_64-unknown-linux-gnu.tar.gz`)
 - `--comment <COMMENT>` — Optional trusted comment embedded + signed into the `.minisig`
 
+### `neoth release verify`
+
+Verify an artifact against the public key pinned into this binary. CI uses this after signing to prove the signing secret and the key baked into the release binary are the same pair
+
+- `<FILE>` — Artifact whose bytes were signed
+- `--signature <SIGNATURE>` — Signature path. Defaults to `<file>.minisig`
+
 ## `neoth reload`
 
-Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. Immutable fields (`operator_id`, `provider_kind`, `telegram_user_id`) cause a `CONFIG_RELOAD_REJECTED` audit frame + the prior config stays live. Tunable fields (`council.*`, `code_map.*`, `claude_cli.tmux.*`, autonomy level, …) reload without a daemon restart
+Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. Identity/provider fields (`operator_id`, `provider_kind`) are immutable and cause a `CONFIG_RELOAD_REJECTED` audit frame. Tunable fields and channel bindings such as `telegram_user_id` reload without a daemon restart; the credential-aware reconciler then restarts only the affected adapter
 
 - `--home <DIR>` — Override `~/.neoth/` (mostly for tests)
 
@@ -2758,7 +2849,7 @@ One-shot security posture report — runs every available check + prints a pass/
 
 SC-09 (Session 28) — export the WAL HMAC compaction key to `<output>` in plaintext for disaster-recovery purposes (machine swap, Windows reinstall, DPAPI unwrap failure)
 
-- `--output <PATH>` — Plaintext destination path. The file is written mode-0600 (Unix) so it's only readable by the operator account. Refused if the path already exists unless `--force` is also passed (defence against silent overwrite of an older backup)
+- `--output <PATH>` — Plaintext destination path outside the NEOTH home. The file is written mode-0600 (Unix) / owner-DACL restricted (Windows). Refused if the path resolves inside `~/.neoth`, or already exists unless `--force` is also passed (defence against a false disaster-recovery copy and silent overwrite of an older backup)
 - `--force` — Overwrite `--output` if it already exists. Without this flag the command fails fast — accidentally re-running this command with the same `--output` shouldn't blow away an older backup taken at a different rotation
 - `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests). Defaults to the operator's actual `~/.neoth`
 
@@ -2797,7 +2888,7 @@ GOLD-ADAPT-JV-MODE-04 — NEOTH toggles its own skills / crons under sovereign m
 
 ### `neoth self-activate cron`
 
-Toggle an existing, fully specified cron job. The command updates `jobs.yaml` under the shared lock, validates the complete generation, and the running scheduler applies it on its next tick without a restart. Create missing jobs first with `neoth cron add`
+Toggle an existing cron job entry
 
 - `<JOB_ID>` — Existing cron job id to modify
 - `--enable` — Enable the cron job
@@ -2948,7 +3039,7 @@ _Aliases:_ `neoth skill`
 
 ## `neoth slack`
 
-Slack pre-flight (A-7). `test` validates xoxb + xapp tokens by calling `auth.test` + `apps.connections.open` and reports the WSS URL Phase-2 socket-mode loop will dial
+Slack pre-flight (A-7). `test` validates xoxb + xapp tokens by calling `auth.test` + `apps.connections.open` and reports the WSS URL consumed by the live Socket Mode loop
 
 ### `neoth slack send`
 
@@ -2959,7 +3050,7 @@ Send a one-shot message to a Slack channel via `chat.postMessage`. Uses `credent
 
 ### `neoth slack test`
 
-Auth-test the configured Slack tokens. Reads `credentials.yaml::slack_bot_token` + `slack_app_token`, calls Slack's `auth.test` + `apps.connections.open`, and reports the result. Phase-2 socket-mode loop will dial the WSS URL this returns
+Auth-test the configured Slack tokens. Reads `credentials.yaml::slack_bot_token` + `slack_app_token`, calls Slack's `auth.test` + `apps.connections.open`, and reports the result. The live Socket Mode loop dials the WSS URL this returns
 
 ## `neoth slash`
 
@@ -2984,7 +3075,7 @@ Daemon-state snapshot — WAL bytes, tier counts, channels, autonomy. Phase 33c 
 
 ## `neoth sudomode`
 
-Shortcut for `neoth autonomy full-auto` (GOLD-FEAT-01): flip NEOTH into FULL-AUTO mode in one word — autonomy `full` + the entire skill library routed proactively. The irreducible security floor still holds (self-replace / patch-apply / dangerous targets stay gated; plugins never auto-activate and still require an exact approval-bound `neoth plugin enable`). Switch back with `neoth autonomy gated`
+Shortcut for `neoth autonomy full-auto` (GOLD-FEAT-01): flip NEOTH into FULL-AUTO mode in one word — autonomy `full` + the entire skill library routed proactively. The irreducible security floor still holds (self-replace / patch-apply / dangerous targets stay gated; every plugin still needs an exact approval-bound enable). Switch back with `neoth autonomy gated`
 
 ## `neoth supervisor`
 
@@ -2996,7 +3087,7 @@ Install the OS-native supervisor (systemd user unit / launchd LaunchAgent / Wind
 
 ### `neoth supervisor loop`
 
-Built-in restart wrapper (the Windows Task Scheduler target): spawn `neoth serve`, relaunch unless it exits with the deliberate-stop code. Blocks forever
+Built-in restart wrapper (the Windows Task Scheduler target): spawn `neoth serve` and relaunch it after every exit. Stop the wrapper through Task Scheduler or `supervisor uninstall`
 
 ### `neoth supervisor status`
 
@@ -3126,7 +3217,7 @@ GR-03 — one read-only view of NEOTH's trust posture: the live autonomy level +
 
 ## `neoth tts`
 
-Canonical text-to-speech CLI. `speak` shares the media dispatcher, provider factory, cloud-consent gate, credential chain, metadata audit, fallback, format validation, and atomic output writer with every production caller
+Canonical audited text-to-speech. Defaults offline; cloud providers require explicit media consent and provider credentials where needed
 
 ### `neoth tts speak`
 
@@ -3134,20 +3225,20 @@ Synthesise speech to an audio file
 
 - `<TEXT>` — Text to synthesise. Use `-` to read from stdin
 - `--out <PATH>` — Output file. The extension is authoritative: wav, mp3, opus, pcm
-- `--provider <PROVIDER>` — Override `media.tts.primary` for this call (`piper`, `system_native`, `edge_tts`, `eleven_labs`, `azure_tts`, `viitor_voice`)
+- `--provider <PROVIDER>` — Override `media.tts.primary` for this call
 - `--voice <VOICE>` — Override the configured provider-specific voice id
 - `--locale <LOCALE>` — Override the configured locale (for example `de-DE`)
 - `--model <PATH>` — Piper ONNX path under `~/.neoth/models/piper`
 - `--model-config <PATH>` — Piper JSON config path under `~/.neoth/models/piper`
-- `--api-key <API_KEY>` — Ephemeral cloud-key override. Prefer credentials.yaml/keychain or the provider-specific environment variable
+- `--api-key <API_KEY>` — Ephemeral cloud key override. Prefer credentials.yaml/keychain or NEOTH_ELEVENLABS_TTS_KEY / NEOTH_AZURE_TTS_KEY
 
 ### `neoth tts status`
 
-Show the effective provider, cloud-consent posture, and local Piper executable/model/config readiness without synthesising or making a network request
+Show the effective provider and local Piper readiness without synthesis
 
 ## `neoth tweaks`
 
-Inspect operator customisation loaded from `~/.neoth/tweaks.toml` (Phase 32 R-20). `show` dumps statusline / theme / model default / persona override + the prompt-snippet list, including each retained theme key's named runtime sink and any validation rejection. `statusline` renders after CLI chat turns; GUI values are applied before first paint. `icon_set` and `scrollbar_style` are not supported schema keys because the current Slint surface has no honest application-wide sink; they fail parsing instead of disappearing silently. `snippet <id>` renders one named snippet so it can be inspected or copied
+Inspect operator customisation loaded from `~/.neoth/tweaks.toml` (Phase 32 R-20). `show` dumps statusline / theme / model default / persona override + the prompt-snippet list. `snippet <id>` renders one named snippet so it can be inspected or copied
 
 ### `neoth tweaks show`
 
@@ -3178,22 +3269,19 @@ Reverse the Nth listed mutation (1-based index from `neoth undo`). Confirm-gated
 Check or apply updates for NEOTH-managed CLIs (claude-cli, antigravity-cli, codex)
 
 - `--check` — Probe every component and print a report. Default when no mode flag set
-- `--apply` — Probe, then update any component where installed != latest. With `--self`, verifies the exact signed release bundle, preflights installed companions, and applies them transactionally instead of running managed-CLI updates
+- `--apply` — Probe, then update any component where installed != latest. When combined with `--self`, runs the full release-bundle update (download, signature + SHA-256 verification, preflight, transactional replace) instead of the managed-CLI update
 - `--list` — Print the static list of components NEOTH knows how to update
-- `--self` — Check whether a newer NEOTH release is published on GitHub. Without `--apply` this is check-only. With `--apply`, the tag/target-bound minisign + SHA-256 archive is size-checked, fully preflighted, and transactionally installed. Pass `--self-repo owner/name` to point at a fork; default is `The-Geek-Freaks/NEOTH`
-- `--self-repo <OWNER/REPO>` — Override the GitHub `owner/repo` slug for the self-check
+- `--self` — Check whether a newer NEOTH release is published on GitHub. Without `--apply` this is check-only. With `--apply`, the signed platform bundle is verified, preflighted, and transactionally applied. Pass `--self-repo owner/name` to point at a fork; default is `The-Geek-Freaks/NEOTH`
+- `--self-repo <OWNER/REPO>` — Override the configured GitHub `owner/repo` slug for self-check/apply
 - `--allow-unsigned` — Accept an UNSIGNED release on `--self --apply`. By default the updater requires a verified minisign signature (supply-chain integrity). Releases published before signing was enabled (no pinned key / no `.minisig`) need this flag — only pass it from a trusted network; an unsigned binary could be tampered in transit
 
 ## `neoth updater`
 
-U-01..U-04 updater status + compatibility check entry. `status` renders recent `UpdaterTaskResultPayload` WAL frames; `check` delegates to the live `neoth update --check` component probe.
+U-01..U-04 updater status + compatibility check entry. `status` renders recent `UpdaterTaskResultPayload` WAL frames; `check` delegates to the live `neoth update --check` component probe
 
 ### `neoth updater check`
 
-Compatibility spelling for `neoth update --check`. Runs the same live,
-read-only component probes and honors the global output format.
-
-Bootstrap entry. Today's slice prints a friendly hint — the actual check pipeline lands with U-01..U-03
+Run the canonical component update check (`neoth update --check`)
 
 ### `neoth updater status`
 
@@ -3219,7 +3307,7 @@ Verify HMAC compaction markers across the WAL. Phase 33b SP-2. Reads every segme
 - `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
 - `--key <PATH>` — Override the HMAC key path
 - `--segment <PATH>` — Verify only this specific segment file
-- `--since-rotation` — SC-09 — verify only segments at/after the last HMAC-key rotation (`0xD9 HMAC_KEY_ROTATED`, written by `neoth security rewrap-hmac-key`). Markers in earlier segments were signed with a key that has since been replaced; skipping them avoids spurious failures after a key recovery. With no rotation recorded, verifies the full history (with a note)
+- `--since-rotation` — SC-09 — verify only segments at/after the last HMAC-key rotation (`0xD9 HMAC_KEY_ROTATED`, written by `neoth keys rotate` and `neoth security rewrap-hmac-key`). Markers in earlier segments were signed with a key that has since been replaced; skipping them avoids spurious failures after a key recovery. With no rotation recorded, verifies the full history (with a note)
 
 ## `neoth wal`
 
@@ -3237,11 +3325,17 @@ KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in
 
 ### `neoth wal proof-key`
 
-PROOF-KEY-01 — inspect, use, verify, and rotate the operator's ed25519 proof signing key at `~/.neoth/wal/signing.key`. `show` and `export-pub` are read-only; `sign` and `wal export --sign` create the first key on demand. `rotate` requires an existing key and fails closed unless the exact dual-signed transition is durably audited before the active key changes
+PROOF-KEY-01 — inspect, sign, verify, or fail-closed rotate the operator's proof signing key (the ed25519 key `wal export --sign` uses, `~/.neoth/wal/signing.key`). Show/export/verify are read-only; sign may create the first key, while rotate requires an existing key and a durable dual-signed WAL transition
 
 #### `neoth wal proof-key export-pub`
 
 Print ONLY the base64 public key (pipe it to an auditor so they can `wal verify-proof --pubkey <key>`). Exits non-zero if no key exists yet
+
+#### `neoth wal proof-key rotate`
+
+Replace the operator proof key with a fresh OS-CSPRNG key. The retiring key is archived securely and a canonical old→new transition signed by BOTH keys is durably appended before the active key changes
+
+- `--dry-run` — Validate and show the cryptographic transition without writing an archive, WAL frame, journal, or replacement key
 
 #### `neoth wal proof-key show`
 
@@ -3260,12 +3354,6 @@ PROOF-KEY-01 — verify a base64 signature over MESSAGE. Defaults to THIS operat
 - `<MESSAGE>` — The signed message
 - `<BASE64_SIG>` — The base64 detached signature (from `proof-key sign`)
 - `--pubkey <BASE64>` — The signer's base64 public key. Defaults to this operator's proof key
-
-#### `neoth wal proof-key rotate`
-
-Replace an existing operator proof key with a fresh OS-CSPRNG key. The retiring secret key is archived with owner-only permissions beside `signing.key`; a canonical old-to-new transition signed by both keys is appended as `proof_key_rotated` (`EVENT_TYPE_EXTENDED` / subtype `0x0D`). The active key changes only after the exact audit event is proven durable. A running daemon uses the subtype-aware audit RPC; the one-shot path waits for append acknowledgement and full writer drain. Lost acknowledgements and interrupted rotations recover against the exact WAL event instead of guessing
-
-- `--dry-run` — Validate the existing key and show the cryptographic transition without writing a key, archive, journal, or WAL event
 
 ### `neoth wal show`
 

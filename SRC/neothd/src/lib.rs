@@ -117,6 +117,7 @@ pub mod hooks;
 /// estimate + VRAM fit + ranking), surfaced via `neoth models fit`.
 pub mod hwfit;
 pub mod installers;
+pub mod interface_preference;
 /// GOLD-LOOP-01 — multi-round autonomous loop engine. Wraps
 /// `run_mcp_dispatch_loop` with outer rounds, stop-condition verification,
 /// optional self-reflect refine passes, WAL events (0x7C–0x7F), and
@@ -232,6 +233,14 @@ pub async fn run() -> Result<()> {
         info!(version = %env!("CARGO_PKG_VERSION"), "{BANNER}");
     }
 
+    // A bare invocation is the installed product launcher: it owns the
+    // exactly-once GUI/CLI choice and honours it on later launches. Keep this
+    // before Clap's required-subcommand parser so `neoth` itself is useful.
+    if std::env::args_os().nth(1).is_none() {
+        cli::run_default_invocation().await?;
+        return Ok(());
+    }
+
     // Parse CLI and dispatch. Subcommands own their own shutdown handling —
     // `cli::serve` listens for SIGTERM/Ctrl+C internally and drains the WAL
     // writer before returning. Short-lived subcommands (`init`, `chat`, etc.)
@@ -251,8 +260,10 @@ fn is_interactive_wizard_invocation() -> bool {
     let mut args = std::env::args();
     let _argv0 = args.next();
     let mut saw_init = false;
+    let mut saw_any_argument = false;
     let mut non_interactive_flag = false;
     for a in args {
+        saw_any_argument = true;
         if a == "init" {
             saw_init = true;
         }
@@ -260,7 +271,7 @@ fn is_interactive_wizard_invocation() -> bool {
             non_interactive_flag = true;
         }
     }
-    saw_init && !non_interactive_flag && std::io::stdout().is_terminal()
+    (saw_init || !saw_any_argument) && !non_interactive_flag && std::io::stdout().is_terminal()
 }
 
 /// Initialise the global tracing subscriber.

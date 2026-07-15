@@ -1,0 +1,83 @@
+{
+  "name": "@neoth/keet-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Repository-owned authenticated Pear/Hyperswarm text bridge for NEOTH",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "bin": {
+    "neoth-keet-bridge": "bin.mjs"
+  },
+  "imports": {
+    "#events": {
+      "bare": "bare-events",
+      "default": "events"
+    },
+    "#fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
+    "#http": {
+      "bare": "bare-http1",
+      "default": "http"
+    },
+    "#os": {
+      "bare": "bare-os",
+      "default": "os"
+    },
+    "#path": {
+      "bare": "bare-path",
+      "default": "path"
+    },
+    "#process": {
+      "bare": "bare-process",
+      "default": "process"
+    },
+    "#subprocess": {
+      "bare": "bare-subprocess",
+      "default": "child_process"
+    },
+    "#url": {
+      "bare": "bare-url",
+      "default": "url"
+    }
+  },
+  "scripts": {
+    "check": "node --check bin.mjs && node --check src/bridge.mjs && node --check src/config.mjs && node --check src/contract.mjs && node --check src/fs-safety.mjs && node --check src/identity.mjs && node --check src/journal.mjs && node --check src/peer-topic.mjs && node --check src/server.mjs && node --check src/shutdown.mjs && node --check src/storage-lock.mjs && node --check src/windows-acl.mjs",
+    "check:notices": "node scripts/generate-notices.cjs --check",
+    "test": "node --test",
+    "start": "bare bin.mjs serve",
+    "make": "node scripts/make.cjs",
+    "make:darwin-arm64": "bare-build --name neoth-keet-bridge --standalone --host darwin-arm64 --out ./out/darwin-arm64 bin.mjs",
+    "make:darwin-x64": "bare-build --name neoth-keet-bridge --standalone --host darwin-x64 --out ./out/darwin-x64 bin.mjs",
+    "make:linux-arm64": "bare-build --name neoth-keet-bridge --standalone --host linux-arm64 --out ./out/linux-arm64 bin.mjs",
+    "make:linux-x64": "bare-build --name neoth-keet-bridge --standalone --host linux-x64 --out ./out/linux-x64 bin.mjs",
+    "make:win32-arm64": "bare-build --name neoth-keet-bridge --standalone --host win32-arm64 --runtime ./scripts/windows-runtime.cjs --out ./out/win32-arm64 bin.mjs",
+    "make:win32-x64": "bare-build --name neoth-keet-bridge --standalone --host win32-x64 --runtime ./scripts/windows-runtime.cjs --out ./out/win32-x64 bin.mjs"
+  },
+  "dependencies": {
+    "b4a": "1.8.1",
+    "bare-buffer": "3.6.1",
+    "bare-events": "2.9.1",
+    "bare-fs": "4.7.2",
+    "bare-http1": "4.5.7",
+    "bare-os": "3.9.1",
+    "bare-path": "3.0.1",
+    "bare-process": "4.5.0",
+    "bare-subprocess": "6.1.0",
+    "bare-url": "2.4.5",
+    "hypercore-crypto": "3.7.0",
+    "hyperswarm": "4.17.0",
+    "keet-identity-key": "3.2.0",
+    "protomux-rpc": "1.9.0",
+    "sodium-universal": "5.0.1"
+  },
+  "devDependencies": {
+    "bare-build": "1.0.2",
+    "bare-runtime": "1.29.4"
+  },
+  "engines": {
+    "node": ">=22.16.0"
+  }
+}

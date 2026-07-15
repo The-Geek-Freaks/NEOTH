@@ -14,11 +14,12 @@ These are documented 1.0.0 limitations — tracked, not hidden:
 
 - **GUI settings depth (GU-01):** all 10 post-onboarding settings tabs are now real
   panels (GU-01 closed in the Session-37 GUI batch — see the GUI honest-status note
-  below). A few stay intentionally thin — the Channels tab shows status and defers
-  connect/disconnect to the CLI/wizard, the Chat tab is a launch-point for the composer,
-  Hemispheres/Plugins/Memory are read-only views, and not every individual `freedom.yaml`
-  flag has its own toggle yet — but the covered behavior remains operable via
-  the CLI and/or documented configuration today.
+  below). The Channels tab now drives the canonical 15-adapter CLI registry for
+  refresh, add/reconfigure, read-only live test, and confirmed removal. A few other
+  panels stay intentionally thin — the Chat tab is a launch-point for the composer,
+  Hemispheres/Plugins/Memory are read-only views, and not every individual
+  `freedom.yaml` flag has its own toggle yet — but the covered behavior remains
+  operable via the CLI and/or documented configuration today.
   (GUI rendering is compile-verified; visual QA is a manual step.)
 - **Migration shadow-run (ARCH-05):** the deterministic recall-parity GATE +
   runbook ship; the 14-day shadow-run, grading, and cutover are
@@ -42,22 +43,23 @@ These are documented 1.0.0 limitations — tracked, not hidden:
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |
 | Local models | Qwen profile path, optional local thinking model path, model cache diagnostics. |
 | Providers | Configured cloud providers, provider status, usage caps, circuit breakers, flapping detection. |
-| Channels | CLI + onboarding GUI: Telegram, WhatsApp Business, Slack Socket Mode, and Discord. Keet is unavailable because upstream exposes no supported public chat API. The post-onboarding GUI Channels tab (GU-01) shows per-channel status; live connect/disconnect remains a CLI/wizard action via `neoth init --reconfigure` + `freedom.yaml`/`credentials.yaml` (the `/connect` `/disconnect` chat commands print that flow). |
+| Channels | CLI and the post-onboarding GUI share one 15-adapter registry and the same add/reconfigure, test, remove, and refresh contracts. Telegram adoption includes its exact numeric sender policy; status never masquerades as reachability, and Test returns the adapter's typed live or unavailable verdict. Desktop archives also ship the repository-owned, full-duplex `neoth-keet-bridge` for private Keet-identity Pear/Hyperswarm topics; it deliberately does not claim interoperability with existing Keet app rooms. |
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Automation | Local cron plus a default-off, loopback-only n8n ingress API with bearer scopes, endpoint-specific consent/cost gates, and typed request/downstream audit events. |
 | Plugins | Skills and WASM plugins with capabilities, signatures, revocation, hostcall WAL events. |
-| Private mesh | **Partial:** authenticated best-effort gossip and foreign-event backup/restore surfaces ship, but no durable per-peer delivery cursor/ACK or complete live cross-device memory-content sync is promised. |
+| Private mesh | Authenticated peeroxide/iroh carriers share durable per-peer pending frames, exact cursor-bound ACKs, restart replay, and transactional receive/materialization for canonical memory and ground-truth snapshots. Raw ingress remains default-off and the mesh is intentionally scoped to typed NEOTH content rather than arbitrary device files. |
 | Doctor | Setup diagnostics for config, secrets, models, channels, plugins, providers, disk, WAL, and cluster discovery. |
 | Docs | Quickstart, privacy proof, install, CLI, providers, local models, channels, plugins, compare pages, security policy. |
 
 > **GUI settings coverage (honest status):** the post-onboarding settings window has
 > 10 tabs and — since the Session-37 GU-01 batch — all 10 are real panels (Privacy,
 > Cluster, Code Sessions, Config, Chat, Hemispheres, Channels, Skills, Plugins, Memory).
-> A few are intentionally thin: Channels shows status and defers connect/disconnect to
-> the CLI/wizard, Chat is a launch-point for the composer, and Hemispheres/Plugins/Memory
-> are read-only views (rebind/enable still flow through the CLI), and not every single
-> `freedom.yaml` flag has a dedicated toggle yet. The covered behavior remains
-> operable via the CLI and/or documented configuration; GUI rendering is
+> Channels is no longer one of the thin panels: it refreshes the canonical registry
+> and drives add/reconfigure, typed live Test, and confirmed Remove through the same
+> CLI contracts. Chat remains a launch-point for the composer, and
+> Hemispheres/Plugins/Memory are read-only views (rebind/enable still flow through the
+> CLI); not every single `freedom.yaml` flag has a dedicated toggle yet. The covered
+> behavior remains operable via the CLI and/or documented configuration; GUI rendering is
 > compile-verified, not yet visually QA'd. This note exists so the
 > GUI claim is never read as more than it is.
 
@@ -71,7 +73,7 @@ These are deliberate post-1.0 areas, not hidden broken promises.
 | Enterprise admin console | Policy is local and operator-owned; fleet admin UX belongs after the personal product is stable. |
 | Public plugin marketplace trust at scale | 1.0 supports capability gates and audits; large ecosystem moderation is later work. |
 | Native mobile app parity | Phone use comes through channels/private surfaces first; full native mobile clients are post-1.0. |
-| Durable cross-device memory sync | Cluster carriers are authenticated best-effort gossip today. Durable per-peer delivery and complete replicated recall/content remain post-1.0 work. |
+| General-purpose device/file replication | Durable v1 mesh sync is scoped to canonical NEOTH memory, ground-truth, and policy-approved WAL classes. It is not a filesystem, account, or arbitrary application-data sync service. |
 | Perfect deletion from third-party providers | NEOTH can redact local memory and stop re-promotion; it cannot erase data already sent to a provider by approved policy. |
 | Arbitrary untrusted autonomous control | Autonomy is policy-gated and auditable. NEOTH is not a "give it root and pray" product. |
 | Team collaboration | Project/team modes can build on the runtime later; 1.0 optimizes for one loyal assistant. |

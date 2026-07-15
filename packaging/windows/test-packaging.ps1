@@ -11,6 +11,16 @@ function Stop-Test {
     throw "NEOTH Windows packaging test failed: $Message"
 }
 
+function Set-Utf8NoBomContent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($Path, $Value + [Environment]::NewLine, $utf8NoBom)
+}
+
 function New-MinimalPe {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -87,7 +97,11 @@ function Assert-PortableEntries {
 
     $zip = [IO.Compression.ZipFile]::OpenRead($Artifact)
     try {
-        $entries = @($zip.Entries | Where-Object { $_.Name } | ForEach-Object FullName)
+        $entries = @(
+            $zip.Entries |
+                Where-Object { $_.Name } |
+                ForEach-Object { $_.FullName.Replace('\', '/') }
+        )
         foreach ($name in $RequiredFiles) {
             if ($entries -cnotcontains "$BundleName/$name") {
                 Stop-Test "portable ZIP is missing $name"
@@ -118,7 +132,7 @@ $requiredExecutables = @(
 )
 $supportFiles = @(
     'freedom.yaml.example', 'import-manifest.example.yaml', 'README.md',
-    'LICENSE-MIT', 'LICENSE-APACHE'
+    'LICENSE-MIT', 'LICENSE-APACHE', 'THIRD_PARTY_LICENSES'
 )
 
 try {
@@ -147,11 +161,11 @@ try {
         'VersionInfoProductTextVersion={#AppVersion}',
         'VersionInfoTextVersion={#AppVersion}'
     )) {
-        if (-not $iss.Contains($contract, [StringComparison]::Ordinal)) {
+        if ($iss.IndexOf($contract, [StringComparison]::Ordinal) -lt 0) {
             Stop-Test "Inno contract is missing: $contract"
         }
     }
-    if ($iss.Contains("'{#UninstallKey}', 'PathEntryOwned'", [StringComparison]::Ordinal)) {
+    if ($iss.IndexOf("'{#UninstallKey}', 'PathEntryOwned'", [StringComparison]::Ordinal) -ge 0) {
         Stop-Test 'PATH ownership is still tied to the replaceable uninstall key'
     }
     $buildSource = Get-Content -LiteralPath $buildScript -Raw
@@ -167,7 +181,7 @@ try {
         'architecture = $Architecture', 'format = $Format',
         'sha256 = $hash', 'trust = [ordered]@{'
     )) {
-        if (-not $buildSource.Contains($schemaField, [StringComparison]::Ordinal)) {
+        if ($buildSource.IndexOf($schemaField, [StringComparison]::Ordinal) -lt 0) {
             Stop-Test "artifact metadata schema is missing: $schemaField"
         }
     }
@@ -180,11 +194,11 @@ try {
         New-MinimalPe -Path (Join-Path $bundle $name) -Machine 0x8664
     }
     foreach ($name in $supportFiles) {
-        Set-Content -LiteralPath (Join-Path $bundle $name) -Value $name -Encoding utf8NoBOM
+        Set-Utf8NoBomContent -Path (Join-Path $bundle $name) -Value $name
     }
     Compress-Archive -LiteralPath $bundle -DestinationPath $archive -CompressionLevel Optimal
     $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath $checksum -Value "$archiveHash  $archiveName" -Encoding utf8NoBOM
+    Set-Utf8NoBomContent -Path $checksum -Value "$archiveHash  $archiveName"
 
     $validation = & $buildScript `
         -Archive $archive `
@@ -202,7 +216,7 @@ try {
     Remove-Item -LiteralPath $archive -Force
     Compress-Archive -LiteralPath $bundle -DestinationPath $archive -CompressionLevel Optimal
     $wrongMachineHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath $checksum -Value "$wrongMachineHash  $archiveName" -Encoding utf8NoBOM
+    Set-Utf8NoBomContent -Path $checksum -Value "$wrongMachineHash  $archiveName"
     Assert-FailsWith -Pattern 'PE machine' -Action {
         & $buildScript `
             -Archive $archive `
@@ -217,7 +231,7 @@ try {
     Remove-Item -LiteralPath $archive -Force
     Compress-Archive -LiteralPath $bundle -DestinationPath $archive -CompressionLevel Optimal
     $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath $checksum -Value "$archiveHash  $archiveName" -Encoding utf8NoBOM
+    Set-Utf8NoBomContent -Path $checksum -Value "$archiveHash  $archiveName"
 
     foreach ($invalidVersion in @(
         '1.0.0-rc.01', '01.0.0', '1.0', '1.0.0+',
@@ -245,7 +259,7 @@ try {
             -ValidateOnly | Out-Null
     }
 
-    Set-Content -LiteralPath $checksum -Value "$archiveHash  wrong.zip" -Encoding utf8NoBOM
+    Set-Utf8NoBomContent -Path $checksum -Value "$archiveHash  wrong.zip"
     Assert-FailsWith -Pattern 'checksum sidecar is bound' -Action {
         & $buildScript `
             -Archive $archive `
@@ -256,7 +270,7 @@ try {
             -OutputDirectory $output `
             -ValidateOnly | Out-Null
     }
-    Set-Content -LiteralPath $checksum -Value "$('0' * 64)  $archiveName" -Encoding utf8NoBOM
+    Set-Utf8NoBomContent -Path $checksum -Value "$('0' * 64)  $archiveName"
     Assert-FailsWith -Pattern 'SHA-256 mismatch' -Action {
         & $buildScript `
             -Archive $archive `
@@ -267,7 +281,7 @@ try {
             -OutputDirectory $output `
             -ValidateOnly | Out-Null
     }
-    Set-Content -LiteralPath $checksum -Value "$archiveHash  $archiveName" -Encoding utf8NoBOM
+    Set-Utf8NoBomContent -Path $checksum -Value "$archiveHash  $archiveName"
 
     # A deliberately failing compiler still exercises the complete portable
     # path, which runs before ISCC and does not require Inno to be installed.

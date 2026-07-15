@@ -669,10 +669,10 @@ pub struct WizardState {
     /// Never written to either configuration file.
     #[serde(skip)]
     pub keet_seed_phrase: Option<crate::secret::SecretString>,
-    /// Legacy checkpoint field from the removed guessed Pear HTTP bridge.
-    /// Never written to either configuration file.
+    /// Keet companion bearer captured outside the public wizard document.
+    /// Never written to `freedom.yaml`.
     #[serde(skip)]
-    pub pears_bearer_token: Option<crate::secret::SecretString>,
+    pub keet_bridge_bearer_token: Option<crate::secret::SecretString>,
     /// NOOB-UX-6 (Workstream B, Session 22) — operator opted into
     /// the Qwen-weights pre-download step. Recorded for the audit
     /// trail + wal NOOB_UX events; no behaviour beyond the wizard step.
@@ -766,5 +766,14 @@ pub enum WizardModeChoice {
 impl WizardModeChoice {
     pub fn exit_for_gui(self) -> bool {
         matches!(self, Self::Gui)
+    }
+}
+
+impl From<crate::interface_preference::InterfacePreference> for WizardModeChoice {
+    fn from(value: crate::interface_preference::InterfacePreference) -> Self {
+        match value {
+            crate::interface_preference::InterfacePreference::Gui => Self::Gui,
+            crate::interface_preference::InterfacePreference::Cli => Self::Cli,
+        }
     }
 }

@@ -326,7 +326,14 @@ async fn summarize_consolidated_days(
         crate::permissions::AutonomyPolicySnapshot::builtin(AutonomyLevel::Strict)
             .expect("Strict is a built-in autonomy policy"),
         wal_writer.cloned(),
-    );
+    )
+    .with_usage_home(
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf(),
+    )
+    .with_usage_automated(true);
     let provider = CostAuthorizingProvider::new(provider, authorizer, None, "memory.warm_summary");
 
     // GOLD-ADAPT-SPEAKR-01 — load the operator's prompt-layer override once.

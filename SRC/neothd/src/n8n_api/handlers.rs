@@ -441,6 +441,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
             Arc::clone(&state.reload_controller),
             Some(state.writer.clone()),
+            state.home.clone(),
         )
         .with_audit_context(
             crate::providers::cost_authorization::ProviderCallAuditContext {

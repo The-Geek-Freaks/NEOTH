@@ -229,7 +229,149 @@ pub const MIGRATIONS: &[Migration] = &[
                       bulk-text identities with collision-safe equality and tombstones",
         run: migration_v27_to_v28,
     },
+    Migration {
+        from: 28,
+        to: 29,
+        description: "GOLD-R3-09: durable per-peer mesh ACK/cursor state, ordered origin sequences, canonical foreign content and typed conflict ledger",
+        run: migration_v28_to_v29,
+    },
 ];
+
+/// v28 -> v29: durable mesh synchronization state shared by peeroxide + iroh.
+///
+/// Existing foreign rows remain valid archival v0 rows. New protocol-v5 rows
+/// carry a 32-byte content digest and canonical materialized content. All ACK
+/// and cursor tables use constraints so corrupt state fails on read/write
+/// instead of silently resetting to an empty cursor.
+fn migration_v28_to_v29(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE idx_foreign_events ADD COLUMN envelope_version INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE idx_foreign_events ADD COLUMN content_sha256 BLOB;
+        ALTER TABLE idx_foreign_events ADD COLUMN content_kind TEXT;
+        ALTER TABLE idx_foreign_events ADD COLUMN content_payload BLOB;
+
+        CREATE TABLE mesh_sync_local_events (
+            peer_pk         TEXT NOT NULL,
+            origin_seq      INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256  BLOB NOT NULL
+                                  CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            envelope        BLOB NOT NULL,
+            created_at      INTEGER NOT NULL,
+            PRIMARY KEY (peer_pk, origin_seq),
+            UNIQUE (peer_pk, content_sha256)
+        );
+        CREATE TABLE mesh_sync_outbound (
+            peer_pk              TEXT PRIMARY KEY,
+            cursor_segment       TEXT,
+            cursor_offset        INTEGER NOT NULL DEFAULT 0 CHECK (cursor_offset >= 0),
+            acked_origin_seq     INTEGER NOT NULL DEFAULT 0 CHECK (acked_origin_seq >= 0),
+            acked_content_sha256 BLOB,
+            updated_at           INTEGER NOT NULL,
+            CHECK ((acked_origin_seq = 0 AND acked_content_sha256 IS NULL) OR
+                   (acked_origin_seq > 0 AND typeof(acked_content_sha256) = 'blob' AND length(acked_content_sha256) = 32))
+        );
+        CREATE TABLE mesh_sync_outbound_pending (
+            peer_pk              TEXT PRIMARY KEY,
+            origin_seq          INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256      BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            wire_frame          BLOB NOT NULL,
+            next_cursor_segment TEXT,
+            next_cursor_offset  INTEGER NOT NULL CHECK (next_cursor_offset >= 0),
+            attempts            INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            created_at          INTEGER NOT NULL
+        );
+        CREATE TABLE mesh_sync_inbound (
+            origin_peer_pk      TEXT PRIMARY KEY,
+            next_expected_seq   INTEGER NOT NULL DEFAULT 1 CHECK (next_expected_seq > 0),
+            last_content_sha256 BLOB,
+            updated_at          INTEGER NOT NULL,
+            CHECK ((next_expected_seq = 1 AND last_content_sha256 IS NULL) OR
+                   (next_expected_seq > 1 AND typeof(last_content_sha256) = 'blob' AND length(last_content_sha256) = 32))
+        );
+        CREATE TABLE mesh_sync_inbound_receipts (
+            origin_peer_pk TEXT NOT NULL,
+            origin_seq     INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256 BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            content_stored INTEGER NOT NULL CHECK (content_stored IN (0, 1)),
+            committed_at   INTEGER NOT NULL,
+            PRIMARY KEY (origin_peer_pk, origin_seq)
+        );
+        CREATE TABLE mesh_sync_materialized (
+            origin_peer_pk  TEXT NOT NULL,
+            content_id      TEXT NOT NULL,
+            origin_seq      INTEGER NOT NULL CHECK (origin_seq > 0),
+            content_sha256  BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            content_kind    TEXT NOT NULL CHECK (content_kind IN ('memory', 'ground_truth', 'metadata', 'raw_private')),
+            content_payload BLOB NOT NULL,
+            updated_at      INTEGER NOT NULL,
+            PRIMARY KEY (origin_peer_pk, content_id)
+        );
+        CREATE TABLE mesh_sync_conflicts (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id       TEXT NOT NULL,
+            incumbent_origin TEXT NOT NULL,
+            incoming_origin  TEXT NOT NULL,
+            incumbent_sha256 BLOB NOT NULL CHECK (length(incumbent_sha256) = 32),
+            incoming_sha256  BLOB NOT NULL CHECK (length(incoming_sha256) = 32),
+            policy           TEXT NOT NULL CHECK (policy IN ('ordered_origin_lww', 'cross_origin_typed_conflict')),
+            observed_at      INTEGER NOT NULL,
+            UNIQUE (content_id, incumbent_origin, incoming_origin, incumbent_sha256, incoming_sha256)
+        );
+        CREATE TABLE mesh_sync_restore_map (
+            origin_peer_pk TEXT NOT NULL,
+            content_id     TEXT NOT NULL,
+            local_kind     TEXT NOT NULL CHECK (local_kind IN ('memory', 'ground_truth')),
+            local_row_id   INTEGER NOT NULL CHECK (local_row_id > 0),
+            last_origin_seq INTEGER NOT NULL CHECK (last_origin_seq > 0),
+            content_sha256 BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            restored_at    INTEGER NOT NULL,
+            PRIMARY KEY (origin_peer_pk, content_id),
+            UNIQUE (local_kind, local_row_id)
+        );
+        CREATE TABLE mesh_sync_restore_evidence (
+            origin_peer_pk          TEXT NOT NULL,
+            ground_truth_content_id TEXT NOT NULL,
+            evidence_position       INTEGER NOT NULL CHECK (evidence_position >= 0),
+            evidence_content_id     TEXT NOT NULL,
+            local_row_id            INTEGER CHECK (local_row_id IS NULL OR local_row_id > 0),
+            PRIMARY KEY (origin_peer_pk, ground_truth_content_id, evidence_position),
+            UNIQUE (origin_peer_pk, ground_truth_content_id, evidence_content_id)
+        );
+        CREATE INDEX mesh_sync_restore_evidence_content
+            ON mesh_sync_restore_evidence (origin_peer_pk, evidence_content_id);
+
+        CREATE TRIGGER mesh_foreign_content_insert_guard
+        BEFORE INSERT ON idx_foreign_events
+        WHEN NOT (
+            (NEW.envelope_version = 0 AND NEW.content_sha256 IS NULL AND
+             NEW.content_kind IS NULL AND NEW.content_payload IS NULL) OR
+            (NEW.envelope_version = 1 AND typeof(NEW.content_sha256) = 'blob' AND
+             length(NEW.content_sha256) = 32 AND
+             NEW.content_kind IN ('memory', 'ground_truth', 'metadata', 'raw_private') AND
+             typeof(NEW.content_payload) = 'blob')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'incomplete canonical foreign content');
+        END;
+        CREATE TRIGGER mesh_foreign_content_update_guard
+        BEFORE UPDATE OF envelope_version,content_sha256,content_kind,content_payload
+        ON idx_foreign_events
+        WHEN NOT (
+            (NEW.envelope_version = 0 AND NEW.content_sha256 IS NULL AND
+             NEW.content_kind IS NULL AND NEW.content_payload IS NULL) OR
+            (NEW.envelope_version = 1 AND typeof(NEW.content_sha256) = 'blob' AND
+             length(NEW.content_sha256) = 32 AND
+             NEW.content_kind IN ('memory', 'ground_truth', 'metadata', 'raw_private') AND
+             typeof(NEW.content_payload) = 'blob')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'incomplete canonical foreign content');
+        END;
+        "#,
+    )
+    .context("migration_v28_to_v29: create durable mesh synchronization state")
+}
 
 /// v27 -> v28: durable, collision-safe bulk-text import identities.
 ///
@@ -1244,6 +1386,104 @@ mod tests {
             )
             .unwrap();
         assert_eq!(hash_len, 8);
+    }
+
+    #[test]
+    fn migration_v28_to_v29_creates_complete_durable_mesh_contract() {
+        let mut conn = open_with_meta(28);
+        conn.execute_batch(
+            r#"
+            CREATE TABLE idx_foreign_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin_peer_pk  TEXT NOT NULL,
+                origin_seq      INTEGER NOT NULL,
+                event_type      INTEGER NOT NULL,
+                payload         BLOB NOT NULL,
+                received_at     INTEGER NOT NULL,
+                UNIQUE (origin_peer_pk, origin_seq)
+            );
+            "#,
+        )
+        .unwrap();
+        let final_v = migrate(&mut conn, 28, 29).unwrap();
+        assert_eq!(final_v, 29);
+        for table in [
+            "mesh_sync_local_events",
+            "mesh_sync_outbound",
+            "mesh_sync_outbound_pending",
+            "mesh_sync_inbound",
+            "mesh_sync_inbound_receipts",
+            "mesh_sync_materialized",
+            "mesh_sync_conflicts",
+            "mesh_sync_restore_map",
+            "mesh_sync_restore_evidence",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "{table} missing after v28->v29");
+        }
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(idx_foreign_events)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "envelope_version",
+            "content_sha256",
+            "content_kind",
+            "content_payload",
+        ] {
+            assert!(
+                columns.iter().any(|found| found == column),
+                "missing {column}"
+            );
+        }
+
+        conn.execute(
+            "INSERT INTO idx_foreign_events \
+             (origin_peer_pk, origin_seq, event_type, payload, received_at) \
+             VALUES ('legacy-peer', 1, 148, X'01', 10)",
+            [],
+        )
+        .expect("legacy v0 rows remain valid after migration");
+
+        let incomplete = conn.execute(
+            "INSERT INTO idx_foreign_events \
+             (origin_peer_pk, origin_seq, event_type, payload, received_at, envelope_version) \
+             VALUES ('canonical-peer', 1, 148, X'02', 11, 1)",
+            [],
+        );
+        assert!(
+            incomplete.is_err(),
+            "canonical v1 rows must fail closed unless digest, kind and payload are complete"
+        );
+
+        conn.execute(
+            "INSERT INTO idx_foreign_events \
+             (origin_peer_pk, origin_seq, event_type, payload, received_at, \
+              envelope_version, content_sha256, content_kind, content_payload) \
+             VALUES ('canonical-peer', 1, 148, X'02', 11, 1, zeroblob(32), \
+                     'metadata', X'03')",
+            [],
+        )
+        .expect("complete canonical v1 rows pass the integrity trigger");
+
+        let corrupt_update = conn.execute(
+            "UPDATE idx_foreign_events SET envelope_version = 1 \
+             WHERE origin_peer_pk = 'legacy-peer'",
+            [],
+        );
+        assert!(
+            corrupt_update.is_err(),
+            "legacy rows cannot be partially upgraded into canonical rows"
+        );
     }
 
     #[test]

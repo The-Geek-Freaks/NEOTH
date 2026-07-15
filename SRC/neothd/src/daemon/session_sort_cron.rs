@@ -524,6 +524,7 @@ pub async fn spawn_session_sort_cron(
                 crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                     Arc::clone(reload_controller),
                     Some(writer.clone()),
+                    home.to_path_buf(),
                 ),
                 config.provider_model.clone(),
                 "session_sort_cron",

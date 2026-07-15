@@ -455,6 +455,68 @@ enum DeliveryDisposition {
     RetryableFailure,
 }
 
+/// Final result of a direct Cron webhook attempt. The delivery ledger stores
+/// the stable delivery id and this terminal class; retry scheduling remains an
+/// explicit operator decision for one-shot `neoth cron run`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CronWebhookDelivery {
+    Delivered,
+    PermanentFailure,
+    RetryableFailure,
+}
+
+/// Validate a registered Cron endpoint before any provider spend. This runs
+/// the same HTTPS-only, DNS and private-address guard as the actual delivery.
+pub async fn validate_cron_endpoint(endpoint: &WebhookEndpointConfig) -> anyhow::Result<()> {
+    if !endpoint.events.is_empty() && !endpoint.events.contains(&WebhookEvent::CronCompleted) {
+        anyhow::bail!("registered endpoint does not accept cron_completed events");
+    }
+    if endpoint.secret.expose_secret().is_empty() {
+        anyhow::bail!("registered endpoint has no signing secret");
+    }
+    let (host, port) = extract_host_port(&endpoint.url)
+        .map_err(|reason| anyhow::anyhow!("invalid Cron webhook endpoint: {reason}"))?;
+    ssrf_check(&host, port)
+        .await
+        .map_err(|error| anyhow::anyhow!("Cron webhook endpoint rejected: {error}"))?;
+    Ok(())
+}
+
+/// Deliver one Cron result through the reviewed signed-webhook transport.
+/// `delivery_id` is stable across retries and becomes both the event id and
+/// X-NEOTH-Delivery-ID, so receivers can deduplicate after ambiguous failures.
+pub async fn deliver_cron_result(
+    endpoint: &WebhookEndpointConfig,
+    job_id: &str,
+    delivery_id: &str,
+    output: &str,
+    writer: &WalWriterHandle,
+) -> CronWebhookDelivery {
+    let hook = PendingWebhook {
+        event: WebhookEvent::CronCompleted,
+        event_id: delivery_id.to_string(),
+        ts_secs: crate::time::now_unix_secs(),
+        summary: serde_json::json!({
+            "job_id": job_id,
+            "output": output,
+        }),
+    };
+    let client = match reqwest::Client::builder()
+        .https_only(true)
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return CronWebhookDelivery::PermanentFailure,
+    };
+    match deliver_to_endpoint(&client, endpoint, &hook, &mut SsrfCache::new(), writer).await {
+        DeliveryDisposition::Success => CronWebhookDelivery::Delivered,
+        DeliveryDisposition::PermanentFailure => CronWebhookDelivery::PermanentFailure,
+        DeliveryDisposition::RetryableFailure => CronWebhookDelivery::RetryableFailure,
+    }
+}
+
 impl DeliveryDisposition {
     fn is_retryable(self) -> bool {
         matches!(self, Self::RetryableFailure)
@@ -522,6 +584,7 @@ async fn deliver_to_endpoint(
         WebhookEvent::SessionCreated => "session_created",
         WebhookEvent::ChatCompleted => "chat_completed",
         WebhookEvent::ChatMessage => "chat_message",
+        WebhookEvent::CronCompleted => "cron_completed",
     };
     let delivery_id = delivery_id(&hook.event_id, &endpoint.url);
 

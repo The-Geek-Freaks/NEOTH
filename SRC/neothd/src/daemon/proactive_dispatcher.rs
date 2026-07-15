@@ -199,10 +199,6 @@ pub(crate) enum DeliveryRoute {
     Suppressed,
     /// Gate allowed but no live adapter for this channel/config — ledger only.
     SidecarOnly,
-    /// The named integration is known but cannot be delivered because no
-    /// supported upstream API/adapter exists. This is a hard failed route,
-    /// distinct from an intentionally ledger-only channel.
-    Unavailable,
     /// Deliver to Telegram. `chat_id` is the operator's OWN configured id
     /// (`telegram_user_id`) rendered as a decimal string — never a value
     /// the proactive item could influence (items carry no chat id), so the
@@ -221,6 +217,10 @@ pub(crate) enum DeliveryRoute {
     /// Deliver through the operator-hosted Baileys sidecar. This variant is
     /// intentionally distinct from Meta Cloud and never consumes Meta creds.
     WhatsAppBaileys { recipient: String },
+    /// Deliver through the authenticated repository-owned Keet companion.
+    /// The capability-secret destination stays in `Credentials` and is never
+    /// copied into this Debug-visible routing enum.
+    Keet,
     /// B9 — deliver via signal-cli. `recipient` = operator's configured
     /// `signal_recipient` routing destination, never item-influenced.
     Signal { recipient: String },
@@ -256,7 +256,7 @@ pub(crate) enum DeliveryRoute {
 /// when compiled, Matrix. Matrix restores its persistent SDK session lazily;
 /// remaining connection-bound adapters (IRC/Twitch/Nostr/GoogleChat) stay
 /// `SidecarOnly` until their live adapter is shared with the tick. Keet is
-/// explicitly `Unavailable`: no public supported Keet chat API exists.
+/// constructible on demand through its authenticated local companion.
 pub(crate) fn plan_delivery(
     channel: &str,
     policy: impl crate::permissions::PolicyArgument,
@@ -391,7 +391,32 @@ pub(crate) fn plan_delivery(
         }
         #[cfg(not(feature = "matrix-channel"))]
         "matrix" => DeliveryRoute::SidecarOnly,
-        "keet" => DeliveryRoute::Unavailable,
+        "keet" => {
+            let complete = credentials
+                .keet_bridge_url
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+                && credentials
+                    .keet_bridge_bearer_token
+                    .as_ref()
+                    .is_some_and(|value| !value.expose().trim().is_empty())
+                && credentials
+                    .keet_topic
+                    .as_ref()
+                    .is_some_and(|value| !value.expose().trim().is_empty())
+                && credentials
+                    .keet_allowed_senders
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty());
+            let canonical_topic = credentials.keet_topic.as_ref().is_some_and(|topic| {
+                crate::channels::keet_bridge::validate_topic(topic.expose()).is_ok()
+            });
+            if complete && canonical_topic {
+                DeliveryRoute::Keet
+            } else {
+                DeliveryRoute::SidecarOnly
+            }
+        }
         // B9 — remaining connection-bound adapters (live socket / relay pool):
         // the tick can't construct them on demand, so routing destinations are
         // stored but delivery stays ledger-only until the daemon adapter is shared.
@@ -406,14 +431,13 @@ pub(crate) fn plan_delivery(
 /// at-most-once claim file before dispatch.
 fn route_needs_claim(route: &DeliveryRoute) -> bool {
     match route {
-        DeliveryRoute::Suppressed | DeliveryRoute::SidecarOnly | DeliveryRoute::Unavailable => {
-            false
-        }
+        DeliveryRoute::Suppressed | DeliveryRoute::SidecarOnly => false,
         DeliveryRoute::Telegram { .. }
         | DeliveryRoute::Slack { .. }
         | DeliveryRoute::Discord { .. }
         | DeliveryRoute::WhatsApp { .. }
         | DeliveryRoute::WhatsAppBaileys { .. }
+        | DeliveryRoute::Keet
         | DeliveryRoute::Signal { .. }
         | DeliveryRoute::Line { .. }
         | DeliveryRoute::Mattermost { .. }
@@ -586,6 +610,14 @@ fn evict_inflight_claimed(
             is_failure = item.is_failure,
             "proactive evict: crash_recovered — item evicted without resend"
         );
+        if let Err(error) = crate::cron::state::update_announce_result(
+            home,
+            &item.dedup_key,
+            crate::cron::state::DeliveryStatus::CrashUnknown,
+        ) {
+            warn!(dedup_key = %item.dedup_key, error = %error,
+                "failed to persist Cron crash-unknown delivery status");
+        }
     }
     // Flush if we opened the file.
     if let Some(mut f) = f_opt {
@@ -741,7 +773,10 @@ pub async fn run_proactive_delivery_tick(
     // no operator signal is exactly the invisible degradation B17 forbids. On a
     // real load error we still degrade to defaults for this tick (so the queue
     // keeps draining to the sidecar), but LOUDLY.
-    let credentials = match crate::config::credentials::Credentials::load() {
+    let credentials = match crate::config::credentials::Credentials::load_effective(
+        &home.join("credentials.yaml"),
+        config.secrets_backend,
+    ) {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(
@@ -815,14 +850,6 @@ pub async fn run_proactive_delivery_tick(
         let (status, recipient) = match route {
             DeliveryRoute::Suppressed => (ProactiveStatus::Suppressed, String::new()),
             DeliveryRoute::SidecarOnly => (ProactiveStatus::SidecarOnly, String::new()),
-            DeliveryRoute::Unavailable => {
-                warn!(
-                    channel = %target_channel,
-                    dedup_key = %item.dedup_key,
-                    "proactive route unavailable; no supported adapter exists"
-                );
-                (ProactiveStatus::Failed, String::new())
-            }
             DeliveryRoute::Telegram { chat_id } => {
                 // Safe: plan_delivery returned Telegram only when the token
                 // is present. Clone the secret only at the send site.
@@ -989,6 +1016,61 @@ pub async fn run_proactive_delivery_tick(
                             "Baileys adapter construction failed; recorded as failed"
                         );
                         (ProactiveStatus::Failed, recipient)
+                    }
+                }
+            }
+            DeliveryRoute::Keet => {
+                let url = credentials
+                    .keet_bridge_url
+                    .as_deref()
+                    .expect("plan_delivery guarantees keet_bridge_url is Some");
+                let token = credentials
+                    .keet_bridge_bearer_token
+                    .clone()
+                    .expect("plan_delivery guarantees keet_bridge_bearer_token is Some");
+                let topic = credentials
+                    .keet_topic
+                    .as_ref()
+                    .expect("plan_delivery guarantees keet_topic is Some");
+                let topic_capability = topic.expose();
+                let topic_alias = crate::channels::keet::topic_alias(topic_capability)
+                    .expect("plan_delivery guarantees a canonical Keet topic");
+                let allowed_senders = credentials
+                    .keet_allowed_senders
+                    .as_deref()
+                    .expect("plan_delivery guarantees keet_allowed_senders is Some");
+                use crate::channels::Channel;
+                match crate::channels::keet::KeetChannel::new(
+                    url,
+                    token,
+                    topic_capability,
+                    allowed_senders,
+                    home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
+                ) {
+                    Ok(channel) => match channel.send_proactive(topic_capability, &item.body).await
+                    {
+                        Ok(_) => {
+                            delivered += 1;
+                            (ProactiveStatus::Delivered, topic_alias)
+                        }
+                        Err(error) => {
+                            warn!(
+                                channel = "keet",
+                                dedup_key = %item.dedup_key,
+                                error = %error,
+                                "proactive Keet companion send failed; recorded as failed"
+                            );
+                            (ProactiveStatus::Failed, topic_alias)
+                        }
+                    },
+                    Err(error) => {
+                        warn!(
+                            channel = "keet",
+                            dedup_key = %item.dedup_key,
+                            error = %error,
+                            "Keet companion configuration rejected; recorded as failed"
+                        );
+                        (ProactiveStatus::Failed, topic_alias)
                     }
                 }
             }
@@ -1199,6 +1281,20 @@ pub async fn run_proactive_delivery_tick(
             warn!(error = %e, "PROACTIVE_SENT WAL append failed (best-effort audit frame)");
         }
 
+        let cron_status = match status {
+            ProactiveStatus::Delivered => crate::cron::state::DeliveryStatus::Delivered,
+            ProactiveStatus::Failed => crate::cron::state::DeliveryStatus::Failed,
+            ProactiveStatus::Suppressed => crate::cron::state::DeliveryStatus::Suppressed,
+            ProactiveStatus::SidecarOnly => crate::cron::state::DeliveryStatus::SidecarOnly,
+        };
+        crate::cron::state::update_announce_result(home, &item.dedup_key, cron_status).map_err(
+            |error| {
+                format!(
+                    "persist correlated Cron delivery result for {}: {error:#}",
+                    item.dedup_key
+                )
+            },
+        )?;
         records.push((item, status));
     }
 
@@ -1342,6 +1438,9 @@ mod tests {
     use super::*;
     use crate::proactive::{ProactiveItem, ProactiveQueue};
     use tempfile::TempDir;
+
+    const TEST_KEET_TOPIC: &str = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const TEST_KEET_SENDER: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     fn item(key: &str, priority: i32, ts: i64) -> ProactiveItem {
         ProactiveItem {
@@ -1961,14 +2060,31 @@ mod tests {
     }
 
     #[test]
-    fn plan_delivery_keet_is_explicitly_unavailable() {
+    fn plan_delivery_keet_uses_only_the_secret_credential_topic() {
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
-        let mut rt = default_rt();
-        rt.destinations.keet_topic = Some("topic".to_string());
+        let rt = default_rt();
+        let creds = crate::config::credentials::Credentials {
+            keet_bridge_url: Some("http://127.0.0.1:9130".into()),
+            keet_topic: Some(crate::secret::SecretString::from(TEST_KEET_TOPIC)),
+            keet_allowed_senders: Some(TEST_KEET_SENDER.into()),
+            keet_bridge_bearer_token: Some(crate::secret::SecretString::from(
+                "0123456789abcdef0123456789abcdef",
+            )),
+            ..Default::default()
+        };
         assert_eq!(
-            plan_delivery("keet", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
-            DeliveryRoute::Unavailable,
-            "legacy Keet routes must fail closed instead of implying a pending bridge"
+            plan_delivery("keet", AutonomyLevel::Full, &cfg, &rt, &creds),
+            DeliveryRoute::Keet
+        );
+        assert!(!format!("{:?}", DeliveryRoute::Keet).contains(TEST_KEET_TOPIC));
+        let partial = crate::config::credentials::Credentials {
+            keet_bridge_url: Some("http://127.0.0.1:9130".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            plan_delivery("keet", AutonomyLevel::Full, &cfg, &rt, &partial),
+            DeliveryRoute::SidecarOnly,
+            "partial companion config must fail closed"
         );
     }
 

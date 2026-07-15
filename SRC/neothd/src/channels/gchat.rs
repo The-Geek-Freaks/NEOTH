@@ -66,6 +66,33 @@ struct TokenResponse {
     expires_in: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SubscriptionResponse {
+    #[serde(default)]
+    name: String,
+}
+
+fn validate_subscription_resource(subscription: &str) -> Result<String> {
+    let value = subscription.trim();
+    let parts: Vec<_> = value.split('/').collect();
+    if parts.len() != 4
+        || parts[0] != "projects"
+        || parts[1].is_empty()
+        || parts[2] != "subscriptions"
+        || parts[3].is_empty()
+        || value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '?' | '#' | '\\')
+        })
+    {
+        anyhow::bail!(
+            "gchat subscription must be `projects/<project>/subscriptions/<subscription>`"
+        );
+    }
+    Ok(value.to_string())
+}
+
 /// Google Chat adapter. Construction parses the key file (fail fast on a bad
 /// path/JSON); the network work happens in [`Self::run`] / the send methods.
 pub struct GChatChannel {
@@ -87,6 +114,7 @@ pub struct GChatChannel {
 impl GChatChannel {
     /// Parse the service-account key at `sa_json_path` and build the adapter.
     pub fn new(sa_json_path: &std::path::Path, subscription: impl Into<String>) -> Result<Self> {
+        let subscription = validate_subscription_resource(&subscription.into())?;
         let raw = std::fs::read_to_string(sa_json_path).with_context(|| {
             format!(
                 "read gchat service-account key at {}",
@@ -111,7 +139,7 @@ impl GChatChannel {
             client_email: key.client_email,
             private_key: SecretString::from(key.private_key.as_str()),
             token_uri: key.token_uri,
-            subscription: subscription.into(),
+            subscription,
             http,
             token: tokio::sync::Mutex::new(None),
             allowed_sender: None,
@@ -166,10 +194,13 @@ impl GChatChannel {
                 ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
                 ("assertion", jwt.as_str()),
             ])
+            .timeout(super::readiness::PROBE_TIMEOUT)
             .send()
             .await
-            .map_err(|e| ChannelError::Transport(format!("gchat token POST: {e}")))?;
-        let status = resp.status();
+            .map_err(|_| ChannelError::Transport("gchat token POST failed".to_string()))?;
+        let (status, body) = super::readiness::bounded_body(resp, "gchat token grant")
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
         if !status.is_success() {
             // Body may echo the assertion — log status only.
             return Err(ChannelError::Auth(format!(
@@ -177,14 +208,38 @@ impl GChatChannel {
                  clock skew"
             )));
         }
-        let tok: TokenResponse = resp
-            .json()
-            .await
+        let tok: TokenResponse = serde_json::from_slice(&body)
             .map_err(|_| ChannelError::Transport("gchat token response parse".to_string()))?;
+        if tok.access_token.trim().is_empty() {
+            return Err(ChannelError::Auth(
+                "gchat token response omitted access_token".to_string(),
+            ));
+        }
         let ttl = Duration::from_secs(tok.expires_in.unwrap_or(3600));
         let deadline = Instant::now() + ttl.saturating_sub(TOKEN_SLACK);
         *guard = Some((tok.access_token.clone(), deadline));
         Ok(tok.access_token)
+    }
+
+    /// Verify the configured Pub/Sub credential and exact subscription with a
+    /// read-only `subscriptions.get`. This neither pulls nor acknowledges a
+    /// message, so an operator probe cannot consume channel traffic.
+    pub async fn probe_subscription(&self) -> Result<String> {
+        let bearer = self.bearer().await?;
+        let mut endpoint =
+            reqwest::Url::parse("https://pubsub.googleapis.com").expect("static Pub/Sub URL");
+        endpoint.set_path(&format!("/v1/{}", self.subscription));
+        let response = self
+            .http
+            .get(endpoint)
+            .bearer_auth(&bearer)
+            .timeout(super::readiness::PROBE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("gchat subscription probe failed"))?;
+        let (status, body) =
+            super::readiness::bounded_body(response, "gchat subscription probe").await?;
+        parse_subscription_probe(status, &body, &self.subscription)
     }
 
     /// One `:pull` round trip. Empty vec on no traffic. Without the
@@ -280,6 +335,33 @@ impl GChatChannel {
             .to_string();
         Ok(MessageId(name))
     }
+}
+
+fn parse_subscription_probe(
+    status: reqwest::StatusCode,
+    body: &[u8],
+    expected: &str,
+) -> Result<String> {
+    if matches!(status.as_u16(), 401 | 403) {
+        anyhow::bail!("Google Chat service account cannot read the Pub/Sub subscription");
+    }
+    if !status.is_success() {
+        anyhow::bail!(
+            "Google Chat subscription probe returned HTTP {}",
+            status.as_u16()
+        );
+    }
+    let response: SubscriptionResponse = serde_json::from_slice(body)
+        .context("Google Chat subscription probe returned malformed JSON")?;
+    if response.name != expected {
+        anyhow::bail!(
+            "Google Chat subscription probe returned `{}`, expected `{expected}`",
+            response.name
+        );
+    }
+    Ok(format!(
+        "service account can read Pub/Sub subscription {expected}"
+    ))
 }
 
 #[async_trait]
@@ -439,5 +521,50 @@ mod tests {
             panic!("non-https token_uri must be rejected");
         };
         assert!(err.to_string().contains("https://"), "{err}");
+    }
+
+    #[test]
+    fn subscription_resource_and_probe_response_are_exact() {
+        assert_eq!(
+            validate_subscription_resource(" projects/p/subscriptions/s ").unwrap(),
+            "projects/p/subscriptions/s"
+        );
+        for invalid in [
+            "projects/p/topics/t",
+            "projects//subscriptions/s",
+            "projects/p/subscriptions/s/extra",
+            "projects/p/subscriptions/s?token=secret",
+        ] {
+            assert!(
+                validate_subscription_resource(invalid).is_err(),
+                "{invalid}"
+            );
+        }
+
+        let detail = parse_subscription_probe(
+            reqwest::StatusCode::OK,
+            br#"{"name":"projects/p/subscriptions/s"}"#,
+            "projects/p/subscriptions/s",
+        )
+        .unwrap();
+        assert!(detail.contains("projects/p/subscriptions/s"));
+        assert!(
+            parse_subscription_probe(
+                reqwest::StatusCode::OK,
+                br#"{"name":"projects/p/subscriptions/other"}"#,
+                "projects/p/subscriptions/s",
+            )
+            .is_err()
+        );
+        assert!(
+            parse_subscription_probe(
+                reqwest::StatusCode::UNAUTHORIZED,
+                b"secret-bearing-body-is-never-surfaced",
+                "projects/p/subscriptions/s",
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("cannot read")
+        );
     }
 }

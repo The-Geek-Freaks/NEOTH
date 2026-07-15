@@ -4,8 +4,9 @@
 //! Each invocation writes WAL events 0x40 (FIRED) → 0x41 (SUCCESS) / 0x42 (FAILED).
 //!
 //! Current execution contract:
-//! - Jobs use the scheduler's authorized provider. Per-job provider/model
-//!   selection is tracked as an explicit Gold contract gap in the roadmap.
+//! - Jobs inherit the scheduler provider by default, or select an explicitly
+//!   configured provider/model/fallback chain without borrowing credentials
+//!   from a different vendor.
 //! - Channel delivery is first persisted to the proactive queue and is later
 //!   sent through the normal channel dispatcher.
 //! - The provider deadline covers the initial call and, for briefing-class
@@ -13,6 +14,7 @@
 //!   are terminal; rejected briefings are never queued for delivery.
 
 use std::path::Path;
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -20,7 +22,8 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::cron::briefing_prompt::render_briefing_system_prompt;
-use crate::cron::schema::{CronRole, Job, classify_role};
+use crate::cron::schema::{CronRole, DeliveryMode, Job, classify_role};
+use crate::cron::state::{DeliveryStatus, RuntimeState, target_hash};
 use crate::hooks::schema::HookDef;
 use crate::hooks::{HookStage, StageOutcome};
 use crate::proactive::{ProactiveItem, ProactiveQueue};
@@ -45,7 +48,47 @@ pub struct RunOutcome {
     /// True when a configured delivery was durably present in the proactive
     /// queue. This is not a claim that the asynchronous channel send completed.
     pub delivery_queued: bool,
+    /// Stable id joining the provider run, proactive queue/webhook and durable
+    /// Cron delivery ledger. None when delivery mode is absent/none.
+    pub delivery_id: Option<String>,
+    /// Truthful state at return time (`queued` is not `delivered`).
+    pub delivery_status: Option<DeliveryStatus>,
     pub error: Option<String>,
+}
+
+enum JobProvider<'a> {
+    Borrowed(&'a AuthorizedProvider),
+    Owned(AuthorizedProvider),
+}
+
+impl JobProvider<'_> {
+    fn get(&self) -> &AuthorizedProvider {
+        match self {
+            Self::Borrowed(provider) => provider,
+            Self::Owned(provider) => provider,
+        }
+    }
+}
+
+struct CronCompletionDriver<'a> {
+    provider: &'a dyn Provider,
+    request: Request,
+}
+
+impl crate::mcp::dispatch_loop::CompletionDriver for CronCompletionDriver<'_> {
+    fn complete<'a>(
+        &'a mut self,
+        prompt: &'a str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
+        let mut request = self.request.clone();
+        request.prompt = prompt.to_string();
+        Box::pin(async move {
+            self.provider
+                .complete(request)
+                .await
+                .map(|completion| completion.text)
+        })
+    }
 }
 
 pub async fn run_job(
@@ -67,26 +110,303 @@ pub async fn run_job_at(
     provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
 ) -> Result<RunOutcome> {
+    let config_path = home.join("freedom.yaml");
+    let config = crate::config::FreedomConfig::load_from_path_or_default(&config_path)
+        .with_context(|| format!("load Cron runtime config {}", config_path.display()))?;
+    validate_delivery_target(home, job, &config).await?;
+    let provider = resolve_job_provider(home, job, provider, writer, &config).await?;
+    if job.execution.thinking_budget.is_some()
+        && !provider.get().request_controls().supports_thinking_budget()
+    {
+        anyhow::bail!(
+            "Cron job `{}` requests thinking_budget but provider `{}` cannot wire it",
+            job.id,
+            provider.get().name()
+        );
+    }
     let proactive_queue_path = home.join("proactive_queue.json");
     let hook_dir = home.join("hooks");
     run_job_with_paths(
+        home,
         job,
-        provider,
+        provider.get(),
         writer,
         &proactive_queue_path,
         &hook_dir,
         crate::hooks::run_stage,
+        &config,
     )
     .await
 }
 
+async fn resolve_job_provider<'a>(
+    home: &Path,
+    job: &Job,
+    default_provider: &'a AuthorizedProvider,
+    writer: &WalWriterHandle,
+    config: &crate::config::FreedomConfig,
+) -> Result<JobProvider<'a>> {
+    if job.execution.provider.is_none() && job.execution.fallback.is_empty() {
+        return Ok(JobProvider::Borrowed(default_provider));
+    }
+
+    let mut scoped = config.clone();
+    if let Some(primary) = job.execution.provider {
+        let provider_kind = primary.to_provider_kind();
+        if !crate::consent::is_granted(home, provider_kind) {
+            anyhow::bail!(
+                "Cron job `{}` cannot use cloud provider `{}` without an explicit consent grant",
+                job.id,
+                primary.as_str()
+            );
+        }
+        let mut primary_slot = configured_provider_slot(config, primary);
+        primary_slot.provider = Some(primary);
+        primary_slot.model = job.execution.model.clone().or(primary_slot.model);
+
+        scoped.provider_kind = Some(provider_kind);
+        if config.provider_kind != Some(provider_kind) {
+            scoped.provider_binary = None;
+        }
+        scoped.provider_model = primary_slot.model.clone();
+        scoped.provider_key = primary_slot.key.clone();
+        scoped.provider_endpoint = primary_slot.endpoint.clone();
+        scoped.provider_region = primary_slot.region.clone();
+        scoped.provider_api_version = primary_slot.api_version.clone();
+        scoped.inference.mode = crate::config::inference::TopologyMode::Custom;
+        scoped.inference.left = primary_slot;
+    }
+    if !job.execution.fallback.is_empty() {
+        scoped.fallback.chain = job
+            .execution
+            .fallback
+            .iter()
+            .map(|target| {
+                let mut slot = configured_provider_slot(config, target.provider);
+                slot.provider = Some(target.provider);
+                slot.model = target.model.clone().or(slot.model);
+                slot.voice = None;
+                slot
+            })
+            .collect();
+        scoped.fallback.max_hops = u8::try_from(scoped.fallback.chain.len())
+            .unwrap_or(u8::MAX)
+            .max(1);
+    }
+    let raw = crate::providers::fallback_chain_from_config(&scoped, home, Some(writer.clone()))
+        .await
+        .with_context(|| format!("build provider policy for Cron job `{}`", job.id))?;
+    let authorized = AuthorizedProvider::from_box(
+        raw,
+        crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            scoped.autonomy_policy(),
+            Some(writer.clone()),
+        )
+        .with_usage_home(home.to_path_buf())
+        .with_usage_automated(true),
+        job.execution
+            .model
+            .clone()
+            .or_else(|| scoped.provider_model.clone()),
+        "cron.job",
+    );
+    Ok(JobProvider::Owned(authorized))
+}
+
+/// Resolve credentials only from a slot that explicitly names `provider`.
+///
+/// `FreedomConfig` contains several provider-shaped records. Cloning the
+/// top-level record and changing only `provider_kind` would send the primary
+/// vendor's key/endpoint to another vendor. This resolver keeps the selected
+/// slot atomic: model, key, endpoint, region and API version always originate
+/// from the same provider binding. An unconfigured provider receives an empty
+/// binding and its adapter therefore fails closed instead of borrowing data.
+fn configured_provider_slot(
+    config: &crate::config::FreedomConfig,
+    provider: crate::config::inference::InferenceProvider,
+) -> crate::config::inference::HemisphereSlot {
+    use crate::config::inference::{HemisphereRole, HemisphereSlot};
+
+    let topology = &config.inference;
+    let active_left = topology.slot_for(HemisphereRole::Left);
+    if active_left.provider == Some(provider) {
+        return active_left.clone();
+    }
+
+    for slot in [
+        &topology.default_slot,
+        &topology.left,
+        &topology.right,
+        &topology.cerebellum,
+    ] {
+        if slot.provider == Some(provider) {
+            return slot.clone();
+        }
+    }
+    for sub_slots in topology.hemisphere_sub_slots.values() {
+        for slot in [&sub_slots.left, &sub_slots.right, &sub_slots.cerebellum] {
+            if slot.provider == Some(provider) {
+                return slot.clone();
+            }
+        }
+    }
+    if let Some(slot) = config
+        .fallback
+        .chain
+        .iter()
+        .find(|slot| slot.provider == Some(provider))
+    {
+        return slot.clone();
+    }
+    if config.provider_kind == Some(provider.to_provider_kind()) {
+        return HemisphereSlot {
+            provider: Some(provider),
+            model: config.provider_model.clone(),
+            key: config.provider_key.clone(),
+            endpoint: config.provider_endpoint.clone(),
+            region: config.provider_region.clone(),
+            api_version: config.provider_api_version.clone(),
+            voice: None,
+        };
+    }
+
+    HemisphereSlot {
+        provider: Some(provider),
+        ..HemisphereSlot::default()
+    }
+}
+
+async fn validate_delivery_target(
+    home: &Path,
+    job: &Job,
+    config: &crate::config::FreedomConfig,
+) -> Result<()> {
+    let Some(delivery) = &job.delivery else {
+        return Ok(());
+    };
+    match delivery.mode {
+        DeliveryMode::None => Ok(()),
+        DeliveryMode::Webhook => {
+            let url = delivery
+                .webhook_url
+                .as_deref()
+                .context("webhook delivery URL missing after schema validation")?;
+            let endpoint = config
+                .webhook_manager
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.url == url)
+                .with_context(|| {
+                    format!(
+                        "Cron webhook target is not registered in freedom.yaml webhook_manager.endpoints"
+                    )
+                })?;
+            crate::daemon::webhook_manager::validate_cron_endpoint(endpoint)
+                .await
+                .context("validate Cron webhook before provider spend")
+        }
+        DeliveryMode::Announce => {
+            if delivery.account.is_some() {
+                anyhow::bail!(
+                    "delivery.account is not supported by the selected channel adapter; provider call blocked"
+                );
+            }
+            if delivery.thread.is_some() {
+                anyhow::bail!(
+                    "delivery.thread is not supported by the selected channel adapter; provider call blocked"
+                );
+            }
+            if delivery.channel.eq_ignore_ascii_case("keet") {
+                if delivery.recipient.is_some() {
+                    anyhow::bail!(
+                        "Keet Cron delivery resolves its secret topic capability from credentials.yaml; do not copy it into jobs.yaml as delivery.recipient"
+                    );
+                }
+                let credentials_path = home.join("credentials.yaml");
+                let credentials = crate::config::credentials::Credentials::load_effective(
+                    &credentials_path,
+                    config.secrets_backend,
+                )
+                .with_context(|| {
+                    format!("load Keet credentials from {}", credentials_path.display())
+                })?;
+                let bridge_url = credentials
+                    .keet_bridge_url
+                    .as_deref()
+                    .context("Keet delivery requires keet_bridge_url")?;
+                let topic = credentials
+                    .keet_topic
+                    .as_ref()
+                    .context("Keet delivery requires keet_topic")?;
+                let allowed_senders = credentials
+                    .keet_allowed_senders
+                    .as_deref()
+                    .context("Keet delivery requires keet_allowed_senders")?;
+                let bearer = credentials
+                    .keet_bridge_bearer_token
+                    .clone()
+                    .context("Keet delivery requires keet_bridge_bearer_token")?;
+                let channel = crate::channels::keet::KeetChannel::new(
+                    bridge_url,
+                    bearer,
+                    topic.expose(),
+                    allowed_senders,
+                    home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
+                )
+                .context("construct Keet Cron delivery target")?;
+                channel
+                    .probe()
+                    .await
+                    .context("Keet Cron target failed its live full-duplex preflight")?;
+                return Ok(());
+            }
+            let Some(recipient) = delivery.recipient.as_deref() else {
+                // Backward compatibility for pre-Gold channel-only jobs. New
+                // CLI creates explicit targets; the dispatcher still resolves
+                // this legacy form from operator-owned routing.
+                return Ok(());
+            };
+            let routing_path = home.join(crate::channels::routing::CHANNEL_ROUTING_FILE);
+            let routing = crate::channels::routing::ChannelRouting::load_from(&routing_path)
+                .with_context(|| format!("load channel routing {}", routing_path.display()))?;
+            let configured = if delivery.channel == "telegram" {
+                routing
+                    .destinations
+                    .telegram_chat_id
+                    .clone()
+                    .or_else(|| config.telegram_user_id.map(|value| value.to_string()))
+            } else {
+                routing
+                    .destinations
+                    .for_channel(&delivery.channel)
+                    .map(str::to_string)
+            };
+            let configured = configured.with_context(|| {
+                format!(
+                    "no operator-owned destination configured for Cron channel `{}`",
+                    delivery.channel
+                )
+            })?;
+            if configured != recipient {
+                anyhow::bail!(
+                    "Cron recipient does not match the operator-owned `{}` channel route",
+                    delivery.channel
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
 async fn run_job_with_paths(
+    home: &Path,
     job: &Job,
     provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
     proactive_queue_path: &Path,
     hook_dir: &Path,
     hook_dispatch: HookDispatcher,
+    config: &crate::config::FreedomConfig,
 ) -> Result<RunOutcome> {
     let started = Instant::now();
 
@@ -95,8 +415,9 @@ async fn run_job_with_paths(
     let fired_payload = serde_json::to_vec(&json!({
         "job_id": job.id,
         "name": job.name,
-        "schedule_expr": job.schedule.cron,
-        "tz": job.schedule.tz.clone().unwrap_or_else(|| "UTC".to_string()),
+        "schedule": job.schedule,
+        "schedule_label": job.schedule.label(),
+        "execution": job.execution,
         "fired_at_unix_ms": fired_at_unix_ms,
     }))?;
     let fired_event_id = write_event(writer, EVENT_TYPE_JOB_FIRED, &fired_payload)
@@ -216,7 +537,7 @@ async fn run_job_with_paths(
     // Seed = UTC day number so the greeting is stable across the two 30 s
     // ticks that may both visit the same cron minute, but rotates daily.
     let is_briefing = classify_role(job) == CronRole::Briefing;
-    let system_prompt: Option<String> = if is_briefing {
+    let mut system_prompt: Option<String> = if is_briefing {
         let tz = job.schedule.timezone();
         let now_local = crate::time::utc_now().with_timezone(&tz);
         let local_dt = now_local.format("%A, %Y-%m-%d %H:%M").to_string();
@@ -229,17 +550,33 @@ async fn run_job_with_paths(
     } else {
         None
     };
+    if let Some(profile) = job.execution.profile.as_deref() {
+        let preset = crate::profile::presets::ProfilePreset::parse(profile)
+            .context("validated Cron profile disappeared")?;
+        let addendum = crate::profile::presets::apply_preset(preset).system_addendum;
+        if !addendum.trim().is_empty() {
+            system_prompt = Some(match system_prompt {
+                Some(system) => format!("{system}\n\n{addendum}"),
+                None => addendum,
+            });
+        }
+    }
 
     // ── Provider call (bounded by timeout_seconds) ─────────────────────────
     let req = Request {
         prompt: effective_prompt.clone(),
         system: system_prompt,
-        model: None,
+        model: job.execution.model.clone(),
+        thinking_budget: job.execution.thinking_budget,
         ..Default::default()
     };
     let timeout_dur = Duration::from_secs(job.timeout_seconds.max(1) as u64);
     let provider_deadline = tokio::time::Instant::now() + timeout_dur;
-    let result = tokio::time::timeout_at(provider_deadline, provider.complete(req.clone())).await;
+    let result = tokio::time::timeout_at(
+        provider_deadline,
+        complete_cron_request(home, job, provider, writer, config, req.clone()),
+    )
+    .await;
 
     let (mut ok, mut output_text, mut err_text) = match result {
         Ok(Ok(completion)) => {
@@ -333,43 +670,169 @@ async fn run_job_with_paths(
         }
     }
 
-    let elapsed = started.elapsed();
     let mut delivery_queued = false;
+    let mut delivery_id = None;
+    let mut delivery_status = None;
     if ok {
         if let Some(delivery) = &job.delivery {
-            let channel = delivery.channel.trim().to_ascii_lowercase();
-            let dedup_key = format!("cron-delivery:{}:{fired_event_id}", job.id);
-            match enqueue_cron_delivery(
-                proactive_queue_path,
-                &job.id,
-                &channel,
-                &output_text,
-                &dedup_key,
-                now_unix_secs(),
-            ) {
-                Ok(inserted) => {
-                    delivery_queued = true;
-                    info!(
-                        job_id = %job.id,
-                        channel = %channel,
-                        dedup_key = %dedup_key,
-                        inserted,
-                        "cron delivery durably queued for proactive dispatch"
-                    );
+            match delivery.mode {
+                DeliveryMode::None => {
+                    delivery_status = Some(DeliveryStatus::Skipped);
                 }
-                Err(error) => {
-                    let message = format!(
-                        "provider completed, but delivery queue persistence failed for channel \
-                         `{channel}`: {error:#}"
-                    );
-                    warn!(job_id = %job.id, channel = %channel, error = %error,
-                        "cron delivery enqueue failed; marking run failed closed");
-                    ok = false;
-                    err_text = Some(message);
+                DeliveryMode::Announce | DeliveryMode::Webhook => {
+                    let target = if delivery.mode == DeliveryMode::Webhook {
+                        delivery
+                            .webhook_url
+                            .as_deref()
+                            .unwrap_or_default()
+                            .to_string()
+                    } else {
+                        format!(
+                            "{}:{}:{}:{}",
+                            delivery.channel,
+                            delivery.recipient.as_deref().unwrap_or("configured-route"),
+                            delivery.account.as_deref().unwrap_or("default-account"),
+                            delivery.thread.as_deref().unwrap_or("root-thread"),
+                        )
+                    };
+                    let id = cron_delivery_id(&job.id, fired_event_id, &target);
+                    let begin = RuntimeState::modify(home, |state| {
+                        state.begin_delivery(
+                            id.clone(),
+                            job.id.clone(),
+                            fired_event_id,
+                            delivery.mode,
+                            target_hash(&target),
+                            delivery.best_effort,
+                        );
+                        Ok(())
+                    });
+                    if let Err(error) = begin {
+                        ok = false;
+                        err_text = Some(format!(
+                            "provider completed, but Cron delivery state could not be persisted: {error:#}"
+                        ));
+                    } else {
+                        delivery_id = Some(id.clone());
+                        match delivery.mode {
+                            DeliveryMode::Announce => {
+                                let channel = delivery.channel.trim().to_ascii_lowercase();
+                                let dedup_key = format!("cron-delivery:{id}");
+                                match enqueue_cron_delivery(
+                                    proactive_queue_path,
+                                    &job.id,
+                                    &channel,
+                                    &output_text,
+                                    &dedup_key,
+                                    now_unix_secs(),
+                                ) {
+                                    Ok(inserted) => {
+                                        delivery_queued = true;
+                                        delivery_status = Some(DeliveryStatus::Queued);
+                                        if let Err(error) = RuntimeState::modify(home, |state| {
+                                            state.update_delivery(&id, DeliveryStatus::Queued, None)
+                                        }) {
+                                            delivery_status = Some(DeliveryStatus::Failed);
+                                            ok = false;
+                                            err_text = Some(format!(
+                                                "delivery was queued, but its durable correlation state could not be updated: {error:#}"
+                                            ));
+                                            warn!(job_id = %job.id, delivery_id = %id, error = %error,
+                                                "Cron announce correlation update failed after enqueue");
+                                        } else {
+                                            info!(
+                                                job_id = %job.id,
+                                                channel = %channel,
+                                                delivery_id = %id,
+                                                inserted,
+                                                "Cron announce durably queued; not yet claimed delivered"
+                                            );
+                                        }
+                                    }
+                                    Err(error) => {
+                                        let message = format!(
+                                            "provider completed, but delivery queue persistence failed for channel `{channel}`: {error:#}"
+                                        );
+                                        delivery_status = Some(DeliveryStatus::Failed);
+                                        if let Err(state_error) =
+                                            RuntimeState::modify(home, |state| {
+                                                state.update_delivery(
+                                                    &id,
+                                                    DeliveryStatus::Failed,
+                                                    Some(message.clone()),
+                                                )
+                                            })
+                                        {
+                                            warn!(job_id = %job.id, delivery_id = %id, error = %state_error,
+                                                "Cron delivery failure could not be recorded in correlation state");
+                                        }
+                                        warn!(job_id = %job.id, channel = %channel, error = %error,
+                                            "Cron announce enqueue failed");
+                                        if !delivery.best_effort {
+                                            ok = false;
+                                            err_text = Some(message);
+                                        }
+                                    }
+                                }
+                            }
+                            DeliveryMode::Webhook => {
+                                let url = delivery.webhook_url.as_deref().unwrap_or_default();
+                                let endpoint = config
+                                    .webhook_manager
+                                    .endpoints
+                                    .iter()
+                                    .find(|endpoint| endpoint.url == url)
+                                    .expect("validated Cron webhook endpoint must remain present");
+                                use crate::daemon::webhook_manager::{
+                                    CronWebhookDelivery, deliver_cron_result,
+                                };
+                                let terminal = deliver_cron_result(
+                                    endpoint,
+                                    &job.id,
+                                    &id,
+                                    &output_text,
+                                    writer,
+                                )
+                                .await;
+                                let (status, error) = match terminal {
+                                    CronWebhookDelivery::Delivered => {
+                                        (DeliveryStatus::Delivered, None)
+                                    }
+                                    CronWebhookDelivery::PermanentFailure => (
+                                        DeliveryStatus::Failed,
+                                        Some("permanent webhook delivery failure".to_string()),
+                                    ),
+                                    CronWebhookDelivery::RetryableFailure => (
+                                        DeliveryStatus::Failed,
+                                        Some("retryable webhook delivery failure".to_string()),
+                                    ),
+                                };
+                                delivery_status = Some(status);
+                                if let Err(state_error) = RuntimeState::modify(home, |state| {
+                                    state.update_delivery(&id, status, error.clone())
+                                }) {
+                                    delivery_status = Some(DeliveryStatus::Failed);
+                                    ok = false;
+                                    err_text = Some(format!(
+                                        "webhook reached a terminal state, but its durable correlation state could not be updated: {state_error:#}"
+                                    ));
+                                    warn!(job_id = %job.id, delivery_id = %id, error = %state_error,
+                                        "Cron webhook correlation update failed");
+                                }
+                                if status != DeliveryStatus::Delivered && !delivery.best_effort {
+                                    ok = false;
+                                    err_text = error;
+                                }
+                            }
+                            DeliveryMode::None => unreachable!(),
+                        }
+                    }
                 }
             }
         }
     }
+
+    let elapsed = started.elapsed();
 
     // GOLD-ADAPT-JV-PRO-06 — surface failure cause.
     if !ok {
@@ -460,7 +923,9 @@ async fn run_job_with_paths(
         "error": err_text,
         "delivery_channel": job.delivery.as_ref().map(|delivery| delivery.channel.as_str()),
         "delivery_queued": delivery_queued,
-        "delivered": false,
+        "delivery_id": delivery_id,
+        "delivery_status": delivery_status.map(DeliveryStatus::as_str),
+        "delivered": delivery_status == Some(DeliveryStatus::Delivered),
     }))?;
     let event_type = if ok {
         EVENT_TYPE_JOB_SUCCESS
@@ -533,7 +998,118 @@ async fn run_job_with_paths(
         duration: elapsed,
         output_bytes: output_text.len(),
         delivery_queued,
+        delivery_id,
+        delivery_status,
         error: err_text,
+    })
+}
+
+fn cron_delivery_id(job_id: &str, fired_event_id: u64, target: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"neoth.cron.delivery.v1\0");
+    hasher.update(job_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(fired_event_id.to_be_bytes());
+    hasher.update([0]);
+    hasher.update(target.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+async fn complete_cron_request(
+    home: &Path,
+    job: &Job,
+    provider: &AuthorizedProvider,
+    writer: &WalWriterHandle,
+    config: &crate::config::FreedomConfig,
+    mut request: Request,
+) -> Result<crate::providers::Completion> {
+    if job.execution.tools.is_empty() {
+        return provider.complete(request).await;
+    }
+
+    let path = home.join("mcp_servers.yaml");
+    let configured = crate::mcp::McpServers::load_from(&path)
+        .with_context(|| format!("load Cron MCP capabilities from {}", path.display()))?;
+    let scoped = scope_cron_mcp_servers(
+        configured,
+        &job.execution.capabilities,
+        &job.execution.tools,
+    )
+    .with_context(|| format!("validate Cron MCP scope from {}", path.display()))?;
+    let catalogue = crate::mcp::catalogue::assemble_catalogue(&scoped)
+        .await
+        .context("Cron MCP capability catalogue is empty or unavailable")?;
+    request.system = Some(match request.system.take() {
+        Some(system) => format!("{system}\n\n{catalogue}"),
+        None => catalogue,
+    });
+    let initial_prompt = request.prompt.clone();
+    let mut driver = CronCompletionDriver { provider, request };
+    let policy = config.autonomy_policy();
+    let outcome = crate::mcp::dispatch_loop::run_tool_loop(
+        &mut driver,
+        initial_prompt,
+        &scoped,
+        &policy,
+        Some(writer),
+        Some(&config.rollback),
+        Some(&job.execution.tools),
+        &config.security,
+    )
+    .await?;
+    Ok(crate::providers::Completion {
+        text: outcome.final_text,
+        ..Default::default()
+    })
+}
+
+fn scope_cron_mcp_servers(
+    configured: crate::mcp::McpServers,
+    capabilities: &[String],
+    tools: &[String],
+) -> Result<crate::mcp::McpServers> {
+    let wanted: std::collections::HashSet<&str> = capabilities.iter().map(String::as_str).collect();
+    let enabled: std::collections::HashSet<&str> = configured
+        .enabled()
+        .into_iter()
+        .map(|server| server.id.as_str())
+        .collect();
+    if let Some(missing) = wanted.difference(&enabled).next() {
+        anyhow::bail!("Cron capability `{missing}` is absent or disabled");
+    }
+
+    let mut permitted = std::collections::HashSet::new();
+    let servers = configured
+        .servers
+        .into_iter()
+        .filter(|server| server.enabled && wanted.contains(server.id.as_str()))
+        .map(|mut server| {
+            // The job scope can only narrow the server policy. A server with
+            // neither an allow-list nor trust_all_tools remains deny-by-default;
+            // jobs.yaml must never turn that boundary into an allow-list.
+            let effective: Vec<String> = match &server.allow_tools {
+                Some(existing) => tools
+                    .iter()
+                    .filter(|tool| existing.contains(tool))
+                    .cloned()
+                    .collect(),
+                None if server.trust_all_tools => tools.to_vec(),
+                None => Vec::new(),
+            };
+            permitted.extend(effective.iter().cloned());
+            server.allow_tools = Some(effective);
+            server.trust_all_tools = false;
+            server
+        })
+        .collect();
+
+    if let Some(missing) = tools.iter().find(|tool| !permitted.contains(*tool)) {
+        anyhow::bail!("Cron tool `{missing}` is not permitted by any selected capability");
+    }
+    Ok(crate::mcp::McpServers {
+        servers,
+        smart_loading: false,
     })
 }
 
@@ -597,6 +1173,8 @@ async fn finish_job_fired_failure(
         duration,
         output_bytes: 0,
         delivery_queued: false,
+        delivery_id: None,
+        delivery_status: None,
         error: Some(error),
     })
 }
@@ -665,6 +1243,8 @@ pub async fn run_briefing_gated(
             duration: Duration::ZERO,
             output_bytes: 0,
             delivery_queued: false,
+            delivery_id: None,
+            delivery_status: None,
             error: Some(format!("briefing-gate skip: {reason}")),
         });
     }
@@ -771,10 +1351,12 @@ mod workstream_c_tests {
             schedule: Schedule {
                 cron: "0 7 * * *".into(),
                 tz: Some("UTC".into()),
+                ..Default::default()
             },
             prompt: "Summarise overnight activity.".into(),
             timeout_seconds: 30,
             delivery: None,
+            execution: Default::default(),
             depends_on: vec![],
         }
     }
@@ -787,12 +1369,174 @@ mod workstream_c_tests {
             schedule: Schedule {
                 cron: "0 * * * *".into(),
                 tz: None,
+                ..Default::default()
             },
             prompt: "produce a delivery".into(),
             timeout_seconds: 30,
             delivery: Some(Delivery::new(channel)),
+            execution: Default::default(),
             depends_on: vec![],
         }
+    }
+
+    #[test]
+    fn per_job_provider_never_borrows_another_vendors_credentials() {
+        let mut config = crate::config::FreedomConfig::default();
+        config.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiApi);
+        config.provider_model = Some("openai-main-model".into());
+        config.provider_key = Some(crate::secret::SecretString::from("openai-main-secret"));
+        config.provider_endpoint = Some("https://openai.example/v1".into());
+
+        let slot =
+            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini);
+        assert_eq!(
+            slot.provider,
+            Some(crate::config::inference::InferenceProvider::Gemini)
+        );
+        assert!(slot.model.is_none());
+        assert!(slot.key.is_none());
+        assert!(slot.endpoint.is_none());
+        assert!(slot.region.is_none());
+        assert!(slot.api_version.is_none());
+    }
+
+    #[test]
+    fn per_job_provider_reuses_only_its_explicit_matching_slot() {
+        let mut config = crate::config::FreedomConfig::default();
+        config.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiApi);
+        config.provider_key = Some(crate::secret::SecretString::from("openai-main-secret"));
+        config
+            .fallback
+            .chain
+            .push(crate::config::inference::HemisphereSlot {
+                provider: Some(crate::config::inference::InferenceProvider::Gemini),
+                model: Some("gemini-job-model".into()),
+                key: Some(crate::secret::SecretString::from("gemini-slot-secret")),
+                endpoint: Some("https://gemini.example".into()),
+                region: Some("eu".into()),
+                api_version: Some("v2".into()),
+                voice: None,
+            });
+
+        let slot =
+            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini);
+        assert_eq!(slot.model.as_deref(), Some("gemini-job-model"));
+        assert_eq!(
+            slot.key.as_ref().map(crate::secret::SecretString::expose),
+            Some("gemini-slot-secret")
+        );
+        assert_eq!(slot.endpoint.as_deref(), Some("https://gemini.example"));
+        assert_eq!(slot.region.as_deref(), Some("eu"));
+        assert_eq!(slot.api_version.as_deref(), Some("v2"));
+    }
+
+    #[tokio::test]
+    async fn per_job_cloud_provider_requires_consent_before_adapter_build() {
+        let home = tempfile::tempdir().unwrap();
+        let mut job = briefing_job();
+        job.execution.provider = Some(crate::config::inference::InferenceProvider::OpenAi);
+        job.execution.model = Some("gpt-test".into());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let default_provider = authorized(CountingProvider {
+            calls: calls.clone(),
+        });
+        let (writer, join) = crate::wal::spawn(home.path().join("cron-consent.wal")).unwrap();
+
+        let error = match resolve_job_provider(
+            home.path(),
+            &job,
+            &default_provider,
+            &writer,
+            &crate::config::FreedomConfig::default(),
+        )
+        .await
+        {
+            Ok(_) => panic!("unconsented cloud override must fail closed"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("without an explicit consent grant")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    fn mcp_server(
+        id: &str,
+        allow_tools: Option<&[&str]>,
+        trust_all_tools: bool,
+        enabled: bool,
+    ) -> crate::mcp::McpServerConfig {
+        crate::mcp::McpServerConfig {
+            id: id.into(),
+            description: None,
+            command: "test-mcp".into(),
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            enabled,
+            allow_tools: allow_tools
+                .map(|tools| tools.iter().map(|tool| (*tool).to_string()).collect()),
+            trust_all_tools,
+            smart_approve: false,
+            autonomy_gate: None,
+        }
+    }
+
+    #[test]
+    fn cron_mcp_scope_is_the_intersection_of_job_and_server_allow_lists() {
+        let scoped = scope_cron_mcp_servers(
+            crate::mcp::McpServers {
+                servers: vec![mcp_server(
+                    "files",
+                    Some(&["read_file", "write_file"]),
+                    false,
+                    true,
+                )],
+                smart_loading: true,
+            },
+            &["files".into()],
+            &["read_file".into()],
+        )
+        .unwrap();
+        assert!(!scoped.smart_loading);
+        assert_eq!(scoped.servers.len(), 1);
+        assert_eq!(
+            scoped.servers[0].allow_tools.as_deref(),
+            Some(["read_file".to_string()].as_slice())
+        );
+        assert!(!scoped.servers[0].trust_all_tools);
+    }
+
+    #[test]
+    fn cron_mcp_scope_cannot_override_a_server_deny_by_default_policy() {
+        let error = scope_cron_mcp_servers(
+            crate::mcp::McpServers {
+                servers: vec![mcp_server("files", None, false, true)],
+                smart_loading: true,
+            },
+            &["files".into()],
+            &["read_file".into()],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not permitted"));
+    }
+
+    #[test]
+    fn cron_mcp_scope_rejects_disabled_capabilities_before_provider_spend() {
+        let error = scope_cron_mcp_servers(
+            crate::mcp::McpServers {
+                servers: vec![mcp_server("files", Some(&["read_file"]), false, false)],
+                smart_loading: true,
+            },
+            &["files".into()],
+            &["read_file".into()],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("absent or disabled"));
     }
 
     struct CountingProvider {
@@ -941,12 +1685,14 @@ mod workstream_c_tests {
         job.delivery = Some(Delivery::new("telegram"));
 
         let outcome = run_job_with_paths(
+            dir.path(),
             &job,
             &provider,
             &writer,
             &queue_path,
             &dir.path().join("hooks"),
             crate::hooks::run_stage,
+            &crate::config::FreedomConfig::default(),
         )
         .await
         .expect("quality retry must complete");
@@ -983,12 +1729,14 @@ mod workstream_c_tests {
         job.delivery = Some(Delivery::new("telegram"));
 
         let outcome = run_job_with_paths(
+            dir.path(),
             &job,
             &provider,
             &writer,
             &queue_path,
             &dir.path().join("hooks"),
             crate::hooks::run_stage,
+            &crate::config::FreedomConfig::default(),
         )
         .await
         .expect("quality failure must be represented in RunOutcome");
@@ -1035,12 +1783,14 @@ mod workstream_c_tests {
         });
 
         let outcome = run_job_with_paths(
+            dir.path(),
             &delivery_job("telegram"),
             &provider,
             &writer,
             &queue_path,
             &dir.path().join("hooks"),
             crate::hooks::run_stage,
+            &crate::config::FreedomConfig::default(),
         )
         .await
         .expect("delivery persistence is represented in RunOutcome");
@@ -1074,12 +1824,14 @@ mod workstream_c_tests {
         });
 
         let outcome = run_job_with_paths(
+            dir.path(),
             &briefing_job(),
             &provider,
             &writer,
             &dir.path().join("queue.json"),
             &hook_dir,
             crate::hooks::run_stage,
+            &crate::config::FreedomConfig::default(),
         )
         .await
         .expect("hook load failure is a terminal RunOutcome");
@@ -1110,12 +1862,14 @@ mod workstream_c_tests {
         });
 
         let outcome = run_job_with_paths(
+            dir.path(),
             &briefing_job(),
             &provider,
             &writer,
             &dir.path().join("queue.json"),
             &hook_dir,
             crate::hooks::run_stage,
+            &crate::config::FreedomConfig::default(),
         )
         .await
         .expect("unreadable hook is a terminal RunOutcome");
@@ -1143,12 +1897,14 @@ mod workstream_c_tests {
         });
 
         let outcome = run_job_with_paths(
+            dir.path(),
             &briefing_job(),
             &provider,
             &writer,
             &dir.path().join("queue.json"),
             &dir.path().join("hooks"),
             failing_hook_dispatch,
+            &crate::config::FreedomConfig::default(),
         )
         .await
         .expect("hook dispatch failure is a terminal RunOutcome");
@@ -1425,10 +2181,12 @@ mod workstream_c_tests {
             schedule: Schedule {
                 cron: "0 * * * *".into(),
                 tz: None,
+                ..Default::default()
             },
             prompt: "do something".into(),
             timeout_seconds: 30,
             delivery: None,
+            execution: Default::default(),
             depends_on: vec![],
         };
 
@@ -1569,10 +2327,12 @@ mod workstream_c_tests {
             schedule: Schedule {
                 cron: "0 7 * * *".into(),
                 tz: Some("Europe/Berlin".into()),
+                ..Default::default()
             },
             prompt: "Summarise the overnight events.".into(),
             timeout_seconds: 30,
             delivery: None,
+            execution: Default::default(),
             depends_on: vec![],
         };
 
@@ -1630,10 +2390,12 @@ mod workstream_c_tests {
             schedule: Schedule {
                 cron: "0 3 * * *".into(),
                 tz: None,
+                ..Default::default()
             },
             prompt: "Run database vacuum and prune old records.".into(),
             timeout_seconds: 60,
             delivery: None,
+            execution: Default::default(),
             depends_on: vec![],
         };
 

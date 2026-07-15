@@ -8,18 +8,23 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 readonly BINARIES=(neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge)
 readonly VERSIONED_BINARIES=(neoth neothd neoth-migrate neoth-relay neoth-keet-bridge)
-readonly SUPPORT_FILES=(README.md LICENSE-MIT LICENSE-APACHE freedom.yaml.example import-manifest.example.yaml)
+readonly SUPPORT_FILES=(README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES freedom.yaml.example import-manifest.example.yaml)
 
 usage() {
   cat <<'EOF'
 Usage:
   build-packages.sh --bundle DIR --version X.Y.Z --arch x86_64|aarch64 \
-    --output DIR --source-date-epoch UNIX_EPOCH [--validate-only]
+    --output DIR --source-date-epoch UNIX_EPOCH [--preflight-receipt FILE]
+  build-packages.sh --bundle DIR --version X.Y.Z --arch x86_64|aarch64 \
+    --validate-only --write-preflight-receipt FILE
   build-packages.sh --print-layout
 
 Builds a native .deb and .rpm from an extracted, version-bound NEOTH desktop
 release bundle. The bundle directory must be named for its Rust target, for
 example neoth-v1.0.0-x86_64-unknown-linux-gnu.
+
+The write mode executes version probes and binds every input byte. The consume
+mode verifies that receipt without executing any bundled product.
 EOF
 }
 
@@ -57,6 +62,46 @@ EOF
   touch --date="@$source_date_epoch" "$artifact.sha256" "$artifact.json"
 }
 
+emit_preflight_receipt() {
+  local name checksum
+  printf '%s\n' 'NEOTH-LINUX-PREFLIGHT-V1'
+  printf 'version %s\n' "$version"
+  printf 'target %s\n' "$target"
+  printf 'architecture %s\n' "$arch"
+  for name in "${BINARIES[@]}" "${SUPPORT_FILES[@]}"; do
+    checksum=$(sha256sum -- "$bundle/$name" | awk '{print $1}')
+    printf '%s  %s\n' "$checksum" "$name"
+  done
+}
+
+write_preflight_receipt_file() {
+  local destination=$1
+  local parent temporary
+  [[ ! -e $destination ]] || die "preflight receipt already exists: $destination"
+  parent=$(dirname -- "$destination")
+  [[ -d $parent ]] || die "preflight receipt directory not found: $parent"
+  temporary=$(mktemp "$parent/.release-preflight.XXXXXX")
+  if ! (umask 077; emit_preflight_receipt >"$temporary"); then
+    rm -f -- "$temporary"
+    die "could not write preflight receipt"
+  fi
+  mv -- "$temporary" "$destination"
+}
+
+verify_preflight_receipt_file() {
+  local receipt=$1
+  local temporary
+  [[ -f $receipt && ! -L $receipt ]] ||
+    die "preflight receipt must be a regular, non-symlink file: $receipt"
+  temporary=$(mktemp "${TMPDIR:-/tmp}/neoth-preflight-verify.XXXXXX")
+  emit_preflight_receipt >"$temporary"
+  if ! cmp -s -- "$temporary" "$receipt"; then
+    rm -f -- "$temporary"
+    die "preflight receipt does not match version, target, architecture, or bundle bytes"
+  fi
+  rm -f -- "$temporary"
+}
+
 print_layout() {
   cat <<'EOF'
 /usr/bin/neoth
@@ -70,6 +115,7 @@ print_layout() {
 /usr/share/doc/neoth/README.md
 /usr/share/doc/neoth/LICENSE-MIT
 /usr/share/doc/neoth/LICENSE-APACHE
+/usr/share/doc/neoth/THIRD_PARTY_LICENSES
 /usr/share/doc/neoth/examples/freedom.yaml.example
 /usr/share/doc/neoth/examples/import-manifest.example.yaml
 EOF
@@ -81,10 +127,13 @@ arch=
 output=
 source_date_epoch=${SOURCE_DATE_EPOCH:-}
 validate_only=0
+write_preflight_receipt=
+preflight_receipt=
 
 while (($#)); do
   case "$1" in
-    --bundle | --version | --arch | --output | --source-date-epoch)
+    --bundle | --version | --arch | --output | --source-date-epoch | \
+      --write-preflight-receipt | --preflight-receipt)
       (($# >= 2)) || die "$1 requires a value"
       case "$1" in
         --bundle) bundle=$2 ;;
@@ -92,6 +141,8 @@ while (($#)); do
         --arch) arch=$2 ;;
         --output) output=$2 ;;
         --source-date-epoch) source_date_epoch=$2 ;;
+        --write-preflight-receipt) write_preflight_receipt=$2 ;;
+        --preflight-receipt) preflight_receipt=$2 ;;
       esac
       shift 2
       ;;
@@ -116,6 +167,12 @@ done
 [[ -n $version ]] || die "--version is required"
 [[ -n $arch ]] || die "--arch is required"
 [[ -n $output || $validate_only == 1 ]] || die "--output is required"
+[[ -z $write_preflight_receipt || $validate_only == 1 ]] ||
+  die "--write-preflight-receipt requires --validate-only"
+[[ -z $preflight_receipt || $validate_only == 0 ]] ||
+  die "--preflight-receipt cannot be combined with --validate-only"
+[[ -z $write_preflight_receipt || -z $preflight_receipt ]] ||
+  die "preflight receipt write and consume modes are mutually exclusive"
 [[ $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] ||
   die "invalid semantic version: $version"
 IFS=. read -r -a prerelease_parts <<<"${version#*-}"
@@ -147,28 +204,43 @@ bundle="$(cd -- "$bundle" && pwd -P)"
   die "bundle directory must be named neoth-v${version}-${target}"
 
 need_cmd readelf
-need_cmd timeout
+if [[ -n $write_preflight_receipt || -n $preflight_receipt ]]; then
+  need_cmd cmp
+  need_cmd sha256sum
+fi
+if [[ -z $preflight_receipt ]]; then
+  need_cmd timeout
+fi
 
 for name in "${BINARIES[@]}"; do
   path="$bundle/$name"
-  [[ -f $path && -s $path && -x $path ]] || die "missing non-empty executable: $name"
+  [[ -f $path && ! -L $path && -s $path && -x $path ]] ||
+    die "missing regular non-empty executable: $name"
   readelf_header="$(readelf -h -- "$path" 2>/dev/null)" || die "$name is not a readable ELF executable"
   grep -Eq "Machine:[[:space:]]*(${machine_pattern})" <<<"$readelf_header" ||
     die "$name does not match requested architecture $arch"
 done
 
 for name in "${SUPPORT_FILES[@]}"; do
-  [[ -f $bundle/$name && -s $bundle/$name ]] || die "missing non-empty release file: $name"
+  [[ -f $bundle/$name && ! -L $bundle/$name && -s $bundle/$name ]] ||
+    die "missing regular non-empty release file: $name"
 done
 
-for name in "${VERSIONED_BINARIES[@]}"; do
-  version_output="$(timeout 15 "$bundle/$name" --version 2>&1)" ||
-    die "$name --version failed or timed out"
-  tr -cs '0-9A-Za-z.+-' '\n' <<<"$version_output" | grep -Fqx -- "$version" ||
-    die "$name version does not equal $version"
-done
+if [[ -n $preflight_receipt ]]; then
+  verify_preflight_receipt_file "$preflight_receipt"
+else
+  for name in "${VERSIONED_BINARIES[@]}"; do
+    version_output="$(timeout 15 "$bundle/$name" --version 2>&1)" ||
+      die "$name --version failed or timed out"
+    tr -cs '0-9A-Za-z.+-' '\n' <<<"$version_output" | grep -Fqx -- "$version" ||
+      die "$name version does not equal $version"
+  done
+fi
 
 if ((validate_only)); then
+  if [[ -n $write_preflight_receipt ]]; then
+    write_preflight_receipt_file "$write_preflight_receipt"
+  fi
   printf 'validated %s (%s, %s)\n' "$bundle" "$version" "$arch"
   exit 0
 fi
@@ -231,7 +303,7 @@ for name in "${BINARIES[@]}"; do
 done
 install -m 0644 -- "$SCRIPT_DIR/neoth.desktop" "$payload/usr/share/applications/neoth.desktop"
 install -m 0644 -- "$SCRIPT_DIR/neoth.svg" "$payload/usr/share/icons/hicolor/scalable/apps/neoth.svg"
-for name in README.md LICENSE-MIT LICENSE-APACHE; do
+for name in README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES; do
   install -m 0644 -- "$bundle/$name" "$doc_dir/$name"
 done
 for name in freedom.yaml.example import-manifest.example.yaml; do
@@ -340,6 +412,7 @@ cp -a . %{buildroot}/
 %defattr(-,root,root,-)
 %license %{_docdir}/neoth/LICENSE-MIT
 %license %{_docdir}/neoth/LICENSE-APACHE
+%license %{_docdir}/neoth/THIRD_PARTY_LICENSES
 %doc %{_docdir}/neoth/README.md
 %doc %{_docdir}/neoth/examples
 %{_bindir}/neoth

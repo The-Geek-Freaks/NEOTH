@@ -147,10 +147,12 @@ export struct MemoryRow {
     bytes: string,    // pre-formatted by Rust
 }
 
-// GU-01 — one channel's connection state (bool only, never a secret).
+// GOLD-R3-04 — canonical channel probe state (never a secret).
 export struct ChannelRow {
     name: string,
-    connected: bool,
+    status: string,      // ok | warn | error | unavailable | not_configured
+    configured: bool,
+    detail: string,
 }
 
 /// DES-10 — one row in the live Channel Activity feed.
@@ -583,6 +585,8 @@ export component SettingsView inherits Rectangle {
     callback skills-always-embed-route-changed(bool);
     // GU-01 — Channels / Plugins / Memory panels.
     in property <[ChannelRow]> channels: [];
+    in property <string> channel-status-error: "";
+    in property <int> channel-add-success-seq: 0;
     // DES-10 — live channel-activity feed (metadata only, no message bodies).
     in property <[ChannelActivityRow]> channel-activity: [];
     in property <[PluginRow]> plugins: [];
@@ -658,6 +662,9 @@ export component SettingsView inherits Rectangle {
     callback reload-config-clicked;
     // GU-01 — Chat tab "Open chat" button → MainWindow switches to the chat view.
     callback open-chat-clicked;
+    /// Launch the packaged CLI in a real platform terminal and make CLI the
+    /// durable default for the next product launch.
+    callback open-cli-clicked;
     // SPEC-06 — operator picked (role, provider) in the Hemispheres rebind
     // control → MainWindow shells `neoth hemispheres set`.
     callback hemisphere-set-clicked(string, string, string);
@@ -673,9 +680,8 @@ export component SettingsView inherits Rectangle {
     /// properties. Live-tail (Pick #8 step 4) will replace this with
     /// a WAL-driven push.
     callback kanban-refresh-clicked;
-    /// GUI-improve — operator clicked "Refresh" on the Channels tab. Rust
-    /// re-reads ~/.neoth/credentials.yaml (a pure file read) + re-applies the
-    /// channel rows, so a CLI connect/disconnect shows without a GUI restart.
+    /// Operator clicked Refresh on the Channels tab. Rust asks the canonical
+    /// `neoth channel list --output json` probe off-thread.
     callback channels-refresh-clicked;
     /// Step 5 (2026-05-20): operator clicked a KanbanTaskCard. Rust
     /// looks up the full task detail (title/status/hemisphere/desc)
@@ -714,13 +720,9 @@ export component SettingsView inherits Rectangle {
     callback channel-test-clicked(string);
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
-    /// Args: (channel_type, f1, f2, f3, f4) — fields mapped per-channel-type in Rust.
-    /// telegram: f1=token; slack: f1=bot-token f2=app-token; whatsapp: f1=token f2=phone-id;
-    /// discord: f1=token; signal: f1=url f2=phone; line: f1=token f2=password;
-    /// irc: f1=server f2=nick f3=password f4=channels-csv;
-    /// imessage/bluebubbles: f1=url f2=password; mattermost: f1=url f2=token;
-    /// gchat: f1=url f2=server.
-    callback channel-add-clicked(string, string, string, string, string);
+    /// Args: channel_type + six typed fields + one boolean policy flag. Rust
+    /// maps them to canonical `neoth channel add` flags for all 15 channels.
+    callback channel-add-clicked(string, string, string, string, string, string, string, bool);
     /// GUI-overhaul feature parity — Memory forget. Preview is a dry run
     /// (`neoth memory --forget <t>`); confirm wipes (`… --forget <t> --confirm`).
     callback memory-forget-preview-clicked(string);
@@ -1181,11 +1183,38 @@ export component SettingsView inherits Rectangle {
             if root.active == SettingsTab.channels: VerticalBox {
                 padding: Theme.space-base;
                 spacing: Theme.space-base;
-                // GAP-19 — local toggle for the Add channel inline form.
+                // GOLD-R3-04 — one add/reconfigure form for the canonical
+                // registry. Reconfigure never reads existing secret values
+                // back from the daemon; the operator supplies a complete new
+                // credential set and the CLI commits it atomically.
                 property <bool> add-channel-open: false;
+                property <bool> form-editing: false;
+                property <int> type-index: 0;
+                property <string> ch-f1: "";
+                property <string> ch-f2: "";
+                property <string> ch-f3: "";
+                property <string> ch-f4: "";
+                property <string> ch-f5: "";
+                property <string> ch-f6: "";
+                property <bool> ch-flag: false;
+                property <int> observed-success: root.channel-add-success-seq;
+                changed observed-success => {
+                    if observed-success > 0 {
+                        add-channel-open = false;
+                        form-editing = false;
+                        ch-f1 = "";
+                        ch-f2 = "";
+                        ch-f3 = "";
+                        ch-f4 = "";
+                        ch-f5 = "";
+                        ch-f6 = "";
+                        ch-flag = false;
+                        type-index = 0;
+                    }
+                }
                 PanelHeader {
                     title: "Channels";
-                    subtitle: "Messaging surfaces NEOTH can reach. Connect/disconnect via the CLI; this shows which have credentials configured — the secrets themselves never leave ~/.neoth/credentials.yaml.";
+                    subtitle: "All registered messaging surfaces, using the same validation and feature probes as the CLI. Secrets are never returned to the GUI.";
                     mirrors-slash: "/connect <channel>   |   /disconnect <channel>";
                 }
                 HorizontalLayout {
@@ -1198,7 +1227,18 @@ export component SettingsView inherits Rectangle {
                     NeothButton {
                         label: "Add channel";
                         primary: true;
-                        clicked => { add-channel-open = !add-channel-open; }
+                        clicked => {
+                            add-channel-open = true;
+                            form-editing = false;
+                            type-index = 0;
+                            ch-f1 = "";
+                            ch-f2 = "";
+                            ch-f3 = "";
+                            ch-f4 = "";
+                            ch-f5 = "";
+                            ch-f6 = "";
+                            ch-flag = false;
+                        }
                     }
                 }
 
@@ -1207,14 +1247,26 @@ export component SettingsView inherits Rectangle {
                 // type-index mirrors the channel-type-model array order below.
                 if add-channel-open: Card {
                     shimmer: false;
-                    property <int> type-index: 0;
-                    property <string> ch-f1: "";
-                    property <string> ch-f2: "";
-                    property <string> ch-f3: "";
-                    property <string> ch-f4: "";
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-base;
+
+                        Text {
+                            text: form-editing ? "RECONFIGURE CHANNEL" : "ADD CHANNEL";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            color: Theme.accent-green;
+                        }
+                        if form-editing: Text {
+                            text: "Existing secrets are never read back. Re-enter every required field; Save changes replaces the channel configuration atomically.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                            accessible-label: self.text;
+                        }
 
                         // ── channel type picker ───────────────────────────────
                         HorizontalLayout {
@@ -1226,18 +1278,23 @@ export component SettingsView inherits Rectangle {
                                 vertical-alignment: center;
                             }
                             add-type-combo := NeothComboBox {
-                                model: ["telegram","slack","whatsapp","discord","signal","line","irc","imessage","mattermost","gchat"];
+                                model: [
+                                    "telegram", "slack", "whatsapp", "whatsapp_baileys", "keet",
+                                    "discord", "signal", "line", "irc", "imessage", "mattermost",
+                                    "gchat", "matrix", "twitch", "nostr"
+                                ];
                                 current-index <=> type-index;
                                 horizontal-stretch: 1;
                             }
                         }
 
                         // ── per-channel hint + fields ─────────────────────────
-                        // telegram (0): token
+                        // telegram (0): token + exact numeric sender allowlist
                         if type-index == 0: VerticalBox {
                             spacing: Theme.space-tight;
-                            Text { text: "Bot token from @BotFather"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            Text { text: "Bot token from @BotFather + your numeric Telegram user ID"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Allowed user ID (--telegram-user-id)  e.g. 123456789"; text <=> ch-f2; }
                         }
                         // slack (1): bot-token + app-token
                         if type-index == 1: VerticalBox {
@@ -1246,35 +1303,55 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit { placeholder-text: "Bot token (--bot-token)"; password: true; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "App token (--app-token)"; password: true; text <=> ch-f2; }
                         }
-                        // whatsapp (2): token + phone-id
+                        // whatsapp (2): complete Cloud API send + verified inbound contract
                         if type-index == 2: VerticalBox {
                             spacing: Theme.space-tight;
-                            Text { text: "WhatsApp Cloud API token + phone number ID"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            Text { text: "WhatsApp Cloud API: outbound token/phone ID + inbound verify token/app secret"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Phone ID (--phone-id)"; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Webhook verify token (--verify-token)"; password: true; text <=> ch-f3; }
+                            NeothLineEdit { placeholder-text: "Meta app secret (--app-secret)"; password: true; text <=> ch-f4; }
                         }
-                        // discord (3): token
+                        // whatsapp_baileys (3): authenticated sidecar + sender policy
                         if type-index == 3: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Repository-owned WhatsApp Web bridge; groups denied unless explicitly allowed"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Bridge URL (--url)  e.g. http://127.0.0.1:9120"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Bearer token, 32+ URL-safe chars (--token)"; password: true; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed senders CSV (--allowed-sender)"; text <=> ch-f3; }
+                            NeothLineEdit { placeholder-text: "Allowed group JIDs CSV (--allowed-rooms-csv, optional)"; text <=> ch-f4; }
+                        }
+                        // keet (4): repository-owned full-duplex companion contract
+                        if type-index == 4: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Keet/Pear companion: local authenticated full-duplex bridge + exact sender policy"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Companion URL (--url)  e.g. http://127.0.0.1:9130"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Bearer token, 32+ URL-safe chars (--token)"; password: true; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Topic capability (--server, secret)"; password: true; text <=> ch-f3; }
+                            NeothLineEdit { placeholder-text: "Allowed sender IDs CSV (--allowed-sender)"; text <=> ch-f4; }
+                        }
+                        // discord (5): token
+                        if type-index == 5: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "Discord bot token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
                         }
-                        // signal (4): url + phone
-                        if type-index == 4: VerticalBox {
+                        // signal (6): url + phone
+                        if type-index == 6: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "signal-cli REST URL + registered phone number"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://localhost:8080"; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Phone (--phone)  e.g. +4917…"; text <=> ch-f2; }
                         }
-                        // line (5): token + password (optional)
-                        if type-index == 5: VerticalBox {
+                        // line (7): token + password (optional)
+                        if type-index == 7: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "LINE Messaging API channel access token; password optional"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Password (--password, optional)"; password: true; text <=> ch-f2; }
                         }
-                        // irc (6): server + nick + password (opt) + channels-csv (opt)
-                        if type-index == 6: VerticalBox {
+                        // irc (8): server + nick + password (opt) + channels-csv (opt)
+                        if type-index == 8: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "IRC server host, nick, optional password + channel list (comma-separated)"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Server (--server)  e.g. irc.libera.chat"; text <=> ch-f1; }
@@ -1282,26 +1359,53 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit { placeholder-text: "Password (--password, optional)"; password: true; text <=> ch-f3; }
                             NeothLineEdit { placeholder-text: "Channels CSV (--channels-csv, optional)  e.g. #general,#dev"; text <=> ch-f4; }
                         }
-                        // imessage / bluebubbles (7): url + password
-                        if type-index == 7: VerticalBox {
+                        // imessage / bluebubbles (9): url + password
+                        if type-index == 9: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "BlueBubbles server URL + password"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://mac.local:1234"; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Password (--password)"; password: true; text <=> ch-f2; }
                         }
-                        // mattermost (8): url + token
-                        if type-index == 8: VerticalBox {
+                        // mattermost (10): url + token
+                        if type-index == 10: VerticalBox {
                             spacing: Theme.space-tight;
                             Text { text: "Mattermost server URL + personal access token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. https://chat.example.com"; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: true; text <=> ch-f2; }
                         }
-                        // gchat (9): url + server
-                        if type-index == 9: VerticalBox {
+                        // gchat (11): service-account path + subscription
+                        if type-index == 11: VerticalBox {
                             spacing: Theme.space-tight;
-                            Text { text: "Google Chat Pub/Sub subscription URL + project/server ID"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
-                            NeothLineEdit { placeholder-text: "URL (--url)  subscription endpoint"; text <=> ch-f1; }
-                            NeothLineEdit { placeholder-text: "Server / project ID (--server)"; text <=> ch-f2; }
+                            Text { text: "Google Chat Pub/Sub service-account file + full subscription resource"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Service-account JSON path (--url)"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "projects/<p>/subscriptions/<s> (--server)"; text <=> ch-f2; }
+                        }
+                        // matrix (12): encrypted by default; access token or password
+                        if type-index == 12: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Matrix homeserver + bot user; encrypted rooms required unless explicitly disabled"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Homeserver URL (--url)"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Bot user ID, @user:server (--nick)"; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Access token (--token, preferred)"; password: true; text <=> ch-f3; }
+                            NeothLineEdit { placeholder-text: "Account password (--password, alternative)"; password: true; text <=> ch-f4; }
+                            NeothLineEdit { placeholder-text: "Allowed sender @user:server (--allowed-sender, optional)"; text <=> ch-f5; }
+                            NeothLineEdit { placeholder-text: "Allowed room IDs CSV (--allowed-rooms-csv, optional)"; text <=> ch-f6; }
+                            NeothCheckBox { text: "Allow plaintext rooms (--allow-plaintext)"; checked <=> ch-flag; }
+                        }
+                        // twitch (13): user + OAuth + rooms
+                        if type-index == 13: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Twitch IRC identity, OAuth token, and at least one channel"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "Bot username (--nick)"; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "OAuth token (--token)"; password: true; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Channels CSV (--channels-csv)"; text <=> ch-f3; }
+                        }
+                        // nostr (14): private key + relay URLs
+                        if type-index == 14: VerticalBox {
+                            spacing: Theme.space-tight;
+                            Text { text: "Nostr NIP-17 private key + secure relay URLs"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            NeothLineEdit { placeholder-text: "nsec1… or 64-char hex key (--token)"; password: true; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "wss:// relay URLs CSV (--channels-csv)"; text <=> ch-f2; }
                         }
 
                         // ── action row ────────────────────────────────────────
@@ -1317,31 +1421,47 @@ export component SettingsView inherits Rectangle {
                                     ch-f2 = "";
                                     ch-f3 = "";
                                     ch-f4 = "";
+                                    ch-f5 = "";
+                                    ch-f6 = "";
+                                    ch-flag = false;
                                     type-index = 0;
                                 }
                             }
                             NeothButton {
-                                label: "Add";
+                                label: form-editing ? "Save changes" : "Add";
                                 primary: true;
                                 clicked => {
                                     root.channel-add-clicked(
                                         add-type-combo.model[add-type-combo.current-index],
-                                        ch-f1, ch-f2, ch-f3, ch-f4
+                                        ch-f1, ch-f2, ch-f3, ch-f4, ch-f5, ch-f6, ch-flag
                                     );
-                                    add-channel-open = false;
-                                    ch-f1 = "";
-                                    ch-f2 = "";
-                                    ch-f3 = "";
-                                    ch-f4 = "";
-                                    type-index = 0;
+                                    // Keep values and the form open until Rust confirms
+                                    // `saved:true`. Failed submissions remain editable.
                                 }
                             }
                         }
                     }
                 }
 
+                if root.channel-status-error != "": Card {
+                    shimmer: false;
+                    border-color: Theme.accent-pink;
+                    Text {
+                        text: "Channel status unavailable: " + root.channel-status-error;
+                        color: Theme.accent-pink;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        wrap: word-wrap;
+                        accessible-role: text;
+                        accessible-label: self.text;
+                    }
+                }
+
                 Card {
                     shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
+                    accessible-role: list;
+                    accessible-label: "Registered channel status";
+                    accessible-item-count: root.channels.length;
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
@@ -1349,31 +1469,80 @@ export component SettingsView inherits Rectangle {
                             spacing: Theme.space-base;
                             // Per-row confirm state (each for-instance gets its own).
                             property <bool> confirming: false;
+                            accessible-role: list-item;
+                            accessible-label: c.name + ": " + c.status + ". " + c.detail;
                             Text {
-                                text: c.connected ? "connected" : "—";
+                                text: c.status == "ok" ? "✓ ready"
+                                    : c.status == "warn" ? "⚠ warning"
+                                    : c.status == "error" ? "✗ error"
+                                    : c.status == "unavailable" ? "⊘ unavailable"
+                                    : "· not configured";
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
-                                color: c.connected ? Theme.accent-green : Theme.text-muted;
+                                color: c.status == "ok" ? Theme.accent-green
+                                    : c.status == "warn" ? Theme.accent-amber
+                                    : c.status == "error" ? Theme.accent-pink
+                                    : Theme.text-muted;
                                 vertical-alignment: center;
+                                width: 132px;
                             }
-                            Text {
-                                text: c.name;
-                                font-family: Theme.font-mono;
-                                font-size: Theme.font-size-caption;
-                                color: Theme.text-primary;
+                            VerticalBox {
                                 horizontal-stretch: 1;
-                                vertical-alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: c.name;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                }
+                                Text {
+                                    text: c.detail;
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-tertiary;
+                                    wrap: word-wrap;
+                                }
                             }
                             // GUI-overhaul feature parity — live-test or remove a
-                            // connected channel (was a read-only status row). Test
-                            // is a safe connectivity check; Remove deletes the
-                            // credential, so it takes an inline confirm.
-                            if c.connected && !confirming: NeothButton {
+                            // configured channel. Test is a safe connectivity check;
+                            // Remove deletes the credential, so it takes an inline
+                            // confirm.
+                            if !confirming: NeothButton {
+                                label: c.configured ? "Reconfigure" : "Configure";
+                                primary: false;
+                                clicked => {
+                                    add-channel-open = true;
+                                    form-editing = c.configured;
+                                    type-index = c.name == "telegram" ? 0
+                                        : c.name == "slack" ? 1
+                                        : c.name == "whatsapp_business" ? 2
+                                        : c.name == "whatsapp_baileys" ? 3
+                                        : c.name == "keet" ? 4
+                                        : c.name == "discord" ? 5
+                                        : c.name == "signal" ? 6
+                                        : c.name == "line" ? 7
+                                        : c.name == "irc" ? 8
+                                        : c.name == "imessage_bluebubbles" ? 9
+                                        : c.name == "mattermost" ? 10
+                                        : c.name == "gchat" ? 11
+                                        : c.name == "matrix" ? 12
+                                        : c.name == "twitch" ? 13
+                                        : 14;
+                                    ch-f1 = "";
+                                    ch-f2 = "";
+                                    ch-f3 = "";
+                                    ch-f4 = "";
+                                    ch-f5 = "";
+                                    ch-f6 = "";
+                                    ch-flag = false;
+                                }
+                            }
+                            if c.configured && !confirming: NeothButton {
                                 label: "Test";
                                 primary: false;
                                 clicked => { root.channel-test-clicked(c.name); }
                             }
-                            if c.connected && !confirming: NeothButton {
+                            if c.configured && !confirming: NeothButton {
                                 label: "Remove";
                                 primary: false;
                                 clicked => { confirming = true; }
@@ -4083,6 +4252,11 @@ export component SettingsView inherits Rectangle {
                         NeothButton {
                             label: "Reload config";
                             clicked => { root.reload-config-clicked(); }
+                        }
+                        NeothButton {
+                            label: "Open CLI";
+                            primary: false;
+                            clicked => { root.open-cli-clicked(); }
                         }
                         NeothButton {
                             label: "Re-run wizard";

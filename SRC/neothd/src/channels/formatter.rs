@@ -90,8 +90,7 @@ pub trait Formatter {
     fn format(&self, reply: &CanonicalReply) -> Vec<String>;
 }
 
-/// Build the right formatter for a supported channel. Keet deliberately
-/// returns `None`: no supported public Keet chat transport exists.
+/// Build the right formatter for a supported channel.
 pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
     match kind {
         ChannelKind::Telegram => Some(Box::new(TelegramFormatter)),
@@ -100,7 +99,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
             Some(Box::new(WhatsAppFormatter))
         }
         ChannelKind::Discord => Some(Box::new(DiscordFormatter)),
-        ChannelKind::Keet => None,
+        ChannelKind::Keet => Some(Box::new(KeetFormatter)),
         ChannelKind::Signal => Some(Box::new(SignalFormatter)),
         ChannelKind::Matrix => Some(Box::new(MatrixFormatter)),
         ChannelKind::Line => Some(Box::new(LineFormatter)),
@@ -367,6 +366,22 @@ impl Formatter for SignalFormatter {
             SIGNAL_MAX_CHARS - SPLIT_HEADROOM,
             reply.length_hint,
         )
+    }
+}
+
+/// Keet companion v1 carries plaintext UTF-8. Keep the mobile-friendly 2k
+/// split used by Signal while reporting the correct canonical channel kind.
+pub struct KeetFormatter;
+
+impl Formatter for KeetFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Keet
+    }
+    fn max_chars_per_message(&self) -> usize {
+        SIGNAL_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        SignalFormatter.format(reply)
     }
 }
 
@@ -698,14 +713,13 @@ mod tests {
 
     #[test]
     fn for_channel_routes_every_known_dialect() {
-        // Supported transports have a formatter; the known-but-unavailable
-        // Keet inventory row deliberately does not.
+        // Every supported transport has a formatter.
         assert!(for_channel(ChannelKind::Telegram).is_some());
         assert!(for_channel(ChannelKind::Slack).is_some());
         assert!(for_channel(ChannelKind::WhatsAppBusiness).is_some());
         assert!(for_channel(ChannelKind::WhatsAppBaileys).is_some());
         assert!(for_channel(ChannelKind::Discord).is_some());
-        assert!(for_channel(ChannelKind::Keet).is_none());
+        assert!(for_channel(ChannelKind::Keet).is_some());
     }
 
     #[test]
@@ -714,6 +728,7 @@ mod tests {
         assert_eq!(SlackFormatter.channel(), ChannelKind::Slack);
         assert_eq!(WhatsAppFormatter.channel(), ChannelKind::WhatsAppBusiness);
         assert_eq!(DiscordFormatter.channel(), ChannelKind::Discord);
+        assert_eq!(KeetFormatter.channel(), ChannelKind::Keet);
     }
 
     // ── Telegram MarkdownV2 golden output ────────────────────────────

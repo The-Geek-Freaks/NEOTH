@@ -2005,8 +2005,6 @@ async fn dispatch_provider(
             let mut chunk_count: u32 = 0;
             let mut input_tokens: Option<u32> = None;
             let mut output_tokens: Option<u32> = None;
-            let mut cache_creation_tokens: Option<u32> = None;
-            let mut cache_read_tokens: Option<u32> = None;
             let mut response_identity: Option<crate::providers::CompletionIdentity> = None;
             let mut saw_done_chunk = false;
 
@@ -2085,8 +2083,6 @@ async fn dispatch_provider(
                             }
                             input_tokens = chunk.input_tokens;
                             output_tokens = chunk.output_tokens;
-                            cache_creation_tokens = chunk.cache_creation_tokens;
-                            cache_read_tokens = chunk.cache_read_tokens;
                             break;
                         }
                     }
@@ -2149,20 +2145,7 @@ async fn dispatch_provider(
                 }
             }
             {
-                // QM-9 Phase 1.5 / GR-15: persist a usage event for the
-                // streaming chat path via the shared best-effort helper.
                 let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
-                crate::daemon::usage_log::record_provider_call_best_effort(
-                    &provider_used,
-                    &model_used,
-                    input_tokens,
-                    output_tokens,
-                    elapsed_ms,
-                    true,
-                    cache_creation_tokens,
-                    cache_read_tokens,
-                    false, // VIEW-06: direct operator CLI turn → human
-                );
                 publish_provider_responded(
                     &provider_used,
                     &model_used,
@@ -2723,19 +2706,6 @@ async fn dispatch_provider(
                         if let Some(p) = permit {
                             p.record_success();
                         }
-                        // QM-9 Phase 1.5 / GR-15: persist a usage event for
-                        // the non-streaming chat path via the shared helper.
-                        crate::daemon::usage_log::record_provider_call_best_effort(
-                            &completion.identity.provider,
-                            &completion.identity.wire_model,
-                            completion.input_tokens,
-                            completion.output_tokens,
-                            elapsed_ms,
-                            true,
-                            completion.cache_creation_tokens,
-                            completion.cache_read_tokens,
-                            false, // VIEW-06: direct operator CLI turn → human
-                        );
                         publish_provider_responded(
                             &completion.identity.provider,
                             &completion.identity.wire_model,
@@ -2759,17 +2729,6 @@ async fn dispatch_provider(
                             Some(resolved) if resolved.identity.is_bound() => {
                                 let resolved_elapsed_ms =
                                     resolved.latency.as_millis().min(u128::from(u64::MAX)) as u64;
-                                crate::daemon::usage_log::record_provider_call_best_effort(
-                                    &resolved.identity.provider,
-                                    &resolved.identity.wire_model,
-                                    resolved.input_tokens,
-                                    resolved.output_tokens,
-                                    resolved_elapsed_ms,
-                                    true,
-                                    resolved.cache_creation_tokens,
-                                    resolved.cache_read_tokens,
-                                    false,
-                                );
                                 publish_provider_responded(
                                     &resolved.identity.provider,
                                     &resolved.identity.wire_model,
@@ -2810,24 +2769,6 @@ async fn dispatch_provider(
                         if let Some(p) = permit {
                             p.record_failure();
                         }
-                        // Record the failure too so the rollup distinguishes
-                        // ok-vs-err for the same provider (GR-15 helper).
-                        // B22: use effective_model (6-tier chain resolved above) so the
-                        // failure analytics record the model that was actually attempted —
-                        // not the 3-tier (cli > tweaks > freedom) fallback that dropped
-                        // any dispatch/skill override.
-                        let model = effective_model.as_deref().unwrap_or("unknown").to_string();
-                        crate::daemon::usage_log::record_provider_call_best_effort(
-                            provider_name,
-                            &model,
-                            None,
-                            None,
-                            elapsed_ms,
-                            false,
-                            None,
-                            None,
-                            false, // VIEW-06: direct operator CLI turn → human
-                        );
                         if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
                             record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
                         }
@@ -5233,10 +5174,11 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         // operators on a Pick #8 council see the per-hemisphere
         // burn instead of one aggregate "council ran" row.
         let call_started = std::time::Instant::now();
-        let raw = self
-            .provider
-            .complete_authorized(req, &self.authorizer, "council_leaf")
-            .await;
+        let raw = crate::providers::cost_authorization::automated_usage_scope(
+            self.provider
+                .complete_authorized(req, &self.authorizer, "council_leaf"),
+        )
+        .await;
         let elapsed_ms = call_started.elapsed().as_millis() as u64;
         match raw {
             Ok(c) => {
@@ -5251,17 +5193,6 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 if let Some(p) = permit {
                     p.record_success();
                 }
-                crate::daemon::usage_log::record_provider_call_best_effort(
-                    &c.identity.provider,
-                    &c.identity.wire_model,
-                    c.input_tokens,
-                    c.output_tokens,
-                    elapsed_ms,
-                    true,
-                    c.cache_creation_tokens,
-                    c.cache_read_tokens,
-                    true, // VIEW-06: council hemisphere call → automated
-                );
                 // GOLD-WIRE-10: the council's per-hemisphere provider response
                 // is the first real producer on the domain-event bus. Each
                 // council call fires one `ProviderResponded` per hemisphere; the
@@ -5292,17 +5223,6 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 if let Some(p) = permit {
                     p.record_failure();
                 }
-                crate::daemon::usage_log::record_provider_call_best_effort(
-                    provider_name,
-                    "unknown",
-                    None,
-                    None,
-                    elapsed_ms,
-                    false,
-                    None,
-                    None,
-                    true, // VIEW-06: council hemisphere call → automated
-                );
                 Err(e.to_string())
             }
         }
@@ -7720,7 +7640,10 @@ pub(crate) async fn run_mcp_dispatch_loop(
                 // see the cost of an autoroute chain, not just the
                 // final composed reply.
                 let call_started = std::time::Instant::now();
-                let result = provider.complete(req).await;
+                let result = crate::providers::cost_authorization::automated_usage_scope(
+                    provider.complete(req),
+                )
+                .await;
                 let elapsed_ms = call_started.elapsed().as_millis() as u64;
                 match result {
                     Ok(c) => {
@@ -7735,17 +7658,6 @@ pub(crate) async fn run_mcp_dispatch_loop(
                         if let Some(p) = permit {
                             p.record_success();
                         }
-                        crate::daemon::usage_log::record_provider_call_best_effort(
-                            &c.identity.provider,
-                            &c.identity.wire_model,
-                            c.input_tokens,
-                            c.output_tokens,
-                            elapsed_ms,
-                            true,
-                            c.cache_creation_tokens,
-                            c.cache_read_tokens,
-                            true, // VIEW-06: MCP agentic-loop hop → automated
-                        );
                         publish_provider_responded(
                             &c.identity.provider,
                             &c.identity.wire_model,
@@ -7759,17 +7671,6 @@ pub(crate) async fn run_mcp_dispatch_loop(
                         if let Some(p) = permit {
                             p.record_failure();
                         }
-                        crate::daemon::usage_log::record_provider_call_best_effort(
-                            provider_name,
-                            "unknown",
-                            None,
-                            None,
-                            elapsed_ms,
-                            false,
-                            None,
-                            None,
-                            true, // VIEW-06: MCP agentic-loop hop → automated
-                        );
                         Err(e)
                     }
                 }

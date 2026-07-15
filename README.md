@@ -72,13 +72,13 @@ Current install (source checkout):
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH
-cd NEOTH/SRC
-cargo install --locked --path neothd --features release-desktop
-cargo install --locked --path neothd-gui
-cargo install --locked --path neoth-migrate
-cargo install --locked --path neoth-relay
+cd NEOTH
+NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
 neoth gui
 ```
+
+The all-components source installer needs Node.js 22.16+ to compile the Keet
+standalone. Signed desktop archives bundle it and need no Node.js.
 
 After the first signed release, one-command install (Linux/macOS):
 
@@ -89,18 +89,25 @@ neoth gui
 ```
 
 The binary installer always verifies SHA-256 plus release authenticity. It uses
-`minisign` with the [pinned public key](NEOTH_RELEASE_MINISIGN_PUBKEY.txt), or
-an installed `cosign` with the exact release-workflow identity. With neither
-verifier it refuses installation unless the operator explicitly selects the
-`NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` emergency path.
+an installed `minisign` with the
+[pinned public key](NEOTH_RELEASE_MINISIGN_PUBKEY.txt), an installed `cosign`, or
+downloads a temporary Cosign verifier whose platform SHA-256 is pinned to an
+immutable official Sigstore source commit. A clean machine therefore needs no
+preinstalled verifier. A downloaded verifier with the wrong digest is never
+executed; `NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` applies only when the verifier
+cannot be downloaded and the archive was authenticated out of band.
 
 Desktop archives contain `neoth`, the `neothd` compatibility launcher, the
 separate `neothd-gui` binary consumed by `neoth gui`, `neoth-migrate`, and
-`neoth-relay`. Only the explicitly headless musl server archive omits the GUI.
+`neoth-relay`, plus the zero-dependency `neoth-keet-bridge` standalone. Only the
+explicitly headless musl server archive omits the GUI and the glibc-linked Keet
+companion.
 The future crates.io package installs only the `neoth`/`neothd` core package;
 use a release archive or source checkout for the companion executables.
 
-After the first signed release, Windows (PowerShell):
+After the first signed release, Windows users can download and double-click the
+signed `NEOTH-1.0.0-x64-Setup.exe` (or ARM64 variant) on the Releases page. The
+zero-prompt PowerShell alternative is:
 
 ```powershell
 irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
@@ -186,7 +193,7 @@ operator.
 | **Loops** | `neoth loop run "<goal>" --until "<criterion>"` — bounded autonomous iteration with L1-L3 budget ladders, full history in `neoth loop history`. |
 | **Recon** | Authorized-engagement recon through gated `uncover` (exposed-host discovery) and `tlsx` (TLS/cert intel) shims — refused under Strict autonomy and audit-logged. |
 | **Automation** | Runs small local cron jobs and larger n8n workflows through a default-off, scoped localhost API with endpoint-specific consent and WAL auditing. |
-| **Channels** | Talks through GUI, CLI, Telegram, WhatsApp Business, the optional repository-owned WhatsApp Web/Baileys sidecar, Slack Socket Mode, and Discord. Keet is explicitly unavailable because it has no supported public chat API. |
+| **Channels** | One canonical GUI/CLI registry for Telegram, Slack, WhatsApp Business, repository-owned WhatsApp Web/Baileys, Discord, Signal, LINE, IRC, iMessage through BlueBubbles, Mattermost, Google Chat, Matrix, Twitch, Nostr, and the full-duplex Keet-identity Pear/Hyperswarm companion. Read-only live probes are shared by both surfaces, and hot credential rotation restarts only the affected adapter. The Keet companion creates private NEOTH topics; it does not claim access to existing Keet app rooms because no supported room/message API exists. |
 | **Private mesh** | Pairs nodes over LAN/mDNS, Tailscale, Hysteria, and consent-gated cluster discovery. |
 | **Plugins** | Loads skills and WASM plugins behind capability gates, signature checks, revocation, and hostcall audit. |
 | **Doctor** | Explains broken setup, missing keys, model cache problems, channel wiring, disk issues, plugin state, provider flapping, and cluster discovery. |
@@ -431,17 +438,19 @@ each with the command that proves it on your machine:
 | Paperless/CalDAV as inputs; source-build IMAP triage | **Yes** | Integrations | Skills/tools | Tools/skills |
 | n8n localhost automation | **Yes** | No | Partial | Cron/tools |
 | WASM plugin capability sandbox | **Yes** | No | Skills | Skills/tools |
-| Private mesh with Tailscale/Hysteria/peeroxide path (NEOTH protocol, not Keet interop) | **Partial** | No | Gateway/nodes | Gateway/platforms |
+| Durable private mesh with Tailscale/Hysteria/peeroxide or Iroh carriers (NEOTH protocol; separate from Keet channels) | **Yes** | No | Gateway/nodes | Gateway/platforms |
 | Built for DAUs and pros at the same time | **Goal** | DAU-heavy | Power-user-heavy | Operator-heavy |
 
 Competitor columns were re-verified against upstream releases on **2026-07-03**
 (Hermes v0.18.0, OpenClaw v2026.6.11, OpenHuman v0.58.7) — where a competitor
 caught up, the table says so.
 
-NEOTH is pre-1.0, so this table is honest about what is not finished: **Private mesh**
-is **Partial** — node discovery, Tailscale/mDNS pairing, the consent gate, and transport
-config ship today, but live cross-device memory sync (tracked as SL-01) is still in
-progress. The **WASM plugin capability sandbox** (V10-04) ships in the native desktop
+NEOTH is pre-1.0, so this table is honest about what is not finished. **Private mesh**
+now has per-peer durable cursors, authenticated content-bound ACKs, byte-exact restart
+replay, transactional receiver materialization, deterministic conflict records, and
+canonical memory/ground-truth snapshots over peeroxide and optional Iroh carriers; see
+[the durable sync contract](docs/mesh-sync.md). The **WASM plugin capability sandbox**
+(V10-04) ships in the native desktop
 release binaries and is exercised by tests, but it is **feature-gated** (`wasm-plugin-host`)
 — source builds opt in, and the headless cross-compiled server targets (musl /
 aarch64-linux) omit it, the same native-only treatment as the OS clipboard. **Built for

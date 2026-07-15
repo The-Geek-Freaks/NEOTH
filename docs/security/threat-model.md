@@ -534,12 +534,20 @@ this is test-harness isolation, not a runtime security boundary.
 
 ### 4.6 Cluster delivery durability
 
-The receive side is persist-before-commit and idempotent, but outbound cluster
-ticks currently advance one process-local WAL offset without a durable cursor
-or acknowledgement per peer. A disconnected or failed peer can therefore miss
-a frame even though receiver replay/dedup would accept it if it were sent
-again. The current transport is authenticated best-effort gossip, not a
-durable replicated log or a complete cross-device memory-sync guarantee.
+Peeroxide and optional Iroh carriers use the same durable synchronization state
+machine. Every destination has its own persisted cursor and exact pending wire
+frame. Queue, send, disconnect, missing-ACK, WAL reconstruction, and database
+errors leave that state unchanged; restart replays the identical bytes. The
+receiver validates authenticated origin, protocol version, contiguous sequence,
+WAL CRC, event ACL, content kind, and digest before transactionally committing
+the receipt, foreign ledger, canonical materialization, conflicts, and inbound
+high-water mark. Only then can it return an ACK bound to that peer, origin,
+sequence, and content digest. Duplicate frames and ACKs are idempotent, gaps and
+old protocol versions fail closed, and one peer cannot advance another peer's
+cursor. Canonical memory and ground-truth snapshots exclude credentials,
+permissions, consent, operator profiles, and provider secrets; raw/private event
+replication remains an explicit opt-in. The complete operational and conflict
+contract is documented in [Durable mesh synchronization](../mesh-sync.md).
 
 ### 4.7 ViitorVoice endpoint trust boundary
 

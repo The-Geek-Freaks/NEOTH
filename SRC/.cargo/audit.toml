@@ -18,8 +18,9 @@ ignore = [
     "RUSTSEC-2017-0008", # serial unmaintained — transitive via portable-pty (tmux adapter)
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained — transitive via matrix-sdk/vodozemac
     "RUSTSEC-2025-0134", # rustls-pemfile unmaintained — transitive via irc
-    "RUSTSEC-2026-0187", # lopdf <0.42 stack-overflow DoS — pdf-extract pins ^0.36; operator-chosen local PDFs only (self-DoS)
+    "RUSTSEC-2026-0192", # ttf-parser unmaintained — latest Slint/lopdf graph; no safe upgrade, see deny.toml
+    "RUSTSEC-2026-0206", # rustybuzz unmaintained — latest Slint/usvg graph; no safe upgrade, see deny.toml
     "RUSTSEC-2023-0071", # rsa Marvin timing — no upstream patch; local outbound SSH client = advisory's safe case
-    "RUSTSEC-2026-0194", # quick-xml <0.41 quadratic attr-check DoS — transitive via feed-rs 2.3/opendal 0.56/wayland-scanner; see deny.toml
-    "RUSTSEC-2026-0195", # quick-xml <0.41 NsReader memory DoS — same transitive chains; neothd's own quick-xml is bumped to 0.41
+    "RUSTSEC-2026-0194", # quick-xml <0.41 quadratic attr-check DoS — build-time only via wayland-scanner; see deny.toml
+    "RUSTSEC-2026-0195", # quick-xml <0.41 NsReader memory DoS — same build-time-only chain; runtime copies are 0.41
 ]

@@ -38,20 +38,34 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     let interactive = is_interactive(&args);
     debug!(interactive, force = args.force, "neoth init starting");
 
-    let neoth_dir = dirs_home().join(".neoth");
+    let neoth_dir = crate::config::FreedomConfig::default_neoth_home();
     let marker = neoth_dir.join(".initialized");
+
+    // Step 0 — operator picks GUI or CLI mode before anything else, including
+    // legacy `.initialized` reconfiguration and checkpoint-resume prompts.
+    // Existing installations without interface.json therefore receive the
+    // one-time choice instead of permanently bypassing it.
+    // Per the HARD RULE `neoth_gui_first_screen_and_settings_parity`:
+    // NEOTH targets non-developer operators ("noobs") who land on a
+    // mode-selection screen, not a tracing-style logspew. If the
+    // operator picks GUI here we launch the packaged sibling directly. The
+    // launcher's successful spawn is the commit point for the durable GUI
+    // preference; dry-run only reports the handoff and writes nothing.
+    if step0_mode_selection(&args, interactive, &neoth_dir)?.exit_for_gui() {
+        if args.dry_run {
+            println!("[dry-run] Would launch the NEOTH GUI; no preference written.");
+            return Ok(());
+        }
+        crate::cli::gui::run_gui(
+            crate::cli::gui::GuiArgs::default(),
+            crate::cli::OutputFormat::Table,
+        )?;
+        return Ok(());
+    }
 
     if marker.exists() && !args.force {
         info!("Already initialized. Showing reconfigure menu.");
         return run_reconfigure_menu(&args);
-    }
-
-    // Non-interactive (pipe / CI / --non-interactive flag) requires explicit license accept.
-    if !interactive && !args.accept_license {
-        anyhow::bail!(
-            "--accept-license is required when running non-interactively \
-             (no TTY detected or --non-interactive set)"
-        );
     }
 
     let mut state = fresh_wizard_state();
@@ -67,15 +81,15 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // on resume. Decline → clear the file + start fresh.
     maybe_resume_from_checkpoint(&neoth_dir, interactive, &mut state)?;
 
-    // Step 0 — operator picks GUI or CLI mode before anything else.
-    // Per the HARD RULE `neoth_gui_first_screen_and_settings_parity`:
-    // NEOTH targets non-developer operators ("noobs") who land on a
-    // mode-selection screen, not a tracing-style logspew. If the
-    // operator picks GUI here we exit the CLI wizard cleanly with a
-    // pointer to `neothd-gui` — the wizard runs in either surface
-    // with parity guarantees on settings.
-    if step0_mode_selection(&args, interactive)?.exit_for_gui() {
-        return Ok(());
+    // Non-interactive (pipe / CI / --non-interactive flag) requires explicit
+    // license accept. This gate intentionally runs AFTER the surface handoff:
+    // `neoth init --gui` owns its licence screen and must not fail merely
+    // because the launching terminal has no stdin TTY.
+    if !interactive && !args.accept_license {
+        anyhow::bail!(
+            "--accept-license is required when running non-interactively \
+             (no TTY detected or --non-interactive set)"
+        );
     }
     step1_license(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
@@ -1092,7 +1106,7 @@ mod tests {
             supervisor: crate::config::SupervisorConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
             keet_seed_phrase: None,
-            pears_bearer_token: None,
+            keet_bridge_bearer_token: None,
             download_qwen_weights: false,
             install_obsidian: false,
             bootstrap_vault: false,
@@ -1932,7 +1946,7 @@ audit_rpc:
         let mut state = fixture_state();
         step6b_keet_pairing(&args, false, &mut state).await.unwrap();
         assert!(state.keet_seed_phrase.is_none());
-        assert!(state.pears_bearer_token.is_none());
+        assert!(state.keet_bridge_bearer_token.is_none());
         // GOLD-COR-07: 6b's marker is now distinct from 5d's (was both 60).
         assert!(
             state
@@ -2011,25 +2025,29 @@ audit_rpc:
     fn legacy_keet_credentials_remain_parseable_for_cleanup() {
         // Backward compatibility only: older files must remain readable so
         // `neoth channel remove keet` can erase both fields.
-        let cred = crate::config::credentials::Credentials {
-            keet_seed_phrase: Some(crate::secret::SecretString::from("alpha bravo charlie")),
-            pears_bearer_token: Some(crate::secret::SecretString::from("deadbeef".repeat(8))),
-            ..Default::default()
-        };
+        let legacy = format!(
+            "keet_seed_phrase: alpha-bravo-charlie\npears_bearer_token: {}\n",
+            "deadbeef".repeat(8)
+        );
+        let cred: crate::config::credentials::Credentials =
+            serde_yaml::from_str(&legacy).expect("deserialize legacy credential keys");
         assert!(cred.has_any());
         let yaml = serde_yaml::to_string(&cred).expect("serialize");
         assert!(yaml.contains("keet_seed_phrase:"));
-        assert!(yaml.contains("pears_bearer_token:"));
+        assert!(yaml.contains("keet_bridge_bearer_token:"));
+        assert!(!yaml.contains("pears_bearer_token:"));
         let back: crate::config::credentials::Credentials =
             serde_yaml::from_str(&yaml).expect("deserialize");
         assert_eq!(
             back.keet_seed_phrase
                 .as_ref()
                 .map(|s| s.expose().to_string()),
-            Some("alpha bravo charlie".to_string()),
+            Some("alpha-bravo-charlie".to_string()),
         );
         assert_eq!(
-            back.pears_bearer_token.as_ref().map(|s| s.expose().len()),
+            back.keet_bridge_bearer_token
+                .as_ref()
+                .map(|s| s.expose().len()),
             Some(64),
         );
     }
@@ -2047,9 +2065,9 @@ audit_rpc:
 
     #[test]
     fn k4b_prompt_neutral_when_pear_missing() {
-        // Backward-compat pin: operators without `pear` see the
-        // original neutral Telegram prompt — Keet is unreachable so
-        // there's nothing to demote Telegram against.
+        // Backward-compat pin: unrelated Pear Runtime presence must not change
+        // the Telegram prompt. Keet readiness is proven through the companion,
+        // not by finding a `pear` executable.
         let s = k4b_telegram_prompt_text(false);
         assert!(!s.contains("FALLBACK"));
         assert!(!s.contains("Keet"));
@@ -2108,13 +2126,13 @@ audit_rpc:
     #[test]
     fn wizard_state_keet_fields_excluded_from_freedom_yaml() {
         // K-3.5 split contract: state.keet_seed_phrase +
-        // state.pears_bearer_token are #[serde(skip)] so they NEVER
+        // state.keet_bridge_bearer_token are #[serde(skip)] so they NEVER
         // surface in freedom.yaml. The serde wire pin: emitting a
         // WizardState carrying both fields produces YAML that does
         // NOT mention either key.
         let mut state = fixture_state();
         state.keet_seed_phrase = Some(crate::secret::SecretString::from("not_in_freedom_yaml"));
-        state.pears_bearer_token = Some(crate::secret::SecretString::from(
+        state.keet_bridge_bearer_token = Some(crate::secret::SecretString::from(
             "token_not_in_freedom_yaml",
         ));
         let yaml = serde_yaml::to_string(&state).expect("serialize");
@@ -2123,8 +2141,8 @@ audit_rpc:
             "keet_seed_phrase MUST be #[serde(skip)] — yaml: {yaml}"
         );
         assert!(
-            !yaml.contains("pears_bearer_token"),
-            "pears_bearer_token MUST be #[serde(skip)] — yaml: {yaml}"
+            !yaml.contains("keet_bridge_bearer_token"),
+            "keet_bridge_bearer_token MUST be #[serde(skip)] — yaml: {yaml}"
         );
         assert!(!yaml.contains("not_in_freedom_yaml"));
         assert!(!yaml.contains("token_not_in_freedom_yaml"));

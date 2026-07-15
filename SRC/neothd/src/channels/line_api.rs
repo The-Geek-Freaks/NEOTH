@@ -35,6 +35,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use anyhow::{Context as _, Result};
+
 use super::{ChannelError, ChannelKind, InboundMessage, MessageId};
 
 /// LINE push endpoint base. The send helper appends `/v2/bot/message/push`.
@@ -50,6 +52,54 @@ const USER_AGENT: &str = "NEOTH/0.1 (+https://neoth.dev)";
 /// `Transport` error by [`send_line_push`]. The [`super::formatter`] splits at
 /// this boundary on the `send_canonical` path.
 pub const LINE_MAX_TEXT_CHARS: usize = 5000;
+
+#[derive(Debug, Deserialize)]
+struct LineBotInfo {
+    #[serde(default, rename = "userId")]
+    user_id: String,
+    #[serde(default, rename = "displayName")]
+    display_name: String,
+}
+
+/// Validate a LINE channel access token through the documented read-only bot
+/// identity endpoint. No test message is sent and the webhook secret is never
+/// transmitted.
+pub async fn probe_bot_info(access_token: &crate::secret::SecretString) -> Result<String> {
+    let endpoint = reqwest::Url::parse(&format!("{LINE_API_BASE}/v2/bot/info"))
+        .expect("static LINE bot-info URL");
+    probe_bot_info_at(endpoint, access_token).await
+}
+
+async fn probe_bot_info_at(
+    endpoint: reqwest::Url,
+    access_token: &crate::secret::SecretString,
+) -> Result<String> {
+    let client = super::readiness::probe_client(&endpoint)?;
+    let response = client
+        .get(endpoint)
+        .bearer_auth(access_token.expose())
+        .header(reqwest::header::USER_AGENT, USER_AGENT)
+        .timeout(super::readiness::PROBE_TIMEOUT)
+        .send()
+        .await
+        .map_err(|_| anyhow::anyhow!("LINE bot-info request failed"))?;
+    let (status, body) = super::readiness::bounded_body(response, "LINE bot-info").await?;
+    if matches!(status.as_u16(), 401 | 403) {
+        anyhow::bail!("LINE rejected the channel access token");
+    }
+    if !status.is_success() {
+        anyhow::bail!("LINE bot-info returned HTTP {}", status.as_u16());
+    }
+    let info: LineBotInfo =
+        serde_json::from_slice(&body).context("LINE bot-info returned malformed JSON")?;
+    if info.user_id.trim().is_empty() || info.display_name.trim().is_empty() {
+        anyhow::bail!("LINE bot-info response omitted userId or displayName");
+    }
+    Ok(format!(
+        "LINE bot {} ({}) authenticated",
+        info.display_name, info.user_id
+    ))
+}
 
 // ── Inbound wire types ───────────────────────────────────────────────────
 
@@ -601,5 +651,33 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.to_string().contains("response parse"), "got: {error}");
+    }
+
+    #[tokio::test]
+    async fn bot_info_probe_is_read_only_and_token_safe() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let token = crate::secret::SecretString::from("line-super-secret");
+        Mock::given(method("GET"))
+            .and(path("/v2/bot/info"))
+            .and(header("authorization", "Bearer line-super-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "userId": "Ubot",
+                "displayName": "NEOTH"
+            })))
+            .mount(&server)
+            .await;
+        let endpoint = reqwest::Url::parse(&format!("{}/v2/bot/info", server.uri())).unwrap();
+        let detail = probe_bot_info_at(endpoint, &token).await.unwrap();
+        assert!(detail.contains("NEOTH"));
+
+        let unreachable = reqwest::Url::parse("http://127.0.0.1:1/v2/bot/info").unwrap();
+        let error = probe_bot_info_at(unreachable, &token)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(token.expose()));
     }
 }

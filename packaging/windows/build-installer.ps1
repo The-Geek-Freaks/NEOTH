@@ -68,8 +68,14 @@ function Write-ArtifactSidecars {
 
     $name = Split-Path -Leaf $Path
     $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath "$Path.sha256" -Value "$hash  $name" -Encoding utf8NoBOM
-    [ordered]@{
+    # Release assembly runs on Linux. Write the checksum contract with an
+    # explicit LF so GNU sha256sum never interprets a trailing CR as part of
+    # the artifact name.
+    [System.IO.File]::WriteAllText(
+        "$Path.sha256",
+        "$hash  $name`n",
+        [System.Text.UTF8Encoding]::new($false))
+    $metadataJson = [ordered]@{
         schema_version = 1
         product = 'NEOTH'
         name = $name
@@ -81,7 +87,11 @@ function Write-ArtifactSidecars {
         trust = [ordered]@{
             authenticode_signed = $AuthenticodeSigned
         }
-    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$Path.json" -Encoding utf8NoBOM
+    } | ConvertTo-Json -Depth 4
+    [System.IO.File]::WriteAllText(
+        "$Path.json",
+        $metadataJson + "`n",
+        [System.Text.UTF8Encoding]::new($false))
 }
 
 function New-PortableArchive {
@@ -105,7 +115,7 @@ function New-PortableArchive {
             $actualEntries = @(
                 $zip.Entries |
                     Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
-                    ForEach-Object FullName |
+                    ForEach-Object { $_.FullName.Replace('\', '/') } |
                     Sort-Object
             )
             $expectedEntries = @(
@@ -137,18 +147,24 @@ function Assert-ZipBundle {
         $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $actualFiles = [Collections.Generic.List[string]]::new()
         foreach ($entry in $zip.Entries) {
-            $entryName = $entry.FullName
-            if ($entryName.Contains('\', [StringComparison]::Ordinal) -or
-                $entryName.StartsWith('/', [StringComparison]::Ordinal) -or
-                $entryName.Contains('../', [StringComparison]::Ordinal)) {
-                Stop-Packaging "unsafe ZIP entry: $entryName"
+            # Windows PowerShell's Compress-Archive writes backslash-separated
+            # member names. Normalize those names before applying the same
+            # exact-set and traversal checks used for slash-separated ZIPs.
+            # The normalized-name set also rejects slash/backslash aliases.
+            $rawEntryName = $entry.FullName
+            $entryName = $rawEntryName.Replace('\', '/')
+            if ($entryName.StartsWith('/', [StringComparison]::Ordinal) -or
+                $entryName.IndexOf('../', [StringComparison]::Ordinal) -ge 0 -or
+                $entryName.IndexOf('//', [StringComparison]::Ordinal) -ge 0 -or
+                $entryName -match '^[A-Za-z]:') {
+                Stop-Packaging "unsafe ZIP entry: $rawEntryName"
             }
             if (-not $seen.Add($entryName)) {
-                Stop-Packaging "duplicate ZIP entry: $entryName"
+                Stop-Packaging "duplicate ZIP entry after path normalization: $rawEntryName"
             }
-            if ([string]::IsNullOrEmpty($entry.Name)) {
+            if ($entryName.EndsWith('/', [StringComparison]::Ordinal)) {
                 if ($entryName -cne "$BundleName/") {
-                    Stop-Packaging "unexpected ZIP directory entry: $entryName"
+                    Stop-Packaging "unexpected ZIP directory entry: $rawEntryName"
                 }
                 continue
             }
@@ -274,6 +290,7 @@ $requiredFiles = @(
     'README.md'
     'LICENSE-MIT'
     'LICENSE-APACHE'
+    'THIRD_PARTY_LICENSES'
 )
 $expectedMachine = if ($Architecture -eq 'x64') { 0x8664 } else { 0xAA64 }
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("neoth-windows-package-" + [guid]::NewGuid().ToString('N'))

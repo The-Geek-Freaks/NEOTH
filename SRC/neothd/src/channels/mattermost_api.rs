@@ -79,6 +79,8 @@ pub struct MmPost {
 struct MmMe {
     #[serde(default)]
     id: String,
+    #[serde(default)]
+    username: String,
 }
 
 /// Verdict from decoding one inbound WS frame.
@@ -270,23 +272,34 @@ pub async fn send_post(
 /// receive loop can drop our own echoed posts. A failure here is fatal to the
 /// run loop — without our id we cannot safely dedup the echo.
 pub async fn fetch_me_user_id(base: &str, token: &SecretString) -> anyhow::Result<String> {
-    let base = base.trim_end_matches('/');
-    let url = format!("{base}/api/v4/users/me");
-    let client = http_client::build_client()?;
+    Ok(probe_identity(base, token).await?.0)
+}
+
+/// Read-only token/identity probe shared by daemon startup and
+/// `neoth channel test mattermost`.
+pub async fn probe_identity(base: &str, token: &SecretString) -> anyhow::Result<(String, String)> {
+    let base = super::readiness::parse_base_url(base, "Mattermost")?;
+    let url = super::readiness::append_path(base, "/api/v4/users/me");
+    let client = super::readiness::probe_client(&url)?;
     let resp = client
-        .get(&url)
+        .get(url)
         .bearer_auth(token.expose())
+        .timeout(super::readiness::PROBE_TIMEOUT)
         .send()
         .await
-        .context("mattermost GET /users/me")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("mattermost /users/me HTTP {}", resp.status());
+        .map_err(|_| anyhow::anyhow!("mattermost GET /users/me request failed"))?;
+    let (status, body) = super::readiness::bounded_body(resp, "Mattermost /users/me").await?;
+    if matches!(status.as_u16(), 401 | 403) {
+        anyhow::bail!("Mattermost rejected the token");
     }
-    let me: MmMe = resp.json().await.context("decode /users/me")?;
+    if !status.is_success() {
+        anyhow::bail!("mattermost /users/me HTTP {}", status.as_u16());
+    }
+    let me: MmMe = serde_json::from_slice(&body).context("decode Mattermost /users/me")?;
     if me.id.is_empty() {
         anyhow::bail!("mattermost /users/me returned an empty id");
     }
-    Ok(me.id)
+    Ok((me.id, me.username))
 }
 
 #[cfg(test)]
@@ -316,6 +329,32 @@ mod tests {
             "wss://mm.example.com/api/v4/websocket"
         );
         assert_eq!(mm_ws_url("wss://x.io"), "wss://x.io/api/v4/websocket");
+    }
+
+    #[tokio::test]
+    async fn identity_probe_is_read_only_bounded_and_token_safe() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let token = SecretString::from("mm-super-secret");
+        Mock::given(method("GET"))
+            .and(path("/api/v4/users/me"))
+            .and(header("authorization", "Bearer mm-super-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "bot-id",
+                "username": "neoth"
+            })))
+            .mount(&server)
+            .await;
+        let identity = probe_identity(&server.uri(), &token).await.unwrap();
+        assert_eq!(identity, ("bot-id".to_string(), "neoth".to_string()));
+
+        let error = probe_identity("http://127.0.0.1:1", &token)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(token.expose()));
     }
 
     #[test]

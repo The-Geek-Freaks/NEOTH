@@ -21,8 +21,11 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+
+static USAGE_LOG_LOCK: Mutex<()> = Mutex::new(());
 
 /// One persisted usage event. Wire shape matches the JSONL we write
 /// to disk + the JSON the Slint panel will read.
@@ -34,41 +37,60 @@ pub struct UsageEvent {
     pub provider: String,
     /// Model name as recorded by the adapter.
     pub model: String,
-    /// Prompt tokens (`0` for providers that don't expose them).
-    pub input_tokens: u32,
-    /// Completion tokens.
-    pub output_tokens: u32,
-    /// USD cost predicted by the cost meter (`0.0` for local-only).
-    pub cost_usd: f64,
+    /// Prompt tokens reported by the concrete provider leaf. `None` means the
+    /// provider did not report them; it must never be converted into a fake 0.
+    #[serde(default)]
+    pub input_tokens: Option<u32>,
+    /// Completion tokens reported by the concrete provider leaf.
+    #[serde(default)]
+    pub output_tokens: Option<u32>,
+    /// Actual USD cost when both token counts and a reviewed price row exist.
+    /// `None` keeps unknown usage distinct from a genuinely free local call.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
     /// Latency in milliseconds.
     pub latency_ms: u64,
     /// True when the call completed successfully; false for errors
     /// (timeout, breaker open, parsed-error response, etc.).
     pub ok: bool,
     /// VIEW-03 — tokens written into the Anthropic prompt cache this turn
-    /// (billed at 1.25× the normal input rate). Zero for non-Anthropic
-    /// providers and for calls without a `cache_control` breakpoint.
-    /// `#[serde(default)]` ensures pre-VIEW-03 JSONL lines deserialise
-    /// as 0 without error.
+    /// (billed at 1.25× the normal input rate). `None` means not reported or
+    /// not applicable. Legacy lines without this field deserialize as `None`.
     #[serde(default)]
-    pub cache_creation_tokens: u32,
+    pub cache_creation_tokens: Option<u32>,
     /// VIEW-03 — tokens served from the Anthropic prompt cache this turn
-    /// (billed at 0.10× the normal input rate). Zero when cache was cold
-    /// or for non-Anthropic providers.
+    /// (billed at 0.10× the normal input rate). `None` means not reported or
+    /// not applicable.
     #[serde(default)]
-    pub cache_read_tokens: u32,
+    pub cache_read_tokens: Option<u32>,
     /// VIEW-03 — net cache savings in USD for this call
     /// (read_savings − write_premium; can be negative on first-turn
     /// creation when no reads offset the 25% write premium yet).
-    /// Zero for non-Anthropic providers.
+    /// `None` when cache economics cannot be derived from reported values.
     #[serde(default)]
-    pub cache_savings_usd: f64,
+    pub cache_savings_usd: Option<f64>,
     /// VIEW-06 — true when this call was model-driven (council hemisphere,
     /// MCP agentic-loop hop) rather than a direct operator CLI turn.
     /// `#[serde(default)]` ensures pre-VIEW-06 JSONL lines deserialize as
     /// `false` (conservative: assume human).
     #[serde(default)]
     pub automated: bool,
+    /// Unique request-bound provider-leaf attempt id. Legacy rows have none.
+    #[serde(default)]
+    pub invocation_id: Option<String>,
+    /// Stable terminal result (`complete`, `stream_done`, `stream_error`, ...).
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// Internal dispatch scope and typed caller metadata. These fields never
+    /// contain prompts, responses or credentials.
+    #[serde(default)]
+    pub call_scope: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub call_type: Option<String>,
+    #[serde(default)]
+    pub streaming: bool,
 }
 
 /// Daily-keyed rollup for a single provider/model pair.
@@ -81,6 +103,14 @@ pub struct PerProviderTotals {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cost_usd: f64,
+    /// Calls whose provider omitted a token/cost dimension. Known totals above
+    /// remain useful without misrepresenting an unknown as zero.
+    #[serde(default)]
+    pub unknown_input_token_count: u64,
+    #[serde(default)]
+    pub unknown_output_token_count: u64,
+    #[serde(default)]
+    pub unknown_cost_count: u64,
     pub mean_latency_ms: f64,
     /// VIEW-07 — median + 90th-percentile latency (ms) across this provider's
     /// calls in the window. The mean alone hides tail latency; p90 surfaces it.
@@ -109,6 +139,12 @@ pub struct UsageRollup {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_cost_usd: f64,
+    #[serde(default)]
+    pub total_unknown_input_token_count: u64,
+    #[serde(default)]
+    pub total_unknown_output_token_count: u64,
+    #[serde(default)]
+    pub total_unknown_cost_count: u64,
     /// VIEW-07 — overall latency percentiles across every provider (ms).
     pub total_p50_latency_ms: u64,
     pub total_p90_latency_ms: u64,
@@ -146,6 +182,13 @@ pub fn jsonl_file_for_ts(home: &Path, ts_unix: i64) -> PathBuf {
 /// hot path should warn-and-continue on failure (a missing usage
 /// row is worse than a failed reply).
 pub fn append(home: &Path, event: &UsageEvent) -> std::io::Result<()> {
+    let _guard = USAGE_LOG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    append_unlocked(home, event)
+}
+
+fn append_unlocked(home: &Path, event: &UsageEvent) -> std::io::Result<()> {
     fs::create_dir_all(usage_dir(home))?;
     let path = jsonl_file_for_ts(home, event.ts_unix);
     let mut line = serde_json::to_vec(event).map_err(std::io::Error::other)?;
@@ -154,6 +197,70 @@ pub fn append(home: &Path, event: &UsageEvent) -> std::io::Result<()> {
     f.write_all(&line)?;
     f.flush()?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn provider_terminal_event(
+    ts_unix: i64,
+    provider: &str,
+    model: &str,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    latency_ms: u64,
+    ok: bool,
+    cache_creation_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
+    automated: bool,
+    invocation_id: &str,
+    outcome: &str,
+    call_scope: &str,
+    source: Option<&str>,
+    call_type: Option<&str>,
+    streaming: bool,
+) -> UsageEvent {
+    let reviewed_price = crate::providers::cost::lookup_price(provider, model);
+    let cost_usd = match (input_tokens, output_tokens, reviewed_price) {
+        (Some(input), Some(output), Some(_)) => Some(crate::providers::cost::actual_cost_usd(
+            provider, model, input, output,
+        )),
+        (_, _, Some(price))
+            if price.input_eur_per_mtok == 0.0 && price.output_eur_per_mtok == 0.0 =>
+        {
+            Some(0.0)
+        }
+        _ => None,
+    };
+    let cache_savings_usd = match (cache_creation_tokens, cache_read_tokens, reviewed_price) {
+        (created, read, Some(_)) if created.is_some() || read.is_some() => {
+            Some(crate::providers::cost::cache_savings_usd(
+                provider,
+                model,
+                created.unwrap_or_default(),
+                read.unwrap_or_default(),
+            ))
+        }
+        _ => None,
+    };
+    UsageEvent {
+        ts_unix,
+        provider: provider.to_owned(),
+        model: model.to_owned(),
+        input_tokens,
+        output_tokens,
+        cost_usd,
+        latency_ms,
+        ok,
+        cache_creation_tokens,
+        cache_read_tokens,
+        cache_savings_usd,
+        automated,
+        invocation_id: Some(invocation_id.to_owned()),
+        outcome: Some(outcome.to_owned()),
+        call_scope: Some(call_scope.to_owned()),
+        source: source.map(str::to_owned),
+        call_type: call_type.map(str::to_owned),
+        streaming,
+    }
 }
 
 /// Convenience: build an event with the current unix-seconds + write
@@ -178,15 +285,28 @@ pub fn record_now(
         ts_unix: now,
         provider: provider.to_string(),
         model: model.to_string(),
-        input_tokens,
-        output_tokens,
-        cost_usd,
+        input_tokens: Some(input_tokens),
+        output_tokens: Some(output_tokens),
+        cost_usd: Some(cost_usd),
         latency_ms,
         ok,
-        cache_creation_tokens,
-        cache_read_tokens,
-        cache_savings_usd,
+        cache_creation_tokens: Some(cache_creation_tokens),
+        cache_read_tokens: Some(cache_read_tokens),
+        cache_savings_usd: Some(cache_savings_usd),
         automated,
+        invocation_id: None,
+        outcome: Some(
+            if ok {
+                "complete"
+            } else {
+                "provider_call_failed"
+            }
+            .into(),
+        ),
+        call_scope: None,
+        source: None,
+        call_type: None,
+        streaming: false,
     };
     append(home, &ev)?;
     Ok(ev)
@@ -197,9 +317,10 @@ pub fn record_now(
 /// Collapses the `providers::cost::actual_cost_usd` + [`record_now`]
 /// boilerplate that was duplicated verbatim across the chat-sync,
 /// chat-stream, council-hemisphere, and MCP-loop call sites. Cost is
-/// computed from the live price table ONLY on the success path; a
-/// failed call records zero tokens + zero cost with `ok = false` so the
-/// rollup still distinguishes ok-vs-err per provider.
+/// computed from the live price table only when the provider reported both
+/// token dimensions and the exact provider/model has a reviewed price row.
+/// Unknown values stay `None`, including failures, so forensic output cannot
+/// confuse "not reported" with a genuine zero.
 ///
 /// The circuit-breaker half of the original GR-15 wrapper name is
 /// already centralised inside every provider adapter via
@@ -222,70 +343,244 @@ pub fn record_provider_call(
     cache_read_tokens: Option<u32>,
     automated: bool,
 ) -> std::io::Result<UsageEvent> {
-    let (input, output, cost, cc_tok, cr_tok, savings) = if ok {
-        let i = input_tokens.unwrap_or(0);
-        let o = output_tokens.unwrap_or(0);
-        let cc = cache_creation_tokens.unwrap_or(0);
-        let cr = cache_read_tokens.unwrap_or(0);
-        let savings = crate::providers::cost::cache_savings_usd(provider, model, cc, cr);
-        (
-            i,
-            o,
-            crate::providers::cost::actual_cost_usd(provider, model, i, o),
-            cc,
-            cr,
-            savings,
-        )
-    } else {
-        // Error path: nothing worth charging — zero tokens, zero cost.
-        (0, 0, 0.0, 0, 0, 0.0)
+    let reviewed_price = crate::providers::cost::lookup_price(provider, model);
+    let cost_usd = match (input_tokens, output_tokens, reviewed_price) {
+        (Some(input), Some(output), Some(_)) => Some(crate::providers::cost::actual_cost_usd(
+            provider, model, input, output,
+        )),
+        (_, _, Some(price))
+            if price.input_eur_per_mtok == 0.0 && price.output_eur_per_mtok == 0.0 =>
+        {
+            Some(0.0)
+        }
+        _ => None,
     };
-    record_now(
-        home, provider, model, input, output, cost, latency_ms, ok, cc_tok, cr_tok, savings,
-        automated,
-    )
-}
-
-/// GR-15 — best-effort convenience over [`record_provider_call`] that
-/// resolves the default `~/.neoth` home and warns (never fails) on an
-/// I/O error. This is what the hot chat / council / MCP-loop paths
-/// call: a stuck disk must never break the operator's reply, but the
-/// dropped usage row is surfaced as a `warn!` (no silent swallow).
-///
-/// `automated` — VIEW-06 dimension: `true` for council hemisphere calls
-/// and MCP agentic-loop hops; `false` for direct operator CLI turns.
-///
-/// TODO GOLD-ADAPT-VIEW-06b: channel path (serve_pipeline.rs lines
-/// 1974/2062/2066) still has no usage logging — those `provider.complete()`
-/// calls are entirely unmetered; adding VIEW-06 there is blocked until
-/// the channel path grows a usage-log wire of its own.
-#[allow(clippy::too_many_arguments)]
-pub fn record_provider_call_best_effort(
-    provider: &str,
-    model: &str,
-    input_tokens: Option<u32>,
-    output_tokens: Option<u32>,
-    latency_ms: u64,
-    ok: bool,
-    cache_creation_tokens: Option<u32>,
-    cache_read_tokens: Option<u32>,
-    automated: bool,
-) {
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    if let Err(e) = record_provider_call(
-        &home,
-        provider,
-        model,
+    let cache_savings_usd = match (cache_creation_tokens, cache_read_tokens, reviewed_price) {
+        (created, read, Some(_)) if created.is_some() || read.is_some() => {
+            Some(crate::providers::cost::cache_savings_usd(
+                provider,
+                model,
+                created.unwrap_or_default(),
+                read.unwrap_or_default(),
+            ))
+        }
+        _ => None,
+    };
+    let ev = UsageEvent {
+        ts_unix: crate::time::now_unix_i64(),
+        provider: provider.to_owned(),
+        model: model.to_owned(),
         input_tokens,
         output_tokens,
+        cost_usd,
         latency_ms,
         ok,
         cache_creation_tokens,
         cache_read_tokens,
+        cache_savings_usd,
         automated,
-    ) {
-        tracing::warn!(error = %e, ok, "usage_log append failed (non-fatal)");
+        invocation_id: None,
+        outcome: Some(
+            if ok {
+                "complete"
+            } else {
+                "provider_call_failed"
+            }
+            .into(),
+        ),
+        call_scope: None,
+        source: None,
+        call_type: None,
+        streaming: false,
+    };
+    append(home, &ev)?;
+    Ok(ev)
+}
+
+fn terminal_optional_u32(
+    payload: &serde_json::Value,
+    field: &'static str,
+) -> anyhow::Result<Option<u32>> {
+    let Some(value) = payload.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
     }
+    let value = value.as_u64().ok_or_else(|| {
+        anyhow::anyhow!("terminal usage field `{field}` is not an unsigned integer")
+    })?;
+    Ok(Some(u32::try_from(value).map_err(|_| {
+        anyhow::anyhow!("terminal usage field `{field}` exceeds u32")
+    })?))
+}
+
+fn terminal_required_str<'a>(
+    payload: &'a serde_json::Value,
+    field: &'static str,
+) -> anyhow::Result<&'a str> {
+    payload
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("terminal usage field `{field}` is missing or empty"))
+}
+
+fn terminal_optional_str<'a>(
+    payload: &'a serde_json::Value,
+    field: &'static str,
+) -> anyhow::Result<Option<&'a str>> {
+    match payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("terminal usage field `{field}` is not a string")),
+    }
+}
+
+fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<UsageEvent>> {
+    let value: serde_json::Value = serde_json::from_slice(payload)?;
+    if value
+        .get("usage_projection_schema")
+        .and_then(serde_json::Value::as_str)
+        != Some("neoth.provider-usage.v2")
+    {
+        // Historical terminal frames predate invocation-id-backed projection
+        // and may already have a legacy JSONL row. Do not double-count them.
+        return Ok(None);
+    }
+    let invocation_id = terminal_required_str(&value, "invocation_id")?;
+    if invocation_id.len() != 64 || !invocation_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("terminal usage invocation_id is not canonical SHA-256 hex");
+    }
+    let ok = value
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| anyhow::anyhow!("terminal usage field `ok` is missing or invalid"))?;
+    let outcome = terminal_required_str(&value, if ok { "terminal_kind" } else { "error_kind" })?;
+    let ts_unix = value
+        .get("ts_unix")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or_else(|| anyhow::anyhow!("terminal usage field `ts_unix` is missing or invalid"))?;
+    let latency_ms = value
+        .get("latency_ms")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            value
+                .get("latency_ns")
+                .and_then(serde_json::Value::as_u64)
+                .map(|latency_ns| latency_ns / 1_000_000)
+        })
+        .ok_or_else(|| anyhow::anyhow!("terminal usage latency is missing or invalid"))?;
+    Ok(Some(provider_terminal_event(
+        ts_unix,
+        terminal_required_str(&value, "provider")?,
+        value
+            .get("wire_model")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| value.get("model").and_then(serde_json::Value::as_str))
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("terminal usage wire model is missing or empty"))?,
+        terminal_optional_u32(&value, "input_tokens")?,
+        terminal_optional_u32(&value, "output_tokens")?,
+        latency_ms,
+        ok,
+        terminal_optional_u32(&value, "cache_creation_tokens")?,
+        terminal_optional_u32(&value, "cache_read_tokens")?,
+        value
+            .get("automated")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| anyhow::anyhow!("terminal usage field `automated` is missing"))?,
+        invocation_id,
+        outcome,
+        terminal_required_str(&value, "call_scope")?,
+        terminal_optional_str(&value, "source")?,
+        terminal_optional_str(&value, "call_type")?,
+        value
+            .get("streaming")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| anyhow::anyhow!("terminal usage field `streaming` is missing"))?,
+    )))
+}
+
+/// Rebuild missing JSONL projections from durable provider terminal WAL rows.
+/// Invocation ids make retries idempotent: a crash after WAL commit and before
+/// JSONL append is repaired once, while an already-projected attempt is skipped.
+pub fn repair_from_terminal_wal(home: &Path) -> anyhow::Result<usize> {
+    let _guard = USAGE_LOG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    let mut persisted = std::collections::HashSet::new();
+    let dir = usage_dir(home);
+    if dir.exists() {
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            for line in fs::read_to_string(&path)?.lines() {
+                let Ok(event) = serde_json::from_str::<UsageEvent>(line) else {
+                    continue;
+                };
+                if let Some(invocation_id) = event.invocation_id {
+                    persisted.insert(invocation_id);
+                }
+            }
+        }
+    }
+
+    let wal_dir = home.join("wal");
+    if !wal_dir.exists() {
+        return Ok(0);
+    }
+    let mut segments = fs::read_dir(&wal_dir)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wal"))
+        .collect::<Vec<_>>();
+    segments.sort();
+
+    let mut candidates = std::collections::BTreeMap::<String, UsageEvent>::new();
+    for segment in segments {
+        let bytes = fs::read(&segment)?;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if !matches!(
+                frame.header.event_type,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+            ) {
+                return Ok(());
+            }
+            let Some(event) = usage_event_from_terminal_payload(frame.payload)? else {
+                return Ok(());
+            };
+            let invocation_id = event
+                .invocation_id
+                .as_ref()
+                .expect("projectable provider terminal has invocation id")
+                .clone();
+            if let Some(previous) = candidates.insert(invocation_id.clone(), event.clone())
+                && previous != event
+            {
+                anyhow::bail!(
+                    "conflicting terminal usage payloads for invocation `{invocation_id}`"
+                );
+            }
+            Ok(())
+        })?;
+    }
+
+    let mut repaired = 0usize;
+    for (invocation_id, event) in candidates {
+        if persisted.insert(invocation_id) {
+            append_unlocked(home, &event)?;
+            repaired += 1;
+        }
+    }
+    Ok(repaired)
 }
 
 /// Walk every `usage/*.jsonl` and aggregate events whose `ts_unix >=
@@ -293,6 +588,9 @@ pub fn record_provider_call_best_effort(
 /// Malformed lines are skipped (logged at debug level via stderr
 /// only when feature `usage-log-strict` is enabled — out of scope here).
 pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
+    if let Err(error) = repair_from_terminal_wal(home) {
+        tracing::warn!(error = %error, "usage projection repair from terminal WAL failed");
+    }
     let mut roll = UsageRollup {
         since_unix,
         until_unix,
@@ -327,12 +625,22 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 continue;
             }
             roll.total_call_count += 1;
-            roll.total_input_tokens += ev.input_tokens as u64;
-            roll.total_output_tokens += ev.output_tokens as u64;
-            roll.total_cost_usd += ev.cost_usd;
-            roll.total_cache_creation_tokens += ev.cache_creation_tokens as u64;
-            roll.total_cache_read_tokens += ev.cache_read_tokens as u64;
-            roll.total_cache_savings_usd += ev.cache_savings_usd;
+            match ev.input_tokens {
+                Some(tokens) => roll.total_input_tokens += u64::from(tokens),
+                None => roll.total_unknown_input_token_count += 1,
+            }
+            match ev.output_tokens {
+                Some(tokens) => roll.total_output_tokens += u64::from(tokens),
+                None => roll.total_unknown_output_token_count += 1,
+            }
+            match ev.cost_usd {
+                Some(cost) => roll.total_cost_usd += cost,
+                None => roll.total_unknown_cost_count += 1,
+            }
+            roll.total_cache_creation_tokens +=
+                u64::from(ev.cache_creation_tokens.unwrap_or_default());
+            roll.total_cache_read_tokens += u64::from(ev.cache_read_tokens.unwrap_or_default());
+            roll.total_cache_savings_usd += ev.cache_savings_usd.unwrap_or_default();
             if ev.ok {
                 roll.total_ok_count += 1;
             } else {
@@ -351,12 +659,21 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                     ..Default::default()
                 });
             totals.call_count += 1;
-            totals.input_tokens += ev.input_tokens as u64;
-            totals.output_tokens += ev.output_tokens as u64;
-            totals.cost_usd += ev.cost_usd;
-            totals.cache_creation_tokens += ev.cache_creation_tokens as u64;
-            totals.cache_read_tokens += ev.cache_read_tokens as u64;
-            totals.cache_savings_usd += ev.cache_savings_usd;
+            match ev.input_tokens {
+                Some(tokens) => totals.input_tokens += u64::from(tokens),
+                None => totals.unknown_input_token_count += 1,
+            }
+            match ev.output_tokens {
+                Some(tokens) => totals.output_tokens += u64::from(tokens),
+                None => totals.unknown_output_token_count += 1,
+            }
+            match ev.cost_usd {
+                Some(cost) => totals.cost_usd += cost,
+                None => totals.unknown_cost_count += 1,
+            }
+            totals.cache_creation_tokens += u64::from(ev.cache_creation_tokens.unwrap_or_default());
+            totals.cache_read_tokens += u64::from(ev.cache_read_tokens.unwrap_or_default());
+            totals.cache_savings_usd += ev.cache_savings_usd.unwrap_or_default();
             if ev.ok {
                 totals.ok_count += 1;
             } else {
@@ -462,9 +779,9 @@ mod tests {
             ts_unix: 1_779_494_400,
             provider: "openai_api".into(),
             model: "gpt-5.5".into(),
-            input_tokens: 100,
-            output_tokens: 250,
-            cost_usd: 0.0015,
+            input_tokens: Some(100),
+            output_tokens: Some(250),
+            cost_usd: Some(0.0015),
             latency_ms: 800,
             ok: true,
             ..Default::default()
@@ -485,16 +802,16 @@ mod tests {
             ts_unix: 1_779_494_400,
             provider: "claude_cli".into(),
             model: "claude-opus-4-7".into(),
-            input_tokens: 100,
-            output_tokens: 200,
-            cost_usd: 0.01,
+            input_tokens: Some(100),
+            output_tokens: Some(200),
+            cost_usd: Some(0.01),
             latency_ms: 1200,
             ok: true,
             ..Default::default()
         };
         append(dir.path(), &ev).unwrap();
         ev.ts_unix += 5;
-        ev.input_tokens = 50;
+        ev.input_tokens = Some(50);
         append(dir.path(), &ev).unwrap();
         let body = std::fs::read_to_string(jsonl_file_for_ts(dir.path(), ev.ts_unix)).unwrap();
         assert_eq!(body.lines().count(), 2);
@@ -522,9 +839,9 @@ mod tests {
                     ts_unix: ts,
                     provider: prov.into(),
                     model: "x".into(),
-                    input_tokens: 10,
-                    output_tokens: 20,
-                    cost_usd: 0.001,
+                    input_tokens: Some(10),
+                    output_tokens: Some(20),
+                    cost_usd: Some(0.001),
                     latency_ms: 100,
                     ok: true,
                     ..Default::default()
@@ -568,9 +885,9 @@ mod tests {
                     ts_unix: 1_779_494_400,
                     provider: "p".into(),
                     model: "m".into(),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cost_usd: 0.0,
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cost_usd: Some(0.0),
                     latency_ms: 0,
                     ok,
                     ..Default::default()
@@ -594,9 +911,9 @@ mod tests {
                     ts_unix: 1_779_494_400,
                     provider: "x".into(),
                     model: "y".into(),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cost_usd: 0.0,
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cost_usd: Some(0.0),
                     latency_ms: ms,
                     ok: true,
                     ..Default::default()
@@ -633,9 +950,9 @@ mod tests {
                     ts_unix: 1_779_494_400,
                     provider: "x".into(),
                     model: "m".into(),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cost_usd: 0.0,
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cost_usd: Some(0.0),
                     latency_ms: ms,
                     ok: true,
                     ..Default::default()
@@ -663,9 +980,9 @@ mod tests {
                     ts_unix: ts,
                     provider: "p".into(),
                     model: "m".into(),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cost_usd: cost,
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cost_usd: Some(cost),
                     latency_ms: 1,
                     ok: true,
                     ..Default::default()
@@ -693,9 +1010,9 @@ mod tests {
                     ts_unix: 1_779_494_400,
                     provider: prov.into(),
                     model: "m".into(),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cost_usd: 0.0,
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cost_usd: Some(0.0),
                     latency_ms: 0,
                     ok: true,
                     ..Default::default()
@@ -740,7 +1057,7 @@ mod tests {
         let body = std::fs::read_to_string(&file).unwrap();
         let parsed: UsageEvent = serde_json::from_str(body.trim()).unwrap();
         assert_eq!(parsed.provider, "openai_api");
-        assert_eq!(parsed.input_tokens, 10);
+        assert_eq!(parsed.input_tokens, Some(10));
     }
 
     // ── GR-15: record_provider_call consolidation ──────────────────────
@@ -762,22 +1079,26 @@ mod tests {
         )
         .unwrap();
         assert!(ev.ok);
-        assert_eq!(ev.input_tokens, 100);
-        assert_eq!(ev.output_tokens, 50);
+        assert_eq!(ev.input_tokens, Some(100));
+        assert_eq!(ev.output_tokens, Some(50));
         // Cost must equal the live price-table fn — pins that the helper
         // routes through actual_cost_usd rather than hardcoding a value
         // (robust to price-table changes; no magic literal to drift).
         assert_eq!(
             ev.cost_usd,
-            crate::providers::cost::actual_cost_usd("openai_api", "gpt-5.5", 100, 50)
+            Some(crate::providers::cost::actual_cost_usd(
+                "openai_api",
+                "gpt-5.5",
+                100,
+                50
+            ))
         );
     }
 
     #[test]
-    fn record_provider_call_failure_zeroes_tokens_and_cost() {
+    fn record_provider_call_failure_preserves_known_tokens_and_cost() {
         let dir = tempdir().unwrap();
-        // Even with non-zero token hints, the error path records zeros so
-        // a failed call never inflates the spend rollup.
+        // A transport can fail after billing. If it reports usage, preserve it.
         let ev = record_provider_call(
             dir.path(),
             "openai_api",
@@ -792,13 +1113,13 @@ mod tests {
         )
         .unwrap();
         assert!(!ev.ok);
-        assert_eq!(ev.input_tokens, 0);
-        assert_eq!(ev.output_tokens, 0);
-        assert_eq!(ev.cost_usd, 0.0);
+        assert_eq!(ev.input_tokens, Some(999));
+        assert_eq!(ev.output_tokens, Some(999));
+        assert!(ev.cost_usd.is_some());
     }
 
     #[test]
-    fn record_provider_call_none_tokens_treated_as_zero() {
+    fn record_provider_call_none_tokens_remain_unknown_for_free_local_call() {
         let dir = tempdir().unwrap();
         let ev = record_provider_call(
             dir.path(),
@@ -813,11 +1134,9 @@ mod tests {
             false,
         )
         .unwrap();
-        assert_eq!(ev.input_tokens, 0);
-        assert_eq!(ev.output_tokens, 0);
-        // Unpriced local model → cost 0.0 (drift guard: actual_cost_usd
-        // returns 0.0 for unknown provider/model pairs).
-        assert_eq!(ev.cost_usd, 0.0);
+        assert_eq!(ev.input_tokens, None);
+        assert_eq!(ev.output_tokens, None);
+        assert_eq!(ev.cost_usd, Some(0.0));
     }
 
     #[test]
@@ -899,9 +1218,9 @@ mod tests {
         // (backward-compat via #[serde(default)]).
         let line = r#"{"ts_unix":1779494400,"provider":"openai_api","model":"gpt-4.1","input_tokens":10,"output_tokens":5,"cost_usd":0.001,"latency_ms":200,"ok":true}"#;
         let ev: UsageEvent = serde_json::from_str(line).unwrap();
-        assert_eq!(ev.cache_creation_tokens, 0);
-        assert_eq!(ev.cache_read_tokens, 0);
-        assert_eq!(ev.cache_savings_usd, 0.0);
+        assert_eq!(ev.cache_creation_tokens, None);
+        assert_eq!(ev.cache_read_tokens, None);
+        assert_eq!(ev.cache_savings_usd, None);
         // And it round-trips through aggregate without panic.
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(crate::daemon::usage_log::usage_dir(dir.path())).unwrap();

@@ -1,8 +1,9 @@
 //! GOLD-ADOPT-27 — channel health-probe registry (Agent-Reach "channel doctor").
 //!
 //! A pure, per-[`ChannelKind`] config-completeness check so operators instantly
-//! see which channel adapters are live, misconfigured, or simply absent —
-//! surfaced in `neoth status` and warned by the MONITOR cron.
+//! see which adapters are statically ready, misconfigured, or simply absent —
+//! surfaced in `neoth status` and warned by the MONITOR cron. Network/runtime
+//! liveness is reported only by each channel's explicit live test.
 //!
 //! The probe is PURE: it classifies a [`ChannelCredsView`] (presence booleans
 //! only — never a secret value) into a [`ProbeStatus`] + an operator-readable
@@ -15,7 +16,8 @@ use crate::channels::ChannelKind;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeStatus {
-    /// Fully configured — the adapter can run.
+    /// All static requirements are present — the adapter can start. This is not
+    /// a claim that a remote service or daemon process is currently connected.
     Ok,
     /// Usable but with a gap an operator should know about (e.g. send works,
     /// inbound doesn't).
@@ -72,11 +74,16 @@ pub struct ChannelCredsView {
     pub whatsapp_token: bool,
     pub whatsapp_phone_id: bool,
     pub whatsapp_verify_token: bool,
+    pub whatsapp_app_secret: bool,
     pub whatsapp_baileys_url: bool,
     pub whatsapp_baileys_token: bool,
     pub whatsapp_baileys_allowed_senders: bool,
     pub whatsapp_baileys_allowed_groups: bool,
-    /// A legacy Keet seed is present. It is never consumed by a transport.
+    pub keet_bridge_url: bool,
+    pub keet_topic: bool,
+    pub keet_allowed_senders: bool,
+    pub keet_bearer: bool,
+    /// A legacy native-transport seed is present. It is never consumed.
     pub keet_seed: bool,
     pub discord_bot: bool,
     pub signal_cli_url: bool,
@@ -112,6 +119,8 @@ pub struct ChannelCredsView {
     pub twitch_username: bool,
     /// GOLD-FEAT-10 — Twitch OAuth token present.
     pub twitch_oauth: bool,
+    /// GOLD-FEAT-10 — At least one Twitch room is configured.
+    pub twitch_channels: bool,
     /// GOLD-FEAT-10 — Nostr identity secret key present.
     pub nostr_key: bool,
     /// GOLD-FEAT-10 — Nostr relay list present.
@@ -124,36 +133,25 @@ pub struct ChannelCredsView {
 
 impl ChannelCredsView {
     /// Assemble from the loaded `freedom.yaml` (telegram lives there) +
-    /// `credentials.yaml` (everything else). Matrix additionally rejects blank
-    /// values, but no secret value is copied, retained, or rendered.
+    /// `credentials.yaml` (everything else). Empty and whitespace-only plain or
+    /// secret values never count as present; no secret is copied or rendered.
     pub fn from_config(
         cfg: Option<&crate::config::FreedomConfig>,
         creds: &crate::config::credentials::Credentials,
     ) -> Self {
-        let matrix_homeserver = creds
-            .matrix_homeserver
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-        let matrix_user_id = creds
-            .matrix_user_id
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-        let matrix_login = creds
-            .matrix_password
-            .as_ref()
-            .is_some_and(|value| !value.expose().trim().is_empty())
-            || creds
-                .matrix_access_token
-                .as_ref()
-                .is_some_and(|value| !value.expose().trim().is_empty());
-        let matrix_invite_policy = creds
-            .matrix_allowed_user_id
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-            || creds
-                .matrix_allowed_room_ids
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty());
+        fn text_present(value: Option<&str>) -> bool {
+            value.is_some_and(|value| !value.trim().is_empty())
+        }
+        fn secret_present(value: Option<&crate::secret::SecretString>) -> bool {
+            value.is_some_and(|value| !value.expose().trim().is_empty())
+        }
+
+        let matrix_homeserver = text_present(creds.matrix_homeserver.as_deref());
+        let matrix_user_id = text_present(creds.matrix_user_id.as_deref());
+        let matrix_login = secret_present(creds.matrix_password.as_ref())
+            || secret_present(creds.matrix_access_token.as_ref());
+        let matrix_invite_policy = text_present(creds.matrix_allowed_user_id.as_deref())
+            || text_present(creds.matrix_allowed_room_ids.as_deref());
         let matrix_config_present = creds.matrix_homeserver.is_some()
             || creds.matrix_user_id.is_some()
             || creds.matrix_password.is_some()
@@ -163,57 +161,55 @@ impl ChannelCredsView {
             || creds.matrix_allowed_room_ids.is_some()
             || creds.matrix_require_encryption.is_some();
         Self {
-            telegram_token: cfg.is_some_and(|c| c.telegram_token.is_some())
-                || creds.telegram_token.is_some(),
+            telegram_token: cfg.is_some_and(|c| secret_present(c.telegram_token.as_ref()))
+                || secret_present(creds.telegram_token.as_ref()),
             telegram_user_id: cfg.is_some_and(|c| c.telegram_user_id.is_some()),
-            slack_bot: creds.slack_bot_token.is_some(),
-            slack_app: creds.slack_app_token.is_some(),
-            whatsapp_token: creds.whatsapp_token.is_some(),
-            whatsapp_phone_id: creds.whatsapp_phone_id.is_some(),
-            whatsapp_verify_token: creds.whatsapp_verify_token.is_some(),
-            whatsapp_baileys_url: creds
-                .whatsapp_baileys_url
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty()),
-            whatsapp_baileys_token: creds
-                .whatsapp_baileys_token
-                .as_ref()
-                .is_some_and(|value| !value.expose().trim().is_empty()),
-            whatsapp_baileys_allowed_senders: creds
-                .whatsapp_baileys_allowed_senders
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty()),
-            whatsapp_baileys_allowed_groups: creds
-                .whatsapp_baileys_allowed_groups
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty()),
-            keet_seed: creds.keet_seed_phrase.is_some(),
+            slack_bot: secret_present(creds.slack_bot_token.as_ref()),
+            slack_app: secret_present(creds.slack_app_token.as_ref()),
+            whatsapp_token: secret_present(creds.whatsapp_token.as_ref()),
+            whatsapp_phone_id: text_present(creds.whatsapp_phone_id.as_deref()),
+            whatsapp_verify_token: secret_present(creds.whatsapp_verify_token.as_ref()),
+            whatsapp_app_secret: secret_present(creds.whatsapp_app_secret.as_ref()),
+            whatsapp_baileys_url: text_present(creds.whatsapp_baileys_url.as_deref()),
+            whatsapp_baileys_token: secret_present(creds.whatsapp_baileys_token.as_ref()),
+            whatsapp_baileys_allowed_senders: text_present(
+                creds.whatsapp_baileys_allowed_senders.as_deref(),
+            ),
+            whatsapp_baileys_allowed_groups: text_present(
+                creds.whatsapp_baileys_allowed_groups.as_deref(),
+            ),
+            keet_bridge_url: text_present(creds.keet_bridge_url.as_deref()),
+            keet_topic: secret_present(creds.keet_topic.as_ref()),
+            keet_allowed_senders: text_present(creds.keet_allowed_senders.as_deref()),
+            keet_bearer: secret_present(creds.keet_bridge_bearer_token.as_ref()),
+            keet_seed: secret_present(creds.keet_seed_phrase.as_ref()),
             // GOLD-PROG-16 wired `credentials.discord_bot_token`; serve_tasks
             // now builds `DiscordChannel::new(creds.discord_bot_token)` + spawns
             // the gateway receive loop, so presence == configured.
-            discord_bot: creds.discord_bot_token.is_some(),
-            signal_cli_url: creds.signal_cli_url.is_some(),
-            bluebubbles_url: creds.bluebubbles_url.is_some(),
-            bluebubbles_password: creds.bluebubbles_password.is_some(),
-            signal_phone_number: creds.signal_phone_number.is_some(),
+            discord_bot: secret_present(creds.discord_bot_token.as_ref()),
+            signal_cli_url: text_present(creds.signal_cli_url.as_deref()),
+            bluebubbles_url: text_present(creds.bluebubbles_url.as_deref()),
+            bluebubbles_password: secret_present(creds.bluebubbles_password.as_ref()),
+            signal_phone_number: text_present(creds.signal_phone_number.as_deref()),
             matrix_homeserver,
             matrix_user_id,
             matrix_login,
             matrix_config_present,
             matrix_invite_policy,
             matrix_encryption_required: creds.matrix_requires_encryption(),
-            line_access_token: creds.line_channel_access_token.is_some(),
-            line_channel_secret: creds.line_channel_secret.is_some(),
-            irc_server: creds.irc_server.is_some(),
-            irc_nick: creds.irc_nick.is_some(),
-            mattermost_url: creds.mattermost_url.is_some(),
-            mattermost_token: creds.mattermost_token.is_some(),
-            twitch_username: creds.twitch_username.is_some(),
-            twitch_oauth: creds.twitch_oauth_token.is_some(),
-            nostr_key: creds.nostr_secret_key.is_some(),
-            nostr_relays: creds.nostr_relays.is_some(),
-            gchat_sa_json: creds.gchat_service_account_json.is_some(),
-            gchat_subscription: creds.gchat_subscription.is_some(),
+            line_access_token: secret_present(creds.line_channel_access_token.as_ref()),
+            line_channel_secret: secret_present(creds.line_channel_secret.as_ref()),
+            irc_server: text_present(creds.irc_server.as_deref()),
+            irc_nick: text_present(creds.irc_nick.as_deref()),
+            mattermost_url: text_present(creds.mattermost_url.as_deref()),
+            mattermost_token: secret_present(creds.mattermost_token.as_ref()),
+            twitch_username: text_present(creds.twitch_username.as_deref()),
+            twitch_oauth: secret_present(creds.twitch_oauth_token.as_ref()),
+            twitch_channels: text_present(creds.twitch_channels.as_deref()),
+            nostr_key: secret_present(creds.nostr_secret_key.as_ref()),
+            nostr_relays: text_present(creds.nostr_relays.as_deref()),
+            gchat_sa_json: text_present(creds.gchat_service_account_json.as_deref()),
+            gchat_subscription: text_present(creds.gchat_subscription.as_deref()),
         }
     }
 }
@@ -253,11 +249,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
                     "token set but telegram_user_id missing — the inbound sender allowlist is OPEN; anyone who finds the bot can drive the agent. Set telegram_user_id before exposing it",
                 )
             } else {
-                (ProbeStatus::Ok, "token + user_id configured (polling loop)")
+                (
+                    ProbeStatus::Ok,
+                    "token + user_id configured; polling runtime can start",
+                )
             }
         }
         ChannelKind::Slack => match (v.slack_bot, v.slack_app) {
-            (true, true) => (ProbeStatus::Ok, "bot + app tokens configured (socket mode)"),
+            (true, true) => (
+                ProbeStatus::Ok,
+                "bot + app tokens configured; socket-mode runtime can start",
+            ),
             (false, false) => (ProbeStatus::NotConfigured, "no slack tokens"),
             _ => (
                 ProbeStatus::Error,
@@ -265,22 +267,26 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             ),
         },
         ChannelKind::WhatsAppBusiness => {
-            if !v.whatsapp_token && !v.whatsapp_phone_id {
+            let any = v.whatsapp_token
+                || v.whatsapp_phone_id
+                || v.whatsapp_verify_token
+                || v.whatsapp_app_secret;
+            if !any {
                 (ProbeStatus::NotConfigured, "no whatsapp credentials")
             } else if !v.whatsapp_token || !v.whatsapp_phone_id {
                 (
                     ProbeStatus::Error,
                     "needs BOTH whatsapp_token AND whatsapp_phone_id to send",
                 )
-            } else if !v.whatsapp_verify_token {
+            } else if !v.whatsapp_verify_token || !v.whatsapp_app_secret {
                 (
                     ProbeStatus::Warn,
-                    "send works; inbound webhook needs whatsapp_verify_token",
+                    "send works; inbound webhook needs BOTH whatsapp_verify_token AND whatsapp_app_secret",
                 )
             } else {
                 (
                     ProbeStatus::Ok,
-                    "token + phone_id + verify_token configured",
+                    "token + phone_id + verify_token + app_secret configured (outbound + verified inbound)",
                 )
             }
         }
@@ -316,19 +322,38 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
                 )
             }
         }
-        ChannelKind::Keet => (
-            ProbeStatus::Unavailable,
-            if v.keet_seed {
-                "unsupported: Keet exposes no public chat API; legacy keet_seed_phrase is ignored (run `neoth channel remove keet` to erase it)"
+        ChannelKind::Keet => {
+            let any = v.keet_bridge_url
+                || v.keet_topic
+                || v.keet_allowed_senders
+                || v.keet_bearer
+                || v.keet_seed;
+            if !any {
+                (
+                    ProbeStatus::NotConfigured,
+                    "no Keet companion configuration",
+                )
+            } else if !(v.keet_bridge_url
+                && v.keet_topic
+                && v.keet_allowed_senders
+                && v.keet_bearer)
+            {
+                (
+                    ProbeStatus::Error,
+                    "Keet needs keet_bridge_url + keet_topic + keet_allowed_senders + keet_bridge_bearer_token; legacy keet_seed_phrase is ignored",
+                )
             } else {
-                "unsupported: Keet exposes no public chat API; no network adapter is compiled"
-            },
-        ),
+                (
+                    ProbeStatus::Warn,
+                    "Keet companion configured; live full-duplex capability proof required (`neoth channel test keet`)",
+                )
+            }
+        }
         ChannelKind::Discord => {
             if v.discord_bot {
                 (
                     ProbeStatus::Ok,
-                    "bot token configured (gateway receive loop)",
+                    "bot token configured; gateway runtime can start",
                 )
             } else {
                 (ProbeStatus::NotConfigured, "no discord_bot_token")
@@ -411,19 +436,19 @@ fn probe_irc(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &'st
 }
 
 fn probe_twitch(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &'static str) {
-    match (v.twitch_username, v.twitch_oauth) {
-        (false, false) => (ProbeStatus::NotConfigured, "no twitch config"),
-        (true, true) if !runtime_compiled => (
+    match (v.twitch_username, v.twitch_oauth, v.twitch_channels) {
+        (false, false, false) => (ProbeStatus::NotConfigured, "no twitch config"),
+        (true, true, true) if !runtime_compiled => (
             ProbeStatus::Error,
             "Twitch credentials are complete, but this binary lacks the `irc-channel` feature and cannot start the adapter",
         ),
-        (true, true) => (
+        (true, true, true) => (
             ProbeStatus::Ok,
-            "twitch_username + twitch_oauth_token configured; `irc-channel` runtime is compiled",
+            "twitch_username + twitch_oauth_token + twitch_channels configured; `irc-channel` runtime is compiled",
         ),
         _ => (
             ProbeStatus::Error,
-            "Twitch needs BOTH twitch_username AND twitch_oauth_token",
+            "Twitch needs twitch_username, twitch_oauth_token, AND at least one twitch_channels room",
         ),
     }
 }
@@ -605,11 +630,24 @@ mod tests {
             whatsapp_token: true,
             whatsapp_phone_id: true,
             whatsapp_verify_token: true,
+            whatsapp_app_secret: true,
             ..Default::default()
         };
         assert_eq!(
             probe_channel(ChannelKind::WhatsAppBusiness, &full).status,
             ProbeStatus::Ok
+        );
+
+        let verify_only = ChannelCredsView {
+            whatsapp_token: true,
+            whatsapp_phone_id: true,
+            whatsapp_verify_token: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            probe_channel(ChannelKind::WhatsAppBusiness, &verify_only).status,
+            ProbeStatus::Warn,
+            "verify token without the signature secret remains outbound-only"
         );
     }
 
@@ -646,14 +684,14 @@ mod tests {
     }
 
     #[test]
-    fn keet_is_unavailable_even_when_legacy_seed_is_present() {
+    fn keet_requires_complete_companion_contract_and_live_probe() {
         let v = ChannelCredsView {
             keet_seed: true,
             ..Default::default()
         };
         assert_eq!(
             probe_channel(ChannelKind::Keet, &v).status,
-            ProbeStatus::Unavailable
+            ProbeStatus::Error
         );
         assert!(
             probe_channel(ChannelKind::Keet, &v)
@@ -664,7 +702,20 @@ mod tests {
         let empty = ChannelCredsView::default();
         assert_eq!(
             probe_channel(ChannelKind::Keet, &empty).status,
-            ProbeStatus::Unavailable
+            ProbeStatus::NotConfigured
+        );
+
+        let configured = ChannelCredsView {
+            keet_bridge_url: true,
+            keet_topic: true,
+            keet_allowed_senders: true,
+            keet_bearer: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            probe_channel(ChannelKind::Keet, &configured).status,
+            ProbeStatus::Warn,
+            "static credential presence must not claim the companion is live"
         );
     }
 
@@ -777,6 +828,7 @@ mod tests {
             irc_nick: true,
             twitch_username: true,
             twitch_oauth: true,
+            twitch_channels: true,
             nostr_key: true,
             nostr_relays: true,
             gchat_sa_json: true,
@@ -797,6 +849,56 @@ mod tests {
         assert_eq!(probe_twitch(&view, true).0, ProbeStatus::Ok);
         assert_eq!(probe_nostr(&view, true).0, ProbeStatus::Ok);
         assert_eq!(probe_gchat(&view, true).0, ProbeStatus::Ok);
+    }
+
+    #[test]
+    fn twitch_probe_requires_at_least_one_room() {
+        let without_rooms = ChannelCredsView {
+            twitch_username: true,
+            twitch_oauth: true,
+            ..Default::default()
+        };
+        assert_eq!(probe_twitch(&without_rooms, true).0, ProbeStatus::Error);
+
+        let complete = ChannelCredsView {
+            twitch_channels: true,
+            ..without_rooms
+        };
+        assert_eq!(probe_twitch(&complete, true).0, ProbeStatus::Ok);
+    }
+
+    #[test]
+    fn empty_and_whitespace_credentials_never_count_as_present() {
+        let creds = crate::config::credentials::Credentials {
+            telegram_token: Some(crate::secret::SecretString::from("  \t")),
+            slack_bot_token: Some(crate::secret::SecretString::from("")),
+            whatsapp_phone_id: Some("   ".into()),
+            whatsapp_app_secret: Some(crate::secret::SecretString::from("\n")),
+            discord_bot_token: Some(crate::secret::SecretString::from(" ")),
+            signal_cli_url: Some("\t".into()),
+            bluebubbles_password: Some(crate::secret::SecretString::from("  ")),
+            line_channel_access_token: Some(crate::secret::SecretString::from("")),
+            irc_server: Some("  ".into()),
+            mattermost_token: Some(crate::secret::SecretString::from("\r\n")),
+            twitch_channels: Some("   ".into()),
+            nostr_relays: Some("\t".into()),
+            gchat_subscription: Some(" ".into()),
+            ..Default::default()
+        };
+        let view = ChannelCredsView::from_config(None, &creds);
+        assert!(!view.telegram_token);
+        assert!(!view.slack_bot);
+        assert!(!view.whatsapp_phone_id);
+        assert!(!view.whatsapp_app_secret);
+        assert!(!view.discord_bot);
+        assert!(!view.signal_cli_url);
+        assert!(!view.bluebubbles_password);
+        assert!(!view.line_access_token);
+        assert!(!view.irc_server);
+        assert!(!view.mattermost_token);
+        assert!(!view.twitch_channels);
+        assert!(!view.nostr_relays);
+        assert!(!view.gchat_subscription);
     }
 
     #[test]

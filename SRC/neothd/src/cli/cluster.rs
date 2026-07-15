@@ -37,6 +37,14 @@ pub enum ClusterAction {
         #[arg(long, default_value = "50")]
         limit: usize,
     },
+    /// Inspect durable per-peer mesh cursors, pending exact replays, ACK high
+    /// water marks and inbound sequence expectations.
+    #[command(name = "sync-state")]
+    SyncState {
+        /// Filter to one authenticated peer public key.
+        #[arg(long, value_name = "PEER_PK")]
+        peer: Option<String>,
+    },
     /// DES-13 — export this node's backup-at-rest for a crashed peer:
     /// dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL
     /// file so an operator can pull a failed node's replicated data off a
@@ -210,6 +218,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
         ClusterAction::Events { peer, limit } => {
             run_foreign_events(peer.as_deref(), limit, &args.output)
         }
+        ClusterAction::SyncState { peer } => run_sync_state(peer.as_deref(), &args.output),
         ClusterAction::ExportForeign {
             peer,
             out,
@@ -1156,25 +1165,43 @@ fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
 
 /// GOLD-G02-CLUSTER-01 — render the foreign-event ledger.
 /// DES-13 — the fixed warning banner every export carries. Honest framing:
-/// this file is a raw backup dump, NOT an importable restore package.
-const EXPORT_FOREIGN_WARNING: &str = "# WARNING: raw backup dump of replicated peer events (idx_foreign_events).\n\
-     # These are raw gossip frames. Use `neoth cluster restore <this-file>` to\n\
+/// this is a backup artifact whose canonical v5 rows are restorable; legacy
+/// rows keep the original WAL-only compatibility shape.
+const EXPORT_FOREIGN_WARNING: &str = "# WARNING: backup dump of replicated peer events (idx_foreign_events).\n\
+     # v5 rows contain both the original WAL frame and a canonical content envelope.\n\
+     # Use `neoth cluster restore <this-file>` to\n\
      # apply same-origin frames back into local recall/memory. Cross-peer rows\n\
      # are skipped. Archive as an off-node backup (DES-13-AUTO-RESTORE-01).";
 
 /// DES-13 — one JSONL line for the export. PURE + unit-pinned: the payload is
-/// base64 so the file stays valid UTF-8 (`jq`-able). Non-PII by construction —
-/// the gossip ACL only persists Replicate-class events (episode/groundtruth
-/// ids + version strings), never raw text or secrets.
+/// base64 so the file stays valid UTF-8 (`jq`-able). Canonical semantic memory
+/// may contain operator content; raw/private content appears only after the
+/// explicit replication opt-in. Credentials, permissions and profiles have no
+/// mesh envelope representation.
 fn export_foreign_jsonl_line(row: &crate::cluster::wal_sync::ForeignEventRow) -> String {
     use base64::Engine as _;
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(&row.payload);
+    let envelope_b64 = row
+        .content_payload
+        .as_ref()
+        .map(|payload| base64::engine::general_purpose::STANDARD.encode(payload));
+    let content_sha256 = row.content_sha256.map(|digest| {
+        use std::fmt::Write as _;
+        let mut hex = String::with_capacity(64);
+        for byte in digest {
+            let _ = write!(hex, "{byte:02x}");
+        }
+        hex
+    });
     serde_json::json!({
         "origin_peer_pk": row.origin_peer_pk,
         "origin_seq": row.origin_seq,
         "event_type": format!("0x{:02X}", row.event_type),
         "payload_b64": payload_b64,
         "received_at": row.received_at,
+        "envelope_version": row.envelope_version,
+        "content_sha256": content_sha256,
+        "envelope_b64": envelope_b64,
     })
     .to_string()
 }
@@ -1235,6 +1262,29 @@ struct ExportRow {
     /// Base64-encoded full WAL frame bytes.
     payload_b64: String,
     received_at: i64,
+    #[serde(default)]
+    envelope_version: Option<u16>,
+    #[serde(default)]
+    content_sha256: Option<String>,
+    #[serde(default)]
+    envelope_b64: Option<String>,
+}
+
+fn parse_sha256_hex(value: &str) -> Result<[u8; 32]> {
+    anyhow::ensure!(
+        value.len() == 64
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || ('a'..='f').contains(&ch)),
+        "content_sha256 must be 64 lowercase hex chars"
+    );
+    let mut digest = [0_u8; 32];
+    for (index, slot) in digest.iter_mut().enumerate() {
+        let offset = index * 2;
+        *slot = u8::from_str_radix(&value[offset..offset + 2], 16)
+            .with_context(|| format!("invalid content_sha256 at byte {index}"))?;
+    }
+    Ok(digest)
 }
 
 /// Parse `"0xNN"` or `"0XNN"` (case-insensitive) → `u8`.
@@ -1428,15 +1478,44 @@ fn run_restore(
                 .with_context(|| format!("savepoint for line {}", line_idx + 1))?;
         }
 
-        let apply_result = crate::cluster::wal_sync::apply_restore_frame(
-            &conn,
-            &export_row.origin_peer_pk,
-            export_row.origin_seq,
-            event_type,
-            &payload_bytes,
-            export_row.received_at,
-            dry_run,
-        );
+        let apply_result = if let Some(envelope_b64) = export_row.envelope_b64.as_deref() {
+            let envelope_version = export_row.envelope_version.unwrap_or_default();
+            let digest = export_row
+                .content_sha256
+                .as_deref()
+                .context("canonical export row is missing content_sha256")
+                .and_then(parse_sha256_hex);
+            digest.and_then(|digest| {
+                anyhow::ensure!(
+                    envelope_version == crate::cluster::gossip_wire::SYNC_ENVELOPE_VERSION,
+                    "unsupported canonical export envelope version {envelope_version}"
+                );
+                let envelope_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(envelope_b64)
+                    .context("canonical export envelope base64 decode failed")?;
+                let envelope: crate::cluster::gossip_wire::SyncEnvelope =
+                    serde_json::from_slice(&envelope_bytes)
+                        .context("canonical export envelope JSON decode failed")?;
+                crate::cluster::wal_sync::apply_restore_envelope(
+                    &conn,
+                    &export_row.origin_peer_pk,
+                    export_row.origin_seq,
+                    &envelope,
+                    digest,
+                    dry_run,
+                )
+            })
+        } else {
+            crate::cluster::wal_sync::apply_restore_frame(
+                &conn,
+                &export_row.origin_peer_pk,
+                export_row.origin_seq,
+                event_type,
+                &payload_bytes,
+                export_row.received_at,
+                dry_run,
+            )
+        };
 
         let outcome = match apply_result {
             Ok(o) => {
@@ -1590,6 +1669,58 @@ fn run_foreign_events(
                     r.event_type,
                     r.payload.len(),
                     r.received_at,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_sync_state(peer: Option<&str>, output: &crate::cli::OutputFormat) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let sync = crate::cluster::durable_sync::DurableMeshSync::new(home.join("views.db"));
+    let rows = sync.list_status(peer)?;
+    match output {
+        crate::cli::OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        }
+        crate::cli::OutputFormat::Jsonl => {
+            for row in &rows {
+                println!("{}", serde_json::to_string(row)?);
+            }
+        }
+        crate::cli::OutputFormat::Table => {
+            if rows.is_empty() {
+                println!("(no durable mesh peer state yet)");
+                return Ok(());
+            }
+            println!(
+                "{:<20} {:>9} {:>9} {:>9} {:>9} {:>10}",
+                "PEER", "ACKED", "PENDING", "ATTEMPTS", "IN NEXT", "CURSOR"
+            );
+            for row in rows {
+                let short: String = row.peer_pk.chars().take(16).collect();
+                let cursor = row.cursor_segment.as_deref().map_or_else(
+                    || row.cursor_offset.to_string(),
+                    |segment| {
+                        let name = std::path::Path::new(segment)
+                            .file_name()
+                            .and_then(std::ffi::OsStr::to_str)
+                            .unwrap_or(segment);
+                        format!("{name}:{}", row.cursor_offset)
+                    },
+                );
+                println!(
+                    "{:<20} {:>9} {:>9} {:>9} {:>9} {:>10}",
+                    format!("{short}..."),
+                    row.acked_origin_seq,
+                    row.pending_origin_seq
+                        .map_or_else(|| "-".to_string(), |value| value.to_string()),
+                    row.pending_attempts
+                        .map_or_else(|| "-".to_string(), |value| value.to_string()),
+                    row.inbound_next_expected_seq
+                        .map_or_else(|| "-".to_string(), |value| value.to_string()),
+                    cursor,
                 );
             }
         }
@@ -2102,6 +2233,9 @@ mod tests {
             event_type: 0x90,
             payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
             received_at: 1_720_000_000,
+            envelope_version: 0,
+            content_sha256: None,
+            content_payload: None,
         };
         let line = export_foreign_jsonl_line(&row);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -2114,6 +2248,48 @@ mod tests {
             .decode(v["payload_b64"].as_str().unwrap())
             .unwrap();
         assert_eq!(decoded, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn export_foreign_jsonl_carries_complete_canonical_envelope() {
+        let envelope = crate::cluster::gossip_wire::SyncEnvelope {
+            version: crate::cluster::gossip_wire::SYNC_ENVELOPE_VERSION,
+            content_id: "metadata:test".into(),
+            updated_at_unix: 1_720_000_000,
+            content: crate::cluster::gossip_wire::SyncContent::Metadata {
+                event_type: 0x94,
+                event_subtype: 0,
+                wal_frame: vec![1, 2, 3],
+            },
+        };
+        let encoded = serde_json::to_vec(&envelope).unwrap();
+        let digest = envelope.content_sha256();
+        let row = crate::cluster::wal_sync::ForeignEventRow {
+            id: 1,
+            origin_peer_pk: "peer-a".into(),
+            origin_seq: 7,
+            event_type: 0x94,
+            payload: vec![1, 2, 3],
+            received_at: 1_720_000_000,
+            envelope_version: envelope.version,
+            content_sha256: Some(digest),
+            content_payload: Some(encoded.clone()),
+        };
+
+        let value: serde_json::Value =
+            serde_json::from_str(&export_foreign_jsonl_line(&row)).unwrap();
+        assert_eq!(value["envelope_version"], envelope.version);
+        assert_eq!(
+            parse_sha256_hex(value["content_sha256"].as_str().unwrap()).unwrap(),
+            digest
+        );
+        use base64::Engine as _;
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(value["envelope_b64"].as_str().unwrap())
+                .unwrap(),
+            encoded
+        );
     }
 
     #[test]

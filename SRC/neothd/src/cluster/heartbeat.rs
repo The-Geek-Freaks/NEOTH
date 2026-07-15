@@ -67,13 +67,17 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 /// v4 (SL-01b): adds `FrameKind::Gossip` (WAL anti-entropy). Same breaking-tag
 /// rationale — the `!=`-check in `validate_hello` keeps v3 and v4 nodes from
 /// pairing, so a v4 Gossip frame never reaches a v3 decoder.
-pub const PROTOCOL_VERSION: u16 = 4;
+///
+/// v5 (GOLD-R3-09): gossip carries canonical content plus a durable monotonic
+/// origin sequence, and `GossipAck` binds the exact committed content digest.
+/// v4 peers are rejected during Hello; no best-effort downgrade exists.
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
 /// CBOR parsing fires; reject oversized frames at the
 /// length-prefix layer.
-pub const MAX_FRAME_BYTES: u32 = 64 * 1024;
+pub const MAX_FRAME_BYTES: u32 = 4 * 1024 * 1024;
 
 /// Baseline heartbeat interval. Per Codex Q3 — fixed 5s with
 /// jitter is more route-friendly than pure-adaptive (which
@@ -103,7 +107,7 @@ pub const MAX_CAPABILITIES: usize = 64;
 /// Max length of a single capability string.
 pub const MAX_CAPABILITY_STRING_LEN: usize = 64;
 
-/// Discriminator for the four message kinds NEOTH peers
+/// Discriminator for the eight message kinds NEOTH peers
 /// exchange. Bumping the schema means adding a new variant +
 /// keeping the existing ones additive — CBOR + serde tolerate
 /// unknown fields per the Codex verdict.
@@ -133,6 +137,8 @@ pub enum FrameKind {
     /// SL-01b: a WAL-gossip frame (anti-entropy). Carries a replicable WAL
     /// frame + the sender's VectorClock. Subject to the band-filter ACL.
     Gossip,
+    /// GOLD-R3-09: receiver commit acknowledgement for one exact gossip frame.
+    GossipAck,
 }
 
 /// Wire envelope every frame carries. Body varies per kind;
@@ -170,6 +176,7 @@ pub enum FrameBody {
     TaskDelegate(TaskDelegateBody),
     TaskResult(TaskResultBody),
     Gossip(super::gossip_wire::GossipFrame),
+    GossipAck(super::gossip_wire::GossipAck),
 }
 
 /// Hello body — sent first on each connection.
@@ -616,21 +623,38 @@ mod tests {
     fn gossip_frame_round_trips_on_the_wire() {
         use super::super::PeerPubkey;
         use super::super::gossip::GossipTag;
-        use super::super::gossip_wire::{GossipFrame, VectorClock};
+        use super::super::gossip_wire::{
+            GossipFrame, SYNC_ENVELOPE_VERSION, SYNC_PROTOCOL_VERSION, SyncContent, SyncEnvelope,
+            VectorClock,
+        };
         let mut vc = VectorClock::new();
         vc.tick(&PeerPubkey::new("node-a"));
+        let payload = vec![0xE0, 0x00, 0xE0];
+        let envelope = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: "wire-test".into(),
+            updated_at_unix: 1_700_000_000,
+            content: SyncContent::Metadata {
+                event_type: 0x94,
+                event_subtype: 0,
+                wal_frame: payload.clone(),
+            },
+        };
         let frame = WireFrame {
             kind: FrameKind::Gossip,
             sequence: 11,
             sent_unix_ms: 1_700_000_000_002,
             peer_id: "node-a".into(),
             body: FrameBody::Gossip(GossipFrame {
+                protocol_version: SYNC_PROTOCOL_VERSION,
                 vector_clock: vc,
                 origin: PeerPubkey::new("node-a"),
                 event_seq: 3,
+                content_sha256: envelope.content_sha256(),
                 timestamp_unix: 1_700_000_000,
                 tag: GossipTag::Replicate,
-                payload: vec![0xE0, 0x00, 0xE0],
+                payload,
+                envelope,
             }),
         };
         let bytes = encode_frame(&frame).unwrap();
@@ -641,6 +665,30 @@ mod tests {
                 assert_eq!(g.tag, GossipTag::Replicate);
             }
             other => panic!("expected Gossip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn durable_gossip_ack_round_trips_exact_binding() {
+        use super::super::PeerPubkey;
+        use super::super::gossip_wire::{GossipAck, SYNC_PROTOCOL_VERSION};
+        assert_eq!(PROTOCOL_VERSION, SYNC_PROTOCOL_VERSION);
+        let ack = GossipAck {
+            protocol_version: SYNC_PROTOCOL_VERSION,
+            origin: PeerPubkey::new("node-a"),
+            origin_seq: 17,
+            content_sha256: [0xAB; 32],
+        };
+        let frame = WireFrame {
+            kind: FrameKind::GossipAck,
+            sequence: 12,
+            sent_unix_ms: 1_700_000_000_003,
+            peer_id: "node-b".into(),
+            body: FrameBody::GossipAck(ack.clone()),
+        };
+        match decode_frame(&encode_frame(&frame).unwrap()).unwrap().body {
+            FrameBody::GossipAck(decoded) => assert_eq!(decoded, ack),
+            other => panic!("expected GossipAck, got {other:?}"),
         }
     }
 
@@ -946,8 +994,8 @@ mod tests {
         // values is intentional + needs a Chorus re-review.
         assert_eq!(PROTOCOL_NAME, "neoth-r7-heartbeat");
         // v2: SL-00(1b) added the mandatory cluster_key_proof to the Hello.
-        assert_eq!(PROTOCOL_VERSION, 4);
-        assert_eq!(MAX_FRAME_BYTES, 64 * 1024);
+        assert_eq!(PROTOCOL_VERSION, 5);
+        assert_eq!(MAX_FRAME_BYTES, 4 * 1024 * 1024);
         assert_eq!(HEARTBEAT_INTERVAL_MS, 5_000);
         assert_eq!(HEARTBEAT_JITTER_PCT, 20);
         assert_eq!(UNHEALTHY_AFTER_MS, 15_000);

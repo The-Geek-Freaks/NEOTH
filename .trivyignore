@@ -1,9 +1,8 @@
 # Trivy ignore file for the NEOTH repo.
 #
-# These advisories are also listed in `SRC/deny.toml` + the
-# `cargo audit --ignore ...` flags in `.github/workflows/security.yml`.
-# Each is unmaintained-only or has no safe upgrade — migration is
-# tracked in PROGRESS_v1_0.md.
+# These advisories mirror `SRC/.cargo/audit.toml` and `SRC/deny.toml`.
+# Each entry is unmaintained-only, has no safe upstream upgrade, or is
+# unreachable from runtime input. The three files must change together.
 #
 # Re-evaluate per item when a safe upgrade lands upstream.
 
@@ -22,3 +21,24 @@ RUSTSEC-2023-0037
 # serial 0.4.0 unmaintained — transitive via portable-pty; no vuln, only
 # maintenance status. Upstream bump tracked.
 RUSTSEC-2017-0008
+
+# proc-macro-error2 — unmaintained; transitive through Matrix/vodozemac.
+RUSTSEC-2026-0173
+
+# rustls-pemfile — unmaintained; transitive through the IRC adapter.
+RUSTSEC-2025-0134
+
+# ttf-parser and rustybuzz — unmaintained (not vulnerable), with no compatible
+# safe upgrade in the current Slint/usvg and lopdf stacks. Upstream migrations
+# to skrifa/harfrust are re-evaluated for every release.
+RUSTSEC-2026-0192
+RUSTSEC-2026-0206
+
+# rsa Marvin timing side-channel — no upstream patch; only used by the local
+# outbound SSH client, matching the advisory's documented safe-use case.
+RUSTSEC-2023-0071
+
+# quick-xml <0.41 remains only in wayland-scanner's build-time proc macro over
+# vendored protocol XML. Runtime parsers resolve to the fixed 0.41 line.
+RUSTSEC-2026-0194
+RUSTSEC-2026-0195

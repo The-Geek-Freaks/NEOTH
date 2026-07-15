@@ -51,10 +51,6 @@ pub struct ChannelDestinations {
     /// destination from the other trust boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_baileys_recipient: Option<String>,
-    /// Legacy field from the removed guessed Keet transport. Deserialised so
-    /// old files remain readable, but never resolved or set by the CLI.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keet_topic: Option<String>,
     /// B9 channel parity — Signal recipient (E.164 number or `group.<id>`),
     /// passed to `signal-cli` as the send target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,6 +98,10 @@ impl ChannelDestinations {
             "discord" => self.discord_channel_id.as_deref(),
             "whatsapp" | "whatsapp_business" => self.whatsapp_recipient.as_deref(),
             "whatsapp_baileys" => self.whatsapp_baileys_recipient.as_deref(),
+            // Keet's topic is a capability-secret. It lives only in
+            // credentials.yaml/keychain and is never copied into this
+            // Debug-visible, operator-shareable routing document.
+            "keet" => None,
             "signal" => self.signal_recipient.as_deref(),
             "line" => self.line_recipient.as_deref(),
             "mattermost" => self.mattermost_channel_id.as_deref(),
@@ -125,6 +125,9 @@ impl ChannelDestinations {
             "discord" => self.discord_channel_id = Some(id),
             "whatsapp" | "whatsapp_business" => self.whatsapp_recipient = Some(id),
             "whatsapp_baileys" => self.whatsapp_baileys_recipient = Some(id),
+            // Route selection may name Keet, but its destination must be the
+            // secret topic installed through `neoth channel add keet`.
+            "keet" => return false,
             "signal" => self.signal_recipient = Some(id),
             "line" => self.line_recipient = Some(id),
             "mattermost" => self.mattermost_channel_id = Some(id),
@@ -153,6 +156,7 @@ pub fn is_known_channel(channel: &str) -> bool {
             | "whatsapp"
             | "whatsapp_business"
             | "whatsapp_baileys"
+            | "keet"
             | "signal"
             | "line"
             | "mattermost"
@@ -383,15 +387,35 @@ mod tests {
             "Baileys route must not overwrite Meta"
         );
         assert!(
+            !d.set_for_channel("keet", "nk1_secret-capability".into()),
+            "Keet capability must never enter the public routing document"
+        );
+        assert_eq!(d.for_channel("keet"), None);
+        assert!(
             !d.set_for_channel("nonsense", "x".into()),
             "unknown channel name → false (caller warns)"
         );
     }
 
     #[test]
-    fn is_known_channel_matches_set_for_channel_names() {
-        // F54 — the --source --channel branch validates against this; it must
-        // accept exactly the canonical names set_for_channel routes.
+    fn legacy_keet_destination_is_ignored_and_not_re_emitted() {
+        let raw = r#"{
+            "destinations": {"keet_topic": "nk1_old-secret"},
+            "by_source": {},
+            "default_channel": "keet"
+        }"#;
+        let parsed: ChannelRouting = serde_json::from_str(raw).expect("legacy route parses");
+        assert_eq!(parsed.destinations.for_channel("keet"), None);
+        let rewritten = serde_json::to_string(&parsed).expect("serialize route");
+        assert!(!rewritten.contains("nk1_old-secret"));
+        assert!(!rewritten.contains("keet_topic"));
+    }
+
+    #[test]
+    fn is_known_channel_covers_route_names_including_secret_destination_channels() {
+        // F54 — the --source --channel branch validates against this. Keet is
+        // known for route selection even though set_for_channel intentionally
+        // refuses its capability-secret destination.
         for ch in [
             "telegram",
             "slack",
@@ -399,6 +423,7 @@ mod tests {
             "whatsapp",
             "whatsapp_business",
             "whatsapp_baileys",
+            "keet",
             "signal",
             "line",
             "mattermost",
@@ -414,7 +439,6 @@ mod tests {
             assert!(is_known_channel(ch), "{ch} must be known");
         }
         assert!(!is_known_channel("telegrm"), "typo rejected");
-        assert!(!is_known_channel("keet"), "unsupported Keet route rejected");
         assert!(!is_known_channel(""), "empty rejected");
     }
 

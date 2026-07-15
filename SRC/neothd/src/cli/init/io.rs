@@ -576,11 +576,12 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     let inference_right_key = public_state.inference.right.key.take();
     let inference_cerebellum_key = public_state.inference.cerebellum.key.take();
     let inference_default_slot_key = public_state.inference.default_slot.key.take();
-    // Legacy Keet/Pear fields are deliberately discarded. There is no
-    // supported public Keet chat API, so onboarding must never mint or persist
-    // credentials for the removed guessed transport.
+    // Legacy direct-seed/Pear wizard fields are deliberately discarded. The
+    // companion credentials belong in credentials.yaml and are written by
+    // `neoth channel add keet`; the wizard must not revive the guessed
+    // direct-transport format.
     public_state.keet_seed_phrase = None;
-    public_state.pears_bearer_token = None;
+    public_state.keet_bridge_bearer_token = None;
 
     // GOLD-ADAPT-OH-03: mark onboarding complete iff ≥1 channel configured.
     // `configured_channels` checks the Telegram wizard path.

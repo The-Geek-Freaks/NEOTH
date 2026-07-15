@@ -128,13 +128,14 @@ ignore = [
     # No direct NEOTH use; migrate once irc exposes a rustls-pki-types path or
     # the IRC adapter moves off this dependency chain.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained — transitive via irc; no vuln, no safe direct upgrade. Re-evaluate when replacing/bumping IRC transport." },
-    # lopdf — stack-overflow DoS on deeply-nested PDF (fixed in 0.42.0), but it
-    # is transitive via pdf-extract 0.9, which pins `lopdf = "^0.36"`, so the
-    # patched 0.42 cannot be selected until pdf-extract bumps upstream. NEOTH's
-    # only PDF path is `neoth ingest` over OPERATOR-CHOSEN local files (no daemon
-    # auto-parses untrusted network PDFs), so the impact is self-DoS, not remote.
-    # Plan: bump pdf-extract once it adopts lopdf >=0.42 (tracked upstream).
-    { id = "RUSTSEC-2026-0187", reason = "lopdf <0.42 stack-overflow DoS — transitive via pdf-extract 0.9 (pins ^0.36); only reachable via `neoth ingest` of operator-chosen local PDFs (self-DoS, not remote). Bump when pdf-extract adopts lopdf >=0.42." },
+    # ttf-parser 0.25.1 — unmaintained, but still the newest line selected by
+    # Slint 1.16/usvg and patched lopdf 0.42. No vulnerability is reported and
+    # there is no compatible safe upgrade. Migrate when upstream adopts skrifa.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 unmaintained — transitive via current Slint/usvg and lopdf 0.42; no vulnerability or safe compatible upgrade. Re-evaluate every release and migrate when upstream adopts skrifa." },
+    # rustybuzz 0.20.1 — unmaintained through the current Slint/usvg renderer.
+    # No vulnerability or compatible upgrade exists; upstream's successor is
+    # harfrust, so the dependency disappears when Slint/usvg migrates.
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz 0.20.1 unmaintained — transitive via current Slint/usvg; no vulnerability or safe compatible upgrade. Re-evaluate every release and migrate when upstream adopts harfrust." },
     # rsa — Marvin timing side-channel (RUSTSEC-2023-0071). No patched release
     # exists (RustCrypto migration to constant-time is in progress). Transitive
     # via russh/ssh-key (the TERMIX SSH client). The attack needs an adversary
@@ -145,12 +146,12 @@ ignore = [
     # quick-xml <0.41 — two DoS advisories (2026-06-29): quadratic duplicate-
     # attribute check (0194) + unbounded NsReader namespace allocation (0195).
     # neothd's DIRECT quick-xml (CalDAV parser) is bumped to 0.41 (fixed).
-    # The remaining <0.41 copies are transitive: feed-rs 2.3.1 (RSS/Atom from
-    # operator-configured feeds) and wayland-scanner (build-time proc-macro over
-    # static protocol XML — zero runtime exposure). All DoS-only, no memory
-    # unsafety. Plan: drop both ignores when those upstreams bump.
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic attr-check DoS — transitive via feed-rs/wayland-scanner; neothd's own copy bumped to 0.41. Drop when upstreams bump." },
-    { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.41 NsReader memory-exhaustion DoS — same transitive chains, DoS-only. Drop when upstreams bump." },
+    # The only remaining <0.41 copy is transitive through wayland-scanner, a
+    # build-time proc macro over vendored Wayland protocol XML. No runtime or
+    # operator-controlled XML reaches it. feed-rs and NEOTH's direct parser now
+    # both resolve to 0.41. Drop both ignores when wayland-scanner bumps.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic attr-check DoS — build-time only via wayland-scanner over vendored protocol XML; all runtime copies are 0.41. Drop when wayland-scanner bumps." },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.41 NsReader memory-exhaustion DoS — same build-time-only wayland-scanner chain; no operator-controlled XML. Drop when wayland-scanner bumps." },
 ]
 
 [sources]

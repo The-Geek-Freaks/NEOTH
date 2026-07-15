@@ -1188,6 +1188,9 @@ pub enum WebhookEvent {
     SessionCreated,
     ChatCompleted,
     ChatMessage,
+    /// Direct, signed Cron result delivery. This event is emitted by the Cron
+    /// runner rather than discovered by the webhook-manager WAL scanner.
+    CronCompleted,
 }
 
 /// One outbound webhook endpoint registration.

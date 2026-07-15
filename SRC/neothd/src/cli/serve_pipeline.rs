@@ -1245,11 +1245,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     Arc::clone(&reload_controller),
                     Some(writer.clone()),
                     asker,
+                    neoth_home.clone(),
                 )
             } else {
                 crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                     Arc::clone(&reload_controller),
                     Some(writer.clone()),
+                    neoth_home.clone(),
                 )
             };
 

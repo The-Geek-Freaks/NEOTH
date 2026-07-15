@@ -11,6 +11,8 @@ NEOTH_REPO="${NEOTH_REPO:-https://github.com/The-Geek-Freaks/NEOTH.git}"
 NEOTH_SRC_DIR="${NEOTH_SRC_DIR:-$HOME/.local/src/neoth}"
 NEOTH_BIN_DIR="${NEOTH_BIN_DIR:-$HOME/.local/bin}"
 NEOTH_MIN_RUST_VER="1.86"
+NEOTH_MIN_NODE_VER="22.16.0"
+NEOTH_PNPM_VER="10.32.1"
 NEOTH_BRANCH="${NEOTH_BRANCH:-main}"
 
 [[ "${INSTALL_DEBUG:-0}" == "1" ]] && set -x
@@ -42,6 +44,13 @@ detect_platform() {
         x86_64)        ARCH="x86_64" ;;
         aarch64|arm64) ARCH="aarch64" ;;
         *)             log_error "Unsupported architecture: $arch"; exit 1 ;;
+    esac
+    case "$OS-$ARCH" in
+        linux-x86_64)  KEET_HOST="linux-x64" ;;
+        linux-aarch64) KEET_HOST="linux-arm64" ;;
+        macos-x86_64)  KEET_HOST="darwin-x64" ;;
+        macos-aarch64) KEET_HOST="darwin-arm64" ;;
+        *) log_error "No Keet standalone target for $OS / $ARCH"; exit 1 ;;
     esac
     log_info "Platform: $OS / $ARCH"
 }
@@ -110,12 +119,53 @@ build_neoth() {
     log_info "Build complete."
 }
 
+build_keet_bridge() {
+    log_step "Building the Keet/Pear companion"
+    command -v node >/dev/null 2>&1 || {
+        log_error "Node.js $NEOTH_MIN_NODE_VER or newer is required for a source build."
+        log_error "Install Node.js, then re-run this installer. Signed release archives need no Node.js."
+        exit 1
+    }
+    command -v corepack >/dev/null 2>&1 || {
+        log_error "corepack is required to run the pinned pnpm toolchain."
+        exit 1
+    }
+    local node_version bridge_dir bridge_binary expected_version actual_version
+    node_version="$(node --version)"
+    node_version="${node_version#v}"
+    if ! _version_gte "$node_version" "$NEOTH_MIN_NODE_VER"; then
+        log_error "Node.js $node_version < required $NEOTH_MIN_NODE_VER."
+        exit 1
+    fi
+    bridge_dir="$NEOTH_SRC_DIR/bridges/keet"
+    bridge_binary="$bridge_dir/out/$KEET_HOST/neoth-keet-bridge"
+    cd "$bridge_dir"
+    corepack prepare "pnpm@$NEOTH_PNPM_VER" --activate
+    corepack pnpm install --frozen-lockfile
+    corepack pnpm run check
+    corepack pnpm test
+    corepack pnpm run "make:$KEET_HOST"
+    [[ -x "$bridge_binary" ]] || {
+        log_error "Required Keet standalone is missing or not executable: $bridge_binary"
+        exit 1
+    }
+    expected_version="$(node -p 'require("./package.json").version')"
+    actual_version="$($bridge_binary --version)"
+    if [[ "$actual_version" != "$expected_version" ]]; then
+        log_error "Keet companion version $actual_version != package version $expected_version"
+        exit 1
+    fi
+    log_info "Keet companion $actual_version built for $KEET_HOST."
+}
+
 install_binaries() {
     log_step "Installing to $NEOTH_BIN_DIR"
     mkdir -p "$NEOTH_BIN_DIR"
     local rel="$NEOTH_SRC_DIR/SRC/target/release"
-    local stage payload backup bin destination rollback_index rollback_bin
-    local -a binaries replaced
+    local keet="$NEOTH_SRC_DIR/bridges/keet/out/$KEET_HOST/neoth-keet-bridge"
+    local notices="$NEOTH_SRC_DIR/THIRD_PARTY_LICENSES"
+    local stage payload backup bin source destination rollback_index rollback_bin index
+    local -a binaries sources modes replaced
     # `neoth` is the public command. `neothd` remains a small compatibility
     # launcher that delegates to the sibling public binary.
     for bin in neoth neothd neothd-gui neoth-migrate neoth-relay; do
@@ -124,6 +174,14 @@ install_binaries() {
             exit 1
         fi
     done
+    if [[ ! -x "$keet" ]]; then
+        log_error "Required Keet build output is missing or not executable: $keet"
+        exit 1
+    fi
+    if [[ ! -s "$notices" ]]; then
+        log_error "Required third-party notices are missing: $notices"
+        exit 1
+    fi
 
     case "$NEOTH_BIN_DIR" in
         *$'\n'*|*$'\r'*) log_error "Install directory must not contain a newline."; exit 1 ;;
@@ -132,9 +190,21 @@ install_binaries() {
     payload="$stage/payload"
     backup="$stage/backup"
     mkdir -p "$payload" "$backup"
-    binaries=(neothd neothd-gui neoth-migrate neoth-relay neoth)
-    for bin in "${binaries[@]}"; do
-        if ! install -m 0755 "$rel/$bin" "$payload/$bin"; then
+    binaries=(neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge THIRD_PARTY_LICENSES neoth)
+    sources=(
+        "$rel/neothd"
+        "$rel/neothd-gui"
+        "$rel/neoth-migrate"
+        "$rel/neoth-relay"
+        "$keet"
+        "$notices"
+        "$rel/neoth"
+    )
+    modes=(0755 0755 0755 0755 0755 0644 0755)
+    for index in "${!binaries[@]}"; do
+        bin="${binaries[$index]}"
+        source="${sources[$index]}"
+        if ! install -m "${modes[$index]}" "$source" "$payload/$bin"; then
             rm -rf "$stage"
             log_error "Could not stage $bin."
             exit 1
@@ -222,6 +292,7 @@ main() {
     check_or_install_rust
     clone_or_update_repo
     build_neoth
+    build_keet_bridge
     install_binaries
     check_path
     verify_installation
@@ -231,6 +302,7 @@ main() {
     echo "  $NEOTH_BIN_DIR/neoth init"
     echo ""
     echo "Then: $NEOTH_BIN_DIR/neoth chat \"hello\""
+    echo "Keet: $NEOTH_BIN_DIR/neoth-keet-bridge setup"
     echo "Docs: https://github.com/The-Geek-Freaks/NEOTH/blob/main/docs/install.md"
 }
 

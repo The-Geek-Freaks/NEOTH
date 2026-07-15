@@ -11,6 +11,7 @@ NEOTH exposes the same buddy through multiple surfaces. Channels are not second-
 | **Telegram** | Fast personal phone access. | Bot API long polling. |
 | **WhatsApp Business** | Mainstream phone access. | Meta Business Cloud API webhook. |
 | **WhatsApp Web (Baileys)** | Operator-owned personal/dedicated account access. | Repository-owned Node sidecar, authenticated HTTP long-poll. |
+| **Keet-identity private topic** | Private peer-to-peer conversations between NEOTH companions. | Repository-owned Pear/Hyperswarm companion over an authenticated loopback bridge; not an existing Keet app room. |
 | **Slack** | Workspaces and team workflows. | Socket Mode WebSocket + Web API. |
 | **Discord** | Community and DM usage. | Gateway WebSocket. |
 | **Signal** | Private personal messaging. | Local signal-cli daemon (JSON-RPC/REST poll). |
@@ -36,29 +37,43 @@ Every channel should pass through:
 
 ## Managing channels from the CLI
 
-The `neoth channel` family manages the messaging channels (Telegram, Slack,
-WhatsApp Business, WhatsApp Web/Baileys, Discord, Signal, LINE, IRC, iMessage/BlueBubbles, Mattermost,
-Google Chat, Matrix, Twitch, and Nostr) without the full wizard:
+The `neoth channel` family manages the canonical messaging registry (Telegram,
+Slack, WhatsApp Business, WhatsApp Web/Baileys, Keet-identity private topics,
+Discord, Signal, LINE, IRC, iMessage/BlueBubbles, Mattermost, Google Chat,
+Matrix, Twitch, and Nostr) without the full wizard:
 
 ```bash
 neoth channel list                 # which channels are configured right now
-neoth channel add telegram         # connect a channel (prompts for the token, no echo)
+neoth channel add telegram         # prompts for token + exact numeric sender ID
 neoth channel test telegram        # live read-only credential check (no message sent)
-neoth channel remove telegram      # clear a channel's credentials
+neoth channel remove telegram      # clear token + sender policy
 ```
 
-- **`add`** prompts for the channel's credential(s) with no terminal echo on an
-  interactive TTY, and writes them to `~/.neoth/credentials.yaml` (mode-0600).
-  Pipe to script it: `printf '%s\n' "$TOKEN" | neoth channel add telegram`.
-- **`test`** validates the configured credentials actually work — Telegram
-  `getMe`, Slack `auth.test`, WhatsApp Business phone-node lookup, authenticated
-  Discord `GET /users/@me`, and Baileys bridge health. It is read-only:
-  nothing is sent, nothing is billed.
+- **`add`** prompts for channel secrets with no terminal echo on an interactive
+  TTY and for required public policy fields. Telegram commits its token in
+  `~/.neoth/credentials.yaml` and its exact numeric sender allowlist in
+  `~/.neoth/freedom.yaml` under one locked rollback-safe update. Script it with
+  `neoth channel add telegram --token "$TOKEN" --telegram-user-id "$TELEGRAM_USER_ID"`.
+- **`test`** validates the configured credentials with a protocol-specific,
+  read-only check: Telegram `getMe`, Slack `auth.test`, WhatsApp Business
+  phone-node lookup, Baileys/Keet companion health, Discord bot identity,
+  signal-cli registered accounts, LINE bot identity, BlueBubbles ping,
+  Mattermost current user, Google Pub/Sub subscription access, Matrix
+  `/account/whoami`, Twitch OAuth identity/scopes, and Nostr relay connection.
+  It sends no chat, consumes no inbound queue, and publishes no relay event.
+  IRC returns the typed `unavailable` verdict because registering the configured
+  nick is stateful and could collide with the live adapter. Matrix password-only
+  auth is likewise `unavailable`; use a device-bound access token for a safe
+  live probe.
 - **`list`** / **`remove`** show and clear configured state. All four accept
   `--output json`.
 
-Messaging-channel credentials live in `credentials.yaml`; `neoth serve` reads
-them on start. Email and calendar do not go through `neoth channel add` and are
+Messaging-channel credentials live in `credentials.yaml` or the selected
+keychain backend. While `neoth serve` is running, its reconciler watches the
+effective credentials and config generation, debounces replacements, and
+restarts only the changed channel. A malformed/unreadable credential store
+stops the channel fleet fail-closed; NEOTH never keeps stale tokens active.
+Email and calendar do not go through `neoth channel add` and are
 not collected by `neoth init`: IMAP uses its documented environment/OAuth
 inputs, while CalDAV uses `caldav_{url,username,password}` in
 `credentials.yaml` or `NEOTH_CALDAV_*`.
@@ -70,9 +85,8 @@ NickServ password + channels csv · **imessage** BlueBubbles server URL +
 password · **mattermost** server URL + token · **gchat** path to the GCP
 service-account JSON key + Pub/Sub subscription name. Optional hardening fields
 (`irc_allowed_account`, `imessage_allowed_sender`, per-channel allowlists) are
-set directly in `credentials.yaml`. `test` live-checks telegram/slack/whatsapp/
-whatsapp_baileys/discord; the rest report configured state via
-`neoth channel list`.
+set directly in `credentials.yaml`. `channel list` reports canonical static
+configuration truth; `channel test` adds live credential/reachability truth.
 
 ## Telegram
 
@@ -82,10 +96,14 @@ whatsapp_baileys/discord; the rest report configured state via
 2. Send `/newbot`.
 3. Choose a display name and bot username.
 4. Copy the token.
-5. Run:
+5. Get your numeric Telegram user ID (for example from `@userinfobot`). NEOTH
+   requires this exact inbound allowlist and refuses an open bot.
+6. Run:
 
 ```bash
-neoth channel add telegram
+neoth channel add telegram \
+  --token "$TELEGRAM_BOT_TOKEN" \
+  --telegram-user-id "$TELEGRAM_USER_ID"
 neoth channel test telegram
 neoth serve
 ```
@@ -269,27 +287,54 @@ Configured Matrix credentials in a binary without `matrix-channel` are reported
 as an error and `neoth serve` logs that the adapter was not started; they are
 never reported as live.
 
-## Keet is not a supported channel
+## Keet-identity Pear/Hyperswarm companion
 
-Keet does not publish a supported room/message automation API. Pear Runtime embeds
-Bare workers and talks to the host app over IPC; the archived `pear-bridge` package
-serves local UI assets and is not a Keet message bridge. Therefore NEOTH compiles no
-Keet transport and does not request or use a Keet seed:
+Desktop release archives include `neoth-keet-bridge`, NEOTH's repository-owned,
+full-duplex text companion. It uses `keet-identity-key` for portable sender
+identity and Pear/Hyperswarm building blocks for an encrypted private topic. The
+standalone includes its Bare runtime, so normal installs need neither Node.js nor
+the Pear CLI.
+
+Run setup once and keep the printed bearer token and `nk1_...` topic private:
 
 ```bash
-neoth channel add keet       # rejected: unavailable
-neoth channel test keet      # reports unavailable; makes no network call
-neoth channel remove keet    # clears legacy keet_seed_phrase / Pear bearer state
+neoth-keet-bridge setup
+neoth-keet-bridge serve
 ```
 
-NEOTH's optional peeroxide/Hyperswarm private mesh is a separate, NEOTH-specific
-node protocol. It does not interoperate with Keet rooms.
+On every peer, join the same topic and exchange only the printed `self_id`
+values. Then wire the local companion interactively with `neoth channel add
+keet`, or non-interactively:
 
-Upstream references: [Pear Runtime](https://docs.pears.com/reference/pear/runtime/)
-documents the embedded Bare-worker IPC contract; the official
-[`pear-bridge`](https://github.com/holepunchto/pear-bridge) repository is archived
-and documents only a local UI-asset server. The official
-[Pear reference](https://docs.pears.com/reference/) publishes no Keet room/message API.
+```bash
+neoth channel add keet \
+  --url http://127.0.0.1:9130 \
+  --token '<local companion bearer_token>' \
+  --server 'nk1_<shared topic capability>' \
+  --allowed-sender '<remote self_id>[,<another remote self_id>]'
+neoth channel test keet
+neoth serve
+```
+
+`--server` is the generic channel CLI field that carries the Keet topic. The
+allowlist is mandatory and exact/case-sensitive. The live probe requires an
+authenticated protocol/version handshake, both send and receive capabilities,
+the configured joined topic, and its high-water cursor; static credential
+presence alone never reports the channel healthy. Runtime receive starts at
+that high-water cursor, so first startup does not replay arbitrary older local
+history. Sends are durable and idempotent, and inbound sender IDs come from
+verified Keet identity attestations before the allowlist and NEOTH pipeline.
+
+This does **not** automate or read existing Keet desktop/mobile rooms. Keet has
+no supported public room/message API, so NEOTH creates its own private
+Keet-identity Pear/Hyperswarm conversation instead of guessing a proprietary
+protocol. The old `keet_seed_phrase` field remains ignored and `--seed` is
+rejected. `neoth channel remove keet` clears both the real companion credentials
+and any legacy seed state. The separate NEOTH cluster mesh likewise remains a
+different protocol.
+
+Companion operations, recovery, exact HTTP contract, and threat boundary are in
+[`bridges/keet/README.md`](../bridges/keet/README.md).
 
 ## Email
 
@@ -367,7 +412,7 @@ Use [live-e2e-protocol.md](live-e2e-protocol.md) before trusting a production ch
 Typical smoke:
 
 ```bash
-neoth channel test <channel>   # live credential check for one channel
+neoth channel test <channel>   # read-only live check or typed unavailable
 neoth doctor                    # full setup diagnostics (incl. channel wiring)
 neoth serve
 neoth privacy audit --last 1h

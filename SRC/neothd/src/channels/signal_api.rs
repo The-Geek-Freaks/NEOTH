@@ -27,6 +27,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use anyhow::{Context as _, Result};
+
 use super::{ChannelError, ChannelKind, InboundMessage, MessageId};
 
 /// `User-Agent` sent on every signal-cli request (matches the discord
@@ -137,6 +139,48 @@ pub fn envelope_to_inbound(env: &ReceiveEnvelope) -> Option<InboundMessage> {
 }
 
 // ── REST helpers ─────────────────────────────────────────────────────────
+
+/// Read-only signal-cli readiness check. `/v1/accounts` lists locally
+/// registered accounts without consuming the receive queue (unlike
+/// `/v1/receive/{number}`), so `channel test` cannot lose a real message.
+pub async fn probe_registration(base_url: &str, our_number: &str) -> Result<String> {
+    let base = super::readiness::parse_base_url(base_url, "Signal")?;
+    let endpoint = super::readiness::append_path(base, "/v1/accounts");
+    probe_registration_at(endpoint, our_number).await
+}
+
+async fn probe_registration_at(endpoint: reqwest::Url, our_number: &str) -> Result<String> {
+    let client = super::readiness::probe_client(&endpoint)?;
+    let response = client
+        .get(endpoint)
+        .header(reqwest::header::USER_AGENT, USER_AGENT)
+        .timeout(super::readiness::PROBE_TIMEOUT)
+        .send()
+        .await
+        .map_err(|_| anyhow::anyhow!("Signal /v1/accounts request failed"))?;
+    let (status, body) = super::readiness::bounded_body(response, "Signal /v1/accounts").await?;
+    if !status.is_success() {
+        anyhow::bail!("Signal /v1/accounts returned HTTP {}", status.as_u16());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&body).context("Signal /v1/accounts returned malformed JSON")?;
+    let accounts = value
+        .as_array()
+        .context("Signal /v1/accounts did not return an account array")?;
+    let configured = our_number.trim();
+    let found = accounts.iter().any(|account| {
+        account.as_str() == Some(configured)
+            || account.get("number").and_then(serde_json::Value::as_str) == Some(configured)
+    });
+    if !found {
+        anyhow::bail!(
+            "Signal service is reachable, but configured number `{configured}` is not registered"
+        );
+    }
+    Ok(format!(
+        "signal-cli service reachable; account {configured} is registered"
+    ))
+}
 
 /// `POST {base_url}/v2/send` — send `text` from `our_number` to `recipient`
 /// (a number or `group.<id>`). Mirrors the discord adapter's status-code
@@ -348,5 +392,34 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.to_string().contains("response parse"), "got: {error}");
+    }
+
+    #[tokio::test]
+    async fn readiness_uses_non_consuming_accounts_endpoint() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/accounts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                "+491234",
+                {"number": "+499999"}
+            ])))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let endpoint = reqwest::Url::parse(&format!("{}/v1/accounts", server.uri())).unwrap();
+        assert!(
+            probe_registration_at(endpoint.clone(), "+491234")
+                .await
+                .unwrap()
+                .contains("registered")
+        );
+        let error = probe_registration_at(endpoint, "+490000")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not registered"));
     }
 }

@@ -44,7 +44,6 @@
 //! Peeroxide's public bootstrap set remains the discovery boundary; private
 //! bootstrap selection is intentionally not exposed as a half-wired option.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -67,10 +66,7 @@ use super::heartbeat::{
 use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
-use super::swarm::{emit_peer_snapshot_to_wal, encode_snapshot_gossip_payload};
-use super::wal_sync::{GossipState, SWARM_SNAPSHOT_SUBTYPE};
 use super::{PeerLoad, PeerLoadRegistry, PeerPubkey, PeerSessionId};
-use crate::daemon::resource_snapshot_cron::{new_system, resolve_node_id, sample_snapshot};
 use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
 
@@ -570,18 +566,10 @@ async fn handle_peeroxide_connection(
     let mut last_healthy: Option<bool> = None;
     let mut last_capabilities_hash: Option<[u8; 32]> = None;
 
-    // SL-01b: per-connection gossip anti-entropy state (dedup keyed by origin +
-    // VC convergence for THIS peer). Node-global merge across peers is a
-    // follow-on with persistence; per-connection is correct for dedup since a
-    // connection is to one peer. Policy default = privacy-safe (raw-ingress off,
-    // 30d budget); a `freedom.yaml::cluster.gossip` override is a follow-on.
-    let mut gossip_state = GossipState::new();
+    // GOLD-R3-09: both inbound commits and outbound ACK application use the
+    // authoritative instance DB. No per-connection dedup/cursor state exists.
     let gossip_policy = GossipPolicy::default();
-    // GOLD-FEAT-06: keep a sysinfo::System alive for the per-connection gossip
-    // piggyback so CPU% is a differential (accurate from tick 2+; RAM/VRAM/
-    // hostname are correct from tick 1). One System per peer connection is
-    // acceptable for a typical cluster size of 2-10 nodes.
-    let mut gossip_sys = new_system();
+    let durable_mesh = super::durable_sync::DurableMeshSync::new(neoth_home.join("views.db"));
 
     // SL-00(1c): register this peer's outbound channel; the Drop guard removes
     // it on EVERY exit path (clean disconnect, error, supersede).
@@ -644,55 +632,6 @@ async fn handle_peeroxide_connection(
                         sent_first_heartbeat = true;
                         if let FrameBody::Heartbeat(ref body) = hb.body {
                             emit_heartbeat_sent_wal(wal_writer.as_deref(), &peer_id, body);
-                        }
-                    }
-                    // GOLD-FEAT-06 gossip-piggyback (a): send REAL resource values
-                    // (CPU/RAM/VRAM/hostname) alongside the heartbeat so remote peers
-                    // see accurate data in their `neoth cluster swarm` view.
-                    // `gossip_sys` is kept alive across heartbeats: CPU% is a sysinfo
-                    // differential reading (accurate from tick 2+; ~0% on first tick);
-                    // RAM/VRAM/hostname are correct from the very first tick.
-                    let snap = sample_snapshot(&resolve_node_id(), &mut gossip_sys);
-                    if let Some(gossip_payload) = encode_snapshot_gossip_payload(&snap) {
-                        let gossip_timestamp =
-                            crate::cluster::wal_sync::gossip_payload_timestamp_unix(
-                                &gossip_payload,
-                            )
-                            .expect("snapshot encoder must produce a canonical WAL frame");
-                        let self_pk = PeerPubkey::new(own_peer_id.clone());
-                        if let Some(gframe) = gossip_state.build_outbound(
-                            &self_pk,
-                            0x00,
-                            SWARM_SNAPSHOT_SUBTYPE,
-                            gossip_payload,
-                            gossip_timestamp,
-                            &gossip_policy,
-                        ) {
-                            let snap_wf = WireFrame {
-                                kind: FrameKind::Gossip,
-                                sequence: gframe.event_seq,
-                                sent_unix_ms: now_unix_ms(),
-                                peer_id: own_peer_id.clone(),
-                                body: FrameBody::Gossip(gframe),
-                            };
-                            match heartbeat::encode_frame(&snap_wf) {
-                                Ok(b) => {
-                                    if let Err(e) = stream.write(&b).await {
-                                        tracing::debug!(
-                                            peer_id = %peer_id,
-                                            error = %e,
-                                            "hyperswarm: snapshot gossip write failed (non-fatal)"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::debug!(
-                                        peer_id = %peer_id,
-                                        error = %e,
-                                        "hyperswarm: snapshot gossip encode failed (non-fatal)"
-                                    );
-                                }
-                            }
                         }
                     }
                 }
@@ -802,129 +741,65 @@ async fn handle_peeroxide_connection(
             }
             continue;
         }
-        // SL-01b: inbound WAL gossip. Decode the canonical frame (including
-        // length + CRC), then run the receive ACL over its real type/subtype.
-        // Accepted payloads are durably persisted before their stable identity
-        // advances.
+        if frame.kind == FrameKind::GossipAck {
+            if let FrameBody::GossipAck(ack) = frame.body {
+                let durable = durable_mesh.clone();
+                let authenticated_peer = PeerPubkey::new(remote_pk_hex.clone());
+                let local_origin = PeerPubkey::new(own_peer_id.clone());
+                tokio::task::spawn_blocking(move || {
+                    durable.acknowledge_outbound(&authenticated_peer, &local_origin, &ack)
+                })
+                .await
+                .context("durable mesh ACK task panicked")??;
+            }
+            continue;
+        }
+        // GOLD-R3-09: one shared DB transaction validates order, deduplicates,
+        // stores the canonical envelope, materializes typed content and advances
+        // the inbound high-water mark. Only its post-COMMIT result can emit ACK.
         if frame.kind == FrameKind::Gossip {
             if let FrameBody::Gossip(gframe) = frame.body {
-                if gframe.origin.as_str() != remote_pk_hex {
-                    emit_gossip_dropped_wal(
-                        wal_writer.as_deref(),
-                        &gframe,
-                        &GossipAcceptance::DroppedDoNotGossipTag,
-                    );
-                    anyhow::bail!(
-                        "gossip origin mismatch: envelope `{}`, authenticated Noise peer `{remote_pk_hex}`",
-                        gframe.origin.as_str()
-                    );
-                }
-                let payload_timestamp =
-                    crate::cluster::wal_sync::gossip_payload_timestamp_unix(&gframe.payload);
-                let (payload_et, payload_sub) = match (
-                    crate::cluster::wal_sync::gossip_payload_event_meta(&gframe.payload),
-                    payload_timestamp,
-                ) {
-                    (Some((event_type, subtype)), Some(timestamp))
-                        if timestamp == gframe.timestamp_unix =>
-                    {
-                        (Some(event_type), Some(subtype))
-                    }
-                    _ => (None, None),
-                };
-                let now = now_unix_secs() as i64;
-                match gossip_state.accept_inbound(
-                    &gframe,
-                    payload_et,
-                    payload_sub,
-                    &gossip_policy,
-                    now,
-                ) {
-                    GossipAcceptance::Accept => {
+                let payload_et =
+                    crate::cluster::wal_sync::gossip_payload_event_meta(&gframe.payload)
+                        .map(|(event_type, _)| event_type);
+                let durable = durable_mesh.clone();
+                let authenticated_peer = PeerPubkey::new(remote_pk_hex.clone());
+                let frame_for_commit = gframe.clone();
+                let policy = gossip_policy.clone();
+                let committed = tokio::task::spawn_blocking(move || {
+                    durable.persist_inbound(&authenticated_peer, &frame_for_commit, &policy)
+                })
+                .await
+                .context("durable inbound mesh task panicked")?;
+                match committed {
+                    Ok(super::durable_sync::InboundCommit::Committed(ack))
+                    | Ok(super::durable_sync::InboundCommit::Duplicate(ack)) => {
                         emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
-                        // G02-CLUSTER-02 persist-then-dedup: INSERT into
-                        // idx_foreign_events FIRST (awaited), advance the dedup
-                        // remember the stable identity + merge the sender's VC only after the DB
-                        // write is confirmed. The old fire-and-forget order made
-                        // a views.db-contention drop permanent (dedup identity +
-                        // VC already advanced ⇒ the peer never re-sent). One
-                        // awaited spawn_blocking per accepted frame is fine —
-                        // this loop does async I/O anyway, and the DB write is
-                        // idempotent (INSERT OR IGNORE on (origin, seq)).
-                        let home = neoth_home.clone();
-                        let origin_pk = gframe.origin.as_str().to_owned();
-                        let origin_seq = gframe.event_seq;
-                        let et_byte = payload_et.unwrap_or(0);
-                        let payload_bytes = gframe.payload.clone();
-                        let persisted = tokio::task::spawn_blocking(move || {
-                            let db_path = home.join("views.db");
-                            let conn = crate::memory::store::open(&db_path)
-                                .map_err(|e| anyhow::anyhow!("open views.db: {e}"))?;
-                            crate::cluster::wal_sync::ingest_foreign_event(
-                                &conn,
-                                &origin_pk,
-                                origin_seq,
-                                et_byte,
-                                &payload_bytes,
-                                crate::time::now_unix_i64(),
-                            )
-                        })
-                        .await
-                        .unwrap_or_else(|join_err| {
-                            Err(anyhow::anyhow!("ingest task panicked: {join_err}"))
-                        });
-                        match persisted {
-                            Ok(()) => {
-                                // GOLD-FEAT-06 gossip-piggyback (b): write a
-                                // peer SwarmResourceSnapshot (0x00/0x03) to the
-                                // LOCAL WAL so `neoth cluster swarm` shows it.
-                                // The foreign-event store holds the raw bytes;
-                                // this WAL write is what the swarm scanner reads.
-                                let snapshot_persisted = if payload_et == Some(0x00)
-                                    && payload_sub == Some(SWARM_SNAPSHOT_SUBTYPE)
-                                {
-                                    wal_writer.as_deref().is_none_or(|writer| {
-                                        emit_peer_snapshot_to_wal(writer, &gframe.payload)
-                                    })
-                                } else {
-                                    true
-                                };
-                                if snapshot_persisted {
-                                    gossip_state.commit_inbound(&gframe);
-                                } else {
-                                    tracing::warn!(
-                                        origin = %gframe.origin.as_str(),
-                                        seq = gframe.event_seq,
-                                        "cluster: peer snapshot WAL append failed — dedup identity not recorded"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                // High-water NOT advanced, VC NOT merged: the
-                                // peer's anti-entropy will re-send this event.
-                                tracing::warn!(
-                                    origin = %gframe.origin.as_str(),
-                                    seq = gframe.event_seq,
-                                    error = %e,
-                                    "cluster: foreign event ingest failed — dedup identity not recorded, peer will re-send"
-                                );
-                            }
-                        }
+                        let ack_frame = WireFrame {
+                            kind: FrameKind::GossipAck,
+                            sequence: out_seq,
+                            sent_unix_ms: now_unix_ms(),
+                            peer_id: own_peer_id.clone(),
+                            body: FrameBody::GossipAck(ack),
+                        };
+                        out_seq = out_seq.wrapping_add(1);
+                        let encoded = heartbeat::encode_frame(&ack_frame)
+                            .context("encode durable gossip ACK")?;
+                        stream
+                            .write(&encoded)
+                            .await
+                            .context("write durable gossip ACK")?;
                     }
-                    dropped => {
+                    Ok(super::durable_sync::InboundCommit::Gap { expected, received }) => {
+                        let dropped = GossipAcceptance::DroppedGap { expected, received };
                         emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);
-                        // Rate-limited drop counter: one warn per 32 drops so sustained
-                        // dedup/budget drops don't flood the log. The counter is
-                        // per-process (not per-connection) — AtomicU64 is lock-free.
-                        static GOSSIP_DROP_COUNT: AtomicU64 = AtomicU64::new(0);
-                        let total = GOSSIP_DROP_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-                        if total % 32 == 0 {
-                            warn!(
-                                total_drops = total,
-                                reason = ?dropped,
-                                "cluster: gossip ingest drops accumulating (sampled every 32)"
-                            );
-                        }
+                    }
+                    Ok(super::durable_sync::InboundCommit::Dropped(dropped)) => {
+                        emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, origin = %gframe.origin.as_str(), seq = gframe.event_seq,
+                            "cluster: durable inbound commit failed — ACK withheld");
                     }
                 }
             }
@@ -1516,6 +1391,9 @@ fn emit_gossip_dropped_wal(
         GossipAcceptance::DroppedDoNotGossipTag => "do_not_gossip",
         GossipAcceptance::DroppedOutsideReplayBudget => "outside_replay_budget",
         GossipAcceptance::DroppedDuplicate { .. } => "duplicate",
+        GossipAcceptance::DroppedProtocolVersion { .. } => "protocol_version",
+        GossipAcceptance::DroppedContentDigest => "content_digest",
+        GossipAcceptance::DroppedGap { .. } => "sequence_gap",
     };
     let payload = serde_json::json!({
         "origin_peer": frame.origin.as_str(),
@@ -1661,7 +1539,10 @@ pub fn handle_inbound_frame(
         // this sync handler (they need provider/lease/autonomy access this fn
         // doesn't have). Reaching here means the intercept has a bug — fail
         // loudly rather than silently no-op.
-        FrameBody::TaskDelegate(_) | FrameBody::TaskResult(_) | FrameBody::Gossip(_) => {
+        FrameBody::TaskDelegate(_)
+        | FrameBody::TaskResult(_)
+        | FrameBody::Gossip(_)
+        | FrameBody::GossipAck(_) => {
             anyhow::bail!(
                 "task/gossip frame reached sync handle_inbound_frame — must be intercepted in the session loop"
             );

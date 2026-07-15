@@ -251,14 +251,12 @@ fn run_route(
     let mut routing = ChannelRouting::load_from(&path).context("load channel routing")?;
     let mut changed = false;
 
-    if channel
-        .as_deref()
-        .is_some_and(|value| value.eq_ignore_ascii_case("keet"))
-    {
-        anyhow::bail!("Keet routing is unavailable: Keet exposes no supported public chat API");
-    }
-
     if let (Some(ch), Some(id)) = (channel.as_ref(), dest.as_ref()) {
+        if ch == "keet" {
+            anyhow::bail!(
+                "Keet's destination is a capability-secret; configure it with `neoth channel add keet --server <topic>` and route only by channel name"
+            );
+        }
         if ch == "matrix" && !crate::channels::routing::is_valid_matrix_room_id(id) {
             anyhow::bail!("Matrix destination must be a room id like `!opaque:server`");
         }
@@ -753,6 +751,25 @@ mod tests {
             !invalid_home.path().join(CHANNEL_ROUTING_FILE).exists(),
             "invalid Matrix destination must not create routing state"
         );
+    }
+
+    #[test]
+    fn keet_capability_is_rejected_from_public_routing_state() {
+        let home = tempfile::tempdir().unwrap();
+        let capability = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let err = run_route(
+            home.path(),
+            None,
+            Some("keet".to_string()),
+            Some(capability.to_string()),
+            false,
+            false,
+        )
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("capability-secret"));
+        assert!(!message.contains(capability));
+        assert!(!home.path().join(CHANNEL_ROUTING_FILE).exists());
     }
 
     #[test]

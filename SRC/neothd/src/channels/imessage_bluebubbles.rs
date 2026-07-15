@@ -245,12 +245,17 @@ impl BlueBubblesChannel {
         chat_guid_allowlist: Option<Vec<String>>,
         allowed_sender: Option<String>,
     ) -> Result<Self> {
+        let server_url = server_url.into();
+        let server_url = super::readiness::parse_base_url(&server_url, "BlueBubbles")?
+            .to_string()
+            .trim_end_matches('/')
+            .to_string();
         // Security review: never follow redirects — a redirect would
         // forward the password query param to the redirect target.
         let http = crate::providers::http_client::build_client_no_redirect()
             .context("build reqwest client for BlueBubbles adapter")?;
         Ok(Self {
-            server_url: server_url.into().trim_end_matches('/').to_string(),
+            server_url,
             password,
             chat_guid_allowlist,
             allowed_sender,
@@ -283,13 +288,45 @@ impl BlueBubblesChannel {
         msg.replace(self.password.expose(), "***")
     }
 
-    fn api_url(&self, path: &str) -> String {
-        format!(
-            "{}/api/v1/{}?password={}",
-            self.server_url,
-            path.trim_start_matches('/'),
-            self.password.expose()
-        )
+    fn api_url(&self, path: &str) -> reqwest::Url {
+        let base = reqwest::Url::parse(&self.server_url)
+            .expect("BlueBubbles URL validated during construction");
+        let mut url = super::readiness::append_path(base, &format!("api/v1/{path}"));
+        url.query_pairs_mut()
+            .append_pair("password", self.password.expose());
+        url
+    }
+
+    /// Authenticate against BlueBubbles' documented read-only ping endpoint.
+    /// The password is query-carried by the upstream API, so transport errors
+    /// are intentionally replaced with static text before reaching callers.
+    pub async fn probe_readiness(&self) -> Result<String> {
+        let url = self.api_url("ping");
+        let response = self
+            .http
+            .get(url)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .timeout(super::readiness::PROBE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("BlueBubbles ping request failed"))?;
+        let (status, body) = super::readiness::bounded_body(response, "BlueBubbles ping").await?;
+        if matches!(status.as_u16(), 401 | 403) {
+            anyhow::bail!("BlueBubbles rejected the server password");
+        }
+        if !status.is_success() {
+            anyhow::bail!("BlueBubbles ping returned HTTP {}", status.as_u16());
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&body).context("BlueBubbles ping returned malformed JSON")?;
+        let envelope_status = value
+            .get("status")
+            .and_then(serde_json::Value::as_u64)
+            .context("BlueBubbles ping response omitted numeric status")?;
+        if envelope_status != 200 {
+            anyhow::bail!("BlueBubbles ping envelope reported status {envelope_status}");
+        }
+        Ok("BlueBubbles server authenticated and reachable".to_string())
     }
 
     /// Drain every `POST /api/v1/message/query` page for one fixed cursor.
@@ -323,14 +360,14 @@ impl BlueBubblesChannel {
             });
             let resp = self
                 .http
-                .post(&url)
+                .post(url.clone())
                 .header(reqwest::header::USER_AGENT, USER_AGENT)
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| {
+                .map_err(|_| {
                     ChannelError::Transport(
-                        self.scrub(format!("BlueBubbles POST /message/query: {e}")),
+                        "BlueBubbles POST /message/query request failed".to_string(),
                     )
                 })?;
             map_bb_status(&resp)?;
@@ -369,14 +406,14 @@ impl BlueBubblesChannel {
         });
         let resp = self
             .http
-            .post(&url)
+            .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                ChannelError::Transport(self.scrub(format!("BlueBubbles POST /message/text: {e}")))
+            .map_err(|_| {
+                ChannelError::Transport("BlueBubbles POST /message/text request failed".to_string())
             })?;
         map_bb_status(&resp)?;
         // Parse the returned message GUID if available; fall back to "sent".
@@ -578,14 +615,14 @@ impl Channel for BlueBubblesChannel {
         let url = self.api_url("message/attachment");
         let resp = self
             .http
-            .post(&url)
+            .post(url)
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .multipart(form)
             .send()
             .await
-            .map_err(|e| {
+            .map_err(|_| {
                 ChannelError::Transport(
-                    self.scrub(format!("BlueBubbles POST /message/attachment: {e}")),
+                    "BlueBubbles POST /message/attachment request failed".to_string(),
                 )
             })?;
         map_bb_status(&resp)?;
@@ -835,6 +872,48 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["g1", "g2", "g3"]
         );
+    }
+
+    #[tokio::test]
+    async fn readiness_ping_is_read_only_and_password_safe() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/ping"))
+            .and(query_param("password", "bb&?super#secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": 200,
+                "message": "Server is alive!",
+                "data": null
+            })))
+            .mount(&server)
+            .await;
+        let channel = BlueBubblesChannel::new(
+            server.uri(),
+            SecretString::from("bb&?super#secret"),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            channel
+                .probe_readiness()
+                .await
+                .unwrap()
+                .contains("authenticated")
+        );
+
+        let bad = BlueBubblesChannel::new(
+            "http://127.0.0.1:1",
+            SecretString::from("bb&?super#secret"),
+            None,
+            None,
+        )
+        .unwrap();
+        let error = bad.probe_readiness().await.unwrap_err().to_string();
+        assert!(!error.contains("bb&?super#secret"));
     }
 
     #[tokio::test]

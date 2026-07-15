@@ -28,6 +28,7 @@ $requiredSupportFiles = @(
     'README.md'
     'LICENSE-MIT'
     'LICENSE-APACHE'
+    'THIRD_PARTY_LICENSES'
 )
 
 function Stop-Smoke {

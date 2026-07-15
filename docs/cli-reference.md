@@ -180,18 +180,18 @@ neoth ouro fetch --checkpoint ByteDance/Ouro-1.4B-Thinking
 
 ```bash
 neoth channel list                 # which channels are configured
-neoth channel add telegram         # connect a channel (no-echo token prompt)
+neoth channel add telegram         # prompt for token + exact numeric sender ID
 neoth channel test telegram        # live read-only credential check
-neoth channel remove telegram      # clear a channel's credentials
+neoth channel remove telegram      # clear token + sender policy
 neoth serve
 ```
 
 | Command | Purpose |
 | :-- | :-- |
 | `channel list` | Show every channel + whether it is configured. |
-| `channel add <name>` | Connect a supported channel (telegram/slack/whatsapp/...); writes credentials.yaml. `keet` is rejected as unavailable. |
-| `channel test <name>` | Live read-only credential check (no message sent, nothing billed). |
-| `channel remove <name>` | Clear a channel's credentials. |
+| `channel add <name>` | Connect a supported channel (telegram/slack/whatsapp/keet/...). Telegram requires `--token --telegram-user-id` and commits secret + exact sender policy through a locked rollback-safe `credentials.yaml`/`freedom.yaml` update. Keet requires `--url --token --server --allowed-sender`. Interactive equivalents use secret-safe prompts. |
+| `channel test <name>` | Protocol-specific read-only credential/reachability check. Sends no chat and consumes no inbound queue. Exit 0=`ok`, 1=`fail`, 2=`skipped`/`unavailable`; JSON always carries the typed verdict. |
+| `channel remove <name>` | Clear a channel's durable adoption state; Telegram removes both token and sender policy. |
 | `serve` | Run daemon/channel server. |
 
 Discord stores `discord_bot_token` in `credentials.yaml`; `channel test discord`
@@ -200,6 +200,20 @@ Gateway receive loop. Email IMAP ingest is a source-build `imap_fetch` opt-in,
 configured through IMAP environment/OAuth credentials rather than
 `channel add`. Calendar reads its CalDAV URL and credentials from
 `freedom.yaml` / `credentials.yaml`.
+
+`neoth channel test keet` performs a read-only authenticated handshake with the
+repository-owned `neoth-keet-bridge`, verifies the exact protocol/version,
+full-duplex capabilities and joined topic, and returns its high-water cursor.
+The companion creates a private Keet-identity Pear/Hyperswarm topic; it cannot
+read or write existing Keet application rooms.
+
+Signal, LINE, BlueBubbles, Mattermost, Google Chat, token-authenticated Matrix,
+Twitch, and Nostr have live read-only probes as well. IRC is explicitly
+`unavailable` because a second registration is stateful; Matrix password-only
+probing is `unavailable` because login creates device/session state. While the
+daemon runs, credential/keychain changes are fingerprinted per channel and only
+the affected adapter is stop-then-started. Corrupt credential state stops the
+fleet fail-closed instead of retaining stale secrets.
 
 ## Coding buddy
 
@@ -257,15 +271,30 @@ neoth plugin ledger my-plugin
 ## Automation
 
 ```bash
-neoth jobs --list             # list scheduled jobs + next-fire times
-neoth cron run morning-brief  # fire one job now (offline; daemon owns the WAL when serving)
+neoth cron create --id morning-brief --name "Morning brief" \
+  --cron "0 7 * * *" --tz Europe/Berlin --prompt "Prepare my brief" \
+  --channel telegram
+neoth cron pause morning-brief
+neoth cron resume morning-brief
+neoth cron deliveries --job morning-brief
+neoth cron run morning-brief   # manual fire; refused while the daemon owns the WAL
 ```
 
 | Command | Purpose |
 | :-- | :-- |
-| `jobs --list` | List scheduled recurring jobs + next-fire times. |
-| `cron run <id>` | Fire one scheduled job now, out of band of the daemon scheduler. |
+| `cron add|create` | Atomically create a cron, fixed-interval, or one-shot job with per-job provider/model/profile/thinking/fallback, exact MCP scope, dependencies, and announce/webhook/none delivery. |
+| `cron edit|update <id>` | Validate and atomically replace supplied fields; `--clear-timezone`, `--clear-delivery`, `--clear-execution`, and `--clear-dependencies` remove optional state explicitly. The daemon live-reloads only a complete valid generation. |
+| `cron pause|resume <id>` | Disable or enable a job without deleting it. |
+| `cron list` / `cron status` | Inspect full schedule/execution/delivery policy or aggregate role state. |
+| `cron deliveries` | Inspect durable delivery correlation, attempts, terminal status, and diagnostics. |
+| `cron run <id>` | Fire one job with the same authorized provider/MCP/delivery boundary as scheduled execution. |
+| `jobs --list` / `jobs --preview <id>` | Read-only schedule and cost/policy preview. |
 | `webhook serve` | Loopback HTTP server that n8n + MCP plugins POST to (the n8n integration surface). |
+
+Strict and Custom autonomy disable scheduled Cron execution fail-closed. Channel
+recipients must resolve to operator-owned routing before provider spend. Keet's
+secret topic capability remains in `credentials.yaml` and is live-probed through
+the authenticated full-duplex companion before a Cron call can spend.
 
 ## Mesh and cluster
 
@@ -274,6 +303,9 @@ neoth cluster discover
 neoth cluster confirm <peer>
 neoth cluster status
 neoth cluster list
+neoth cluster sync-state
+neoth cluster export-foreign --peer <peer> --out backup.jsonl
+neoth cluster restore backup.jsonl
 neoth hardware
 ```
 
@@ -283,6 +315,9 @@ neoth hardware
 | `cluster confirm <peer>` | Approve a peer. |
 | `cluster status` | Show mesh health. |
 | `cluster topology` | Show connected surfaces/nodes. |
+| `cluster sync-state` | Inspect per-peer ACK cursors, pending replay, and contiguous inbound sequence. |
+| `cluster export-foreign` | Export original WAL frames plus canonical v5 content envelopes. |
+| `cluster restore` | Restore canonical memory/ground-truth through durable local-ID mapping. |
 | `local resources` | Show GPU/CPU/RAM/model usage. |
 
 ## Maintenance

@@ -165,10 +165,14 @@ The self-updater does it automatically:
   signature — no swap without cryptographic provenance.
 
 The binary installers also fail closed: they verify `<asset>.minisig` with the
-versioned key, or use cosign with the exact tagged workflow identity. Anyone can
-verify by hand with `NEOTH_RELEASE_MINISIGN_PUBKEY.txt`; the only installer
-escape is the loud `NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` path for artifacts
-authenticated out of band. A present but invalid signature is never bypassed.
+versioned key, or use Cosign with the exact tagged workflow identity. If Cosign
+and minisign are absent, the installers fetch a temporary Cosign version whose
+platform digest is copied from the immutable official source recorded in
+`packaging/cosign-bootstrap.json`; a mismatch is rejected before execution.
+Anyone can verify by hand with `NEOTH_RELEASE_MINISIGN_PUBKEY.txt`; the only
+installer escape is the loud `NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` path when that
+verifier cannot be downloaded and the artifact was authenticated out of band.
+A present but invalid signature or verifier is never bypassed.
 
 ---
 

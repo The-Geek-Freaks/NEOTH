@@ -33,6 +33,13 @@ export component NeothButton inherits Rectangle {
     in property <bool> danger: false;
     callback clicked();
 
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled && !root.loading;
+    accessible-action-default => {
+        if root.enabled && !root.loading { root.clicked(); }
+    }
+
     property <color> accent-color: root.danger ? Theme.accent-pink : Theme.accent-green;
 
     height: root.size == "sm" ? 32px : (root.size == "xs" ? 28px : 44px);
@@ -43,8 +50,9 @@ export component NeothButton inherits Rectangle {
     // from the surrounding cards. An accent-tinted fill + accent border reads as
     // a clear primary CTA (secondary stays outline-only), without being flashy.
     background: root.primary ? root.accent-color.with-alpha(0.16) : transparent;
-    border-width: 1px;
-    border-color: root.enabled ? root.accent-color : Theme.border-subtle;
+    border-width: key-focus.has-focus ? 2px : 1px;
+    border-color: key-focus.has-focus ? Theme.focus-ring
+        : root.enabled ? root.accent-color : Theme.border-subtle;
     opacity: root.enabled ? 1.0 : 0.4;
 
     // Sovereign-Curve hover lift via a thin accent bar at the
@@ -86,9 +94,23 @@ export component NeothButton inherits Rectangle {
         transform-rotation: 360deg * (animation-tick() / Theme.duration-spin);
     }
 
+    key-focus := FocusScope {
+        enabled: root.enabled && !root.loading;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
     touch := TouchArea {
         enabled: root.enabled && !root.loading;
-        clicked => { root.clicked(); }
+        clicked => {
+            key-focus.focus();
+            root.clicked();
+        }
     }
 
     states [
@@ -656,11 +678,20 @@ export component NeothComboBox inherits Rectangle {
     in-out property <int> current-index: 0;
     callback selected(int);
 
+    accessible-role: combobox;
+    accessible-label: root.model.length > 0 && root.current-index >= 0 && root.current-index < root.model.length
+        ? "Selected " + root.model[root.current-index]
+        : "No selection";
+    accessible-expandable: true;
+    accessible-action-expand => { popup.show(); }
+    accessible-action-default => { popup.show(); }
+
     height: 44px;
     background: Theme.bg-card;
     border-radius: Theme.radius-button;
     border-width: 1px;
-    border-color: trigger.has-hover ? Theme.accent-green : Theme.border-subtle;
+    border-color: combo-focus.has-focus ? Theme.focus-ring
+        : trigger.has-hover ? Theme.accent-green : Theme.border-subtle;
 
     animate border-color {
         duration: Theme.duration-micro;
@@ -691,8 +722,21 @@ export component NeothComboBox inherits Rectangle {
         }
     }
 
+    combo-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                popup.show();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
     trigger := TouchArea {
-        clicked => { popup.show(); }
+        clicked => {
+            combo-focus.focus();
+            popup.show();
+        }
     }
 
     popup := PopupWindow {
@@ -711,6 +755,14 @@ export component NeothComboBox inherits Rectangle {
                 spacing: 0px;
 
                 for entry[i] in root.model: Rectangle {
+                    accessible-role: radio-button;
+                    accessible-label: entry;
+                    accessible-checked: i == root.current-index;
+                    accessible-action-default => {
+                        root.current-index = i;
+                        root.selected(i);
+                        popup.close();
+                    }
                     height: 36px;
                     background: row-touch.has-hover ? Theme.bg-base : transparent;
                     border-radius: Theme.radius-button;
@@ -766,6 +818,18 @@ export component NeothCheckBox inherits Rectangle {
     in property <string> text: "";
     callback toggled(bool);
 
+    accessible-role: checkbox;
+    accessible-label: root.text;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+
     height: 32px;
     background: transparent;
 
@@ -779,9 +843,10 @@ export component NeothCheckBox inherits Rectangle {
             y: (parent.height - 20px) / 2;
             background: root.checked ? Theme.accent-green.with-alpha(0.18) : Theme.bg-card;
             border-radius: Theme.radius-xs;
-            border-width: 1px;
+            border-width: check-focus.has-focus ? 2px : 1px;
             border-color:
                 !root.enabled              ? Theme.border-subtle :
+                check-focus.has-focus      ? Theme.focus-ring :
                 root.checked               ? Theme.accent-green :
                 touch.has-hover            ? Theme.accent-green.with-alpha(0.6) :
                                               Theme.border-subtle;
@@ -816,9 +881,22 @@ export component NeothCheckBox inherits Rectangle {
         }
     }
 
+    check-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
     touch := TouchArea {
         enabled: root.enabled;
         clicked => {
+            check-focus.focus();
             root.checked = !root.checked;
             root.toggled(root.checked);
         }
@@ -893,6 +971,9 @@ export component NeothLineEdit inherits Rectangle {
                 vertical-alignment: center;
                 horizontal-alignment: left;
                 enabled: root.enabled;
+                accessible-label: root.placeholder-text;
+                accessible-placeholder-text: root.placeholder-text;
+                accessible-enabled: root.enabled;
                 accepted => { root.accepted(self.text); }
                 edited => { root.edited(self.text); }
             }

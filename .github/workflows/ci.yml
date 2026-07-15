@@ -72,6 +72,91 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
+  keet-bridge:
+    name: Keet companion / frozen standalone
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+
+      - name: Install, verify, test, and package
+        working-directory: bridges/keet
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run check
+          pnpm run check:notices
+          pnpm test
+          pnpm run make:linux-x64
+          test -x out/linux-x64/neoth-keet-bridge
+          EXPECTED="$(node -p 'require("./package.json").version')"
+          test "$(out/linux-x64/neoth-keet-bridge --version)" = "$EXPECTED"
+
+  license-notices:
+    name: Exact distribution license notices
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
+
+      - name: Verify all locked release-target notices
+        run: python3 packaging/generate_rust_notices.py --check
+
+      - name: Verify clean-machine authenticity bootstrap contract
+        run: python3 packaging/test_bootstrap_verifier.py
+
+  release-signer:
+    name: Isolated release signer
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Rust stable with rustfmt
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
+          components: rustfmt
+
+      - name: Cache signer dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            .github/release-tools/neoth-release-signer/target/
+          key: release-signer-${{ hashFiles('.github/release-tools/neoth-release-signer/Cargo.lock') }}
+
+      - name: Verify formatting
+        run: cargo fmt --manifest-path .github/release-tools/neoth-release-signer/Cargo.toml -- --check
+
+      - name: Test locked signer implementation
+        run: cargo test --locked --manifest-path .github/release-tools/neoth-release-signer/Cargo.toml
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit signer lockfile without workspace exceptions
+        working-directory: .github/release-tools/neoth-release-signer
+        run: cargo audit
+
   check:
     name: ${{ matrix.os }} / ${{ matrix.toolchain }}
     runs-on: ${{ matrix.os }}
@@ -295,6 +380,7 @@ jobs:
       - name: Install Rust + wasm32 target
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
+          toolchain: '1.86.0'
           targets: wasm32-unknown-unknown
 
       - name: Cache wasm32 build
@@ -397,6 +483,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -442,6 +530,8 @@ jobs:
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

@@ -11,6 +11,7 @@
 //!     least one secret) — mode 0600 on unix, ACL-restricted on Windows.
 //!     Mirrors the secrets-split landed by `config/credentials.rs`.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -671,6 +672,28 @@ fn main() -> Result<()> {
     }
 
     let already_initialized = neoth_dir.join("freedom.yaml").exists();
+    // GOLD-R4-03 — an absent preference is the one and only state that shows
+    // the GUI-vs-CLI chooser. Opening the GUI after a prior CLI choice is an
+    // explicit switch back to GUI, so update the canonical CLI-owned contract
+    // before skipping the chooser. Existing malformed state remains visible
+    // and repairable through an explicit card choice.
+    let (interface_choice_recorded, interface_choice_error) =
+        match load_gui_interface_preference(&neoth_dir) {
+            Ok(Some(GuiInterfacePreference::Gui)) => (true, None),
+            Ok(Some(GuiInterfacePreference::Cli)) => {
+                let result = which_neothd()
+                    .context("NEOTH CLI binary is missing beside the GUI")
+                    .and_then(|bin| {
+                        set_interface_preference_via_cli(&bin, GuiInterfacePreference::Gui)
+                    });
+                match result {
+                    Ok(()) => (true, None),
+                    Err(error) => (false, Some(error.to_string())),
+                }
+            }
+            Ok(None) => (false, None),
+            Err(error) => (false, Some(error.to_string())),
+        };
     // GUI-REENTRY-PRESET fix: track whether the re-entry config read succeeded.
     // on_finish_clicked checks this flag and refuses to overwrite the existing
     // config when the read failed (preventing Slint property defaults — which
@@ -683,7 +706,9 @@ fn main() -> Result<()> {
             freedom_path = %neoth_dir.join("freedom.yaml").display(),
             "freedom.yaml already exists — jumping to done step"
         );
-        window.set_step(WizardStep::Done);
+        if interface_choice_recorded {
+            window.set_step(WizardStep::Done);
+        }
         // The operator already accepted the licence on first run —
         // freedom.yaml's existence is the proof. Pre-arm the checkbox
         // state so the "Finish" button stays clickable on re-entry
@@ -910,29 +935,122 @@ fn main() -> Result<()> {
             .into(),
         );
     }
+    if interface_choice_recorded && !already_initialized {
+        window.set_step(WizardStep::Welcome);
+    }
+    if let Some(error) = interface_choice_error {
+        window.set_step(WizardStep::ModeSelection);
+        window.set_status_line(
+            format!(
+                "Interface preference needs repair: {error}. Choose GUI or CLI below to replace it explicitly."
+            )
+            .into(),
+        );
+    }
 
-    // Pick #29 — CLI mode handoff. Operator picked the terminal flow
-    // on the mode-selection screen; print the actionable command and
-    // exit the GUI so the operator drops back to their shell with a
-    // clean message. The CLI binary's `neoth init` then takes over.
+    // GOLD-R4-03 — both first-run choices cross the canonical CLI writer.
+    // Advance/exit only after persistence (and for CLI, a real terminal)
+    // succeeds. All subprocess work stays off the Slint event loop.
+    let weak_gui_choice = window.as_weak();
+    window.on_gui_mode_chosen(move || {
+        if let Some(w) = weak_gui_choice.upgrade() {
+            w.set_status_line("Saving GUI as the default interface…".into());
+        }
+        let weak = weak_gui_choice.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd()
+                .context("NEOTH CLI binary is missing beside the GUI")
+                .and_then(|bin| {
+                    set_interface_preference_via_cli(&bin, GuiInterfacePreference::Gui)
+                });
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak.upgrade() else { return };
+                match result {
+                    Ok(()) => {
+                        w.set_mode_choice_busy(false);
+                        w.set_mode_gui_chosen(true);
+                        w.set_mode_cli_chosen(false);
+                        w.set_status_line("GUI selected. You can open the CLI anytime from Settings → Maintenance.".into());
+                        w.set_step(if already_initialized {
+                            WizardStep::Done
+                        } else {
+                            WizardStep::Welcome
+                        });
+                    }
+                    Err(error) => {
+                        w.set_mode_choice_busy(false);
+                        w.set_status_line(
+                            format!("Could not save the GUI choice: {error}").into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+
     let weak_cli = window.as_weak();
     window.on_cli_mode_chosen(move || {
         if let Some(w) = weak_cli.upgrade() {
-            w.set_status_line(
-                "GUI exited. Run `neoth init` in your terminal to continue with the CLI wizard."
-                    .into(),
-            );
+            w.set_status_line("Opening the NEOTH CLI in a new terminal…".into());
         }
-        info!("operator picked CLI mode — exiting GUI");
-        // L-1 fix — eprintln so the message survives even when stdout
-        // is captured (cargo run --quiet, packaged installer wrappers).
-        // The operator gets a copy-paste-ready command in their shell.
-        eprintln!();
-        eprintln!("CLI mode selected. Run this in your terminal:");
-        eprintln!();
-        eprintln!("    neoth init");
-        eprintln!();
-        std::process::exit(0);
+        let weak = weak_cli.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd()
+                .context("NEOTH CLI binary is missing beside the GUI")
+                .and_then(|bin| switch_to_cli(&bin, already_initialized));
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak.upgrade() else { return };
+                match result {
+                    Ok(()) => {
+                        info!("operator switched from first-run GUI to CLI");
+                        let _ = w.hide();
+                        let _ = slint::quit_event_loop();
+                    }
+                    Err(error) => {
+                        w.set_mode_choice_busy(false);
+                        w.set_status_line(
+                            format!("Could not open the CLI terminal: {error}").into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+
+    let weak_settings_cli = window.as_weak();
+    window.on_settings_open_cli_clicked(move || {
+        if let Some(w) = weak_settings_cli.upgrade() {
+            w.set_status_line("Opening the NEOTH CLI in a new terminal…".into());
+        }
+        let weak = weak_settings_cli.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd()
+                .context("NEOTH CLI binary is missing beside the GUI")
+                .and_then(|bin| switch_to_cli(&bin, true));
+            let weak_for_toast = weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak.upgrade() else { return };
+                match result {
+                    Ok(()) => {
+                        w.set_status_line(
+                            "CLI opened. It is now the default; `neoth gui` switches back anytime."
+                                .into(),
+                        );
+                        push_toast(
+                            &weak_for_toast,
+                            "success",
+                            "CLI opened",
+                            "The GUI stays available; the next default launch uses CLI.",
+                        );
+                    }
+                    Err(error) => {
+                        let message = format!("Could not open the CLI terminal: {error}");
+                        w.set_status_line(message.clone().into());
+                        push_toast(&weak_for_toast, "warn", "CLI launch failed", &message);
+                    }
+                }
+            });
+        });
     });
 
     // R2-P0-1 (2026-05-22 Session 20) — GUI chat now reaches the
@@ -1946,8 +2064,10 @@ fn main() -> Result<()> {
         let skills = fetch_skills();
         let plugins = fetch_plugins();
         let memory = fetch_memory_snapshot();
-        // Channels read credentials.yaml PRESENCE only (no subprocess, no secrets).
-        let channels = panel_logic::read_channel_status(&default_neoth_home());
+        // Channels come from the canonical daemon probe. This includes
+        // keychain-backed credentials, feature availability, and partial/error
+        // states without exposing secret values.
+        let channels = fetch_channel_status();
         let weak = weak_panels_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
@@ -2207,17 +2327,26 @@ fn main() -> Result<()> {
         });
     });
 
-    // GUI-improve (gap panel wf_641e1173) — re-read credentials.yaml on demand
-    // so a CLI `neoth connect/disconnect` reflects without a GUI restart.
-    // `read_channel_status` is a pure file read, so it runs inline on the UI
-    // thread (no subprocess / no worker needed).
+    // GOLD-R3-04 — refresh the canonical channel inventory off the UI thread.
+    // The CLI owns credential/keychain parsing + probe semantics; the GUI never
+    // guesses connection state from credentials.yaml.
     let weak_channels_refresh = window.as_weak();
     window.on_channels_refresh_clicked(move || {
-        let channels = panel_logic::read_channel_status(&default_neoth_home());
-        if let Some(w) = weak_channels_refresh.upgrade() {
-            apply_channels(&w, channels);
-            w.set_status_line("Channels refreshed from credentials.yaml.".into());
-        }
+        let weak = weak_channels_refresh.clone();
+        std::thread::spawn(move || {
+            let channels = fetch_channel_status();
+            let ok = channels.is_ok();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    apply_channels(&w, channels);
+                    w.set_status_line(if ok {
+                        "Channel status refreshed.".into()
+                    } else {
+                        "Channel status refresh failed — see the Channels panel.".into()
+                    });
+                }
+            });
+        });
     });
 
     // Doctor tab (design-mockup surface) — run `neothd doctor` read-only and
@@ -3494,27 +3623,40 @@ fn main() -> Result<()> {
                     .arg("channel")
                     .arg("test")
                     .arg(&name)
+                    .arg("--output")
+                    .arg("json")
                     .output()
                     .ok()
             }) {
-                Some(o) if o.status.success() => {
-                    let line = String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .map(str::trim)
-                        .rfind(|l| !l.is_empty())
-                        .unwrap_or("ok")
-                        .to_string();
-                    format!("{name}: {line}")
-                }
-                Some(o) => format!(
-                    "{name} test failed: {}",
-                    String::from_utf8_lossy(&o.stderr)
-                        .lines()
-                        .map(str::trim)
-                        .find(|l| !l.is_empty())
-                        .unwrap_or("(no detail)")
-                ),
-                None => format!("{name}: neothd binary not on PATH"),
+                Some(o) => match panel_logic::parse_channel_test_status(
+                    &String::from_utf8_lossy(&o.stdout),
+                    &name,
+                ) {
+                    // `fail`, `skipped`, and `unavailable` deliberately use
+                    // non-zero CLI exit codes for scripts. The JSON remains
+                    // the canonical truth and must still reach the GUI.
+                    Ok(result) => {
+                        let glyph = match result.status.as_str() {
+                            "ok" => "✓",
+                            "fail" => "✗",
+                            "unavailable" => "⊘",
+                            _ => "–",
+                        };
+                        format!("{glyph} {name}: {}", result.detail)
+                    }
+                    Err(error) if o.status.success() => {
+                        format!("{name} test returned invalid data: {error}")
+                    }
+                    Err(_) => format!(
+                        "{name} test failed: {}",
+                        String::from_utf8_lossy(&o.stderr)
+                            .lines()
+                            .map(str::trim)
+                            .find(|line| !line.is_empty())
+                            .unwrap_or("(no detail)")
+                    ),
+                },
+                None => format!("{name}: NEOTH CLI not found; reinstall or repair PATH"),
             };
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
@@ -3524,9 +3666,9 @@ fn main() -> Result<()> {
         });
     });
 
-    // GUI-overhaul feature parity — remove a channel's credential
-    // (`neoth channel remove <name>`), then re-read credentials.yaml so the row
-    // flips to disconnected. Gated behind an inline confirm in the UI.
+    // GUI-overhaul feature parity — remove a channel's credential through the
+    // canonical CLI, then refresh its canonical configured/probe state. Gated
+    // behind an inline confirm in the UI.
     let weak_channel_remove = window.as_weak();
     window.on_channel_remove(move |name| {
         let weak = weak_channel_remove.clone();
@@ -3543,39 +3685,50 @@ fn main() -> Result<()> {
                 })
                 .map(|o| o.status.success())
                 .unwrap_or(false);
-            let channels = panel_logic::read_channel_status(&default_neoth_home());
+            let channels = fetch_channel_status();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     apply_channels(&w, channels);
                     w.set_status_line(if ok {
                         format!("Channel {name} credential removed.").into()
                     } else {
-                        format!("Channel {name} remove failed (is neothd on PATH?).").into()
+                        format!("Channel {name} remove failed (is neoth installed and writable?).")
+                            .into()
                     });
                 }
             });
         });
     });
 
-    // GAP-19 — Add a new channel credential from the GUI.
-    // Maps (channel_type, f1..f4) → the correct `neoth channel add <type> <flags>` args.
-    // Empty required fields are caught before shelling; on success re-reads
-    // credentials.yaml + refreshes the channel rows exactly like on_channel_remove.
+    // GOLD-R3-04 — Add/repair every registered channel from the GUI.
+    // Maps the typed form fields to canonical `neoth channel add` flags.
+    // Empty required fields are caught before shelling; on success the canonical
+    // channel inventory is refreshed exactly like on_channel_remove.
     let weak_channel_add = window.as_weak();
-    window.on_channel_add(move |ctype, f1, f2, f3, f4| {
+    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, flag| {
         let ctype = ctype.to_string();
         let f1 = f1.trim().to_string();
         let f2 = f2.trim().to_string();
         let f3 = f3.trim().to_string();
         let f4 = f4.trim().to_string();
+        let f5 = f5.trim().to_string();
+        let f6 = f6.trim().to_string();
 
         // Build the flag args for this channel type; return Err(hint) on missing required fields.
         let args_result: Result<Vec<String>, String> = (|| match ctype.as_str() {
             "telegram" => {
-                if f1.is_empty() {
-                    return Err("telegram needs: --token".into());
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("telegram needs: --token and --telegram-user-id".into());
                 }
-                Ok(vec!["--token".into(), f1])
+                if f2.parse::<u64>().ok().filter(|id| *id > 0).is_none() {
+                    return Err("telegram user ID must be a positive integer".into());
+                }
+                Ok(vec![
+                    "--token".into(),
+                    f1,
+                    "--telegram-user-id".into(),
+                    f2,
+                ])
             }
             "slack" => {
                 if f1.is_empty() || f2.is_empty() {
@@ -3584,10 +3737,60 @@ fn main() -> Result<()> {
                 Ok(vec!["--bot-token".into(), f1, "--app-token".into(), f2])
             }
             "whatsapp" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err("whatsapp needs: --token and --phone-id".into());
+                if f1.is_empty() || f2.is_empty() || f3.is_empty() || f4.is_empty() {
+                    return Err(
+                        "whatsapp needs: --token, --phone-id, --verify-token, and --app-secret"
+                            .into(),
+                    );
                 }
-                Ok(vec!["--token".into(), f1, "--phone-id".into(), f2])
+                Ok(vec![
+                    "--token".into(),
+                    f1,
+                    "--phone-id".into(),
+                    f2,
+                    "--verify-token".into(),
+                    f3,
+                    "--app-secret".into(),
+                    f4,
+                ])
+            }
+            "whatsapp_baileys" => {
+                if f1.is_empty() || f2.is_empty() || f3.is_empty() {
+                    return Err(
+                        "whatsapp_baileys needs: --url, --token, and --allowed-sender"
+                            .into(),
+                    );
+                }
+                let mut args = vec![
+                    "--url".into(),
+                    f1,
+                    "--token".into(),
+                    f2,
+                    "--allowed-sender".into(),
+                    f3,
+                ];
+                if !f4.is_empty() {
+                    args.extend(["--allowed-rooms-csv".into(), f4]);
+                }
+                Ok(args)
+            }
+            "keet" => {
+                if f1.is_empty() || f2.is_empty() || f3.is_empty() || f4.is_empty() {
+                    return Err(
+                        "keet needs: --url, --token, --server (topic), and --allowed-sender"
+                            .into(),
+                    );
+                }
+                Ok(vec![
+                    "--url".into(),
+                    f1,
+                    "--token".into(),
+                    f2,
+                    "--server".into(),
+                    f3,
+                    "--allowed-sender".into(),
+                    f4,
+                ])
             }
             "discord" => {
                 if f1.is_empty() {
@@ -3638,9 +3841,61 @@ fn main() -> Result<()> {
             }
             "gchat" => {
                 if f1.is_empty() || f2.is_empty() {
-                    return Err("gchat needs: --url and --server".into());
+                    return Err(
+                        "gchat needs: --url (service-account JSON path) and --server (subscription)"
+                            .into(),
+                    );
                 }
                 Ok(vec!["--url".into(), f1, "--server".into(), f2])
+            }
+            "matrix" => {
+                if f1.is_empty() || f2.is_empty() || (f3.is_empty() && f4.is_empty()) {
+                    return Err(
+                        "matrix needs: --url, --nick, and either --token or --password"
+                            .into(),
+                    );
+                }
+                let mut args = vec!["--url".into(), f1, "--nick".into(), f2];
+                if !f3.is_empty() {
+                    args.extend(["--token".into(), f3]);
+                }
+                if !f4.is_empty() {
+                    args.extend(["--password".into(), f4]);
+                }
+                if !f5.is_empty() {
+                    args.extend(["--allowed-sender".into(), f5]);
+                }
+                if !f6.is_empty() {
+                    args.extend(["--allowed-rooms-csv".into(), f6]);
+                }
+                if flag {
+                    args.push("--allow-plaintext".into());
+                }
+                Ok(args)
+            }
+            "twitch" => {
+                if f1.is_empty() || f2.is_empty() || f3.is_empty() {
+                    return Err("twitch needs: --nick, --token, and --channels-csv".into());
+                }
+                Ok(vec![
+                    "--nick".into(),
+                    f1,
+                    "--token".into(),
+                    f2,
+                    "--channels-csv".into(),
+                    f3,
+                ])
+            }
+            "nostr" => {
+                if f1.is_empty() || f2.is_empty() {
+                    return Err("nostr needs: --token and --channels-csv (relay URLs)".into());
+                }
+                Ok(vec![
+                    "--token".into(),
+                    f1,
+                    "--channels-csv".into(),
+                    f2,
+                ])
             }
             other => Err(format!("unknown channel type: {other}")),
         })();
@@ -3666,29 +3921,29 @@ fn main() -> Result<()> {
                         Some(o) if o.status.success() => {
                             // The CLI emits pretty JSON, so whitespace-sensitive
                             // substring checks misclassified every successful add.
-                            let configured = parse_channel_configured(&o.stdout);
-                            match configured {
+                            let saved = parse_channel_saved(&o.stdout, &ctype_clone);
+                            match saved {
                                 Some(true) => (
                                     "success",
                                     "Add channel",
-                                    format!("Channel {ctype_clone} connected and configured."),
+                                    format!(
+                                        "Channel {ctype_clone} saved. Use Test for live connectivity proof."
+                                    ),
                                     true,
                                 ),
                                 Some(false) => (
-                                    "warn",
-                                    "Add channel",
-                                    format!(
-                                        "Channel {ctype_clone} credentials were saved but the channel is incomplete."
-                                    ),
-                                    true,
+                                    "error",
+                                    "Add channel response invalid",
+                                    format!("Channel {ctype_clone}: neoth reported saved=false."),
+                                    false,
                                 ),
                                 None => (
                                     "error",
                                     "Add channel response invalid",
                                     format!(
-                                        "Channel {ctype_clone}: neothd returned success without a configured status."
+                                        "Channel {ctype_clone}: neoth returned success without a saved status."
                                     ),
-                                    true,
+                                    false,
                                 ),
                             }
                         }
@@ -3710,13 +3965,15 @@ fn main() -> Result<()> {
                         None => (
                             "error",
                             "Add channel failed",
-                            format!("{ctype_clone}: neothd binary not on PATH"),
+                            format!(
+                                "{ctype_clone}: NEOTH CLI not found; reinstall or repair PATH"
+                            ),
                             false,
                         ),
                     };
 
                     let channels = if refresh {
-                        Some(panel_logic::read_channel_status(&default_neoth_home()))
+                        Some(fetch_channel_status())
                     } else {
                         None
                     };
@@ -3727,6 +3984,9 @@ fn main() -> Result<()> {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = weak.upgrade() {
                                 apply_channels(&w, ch);
+                                w.set_channel_add_success_seq(
+                                    w.get_channel_add_success_seq().saturating_add(1),
+                                );
                             }
                         });
                     }
@@ -6049,13 +6309,23 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Parse the authoritative completion bit from `neoth channel add --output json`.
-/// Missing, malformed, or non-boolean values are never guessed as success.
-fn parse_channel_configured(stdout: &[u8]) -> Option<bool> {
-    serde_json::from_slice::<serde_json::Value>(stdout)
-        .ok()?
-        .get("configured")?
-        .as_bool()
+/// Parse and bind the authoritative acknowledgement from
+/// `neoth channel add --output json`. A success response for a different
+/// channel, `ok:false`, or a malformed/missing field is never reused as the
+/// approval to close this form.
+fn parse_channel_saved(stdout: &[u8], expected_channel: &str) -> Option<bool> {
+    #[derive(Deserialize)]
+    struct ChannelAddAcknowledgement {
+        ok: bool,
+        channel: String,
+        saved: bool,
+    }
+
+    let acknowledgement: ChannelAddAcknowledgement = serde_json::from_slice(stdout).ok()?;
+    if !acknowledgement.ok || acknowledgement.channel != expected_channel {
+        return None;
+    }
+    Some(acknowledgement.saved)
 }
 
 /// Plain-data snapshot the wizard hands off to disk. Keeps the Slint
@@ -8461,18 +8731,52 @@ fn apply_memory(window: &MainWindow, snap: panel_logic::MemorySnapshot) {
     window.set_memory_total(fmt_bytes(snap.total_bytes).into());
 }
 
-/// GU-01 — push per-channel connection state (presence of credentials, never
-/// the secret values) onto the MainWindow. UI-thread only.
-fn apply_channels(window: &MainWindow, channels: Vec<panel_logic::ChannelStatus>) {
+/// GOLD-R3-04 — push the canonical per-channel probe state onto MainWindow.
+/// Errors clear stale rows and remain visible in-panel instead of degrading to
+/// a false "not connected" state. UI-thread only.
+fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::ChannelStatus>, String>) {
     use slint::{ModelRc, VecModel};
-    let rows: Vec<ChannelRow> = channels
+    let (channels, error) = match channels {
+        Ok(channels) => (channels, String::new()),
+        Err(error) => (Vec::new(), error),
+    };
+    let rows = channels
         .into_iter()
-        .map(|c| ChannelRow {
-            name: c.name.into(),
-            connected: c.connected,
+        .map(|channel| ChannelRow {
+            name: channel.name.into(),
+            status: channel.status.into(),
+            configured: channel.configured,
+            detail: channel.detail.into(),
         })
-        .collect();
+        .collect::<Vec<_>>();
     window.set_channels(ModelRc::new(VecModel::from(rows)));
+    window.set_channel_status_error(error.into());
+}
+
+/// Fetch `neoth channel list --output json`. A missing binary, non-zero exit,
+/// malformed stdout, or corrupt operator config is returned verbatim enough to
+/// repair, but never with secret material from stdout.
+fn fetch_channel_status() -> Result<Vec<panel_logic::ChannelStatus>, String> {
+    let bin = which_neothd().ok_or_else(|| {
+        "NEOTH CLI not found. Reinstall or repair PATH, then refresh.".to_string()
+    })?;
+    let output = spawn_neothd_plain(&bin)
+        .arg("channel")
+        .arg("list")
+        .arg("--output")
+        .arg("json")
+        .output()
+        .map_err(|error| format!("could not start NEOTH channel probe: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("channel probe failed without detail")
+            .to_string();
+        return Err(detail);
+    }
+    panel_logic::parse_channel_status(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// SPEC-05 — fetch the saved presets via `neoth preset list --json`. Empty on
@@ -11288,6 +11592,259 @@ pub fn shape_preset_summary(stdout: &[u8]) -> String {
     }
 }
 
+const INTERFACE_SCHEMA_VERSION: u8 = 1;
+const MAX_INTERFACE_PREFERENCE_BYTES: u64 = 4 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GuiInterfacePreference {
+    Gui,
+    Cli,
+}
+
+impl GuiInterfacePreference {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Gui => "gui",
+            Self::Cli => "cli",
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuiInterfacePreferenceRecord {
+    schema_version: u8,
+    preferred: String,
+}
+
+/// Read the daemon-owned interface contract without duplicating its writer.
+/// Missing is the sole "not answered yet" state; existing corruption is
+/// surfaced so the GUI can offer an explicit repair choice.
+fn load_gui_interface_preference(home: &Path) -> Result<Option<GuiInterfacePreference>> {
+    let path = home.join("interface.json");
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("open {}", path.display())),
+    };
+    let mut bytes = Vec::new();
+    let mut reader = std::io::BufReader::new(file);
+    reader
+        .by_ref()
+        .take(MAX_INTERFACE_PREFERENCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", path.display()))?;
+    if bytes.len() as u64 > MAX_INTERFACE_PREFERENCE_BYTES {
+        anyhow::bail!(
+            "{} is too large (maximum {MAX_INTERFACE_PREFERENCE_BYTES} bytes)",
+            path.display()
+        );
+    }
+    let record: GuiInterfacePreferenceRecord =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+    if record.schema_version != INTERFACE_SCHEMA_VERSION {
+        anyhow::bail!(
+            "unsupported interface preference schema {} in {}",
+            record.schema_version,
+            path.display()
+        );
+    }
+    match record.preferred.as_str() {
+        "gui" => Ok(Some(GuiInterfacePreference::Gui)),
+        "cli" => Ok(Some(GuiInterfacePreference::Cli)),
+        other => anyhow::bail!(
+            "invalid preferred interface `{other}` in {}",
+            path.display()
+        ),
+    }
+}
+
+/// Delegate writes to the canonical CLI implementation and verify its
+/// machine-readable acknowledgement. The GUI never hand-writes the contract.
+fn set_interface_preference_via_cli(bin: &Path, preferred: GuiInterfacePreference) -> Result<()> {
+    let output = spawn_neothd_plain(bin)
+        .args(["--output", "json", "interface", "set", preferred.as_str()])
+        .output()
+        .with_context(|| format!("run `{}` interface set", bin.display()))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "interface preference update failed (exit {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .context("parse interface preference acknowledgement")?;
+    let acknowledged = value.get("changed").and_then(|v| v.as_bool()) == Some(true)
+        && value.get("preferred").and_then(|v| v.as_str()) == Some(preferred.as_str());
+    if !acknowledged {
+        anyhow::bail!("interface preference update returned an invalid acknowledgement");
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn terminal_shell_script(initialized: bool) -> &'static str {
+    if initialized {
+        "\"$NEOTH_BIN\" status; printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; exec \"${SHELL:-/bin/sh}\" -l"
+    } else {
+        "\"$NEOTH_BIN\" init --cli; printf '\\nNEOTH CLI ready.\\n'; exec \"${SHELL:-/bin/sh}\" -l"
+    }
+}
+
+/// Open a real platform terminal and keep it interactive after the initial
+/// NEOTH command. Returns the launcher child where the platform exposes one;
+/// dropping it deliberately detaches the terminal from the GUI process.
+fn launch_cli_terminal(bin: &Path, initialized: bool) -> Result<Option<std::process::Child>> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        let path = bin.to_string_lossy().replace('\'', "''");
+        let initial = if initialized {
+            format!("& '{path}' status")
+        } else {
+            format!("& '{path}' init --cli")
+        };
+        let script =
+            format!("{initial}; Write-Host ''; Write-Host 'NEOTH CLI ready. Try: neoth --help'");
+        let child = std::process::Command::new("powershell.exe")
+            .args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script])
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn()
+            .context("open Windows PowerShell for the NEOTH CLI")?;
+        return Ok(Some(child));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let path = bin
+            .to_str()
+            .context("NEOTH binary path is not valid Unicode")?
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let command = if initialized { "status" } else { "init --cli" };
+        let script = format!(
+            "set neothBin to \"{path}\"\ntell application \"Terminal\"\nactivate\ndo script ((quoted form of neothBin) & \" {command}; printf '\\\\nNEOTH CLI ready. Try: neoth --help\\\\n'; exec $SHELL -l\")\nend tell"
+        );
+        let output = std::process::Command::new("/usr/bin/osascript")
+            .args(["-e", &script])
+            .output()
+            .context("ask Terminal.app to open the NEOTH CLI")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "Terminal.app launch failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        return Ok(None);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let script = terminal_shell_script(initialized);
+        let candidates: &[(&str, &[&str])] = &[
+            ("x-terminal-emulator", &["-e", "sh", "-lc", script]),
+            ("gnome-terminal", &["--", "sh", "-lc", script]),
+            ("konsole", &["-e", "sh", "-lc", script]),
+            ("kitty", &["sh", "-lc", script]),
+            ("alacritty", &["-e", "sh", "-lc", script]),
+        ];
+        let mut last_error = None;
+        for (program, args) in candidates {
+            match std::process::Command::new(program)
+                .args(*args)
+                .env("NEOTH_BIN", bin)
+                .spawn()
+            {
+                Ok(child) => return Ok(Some(child)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => last_error = Some(format!("{program}: {error}")),
+            }
+        }
+        anyhow::bail!(
+            "no supported desktop terminal could be opened{}; run `neoth interface set cli` in an existing terminal",
+            last_error
+                .map(|error| format!(" ({error})"))
+                .unwrap_or_default()
+        );
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    anyhow::bail!("opening a CLI terminal is unsupported on this platform")
+}
+
+fn switch_to_cli(bin: &Path, initialized: bool) -> Result<()> {
+    // Persist first: macOS Terminal.app returns no child handle that the GUI
+    // could kill if a later write failed. If the terminal cannot be opened,
+    // restore GUI as the truthful currently-visible surface on every platform.
+    set_interface_preference_via_cli(bin, GuiInterfacePreference::Cli)?;
+    match launch_cli_terminal(bin, initialized) {
+        Ok(terminal) => {
+            drop(terminal);
+            Ok(())
+        }
+        Err(launch_error) => {
+            if let Err(rollback_error) =
+                set_interface_preference_via_cli(bin, GuiInterfacePreference::Gui)
+            {
+                return Err(launch_error).context(format!(
+                    "CLI terminal launch failed and restoring the GUI preference also failed: {rollback_error:#}"
+                ));
+            }
+            Err(launch_error)
+                .context("CLI terminal launch failed; the durable preference was restored to GUI")
+        }
+    }
+}
+
+#[cfg(test)]
+mod interface_preference_tests {
+    use super::*;
+
+    #[test]
+    fn gui_reader_distinguishes_missing_gui_cli_and_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load_gui_interface_preference(dir.path()).unwrap(), None);
+
+        std::fs::write(
+            dir.path().join("interface.json"),
+            br#"{"schema_version":1,"preferred":"gui"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load_gui_interface_preference(dir.path()).unwrap(),
+            Some(GuiInterfacePreference::Gui)
+        );
+
+        std::fs::write(
+            dir.path().join("interface.json"),
+            br#"{"schema_version":1,"preferred":"cli"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load_gui_interface_preference(dir.path()).unwrap(),
+            Some(GuiInterfacePreference::Cli)
+        );
+
+        std::fs::write(
+            dir.path().join("interface.json"),
+            br#"{"schema_version":1,"preferred":"gui","extra":true}"#,
+        )
+        .unwrap();
+        assert!(load_gui_interface_preference(dir.path()).is_err());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_terminal_script_uses_an_environment_path_not_interpolation() {
+        let script = terminal_shell_script(false);
+        assert!(script.contains("\"$NEOTH_BIN\" init --cli"));
+        assert!(script.contains("exec \"${SHELL:-/bin/sh}\" -l"));
+    }
+}
+
 fn which_neothd() -> Option<PathBuf> {
     let executables = if cfg!(windows) {
         ["neoth.exe", "neothd.exe"]
@@ -11592,29 +12149,56 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn channel_add_configured_parser_accepts_pretty_json_true() {
+    fn channel_add_saved_parser_accepts_pretty_json_true() {
         assert_eq!(
-            parse_channel_configured(b"{\n  \"configured\": true\n}"),
+            parse_channel_saved(
+                b"{\n  \"ok\": true,\n  \"channel\": \"telegram\",\n  \"saved\": true\n}",
+                "telegram",
+            ),
             Some(true)
         );
     }
 
     #[test]
-    fn channel_add_configured_parser_preserves_explicit_false() {
+    fn channel_add_saved_parser_preserves_explicit_false() {
         assert_eq!(
-            parse_channel_configured(b"{\n  \"configured\": false\n}"),
+            parse_channel_saved(
+                b"{\n  \"ok\": true,\n  \"channel\": \"telegram\",\n  \"saved\": false\n}",
+                "telegram",
+            ),
             Some(false)
         );
     }
 
     #[test]
-    fn channel_add_configured_parser_rejects_missing_or_malformed_status() {
-        assert_eq!(parse_channel_configured(b"{}"), None);
+    fn channel_add_saved_parser_rejects_missing_or_malformed_status() {
+        assert_eq!(parse_channel_saved(b"{}", "telegram"), None);
         assert_eq!(
-            parse_channel_configured(b"{\"configured\": \"true\"}"),
+            parse_channel_saved(
+                b"{\"ok\":true,\"channel\":\"telegram\",\"saved\":\"true\"}",
+                "telegram",
+            ),
             None
         );
-        assert_eq!(parse_channel_configured(b"not-json"), None);
+        assert_eq!(parse_channel_saved(b"not-json", "telegram"), None);
+    }
+
+    #[test]
+    fn channel_add_saved_parser_binds_success_to_requested_channel() {
+        assert_eq!(
+            parse_channel_saved(
+                b"{\"ok\":true,\"channel\":\"slack\",\"saved\":true}",
+                "telegram",
+            ),
+            None
+        );
+        assert_eq!(
+            parse_channel_saved(
+                b"{\"ok\":false,\"channel\":\"telegram\",\"saved\":true}",
+                "telegram",
+            ),
+            None
+        );
     }
 
     fn empty_snapshot() -> WizardSnapshot {

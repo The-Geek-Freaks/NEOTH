@@ -918,7 +918,13 @@ pub fn apply_downloaded(
 /// installation's footprint, but whenever one of the shipped companions is
 /// installed beside `neoth`, update it from the same verified archive too.
 /// The public binary is replaced last and acts as the transaction commit point.
-const SELF_UPDATE_COMPANIONS: [&str; 4] = ["neothd", "neothd-gui", "neoth-migrate", "neoth-relay"];
+const SELF_UPDATE_COMPANIONS: [&str; 5] = [
+    "neothd",
+    "neothd-gui",
+    "neoth-migrate",
+    "neoth-relay",
+    "neoth-keet-bridge",
+];
 
 #[derive(Debug)]
 struct StagedBundleMember {
@@ -2819,11 +2825,12 @@ mod tests {
 
     #[test]
     fn apply_downloaded_bundle_updates_every_installed_component() {
-        let binaries: [(&str, &[u8], &[u8]); 5] = [
+        let binaries: [(&str, &[u8], &[u8]); 6] = [
             ("neothd", b"new-compat", b"old-compat"),
             ("neothd-gui", b"new-gui", b"old-gui"),
             ("neoth-migrate", b"new-migrate", b"old-migrate"),
             ("neoth-relay", b"new-relay", b"old-relay"),
+            ("neoth-keet-bridge", b"new-keet", b"old-keet"),
             ("neoth", b"new-core", b"old-core"),
         ];
         let names = binaries

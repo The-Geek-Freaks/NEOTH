@@ -50,6 +50,77 @@ use crate::secret::SecretString;
 use super::nostr_api::{map_nostr_dm, nostr_text_chunks};
 use super::{Channel, ChannelError, MessageId, PipelineHandler};
 
+fn parse_keys(secret_key: &SecretString) -> Result<Keys> {
+    Keys::parse(secret_key.expose()).map_err(|_| {
+        anyhow::anyhow!("invalid Nostr secret key (expected a valid nsec1 key or 64-char hex)")
+    })
+}
+
+fn normalize_relay_urls(relays_csv: &str) -> Result<Vec<String>> {
+    let mut relays = std::collections::BTreeSet::new();
+    for relay in relays_csv
+        .split(',')
+        .map(str::trim)
+        .filter(|relay| !relay.is_empty())
+    {
+        let parsed = reqwest::Url::parse(relay)
+            .map_err(|_| anyhow::anyhow!("invalid Nostr relay URL `{relay}`"))?;
+        if parsed.scheme() != "wss" || parsed.host_str().is_none() {
+            anyhow::bail!("Nostr relay `{relay}` must be an absolute wss:// URL");
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            anyhow::bail!("Nostr relay URLs must not contain credentials");
+        }
+        if parsed.query().is_some() || parsed.fragment().is_some() {
+            anyhow::bail!("Nostr relay URLs must not contain a query or fragment");
+        }
+        relays.insert(parsed.to_string());
+    }
+    if relays.is_empty() {
+        anyhow::bail!("Nostr needs at least one wss:// relay URL");
+    }
+    Ok(relays.into_iter().collect())
+}
+
+/// Validate exactly the key and relay contract consumed by the live adapter.
+/// The returned CSV is canonical and safe to persist; key parse failures are
+/// intentionally static so operator-visible errors can never echo the secret.
+pub(crate) fn validate_configuration(
+    secret_key: &SecretString,
+    relays_csv: &str,
+) -> Result<String> {
+    let _ = parse_keys(secret_key)?;
+    Ok(normalize_relay_urls(relays_csv)?.join(","))
+}
+
+/// Connect to the configured relay pool without subscribing or publishing.
+/// The probe proves key parsing plus live WebSocket reachability while leaving
+/// the inbox and relay event state untouched.
+pub async fn probe_relays(secret_key: &SecretString, relays_csv: &str) -> Result<String> {
+    let keys = parse_keys(secret_key)?;
+    let public_key = keys.public_key().to_hex();
+    let relays = normalize_relay_urls(relays_csv)?;
+    let client = Client::builder().signer(keys).build();
+    for relay in &relays {
+        client
+            .add_relay(relay.as_str())
+            .await
+            .with_context(|| format!("add Nostr relay {relay}"))?;
+    }
+    let outcome = client.try_connect(super::readiness::PROBE_TIMEOUT).await;
+    client.disconnect().await;
+    classify_relay_probe(&public_key, outcome.success.len(), outcome.failed.len())
+}
+
+fn classify_relay_probe(public_key: &str, connected: usize, failed: usize) -> Result<String> {
+    if connected == 0 {
+        anyhow::bail!("Nostr could not connect to any configured relay ({failed} failed)");
+    }
+    Ok(format!(
+        "Nostr identity {public_key} reached {connected} relay(s); {failed} failed"
+    ))
+}
+
 /// NIP-59 randomizes gift-wrap timestamps backwards by at most two days.
 /// Keep one extra second so an inclusive/exclusive relay boundary cannot lose
 /// an event exactly at the edge.
@@ -218,8 +289,7 @@ impl NostrChannel {
 
     /// Parse the operator's secret key (accepts `nsec1…` bech32 or 64-char hex).
     fn keys(&self) -> Result<Keys> {
-        Keys::parse(self.secret_key.expose())
-            .context("parse nostr secret key (expected nsec1… or hex)")
+        parse_keys(&self.secret_key)
     }
 }
 
@@ -236,6 +306,7 @@ impl Channel for NostrChannel {
     /// config); transient relay drops are handled by the SDK's relay pool.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
         let keys = self.keys()?;
+        let relays = normalize_relay_urls(&self.relays.join(","))?;
         let my_pubkey = keys.public_key();
         let cursor_path = self
             .cursor_path
@@ -248,14 +319,11 @@ impl Channel for NostrChannel {
             scan_started_at,
         )?;
         let client = Client::builder().signer(keys).build();
-        for relay in &self.relays {
+        for relay in &relays {
             client
                 .add_relay(relay.as_str())
                 .await
                 .with_context(|| format!("add nostr relay {relay}"))?;
-        }
-        if self.relays.is_empty() {
-            anyhow::bail!("nostr: no relays configured (set nostr_relays)");
         }
         client.connect().await;
         // Publish the (ref-counted) client so `send_text` can send while the
@@ -355,7 +423,7 @@ impl Channel for NostrChannel {
             {
                 continue;
             }
-            let rumor = unwrapped.rumor;
+            let mut rumor = unwrapped.rumor;
             if rumor.kind != Kind::PrivateDirectMessage {
                 warn!(
                     kind = rumor.kind.as_u16(),
@@ -373,7 +441,7 @@ impl Channel for NostrChannel {
             };
             // The inner rumor ID is stable across gift wraps and is the useful
             // provider correlation ID for WAL/edit/de-dup observability.
-            inbound.message_id = Some(rumor.id.unwrap_or_else(|| rumor.compute_id()).to_hex());
+            inbound.message_id = Some(rumor.id().to_hex());
             match handler(inbound).await {
                 Ok(Some(out)) => {
                     for chunk in nostr_text_chunks(&out.text) {
@@ -450,6 +518,44 @@ mod tests {
             vec!["wss://relay.damus.io", "wss://nos.lol"],
             "trims spaces + drops the trailing empty"
         );
+    }
+
+    #[test]
+    fn configuration_uses_real_key_parser_and_normalizes_secure_relays() {
+        let key = SecretString::from("11".repeat(32));
+        let relays = validate_configuration(
+            &key,
+            " WSS://Relay.Example.com, wss://relay.example.com/room, wss://relay.example.com ",
+        )
+        .unwrap();
+        assert_eq!(
+            relays,
+            "wss://relay.example.com/,wss://relay.example.com/room"
+        );
+        assert!(validate_configuration(&key, "ws://relay.example.com").is_err());
+        assert!(validate_configuration(&key, "https://relay.example.com").is_err());
+    }
+
+    #[test]
+    fn invalid_key_error_never_contains_secret() {
+        let secret = "nsec1-not-a-real-key-secret-material";
+        let error = validate_configuration(&SecretString::from(secret), "wss://relay.example.com")
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(secret));
+        assert!(error.contains("invalid Nostr secret key"));
+    }
+
+    #[test]
+    fn relay_probe_requires_at_least_one_live_relay_without_secret_output() {
+        let detail = classify_relay_probe("public-key", 2, 1).unwrap();
+        assert!(detail.contains("public-key"));
+        assert!(detail.contains("2 relay"));
+
+        let secret = "nostr-super-secret";
+        let error = classify_relay_probe(secret, 0, 3).unwrap_err().to_string();
+        assert!(!error.contains(secret));
+        assert!(error.contains("3 failed"));
     }
 
     #[test]
