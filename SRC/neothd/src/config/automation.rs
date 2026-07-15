@@ -545,13 +545,16 @@ impl ResourceWatchConfig {
 /// the operator's Obsidian vault: the compile-time capability map
 /// (skills / crons / CLI / slash — always available, ships in-binary)
 /// plus the `PLAN/` design corpus when `source_dir` exists (dev
-/// checkouts). Default OFF (opt-in — writes into the operator's vault).
+/// checkouts). Default ON: all writes are local, the signed release baseline is
+/// immutable, and operator/Self-Improve edits are isolated in update-safe
+/// overlays. Operators can still disable the periodic refresh explicitly.
 /// Audit: tracing only — the WAL event-type byte space is exhausted
 /// (255/256 at spec time), so no dedicated frame exists.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct SelfWikiConfig {
-    /// Master switch. `false` (default) = the cron never spawns.
+    /// Master switch. `true` (default) materializes the signed release map and
+    /// keeps the local wiki/recall view current. `false` disables the cron.
     pub enabled: bool,
     /// Rebuild interval in seconds. Default 86 400 (daily). Clamped to a
     /// 1-hour floor by [`Self::interval_duration`].
@@ -575,9 +578,9 @@ pub const DEFAULT_SELF_WIKI_INTERVAL_SECS: u64 = 86_400;
 
 impl Default for SelfWikiConfig {
     fn default() -> Self {
-        // Off by default — writes into the operator's vault, opt-in.
+        // Local-only, release-signed knowledge is useful on every install.
         Self {
-            enabled: false,
+            enabled: true,
             interval_secs: DEFAULT_SELF_WIKI_INTERVAL_SECS,
             vault: None,
             subdir: "NEOTH-Wiki".to_string(),

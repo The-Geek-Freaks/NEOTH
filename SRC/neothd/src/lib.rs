@@ -74,7 +74,7 @@ pub(crate) mod test_env {
     }
 }
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 // clippy::unused_imports is wrong on `warn` here -- the `warn!`
 // macro at line 125 below DOES resolve through this import on
@@ -206,6 +206,13 @@ pub async fn run() -> Result<()> {
     unsafe {
         libc::umask(0o077);
     }
+
+    // A prior bundle transaction may have stopped after installing companion
+    // members but before its durable final state. Recover under the exact
+    // executable-derived root and closed release allowlist before parsing or
+    // dispatching any public command.
+    updater::release_bundle::recover_running_portable_transaction()
+        .context("recover interrupted NEOTH installation before startup")?;
 
     // Windows: no umask equivalent. Warn the operator if running on a
     // user account whose default DACL grants read to other processes.

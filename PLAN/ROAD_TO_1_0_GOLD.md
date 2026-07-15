@@ -93,9 +93,9 @@ _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique
 
 This additive workstream supersedes the earlier "zero code gaps" conclusion. External push reviews were rechecked against the dirty source tree, not accepted at face value. Already-closed findings such as SNYK-01, SNYK-02, B22, GRAPH-03, the public `neoth` binary/package contract, release artifact contents, and explicit Cron-Custom fail-closed behavior remain closed. The boxes below are the remaining 1.0 contract and verification work; none may be deferred by an older v1.1/post-Gold label.
 
-- [x] **GOLD-R3-01 Runtime instance isolation and fail-closed state:** one typed `InstancePaths` value now carries the authoritative instance home/config through serve, channel, DB/indexer, journal, WAL/HMAC/key, credential/policy reload and Cron/background paths. Existing malformed state propagates instead of silently defaulting, and Custom diagnostics name the actual instance paths rather than `~/.neoth`. Evidence 2026-07-15: exact Rust 1.90 Core Clippy with `wizard,wasm-plugin-host` is clean; the current-source `custom` filter is **43/43**, `serve_pipeline` **13/13**, instance-path unit tests **2/2**, CLI GUI/interface pure tests **10/10**, and the isolated real-process interface contract is **13/13**.
-- [x] **GOLD-R3-02 Registry and config caller parity:** Skill/Mode registries now validate the complete candidate set before initial publication or atomic reload; an existing malformed manifest or duplicate mode ID fails the operation, and a failed reload leaves the previous snapshot visible byte-for-byte. Missing optional directories retain their explicit empty-state behavior. Evidence 2026-07-15: exact Rust 1.90 Core Clippy is clean; focused initial-load/malformed/duplicate-mode checks **4/4**, duplicate-mode registry checks **5/5**, and the canonical self-wiki/Clap inventory drift suite **10/10**.
-- [x] **GOLD-R3-03 Cron briefing quality contract:** every briefing is scored before durable delivery; one regeneration is allowed through the same already-authorized provider and the original absolute job deadline. A second rejection or deadline exhaustion emits durable `JOB_FAILED` and queues no rejected body. Evidence 2026-07-15: low-quality-retry success, second-rejection/no-delivery and shared-absolute-deadline tests are all current-source green; the wider Cron/Custom filter is **43/43**, and exact Rust 1.90 Core Clippy is clean.
+- [x] **GOLD-R3-01 Runtime instance isolation and fail-closed state:** one typed `InstancePaths` value now carries the authoritative instance home/config through serve, channel, DB/indexer, journal, WAL/HMAC/key, credential/policy reload and Cron/background paths. Existing malformed state propagates instead of silently defaulting, and Custom diagnostics name the actual instance paths rather than `~/.neoth`. Evidence 2026-07-15: exact Rust 1.91 Core Clippy with `wizard,wasm-plugin-host` is clean; the current-source `custom` filter is **43/43**, `serve_pipeline` **13/13**, instance-path unit tests **2/2**, CLI GUI/interface pure tests **10/10**, and the isolated real-process interface contract is **13/13**. The package/workflow MSRV was raised from 1.90 to 1.91 after the locked `cluster-iroh` dependency graph proved that 1.90 cannot build the advertised feature; Cargo manifests, Clippy policy, CI, Security, publish and release workflows now share the honest floor.
+- [x] **GOLD-R3-02 Registry and config caller parity:** Skill/Mode registries now validate the complete candidate set before initial publication or atomic reload; an existing malformed manifest or duplicate mode ID fails the operation, and a failed reload leaves the previous snapshot visible byte-for-byte. Missing optional directories retain their explicit empty-state behavior. Evidence 2026-07-15: exact Rust 1.91 Core Clippy is clean; focused initial-load/malformed/duplicate-mode checks **4/4**, duplicate-mode registry checks **5/5**, and the canonical self-wiki/Clap inventory drift suite **10/10**.
+- [x] **GOLD-R3-03 Cron briefing quality contract:** every briefing is scored before durable delivery; one regeneration is allowed through the same already-authorized provider and the original absolute job deadline. A second rejection or deadline exhaustion emits durable `JOB_FAILED` and queues no rejected body. Evidence 2026-07-15: low-quality-retry success, second-rejection/no-delivery and shared-absolute-deadline tests are all current-source green; the wider Cron/Custom filter is **43/43**, and exact Rust 1.91 Core Clippy is clean.
 - [x] **GOLD-R3-04 GUI channel parity and truthful status:** the post-onboarding GUI and CLI now consume the same 15-channel registry and canonical readiness/probe contract for refresh, add/reconfigure, typed read-only test and confirmed remove. Telegram requires token plus a positive exact sender ID; `freedom.yaml` and `credentials.yaml` mutate under one locked rollback-safe transaction, malformed state fails closed, and a second-write failure restores both files byte-for-byte. The GUI rejects malformed, `ok:false` and wrong-channel acknowledgements instead of closing the form. Evidence: `cargo check -p neothd-gui --locked` including Slint, 18 GUI/channel tests, 6 canonical `connect` parity tests, real Telegram Add -> Probe -> Remove, malformed-config preservation and injected dual-file rollback: **27/27**, plus scoped rustfmt/diff checks.
 - [x] **GOLD-R3-05 Full Cron job contract:** Cron/interval/one-shot scheduling, create/edit/delete/pause/resume, explicit clear operations, per-job provider/model/profile, MCP capability/tool intersection, delivery state and reload are wired end to end. Provider selection is credential-isolated by vendor; an unconfigured override inherits no other provider's key/endpoint/model and cloud overrides require consent before adapter construction. Custom remains explicitly fail-closed at scheduler, serve bootstrap and self-activation regardless of its generic Standard rank. Evidence: locked library check; 9 new job-contract tests; CLI Cron **11/11** with isolated instance home; representative runner E2E; three exact Custom-rail tests; generated CLI-doc drift **1/1**.
 - [x] **GOLD-R3-06 Serve/channel usage metering:** `fail_closed_reload`/`channel_reload` now require the authoritative instance home at type level across serve/background/channel/n8n/decay paths. Success, failure, fallback leaves and stream Done/EOF/error/cancellation record exactly once with canonical response identity and `automated=true`. The reviewed production raw-call surface covers every `complete/stream` receiver; Cron uses the non-freely-constructible `AuthorizedProvider`, channel/n8n use the same central boundary, and sub-agent/self-improve QA now accepts `Arc<AuthorizedProvider>` at type level rather than an erasable raw `dyn Provider`. Evidence: terminal usage, reload-home, fallback-leaf, stream lifecycle and production raw-call boundary tests all green; sub-agent runtime **5/5**.
@@ -110,6 +110,42 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
 
 - [ ] **GOLD-R4-01 Cross-platform distribution contract:** produce version-locked release artifacts containing the `neoth` CLI/daemon, `neothd-gui`, example config, README/notices/licenses and required runtime assets. Ship a normal Windows installer executable, a signed/notarizable macOS installer/app bundle, and first-class Linux packages plus a portable fallback; architecture and OS support must be explicit and machine-tested.
 - [ ] **GOLD-R4-02 Package-manager and update reach:** wire GitHub Releases, crates.io where appropriate, WinGet, Homebrew and maintained Linux package metadata to the same signed version contract. Install, upgrade, downgrade/recovery and uninstall must leave no ambiguous mixed-version CLI/GUI state; generated manifests and checksums are artifact-tested.
+
+  **Current self-update boundary (2026-07-15; remains OPEN):** portable bundles
+  now use one exact-profile journaled transaction. Its generated ownership
+  marker is a member of that transaction. Portable support/legal/example and
+  release-knowledge files live below the package-owned `neoth-support/` root,
+  so a first install into shared `~/.local/bin`/user-PATH directories neither
+  claims nor overwrites generic files. Existing public files stay present until
+  one atomic replacement; `neoth` and `neothd` recover an executable-bound,
+  closed-allowlist journal before normal dispatch. Windows checks both
+  HKCU/HKLM Inno ownership before any portable mutation. A running Windows
+  portable CLI completes through a detached, signed target-release helper that
+  waits for the old PID, re-verifies archive/signature, coordinates daemon/
+  supervisor stop and restart, writes a request-bound durable receipt, and
+  emits Applied only after commit. Stage, receipt and cleanup paths are derived
+  from one private namespace; operation ID, canonical lowercase request hash,
+  install root, version and transaction identity are revalidated. Portable
+  Windows update/handoff/cleanup refuses an elevated token before staging,
+  helper launch, ACL mutation or deletion; machine-wide updates belong to the
+  signed native installer.
+  Registered/malformed Inno state fails closed instead of corrupting Setup
+  ownership. Still required before this box closes: select, verify, launch and
+  qualify the exact signed Windows Setup asset for Inno installs; the
+  signed/notarized macOS PKG/full-App handoff; and DEB/RPM selection plus
+  apt/dnf/rpm transaction for package-owned Linux installs. None of those three
+  native paths is claimed complete by the portable transaction.
+
+  **Current evidence:** InstallTransaction killpoint/rollback **17/17**,
+  release-bundle ownership/profile **10/10**, real killed-process recovery via
+  installed `neoth.exe` and `neothd.exe` **2/2**, canonical zero-installer
+  delegation **3/3**, and the complete focused self-update module **73/73**.
+  The release gate now has one independent 52-name golden asset surface,
+  stable/pre-release tests **7/7**, exact-head selector tests **7/7**, manifest
+  tests **6/6**, immutable action pins, seven-day build handoffs and a native
+  Windows ARM64 runner contract. This evidence hardens R4-01/R4-02/R4-08 but
+  does not replace the still-required signed native N-to-N+1 runner proofs or
+  package-manager publication.
 - [x] **GOLD-R4-03 First-run interface choice and switching:** first launch now resolves through one product launcher that chooses GUI/CLI once, persists the decision in the authoritative instance home, honors headless/SSH/noninteractive gates, and supports `neoth gui` plus GUI `Open terminal/CLI` switching through a private one-shot Ready token. Windows state writes no longer use inherited temp ACLs, path-based `icacls`, `%USERNAME%`, or hard-link publication while a zero-share private handle is open: Core and GUI create private files with a TokenUser-only protected DACL at `CreateFileW(CREATE_NEW)`, complete bytes+fsync before visibility, and publish through handle-bound replace/create-if-absent rename; directory DACL verification accepts Windows' safe OI/CI `INHERIT_ONLY` canonical split while rejecting inherited/extra-principal/deny ACEs. Evidence 2026-07-15: `wal::win_native::tests` **16 passed / 1 intentional ignored**, `cli::interface::tests` **18/18**, `cli::init::tests` **130/130** (the previous 18 DACL failures are gone), `config::credentials::tests` **29/29**, `util::atomic_write::tests` **6/6**, `cargo check --manifest-path SRC/neothd-gui/Cargo.toml --locked` green, `cargo check --manifest-path SRC/neothd/Cargo.toml --locked` green, `cargo fmt` and `git diff --check` green. Remaining R4 work is distribution/package-manager/onboarding/parity/Buddy/channel/clean-machine/accessibility/launch, tracked below.
 - [ ] **GOLD-R4-04 Zero-friction onboarding and repair:** one guided path handles provider/local-model choice, autonomy, channels, permissions, optional integrations and readiness checks with actionable errors. Resume interrupted setup, repair damaged/missing config, preserve operator data, expose logs/Doctor, and make update/rollback/uninstall safe for a non-technical user.
 - [ ] **GOLD-R4-05 Full GUI/CLI capability parity:** generate a canonical capability inventory from real command/channel/config registries, map every supported operation and state to both surfaces, implement missing GUI flows, and add drift tests. Disabled/unavailable/error states must be explicit; no stub, dead button, lossy config parser or misleading `CLI-only` label may remain.
@@ -192,6 +228,75 @@ silently discarded or reported as migrated. CLI and GUI must expose the same
 preflight diff and unresolved-field report before activation.
 These are explicit R4-01, R4-04, R4-05, R4-06, R4-07, R4-08 and R4-09 blockers,
 not documentation-only work.
+
+The executable scope is now split into three additive, dependency-ordered plans:
+[`plans/001-openclaw-channel-migration-parity.md`](../plans/001-openclaw-channel-migration-parity.md)
+owns the account-scoped channel descriptor, lossless OpenClaw plan/apply/status/
+rollback flow and channel-runtime parity;
+[`plans/002-zero-friction-adoption-coupling.md`](../plans/002-zero-friction-adoption-coupling.md)
+owns the canonical capability descriptor, durable install/adoption jobs, managed
+runtimes and complete adoption lifecycle; and
+[`plans/003-gui-cli-buddy-capability-parity.md`](../plans/003-gui-cli-buddy-capability-parity.md)
+projects those same descriptors and jobs into CLI, full GUI, Buddy and release
+self-knowledge. Their unchecked acceptance boxes are v1.0 Gold work. They do not
+create a second backlog or supersede this file, and the historical WS-I `308/308`
+snapshot must not be used to infer that these current production-consumer,
+packaging, migration or surface-parity contracts are complete.
+
+**Release-bound Graphify self-knowledge contract (operator directive
+2026-07-15; WS-R4 boxes remain open):** every real release must build a fresh,
+complete Graphify snapshot from the clean, exact release-tag HEAD. Reusing a
+previous `graphify-out/`, scanning a dirty checkout, silently omitting supported
+files, or calling an AST-only graph a complete deep graph is forbidden. The
+release gate must pin the Graphify toolchain, every required exporter dependency
+and an explicit semantic backend, record its version/model/command, and fail when
+semantic extraction cannot run. Graphify's pinned detector defines the semantic
+input set; every Git-tracked code file that its sensitive-name filter omits is
+recovered locally by AST extraction and is never sent to the semantic backend.
+Detector-excluded noise such as lock files and generated `dist/` trees remains
+byte-bound by the tracked-source manifest without being misrepresented as
+semantically extracted. Absolute checkout paths and path-derived file IDs are
+canonicalized to repository-relative identities before clustering.
+The required payload is the full graph JSON, report, interactive HTML, Wiki,
+Obsidian vault, SVG, GraphML, Graphify manifest, complete tracked-source
+manifest, and a generation receipt binding HEAD before/after generation.
+Every file is role-, size- and SHA-256-bound by a closed sorted manifest; the
+compiled binaries carry the same `NEOTH_SOURCE_HEAD` and canonical snapshot
+payload SHA-256. A version/HEAD mismatch, unlisted file, missing export, symlink,
+source drift or payload mutation blocks the release.
+
+The verified `self-knowledge/` tree is a required recursively checked runtime
+asset in every supported portable archive, Windows installer, macOS app/PKG,
+Linux DEB/RPM and updater transaction. Installation materializes it at the
+platform-native resource path; update commits code plus knowledge as one
+version and rollback restores both. NEOTH verifies the inner manifest before
+query, Wiki/Obsidian materialization or recall. Each release becomes a new
+version/HEAD-specific read-only baseline under `Release Knowledge`; the stable
+`User Overlays` tree survives upgrades and uninstall unless the operator asks
+for data purge. User corrections and Self-Improve proposals live only in that
+overlay, have separate provenance/recall scope, and never rewrite the signed
+baseline or silently alter code, policy or live configuration. Self-Improve may
+read the baseline and overlay and stage a reviewable proposal; an effectful
+change still traverses the normal verification, permission, cost, WAL and
+explicit-accept gates.
+
+CLI, full GUI and Buddy must expose the same snapshot status, release/HEAD,
+verification failure, build/download/materialization progress, open-Wiki/open-
+Obsidian action, graph query/architecture lookup, overlay location/diff and
+proposal review state. A released user must not install Python, Graphify or a
+developer toolchain manually to query NEOTH's shipped self-map; use a native
+reader or a bundled managed runtime. The public Wiki/release documentation must
+publish the same release identity and architecture entry points. The current
+integration wave implements and locally contract-tests the real locked
+extract -> local tracked-code recovery -> cluster -> five-export pipeline;
+portable/DEB/RPM/macOS App+PKG+DMG/Windows Setup staging; transactional
+installer/updater rollback; native status/verify/query; immutable baseline
+materialization; and separate reviewed-overlay recall. This does **not** close a
+broad WS-R4 box until the integrated commit and exact-head runners prove it. GUI/Buddy
+parity, visible long-running progress, full Self-Improve proposal/review wiring,
+public Wiki publication, signed native-installer execution and exact-head
+clean-machine qualification remain completion gates under R4-01, R4-02, R4-04,
+R4-05, R4-06, R4-08 and R4-10.
 
 ### 3.3 Public reconciliation of the 20 confirmed WS-I wiring gaps
 

@@ -840,10 +840,12 @@ fn main() -> Result<()> {
     init_tracing();
     info!("neothd-gui starting (R-1 Phase 3 — autonomy + channels + keys)");
 
-    let product_launcher = product_launcher_mode(
-        std::env::args_os().skip(1),
-        std::env::var_os(PRODUCT_LAUNCHER_ENV),
-    )?;
+    let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if runtime_probe_requested(&arguments) {
+        return run_runtime_probe();
+    }
+    let product_launcher =
+        product_launcher_mode(arguments, std::env::var_os(PRODUCT_LAUNCHER_ENV))?;
     let neoth_dir = default_neoth_home();
     std::fs::create_dir_all(&neoth_dir)
         .with_context(|| format!("create NEOTH home {}", neoth_dir.display()))?;
@@ -7368,6 +7370,53 @@ fn main() -> Result<()> {
         anyhow::bail!(error);
     }
     run_result?;
+    Ok(())
+}
+
+/// Clean-machine release probe. It deliberately branches before NEOTH_HOME is
+/// resolved or created: the probe validates only the shipped display stack and
+/// must never mutate operator configuration. `Window::run` shows the real
+/// native window; the bounded timer then waits until winit exposes that native
+/// handle. A successful exit therefore proves construction and real event-loop
+/// readiness instead of merely parsing the Slint document.
+fn run_runtime_probe() -> Result<()> {
+    use slint::winit_030::WinitWindowAccessor;
+
+    let window = MainWindow::new().context("construct GUI runtime-probe window")?;
+    let ready = std::rc::Rc::new(std::cell::Cell::new(false));
+    let observed_ready = ready.clone();
+    let ticks = std::rc::Rc::new(std::cell::Cell::new(0_u16));
+    let observed_ticks = ticks.clone();
+    let weak = window.as_weak();
+    let readiness_timer = slint::Timer::default();
+    readiness_timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(10),
+        move || {
+            if let Some(window) = weak.upgrade()
+                && window.window().with_winit_window(|_| ()).is_some()
+            {
+                observed_ready.set(true);
+                let _ = window.hide();
+                let _ = slint::quit_event_loop();
+                return;
+            }
+            let next_tick = observed_ticks.get().saturating_add(1);
+            observed_ticks.set(next_tick);
+            if next_tick >= 500 {
+                let _ = slint::quit_event_loop();
+            }
+        },
+    );
+    window.run().context("run GUI runtime-probe event loop")?;
+    drop(readiness_timer);
+    if !ready.get() {
+        anyhow::bail!(
+            "GUI runtime probe did not observe a live native window after {} event-loop ticks",
+            ticks.get()
+        );
+    }
+    println!("NEOTH GUI runtime probe: ready");
     Ok(())
 }
 
@@ -13923,6 +13972,14 @@ mod interface_preference_tests {
 
     #[test]
     fn product_launcher_and_relative_home_contracts_are_explicit() {
+        assert!(runtime_probe_requested(&[OsString::from(
+            "--runtime-probe"
+        )]));
+        assert!(!runtime_probe_requested(&[]));
+        assert!(!runtime_probe_requested(&[
+            OsString::from("--runtime-probe"),
+            OsString::from("--product-launcher"),
+        ]));
         assert!(!product_launcher_requested(Vec::<OsString>::new()).unwrap());
         assert!(product_launcher_requested([OsString::from("--product-launcher")]).unwrap());
         assert!(product_launcher_requested([OsString::from("--unknown")]).is_err());
@@ -14411,6 +14468,10 @@ fn resolve_neoth_home(
 }
 
 const PRODUCT_LAUNCHER_ENV: &str = "NEOTH_PRODUCT_LAUNCHER";
+
+fn runtime_probe_requested(args: &[std::ffi::OsString]) -> bool {
+    matches!(args, [argument] if argument == "--runtime-probe")
+}
 
 fn product_launcher_mode(
     args: impl IntoIterator<Item = std::ffi::OsString>,

@@ -44,7 +44,7 @@ commands, under their documented command-specific gates.
 | 7 | Web search | `tools/web_search.rs`, `cli/search.rs` | Fixed Brave/Tavily APIs or trusted operator-configured SearXNG | Explicit command; Brave/Tavily need an API key; no dedicated autonomy action or typed WAL event |
 | 8 | arXiv search | `tools/arxiv.rs`, `cli/arxiv.rs` | `export.arxiv.org/api/query` | Explicit anonymous read-only command; current constant starts with HTTP and follows the service redirect to HTTPS; no dedicated autonomy action or typed WAL event |
 | 9 | Text-to-speech | `media/tts_dispatch.rs`, `media/tts_cloud.rs`, `media/tts_provider.rs`, `cli/tts.rs` | Offline system/Piper engines; Microsoft Edge speech, ElevenLabs, Azure Speech, or an operator-configured ViitorVoice sidecar | Local by default; every non-local provider requires `media.cloud_tts_enabled`; credential requirements are provider-specific; metadata-only `0xCD` audit when a WAL sink is available |
-| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | Bounded download/extraction + SHA-256 + **minisign signature and signed asset-name binding** (`updater/sig_verify.rs`, compile-time pinned pubkey) + stage-path confinement + transactional bundle rollback; explicit manual `--allow-unsigned` recovery only |
+| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | Bounded download/extraction + SHA-256 + **minisign signature and signed asset-name binding** (`updater/sig_verify.rs`, compile-time pinned pubkey) + stage-path confinement + release-bound closed-set self-knowledge verification + primary-last transactional bundle/directory rollback; explicit manual `--allow-unsigned` recovery only |
 | 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | REST send and read-only bot-identity probe; Gateway receive is a separate inbound path; operator bot token; CHANNEL_EGRESS audit on sends |
 | 12 | Email / Gmail IMAP ingest | `email/imap_fetch.rs`, `cli/email.rs`, `daemon/email_ingest_cron.rs` | Configured IMAP/TLS server (Gmail default); `oauth2.googleapis.com` only when refreshing XOAUTH2 credentials | Network-live only in builds with `imap_fetch`; daemon poll default OFF; non-destructive fetch, local triage, fail-closed quarantine; no SMTP |
 
@@ -293,10 +293,25 @@ passes a bounded, version-bound verification pipeline before any binary swap:
    non-symlink files in their exact stage slots; an untrusted `pending.json`
    cannot redirect reads or cleanup outside the stage directory.
 
-5. **Bundle preflight + rollback** — every companion installed beside `neoth`
-   must be present in the verified archive before mutation. Companions replace
-   first, the public core last; any intermediate error restores prior binaries
-   in reverse order.
+5. **Closed bundle transaction** — the archive must contain the exact compiled
+   platform profile, including support files and release-bound self-knowledge.
+   A durable journal stages every member, writes the locally generated portable
+   ownership marker inside the same transaction, and commits the public core
+   last. Recovery either finalizes the committed bundle or restores the entire
+   previous set; no caller-managed backup filename is part of the contract.
+
+   On Windows, registered Inno installs and malformed/ambiguous uninstall
+   records are never treated as portable. A real portable update launches the
+   verified target-release helper, re-verifies archive and signature after the
+   old CLI exits, drains/stops the runtime, commits, then emits `0xD2`; merely
+   scheduling that handoff is not audited as an applied update. The private
+   staging namespace, committed receipt and cleanup bind one lowercase request
+   hash, operation, install root, target version and transaction. Portable
+   staging, handoff and cleanup reject elevated process tokens before any ACL,
+   extraction, helper-launch or delete effect, so same-user path races cannot
+   turn this path into an elevated deputy. Native
+   Windows-Setup, macOS PKG/App, and Linux DEB/RPM selection/execution remain
+   release blockers and currently fail closed before package-owned mutation.
 
 `require_signature` rule:
 - **Manual path** (`neoth update --self --apply`, `require=true` by default) —

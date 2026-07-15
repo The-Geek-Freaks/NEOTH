@@ -38,6 +38,12 @@ execution. A mismatch fails closed. `NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` is an
 explicit emergency-only path for a verifier download failure and an archive
 authenticated out of band.
 
+The same installation transaction includes NEOTH's release-bound Graphify
+self-knowledge. It is already generated and verified in the release; a normal
+machine does not need Python, Graphify, or a separate model download to use it.
+Upgrades replace only that immutable baseline and preserve your NEOTH Wiki and
+`User Overlays`.
+
 The separate manual crates.io workflow publishes `neoth-plugin-sdk` first and
 allows `neoth` only after the exact SDK version is visible to Cargo.
 

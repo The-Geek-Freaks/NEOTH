@@ -24,7 +24,7 @@
   <key>CFBundleShortVersionString</key>
   <string>@NUMERIC_VERSION@</string>
   <key>CFBundleVersion</key>
-  <string>@NUMERIC_VERSION@</string>
+  <string>@BUNDLE_VERSION@</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>

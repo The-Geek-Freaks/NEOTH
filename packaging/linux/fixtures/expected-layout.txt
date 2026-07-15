@@ -12,3 +12,4 @@
 /usr/share/doc/neoth/THIRD_PARTY_LICENSES
 /usr/share/doc/neoth/examples/freedom.yaml.example
 /usr/share/doc/neoth/examples/import-manifest.example.yaml
+/usr/share/neoth/self-knowledge/manifest.json

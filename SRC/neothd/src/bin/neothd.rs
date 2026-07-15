@@ -7,6 +7,10 @@
 use std::process::Command;
 
 fn main() {
+    if let Err(error) = neothd::updater::release_bundle::recover_running_portable_transaction() {
+        eprintln!("neothd compatibility launcher could not recover its installation: {error:#}");
+        std::process::exit(1);
+    }
     let sibling = std::env::current_exe().ok().map(|mut path| {
         path.set_file_name(if cfg!(windows) { "neoth.exe" } else { "neoth" });
         path

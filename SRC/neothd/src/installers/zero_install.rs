@@ -158,75 +158,22 @@ pub fn one_liner_install_command_for_host() -> String {
     }
 }
 
-/// Render the install-shell-script template. Pure-fn so tests pin
-/// the script shape (operators downloading via curl|sh need a
-/// stable contract). The script:
-///
-///   1. Detects target triple.
-///   2. Downloads the matching artifact from GitHub Releases.
-///   3. Extracts `neoth` to `~/.local/bin` and installs a `neothd`
-///      compatibility executable.
-///   4. Verifies the SHA-256 against a signed checksum file
-///      published alongside the artifact.
+/// Render a version-pinned wrapper around the one canonical installer.
+/// Archive authentication, closed member validation, namespaced support files,
+/// locking, journaling, and marker ownership must not be reimplemented here.
 ///
 /// Returns the full script body — operators inspect via
 /// `curl -fsSL ... | less` before piping into sh.
 pub fn render_install_sh(version: &str) -> String {
+    let quoted_version = version.replace(char::from(39), r#"'"'"'"#);
     format!(
         "#!/usr/bin/env sh
 # NEOTH install script — version {version}
 # Source: {INSTALL_SH_URL}
-# Audit: download + read this script before piping to sh.
+# This wrapper delegates to the reviewed canonical installer.
 set -eu
 
-VERSION=\"{version}\"
-RELEASES=\"{RELEASES_BASE_URL}\"
-
-# Detect target triple
-case \"$(uname -s)-$(uname -m)\" in
-  Linux-x86_64)   TARGET=\"x86_64-unknown-linux-gnu\" EXT=\"tar.gz\" ;;
-  Linux-aarch64)  TARGET=\"aarch64-unknown-linux-gnu\" EXT=\"tar.gz\" ;;
-  Darwin-x86_64)  TARGET=\"x86_64-apple-darwin\" EXT=\"tar.gz\" ;;
-  Darwin-arm64)   TARGET=\"aarch64-apple-darwin\" EXT=\"tar.gz\" ;;
-  *) echo \"unsupported host: $(uname -s)-$(uname -m)\" >&2 ; exit 1 ;;
-esac
-
-# Download artifact + matching checksum
-ART=\"neoth-v${{VERSION}}-${{TARGET}}.${{EXT}}\"
-URL=\"${{RELEASES}}/download/v${{VERSION}}/${{ART}}\"
-CKSUM_URL=\"${{URL}}.sha256\"
-
-TMP=\"$(mktemp -d)\"
-trap 'rm -rf \"$TMP\"' EXIT
-
-curl -fsSL \"$URL\"        -o \"$TMP/$ART\"
-curl -fsSL \"$CKSUM_URL\"  -o \"$TMP/$ART.sha256\"
-
-# Verify checksum on Linux and macOS
-EXPECTED=\"$(awk '{{print $1}}' \"$TMP/$ART.sha256\")\"
-if command -v sha256sum >/dev/null 2>&1; then
-  ACTUAL=\"$(sha256sum \"$TMP/$ART\" | awk '{{print $1}}')\"
-else
-  ACTUAL=\"$(shasum -a 256 \"$TMP/$ART\" | awk '{{print $1}}')\"
-fi
-[ \"$EXPECTED\" = \"$ACTUAL\" ] || {{ echo \"checksum mismatch\" >&2; exit 1; }}
-
-# Extract
-mkdir -p \"$HOME/.local/bin\"
-tar -xzf \"$TMP/$ART\" -C \"$TMP\"
-ARCHIVE_DIR=\"$TMP/neoth-v${{VERSION}}-${{TARGET}}\"
-[ -f \"$ARCHIVE_DIR/neoth\" ] || {{ echo \"archive missing neoth\" >&2; exit 1; }}
-[ -f \"$ARCHIVE_DIR/neothd\" ] || {{ echo \"archive missing neothd compatibility launcher\" >&2; exit 1; }}
-[ -f \"$ARCHIVE_DIR/freedom.yaml.example\" ] || {{ echo \"archive missing freedom.yaml.example\" >&2; exit 1; }}
-install -m 0755 \"$ARCHIVE_DIR/neoth\" \"$HOME/.local/bin/neoth\"
-install -m 0755 \"$ARCHIVE_DIR/neothd\" \"$HOME/.local/bin/neothd\"
-if [ ! -f \"$HOME/.local/bin/freedom.yaml.example\" ]; then
-  install -m 0644 \"$ARCHIVE_DIR/freedom.yaml.example\" \"$HOME/.local/bin/freedom.yaml.example\"
-fi
-
-echo \"NEOTH ${{VERSION}} installed to $HOME/.local/bin/neoth\"
-echo \"Add ~/.local/bin to your PATH if it isn't already.\"
-echo \"Next: run 'neoth init' to start the wizard.\"
+curl -fsSL '{INSTALL_SH_URL}' | NEOTH_VERSION='v{quoted_version}' sh
 ",
     )
 }
@@ -438,75 +385,17 @@ mod tests {
     #[test]
     fn install_sh_embeds_version() {
         let script = render_install_sh("0.3.0");
-        assert!(script.contains("VERSION=\"0.3.0\""));
+        assert!(script.contains("NEOTH_VERSION='v0.3.0'"));
     }
 
     #[test]
-    fn install_sh_detects_four_target_combos() {
+    fn install_sh_delegates_to_the_only_canonical_installer() {
         let script = render_install_sh("0.3.0");
-        for case in [
-            "Linux-x86_64",
-            "Linux-aarch64",
-            "Darwin-x86_64",
-            "Darwin-arm64",
-        ] {
-            assert!(script.contains(case), "case branch missing: {case}");
-        }
-    }
-
-    #[test]
-    fn install_sh_verifies_checksum() {
-        let script = render_install_sh("0.3.0");
-        assert!(script.contains("sha256sum"));
-        assert!(script.contains("shasum -a 256"));
-        // Drift guard — the curl line for the .sha256 file MUST
-        // happen BEFORE the sha256sum verification.
-        let dl_pos = script
-            .find("CKSUM_URL")
-            .expect("sha256 download line not found");
-        let verify_pos = script.find("EXPECTED=").unwrap();
-        assert!(
-            dl_pos < verify_pos,
-            "checksum download must precede verification"
-        );
-    }
-
-    #[test]
-    fn install_sh_extracts_to_local_bin() {
-        let script = render_install_sh("0.3.0");
-        assert!(script.contains("HOME/.local/bin"));
-        assert!(script.contains("tar -xzf"));
-    }
-
-    #[test]
-    fn install_sh_requires_and_installs_packaged_compat_launcher() {
-        let script = render_install_sh("0.3.0");
-        assert!(script.contains("archive missing neothd compatibility launcher"));
-        assert!(
-            script.contains("install -m 0755 \"$ARCHIVE_DIR/neothd\" \"$HOME/.local/bin/neothd\"")
-        );
-        assert!(
-            !script.contains("install -m 0755 \"$ARCHIVE_DIR/neoth\" \"$HOME/.local/bin/neothd\"")
-        );
-    }
-
-    #[test]
-    fn install_sh_unsupported_host_exits_nonzero() {
-        let script = render_install_sh("0.3.0");
-        assert!(script.contains("unsupported host"));
-        assert!(script.contains("exit 1"));
-    }
-
-    #[test]
-    fn install_sh_rejects_tmp_dir_via_trap() {
-        let script = render_install_sh("0.3.0");
-        assert!(script.contains("trap 'rm -rf \"$TMP\"' EXIT"));
-    }
-
-    #[test]
-    fn install_sh_points_at_correct_releases_base() {
-        let script = render_install_sh("0.3.0");
-        assert!(script.contains(RELEASES_BASE_URL));
+        assert!(script.contains(INSTALL_SH_URL));
+        assert_eq!(script.matches("curl -fsSL").count(), 1);
+        assert!(!script.contains("install -m"));
+        assert!(!script.contains("$HOME/.local/bin/freedom.yaml.example"));
+        assert!(!script.contains("tar -xzf"));
     }
 
     // ── render_winget_manifest ────────────────────────────────────

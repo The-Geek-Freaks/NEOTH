@@ -160,13 +160,11 @@ fn ssid_via_networksetup() -> Option<String> {
             .args(["-getairportnetwork", dev])
             .output()
             .ok();
-        if let Some(out) = output {
-            if out.status.success() {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                if let Some(ssid) = parse_networksetup_ssid(&stdout) {
-                    return Some(ssid);
-                }
-            }
+        if let Some(out) = output
+            && out.status.success()
+            && let Some(ssid) = parse_networksetup_ssid(&String::from_utf8_lossy(&out.stdout))
+        {
+            return Some(ssid);
         }
     }
     None

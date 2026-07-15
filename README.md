@@ -99,7 +99,11 @@ cannot be downloaded and the archive was authenticated out of band.
 
 Desktop archives contain `neoth`, the `neothd` compatibility launcher, the
 separate `neothd-gui` binary consumed by bare `neoth` and `neoth gui`, `neoth-migrate`, and
-`neoth-relay`, plus the zero-dependency `neoth-keet-bridge` standalone. Only the
+`neoth-relay`, plus the zero-dependency `neoth-keet-bridge` standalone. They
+also carry a release-bound Graphify map of the exact tagged source tree; NEOTH
+verifies its source HEAD, version, closed file set, and payload hash before
+using it. Graphify and Python are build-time release inputs, not user
+dependencies. Only the
 explicitly headless musl server archive omits the GUI and the glibc-linked Keet
 companion.
 The future crates.io package installs only the `neoth`/`neothd` core package;

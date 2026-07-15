@@ -199,26 +199,6 @@ jobs:
         with:
           category: /language:rust
 
-      - name: Block unresolved high or critical CodeQL alerts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # GitHub-hosted runner images can carry a gh version without
-          # `gh api --slurp`. Emit every page as JSON and let the runner's jq
-          # combine them instead; an API or parse failure still fails closed
-          # under the workflow shell's `set -eo pipefail` contract.
-          alert_count=$(gh api --paginate -X GET \
-            "repos/${GITHUB_REPOSITORY}/code-scanning/alerts" \
-            -f state=open \
-            -f tool_name=CodeQL \
-            -f per_page=100 | \
-            jq -s '[.[][] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")] | length')
-          if [[ "$alert_count" -ne 0 ]]; then
-            echo "::error::$alert_count unresolved high/critical CodeQL alert(s) block Gold"
-            exit 1
-          fi
-
   codeql-javascript:
     name: CodeQL / JavaScript
     runs-on: ubuntu-24.04
@@ -245,11 +225,27 @@ jobs:
         with:
           category: /language:javascript-typescript
 
+  codeql-gate:
+    name: CodeQL / unresolved high-critical gate
+    needs: [codeql, codeql-javascript]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: read
+
+    steps:
+      # Evaluate the repository-wide alert state only after both exact-head
+      # language analyses have uploaded their results. A per-language gate can
+      # race the other analysis and falsely fail on alerts that the still-
+      # running job closes.
       - name: Block unresolved high or critical CodeQL alerts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # GitHub-hosted runner images can carry a gh version without
+          # `gh api --slurp`. Emit every page as JSON and let jq combine them;
+          # API or parse errors remain fail-closed under pipefail.
           alert_count=$(gh api --paginate -X GET \
             "repos/${GITHUB_REPOSITORY}/code-scanning/alerts" \
             -f state=open \

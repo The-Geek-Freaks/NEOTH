@@ -83,6 +83,371 @@ EOF
   touch -h -t "$timestamp" "$artifact.sha256" "$artifact.json"
 }
 
+# Apple compares CFBundleVersion as at most three numeric components. Preserve
+# SemVer precedence without pretending that arbitrary prerelease identifiers
+# have a native ordering: unsupported native-PKG versions fail closed.
+macos_bundle_version() {
+  local semver=$1
+  local core prerelease major minor patch stage sequence slot
+
+  core=${semver%%-*}
+  IFS=. read -r major minor patch <<<"$core"
+  ((major <= 99 && minor <= 99 && patch <= 99)) ||
+    die "macOS native package versions require major, minor, and patch in 0..99: $semver"
+  ((major > 0 || minor > 0)) ||
+    die "macOS native package versions require major or minor to be nonzero: $semver"
+
+  if [[ $semver != *-* ]]; then
+    slot=99
+  else
+    prerelease=${semver#*-}
+    if [[ ! $prerelease =~ ^(alpha|beta|rc)\.(0|[1-9]|[12][0-9]|3[01])$ ]]; then
+      die "macOS native prereleases require alpha.N, beta.N, or rc.N with N in 0..31: $semver"
+    fi
+    stage=${BASH_REMATCH[1]}
+    sequence=${BASH_REMATCH[2]}
+    case "$stage" in
+      alpha) slot=$sequence ;;
+      beta) slot=$((32 + sequence)) ;;
+      rc) slot=$((64 + sequence)) ;;
+    esac
+  fi
+
+  printf '%d.%d.%d\n' "$((major * 100 + minor))" "$patch" "$slot"
+}
+
+write_pkg_install_scripts() {
+  local scripts_dir=$1
+  local require_signature=$2
+  local expected_team_id=$3
+  local expected_requirement_sha256=$4
+  mkdir -p "$scripts_dir"
+
+  {
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      'export LC_ALL=C' \
+      "require_signature=$require_signature" \
+      "expected_bundle_id='$BUNDLE_ID'" \
+      "expected_release_version='$version'" \
+      "expected_bundle_version='$bundle_version'" \
+      "expected_team_id='$expected_team_id'" \
+      "expected_requirement_sha256='$expected_requirement_sha256'" \
+      'expected_owner_uid=0' \
+      "expected_target_volume='/'" \
+      'codesign_tool=/usr/bin/codesign' \
+      'find_tool=/usr/bin/find' \
+      'plutil_tool=/usr/bin/plutil' \
+      'readlink_tool=/usr/bin/readlink' \
+      'shasum_tool=/usr/bin/shasum' \
+      'stat_tool=/usr/bin/stat'
+    cat <<'NEOTH_PKG_PREINSTALL'
+
+die() {
+  printf 'NEOTH PKG preinstall: %s\n' "$*" >&2
+  exit 1
+}
+
+target_volume=${3:-/}
+[ "$target_volume" = "$expected_target_volume" ] ||
+  die "this package may only be installed on the root volume: $target_volume"
+case "$target_volume" in
+  /) applications_root=/Applications ;;
+  /*) applications_root="${target_volume%/}/Applications" ;;
+  *) die "target volume is not absolute: $target_volume" ;;
+esac
+live="$applications_root/NEOTH.app"
+case "$target_volume" in
+  /) bin_root=/usr/local/bin ;;
+  *) bin_root="${target_volume%/}/usr/local/bin" ;;
+esac
+
+require_owned_path() {
+  path=$1
+  label=$2
+  [ ! -L "$path" ] || die "$label must not be a symbolic link: $path"
+  [ -f "$path" ] || [ -d "$path" ] || die "$label is not a regular file or directory: $path"
+  metadata=$("$stat_tool" -f '%u %Sp' "$path") || die "could not inspect $label: $path"
+  owner=${metadata%% *}
+  mode=${metadata#* }
+  [ "$owner" = "$expected_owner_uid" ] ||
+    die "$label is not owned by the package owner: $path"
+  case "$mode" in
+    ?????w????* | ????????w?*) die "$label is group/world-writable: $path" ;;
+  esac
+}
+
+plist_value() {
+  "$plutil_tool" -extract "$2" raw -o - "$1" 2>/dev/null
+}
+
+require_plist_value() {
+  file=$1
+  key=$2
+  expected=$3
+  label=$4
+  actual=$(plist_value "$file" "$key") || die "$label is missing $key"
+  [ "$actual" = "$expected" ] || die "$label has an unexpected $key"
+}
+
+verify_app_contract() {
+  app=$1
+  required_release=$2
+  label=$3
+  [ -d "$app" ] && [ ! -L "$app" ] || die "$label must be a non-link directory: $app"
+  listing=$("$find_tool" "$app" -print) || die "could not inspect $label"
+  old_ifs=$IFS
+  IFS='
+'
+  set -f
+  for path in $listing; do
+    require_owned_path "$path" "$label member"
+  done
+  set +f
+  IFS=$old_ifs
+
+  info="$app/Contents/Info.plist"
+  receipt="$app/Contents/Resources/neoth-package-ownership.plist"
+  require_owned_path "$info" "$label Info.plist"
+  require_owned_path "$receipt" "$label ownership receipt"
+  require_plist_value "$info" CFBundleIdentifier "$expected_bundle_id" "$label Info.plist"
+  require_plist_value "$info" CFBundleExecutable neothd-gui "$label Info.plist"
+  require_plist_value "$info" CFBundlePackageType APPL "$label Info.plist"
+  require_plist_value "$receipt" schema_version 1 "$label ownership receipt"
+  require_plist_value "$receipt" product NEOTH "$label ownership receipt"
+  require_plist_value "$receipt" bundle_id "$expected_bundle_id" "$label ownership receipt"
+  require_plist_value "$receipt" install_profile native-pkg "$label ownership receipt"
+  receipt_release=$(plist_value "$receipt" release_version) ||
+    die "$label ownership receipt is missing release_version"
+  info_release=$(plist_value "$info" NEOTHReleaseVersion) ||
+    die "$label Info.plist is missing NEOTHReleaseVersion"
+  [ -n "$receipt_release" ] && [ "$receipt_release" = "$info_release" ] ||
+    die "$label ownership receipt does not match Info.plist release"
+  if [ -n "$required_release" ]; then
+    [ "$receipt_release" = "$required_release" ] ||
+      die "$label release does not match the package release"
+  fi
+  for name in neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge; do
+    require_owned_path "$app/Contents/MacOS/$name" "$label executable $name"
+  done
+  require_owned_path "$app/Contents/Resources/self-knowledge/manifest.json" \
+    "$label self-knowledge manifest"
+}
+
+verify_exact_signature() {
+  app=$1
+  label=$2
+  "$codesign_tool" --verify --deep --strict --verbose=2 "$app" ||
+    die "$label signature verification failed"
+  details=$("$codesign_tool" -dv --verbose=4 "$app" 2>&1) ||
+    die "$label signer identity could not be read"
+  team=$(printf '%s\n' "$details" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/tail -n 1)
+  [ "$team" = "$expected_team_id" ] || die "$label Team ID is not the pinned NEOTH Team ID"
+  requirement_output=$("$codesign_tool" -d -r- "$app" 2>&1) ||
+    die "$label designated requirement could not be read"
+  requirement=$(printf '%s\n' "$requirement_output" |
+    /usr/bin/sed -n 's/^designated => //p' | /usr/bin/tail -n 1)
+  [ -n "$requirement" ] || die "$label designated requirement is missing"
+  requirement_sha256=$(printf '%s' "$requirement" | "$shasum_tool" -a 256 | /usr/bin/awk '{print $1}')
+  [ "$requirement_sha256" = "$expected_requirement_sha256" ] ||
+    die "$label designated requirement is not the pinned NEOTH requirement"
+}
+
+verify_command_links() {
+  [ ! -L "$bin_root" ] || die "command directory must not be a symbolic link: $bin_root"
+  if [ -e "$bin_root" ] && [ ! -d "$bin_root" ]; then
+    die "command directory is not a directory: $bin_root"
+  fi
+  for name in neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge; do
+    path="$bin_root/$name"
+    expected="/Applications/NEOTH.app/Contents/MacOS/$name"
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      [ -L "$path" ] || die "refusing to replace foreign command path: $path"
+      [ "$("$readlink_tool" "$path")" = "$expected" ] ||
+        die "refusing to replace foreign command link: $path"
+      owner=$("$stat_tool" -f '%u' "$path") || die "could not inspect command link: $path"
+      [ "$owner" = "$expected_owner_uid" ] || die "refusing to replace foreign-owned command link: $path"
+    fi
+  done
+  path="$bin_root/neoth-uninstall"
+  expected=/Applications/NEOTH.app/Contents/Resources/uninstall-neoth.sh
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    [ -L "$path" ] || die "refusing to replace foreign command path: $path"
+    [ "$("$readlink_tool" "$path")" = "$expected" ] ||
+      die "refusing to replace foreign command link: $path"
+    owner=$("$stat_tool" -f '%u' "$path") || die "could not inspect command link: $path"
+    [ "$owner" = "$expected_owner_uid" ] || die "refusing to replace foreign-owned command link: $path"
+  fi
+}
+
+if [ -L "$applications_root" ] || [ ! -d "$applications_root" ]; then
+  die "Applications directory must be a non-link directory: $applications_root"
+fi
+if [ -e "$live" ] || [ -L "$live" ]; then
+  [ "$require_signature" -eq 1 ] ||
+    die 'unsigned NEOTH prerelease packages cannot replace an existing or legacy NEOTH.app; use the documented migration/uninstall flow first'
+  verify_app_contract "$live" '' 'existing NEOTH.app' ||
+    die 'existing NEOTH.app is not an exact package-owned installation; use the documented migration/uninstall flow first'
+  verify_exact_signature "$live" 'existing NEOTH.app' ||
+    die 'existing NEOTH.app is not signed by the pinned NEOTH release identity; use the documented migration/uninstall flow first'
+fi
+verify_command_links
+NEOTH_PKG_PREINSTALL
+  } >"$scripts_dir/preinstall"
+
+  {
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      'export LC_ALL=C' \
+      "require_signature=$require_signature" \
+      "expected_bundle_id='$BUNDLE_ID'" \
+      "expected_release_version='$version'" \
+      "expected_bundle_version='$bundle_version'" \
+      "expected_team_id='$expected_team_id'" \
+      "expected_requirement_sha256='$expected_requirement_sha256'" \
+      'expected_owner_uid=0' \
+      "expected_target_volume='/'" \
+      'codesign_tool=/usr/bin/codesign' \
+      'find_tool=/usr/bin/find' \
+      'plutil_tool=/usr/bin/plutil' \
+      'readlink_tool=/usr/bin/readlink' \
+      'shasum_tool=/usr/bin/shasum' \
+      'stat_tool=/usr/bin/stat'
+    cat <<'NEOTH_PKG_POSTINSTALL'
+
+die() {
+  printf 'NEOTH PKG postinstall: %s\n' "$*" >&2
+  exit 1
+}
+
+target_volume=${3:-/}
+[ "$target_volume" = "$expected_target_volume" ] ||
+  die "this package may only be installed on the root volume: $target_volume"
+case "$target_volume" in
+  /) applications_root=/Applications ;;
+  /*) applications_root="${target_volume%/}/Applications" ;;
+  *) die "target volume is not absolute: $target_volume" ;;
+esac
+live="$applications_root/NEOTH.app"
+case "$target_volume" in
+  /) bin_root=/usr/local/bin ;;
+  *) bin_root="${target_volume%/}/usr/local/bin" ;;
+esac
+
+require_owned_path() {
+  path=$1
+  label=$2
+  [ ! -L "$path" ] || die "$label must not be a symbolic link: $path"
+  [ -f "$path" ] || [ -d "$path" ] || die "$label is not a regular file or directory: $path"
+  metadata=$("$stat_tool" -f '%u %Sp' "$path") || die "could not inspect $label: $path"
+  owner=${metadata%% *}
+  mode=${metadata#* }
+  [ "$owner" = "$expected_owner_uid" ] || die "$label is not owned by the package owner: $path"
+  case "$mode" in
+    ?????w????* | ????????w?*) die "$label is group/world-writable: $path" ;;
+  esac
+}
+
+plist_value() {
+  "$plutil_tool" -extract "$2" raw -o - "$1" 2>/dev/null
+}
+
+require_plist_value() {
+  file=$1
+  key=$2
+  expected=$3
+  label=$4
+  actual=$(plist_value "$file" "$key") || die "$label is missing $key"
+  [ "$actual" = "$expected" ] || die "$label has an unexpected $key"
+}
+
+verify_new_payload() {
+  app=$1
+  [ -d "$app" ] && [ ! -L "$app" ] || die "installed NEOTH.app must be a non-link directory"
+  listing=$("$find_tool" "$app" -print) || die 'could not inspect installed NEOTH.app'
+  old_ifs=$IFS
+  IFS='
+'
+  set -f
+  for path in $listing; do
+    require_owned_path "$path" 'installed NEOTH.app member'
+  done
+  set +f
+  IFS=$old_ifs
+
+  info="$app/Contents/Info.plist"
+  receipt="$app/Contents/Resources/neoth-package-ownership.plist"
+  require_plist_value "$info" CFBundleIdentifier "$expected_bundle_id" 'installed Info.plist'
+  require_plist_value "$info" CFBundleExecutable neothd-gui 'installed Info.plist'
+  require_plist_value "$info" CFBundlePackageType APPL 'installed Info.plist'
+  require_plist_value "$info" CFBundleVersion "$expected_bundle_version" 'installed Info.plist'
+  require_plist_value "$info" NEOTHReleaseVersion "$expected_release_version" 'installed Info.plist'
+  require_plist_value "$receipt" schema_version 1 'installed ownership receipt'
+  require_plist_value "$receipt" product NEOTH 'installed ownership receipt'
+  require_plist_value "$receipt" bundle_id "$expected_bundle_id" 'installed ownership receipt'
+  require_plist_value "$receipt" install_profile native-pkg 'installed ownership receipt'
+  require_plist_value "$receipt" release_version "$expected_release_version" 'installed ownership receipt'
+  for name in neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge; do
+    require_owned_path "$app/Contents/MacOS/$name" "installed executable $name"
+  done
+  require_owned_path "$app/Contents/Resources/self-knowledge/manifest.json" \
+    'installed self-knowledge manifest'
+}
+
+verify_exact_signature() {
+  app=$1
+  "$codesign_tool" --verify --deep --strict --verbose=2 "$app" ||
+    die 'installed NEOTH.app signature verification failed'
+  details=$("$codesign_tool" -dv --verbose=4 "$app" 2>&1) ||
+    die 'installed NEOTH.app signer identity could not be read'
+  team=$(printf '%s\n' "$details" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/tail -n 1)
+  [ "$team" = "$expected_team_id" ] || die 'installed NEOTH.app Team ID is not pinned'
+  requirement_output=$("$codesign_tool" -d -r- "$app" 2>&1) ||
+    die 'installed NEOTH.app designated requirement could not be read'
+  requirement=$(printf '%s\n' "$requirement_output" |
+    /usr/bin/sed -n 's/^designated => //p' | /usr/bin/tail -n 1)
+  [ -n "$requirement" ] || die 'installed NEOTH.app designated requirement is missing'
+  requirement_sha256=$(printf '%s' "$requirement" | "$shasum_tool" -a 256 | /usr/bin/awk '{print $1}')
+  [ "$requirement_sha256" = "$expected_requirement_sha256" ] ||
+    die 'installed NEOTH.app designated requirement is not pinned'
+}
+
+verify_installed_command_links() {
+  [ -d "$bin_root" ] && [ ! -L "$bin_root" ] || die 'installed command directory is invalid'
+  for name in neoth neothd neothd-gui neoth-migrate neoth-relay neoth-keet-bridge; do
+    path="$bin_root/$name"
+    expected="/Applications/NEOTH.app/Contents/MacOS/$name"
+    [ -L "$path" ] || die "installed command link is missing: $path"
+    [ "$("$readlink_tool" "$path")" = "$expected" ] || die "installed command link is wrong: $path"
+    owner=$("$stat_tool" -f '%u' "$path") || die "could not inspect installed command link: $path"
+    [ "$owner" = "$expected_owner_uid" ] || die "installed command link has the wrong owner: $path"
+  done
+  path="$bin_root/neoth-uninstall"
+  [ -L "$path" ] || die "installed command link is missing: $path"
+  [ "$("$readlink_tool" "$path")" = '/Applications/NEOTH.app/Contents/Resources/uninstall-neoth.sh' ] ||
+    die "installed command link is wrong: $path"
+  owner=$("$stat_tool" -f '%u' "$path") || die "could not inspect installed command link: $path"
+  [ "$owner" = "$expected_owner_uid" ] || die "installed command link has the wrong owner: $path"
+}
+
+# PackageKit has already placed the strict, non-relocatable component at its
+# live path. Validate only those new bytes. Returning nonzero delegates rollback
+# to PackageKit; this script never executes, moves, or removes an old candidate.
+verify_new_payload "$live"
+if [ "$require_signature" -eq 1 ]; then
+  verify_exact_signature "$live"
+fi
+verify_installed_command_links
+"$live/Contents/MacOS/neoth" --output json self-knowledge verify \
+  --snapshot "$live/Contents/Resources/self-knowledge" >/dev/null
+NEOTH_PKG_POSTINSTALL
+  } >"$scripts_dir/postinstall"
+
+  chmod 0755 "$scripts_dir/preinstall" "$scripts_dir/postinstall"
+}
+
 capture_version() {
   local executable=$1
   local capture pid watchdog status
@@ -113,7 +478,7 @@ capture_version() {
 }
 
 emit_preflight_receipt() {
-  local name checksum
+  local name checksum path relative
   printf '%s\n' 'NEOTH-MACOS-PREFLIGHT-V1'
   printf 'version %s\n' "$version"
   printf 'target %s\n' "$target"
@@ -122,6 +487,11 @@ emit_preflight_receipt() {
     checksum=$(shasum -a 256 "$bundle/$name" | awk '{print $1}')
     printf '%s  %s\n' "$checksum" "$name"
   done
+  while IFS= read -r path; do
+    relative=${path#"$bundle/"}
+    checksum=$(shasum -a 256 "$path" | awk '{print $1}')
+    printf '%s  %s\n' "$checksum" "$relative"
+  done < <(find "$bundle/self-knowledge" -type f -print | LC_ALL=C sort)
 }
 
 write_preflight_receipt_file() {
@@ -167,6 +537,8 @@ print_layout() {
 /Applications/NEOTH.app/Contents/Resources/THIRD_PARTY_LICENSES
 /Applications/NEOTH.app/Contents/Resources/examples/freedom.yaml.example
 /Applications/NEOTH.app/Contents/Resources/examples/import-manifest.example.yaml
+/Applications/NEOTH.app/Contents/Resources/neoth-package-ownership.plist
+/Applications/NEOTH.app/Contents/Resources/self-knowledge/manifest.json
 /Applications/NEOTH.app/Contents/Resources/uninstall-neoth.sh
 /usr/local/bin/neoth
 /usr/local/bin/neothd
@@ -245,6 +617,8 @@ if [[ $version == *-* ]]; then
     [[ ! $part =~ ^0[0-9]+$ ]] || die "numeric prerelease identifiers must not have leading zeroes"
   done
 fi
+numeric_version=${version%%-*}
+bundle_version=$(macos_bundle_version "$version")
 
 case "$arch" in
   x86_64) target=x86_64-apple-darwin ;;
@@ -285,9 +659,11 @@ bundle="$(cd "$bundle" && pwd -P)"
   die "bundle directory must be named neoth-v${version}-${target}"
 
 need_cmd lipo
+need_cmd find
 if [[ -n $write_preflight_receipt || -n $preflight_receipt ]]; then
   need_cmd cmp
   need_cmd shasum
+  need_cmd sort
 fi
 for name in "${BINARIES[@]}"; do
   path="$bundle/$name"
@@ -300,6 +676,17 @@ for name in "${SUPPORT_FILES[@]}"; do
   [[ -f $bundle/$name && ! -L $bundle/$name && -s $bundle/$name ]] ||
     die "missing regular non-empty release file: $name"
 done
+snapshot="$bundle/self-knowledge"
+[[ -d $snapshot && ! -L $snapshot && -s $snapshot/manifest.json && ! -L $snapshot/manifest.json ]] ||
+  die "missing regular self-knowledge snapshot and manifest"
+[[ -z $(find "$snapshot" -type l -print -quit) ]] ||
+  die "self-knowledge snapshot must not contain symlinks"
+[[ -z $(find "$snapshot" ! -type f ! -type d -print -quit) ]] ||
+  die "self-knowledge snapshot contains a non-file/non-directory entry"
+while IFS= read -r -d '' path; do
+  [[ $path != *$'\n'* && $path != *$'\r'* ]] ||
+    die "self-knowledge path contains a newline"
+done < <(find "$snapshot" -print0)
 if [[ -n $preflight_receipt ]]; then
   verify_preflight_receipt_file "$preflight_receipt"
 else
@@ -322,7 +709,7 @@ fi
 [[ $source_date_epoch =~ ^[0-9]+$ ]] || die "--source-date-epoch must be an integer"
 ((source_date_epoch >= 315532800)) || die "--source-date-epoch must be 1980-01-01 or later"
 
-for command in cmp codesign date ditto find hdiutil install lipo mktemp pkgbuild pkgutil plutil shasum tar touch xcrun; do
+for command in awk chmod cmp codesign date diff ditto find hdiutil install lipo lsbom mktemp pkgbuild pkgutil plutil sed shasum sort tail tar touch xcrun; do
   need_cmd "$command"
 done
 if ((do_signing)); then
@@ -376,19 +763,44 @@ done
 for name in freedom.yaml.example import-manifest.example.yaml; do
   install -m 0644 "$bundle/$name" "$examples_dir/$name"
 done
+ditto "$snapshot" "$resources_dir/self-knowledge"
 install -m 0755 "$SCRIPT_DIR/uninstall-neoth.sh" "$resources_dir/uninstall-neoth.sh"
 
-version_without_build=${version%%+*}
-numeric_version=${version_without_build%%-*}
-sed -e "s/@NUMERIC_VERSION@/$numeric_version/g" -e "s/@RELEASE_VERSION@/$version/g" \
+sed -e "s/@NUMERIC_VERSION@/$numeric_version/g" \
+  -e "s/@BUNDLE_VERSION@/$bundle_version/g" \
+  -e "s/@RELEASE_VERSION@/$version/g" \
   "$SCRIPT_DIR/Info.plist.in" >"$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
+[[ $(plutil -extract CFBundleVersion raw -o - "$app/Contents/Info.plist") == "$bundle_version" ]] ||
+  die "app PackageKit bundle-version contract drifted"
 [[ $(plutil -extract LSEnvironment.NEOTH_PRODUCT_LAUNCHER raw -o - "$app/Contents/Info.plist") == 1 ]] ||
   die "app product-launcher environment contract drifted"
+ownership_receipt="$resources_dir/neoth-package-ownership.plist"
+cat >"$ownership_receipt" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>schema_version</key>
+  <integer>1</integer>
+  <key>product</key>
+  <string>NEOTH</string>
+  <key>bundle_id</key>
+  <string>$BUNDLE_ID</string>
+  <key>install_profile</key>
+  <string>native-pkg</string>
+  <key>release_version</key>
+  <string>$version</string>
+</dict>
+</plist>
+EOF
+plutil -lint "$ownership_receipt" >/dev/null
 
 timestamp="$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')"
 find "$app" -exec touch -h -t "$timestamp" {} +
 
+expected_team_id=UNSIGNED
+expected_requirement_sha256=UNSIGNED
 if ((do_signing)); then
   for name in "${BINARIES[@]}"; do
     entitlements="$SCRIPT_DIR/entitlements.plist"
@@ -402,7 +814,19 @@ if ((do_signing)); then
   done
   codesign --force --sign "$application_identity" --options runtime --timestamp \
     --entitlements "$SCRIPT_DIR/entitlements.plist" "$app"
-  codesign --verify --strict --verbose=2 "$app"
+  codesign --verify --deep --strict --verbose=2 "$app"
+  signature_details=$(codesign -dv --verbose=4 "$app" 2>&1) ||
+    die "could not read the signed app identity"
+  expected_team_id=$(sed -n 's/^TeamIdentifier=//p' <<<"$signature_details" | tail -n 1)
+  [[ $expected_team_id =~ ^[A-Z0-9]{10}$ ]] ||
+    die "signed app has no exact 10-character Team ID"
+  requirement_output=$(codesign -d -r- "$app" 2>&1) ||
+    die "could not read the signed app designated requirement"
+  designated_requirement=$(sed -n 's/^designated => //p' <<<"$requirement_output" | tail -n 1)
+  [[ -n $designated_requirement ]] || die "signed app has no designated requirement"
+  expected_requirement_sha256=$(printf '%s' "$designated_requirement" | shasum -a 256 | awk '{print $1}')
+  [[ $expected_requirement_sha256 =~ ^[0-9a-f]{64}$ ]] ||
+    die "signed app designated requirement digest is invalid"
 fi
 
 notary_args=()
@@ -435,6 +859,7 @@ done
 for name in "${SUPPORT_FILES[@]}"; do
   install -m 0644 "$bundle/$name" "$portable_root/$name"
 done
+ditto "$snapshot" "$portable_root/self-knowledge"
 find "$portable_root" -exec touch -h -t "$timestamp" {} +
 COPYFILE_DISABLE=1 tar -C "$portable_parent" -czf "$portable_output" "$(basename "$portable_root")"
 portable_verify="$work/portable-verify"
@@ -447,18 +872,52 @@ for name in "${BINARIES[@]}"; do
     codesign --verify --strict --verbose=2 "$portable_verify/$(basename "$portable_root")/$name"
   fi
 done
+diff -qr "$snapshot" "$portable_verify/$(basename "$portable_root")/self-knowledge" >/dev/null ||
+  die "portable archive changed or omitted self-knowledge payload"
 write_sidecars "$portable_output" portable-tar
 
 pkg_root="$work/pkg-root"
+pkg_scripts="$work/pkg-scripts"
+pkg_component_plist="$work/pkg-components.plist"
 mkdir -p "$pkg_root/Applications" "$pkg_root/usr/local/bin"
+# PackageKit owns the live, strict component. Its BOM and receipt therefore
+# describe the files operators actually run; rollback is PackageKit's job.
 ditto "$app" "$pkg_root/Applications/NEOTH.app"
 for name in "${BINARIES[@]}"; do
   ln -s "/Applications/NEOTH.app/Contents/MacOS/$name" "$pkg_root/usr/local/bin/$name"
 done
 ln -s '/Applications/NEOTH.app/Contents/Resources/uninstall-neoth.sh' "$pkg_root/usr/local/bin/neoth-uninstall"
 find "$pkg_root" -exec touch -h -t "$timestamp" {} +
+write_pkg_install_scripts \
+  "$pkg_scripts" \
+  "$do_signing" \
+  "$expected_team_id" \
+  "$expected_requirement_sha256"
+find "$pkg_scripts" -exec touch -h -t "$timestamp" {} +
+cat >"$pkg_component_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+  <dict>
+    <key>BundleHasStrictIdentifier</key>
+    <true/>
+    <key>BundleIsRelocatable</key>
+    <false/>
+    <key>BundleIsVersionChecked</key>
+    <true/>
+    <key>BundleOverwriteAction</key>
+    <string>upgrade</string>
+    <key>RootRelativeBundlePath</key>
+    <string>Applications/NEOTH.app</string>
+  </dict>
+</array>
+</plist>
+EOF
+plutil -lint "$pkg_component_plist" >/dev/null
+touch -h -t "$timestamp" "$pkg_component_plist"
 
-pkg_args=(--root "$pkg_root" --identifier "$BUNDLE_ID" --version "$numeric_version" --install-location /)
+pkg_args=(--root "$pkg_root" --scripts "$pkg_scripts" --component-plist "$pkg_component_plist" --identifier "$BUNDLE_ID" --version "$bundle_version" --install-location / --ownership recommended)
 if ((do_signing)); then
   pkg_args+=(--sign "$installer_identity" --timestamp)
 fi
@@ -472,6 +931,25 @@ if ((do_notarization)); then
   xcrun stapler validate "$pkg_output"
 fi
 write_sidecars "$pkg_output" pkg
+pkg_verify="$work/pkg-verify"
+pkgutil --expand-full "$pkg_output" "$pkg_verify"
+diff -qr \
+  "$snapshot" \
+  "$pkg_verify/Payload/Applications/NEOTH.app/Contents/Resources/self-knowledge" >/dev/null ||
+  die "built PKG changed or omitted self-knowledge payload"
+[[ -x $pkg_verify/Scripts/preinstall && -x $pkg_verify/Scripts/postinstall ]] ||
+  die "built PKG omitted executable ownership install scripts"
+cmp -s \
+  "$ownership_receipt" \
+  "$pkg_verify/Payload/Applications/NEOTH.app/Contents/Resources/neoth-package-ownership.plist" ||
+  die "built PKG changed or omitted its ownership receipt"
+[[ -f $pkg_verify/Bom ]] || die "built PKG has no PackageKit BOM"
+pkg_bom_payload=$(lsbom -s "$pkg_verify/Bom" | sed 's#^\./##')
+grep -Fqx 'Applications/NEOTH.app/Contents/Info.plist' <<<"$pkg_bom_payload" ||
+  die "built PKG BOM does not own the live NEOTH.app"
+if grep -F '.NEOTH.app.neoth-pkg-' <<<"$pkg_bom_payload" >/dev/null; then
+  die "built PKG BOM still owns a hidden transaction carrier"
+fi
 
 dmg_root="$work/dmg-root"
 mkdir -p "$dmg_root"
@@ -500,14 +978,24 @@ done
 for name in freedom.yaml.example import-manifest.example.yaml; do
   [[ -s $app_output/Contents/Resources/examples/$name ]] || die "built app is missing example $name"
 done
+cmp -s "$ownership_receipt" "$app_output/Contents/Resources/neoth-package-ownership.plist" ||
+  die "built app changed or omitted its ownership receipt"
+diff -qr "$snapshot" "$app_output/Contents/Resources/self-knowledge" >/dev/null ||
+  die "built app changed or omitted self-knowledge payload"
 plutil -lint "$app_output/Contents/Info.plist" >/dev/null
 [[ $(plutil -extract CFBundleIdentifier raw -o - "$app_output/Contents/Info.plist") == "$BUNDLE_ID" ]] ||
   die "built app bundle identifier drifted"
+[[ $(plutil -extract CFBundleVersion raw -o - "$app_output/Contents/Info.plist") == "$bundle_version" ]] ||
+  die "built app PackageKit bundle version drifted"
 [[ $(plutil -extract LSEnvironment.NEOTH_PRODUCT_LAUNCHER raw -o - "$app_output/Contents/Info.plist") == 1 ]] ||
   die "built app product-launcher environment contract drifted"
 pkg_payload="$(pkgutil --payload-files "$pkg_output" | sed 's#^\./##')"
+if grep -F '.NEOTH.app.neoth-pkg-' <<<"$pkg_payload" >/dev/null; then
+  die "built PKG payload still owns a hidden transaction carrier"
+fi
 while IFS= read -r required_path; do
   grep -Fqx -- "${required_path#/}" <<<"$pkg_payload" || die "built PKG is missing $required_path"
+  grep -Fqx -- "${required_path#/}" <<<"$pkg_bom_payload" || die "built PKG BOM is missing $required_path"
 done < <(print_layout)
 if ((do_notarization)); then
   xcrun stapler validate "$app_output"
@@ -518,6 +1006,10 @@ mkdir -p "$dmg_mount"
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$dmg_mount" "$dmg_output"
 [[ -d $dmg_mount/NEOTH.app ]] || die "built DMG is missing NEOTH.app"
 [[ -s $dmg_mount/$(basename "$pkg_output") ]] || die "built DMG is missing its native PKG"
+cmp -s "$ownership_receipt" "$dmg_mount/NEOTH.app/Contents/Resources/neoth-package-ownership.plist" ||
+  die "built DMG changed or omitted the app ownership receipt"
+diff -qr "$snapshot" "$dmg_mount/NEOTH.app/Contents/Resources/self-knowledge" >/dev/null ||
+  die "built DMG changed or omitted self-knowledge payload"
 [[ -L $dmg_mount/Applications && $(readlink "$dmg_mount/Applications") == /Applications ]] ||
   die "built DMG is missing its Applications link"
 hdiutil detach -quiet "$dmg_mount"

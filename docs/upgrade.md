@@ -2,7 +2,8 @@
 
 The `neoth` core is self-contained; desktop release archives also ship the
 `neothd` compatibility launcher, `neothd-gui`, `neoth-migrate`, and
-`neoth-relay`, plus the self-contained `neoth-keet-bridge`. State lives under
+`neoth-relay`, plus the self-contained `neoth-keet-bridge` and a release-bound
+Graphify self-knowledge snapshot. State lives under
 `~/.neoth/`. Upgrades are designed to be safe and in-place: your memory, config,
 and audit log survive across versions.
 
@@ -12,7 +13,7 @@ and audit log survive across versions.
 ## TL;DR
 
 ```bash
-# Built-in self-update (verifies one signed release bundle + rollback):
+# Built-in self-update (portable installs; signed bundle + crash recovery):
 neoth update --self --apply
 
 # Then confirm health:
@@ -33,13 +34,44 @@ neoth doctor
    by default. Official releases pin the key at build time and publish the
    signature companion. Pass `--allow-unsigned` only as an explicit recovery
    action for a trusted non-release build.
-4. **Bundle preflight** — every companion currently installed beside `neoth`
-   must exist in the same verified archive before any executable is touched.
-   This includes `neoth-keet-bridge`; source-only core installations remain
-   core-only.
-5. **Transactional replace** — companions are backed up and replaced first;
-   `neoth` is the commit point and moves last. A partial failure restores prior
-   executables in reverse order. Backups use `*.bak.<timestamp>` names.
+4. **Closed extraction and bundle preflight** — the authenticated archive must
+   have one exact version-and-target-bound root. Traversal, links, hardlinks,
+   reparse points, special files, duplicate/case-colliding names, excessive
+   depth/count, and oversized members are rejected in a private staging
+   directory. The complete binary, support/legal/example, and release-bound
+   `self-knowledge/` set must match the compiled platform profile exactly.
+5. **Journaled replace** — every package-owned portable member is applied by
+   one native transaction; `neoth` is the final commit point. An existing public
+   entrypoint is copied to a verified backup and then atomically replaced, so
+   its pathname never disappears in a crash window. The result reports a
+   durable transaction ID. If the process or machine stops mid-commit, the next
+   normal `neoth` or `neothd` start validates and recovers the executable-bound
+   journal before command dispatch; a later installer run does the same.
+   Portable support/legal/example files and the snapshot are isolated below
+   `neoth-support/`, rather than claiming generic names in a shared binary root.
+   User config, credentials, WAL, memory, and Wiki/User Overlays are outside the
+   transaction and are never replaced.
+
+   On Windows portable installs, the running CLI cannot replace itself. It
+   launches the verified `neoth.exe` from the target bundle, requests a graceful
+   daemon drain, and exits. That helper waits for the old PID, re-verifies the
+   archive and signature, stops/restarts the Task Scheduler supervisor when
+   configured, commits the same transaction, writes a durable result receipt,
+   and only then emits `SELF_UPDATE_APPLIED`. The CLI reports
+   `handoff_scheduled` until that real commit exists; unsigned recovery builds
+   cannot use the detached path. Portable Windows staging, handoff and cleanup
+   deliberately refuse an elevated process token before touching their private
+   staging namespace. Use the signed Windows Setup package for an administrator
+   or machine-wide installation/update.
+
+The member transaction intentionally refuses native Linux DEB/RPM installs and
+signed `NEOTH.app` installs. Updating those files behind dpkg/rpm would corrupt
+the package database, and changing files inside an app bundle would invalidate
+Apple's outer code signature. The built-in updater currently reports that
+typed boundary and stops. Automatic selection and execution of the exact signed
+Windows Setup, macOS PKG/App replacement, and Linux DEB/RPM through the native
+package manager are still open v1.0 release work; use the authenticated native
+installer manually until those handoffs are wired and clean-machine tested.
 
 Background self-update is **off by default**. When `auto_update.enabled` is on,
 the daemon checks at `check_interval_secs`; setting that interval to `0`
@@ -67,6 +99,10 @@ any of them invalidates a previously staged artifact and forces a fresh fetch.
   keys take their documented defaults; nothing is rewritten unless you change it.
 - **Keys** — the WAL HMAC key (and, if you enabled it, the AEAD master key) stay
   put. See "Encryption keys" below.
+- **Self-knowledge overlays** — the immutable release baseline is upgraded, but
+  the materialized NEOTH Wiki and its `User Overlays` are operator state under
+  `NEOTH_HOME`; installers, package uninstall, and self-update never replace or
+  remove them.
 
 ## After upgrading: always run `neoth doctor`
 
@@ -94,7 +130,7 @@ If you turned on WAL/config encryption, the master key lives at
 ## Downgrade
 
 Downgrading is best-effort: an older binary may not understand a newer views-DB
-schema. Keep the `*.bak.<timestamp>` files the self-updater left, or restore the
-complete prior binary bundle, and run `neoth doctor`. The WAL itself is
-forward-and-backward readable (legacy plaintext + newer segment formats both
-parse).
+schema. Install a complete older signed bundle through the same platform
+installer path, then run `neoth doctor`; do not mix individual files from two
+releases. The WAL itself is forward-and-backward readable (legacy plaintext +
+newer segment formats both parse).

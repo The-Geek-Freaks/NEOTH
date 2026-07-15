@@ -22,6 +22,79 @@ maintainer's machine and copied into the GitHub Actions secret
 checks that signature against the pinned public key before any auto-update. An
 attacker who swaps a release cannot forge a signature without the private key.
 
+## Release self-knowledge inputs
+
+The release workflow also builds the Graphify self-knowledge snapshot that is
+shipped in every portable archive and native installer. Configure these before
+tagging:
+
+- Actions variable `NEOTH_GRAPHIFY_BACKEND`: one of `claude`, `gemini`,
+  `openai`, `kimi`, or `deepseek`.
+- Actions variable `NEOTH_GRAPHIFY_MODEL`: the exact model identifier used for
+  semantic clustering.
+- Actions secret `NEOTH_GRAPHIFY_API_KEY`: the credential for that selected
+  backend. It is exposed only to the read-only snapshot-build job.
+
+The generator environment is locked by
+`packaging/graphify-release/{pyproject.toml,uv.lock}` to Python 3.12.10 and
+`graphifyy==0.8.41` plus its required `matplotlib==3.10.8` SVG exporter,
+including artifact hashes, and is created under the runner temporary directory
+rather than inside the checkout. The same job first exercises the real locked
+CLI through AST recovery, clustering, and every required export. It then pins the
+workspace MSRV and records the normalized `rustc -Vv` and `cargo -V` identities
+used by Graphify's Cargo parser in the hashed generation receipt. Python,
+Graphify, Rust, and Cargo are probed again after generation; any drift fails the
+release. Generation must start and end at the exact tag HEAD with a pristine
+tracked input set. CI then seals the snapshot, re-verifies its closed file set
+and provenance after every cross-job transfer, and compiles its source HEAD plus
+canonical payload SHA-256 into the Rust release binaries. Containerized cross
+builds explicitly pass those same bindings through.
+
+The generator binds Graphify's pinned detector selection to the extraction
+manifest. If that detector excludes a sensitive-looking filename that is still
+public tracked code, NEOTH recovers only its AST locally before clustering; the
+file is never sent to the semantic backend. The receipt permits at most one
+such augmentation phase, and both the build-time and Rust runtime verifiers
+validate its exact script and arguments.
+
+The platform jobs recursively install the identical snapshot in the supported
+portable, Linux package, macOS app, and Windows Setup layouts. The updater
+accepts only package-owned locations derived from the installed executable;
+the read-only `NEOTH_SELF_KNOWLEDGE_DIR` override is never a write target.
+Release baselines are package-owned. Materialized `User Overlays` are
+operator-owned and must survive update and uninstall.
+
+### macOS native version ordering
+
+Apple's current bundle contract allows only three numeric `CFBundleVersion`
+components. NEOTH therefore maps a native macOS release to
+`(major * 100 + minor).patch.slot`: `alpha.0..31` uses slots `0..31`,
+`beta.0..31` uses `32..63`, `rc.0..31` uses `64..95`, and the stable release
+uses `99`. Major, minor, and patch must each fit `0..99`, and major plus minor
+must not both be zero. The same value is written to the app and PackageKit
+receipt, so `beta.1 < beta.2 < rc.1 < stable` and the next patch/minor/major
+always sorts later. A tag outside this deliberately bounded native mapping
+fails in the keyless macOS preflight before signing or publication; CI never
+silently collapses arbitrary SemVer prereleases to the stable bundle version.
+
+## Closed public release-asset policy
+
+The workflow does not treat every file emitted by a producer as a public
+release asset. `packaging/release_asset_contract.py` defines the exact
+version-derived surface: 52 canonical archives, native packages, metadata and
+checksum sidecars for the supported matrix. From those names it derives the
+53 signable payloads (including `SHA256SUMS`), 54 Cosign inputs (the signable
+set plus the public key), and the exact 161-file publication set.
+
+After all producers finish, CI rejects any missing or additional canonical
+name and emits `NEOTH_INTERNAL_RELEASE_ASSET_POLICY`. That policy is included
+in the SHA-256-bound cross-job transfer, but is never itself published. The
+isolated minisign and Cosign jobs consume its closed lists; the checkout-free
+publisher accepts only the policy's publication set and uploads those exact
+paths rather than filename globs. An accidental extra archive, executable,
+metadata file or checksum therefore fails before signing instead of silently
+becoming part of NEOTH's public v1 contract.
+
 ## One-time setup (maintainer)
 
 > **The canonical `The-Geek-Freaks/NEOTH` repository is already provisioned.**

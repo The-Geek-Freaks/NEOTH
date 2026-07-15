@@ -119,6 +119,12 @@ jobs:
       - name: Verify clean-machine authenticity bootstrap contract
         run: python3 packaging/test_bootstrap_verifier.py
 
+      - name: Verify release workflow and public asset contracts
+        run: |
+          python3 .github/release-tools/test-release-isolation.py
+          python3 packaging/tests/test_release_asset_contract.py
+          python3 packaging/tests/test_release_gate_contract.py
+
   release-signer:
     name: Isolated release signer
     runs-on: ubuntu-24.04

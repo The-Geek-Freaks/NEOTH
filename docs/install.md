@@ -11,6 +11,7 @@ the verified release installer; Rust users may use
 | Path | Best for |
 | :-- | :-- |
 | **Release binary** | Normal users. No Rust toolchain. |
+| **Native package** | `.deb`/`.rpm` on Linux, signed `.pkg`/`.dmg` on macOS, signed Setup `.exe` on Windows. |
 | **cargo install** | Rust users after publication; installs the core CLI/daemon package only. |
 | **Source build** | Contributors, packagers, operators, and private forks. |
 | **Installer script** | Linux/macOS or Windows setup with PATH wiring. |
@@ -78,6 +79,11 @@ tar -xzf "neoth-v1.0.0-$TARGET.tar.gz"
 for name in neoth neothd neoth-migrate neoth-relay; do
   install -m 0755 "neoth-v1.0.0-$TARGET/$name" "$HOME/.local/bin/$name"
 done
+mkdir -p "$HOME/.local/bin/neoth-support"
+for name in README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES freedom.yaml.example import-manifest.example.yaml; do
+  install -m 0644 "neoth-v1.0.0-$TARGET/$name" "$HOME/.local/bin/neoth-support/$name"
+done
+cp -R "neoth-v1.0.0-$TARGET/self-knowledge" "$HOME/.local/bin/neoth-support/self-knowledge"
 case "$TARGET" in
   *-unknown-linux-musl) ;;
   *)
@@ -91,9 +97,13 @@ neoth --version
 ```
 
 Desktop archives for GNU Linux, macOS, and Windows include all six executables,
-including the self-contained Keet companion. The static musl server archive is
-deliberately headless and omits `neothd-gui` plus the glibc-linked Keet
-companion; use the CLI wizard there with `neoth init`.
+including the self-contained Keet companion. Every archive, including the
+headless musl build, also contains the exact release-bound `self-knowledge/`
+snapshot generated from the tagged source by pinned Graphify. NEOTH verifies
+its closed file set, source HEAD, release version, and payload digest at runtime;
+normal users do not install Python or Graphify. The static musl server archive
+deliberately omits `neothd-gui` plus the glibc-linked Keet companion; use the CLI
+wizard there with `neoth init`.
 
 ## Path C: Linux/macOS installer
 
@@ -116,7 +126,19 @@ official Sigstore source recorded in `packaging/cosign-bootstrap.json`. It requi
 `neoth`, the `neothd` compatibility launcher, `neoth-migrate`,
 `neoth-relay`, `freedom.yaml.example`, and `neothd-gui` plus
 `neoth-keet-bridge` on desktop targets, validates the companion against the
-exact release version before mutation, installs the complete set transactionally,
+exact release version before mutation, verifies the complete
+`self-knowledge/` tree, and passes the exact extracted root to the verified
+release binary's hidden native installer. That one engine owns a common OS
+lock, destination-local staging, a durable hash-bound journal, automatic crash
+recovery, and the final `neoth` commit point. Every release replaces all
+package-owned binaries, examples, README/licenses, third-party notices, and the
+immutable self-knowledge baseline together. Portable support files live below
+the namespaced `neoth-support/` directory, so a shared `~/.local/bin` keeps any
+unrelated README, license, example, or `self-knowledge/` sentinel untouched.
+A markerless existing NEOTH binary or `neoth-support/` target fails closed with
+an explicit migration error; `~/.neoth`, credentials, private
+configuration, and user overlays are outside that transaction. Headless musl
+installs also remove stale desktop-only GUI/Keet companions atomically. It then
 wires the install directory into the detected user shell profile, and avoids
 sudo. The profile change applies to new
 shells; for the current shell run:
@@ -141,7 +163,8 @@ a valid signature from being replayed under another release asset name.
 Recommended: download and double-click `NEOTH-1.0.0-x64-Setup.exe` (or
 `NEOTH-1.0.0-arm64-Setup.exe`) from the GitHub Releases page. The installer is
 Authenticode-signed by the release pipeline, validates its payload before any
-mutation, installs the CLI, GUI, migration, relay, and Keet companions, wires
+mutation, installs the CLI, GUI, migration, relay, Keet companion, and the
+release-bound self-knowledge snapshot, wires
 the user PATH, and supports clean rollback/uninstall.
 
 Non-interactive PowerShell alternative:
@@ -160,13 +183,23 @@ neoth
 
 The PowerShell installer needs no preinstalled signature utility. It applies the install directory to both the real user
 PATH and the current process PATH, without copying system PATH entries into the
-user value. It enforces the same minisign/cosign and transactional replacement
-contract as the Unix installer.
+user value. It enforces the same minisign/cosign and native crash-recoverable
+bundle transaction as the Unix installer; PowerShell has no second file-swap
+algorithm or caller-defined member list.
 It also starts the packaged Keet standalone in a hidden console for an exact
 pre-install version check; a missing, broken, or mixed-version companion blocks
 the transaction before the public `neoth.exe` commit point.
 
-## Path E: build from source
+## Path E: native packages
+
+After the signed release exists, Linux users can install the matching `.deb` or
+`.rpm`; macOS users can open the signed/notarized `.pkg` or drag the `.app` from
+the `.dmg`. These packages contain the same CLI, GUI, companions, examples, and
+verified self-knowledge bytes as the portable archive. Package uninstall removes
+only package-owned files. It never removes `~/.neoth`, the materialized NEOTH
+Wiki, or `User Overlays`.
+
+## Path F: build from source
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH ~/.local/src/neoth

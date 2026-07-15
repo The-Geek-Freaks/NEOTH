@@ -706,7 +706,8 @@ pub struct FreedomConfig {
     /// GOLD-FEAT-03b — self-wiki background rebuild cron. When `enabled`,
     /// periodically re-renders the in-binary capability map (+ the PLAN/
     /// design corpus on dev checkouts) into the operator's Obsidian
-    /// vault and refreshes the ground-truth pointers. Default OFF.
+    /// vault and refreshes the ground-truth pointers. Default ON (local-only;
+    /// signed release baseline + update-safe operator overlays).
     #[serde(default)]
     pub self_wiki: SelfWikiConfig,
     /// HO-07 — neoth-monitor alerting sidecar cron. When `enabled`, the

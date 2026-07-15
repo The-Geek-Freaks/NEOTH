@@ -257,16 +257,15 @@ async fn run_self_apply(
                 ) {
                     Ok(outcome) => {
                         crate::updater::self_update::clear_staged(&stage_dir, &pending);
-                        emit_self_update_applied(
+                        finish_self_update_outcome(
                             &outcome,
                             repo,
                             channel,
                             &pending.target_triple,
                             "manual_from_staged",
+                            output,
                         )
-                        .await;
-                        render_self_apply(&outcome, output);
-                        maybe_request_restart()?;
+                        .await?;
                         return Ok(());
                     }
                     Err(e) => {
@@ -337,7 +336,16 @@ async fn run_self_apply(
     // thread it into the fresh-download verify+apply.
     // The archive is a version-locked bundle. The updater preserves a
     // source-only footprint, but refreshes every installed release companion.
-    let outcome = apply_update(&release, target, "neoth", install_dir, require_signature).await?;
+    let outcome = apply_update(
+        &release,
+        repo,
+        channel,
+        target,
+        "neoth",
+        install_dir,
+        require_signature,
+    )
+    .await?;
 
     // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — best-effort one-shot
     // writer (HF-01 pattern). Guard: if the daemon is live it owns the
@@ -347,10 +355,27 @@ async fn run_self_apply(
     // "manual"` — the operator ran `neoth update --self --apply`. The
     // The daemon's stage-only path emits its own staged-pending frame through
     // the live WAL writer; binary replacement remains operator-initiated.
-    emit_self_update_applied(&outcome, repo, channel, target, "manual").await;
+    finish_self_update_outcome(&outcome, repo, channel, target, "manual", output).await
+}
 
-    render_self_apply(&outcome, output);
-    maybe_request_restart()?;
+async fn finish_self_update_outcome(
+    outcome: &crate::updater::self_update::UpdateApplyOutcome,
+    repo: &str,
+    channel: crate::config::ReleaseChannel,
+    target: &str,
+    trigger_source: &str,
+    output: OutputFormat,
+) -> Result<()> {
+    match outcome {
+        crate::updater::self_update::UpdateApplyOutcome::Applied(applied) => {
+            emit_self_update_applied(applied, repo, channel, target, trigger_source).await;
+            render_self_apply(applied, output);
+            maybe_request_restart()?;
+        }
+        crate::updater::self_update::UpdateApplyOutcome::HandoffScheduled(scheduled) => {
+            render_self_handoff_scheduled(scheduled, output);
+        }
+    }
     Ok(())
 }
 
@@ -387,7 +412,7 @@ fn now_unix_secs() -> u64 {
 /// manual `neoth update --self --apply`. Skips silently when the daemon
 /// is live (it owns the WAL segment) or the WAL dir is unwritable —
 /// every failure is logged at WARN, never fatal.
-async fn emit_self_update_applied(
+pub(super) async fn emit_self_update_applied(
     outcome: &crate::updater::self_update::UpdateApplied,
     repo: &str,
     channel: crate::config::ReleaseChannel,
@@ -397,7 +422,8 @@ async fn emit_self_update_applied(
     let payload = serde_json::to_vec(&serde_json::json!({
         "from_version": outcome.from_version,
         "to_version": outcome.to_version,
-        "backup_path": outcome.backup_path.display().to_string(),
+        "transaction_id": outcome.transaction_id,
+        "recovery": "automatic_crash_recovery",
         "repo": repo,
         "channel": channel.as_str(),
         "target_triple": target,
@@ -518,7 +544,8 @@ fn render_self_apply(applied: &crate::updater::self_update::UpdateApplied, outpu
                 serde_json::json!({
                     "from_version": applied.from_version,
                     "to_version": applied.to_version,
-                    "backup_path": applied.backup_path.display().to_string(),
+                    "transaction_id": applied.transaction_id,
+                    "automatic_crash_recovery": applied.automatic_crash_recovery,
                     "restart_required": applied.restart_required,
                 })
             );
@@ -527,11 +554,44 @@ fn render_self_apply(applied: &crate::updater::self_update::UpdateApplied, outpu
             println!("# NEOTH release-bundle self-update applied");
             println!("  from         : {}", applied.from_version);
             println!("  to           : {}", applied.to_version);
-            println!("  backup       : {}", applied.backup_path.display());
+            println!("  transaction  : {}", applied.transaction_id);
+            println!("  recovery     : automatic on interrupted commit");
             if applied.restart_required {
                 println!();
                 println!("  Restart the daemon to run the new binary.");
             }
+        }
+    }
+}
+
+fn render_self_handoff_scheduled(
+    scheduled: &crate::updater::self_update::UpdateHandoffScheduled,
+    output: OutputFormat,
+) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "handoff_scheduled",
+                    "from_version": scheduled.from_version,
+                    "to_version": scheduled.to_version,
+                    "operation_id": scheduled.operation_id,
+                    "receipt_path": scheduled.receipt_path,
+                    "restart_required": scheduled.restart_required,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            println!("# NEOTH Windows self-update scheduled");
+            println!("  from         : {}", scheduled.from_version);
+            println!("  to           : {}", scheduled.to_version);
+            println!("  operation    : {}", scheduled.operation_id);
+            println!("  receipt      : {}", scheduled.receipt_path.display());
+            println!();
+            println!(
+                "  The signed target helper will finish the update automatically after this command exits."
+            );
         }
     }
 }

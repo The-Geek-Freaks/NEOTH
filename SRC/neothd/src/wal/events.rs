@@ -2091,15 +2091,16 @@ pub const EVENT_TYPE_CONFIG_RELOAD_REJECTED: u8 = 0xD1;
 /// `0xD2 SELF_UPDATE_APPLIED` — V03-09 Phase 2b. Emitted when
 /// `neoth update --self --apply` (or a future scheduled
 /// auto-update) successfully completed the download → SHA-256
-/// verify → extract → atomic-replace chain. The replacement
-/// landed on disk; the new binary takes effect on next daemon
-/// restart. Operators following the audit chain see a clear
-/// "version X → Y at time T" anchor.
+/// verify → closed extraction → journaled bundle transaction. The durable
+/// commit landed on disk; the new binary takes effect on next daemon restart.
+/// Operators following the audit chain see a clear "version X → Y at time T"
+/// anchor and the native transaction that performed it.
 ///
-/// Payload (JSON): `{from_version, to_version, backup_path,
-/// repo, target_triple, ts_unix}`. `backup_path` lets the
-/// operator revert with a single `mv` on Unix or via the
-/// rollback CLI later.
+/// Payload (JSON): `{from_version, to_version, transaction_id,
+/// recovery:"automatic_crash_recovery", repo, target_triple, ts_unix}`.
+/// Transaction backups are internal journal state and are removed after a
+/// durable commit; interrupted commits are completed or rolled back
+/// automatically instead of advertising a nonexistent manual backup.
 pub const EVENT_TYPE_SELF_UPDATE_APPLIED: u8 = 0xD2;
 
 /// `0xD3 PATCH_APPLIED` — Pick #6 Phase 4. Emitted after the

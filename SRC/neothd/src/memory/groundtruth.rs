@@ -45,6 +45,19 @@ pub enum Source {
     /// Operator pasted a markdown file; the bulk-text extractor produced
     /// this claim.
     BulkText,
+    /// Extracted from the release-signed, HEAD- and payload-bound Graphify
+    /// self-knowledge baseline. The bytes are authentic, but generated prose
+    /// is not thereby true; extracted claims therefore remain untrusted until
+    /// independently corroborated.
+    ReleaseSelfKnowledge,
+    /// The narrow cryptographic identity statement for a release snapshot
+    /// (version, source HEAD, payload and graph counters). Unlike generated
+    /// prose, those values are directly checked against signed/compiled bytes.
+    ReleaseBuildIdentity,
+    /// Extracted only from the operator-curated `Operator Notes` and
+    /// `Reviewed Self-Improve` overlay directories. Placement there is the
+    /// explicit attestation boundary; proposal staging is never accepted.
+    SelfKnowledgeOverlay,
     /// OM-01 — promoted from the operator's LOCAL OMI backend transcript feed
     /// (SC-14: only ever a self-hosted endpoint; api.omi.me is refused at
     /// daemon startup).
@@ -75,6 +88,9 @@ impl Source {
             Source::ImportSession => "import:session",
             Source::ImportObsidian => "import:obsidian",
             Source::BulkText => "bulk-text",
+            Source::ReleaseSelfKnowledge => "release-self-knowledge",
+            Source::ReleaseBuildIdentity => "release-build-identity",
+            Source::SelfKnowledgeOverlay => "self-knowledge-overlay",
             Source::Omi => "omi",
             Source::Synthesis => "synthesis-cron",
             Source::ArxivScan => "arxiv-skill-scan",
@@ -93,20 +109,24 @@ impl Source {
     /// the operator explicitly typing a fact. BulkText now starts `Raw` and must
     /// be corroborated (≥3 distinct sources, confidence ≥ 0.85) to reach Verified.
     pub fn is_operator_attested(&self) -> bool {
+        // BulkText and generated release prose are automated extraction;
+        // synthesis is an automated cron pass. None is operator attestation.
         matches!(
             self,
-            Source::Onboarding | Source::OperatorRuntime | Source::NmapScan | Source::ArpScan // BulkText removed: extraction is automated; corroboration required.
-                                                                                              // GOLD-ADAPT-JV-MEM-01.
-                                                                                              // Synthesis is NOT operator-attested: it's an automated cron pass.
-                                                                                              // NN-MEM-02.
+            Source::Onboarding
+                | Source::OperatorRuntime
+                | Source::NmapScan
+                | Source::ArpScan
+                | Source::SelfKnowledgeOverlay
         )
     }
 
     /// The fact-state a freshly-inserted row from this source starts in.
     ///
-    /// GOLD-ADAPT-JV-MEM-01: `BulkText` starts `Raw` (automated extraction;
-    /// requires at least one external corroboration to lift to `Candidate`, then
-    /// a second external source + confidence ≥ 0.85 to reach `Verified`).
+    /// GOLD-ADAPT-JV-MEM-01: automated extraction (`BulkText` and generated
+    /// release prose) starts `Raw`; it requires external corroboration to lift
+    /// to `Candidate`, then a second external source + confidence ≥ 0.85 to
+    /// reach `Verified`.
     /// Operator-attested sources start `Verified` (immediate trust, gate 2).
     /// All other external sources start `Candidate`.
     pub fn initial_fact_state(&self) -> FactState {
@@ -116,6 +136,10 @@ impl Source {
             // gates 1+3 (sourceCount ≥ 2 distinct + confidence ≥ 0.85) lift
             // to Verified. GOLD-ADAPT-JV-MEM-01.
             Source::BulkText => FactState::Raw,
+            Source::ReleaseSelfKnowledge => FactState::Raw,
+            // This source is restricted to values checked directly against
+            // the release manifest and compile-time identity bindings.
+            Source::ReleaseBuildIdentity => FactState::Verified,
             s if s.is_operator_attested() => FactState::Verified,
             _ => FactState::Candidate,
         }

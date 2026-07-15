@@ -2,21 +2,36 @@ from __future__ import annotations
 
 import pathlib
 import re
+import runpy
 import tomllib
 
 
 REPOSITORY_ROOT = pathlib.Path(__file__).parents[2]
 WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
 WORKSPACE_MANIFEST = REPOSITORY_ROOT / "SRC" / "Cargo.toml"
+NEOTH_MANIFEST_PATH = REPOSITORY_ROOT / "SRC" / "neothd" / "Cargo.toml"
 PRODUCT_LOCKFILE = REPOSITORY_ROOT / "SRC" / "Cargo.lock"
 PRODUCT_VERIFIER = REPOSITORY_ROOT / "SRC" / "neothd" / "src" / "updater" / "sig_verify.rs"
+GRAPHIFY_MANIFEST_PATH = REPOSITORY_ROOT / "packaging" / "graphify-release" / "pyproject.toml"
+GRAPHIFY_LOCKFILE = REPOSITORY_ROOT / "packaging" / "graphify-release" / "uv.lock"
+SELF_KNOWLEDGE_BUILDER_PATH = REPOSITORY_ROOT / "scripts" / "build_release_self_knowledge.py"
+RELEASE_ASSET_CONTRACT_PATH = REPOSITORY_ROOT / "packaging" / "release_asset_contract.py"
+RELEASE_GATE_CONTRACT_PATH = REPOSITORY_ROOT / "packaging" / "release_gate_contract.py"
+WINDOWS_SMOKE_PATH = REPOSITORY_ROOT / "packaging" / "windows" / "smoke-installer.ps1"
 SIGNER_ROOT = REPOSITORY_ROOT / ".github" / "release-tools" / "neoth-release-signer"
 SIGNER_MANIFEST_PATH = SIGNER_ROOT / "Cargo.toml"
 SIGNER_LOCKFILE = SIGNER_ROOT / "Cargo.lock"
 TEXT = WORKFLOW.read_text(encoding="utf-8")
 WORKSPACE = tomllib.loads(WORKSPACE_MANIFEST.read_text(encoding="utf-8"))
+NEOTH_MANIFEST = tomllib.loads(NEOTH_MANIFEST_PATH.read_text(encoding="utf-8"))
 PRODUCT_LOCK = tomllib.loads(PRODUCT_LOCKFILE.read_text(encoding="utf-8"))
 PRODUCT_VERIFIER_TEXT = PRODUCT_VERIFIER.read_text(encoding="utf-8")
+GRAPHIFY_MANIFEST = tomllib.loads(GRAPHIFY_MANIFEST_PATH.read_text(encoding="utf-8"))
+GRAPHIFY_LOCK = tomllib.loads(GRAPHIFY_LOCKFILE.read_text(encoding="utf-8"))
+SELF_KNOWLEDGE_BUILDER_TEXT = SELF_KNOWLEDGE_BUILDER_PATH.read_text(encoding="utf-8")
+RELEASE_ASSET_CONTRACT = runpy.run_path(str(RELEASE_ASSET_CONTRACT_PATH))
+RELEASE_GATE_CONTRACT_TEXT = RELEASE_GATE_CONTRACT_PATH.read_text(encoding="utf-8")
+WINDOWS_SMOKE_TEXT = WINDOWS_SMOKE_PATH.read_text(encoding="utf-8")
 SIGNER_MANIFEST = tomllib.loads(SIGNER_MANIFEST_PATH.read_text(encoding="utf-8"))
 SIGNER_LOCK = tomllib.loads(SIGNER_LOCKFILE.read_text(encoding="utf-8"))
 JOB_PATTERN = re.compile(
@@ -261,6 +276,155 @@ build_signer = job("build-release-signer")
 minisign = job("minisign-release-assets")
 cosign = job("cosign-release-assets")
 publish = job("release")
+self_knowledge = job("build-self-knowledge")
+product_build = job("build")
+release_version_gate = job("verify-release-version")
+
+matrix_entries = {}
+for target, body in re.findall(
+    r"(?ms)^          - target: (\S+)\n(.*?)(?=^          - target: |^    steps:)",
+    product_build,
+):
+    runner = re.search(r"(?m)^            os: (\S+)$", body)
+    require(runner is not None, f"release target {target} has no runner")
+    matrix_entries[target] = runner.group(1)
+require(len(matrix_entries) == 7, "release build matrix does not contain seven targets")
+require(
+    "runs-on: ${{ matrix.os }}" in product_build,
+    "release build does not dispatch each target on its declared matrix runner",
+)
+runner_architectures = {
+    "ubuntu-24.04": "x86_64",
+    "ubuntu-24.04-arm": "aarch64",
+    "macos-15-intel": "x86_64",
+    "macos-15": "aarch64",
+    "windows-2022": "x86_64",
+    "windows-11-arm": "aarch64",
+}
+require(
+    '"$RUNTIME_BINARY" --output json self-knowledge verify' in product_build
+    and 'NEOTH_HOME="$QUERY_HOME" "$RUNTIME_BINARY" --output json' in product_build,
+    "release matrix no longer executes every packaged target binary",
+)
+for target, runner in matrix_entries.items():
+    require(runner in runner_architectures, f"release target {target} uses unknown runner {runner}")
+    target_architecture = target.split("-", 1)[0]
+    require(
+        runner_architectures[runner] == target_architecture,
+        f"release target {target} executes on incompatible {runner} runner",
+    )
+
+workflow_steps = re.findall(
+    r"(?ms)^      - name: [^\n]+\n(.*?)(?=^      - name: |^  [A-Za-z0-9_-]+:\n|\Z)",
+    TEXT,
+)
+upload_steps = [
+    step for step in workflow_steps if "uses: actions/upload-artifact@" in step
+]
+require(
+    len(upload_steps) == TEXT.count("uses: actions/upload-artifact@"),
+    "release upload-artifact step parser missed a handoff",
+)
+for upload_step in upload_steps:
+    retention = re.findall(r"retention-days: (\d+)", upload_step)
+    require(
+        len(retention) == 1 and int(retention[0]) >= 7,
+        "a release artifact handoff is missing at least seven days of retention",
+    )
+
+require(
+    "release_asset_contract.py" in release_version_gate
+    and "release_contract.validate_version(tag_version)" in release_version_gate
+    and "test_release_asset_contract.py" in release_version_gate,
+    "earliest release gate does not consume and test the shared version/asset contract",
+)
+require(
+    "release_gate_contract.py select-latest" in release_version_gate
+    and "test_release_gate_contract.py" in release_version_gate
+    and "--paginate --slurp" in release_version_gate
+    and "--max-age-hours 24" in release_version_gate,
+    "exact-head release selection is not freshness-bound and contract-tested",
+)
+require("-f event=" not in release_version_gate, "exact-head gate filters out Security events")
+require("-f status=" not in release_version_gate, "exact-head gate filters out active or failed runs")
+require(
+    "Filtering by status or conclusion before this" in RELEASE_GATE_CONTRACT_TEXT,
+    "exact-head selector no longer selects chronology before verdict",
+)
+
+graphify_dependencies = GRAPHIFY_MANIFEST.get("project", {}).get("dependencies", [])
+require(
+    graphify_dependencies == ["graphifyy==0.8.41", "matplotlib==3.10.8"],
+    "release Graphify environment is not exactly version-pinned",
+)
+require(
+    {(package.get("name"), package.get("version")) for package in GRAPHIFY_LOCK.get("package", [])}
+    >= {
+        ("graphifyy", "0.8.41"),
+        ("matplotlib", "3.10.8"),
+        ("neoth-release-graphify", "0.0.0"),
+    },
+    "release Graphify lock does not contain the exact generator contract",
+)
+for package in GRAPHIFY_LOCK.get("package", []):
+    for source in package.get("sdist", {}), *package.get("wheels", []):
+        if isinstance(source, dict) and source.get("url"):
+            require(
+                isinstance(source.get("hash"), str) and source["hash"].startswith("sha256:"),
+                f"release Graphify lock lacks an artifact hash for {package.get('name')}",
+            )
+
+require("contents: read" in self_knowledge, "self-knowledge job lacks read-only source access")
+require("contents: write" not in self_knowledge, "self-knowledge job can write repository contents")
+require("persist-credentials: false" in self_knowledge, "self-knowledge checkout persists credentials")
+require(RUST_MSRV_PIN in self_knowledge, "self-knowledge Cargo parser does not use the workspace MSRV")
+require("uv sync" in self_knowledge and "--locked" in self_knowledge, "Graphify environment is not lock-enforced")
+require("$RUNNER_TEMP/neoth-graphify-venv" in self_knowledge, "Graphify environment is created inside the checkout")
+require("graphify 0.8.41" in self_knowledge, "Graphify executable version is not runtime-verified")
+require(
+    'probe_tool_version(("rustc", "-Vv")' in SELF_KNOWLEDGE_BUILDER_TEXT
+    and 'probe_tool_version(("cargo", "-V")' in SELF_KNOWLEDGE_BUILDER_TEXT,
+    "release self-knowledge receipt does not bind the Cargo parser toolchain",
+)
+require(
+    "final_toolchain != toolchain" in SELF_KNOWLEDGE_BUILDER_TEXT,
+    "release self-knowledge generator does not detect toolchain drift",
+)
+require("--expected-head \"$SOURCE_HEAD\"" in self_knowledge, "snapshot is not verified against exact source HEAD")
+require("release-self-knowledge.tar.gz.sha256" in self_knowledge, "self-knowledge transfer lacks a checksum sidecar")
+require("secrets.NEOTH_GRAPHIFY_API_KEY" in self_knowledge, "Graphify provider key is not isolated to a secret")
+require(
+    "secrets.NEOTH_GRAPHIFY_API_KEY" not in TEXT.replace(self_knowledge, "", 1),
+    "Graphify provider key is referenced outside its isolated job",
+)
+
+require("build-self-knowledge" in product_build, "release matrix does not depend on self-knowledge generation")
+require("NEOTH_SOURCE_HEAD" in product_build, "release matrix lacks compiled source-HEAD binding")
+require(
+    "NEOTH_SELF_KNOWLEDGE_PAYLOAD_SHA256" in product_build,
+    "release matrix lacks compiled self-knowledge payload binding",
+)
+require("release-self-knowledge" in product_build, "release matrix does not consume the immutable snapshot")
+require("--expected-head \"$NEOTH_SOURCE_HEAD\"" in product_build, "release matrix does not reverify snapshot HEAD")
+require("cp -R dist/release-self-knowledge/self-knowledge" in product_build, "portable archives omit self-knowledge")
+
+cross_passthrough = set(
+    NEOTH_MANIFEST.get("package", {})
+    .get("metadata", {})
+    .get("cross", {})
+    .get("build", {})
+    .get("env", {})
+    .get("passthrough", [])
+)
+require(
+    {
+        "NEOTH_RELEASE_MINISIGN_PUBKEY",
+        "NEOTH_SOURCE_HEAD",
+        "NEOTH_SELF_KNOWLEDGE_PAYLOAD_SHA256",
+    }
+    <= cross_passthrough,
+    "cross builds drop a release signature or self-knowledge compile-time binding",
+)
 
 require("contents: write" not in minisign, "minisign job can write repository contents")
 require("id-token: write" not in minisign, "minisign job has an OIDC token")
@@ -295,6 +459,39 @@ require("git fetch" not in publish, "checkout-free publish job still invokes git
 require("/git/ref/tags/" in publish, "publish job does not re-resolve the remote tag")
 require("draft=false" in publish, "draft publication is not the final commit point")
 require("remote draft asset set does not exactly match" in publish, "exact asset check missing")
+require(
+    len(RELEASE_ASSET_CONTRACT["expected_names"]("1.0.0", "canonical")) == 52,
+    "canonical release asset policy count drifted",
+)
+require(
+    len(RELEASE_ASSET_CONTRACT["expected_names"]("1.0.0", "publication")) == 161,
+    "public release asset policy count drifted",
+)
+asset_generation = job("generate-package-manifests")
+require(
+    "release_asset_contract.py verify" in asset_generation
+    and "--set canonical" in asset_generation
+    and "write-policy" in asset_generation,
+    "canonical asset producer is not policy-closed",
+)
+require(
+    "NEOTH_INTERNAL_RELEASE_ASSET_POLICY" in prepare
+    and "--set signing" in prepare,
+    "signing-input preparation does not bind the exact asset policy",
+)
+require(
+    'policy["signable_payloads"]' in minisign,
+    "minisign job derives its input set from filename globs instead of policy",
+)
+require(
+    'policy["signing_inputs"]' in cosign,
+    "Cosign job derives its input set from filename globs instead of policy",
+)
+require(
+    'policy["publication"]' in publish
+    and "names != publication | internal_manifests" in publish,
+    "publish job does not require the exact policy-defined release set",
+)
 
 require("provenance" not in TEXT.lower(), "Cosign bundle is mislabeled as provenance")
 require(
@@ -316,13 +513,17 @@ require("actions/checkout" not in musl_smoke, "musl smoke has an unnecessary che
 require("secrets." not in musl_smoke, "musl smoke receives a signing secret")
 require("actions: read" in musl_smoke, "musl smoke cannot read immutable artifacts")
 require("sha256sum --check --strict" in musl_smoke, "musl archive sidecar is not verified")
-require("expected_names" in musl_smoke, "musl archive exact-set validation is missing")
+require(
+    "expected_flat_names" in musl_smoke and "snapshot_names" in musl_smoke,
+    "musl archive exact-set validation is missing",
+)
 require("member.isreg()" in musl_smoke, "musl archive permits non-regular members")
 require("neothd-gui" in musl_smoke, "musl smoke does not assert GUI absence")
 require("neoth-keet-bridge" in musl_smoke, "musl smoke does not assert Keet absence")
 for binary in ("neoth", "neothd", "neoth-migrate", "neoth-relay"):
     require(binary in musl_smoke, f"musl smoke omits {binary}")
 require("--version" in musl_smoke, "musl binaries are not executed against the tag")
+require("self-knowledge verify" in musl_smoke, "musl runtime does not verify its shipped snapshot")
 require("readelf -l" in musl_smoke, "musl smoke does not prove static portability")
 require(
     "smoke-linux-musl-portable" in job("generate-package-manifests"),
@@ -339,6 +540,10 @@ for platform in ("linux", "macos"):
     require("clean-machine smoke" not in package, f"{platform} product smoke shares package runner")
     require("--version" in smoke, f"{platform} fresh-runner smoke lacks runtime probe")
     require(
+        "self-knowledge verify" in smoke,
+        f"{platform} fresh-runner smoke does not verify the installed snapshot",
+    )
+    require(
         f"smoke-{platform}-native" in job("generate-package-manifests"),
         f"{platform} smoke is outside release dependency graph",
     )
@@ -348,6 +553,10 @@ require("-DeleteKey" in windows_package, "Windows cleanup leaves imported privat
 require("Ephemeral Authenticode PFX cleanup failed" in windows_package, "Windows PFX cleanup is fail-open")
 require("smoke-installer.ps1" not in windows_package, "Windows product smoke shares signing runner")
 require("smoke-installer.ps1" in job("smoke-windows-installer"), "Windows fresh smoke missing")
+require(
+    "self-knowledge verify" in WINDOWS_SMOKE_TEXT,
+    "Windows fresh-runner smoke does not verify the installed snapshot",
+)
 require(
     "smoke-windows-installer" in job("generate-package-manifests"),
     "Windows smoke is outside release dependency graph",

@@ -2,11 +2,12 @@
 //!
 //! The module resolves the host archive, bounds every download and extraction,
 //! verifies SHA-256 plus minisign policy, stages unattended updates, and applies
-//! operator-approved updates with backups. Release installations are updated as
-//! one version-locked bundle: installed companion binaries are preflighted and
-//! replaced before `neoth`, with reverse-order rollback on a partial failure.
-//! Source-only installations keep their existing footprint.
+//! operator-approved updates through the same closed, journaled release-bundle
+//! transaction used by bootstrap. Portable installations update every
+//! package-owned member as one version-locked unit. Native package-manager and
+//! signed-app layouts fail closed and require their platform installer.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -98,7 +99,7 @@ pub fn parse_semver(s: &str) -> Result<(u32, u32, u32)> {
 pub fn version_is_newer(latest: &str, current: &str) -> Result<bool> {
     let l = parse_semver_version(latest)?;
     let c = parse_semver_version(current)?;
-    Ok(l > c)
+    Ok(l.cmp_precedence(&c).is_gt())
 }
 
 fn prerelease_is_rc(version: &semver::Version) -> bool {
@@ -218,7 +219,10 @@ pub fn select_release_for_channel(
         if !version_matches_channel(&version, channel) {
             continue;
         }
-        if selected.as_ref().is_none_or(|(best, _)| version > *best) {
+        if selected
+            .as_ref()
+            .is_none_or(|(best, _)| version.cmp_precedence(best).is_gt())
+        {
             selected = Some((version, release));
         }
     }
@@ -398,12 +402,8 @@ pub fn archive_format_for_target(target: &str) -> ArchiveFormat {
 /// asset-locator must produce the exact same form.
 ///
 /// Composed from `std::env::consts::{OS, ARCH}` — Rust does not
-/// expose `TARGET` at runtime by default. Build-time injection
-/// via `build.rs` would be more accurate (could disambiguate
-/// `gnu` vs `msvc` on Windows, or `musl` vs `gnu` on Linux), but
-/// cargo-dist's default release matrix matches our composed form
-/// well enough for the common cases. Operator with an unusual
-/// host overrides via `freedom.yaml::auto_update.target_triple`.
+/// expose `TARGET` at runtime by default. Compile-time cfg disambiguates the
+/// Linux libc so a musl build can never select a glibc release archive.
 ///
 /// Returns `None` for hosts we don't have a cargo-dist mapping
 /// for; the caller falls back to the manual-install path.
@@ -412,6 +412,7 @@ pub fn host_target_triple() -> Option<&'static str> {
     match (OS, ARCH) {
         ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
         ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
+        ("linux", "x86_64") if cfg!(target_env = "musl") => Some("x86_64-unknown-linux-musl"),
         ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
         ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
         ("macos", "x86_64") => Some("x86_64-apple-darwin"),
@@ -533,26 +534,14 @@ pub struct UpdateAssets<'a> {
     pub signature: Option<&'a ReleaseAsset>,
 }
 
-/// Extract a cargo-dist archive's `<binary>` member to `out_dir`.
-/// Returns the full path of the extracted file.
-///
-/// The archive's tarball contains the binary at one of two
-/// canonical locations:
-///   - top-level: `neoth.exe` / `neoth`
-///   - inside a target-named subdir: `neoth-x86_64-pc-windows-msvc/neoth.exe`
-///
-/// Both shapes are accepted. Anything else is rejected because
-/// we have no way to know which member is the binary.
-///
-/// `binary` is the base name (e.g. `"neoth"`). The function adds
-/// `.exe` on Windows automatically.
-/// Hard ceiling on the size of any single extracted archive member /
-/// decompressed tarball (GOLD-SEC-11 / A-29). The real `neothd` binary is
-/// tens of MiB; 1 GiB is generous headroom while refusing a decompression
-/// bomb (a tiny crafted archive that expands to many GiB). The SHA-256 /
-/// minisig checks bind the bytes to the companion but say nothing about
-/// decompressed size — this cap is the missing guard.
-const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024;
+/// Closed archive-extraction ceilings. Authentication proves who supplied an
+/// archive; these bounds and path rules prove what it is allowed to create.
+const MAX_RELEASE_BUNDLE_MEMBER_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_RELEASE_BUNDLE_UNPACKED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_RELEASE_TAR_STREAM_BYTES: u64 = MAX_RELEASE_BUNDLE_UNPACKED_BYTES + 128 * 1024 * 1024;
+const MAX_RELEASE_BUNDLE_MEMBERS: usize = 100_128;
+const MAX_RELEASE_BUNDLE_DEPTH: usize = 64;
+const MAX_RELEASE_MEMBER_NAME_BYTES: usize = 32 * 1024;
 
 /// Download ceilings for the signed release payload and its small companions.
 /// The archive contains all shipped binaries and can legitimately be large, but
@@ -562,214 +551,402 @@ const MAX_CHECKSUM_BYTES: usize = 16 * 1024;
 const MAX_SIGNATURE_BYTES: usize = 64 * 1024;
 const MAX_PENDING_JSON_BYTES: usize = 64 * 1024;
 
-/// A `Write` that errors once more than `limit` bytes are written. Bounds
-/// the streaming xz output where there is no `Read::take` to cap.
-struct LimitedWriter {
-    buf: Vec<u8>,
+/// A file-backed `Write` that errors once more than `limit` bytes are written.
+/// XZ is decoded into the private extraction directory instead of allocating a
+/// decompressed archive in memory.
+struct LimitedFileWriter<'a> {
+    file: &'a mut std::fs::File,
+    written: u64,
     limit: u64,
 }
 
-impl std::io::Write for LimitedWriter {
+impl std::io::Write for LimitedFileWriter<'_> {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        if self.buf.len() as u64 + data.len() as u64 > self.limit {
+        let next = self
+            .written
+            .checked_add(data.len() as u64)
+            .ok_or_else(|| std::io::Error::other("decompressed archive size overflow"))?;
+        if next > self.limit {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "decompressed archive exceeds size cap (decompression-bomb guard)",
             ));
         }
-        self.buf.extend_from_slice(data);
-        Ok(data.len())
+        let count = std::io::Write::write(self.file, data)?;
+        self.written += count as u64;
+        Ok(count)
     }
+
     fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+        std::io::Write::flush(self.file)
     }
 }
 
-pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
-    use std::io::{Cursor, Read};
-    let reader = Cursor::new(zip_bytes);
-    let mut archive = zip::ZipArchive::new(reader).context("open zip archive")?;
-    let want = binary_filename_for_host(binary);
-    let mut chosen: Option<usize> = None;
-    for i in 0..archive.len() {
-        let entry = archive.by_index(i).context("read zip entry")?;
-        if entry.is_dir() {
-            continue;
-        }
-        let name = entry.name();
-        if name.ends_with(&format!("/{want}")) || name == want {
-            chosen = Some(i);
-            break;
-        }
-    }
-    let index =
-        chosen.ok_or_else(|| anyhow::anyhow!("zip archive missing expected member `{want}`"))?;
-    let mut entry = archive
-        .by_index(index)
-        .context("re-open chosen zip entry")?;
-    std::fs::create_dir_all(out_dir)
-        .with_context(|| format!("create out_dir {}", out_dir.display()))?;
-    let dest = out_dir.join(&want);
-    let mut out =
-        std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
-    let written = std::io::copy(&mut (&mut entry).take(MAX_EXTRACT_BYTES + 1), &mut out)
-        .context("copy zip body to disk")?;
-    if written > MAX_EXTRACT_BYTES {
-        let _ = std::fs::remove_file(&dest);
-        anyhow::bail!(
-            "zip member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)"
-        );
-    }
-    set_executable_permissions(&dest)?;
-    Ok(dest)
+#[derive(Debug)]
+struct ArchiveLedger<'a> {
+    expected_root: &'a str,
+    exact_names: BTreeSet<String>,
+    casefold_names: BTreeSet<String>,
+    members: usize,
+    unpacked_bytes: u64,
 }
 
-/// Extract a `.tar.xz` archive's `<binary>` member to `out_dir`.
-/// Pure-Rust pipeline: lzma-rs decompresses xz → tar reads the
-/// resulting tarball. No system liblzma linkage.
-pub fn extract_tar_xz_binary(tar_xz_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
-    use std::io::Cursor;
-    let mut writer = LimitedWriter {
-        buf: Vec::with_capacity(tar_xz_bytes.len().saturating_mul(3).min(64 * 1024 * 1024)),
-        limit: MAX_EXTRACT_BYTES,
-    };
-    let mut reader = Cursor::new(tar_xz_bytes);
-    lzma_rs::xz_decompress(&mut reader, &mut writer)
-        .context("xz decompress tarball (or size cap exceeded — decompression-bomb guard)")?;
-    extract_tar_binary_from_bytes(&writer.buf, out_dir, binary)
-}
-
-/// Extract a `.tar.gz` archive. Mirrors [`extract_tar_xz_binary`]
-/// but pipes through flate2 instead of lzma-rs.
-pub fn extract_tar_gz_binary(tar_gz_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
-    use flate2::read::GzDecoder;
-    use std::io::Read;
-    let mut gz = GzDecoder::new(tar_gz_bytes);
-    let mut decompressed: Vec<u8> = Vec::new();
-    let n = gz
-        .by_ref()
-        .take(MAX_EXTRACT_BYTES + 1)
-        .read_to_end(&mut decompressed)
-        .context("gz decompress tarball")?;
-    if n as u64 > MAX_EXTRACT_BYTES {
-        anyhow::bail!(
-            "gz tarball exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)"
-        );
-    }
-    extract_tar_binary_from_bytes(&decompressed, out_dir, binary)
-}
-
-/// Walk a raw tar byte stream looking for the binary member.
-/// Shared between the xz + gz paths.
-fn extract_tar_binary_from_bytes(raw_tar: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
-    use std::io::{Cursor, Read};
-    let want = binary_filename_for_host(binary);
-    let mut archive = tar::Archive::new(Cursor::new(raw_tar));
-    std::fs::create_dir_all(out_dir)
-        .with_context(|| format!("create out_dir {}", out_dir.display()))?;
-    let dest = out_dir.join(&want);
-    for entry in archive.entries().context("iterate tar entries")? {
-        let mut entry = entry.context("read tar entry")?;
-        let path_in_tar = entry.path().context("read tar entry path")?.into_owned();
-        let name = path_in_tar
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        if name == want && entry.header().entry_type().is_file() {
-            let mut out = std::fs::File::create(&dest)
-                .with_context(|| format!("create {}", dest.display()))?;
-            let written = std::io::copy(&mut (&mut entry).take(MAX_EXTRACT_BYTES + 1), &mut out)
-                .context("copy tar body to disk")?;
-            if written > MAX_EXTRACT_BYTES {
-                let _ = std::fs::remove_file(&dest);
-                anyhow::bail!(
-                    "tar member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)"
-                );
-            }
-            set_executable_permissions(&dest)?;
-            return Ok(dest);
+impl<'a> ArchiveLedger<'a> {
+    fn new(expected_root: &'a str) -> Self {
+        Self {
+            expected_root,
+            exact_names: BTreeSet::new(),
+            casefold_names: BTreeSet::new(),
+            members: 0,
+            unpacked_bytes: 0,
         }
     }
-    anyhow::bail!("tar archive missing expected member `{want}`")
+
+    fn register(&mut self, raw_name: &str, is_directory: bool, size: u64) -> Result<PathBuf> {
+        if raw_name.len() > MAX_RELEASE_MEMBER_NAME_BYTES {
+            anyhow::bail!("release archive member name exceeds the safety ceiling");
+        }
+        if raw_name.contains(['\\', '\0']) || raw_name.starts_with('/') {
+            anyhow::bail!("unsafe release archive member name: {raw_name:?}");
+        }
+        if !is_directory && raw_name.ends_with('/') {
+            anyhow::bail!("regular archive member has a directory name: {raw_name:?}");
+        }
+        if is_directory && size != 0 {
+            anyhow::bail!("archive directory has a non-zero body: {raw_name:?}");
+        }
+        let normalized = if is_directory {
+            raw_name.strip_suffix('/').unwrap_or(raw_name)
+        } else {
+            raw_name
+        };
+        let components = normalized.split('/').collect::<Vec<_>>();
+        if components.is_empty()
+            || components[0] != self.expected_root
+            || components.len().saturating_sub(1) > MAX_RELEASE_BUNDLE_DEPTH
+        {
+            anyhow::bail!(
+                "release archive member is outside exact root {:?}: {raw_name:?}",
+                self.expected_root
+            );
+        }
+        for component in &components {
+            validate_archive_component(component, raw_name)?;
+        }
+
+        let exact = components.join("/");
+        if !self.exact_names.insert(exact.clone()) {
+            anyhow::bail!("duplicate release archive member: {exact:?}");
+        }
+        let casefold = exact
+            .chars()
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+        if !self.casefold_names.insert(casefold) {
+            anyhow::bail!("case-colliding release archive member: {exact:?}");
+        }
+        self.members = self
+            .members
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("release archive member count overflow"))?;
+        if self.members > MAX_RELEASE_BUNDLE_MEMBERS {
+            anyhow::bail!(
+                "release archive exceeds the {MAX_RELEASE_BUNDLE_MEMBERS}-member safety ceiling"
+            );
+        }
+        if size > MAX_RELEASE_BUNDLE_MEMBER_BYTES {
+            anyhow::bail!(
+                "release archive member exceeds the {MAX_RELEASE_BUNDLE_MEMBER_BYTES}-byte safety ceiling: {exact:?}"
+            );
+        }
+        self.unpacked_bytes = self
+            .unpacked_bytes
+            .checked_add(size)
+            .ok_or_else(|| anyhow::anyhow!("release archive byte count overflow"))?;
+        if self.unpacked_bytes > MAX_RELEASE_BUNDLE_UNPACKED_BYTES {
+            anyhow::bail!("release archive exceeds the unpacked-byte safety ceiling");
+        }
+
+        Ok(components.iter().collect())
+    }
 }
 
-/// Archive extraction writes a fresh file rather than preserving tar metadata.
-/// Restore executable mode explicitly so a successful Unix self-update cannot
-/// replace `neoth` with a non-runnable `0644` file.
-fn set_executable_permissions(path: &Path) -> Result<()> {
-    #[cfg(unix)]
+fn validate_archive_component(component: &str, raw_name: &str) -> Result<()> {
+    if component.is_empty()
+        || matches!(component, "." | "..")
+        || component.len() > 255
+        || component.ends_with([' ', '.'])
+        || component.contains(':')
+        || component.chars().any(char::is_control)
     {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mut permissions = std::fs::metadata(path)
-            .with_context(|| format!("read permissions for {}", path.display()))?
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(path, permissions)
-            .with_context(|| format!("mark {} executable", path.display()))?;
+        anyhow::bail!("unsafe release archive member name: {raw_name:?}");
     }
-    #[cfg(not(unix))]
-    let _ = path;
+    let device_stem = component
+        .split('.')
+        .next()
+        .unwrap_or(component)
+        .to_ascii_uppercase();
+    let reserved = matches!(device_stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || device_stem
+            .strip_prefix("COM")
+            .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
+        || device_stem
+            .strip_prefix("LPT")
+            .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"));
+    if reserved {
+        anyhow::bail!("Windows-reserved release archive member: {raw_name:?}");
+    }
     Ok(())
 }
 
-/// Pick the host-appropriate binary filename. On Windows the
-/// cargo-dist binary carries a `.exe` suffix; on Unix it's bare.
+fn metadata_is_link_like(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+fn ensure_private_directory(root: &Path, relative: &Path) -> Result<PathBuf> {
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            anyhow::bail!("validated archive path became non-relative");
+        };
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if !metadata_is_link_like(&metadata) && metadata.is_dir() => {}
+            Ok(_) => anyhow::bail!(
+                "release extraction path is not a real directory: {}",
+                current.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current).with_context(|| {
+                    format!("create private release directory {}", current.display())
+                })?;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("inspect private release directory {}", current.display())
+                });
+            }
+        }
+    }
+    Ok(current)
+}
+
+fn create_archive_output(root: &Path, relative: &Path) -> Result<std::fs::File> {
+    let parent = relative
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("release archive file has no parent"))?;
+    ensure_private_directory(root, parent)?;
+    let destination = root.join(relative);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)
+        .with_context(|| format!("create staged release member {}", destination.display()))
+}
+
+fn copy_archive_file(
+    input: &mut impl std::io::Read,
+    output: &mut std::fs::File,
+    declared_size: u64,
+    relative: &Path,
+) -> Result<()> {
+    let written = std::io::copy(&mut std::io::Read::take(input, declared_size + 1), output)
+        .with_context(|| format!("extract release member {}", relative.display()))?;
+    if written != declared_size {
+        anyhow::bail!(
+            "release archive member size mismatch for {}: declared {declared_size}, extracted {written}",
+            relative.display()
+        );
+    }
+    output
+        .sync_all()
+        .with_context(|| format!("sync staged release member {}", relative.display()))?;
+    set_staged_permissions(&root_member_name(relative), output)?;
+    Ok(())
+}
+
+fn root_member_name(relative: &Path) -> String {
+    relative
+        .components()
+        .nth(1)
+        .and_then(|component| component.as_os_str().to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn set_staged_permissions(root_member: &str, file: &std::fs::File) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let executable = matches!(
+            root_member,
+            "neoth"
+                | "neothd"
+                | "neothd-gui"
+                | "neoth-migrate"
+                | "neoth-relay"
+                | "neoth-keet-bridge"
+        );
+        file.set_permissions(std::fs::Permissions::from_mode(if executable {
+            0o755
+        } else {
+            0o644
+        }))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (root_member, file);
+    Ok(())
+}
+
+fn extract_zip_release_bundle(
+    archive_bytes: &[u8],
+    stage_root: &Path,
+    expected_root: &str,
+) -> Result<PathBuf> {
+    use std::io::Cursor;
+
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(archive_bytes)).context("open ZIP archive")?;
+    let mut ledger = ArchiveLedger::new(expected_root);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).context("read ZIP entry")?;
+        let raw_name = std::str::from_utf8(entry.name_raw())
+            .context("ZIP member name is not valid UTF-8")?
+            .to_string();
+        let is_directory = entry.is_dir();
+        if let Some(mode) = entry.unix_mode() {
+            let kind = mode & 0o170_000;
+            let expected_kind = if is_directory { 0o040_000 } else { 0o100_000 };
+            if kind != 0 && kind != expected_kind {
+                anyhow::bail!("ZIP member is a symlink or special file: {raw_name:?}");
+            }
+        }
+        let relative = ledger.register(&raw_name, is_directory, entry.size())?;
+        if is_directory {
+            ensure_private_directory(stage_root, &relative)?;
+        } else {
+            let declared_size = entry.size();
+            let mut output = create_archive_output(stage_root, &relative)?;
+            copy_archive_file(&mut entry, &mut output, declared_size, &relative)?;
+        }
+    }
+    require_extracted_root(stage_root, expected_root)
+}
+
+fn extract_tar_release_bundle<R: std::io::Read>(
+    reader: R,
+    stage_root: &Path,
+    expected_root: &str,
+) -> Result<PathBuf> {
+    let mut archive = tar::Archive::new(reader);
+    let mut ledger = ArchiveLedger::new(expected_root);
+    for entry in archive.entries().context("iterate tar entries")? {
+        let mut entry = entry.context("read tar entry")?;
+        let raw_name = std::str::from_utf8(entry.path_bytes().as_ref())
+            .context("tar member name is not valid UTF-8")?
+            .to_string();
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            anyhow::bail!("tar member is a link or special file: {raw_name:?}");
+        }
+        let is_directory = entry_type.is_dir();
+        let declared_size = entry.size();
+        let relative = ledger.register(&raw_name, is_directory, declared_size)?;
+        if is_directory {
+            ensure_private_directory(stage_root, &relative)?;
+        } else {
+            let mut output = create_archive_output(stage_root, &relative)?;
+            copy_archive_file(&mut entry, &mut output, declared_size, &relative)?;
+        }
+    }
+    require_extracted_root(stage_root, expected_root)
+}
+
+fn require_extracted_root(stage_root: &Path, expected_root: &str) -> Result<PathBuf> {
+    let bundle_root = stage_root.join(expected_root);
+    let metadata = std::fs::symlink_metadata(&bundle_root)
+        .with_context(|| format!("release archive is missing exact root {expected_root:?}"))?;
+    if metadata_is_link_like(&metadata) || !metadata.is_dir() {
+        anyhow::bail!("release archive root is not a real directory");
+    }
+    Ok(bundle_root)
+}
+
+fn extract_release_bundle(
+    archive_bytes: &[u8],
+    format: ArchiveFormat,
+    stage_root: &Path,
+    expected_root: &str,
+) -> Result<PathBuf> {
+    match format {
+        ArchiveFormat::Zip => extract_zip_release_bundle(archive_bytes, stage_root, expected_root),
+        ArchiveFormat::TarGz => {
+            let decoder = flate2::read::GzDecoder::new(archive_bytes);
+            extract_tar_release_bundle(
+                std::io::Read::take(decoder, MAX_RELEASE_TAR_STREAM_BYTES + 1),
+                stage_root,
+                expected_root,
+            )
+            .context("extract gzip release bundle")
+        }
+        ArchiveFormat::TarXz => {
+            use std::io::{Cursor, Seek as _, SeekFrom, Write as _};
+
+            let raw_tar_path = stage_root.join(".release-bundle.tar");
+            let mut raw_tar = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&raw_tar_path)
+                .context("create bounded XZ staging file")?;
+            {
+                let mut writer = LimitedFileWriter {
+                    file: &mut raw_tar,
+                    written: 0,
+                    limit: MAX_RELEASE_TAR_STREAM_BYTES,
+                };
+                lzma_rs::xz_decompress(&mut Cursor::new(archive_bytes), &mut writer)
+                    .context("decompress bounded XZ release bundle")?;
+                writer.flush()?;
+            }
+            raw_tar.seek(SeekFrom::Start(0))?;
+            let result = extract_tar_release_bundle(raw_tar, stage_root, expected_root)
+                .context("extract XZ release bundle");
+            let _ = std::fs::remove_file(raw_tar_path);
+            result
+        }
+    }
+}
+
+fn expected_archive_root(release_version: &str, target_triple: &str) -> Result<String> {
+    if release_version.trim() != release_version {
+        anyhow::bail!("release version contains surrounding whitespace");
+    }
+    parse_semver_version(release_version)?;
+    if !release_target_is_supported(target_triple) {
+        anyhow::bail!("unsupported release target {target_triple:?}");
+    }
+    Ok(format!("neoth-{release_version}-{target_triple}"))
+}
+
+/// Pick the host-appropriate binary filename. On Windows the release binary
+/// carries a `.exe` suffix; on Unix it is bare.
 fn binary_filename_for_host(binary: &str) -> String {
     if std::env::consts::EXE_SUFFIX.is_empty() {
         binary.to_string()
     } else {
         format!("{binary}{}", std::env::consts::EXE_SUFFIX)
     }
-}
-
-/// Atomic rename of `new_path` onto `target_path`.
-///
-/// Strategy:
-///   1. Move existing `target_path` → `<target>.bak.<unix_ms>` so
-///      a rollback is one rename away.
-///   2. Rename `new_path` → `target_path`.
-///   3. Best-effort delete the `.bak` only on Unix; Windows keeps
-///      the `.bak` since the running daemon may still have a
-///      handle to it (the OS releases the handle on next start,
-///      and `neoth update --self --gc-backups` can sweep later).
-///
-/// Both renames are `std::fs::rename`, which on POSIX is atomic
-/// inside the same filesystem and on Windows uses
-/// `ReplaceFileW` semantics via the std impl. Caller MUST ensure
-/// `new_path` lives on the same volume as `target_path`
-/// (e.g. by using a tempdir under the target's parent).
-pub fn atomic_replace_binary(new_path: &Path, target_path: &Path) -> Result<PathBuf> {
-    let now_ms = crate::time::now_unix_ms_u128();
-    let bak_path = backup_path_for(target_path, now_ms);
-    if target_path.exists() {
-        std::fs::rename(target_path, &bak_path).with_context(|| {
-            format!("rename {} → {}", target_path.display(), bak_path.display())
-        })?;
-    }
-    if let Err(e) = std::fs::rename(new_path, target_path) {
-        // Best-effort rollback: put the original back before
-        // surfacing the error.
-        if bak_path.exists() {
-            let _ = std::fs::rename(&bak_path, target_path);
-        }
-        return Err(anyhow::anyhow!(
-            "rename {} → {} failed: {e}",
-            new_path.display(),
-            target_path.display()
-        ));
-    }
-    Ok(bak_path)
-}
-
-/// Compute the rollback path for `target` at timestamp `now_ms`.
-/// Pure — used by [`atomic_replace_binary`] + the test suite.
-pub fn backup_path_for(target: &Path, now_ms: u128) -> PathBuf {
-    let mut name = target
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    name.push_str(&format!(".bak.{now_ms}"));
-    target.with_file_name(name)
 }
 
 /// Parse a cargo-dist `.sha256` companion file body. The
@@ -845,7 +1022,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 pub struct UpdateApplied {
     pub from_version: String,
     pub to_version: String,
-    pub backup_path: PathBuf,
+    /// Durable native transaction identifier. Interrupted commits are
+    /// recovered automatically from the transaction journal on the next run;
+    /// there is no operator-facing backup file to retain or restore manually.
+    pub transaction_id: String,
+    pub automatic_crash_recovery: bool,
     pub restart_required: bool,
     /// SHA-256 hex of the verified release archive (the value from the
     /// `.sha256` companion that `apply_downloaded` checked the bytes
@@ -864,255 +1045,1174 @@ pub struct UpdateApplied {
     pub signature_status: String,
 }
 
-/// Pure-bytes-in orchestrator. Network-free so the unit suite
-/// can exercise the full apply path without HTTP mocking.
-///
-/// Steps:
-///   1. parse the SHA-256 companion text
-///   2. verify `asset_bytes` against it
-///   3. select the extractor by archive format
-///   4. extract the binary into a tmpdir living under
-///      `install_dir.parent()` so the rename is same-volume
-///   5. atomic-replace onto `install_dir.join(<binary>)`
-fn extract_archive_binary(
-    asset_bytes: &[u8],
-    format: ArchiveFormat,
-    stage_dir: &Path,
-    binary: &str,
-) -> Result<PathBuf> {
-    match format {
-        ArchiveFormat::Zip => extract_zip_binary(asset_bytes, stage_dir, binary),
-        ArchiveFormat::TarXz => extract_tar_xz_binary(asset_bytes, stage_dir, binary),
-        ArchiveFormat::TarGz => extract_tar_gz_binary(asset_bytes, stage_dir, binary),
-    }
+/// Windows cannot replace the executable that is currently running. Portable
+/// installs therefore hand the already-authenticated archive to the target
+/// release helper, which waits for this CLI process and records the real
+/// transaction result after it commits. A scheduled handoff is deliberately
+/// not reported as `UpdateApplied` and never emits the applied WAL event early.
+#[derive(Debug, Clone)]
+pub struct UpdateHandoffScheduled {
+    pub from_version: String,
+    pub to_version: String,
+    pub operation_id: String,
+    pub receipt_path: PathBuf,
+    pub restart_required: bool,
 }
 
-pub fn apply_downloaded(
-    asset_bytes: &[u8],
-    companion_text: &str,
-    format: ArchiveFormat,
-    binary: &str,
-    install_dir: &Path,
-) -> Result<PathBuf> {
-    let expected = parse_sha256_companion(companion_text).context("parse sha256 companion")?;
-    verify_sha256_bytes(asset_bytes, &expected).context("verify asset sha256")?;
-
-    // Stage the extracted binary in a tempdir that lives next to
-    // the install dir so the final rename is same-volume (atomic
-    // on POSIX, ReplaceFileW-semantics on Windows).
-    let stage_parent = install_dir.parent().unwrap_or(install_dir);
-    let stage = tempfile::tempdir_in(stage_parent)
-        .with_context(|| format!("stage tempdir under {}", stage_parent.display()))?;
-
-    let extracted = extract_archive_binary(asset_bytes, format, stage.path(), binary)?;
-
-    let target = install_dir.join(binary_filename_for_host(binary));
-    let backup = atomic_replace_binary(&extracted, &target)?;
-    // tempdir drops here; the extracted file already moved out
-    // via atomic_replace_binary, so the directory is empty +
-    // safe to clean.
-    Ok(backup)
+#[derive(Debug, Clone)]
+pub enum UpdateApplyOutcome {
+    Applied(UpdateApplied),
+    HandoffScheduled(UpdateHandoffScheduled),
 }
 
-/// Release archives are a version-locked bundle. Preserve a source-only
-/// installation's footprint, but whenever one of the shipped companions is
-/// installed beside `neoth`, update it from the same verified archive too.
-/// The public binary is replaced last and acts as the transaction commit point.
-const SELF_UPDATE_COMPANIONS: [&str; 5] = [
-    "neothd",
-    "neothd-gui",
-    "neoth-migrate",
-    "neoth-relay",
-    "neoth-keet-bridge",
-];
-
-#[derive(Debug)]
-struct StagedBundleMember {
-    binary: String,
-    staged_path: PathBuf,
-    target_path: PathBuf,
+struct PreparedDownloadedBundle {
+    stage: tempfile::TempDir,
+    bundle_root: PathBuf,
+    layout: super::release_bundle::ReleaseInstallLayout,
+    canonical_version: String,
 }
 
-#[derive(Debug)]
-struct AppliedBundleMember {
-    target_path: PathBuf,
-    backup_path: PathBuf,
-    had_original: bool,
+#[cfg(windows)]
+fn create_release_staging_directory() -> Result<tempfile::TempDir> {
+    require_non_elevated_windows_portable_update("create release staging")?;
+    let namespace = windows_handoff_staging_namespace()?;
+    let stage = tempfile::Builder::new()
+        .prefix(WINDOWS_HANDOFF_STAGE_PREFIX)
+        .tempdir_in(&namespace)
+        .context("create private Windows release extraction directory")?;
+    crate::wal::win_native::set_private_current_user_directory_dacl(stage.path()).with_context(
+        || {
+            format!(
+                "protect private Windows release extraction directory {}",
+                stage.path().display()
+            )
+        },
+    )?;
+    crate::wal::win_native::verify_private_directory_dacl(stage.path()).with_context(|| {
+        format!(
+            "verify private Windows release extraction directory {}",
+            stage.path().display()
+        )
+    })?;
+    Ok(stage)
 }
 
-fn installed_bundle_members(primary: &str, install_dir: &Path) -> Vec<String> {
-    if primary != "neoth" {
-        return vec![primary.to_string()];
-    }
-
-    let mut members = SELF_UPDATE_COMPANIONS
-        .iter()
-        .filter(|binary| install_dir.join(binary_filename_for_host(binary)).exists())
-        .map(|binary| (*binary).to_string())
-        .collect::<Vec<_>>();
-    // Replace the process-owning binary last. If any earlier member fails, the
-    // currently running version remains the visible bundle version.
-    members.push(primary.to_string());
-    members
+#[cfg(not(windows))]
+fn create_release_staging_directory() -> Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(".neoth-self-update-")
+        .tempdir()
+        .context("create private release extraction directory")
 }
 
-/// Apply the verified release archive to every NEOTH binary currently present
-/// in the installation. All required members are extracted before the first
-/// target is touched. If a later replacement fails, already-replaced
-/// companions are rolled back in reverse order.
+/// Apply one authenticated release archive through the shared closed bundle
+/// policy and crash-safe transaction. The archive is fully extracted into a
+/// private directory before package-owned state is inspected or mutated.
 pub fn apply_downloaded_bundle(
     asset_bytes: &[u8],
     companion_text: &str,
     format: ArchiveFormat,
-    primary: &str,
     install_dir: &Path,
-) -> Result<PathBuf> {
-    let expected = parse_sha256_companion(companion_text).context("parse sha256 companion")?;
-    verify_sha256_bytes(asset_bytes, &expected).context("verify asset sha256")?;
-
-    let stage_parent = install_dir.parent().unwrap_or(install_dir);
-    let stage = tempfile::tempdir_in(stage_parent)
-        .with_context(|| format!("stage bundle tempdir under {}", stage_parent.display()))?;
-    let members = installed_bundle_members(primary, install_dir);
-    let mut staged = Vec::with_capacity(members.len());
-
-    // Complete preflight: every installed companion must exist in the exact
-    // archive before any on-disk executable is moved.
-    for binary in members {
-        let target_path = install_dir.join(binary_filename_for_host(&binary));
-        if target_path.exists() && !target_path.is_file() {
-            anyhow::bail!(
-                "self-update target {} exists but is not a regular file",
-                target_path.display()
-            );
-        }
-        let staged_path = extract_archive_binary(asset_bytes, format, stage.path(), &binary)
-            .with_context(|| {
-                format!(
-                    "release bundle is missing installed component `{binary}`; no files were changed"
-                )
-            })?;
-        staged.push(StagedBundleMember {
-            binary,
-            staged_path,
-            target_path,
-        });
-    }
-
-    replace_staged_bundle_with(&staged, primary, atomic_replace_binary)
+    expected_release_version: &str,
+    target_triple: &str,
+) -> Result<super::release_bundle::ReleaseBundleCommit> {
+    let prepared = prepare_downloaded_bundle(
+        asset_bytes,
+        companion_text,
+        format,
+        install_dir,
+        expected_release_version,
+        target_triple,
+    )?;
+    apply_prepared_downloaded_bundle(prepared)
 }
 
-fn replace_staged_bundle_with<F>(
-    staged: &[StagedBundleMember],
-    primary: &str,
-    mut replace: F,
-) -> Result<PathBuf>
-where
-    F: FnMut(&Path, &Path) -> Result<PathBuf>,
-{
-    let mut applied = Vec::with_capacity(staged.len());
-    let mut primary_backup = None;
-
-    for member in staged {
-        let had_original = member.target_path.exists();
-        match replace(&member.staged_path, &member.target_path) {
-            Ok(backup_path) => {
-                if member.binary == primary {
-                    primary_backup = Some(backup_path.clone());
-                } else {
-                    info!(
-                        component = %member.binary,
-                        backup = %backup_path.display(),
-                        "self-update: installed companion from version-locked release bundle"
-                    );
-                }
-                applied.push(AppliedBundleMember {
-                    target_path: member.target_path.clone(),
-                    backup_path,
-                    had_original,
-                });
-            }
-            Err(error) => {
-                let rollback = rollback_applied_bundle(&applied);
-                return match rollback {
-                    Ok(()) => Err(error.context(format!(
-                        "replace release-bundle component `{}` failed; earlier replacements were rolled back",
-                        member.binary
-                    ))),
-                    Err(rollback_error) => Err(error.context(format!(
-                        "replace release-bundle component `{}` failed; rollback was incomplete: {rollback_error:#}",
-                        member.binary
-                    ))),
-                };
-            }
-        }
+fn prepare_downloaded_bundle(
+    asset_bytes: &[u8],
+    companion_text: &str,
+    format: ArchiveFormat,
+    install_dir: &Path,
+    expected_release_version: &str,
+    target_triple: &str,
+) -> Result<PreparedDownloadedBundle> {
+    let expected = parse_sha256_companion(companion_text).context("parse sha256 companion")?;
+    verify_sha256_bytes(asset_bytes, &expected).context("verify asset sha256")?;
+    let host_target = host_target_triple()
+        .ok_or_else(|| anyhow::anyhow!("self-update is unsupported on this host architecture"))?;
+    if target_triple != host_target {
+        anyhow::bail!(
+            "self-update target {target_triple:?} does not match running host {host_target:?}; cross-target archives cannot replace the running installation"
+        );
     }
 
-    primary_backup.ok_or_else(|| {
-        anyhow::anyhow!("release-bundle apply did not include primary binary `{primary}`")
+    let expected_root = expected_archive_root(expected_release_version, target_triple)?;
+    let stage = create_release_staging_directory()?;
+    let bundle_root = extract_release_bundle(asset_bytes, format, stage.path(), &expected_root)
+        .context("safely extract authenticated release bundle")?;
+
+    let installed_executable = install_dir.join(binary_filename_for_host("neoth"));
+    let layout =
+        super::release_bundle::ReleaseInstallLayout::derive_from_executable(&installed_executable)
+            .context("derive trusted installed release layout")?;
+    let canonical_version = parse_semver_version(expected_release_version)?.to_string();
+    Ok(PreparedDownloadedBundle {
+        stage,
+        bundle_root,
+        layout,
+        canonical_version,
     })
 }
 
-fn rollback_applied_bundle(applied: &[AppliedBundleMember]) -> Result<()> {
-    let mut failures = Vec::new();
-    for member in applied.iter().rev() {
-        let mut displaced = member.target_path.clone();
-        let displaced_name = format!(
-            "{}.failed-update-rollback.{}",
-            member
-                .target_path
-                .file_name()
-                .map(|name| name.to_string_lossy())
-                .unwrap_or_default(),
-            crate::time::now_unix_ms_u128()
+fn apply_prepared_downloaded_bundle(
+    prepared: PreparedDownloadedBundle,
+) -> Result<super::release_bundle::ReleaseBundleCommit> {
+    let commit = super::release_bundle::apply_release_bundle(
+        &prepared.bundle_root,
+        prepared.layout,
+        &prepared.canonical_version,
+    )
+    .context("apply authenticated release bundle")?;
+    drop(prepared.stage);
+    Ok(commit)
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+enum BundleApplyOutcome {
+    Committed(super::release_bundle::ReleaseBundleCommit),
+    HandoffScheduled {
+        operation_id: String,
+        receipt_path: PathBuf,
+    },
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+struct HandoffAudit<'a> {
+    from_version: &'a str,
+    release_tag: &'a str,
+    source_repo: &'a str,
+    channel: ReleaseChannel,
+    download_url: &'a str,
+}
+
+struct DownloadedBundleUpdateRequest<'a> {
+    asset_bytes: &'a [u8],
+    companion_text: &'a str,
+    signature_text: Option<&'a str>,
+    format: ArchiveFormat,
+    install_dir: &'a Path,
+    expected_release_version: &'a str,
+    target_triple: &'a str,
+    asset_name: &'a str,
+    audit: HandoffAudit<'a>,
+}
+
+fn apply_downloaded_bundle_for_update(
+    request: DownloadedBundleUpdateRequest<'_>,
+) -> Result<BundleApplyOutcome> {
+    let DownloadedBundleUpdateRequest {
+        asset_bytes,
+        companion_text,
+        signature_text,
+        format,
+        install_dir,
+        expected_release_version,
+        target_triple,
+        asset_name,
+        audit,
+    } = request;
+    let prepared = prepare_downloaded_bundle(
+        asset_bytes,
+        companion_text,
+        format,
+        install_dir,
+        expected_release_version,
+        target_triple,
+    )?;
+
+    #[cfg(windows)]
+    if running_from_install_root(install_dir)? {
+        return schedule_windows_bundle_handoff(
+            prepared,
+            asset_bytes,
+            companion_text,
+            signature_text,
+            target_triple,
+            asset_name,
+            audit,
         );
-        displaced.set_file_name(displaced_name);
+    }
 
-        if member.target_path.exists()
-            && let Err(error) = std::fs::rename(&member.target_path, &displaced)
-        {
-            failures.push(format!(
-                "move new {} aside: {error}",
-                member.target_path.display()
-            ));
-            continue;
+    #[cfg(not(windows))]
+    let _ = (signature_text, target_triple, asset_name, audit);
+
+    apply_prepared_downloaded_bundle(prepared).map(BundleApplyOutcome::Committed)
+}
+
+#[cfg(windows)]
+const WINDOWS_HANDOFF_SCHEMA_VERSION: u32 = 1;
+#[cfg(windows)]
+const WINDOWS_HANDOFF_REQUEST: &str = "handoff.json";
+#[cfg(windows)]
+const WINDOWS_HANDOFF_ARCHIVE: &str = "handoff.asset";
+#[cfg(windows)]
+const WINDOWS_HANDOFF_CHECKSUM: &str = "handoff.sha256";
+#[cfg(windows)]
+const WINDOWS_HANDOFF_SIGNATURE: &str = "handoff.minisig";
+#[cfg(windows)]
+const WINDOWS_HANDOFF_RECEIPTS: &str = "update-handoffs";
+#[cfg(windows)]
+const WINDOWS_HANDOFF_STAGING: &str = "update-handoff-staging";
+#[cfg(windows)]
+const WINDOWS_HANDOFF_STAGE_PREFIX: &str = ".neoth-self-update-";
+
+#[cfg(windows)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct WindowsHandoffRequest {
+    schema_version: u32,
+    operation_id: String,
+    install_root: PathBuf,
+    expected_version: String,
+    release_tag: String,
+    target_triple: String,
+    from_version: String,
+    source_repo: String,
+    channel: ReleaseChannel,
+    download_url: String,
+    daemon_pid: Option<u32>,
+    supervisor_enabled: bool,
+}
+
+#[cfg(windows)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct WindowsHandoffReceipt {
+    schema_version: u32,
+    operation_id: String,
+    status: String,
+    from_version: String,
+    to_version: String,
+    request_sha256: String,
+    stage_root: PathBuf,
+    install_root: PathBuf,
+    transaction_id: Option<String>,
+    members: Option<usize>,
+    automatic_crash_recovery: bool,
+    error: Option<String>,
+}
+
+#[cfg(windows)]
+pub(crate) struct CompletedWindowsHandoff {
+    pub applied: UpdateApplied,
+    pub operation_id: String,
+    pub install_root: PathBuf,
+    pub request_sha256: String,
+    pub source_repo: String,
+    pub channel: ReleaseChannel,
+    pub target_triple: String,
+}
+
+#[cfg(windows)]
+fn running_from_install_root(install_root: &Path) -> Result<bool> {
+    let current = std::env::current_exe()
+        .context("locate running self-update executable")?
+        .canonicalize()
+        .context("canonicalize running self-update executable")?;
+    let installed = install_root
+        .join(binary_filename_for_host("neoth"))
+        .canonicalize()
+        .context("canonicalize installed neoth executable")?;
+    Ok(current == installed)
+}
+
+#[cfg(windows)]
+fn validate_handoff_operation_id(operation_id: &str) -> Result<()> {
+    if operation_id.len() != 32
+        || !operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!("Windows update handoff id must be 32 lowercase hex characters");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_handoff_request_sha256(request_sha256: &str) -> Result<()> {
+    if request_sha256.len() != 64
+        || !request_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!("Windows update request SHA-256 must be 64 lowercase hex characters");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_windows_handoff_request_binding(bytes: &[u8], expected_sha256: &str) -> Result<()> {
+    validate_handoff_request_sha256(expected_sha256)?;
+    if hex_encode(&Sha256::digest(bytes)) != expected_sha256 {
+        anyhow::bail!("Windows handoff request SHA-256 binding does not match");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn ensure_private_windows_handoff_directory(path: &Path, label: &str) -> Result<PathBuf> {
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("create {label} directory {}", path.display()))?;
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("inspect {label} directory {}", path.display()))?;
+    if metadata_is_link_like(&metadata) || !metadata.is_dir() {
+        anyhow::bail!(
+            "{label} directory is not a real directory: {}",
+            path.display()
+        );
+    }
+    crate::wal::win_native::set_private_current_user_directory_dacl(path)
+        .with_context(|| format!("protect {label} directory {}", path.display()))?;
+    crate::wal::win_native::verify_private_directory_dacl(path)
+        .with_context(|| format!("verify {label} directory {}", path.display()))?;
+    std::fs::canonicalize(path)
+        .with_context(|| format!("canonicalize {label} directory {}", path.display()))
+}
+
+#[cfg(all(windows, test))]
+fn windows_handoff_state_home() -> PathBuf {
+    std::env::temp_dir().join(format!("neoth-test-update-handoffs-{}", std::process::id()))
+}
+
+#[cfg(all(windows, not(test)))]
+fn windows_handoff_state_home() -> PathBuf {
+    crate::config::FreedomConfig::default_neoth_home()
+}
+
+#[cfg(windows)]
+fn windows_handoff_staging_namespace() -> Result<PathBuf> {
+    ensure_private_windows_handoff_directory(
+        &windows_handoff_state_home().join(WINDOWS_HANDOFF_STAGING),
+        "Windows update staging",
+    )
+}
+
+#[cfg(windows)]
+fn handoff_receipt_path(operation_id: &str) -> Result<PathBuf> {
+    validate_handoff_operation_id(operation_id)?;
+    let directory = ensure_private_windows_handoff_directory(
+        &windows_handoff_state_home().join(WINDOWS_HANDOFF_RECEIPTS),
+        "Windows update receipt",
+    )?;
+    Ok(directory.join(format!("{operation_id}.json")))
+}
+
+#[cfg(windows)]
+fn write_new_synced(path: &Path, bytes: &[u8], label: &str) -> Result<()> {
+    use std::io::Write as _;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("create Windows handoff {label} {}", path.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("write Windows handoff {label}"))?;
+    file.sync_all()
+        .with_context(|| format!("flush Windows handoff {label}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn schedule_windows_bundle_handoff(
+    prepared: PreparedDownloadedBundle,
+    asset_bytes: &[u8],
+    companion_text: &str,
+    signature_text: Option<&str>,
+    target_triple: &str,
+    asset_name: &str,
+    audit: HandoffAudit<'_>,
+) -> Result<BundleApplyOutcome> {
+    use std::os::windows::process::CommandExt as _;
+    use std::process::{Command, Stdio};
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
+
+    if asset_name != expected_asset_name("neoth", audit.release_tag, target_triple) {
+        anyhow::bail!("Windows handoff asset name does not match the exact release target");
+    }
+    let signature_text = signature_text
+        .ok_or_else(|| anyhow::anyhow!("Windows handoff requires a release signature"))?;
+    let signature_status = crate::updater::sig_verify::check_signature_for_file(
+        asset_bytes,
+        Some(signature_text),
+        true,
+        Some(asset_name),
+    )
+    .context("Windows handoff requires a verified release signature")?;
+    if signature_status != crate::updater::sig_verify::SigStatus::Verified {
+        anyhow::bail!("Windows handoff requires a verified release signature");
+    }
+
+    let operation_id = uuid::Uuid::new_v4().simple().to_string();
+    let receipt_path = handoff_receipt_path(&operation_id)?;
+    if receipt_path.exists() {
+        anyhow::bail!(
+            "Windows update receipt slot already exists: {}",
+            receipt_path.display()
+        );
+    }
+    let install_root = match &prepared.layout {
+        super::release_bundle::ReleaseInstallLayout::Portable(root) => root.clone(),
+        _ => anyhow::bail!("Windows PID handoff is only valid for portable installations"),
+    };
+    let config = crate::config::FreedomConfig::load_from_default_path_or_default()
+        .context("load supervisor policy for Windows update handoff")?;
+    let daemon_pid =
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
+            .context("inspect running daemon before Windows update handoff")?;
+    let request = WindowsHandoffRequest {
+        schema_version: WINDOWS_HANDOFF_SCHEMA_VERSION,
+        operation_id: operation_id.clone(),
+        install_root,
+        expected_version: prepared.canonical_version.clone(),
+        release_tag: audit.release_tag.to_string(),
+        target_triple: target_triple.to_string(),
+        from_version: audit.from_version.to_string(),
+        source_repo: audit.source_repo.to_string(),
+        channel: audit.channel,
+        download_url: audit.download_url.to_string(),
+        daemon_pid,
+        supervisor_enabled: config.supervisor.enabled,
+    };
+
+    let stage_root = prepared
+        .bundle_root
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Windows handoff bundle has no staging parent"))?;
+    let request_path = stage_root.join(WINDOWS_HANDOFF_REQUEST);
+    let archive_path = stage_root.join(WINDOWS_HANDOFF_ARCHIVE);
+    let checksum_path = stage_root.join(WINDOWS_HANDOFF_CHECKSUM);
+    let signature_path = stage_root.join(WINDOWS_HANDOFF_SIGNATURE);
+    let mut request_bytes = serde_json::to_vec_pretty(&request)?;
+    request_bytes.push(b'\n');
+    let request_sha256 = hex_encode(&Sha256::digest(&request_bytes));
+    write_new_synced(&request_path, &request_bytes, "request")?;
+    write_new_synced(&archive_path, asset_bytes, "archive")?;
+    write_new_synced(&checksum_path, companion_text.as_bytes(), "checksum")?;
+    write_new_synced(&signature_path, signature_text.as_bytes(), "signature")?;
+
+    let helper = prepared.bundle_root.join(binary_filename_for_host("neoth"));
+    let mut child = Command::new(&helper)
+        .arg("--output")
+        .arg("json")
+        .arg("internal")
+        .arg("bundle-transaction")
+        .arg("handoff")
+        .arg("--bundle-root")
+        .arg(&prepared.bundle_root)
+        .arg("--request")
+        .arg(&request_path)
+        .arg("--request-sha256")
+        .arg(&request_sha256)
+        .arg("--wait-pid")
+        .arg(std::process::id().to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
+        .spawn()
+        .with_context(|| format!("start target release helper {}", helper.display()))?;
+
+    if daemon_pid.is_some()
+        && let Err(error) = crate::daemon::supervisor::request_restart(
+            &crate::config::FreedomConfig::default_neoth_home(),
+        )
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error).context("request graceful daemon stop for Windows update handoff");
+    }
+
+    let _persistent_stage = prepared.stage.keep();
+    Ok(BundleApplyOutcome::HandoffScheduled {
+        operation_id,
+        receipt_path,
+    })
+}
+
+#[cfg(windows)]
+fn read_windows_handoff_request(
+    bundle_root: &Path,
+    request_path: &Path,
+    expected_sha256: Option<&str>,
+) -> Result<(WindowsHandoffRequest, PathBuf)> {
+    let bundle_root = std::fs::canonicalize(bundle_root).with_context(|| {
+        format!(
+            "canonicalize Windows handoff bundle {}",
+            bundle_root.display()
+        )
+    })?;
+    let stage_root = bundle_root
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Windows handoff bundle has no staging parent"))?
+        .to_path_buf();
+    let expected_request = std::fs::canonicalize(stage_root.join(WINDOWS_HANDOFF_REQUEST))
+        .context("canonicalize exact Windows handoff request slot")?;
+    let supplied_request = std::fs::canonicalize(request_path).with_context(|| {
+        format!(
+            "canonicalize Windows handoff request {}",
+            request_path.display()
+        )
+    })?;
+    if supplied_request != expected_request {
+        anyhow::bail!("Windows handoff request is outside its exact staging slot");
+    }
+    let metadata =
+        std::fs::symlink_metadata(&supplied_request).context("inspect Windows handoff request")?;
+    if metadata_is_link_like(&metadata) || !metadata.is_file() {
+        anyhow::bail!("Windows handoff request is not a regular non-link file");
+    }
+    let bytes = read_file_bounded(
+        &supplied_request,
+        MAX_PENDING_JSON_BYTES,
+        "Windows handoff request",
+    )?;
+    if let Some(expected_sha256) = expected_sha256 {
+        validate_windows_handoff_request_binding(&bytes, expected_sha256)?;
+    }
+    let request: WindowsHandoffRequest =
+        serde_json::from_slice(&bytes).context("parse Windows handoff request")?;
+    validate_handoff_operation_id(&request.operation_id)?;
+    if request.schema_version != WINDOWS_HANDOFF_SCHEMA_VERSION
+        || request.expected_version != env!("CARGO_PKG_VERSION")
+        || parse_semver_version(&request.expected_version)?.to_string() != request.expected_version
+        || parse_semver_version(&request.release_tag)?.to_string() != request.expected_version
+        || parse_semver_version(&request.from_version).is_err()
+        || !owner_repo_is_valid(&request.source_repo)
+        || host_target_triple() != Some(request.target_triple.as_str())
+    {
+        anyhow::bail!("Windows handoff request identity is invalid for this release helper");
+    }
+    let expected_asset = expected_asset_name("neoth", &request.release_tag, &request.target_triple);
+    if !request
+        .download_url
+        .ends_with(&format!("/{expected_asset}"))
+    {
+        anyhow::bail!("Windows handoff download URL is not bound to the expected asset");
+    }
+    Ok((request, stage_root))
+}
+
+#[cfg(windows)]
+fn wait_for_windows_process(pid: u32, timeout_ms: u32, label: &str) -> Result<()> {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_FAILED, WAIT_OBJECT_0,
+        WAIT_TIMEOUT,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+
+    if pid == 0 || pid == std::process::id() {
+        anyhow::bail!("invalid {label} pid {pid} for Windows update handoff");
+    }
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        let error = unsafe { GetLastError() };
+        if error == ERROR_INVALID_PARAMETER {
+            return Ok(());
         }
-
-        let mut prior_state_restored = !member.had_original;
-        if member.had_original {
-            if !member.backup_path.exists() {
-                failures.push(format!(
-                    "backup {} disappeared",
-                    member.backup_path.display()
-                ));
-            } else if let Err(error) = std::fs::rename(&member.backup_path, &member.target_path) {
-                failures.push(format!("restore {}: {error}", member.target_path.display()));
-            } else {
-                prior_state_restored = true;
-            }
+        anyhow::bail!("open {label} pid {pid} for update handoff: Win32 {error}");
+    }
+    let wait = unsafe { WaitForSingleObject(handle, timeout_ms) };
+    let close_ok = unsafe { CloseHandle(handle) };
+    if close_ok == 0 {
+        anyhow::bail!("close {label} process handle after update wait");
+    }
+    match wait {
+        WAIT_OBJECT_0 => Ok(()),
+        WAIT_TIMEOUT => {
+            anyhow::bail!("timed out waiting for {label} pid {pid} to exit before Windows update")
         }
+        WAIT_FAILED => anyhow::bail!("wait for {label} pid {pid} failed"),
+        other => anyhow::bail!("unexpected Windows wait result {other} for {label} pid {pid}"),
+    }
+}
 
-        if prior_state_restored && displaced.exists() {
-            if let Err(error) = std::fs::remove_file(&displaced) {
-                warn!(
-                    path = %displaced.display(),
-                    error = %error,
-                    "self-update rollback restored the prior target but could not remove the displaced candidate"
-                );
-            }
-        } else if displaced.exists() {
-            warn!(
-                path = %displaced.display(),
-                "self-update rollback could not restore the prior target; retained the displaced candidate for manual recovery"
+#[cfg(windows)]
+fn stop_windows_supervisor_task() {
+    let outcome = std::process::Command::new("schtasks.exe")
+        .args(["/end", "/tn", crate::daemon::supervisor::WINDOWS_TASK_NAME])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if let Err(error) = outcome {
+        warn!(%error, "could not ask Task Scheduler to stop the NEOTH supervisor before update");
+    }
+}
+
+#[cfg(windows)]
+fn restore_windows_runtime(request: &WindowsHandoffRequest) -> Result<()> {
+    use std::os::windows::process::CommandExt as _;
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
+
+    if request.supervisor_enabled {
+        let output = std::process::Command::new("schtasks.exe")
+            .args(["/run", "/tn", crate::daemon::supervisor::WINDOWS_TASK_NAME])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .context("restart NEOTH Task Scheduler supervisor after update")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "restart NEOTH Task Scheduler supervisor failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
             );
         }
+    } else if request.daemon_pid.is_some() {
+        std::process::Command::new(request.install_root.join(binary_filename_for_host("neoth")))
+            .arg("serve")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
+            .spawn()
+            .context("restart unsupervised NEOTH daemon after Windows update")?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_windows_handoff_receipt(
+    request: &WindowsHandoffRequest,
+    request_sha256: &str,
+    stage_root: &Path,
+    transaction_id: Option<&str>,
+    members: Option<usize>,
+    error: Option<&str>,
+) -> Result<()> {
+    validate_handoff_request_sha256(request_sha256)?;
+    let canonical_stage = std::fs::canonicalize(stage_root).with_context(|| {
+        format!(
+            "canonicalize Windows handoff stage for receipt {}",
+            stage_root.display()
+        )
+    })?;
+    let canonical_install = std::fs::canonicalize(&request.install_root).with_context(|| {
+        format!(
+            "canonicalize Windows handoff install root for receipt {}",
+            request.install_root.display()
+        )
+    })?;
+    let receipt = WindowsHandoffReceipt {
+        schema_version: WINDOWS_HANDOFF_SCHEMA_VERSION,
+        operation_id: request.operation_id.clone(),
+        status: if error.is_some() {
+            "failed".to_string()
+        } else {
+            "committed".to_string()
+        },
+        from_version: request.from_version.clone(),
+        to_version: request.expected_version.clone(),
+        request_sha256: request_sha256.to_string(),
+        stage_root: canonical_stage,
+        install_root: canonical_install,
+        transaction_id: transaction_id.map(str::to_string),
+        members,
+        automatic_crash_recovery: true,
+        error: error.map(str::to_string),
+    };
+    let mut bytes = serde_json::to_vec_pretty(&receipt)?;
+    bytes.push(b'\n');
+    let path = handoff_receipt_path(&request.operation_id)?;
+    crate::util::atomic_write::atomic_write_private(&path, &bytes)
+        .with_context(|| format!("write Windows update receipt {}", path.display()))
+}
+
+#[cfg(windows)]
+fn run_windows_bundle_handoff_inner(
+    request: &WindowsHandoffRequest,
+    stage_root: &Path,
+    wait_pid: u32,
+) -> Result<super::release_bundle::ReleaseBundleCommit> {
+    wait_for_windows_process(wait_pid, 300_000, "parent updater")?;
+    if let Some(daemon_pid) = request.daemon_pid {
+        wait_for_windows_process(daemon_pid, 120_000, "NEOTH daemon")?;
+    }
+    if request.supervisor_enabled {
+        // The Windows supervisor loop would otherwise relaunch the old image
+        // three seconds after the daemon drains and re-lock neoth.exe.
+        stop_windows_supervisor_task();
     }
 
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        anyhow::bail!(failures.join("; "))
+    let archive_path = stage_root.join(WINDOWS_HANDOFF_ARCHIVE);
+    let checksum_path = stage_root.join(WINDOWS_HANDOFF_CHECKSUM);
+    let signature_path = stage_root.join(WINDOWS_HANDOFF_SIGNATURE);
+    for (path, label) in [
+        (&archive_path, "archive"),
+        (&checksum_path, "checksum"),
+        (&signature_path, "signature"),
+    ] {
+        let metadata = std::fs::symlink_metadata(path)
+            .with_context(|| format!("inspect Windows handoff {label} {}", path.display()))?;
+        if metadata_is_link_like(&metadata) || !metadata.is_file() {
+            anyhow::bail!("Windows handoff {label} is not a regular non-link file");
+        }
     }
+    let asset_bytes = read_file_bounded(
+        &archive_path,
+        MAX_RELEASE_ARCHIVE_BYTES,
+        "Windows handoff archive",
+    )?;
+    let companion_text = String::from_utf8(read_file_bounded(
+        &checksum_path,
+        MAX_CHECKSUM_BYTES,
+        "Windows handoff checksum",
+    )?)
+    .context("Windows handoff checksum is not UTF-8")?;
+    let signature_text = String::from_utf8(read_file_bounded(
+        &signature_path,
+        MAX_SIGNATURE_BYTES,
+        "Windows handoff signature",
+    )?)
+    .context("Windows handoff signature is not UTF-8")?;
+    let asset_name = expected_asset_name("neoth", &request.release_tag, &request.target_triple);
+    let signature_status = crate::updater::sig_verify::check_signature_for_file(
+        &asset_bytes,
+        Some(&signature_text),
+        true,
+        Some(&asset_name),
+    )
+    .context("re-verify Windows handoff release signature after parent exit")?;
+    if signature_status != crate::updater::sig_verify::SigStatus::Verified {
+        anyhow::bail!("Windows handoff release signature is not verified");
+    }
+    apply_downloaded_bundle(
+        &asset_bytes,
+        &companion_text,
+        archive_format_for_target(&request.target_triple),
+        &request.install_root,
+        &request.expected_version,
+        &request.target_triple,
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn run_windows_bundle_handoff(
+    bundle_root: &Path,
+    request_path: &Path,
+    request_sha256: &str,
+    wait_pid: u32,
+) -> Result<CompletedWindowsHandoff> {
+    require_non_elevated_windows_portable_update("run release handoff")?;
+    super::release_bundle::require_running_bundle_helper(bundle_root)?;
+    let (request, stage_root) =
+        read_windows_handoff_request(bundle_root, request_path, Some(request_sha256))?;
+    let apply_result = run_windows_bundle_handoff_inner(&request, &stage_root, wait_pid);
+    let restore_result = restore_windows_runtime(&request);
+
+    match apply_result {
+        Ok(commit) => {
+            let restore_warning = restore_result.err().map(|error| format!("{error:#}"));
+            if let Some(error) = &restore_warning {
+                warn!(%error, "Windows update committed but the previous runtime could not be restarted");
+            }
+            write_windows_handoff_receipt(
+                &request,
+                request_sha256,
+                &stage_root,
+                Some(&commit.receipt.transaction_id),
+                Some(commit.receipt.members),
+                None,
+            )?;
+            Ok(CompletedWindowsHandoff {
+                applied: UpdateApplied {
+                    from_version: request.from_version.clone(),
+                    to_version: request.expected_version.clone(),
+                    transaction_id: commit.receipt.transaction_id,
+                    automatic_crash_recovery: true,
+                    restart_required: true,
+                    archive_sha256: parse_sha256_companion(&String::from_utf8(
+                        read_file_bounded(
+                            &stage_root.join(WINDOWS_HANDOFF_CHECKSUM),
+                            MAX_CHECKSUM_BYTES,
+                            "Windows handoff checksum",
+                        )?,
+                    )?)?,
+                    download_url: request.download_url.clone(),
+                    signature_status: "verified".to_string(),
+                },
+                operation_id: request.operation_id.clone(),
+                install_root: request.install_root.clone(),
+                request_sha256: request_sha256.to_string(),
+                source_repo: request.source_repo.clone(),
+                channel: request.channel,
+                target_triple: request.target_triple.clone(),
+            })
+        }
+        Err(error) => {
+            let message = match restore_result {
+                Ok(()) => format!("{error:#}"),
+                Err(restore_error) => {
+                    format!("{error:#}; restoring the prior runtime also failed: {restore_error:#}")
+                }
+            };
+            if let Err(receipt_error) = write_windows_handoff_receipt(
+                &request,
+                request_sha256,
+                &stage_root,
+                None,
+                None,
+                Some(&message),
+            ) {
+                return Err(error.context(format!(
+                    "Windows update failed and its failure receipt could not be written: {receipt_error:#}"
+                )));
+            }
+            Err(error.context("detached Windows release transaction failed"))
+        }
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn spawn_windows_handoff_cleanup(completed: &CompletedWindowsHandoff) -> Result<()> {
+    use std::os::windows::process::CommandExt as _;
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
+
+    std::process::Command::new(
+        completed
+            .install_root
+            .join(binary_filename_for_host("neoth")),
+    )
+    .arg("--output")
+    .arg("json")
+    .arg("internal")
+    .arg("bundle-transaction")
+    .arg("cleanup-handoff")
+    .arg("--operation-id")
+    .arg(&completed.operation_id)
+    .arg("--request-sha256")
+    .arg(&completed.request_sha256)
+    .arg("--wait-pid")
+    .arg(std::process::id().to_string())
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
+    .spawn()
+    .context("start installed cleanup helper for Windows update handoff")?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_committed_windows_handoff_receipt(
+    receipt: &WindowsHandoffReceipt,
+    operation_id: &str,
+    request_sha256: &str,
+) -> Result<()> {
+    if receipt.schema_version != WINDOWS_HANDOFF_SCHEMA_VERSION
+        || receipt.operation_id != operation_id
+        || receipt.request_sha256 != request_sha256
+        || receipt.status != "committed"
+        || receipt.to_version != env!("CARGO_PKG_VERSION")
+        || parse_semver_version(&receipt.from_version).is_err()
+        || receipt.transaction_id.as_deref().is_none_or(str::is_empty)
+        || receipt.members.is_none_or(|members| members == 0)
+        || !receipt.automatic_crash_recovery
+        || receipt.error.is_some()
+    {
+        anyhow::bail!("Windows handoff receipt is not an exact committed cleanup authority");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn read_committed_windows_handoff_receipt(
+    operation_id: &str,
+    request_sha256: &str,
+) -> Result<WindowsHandoffReceipt> {
+    validate_handoff_operation_id(operation_id)?;
+    validate_handoff_request_sha256(request_sha256)?;
+    let path = handoff_receipt_path(operation_id)?;
+    let metadata = std::fs::symlink_metadata(&path)
+        .with_context(|| format!("inspect Windows handoff receipt {}", path.display()))?;
+    if metadata_is_link_like(&metadata) || !metadata.is_file() {
+        anyhow::bail!("Windows handoff receipt is not a regular non-link file");
+    }
+    crate::wal::win_native::verify_private_dacl(&path)
+        .with_context(|| format!("verify private Windows handoff receipt {}", path.display()))?;
+    let bytes = read_file_bounded(&path, MAX_PENDING_JSON_BYTES, "Windows handoff receipt")?;
+    let receipt: WindowsHandoffReceipt =
+        serde_json::from_slice(&bytes).context("parse Windows handoff receipt")?;
+    validate_committed_windows_handoff_receipt(&receipt, operation_id, request_sha256)?;
+    Ok(receipt)
+}
+
+#[cfg(windows)]
+fn validate_windows_cleanup_namespace(
+    receipt: &WindowsHandoffReceipt,
+    namespace: &Path,
+) -> Result<()> {
+    if receipt.stage_root.parent() != Some(namespace)
+        || !receipt
+            .stage_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(WINDOWS_HANDOFF_STAGE_PREFIX))
+    {
+        anyhow::bail!("Windows handoff receipt stage is outside the private staging namespace");
+    }
+    if !receipt.stage_root.is_absolute() || !receipt.install_root.is_absolute() {
+        anyhow::bail!("Windows handoff receipt paths are not canonical absolute paths");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_windows_cleanup_tree(root: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(root)
+        .with_context(|| format!("inspect Windows handoff cleanup tree {}", root.display()))?;
+    if metadata_is_link_like(&metadata) || !metadata.is_dir() {
+        anyhow::bail!(
+            "Windows handoff cleanup root is not a real directory: {}",
+            root.display()
+        );
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let mut entries = std::fs::read_dir(&directory)
+            .with_context(|| format!("read Windows handoff tree {}", directory.display()))?
+            .collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata_is_link_like(&metadata) {
+                anyhow::bail!(
+                    "Windows handoff cleanup tree contains a reparse point: {}",
+                    path.display()
+                );
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if !metadata.is_file() {
+                anyhow::bail!(
+                    "Windows handoff cleanup tree contains a special file: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn remove_windows_cleanup_tree(root: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(root)
+        .with_context(|| format!("inspect Windows cleanup artifact {}", root.display()))?;
+    if metadata_is_link_like(&metadata) {
+        anyhow::bail!(
+            "refusing to remove Windows reparse point {}",
+            root.display()
+        );
+    }
+    if metadata.is_file() {
+        std::fs::remove_file(root)
+            .with_context(|| format!("remove Windows cleanup file {}", root.display()))?;
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        anyhow::bail!("refusing to remove Windows special file {}", root.display());
+    }
+    let mut entries = std::fs::read_dir(root)
+        .with_context(|| format!("read Windows cleanup directory {}", root.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        remove_windows_cleanup_tree(&entry.path())?;
+    }
+    std::fs::remove_dir(root)
+        .with_context(|| format!("remove Windows cleanup directory {}", root.display()))
+}
+
+#[cfg(windows)]
+fn windows_process_is_elevated() -> Result<bool> {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    struct TokenHandle(HANDLE);
+
+    impl Drop for TokenHandle {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: this guard owns one successful OpenProcessToken
+                // handle and closes it exactly once.
+                unsafe { CloseHandle(self.0) };
+            }
+        }
+    }
+
+    let mut raw_token: HANDLE = std::ptr::null_mut();
+    // SAFETY: GetCurrentProcess returns the caller pseudo-handle and
+    // `raw_token` is a valid out-pointer for one TOKEN_QUERY handle.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw_token) } == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("open current process token for Windows handoff cleanup");
+    }
+    let token = TokenHandle(raw_token);
+    let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+    let mut returned = 0u32;
+    // SAFETY: `elevation` is writable for the declared TOKEN_ELEVATION size,
+    // and `returned` is a valid out-pointer for the byte count.
+    if unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenElevation,
+            (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error())
+            .context("inspect current process elevation for Windows handoff cleanup");
+    }
+    if returned < std::mem::size_of::<TOKEN_ELEVATION>() as u32 {
+        anyhow::bail!("Windows returned an undersized token elevation record");
+    }
+    Ok(elevation.TokenIsElevated != 0)
+}
+
+#[cfg(windows)]
+fn require_non_elevated_windows_portable_update(operation: &str) -> Result<()> {
+    #[cfg(test)]
+    let elevated = false;
+    #[cfg(not(test))]
+    let elevated = windows_process_is_elevated()?;
+
+    validate_windows_portable_update_elevation(elevated, operation)
+}
+
+#[cfg(windows)]
+fn validate_windows_portable_update_elevation(elevated: bool, operation: &str) -> Result<()> {
+    if elevated {
+        anyhow::bail!(
+            "Windows portable self-update refuses to {operation} with an elevated process token; use the signed native installer for machine-wide updates"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn cleanup_windows_handoff(
+    operation_id: &str,
+    request_sha256: &str,
+    wait_pid: u32,
+) -> Result<()> {
+    // Portable staging, helper launch, and cleanup intentionally have no more
+    // authority than the user who owns the private staging namespace. This
+    // makes a same-user replacement race unable to become an elevated deputy.
+    require_non_elevated_windows_portable_update("clean release handoff staging")?;
+    let receipt = read_committed_windows_handoff_receipt(operation_id, request_sha256)?;
+    let namespace = windows_handoff_staging_namespace()?;
+    validate_windows_cleanup_namespace(&receipt, &namespace)?;
+    let cleanup_root = namespace.join(format!(".cleanup-{operation_id}"));
+    let stage_exists = receipt.stage_root.try_exists()?;
+    let cleanup_exists = cleanup_root.try_exists()?;
+    if stage_exists && cleanup_exists {
+        anyhow::bail!("Windows handoff has both live and cleanup staging roots");
+    }
+    if !stage_exists && !cleanup_exists {
+        return Ok(());
+    }
+    let active_root = if stage_exists {
+        let canonical = std::fs::canonicalize(&receipt.stage_root)?;
+        if canonical != receipt.stage_root {
+            anyhow::bail!("Windows handoff stage identity changed after commit");
+        }
+        receipt.stage_root.clone()
+    } else {
+        let canonical = std::fs::canonicalize(&cleanup_root)?;
+        if canonical != cleanup_root {
+            anyhow::bail!("Windows handoff cleanup identity is not canonical");
+        }
+        cleanup_root.clone()
+    };
+    validate_windows_cleanup_tree(&active_root)?;
+    crate::wal::win_native::verify_private_directory_dacl(&active_root).with_context(|| {
+        format!(
+            "verify private Windows handoff cleanup root {}",
+            active_root.display()
+        )
+    })?;
+
+    let is_staged = active_root == receipt.stage_root;
+    if is_staged {
+        let request_path = active_root.join(WINDOWS_HANDOFF_REQUEST);
+        let (request, canonical_active_root) = read_windows_handoff_request(
+            &active_root.join(expected_archive_root(
+                env!("CARGO_PKG_VERSION"),
+                host_target_triple().ok_or_else(|| anyhow::anyhow!("unsupported cleanup host"))?,
+            )?),
+            &request_path,
+            Some(request_sha256),
+        )?;
+        let canonical_install = std::fs::canonicalize(&request.install_root)?;
+        if canonical_active_root != active_root
+            || request.operation_id != operation_id
+            || canonical_install != receipt.install_root
+        {
+            anyhow::bail!("Windows handoff cleanup identity does not match its committed receipt");
+        }
+    }
+    let current = std::env::current_exe()
+        .context("locate installed Windows cleanup helper")?
+        .canonicalize()
+        .context("canonicalize installed Windows cleanup helper")?;
+    let expected = receipt
+        .install_root
+        .join(binary_filename_for_host("neoth"))
+        .canonicalize()
+        .context("canonicalize installed neoth for handoff cleanup")?;
+    if current != expected {
+        anyhow::bail!("Windows handoff cleanup must run the installed neoth executable");
+    }
+    wait_for_windows_process(wait_pid, 300_000, "release helper")?;
+
+    if is_staged {
+        let (_, revalidated_root) = read_windows_handoff_request(
+            &active_root.join(expected_archive_root(
+                env!("CARGO_PKG_VERSION"),
+                host_target_triple().ok_or_else(|| anyhow::anyhow!("unsupported cleanup host"))?,
+            )?),
+            &active_root.join(WINDOWS_HANDOFF_REQUEST),
+            Some(request_sha256),
+        )?;
+        if revalidated_root != active_root {
+            anyhow::bail!("Windows handoff cleanup root changed while waiting for the helper");
+        }
+    }
+    validate_windows_cleanup_tree(&active_root)?;
+    let quarantined = if is_staged {
+        if cleanup_root.try_exists()? {
+            anyhow::bail!("Windows handoff cleanup quarantine already exists");
+        }
+        std::fs::rename(&active_root, &cleanup_root).with_context(|| {
+            format!(
+                "quarantine completed Windows handoff {}",
+                active_root.display()
+            )
+        })?;
+        cleanup_root
+    } else {
+        active_root
+    };
+    validate_windows_cleanup_tree(&quarantined)?;
+    remove_windows_cleanup_tree(&quarantined)
 }
 
 async fn fetch_bytes_bounded(
@@ -1163,20 +2263,29 @@ async fn fetch_text_bounded(
     String::from_utf8(bytes).with_context(|| format!("{label} is not valid UTF-8"))
 }
 
-/// Network-driven update flow. Wraps [`apply_downloaded_bundle`] with
+/// Network-driven update flow. Wraps the shared bundle transaction with
 /// HTTP fetches against the release's `browser_download_url`
-/// fields. Returns Ok with the [`UpdateApplied`] envelope on
-/// success, Err with a diagnostic when any step fails — the
-/// daemon's existing binary is left untouched on failure (the
-/// staging tempdir cleans up; `target` only mutates after the
-/// final atomic_replace succeeds).
+/// fields. Returns [`UpdateApplyOutcome::Applied`] after a synchronous commit,
+/// or [`UpdateApplyOutcome::HandoffScheduled`] when a running Windows portable
+/// executable must finish through the detached target helper. Errors leave the
+/// daemon's existing binary untouched (the
+/// extraction tempdir cleans up; installed state mutates only after every
+/// archive and layout preflight succeeds).
 pub async fn apply_update(
     release: &LatestRelease,
+    source_repo: &str,
+    channel: ReleaseChannel,
     target_triple: &str,
     binary: &str,
     install_dir: &Path,
     require_signature: bool,
-) -> Result<UpdateApplied> {
+) -> Result<UpdateApplyOutcome> {
+    validate_owner_repo(source_repo)?;
+    if binary != "neoth" {
+        anyhow::bail!(
+            "release-bundle self-update supports only the public `neoth` entrypoint, not {binary:?}"
+        );
+    }
     let assets = resolve_update_assets(release, target_triple, binary)?;
     let companion = assets.sha256.ok_or_else(|| {
         anyhow::anyhow!(
@@ -1215,8 +2324,8 @@ pub async fn apply_update(
     // is the two-tier rule: the unattended daemon path passes `true`
     // (any non-verified outcome bails); the manual operator path passes
     // `false` (missing sig / unprovisioned key warns + proceeds, but a
-    // present-but-invalid sig still bails). Runs before apply_downloaded
-    // so a failed verify never reaches `atomic_replace_binary`.
+    // present-but-invalid sig still bails). Runs before bundle application so
+    // a failed verify never reaches the native transaction.
     let signature_text = match assets.signature {
         Some(sig_asset) => Some(
             fetch_text_bounded(
@@ -1251,22 +2360,52 @@ pub async fn apply_update(
 
     let format = archive_format_for_target(target_triple);
     let download_url = assets.binary.browser_download_url.clone();
-    let backup =
-        apply_downloaded_bundle(&asset_bytes, &companion_text, format, binary, install_dir)?;
+    let bundle_outcome = apply_downloaded_bundle_for_update(DownloadedBundleUpdateRequest {
+        asset_bytes: &asset_bytes,
+        companion_text: &companion_text,
+        signature_text: signature_text.as_deref(),
+        format,
+        install_dir,
+        expected_release_version: &release.tag_name,
+        target_triple,
+        asset_name: &assets.binary.name,
+        audit: HandoffAudit {
+            from_version: current_version(),
+            release_tag: &release.tag_name,
+            source_repo,
+            channel,
+            download_url: &download_url,
+        },
+    })?;
     // apply_downloaded_bundle already parsed + verified the companion, so this
     // re-parse cannot fail at this point; default to empty rather than
     // unwrap to keep a successful apply from ever panicking on audit.
     let archive_sha256 = parse_sha256_companion(&companion_text).unwrap_or_default();
 
-    Ok(UpdateApplied {
-        from_version: current_version().to_string(),
-        to_version: release.tag_name.clone(),
-        backup_path: backup,
-        restart_required: true,
-        archive_sha256,
-        download_url,
-        signature_status: sig_status.as_str().to_string(),
-    })
+    match bundle_outcome {
+        BundleApplyOutcome::Committed(commit) => Ok(UpdateApplyOutcome::Applied(UpdateApplied {
+            from_version: current_version().to_string(),
+            to_version: release.tag_name.clone(),
+            transaction_id: commit.receipt.transaction_id,
+            automatic_crash_recovery: true,
+            restart_required: true,
+            archive_sha256,
+            download_url,
+            signature_status: sig_status.as_str().to_string(),
+        })),
+        BundleApplyOutcome::HandoffScheduled {
+            operation_id,
+            receipt_path,
+        } => Ok(UpdateApplyOutcome::HandoffScheduled(
+            UpdateHandoffScheduled {
+                from_version: current_version().to_string(),
+                to_version: parse_semver_version(&release.tag_name)?.to_string(),
+                operation_id,
+                receipt_path,
+                restart_required: true,
+            },
+        )),
+    }
 }
 
 /// MV-01b prereq #5 — the staged-pending record written next to the
@@ -1421,10 +2560,20 @@ pub fn apply_from_staged(
     stage_dir: &Path,
     install_dir: &Path,
     require_signature: bool,
-) -> Result<UpdateApplied> {
+) -> Result<UpdateApplyOutcome> {
     parse_semver_version(&pending.to_version).map_err(|error| {
         IntegrityViolation(format!("invalid staged release version: {error:#}"))
     })?;
+    validate_owner_repo(&pending.source_repo)
+        .map_err(|error| IntegrityViolation(format!("invalid staged release source: {error:#}")))?;
+    if !release_tag_matches_channel(&pending.to_version, pending.channel) {
+        return Err(IntegrityViolation(format!(
+            "staged release version {:?} is outside its recorded {} channel",
+            pending.to_version,
+            pending.channel.as_str()
+        ))
+        .into());
+    }
     if !release_target_is_supported(&pending.target_triple) {
         return Err(IntegrityViolation(format!(
             "unsupported staged release target {:?}",
@@ -1490,26 +2639,55 @@ pub fn apply_from_staged(
     // F55 — re-verify integrity (SHA-256) against the recorded hash BEFORE any
     // swap, mapped to the typed `IntegrityViolation` so the caller can tell a
     // tamper-suspect failure apart from a benign I/O error and REFUSE (clear +
-    // audit) rather than silently downloading a fresh copy. `apply_downloaded`
-    // re-checks internally too (defence in depth); this typed pre-check fires
+    // audit) rather than silently downloading a fresh copy. The shared bundle
+    // path re-checks internally too (defence in depth); this typed check fires
     // first so the failure is classifiable.
     verify_sha256_bytes(&bytes, &pending.archive_sha256)
         .map_err(|e| IntegrityViolation(format!("staged sha256 verify failed: {e:#}")))?;
     let companion_text = format!("{}  staged\n", pending.archive_sha256);
     let format = archive_format_for_target(&pending.target_triple);
-    // Update every installed release companion from the exact same verified
-    // archive. A source-only core installation remains core-only.
-    let backup = apply_downloaded_bundle(&bytes, &companion_text, format, "neoth", install_dir)
-        .context("apply staged archive")?;
-    Ok(UpdateApplied {
-        from_version: current_version().to_string(),
-        to_version: pending.to_version.clone(),
-        backup_path: backup,
-        restart_required: true,
-        archive_sha256: pending.archive_sha256.clone(),
-        download_url: pending.download_url.clone(),
-        signature_status: sig_status.as_str().to_string(),
+    let bundle_outcome = apply_downloaded_bundle_for_update(DownloadedBundleUpdateRequest {
+        asset_bytes: &bytes,
+        companion_text: &companion_text,
+        signature_text: signature_text.as_deref(),
+        format,
+        install_dir,
+        expected_release_version: &pending.to_version,
+        target_triple: &pending.target_triple,
+        asset_name: &expected_asset,
+        audit: HandoffAudit {
+            from_version: current_version(),
+            release_tag: &pending.to_version,
+            source_repo: &pending.source_repo,
+            channel: pending.channel,
+            download_url: &pending.download_url,
+        },
     })
+    .context("apply staged archive")?;
+    match bundle_outcome {
+        BundleApplyOutcome::Committed(commit) => Ok(UpdateApplyOutcome::Applied(UpdateApplied {
+            from_version: current_version().to_string(),
+            to_version: pending.to_version.clone(),
+            transaction_id: commit.receipt.transaction_id,
+            automatic_crash_recovery: true,
+            restart_required: true,
+            archive_sha256: pending.archive_sha256.clone(),
+            download_url: pending.download_url.clone(),
+            signature_status: sig_status.as_str().to_string(),
+        })),
+        BundleApplyOutcome::HandoffScheduled {
+            operation_id,
+            receipt_path,
+        } => Ok(UpdateApplyOutcome::HandoffScheduled(
+            UpdateHandoffScheduled {
+                from_version: current_version().to_string(),
+                to_version: parse_semver_version(&pending.to_version)?.to_string(),
+                operation_id,
+                receipt_path,
+                restart_required: true,
+            },
+        )),
+    }
 }
 
 /// Remove the staged archive + `pending.json` after a successful apply.
@@ -1533,7 +2711,7 @@ pub fn clear_staged(stage_dir: &Path, pending: &PendingUpdate) {
 /// `require_signature`), write the raw archive into `stage_dir`, and
 /// drop a `pending.json` record. Returns the [`PendingUpdate`].
 ///
-/// Deliberately stops BEFORE extract/`atomic_replace_binary` — the
+/// Deliberately stops before extraction and the native bundle transaction — the
 /// `Action::SelfBinaryReplace` permission gate is Confirm-always, so the
 /// unattended daemon path may only stage; the actual swap stays
 /// operator-initiated (`neoth update --self --apply`). Senior-dev panel
@@ -2139,21 +3317,29 @@ mod tests {
         // must match what `apply_from_staged` extracts internally
         // (`"neoth"` — the public self-updated Cargo binary).
         let want = binary_filename_for_host("neoth");
-        let zip_bytes = make_zip_with_member(&want, b"staged-daemon");
+        let target = host_target_triple().expect("test host is in the release matrix");
+        let archive_bytes =
+            make_release_bundle_with_snapshot(&[(&want, b"staged-daemon")], "v9.9.9", target);
         let mut hasher = Sha256::new();
-        hasher.update(&zip_bytes);
+        hasher.update(&archive_bytes);
         let digest = hex_encode(&hasher.finalize());
 
         let dir = tempdir().unwrap();
         let stage_dir = dir.path().join("staged");
         std::fs::create_dir_all(&stage_dir).unwrap();
-        let asset_name = expected_asset_name("neoth", "v9.9.9", "x86_64-pc-windows-msvc");
+        let asset_name = expected_asset_name("neoth", "v9.9.9", target);
         let staged_archive = stage_dir.join(&asset_name);
-        std::fs::write(&staged_archive, &zip_bytes).unwrap();
+        std::fs::write(&staged_archive, &archive_bytes).unwrap();
 
         let install_dir = dir.path().join("bin");
         std::fs::create_dir_all(&install_dir).unwrap();
         std::fs::write(install_dir.join(&want), b"old-daemon").unwrap();
+        crate::updater::release_bundle::write_test_portable_ownership_marker(&install_dir).unwrap();
+        let overlay = dir
+            .path()
+            .join("operator-vault/User Overlays/operator-notes.md");
+        std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
+        std::fs::write(&overlay, b"operator-owned; never replace").unwrap();
 
         let pending = PendingUpdate {
             to_version: "v9.9.9".into(),
@@ -2164,7 +3350,7 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: staged_archive.display().to_string(),
             staged_signature: None,
-            target_triple: "x86_64-pc-windows-msvc".into(),
+            target_triple: target.into(),
             staged_ts_unix: 1_700_000_000,
         };
         // pending.json round-trips through disk.
@@ -2177,11 +3363,26 @@ mod tests {
         // install mechanics still run.
         let outcome =
             apply_from_staged(&pending, &stage_dir, &install_dir, false).expect("staged apply");
+        let UpdateApplyOutcome::Applied(outcome) = outcome else {
+            panic!("test installation is not the running Windows executable");
+        };
         assert_eq!(outcome.to_version, "v9.9.9");
         assert_eq!(outcome.signature_status, "no_pinned_key");
         assert_eq!(
             std::fs::read(install_dir.join(&want)).unwrap(),
             b"staged-daemon"
+        );
+        crate::wiki::release_snapshot::VerifiedReleaseSnapshot::open_for_update(
+            install_dir
+                .join(crate::updater::release_bundle::PORTABLE_SUPPORT_DIR)
+                .join("self-knowledge"),
+            "v9.9.9",
+        )
+        .expect("installed snapshot remains release-valid");
+        assert_eq!(
+            std::fs::read(&overlay).unwrap(),
+            b"operator-owned; never replace",
+            "self-update must not mutate User Overlays"
         );
 
         clear_staged(&stage_dir, &pending);
@@ -2618,25 +3819,31 @@ mod tests {
         );
     }
 
-    // ── Extractor + atomic-replace coverage ─────────────────────────
+    // Closed release-archive and native-transaction coverage.
 
-    /// Build an in-memory ZIP archive containing one member with
-    /// the requested name + body.
     fn make_zip_with_member(name: &str, body: &[u8]) -> Vec<u8> {
-        make_zip_with_members(&[(name, body)])
+        make_zip_with_members(&[(name, body, None)])
     }
 
-    fn make_zip_with_members(members: &[(&str, &[u8])]) -> Vec<u8> {
-        use std::io::Cursor;
-        use std::io::Write;
-        let mut out: Vec<u8> = Vec::new();
+    fn make_zip_with_members(members: &[(&str, &[u8], Option<u32>)]) -> Vec<u8> {
+        use std::io::{Cursor, Write as _};
+
+        let mut out = Vec::new();
         {
             let cursor = Cursor::new(&mut out);
             let mut writer = zip::ZipWriter::new(cursor);
-            for (name, body) in members {
-                writer
-                    .start_file::<_, ()>(*name, zip::write::SimpleFileOptions::default())
-                    .unwrap();
+            for (name, body, unix_mode) in members {
+                let mut options = zip::write::SimpleFileOptions::default();
+                if let Some(mode) = unix_mode {
+                    options = options.unix_permissions(*mode);
+                }
+                if unix_mode.is_some_and(|mode| mode & 0o170_000 == 0o120_000) {
+                    writer
+                        .add_symlink::<_, _, ()>(*name, std::str::from_utf8(body).unwrap(), options)
+                        .unwrap();
+                    continue;
+                }
+                writer.start_file::<_, ()>(*name, options).unwrap();
                 writer.write_all(body).unwrap();
             }
             writer.finish().unwrap();
@@ -2644,363 +3851,496 @@ mod tests {
         out
     }
 
-    /// Build an in-memory `.tar.gz` archive containing one
-    /// member with the requested name + body.
-    fn make_tar_gz_with_member(name: &str, body: &[u8]) -> Vec<u8> {
+    fn collect_snapshot_files(root: &Path, current: &Path, files: &mut Vec<PathBuf>) {
+        let mut entries = std::fs::read_dir(current)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                collect_snapshot_files(root, &path, files);
+            } else {
+                files.push(path.strip_prefix(root).unwrap().to_path_buf());
+            }
+        }
+    }
+
+    fn release_files(
+        overrides: &[(&str, &[u8])],
+        release_version: &str,
+        target: &str,
+    ) -> std::collections::BTreeMap<String, Vec<u8>> {
+        let mut files = std::collections::BTreeMap::new();
+        for binary in ["neothd", "neoth-migrate", "neoth-relay"] {
+            files.insert(
+                binary_filename_for_host(binary),
+                format!("new-{binary}").into_bytes(),
+            );
+        }
+        if !target.contains("musl") {
+            for binary in ["neothd-gui", "neoth-keet-bridge"] {
+                files.insert(
+                    binary_filename_for_host(binary),
+                    format!("new-{binary}").into_bytes(),
+                );
+            }
+        }
+        for name in [
+            "README.md",
+            "LICENSE-MIT",
+            "LICENSE-APACHE",
+            "THIRD_PARTY_LICENSES",
+            "freedom.yaml.example",
+            "import-manifest.example.yaml",
+        ] {
+            files.insert(name.to_string(), format!("fixture-{name}").into_bytes());
+        }
+        files.insert(binary_filename_for_host("neoth"), b"new-neoth".to_vec());
+
+        let fixture = tempdir().unwrap();
+        let snapshot = fixture.path().join("self-knowledge");
+        let canonical_version = parse_semver_version(release_version).unwrap().to_string();
+        crate::wiki::release_snapshot::write_test_snapshot(&snapshot, &canonical_version).unwrap();
+        let mut snapshot_files = Vec::new();
+        collect_snapshot_files(&snapshot, &snapshot, &mut snapshot_files);
+        for relative in snapshot_files {
+            let portable = relative
+                .components()
+                .map(|component| component.as_os_str().to_str().unwrap())
+                .collect::<Vec<_>>()
+                .join("/");
+            files.insert(
+                format!("self-knowledge/{portable}"),
+                std::fs::read(snapshot.join(relative)).unwrap(),
+            );
+        }
+        for (name, body) in overrides {
+            files.insert((*name).to_string(), body.to_vec());
+        }
+        files
+    }
+
+    fn encode_release_files(
+        files: &std::collections::BTreeMap<String, Vec<u8>>,
+        release_version: &str,
+        target: &str,
+    ) -> Vec<u8> {
+        let root = expected_archive_root(release_version, target).unwrap();
+        match archive_format_for_target(target) {
+            ArchiveFormat::Zip => {
+                use std::io::{Cursor, Write as _};
+
+                let mut out = Vec::new();
+                {
+                    let cursor = Cursor::new(&mut out);
+                    let mut writer = zip::ZipWriter::new(cursor);
+                    for (name, body) in files {
+                        writer
+                            .start_file::<_, ()>(
+                                format!("{root}/{name}"),
+                                zip::write::SimpleFileOptions::default(),
+                            )
+                            .unwrap();
+                        writer.write_all(body).unwrap();
+                    }
+                    writer.finish().unwrap();
+                }
+                out
+            }
+            ArchiveFormat::TarGz => {
+                use flate2::Compression;
+                use flate2::write::GzEncoder;
+                use std::io::Write as _;
+
+                let mut tar_bytes = Vec::new();
+                {
+                    let mut builder = tar::Builder::new(&mut tar_bytes);
+                    for (name, body) in files {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_path(format!("{root}/{name}")).unwrap();
+                        header.set_size(body.len() as u64);
+                        header.set_mode(if name.starts_with("neoth") {
+                            0o755
+                        } else {
+                            0o644
+                        });
+                        header.set_cksum();
+                        builder.append(&header, body.as_slice()).unwrap();
+                    }
+                    builder.finish().unwrap();
+                }
+                let mut out = Vec::new();
+                let mut gzip = GzEncoder::new(&mut out, Compression::default());
+                gzip.write_all(&tar_bytes).unwrap();
+                gzip.finish().unwrap();
+                out
+            }
+            ArchiveFormat::TarXz => unreachable!("release matrix does not emit XZ"),
+        }
+    }
+
+    fn make_release_bundle_with_snapshot(
+        overrides: &[(&str, &[u8])],
+        release_version: &str,
+        target: &str,
+    ) -> Vec<u8> {
+        encode_release_files(
+            &release_files(overrides, release_version, target),
+            release_version,
+            target,
+        )
+    }
+
+    #[test]
+    fn archive_ledger_rejects_unsafe_names_collisions_and_oversize() {
+        let root = "neoth-v9.9.9-x86_64-pc-windows-msvc";
+        for bad in [
+            format!("{root}/../escape"),
+            format!("../{root}/escape"),
+            format!("{root}/CON.txt"),
+            format!("{root}/trailing."),
+            format!("{root}//empty"),
+        ] {
+            let mut ledger = ArchiveLedger::new(root);
+            assert!(ledger.register(&bad, false, 1).is_err(), "{bad:?} passed");
+        }
+
+        let mut collision = ArchiveLedger::new(root);
+        collision
+            .register(&format!("{root}/README.md"), false, 1)
+            .unwrap();
+        assert!(
+            collision
+                .register(&format!("{root}/readme.md"), false, 1)
+                .is_err()
+        );
+        let mut oversized = ArchiveLedger::new(root);
+        assert!(
+            oversized
+                .register(
+                    &format!("{root}/neoth.exe"),
+                    false,
+                    MAX_RELEASE_BUNDLE_MEMBER_BYTES + 1,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn zip_extractor_rejects_wrong_root_duplicates_and_links() {
+        let root = "neoth-v9.9.9-x86_64-pc-windows-msvc";
+        let fixture = tempdir().unwrap();
+        assert!(
+            extract_zip_release_bundle(
+                &make_zip_with_member("other-root/neoth.exe", b"x"),
+                fixture.path(),
+                root,
+            )
+            .is_err()
+        );
+
+        let fixture = tempdir().unwrap();
+        // zip 6 rejects byte-identical duplicate names in ZipWriter itself.
+        // Distinct spellings that collide under our cross-platform case-folded
+        // ledger still exercise the extractor's duplicate-target boundary.
+        let upper = format!("{root}/README.md");
+        let lower = format!("{root}/readme.md");
+        let collision =
+            make_zip_with_members(&[(upper.as_str(), b"a", None), (lower.as_str(), b"b", None)]);
+        assert!(extract_zip_release_bundle(&collision, fixture.path(), root).is_err());
+
+        let fixture = tempdir().unwrap();
+        let link = format!("{root}/self-knowledge/link");
+        let symlink = make_zip_with_members(&[(link.as_str(), b"target", Some(0o120777))]);
+        assert!(extract_zip_release_bundle(&symlink, fixture.path(), root).is_err());
+    }
+
+    #[test]
+    fn tar_extractor_rejects_hardlinks_before_writing_payload() {
         use flate2::Compression;
         use flate2::write::GzEncoder;
-        use std::io::Write;
-        let mut tar_bytes: Vec<u8> = Vec::new();
+        use std::io::Write as _;
+
+        let root = "neoth-v9.9.9-x86_64-unknown-linux-gnu";
+        let mut tar_bytes = Vec::new();
         {
-            let mut tb = tar::Builder::new(&mut tar_bytes);
+            let mut builder = tar::Builder::new(&mut tar_bytes);
             let mut header = tar::Header::new_gnu();
-            header.set_path(name).unwrap();
-            header.set_size(body.len() as u64);
+            header.set_path(format!("{root}/neoth")).unwrap();
+            header.set_entry_type(tar::EntryType::Link);
+            header.set_link_name(format!("{root}/neothd")).unwrap();
+            header.set_size(0);
             header.set_mode(0o755);
             header.set_cksum();
-            tb.append(&header, body).unwrap();
-            tb.finish().unwrap();
+            builder.append(&header, std::io::empty()).unwrap();
+            builder.finish().unwrap();
         }
-        let mut out: Vec<u8> = Vec::new();
-        let mut gz = GzEncoder::new(&mut out, Compression::default());
-        gz.write_all(&tar_bytes).unwrap();
-        gz.finish().unwrap();
-        out
+        let mut archive = Vec::new();
+        let mut gzip = GzEncoder::new(&mut archive, Compression::default());
+        gzip.write_all(&tar_bytes).unwrap();
+        gzip.finish().unwrap();
+
+        let fixture = tempdir().unwrap();
+        let error = extract_release_bundle(&archive, ArchiveFormat::TarGz, fixture.path(), root)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("link or special"));
+        assert!(!fixture.path().join(root).join("neoth").exists());
     }
 
     #[test]
-    fn extract_zip_binary_finds_top_level_member() {
-        let want = binary_filename_for_host("neoth");
-        let zip_bytes = make_zip_with_member(&want, b"daemon-bytes-go-here");
-        let dir = tempdir().unwrap();
-        let dest = extract_zip_binary(&zip_bytes, dir.path(), "neoth").unwrap();
-        assert_eq!(dest, dir.path().join(&want));
-        let written = std::fs::read(&dest).unwrap();
-        assert_eq!(written, b"daemon-bytes-go-here");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn extracted_binary_is_executable_on_unix() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let want = binary_filename_for_host("neoth");
-        let zip_bytes = make_zip_with_member(&want, b"daemon");
-        let dir = tempdir().unwrap();
-        let dest = extract_zip_binary(&zip_bytes, dir.path(), "neoth").unwrap();
-        assert_ne!(
-            std::fs::metadata(dest).unwrap().permissions().mode() & 0o111,
-            0,
-            "self-updated binary must remain runnable"
+    fn downloaded_bundle_updates_full_portable_profile_and_preserves_user_state() {
+        let target = host_target_triple().expect("test host is in the release matrix");
+        let core_name = binary_filename_for_host("neoth");
+        let archive = make_release_bundle_with_snapshot(
+            &[(core_name.as_str(), b"new-core")],
+            "v9.9.9",
+            target,
         );
-    }
+        let digest = hex_encode(&Sha256::digest(&archive));
+        let install = tempdir().unwrap();
+        let core = install.path().join(&core_name);
+        std::fs::write(&core, b"old-core").unwrap();
+        crate::updater::release_bundle::write_test_portable_ownership_marker(install.path())
+            .unwrap();
+        let config = install.path().join("freedom.yaml");
+        std::fs::write(&config, b"operator: keep").unwrap();
+        let overlay = install.path().join("vault/User Overlays/operator.md");
+        std::fs::create_dir_all(overlay.parent().unwrap()).unwrap();
+        std::fs::write(&overlay, b"keep-overlay").unwrap();
 
-    #[test]
-    fn extract_zip_binary_finds_nested_member() {
-        // cargo-dist tarballs nest the binary under a target-
-        // named subdir. Mirror that shape.
-        let want = binary_filename_for_host("neoth");
-        let nested_name = format!("neoth-x86_64-pc-windows-msvc/{want}");
-        let zip_bytes = make_zip_with_member(&nested_name, b"nested-bytes");
-        let dir = tempdir().unwrap();
-        let dest = extract_zip_binary(&zip_bytes, dir.path(), "neoth").unwrap();
-        // The output filename strips the subdir — we always
-        // land the binary directly under out_dir.
-        assert_eq!(dest, dir.path().join(&want));
-        assert_eq!(std::fs::read(&dest).unwrap(), b"nested-bytes");
-    }
-
-    #[test]
-    fn extract_zip_binary_errors_when_member_missing() {
-        let zip_bytes = make_zip_with_member("README.md", b"only a readme");
-        let dir = tempdir().unwrap();
-        let err = extract_zip_binary(&zip_bytes, dir.path(), "neoth")
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("missing"),
-            "diagnostic must say missing: {err}"
-        );
-    }
-
-    #[test]
-    fn extract_tar_gz_binary_round_trips() {
-        let want = binary_filename_for_host("neoth");
-        let tar_gz = make_tar_gz_with_member(&want, b"gz-bytes");
-        let dir = tempdir().unwrap();
-        let dest = extract_tar_gz_binary(&tar_gz, dir.path(), "neoth").unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"gz-bytes");
-    }
-
-    #[test]
-    fn extract_tar_gz_binary_finds_nested_member() {
-        let want = binary_filename_for_host("neoth");
-        let nested = format!("neoth-x86_64-unknown-linux-gnu/{want}");
-        let tar_gz = make_tar_gz_with_member(&nested, b"nested-gz");
-        let dir = tempdir().unwrap();
-        let dest = extract_tar_gz_binary(&tar_gz, dir.path(), "neoth").unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"nested-gz");
-    }
-
-    #[test]
-    fn extract_tar_gz_binary_errors_when_member_missing() {
-        let tar_gz = make_tar_gz_with_member("LICENSE", b"only license");
-        let dir = tempdir().unwrap();
-        assert!(extract_tar_gz_binary(&tar_gz, dir.path(), "neoth").is_err());
-    }
-
-    #[test]
-    fn binary_filename_for_host_carries_exe_suffix_on_windows() {
-        let name = binary_filename_for_host("neoth");
-        if std::env::consts::EXE_SUFFIX.is_empty() {
-            assert_eq!(name, "neoth");
-        } else {
-            assert!(name.ends_with(std::env::consts::EXE_SUFFIX));
-            assert!(name.starts_with("neoth"));
-        }
-    }
-
-    #[test]
-    fn backup_path_for_appends_unix_ms_suffix() {
-        let bak = backup_path_for(Path::new("/usr/local/bin/neoth"), 1_716_000_000_000);
-        assert_eq!(bak, PathBuf::from("/usr/local/bin/neoth.bak.1716000000000"));
-    }
-
-    #[test]
-    fn backup_path_for_handles_relative_target() {
-        let bak = backup_path_for(Path::new("neoth.exe"), 7);
-        assert_eq!(bak, PathBuf::from("neoth.exe.bak.7"));
-    }
-
-    #[test]
-    fn atomic_replace_binary_moves_new_into_place_and_backs_up_old() {
-        let dir = tempdir().unwrap();
-        let target = dir.path().join("neoth.bin");
-        let new_path = dir.path().join("neoth.new");
-        std::fs::write(&target, b"old-daemon").unwrap();
-        std::fs::write(&new_path, b"new-daemon").unwrap();
-
-        let bak = atomic_replace_binary(&new_path, &target).unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), b"new-daemon");
-        assert!(bak.exists(), "backup must exist at {}", bak.display());
-        assert_eq!(std::fs::read(&bak).unwrap(), b"old-daemon");
-        assert!(!new_path.exists(), "new_path must be renamed away");
-    }
-
-    // ── Downloaded-archive apply coverage ───────────────────────────
-
-    #[test]
-    fn apply_downloaded_replaces_binary_when_archive_and_digest_match() {
-        // Build a zip containing the host's binary name, take its
-        // SHA-256, run the full apply_downloaded path, assert the
-        // target file ends up with the expected bytes.
-        let want = binary_filename_for_host("neoth");
-        let zip_bytes = make_zip_with_member(&want, b"shiny-new-daemon");
-        let mut hasher = Sha256::new();
-        hasher.update(&zip_bytes);
-        let digest = hex_encode(&hasher.finalize());
-        let companion_text = format!("{digest}  neoth.zip\n");
-
-        let dir = tempdir().unwrap();
-        let target = dir.path().join(&want);
-        std::fs::write(&target, b"old-daemon").unwrap();
-
-        let backup = apply_downloaded(
-            &zip_bytes,
-            &companion_text,
-            ArchiveFormat::Zip,
-            "neoth",
-            dir.path(),
+        let commit = apply_downloaded_bundle(
+            &archive,
+            &digest,
+            archive_format_for_target(target),
+            install.path(),
+            "v9.9.9",
+            target,
         )
         .unwrap();
 
-        assert_eq!(std::fs::read(&target).unwrap(), b"shiny-new-daemon");
-        assert!(
-            backup.exists(),
-            "old binary preserved at {}",
-            backup.display()
-        );
-        assert_eq!(std::fs::read(&backup).unwrap(), b"old-daemon");
-    }
-
-    #[test]
-    fn apply_downloaded_bundle_updates_every_installed_component() {
-        let binaries: [(&str, &[u8], &[u8]); 6] = [
-            ("neothd", b"new-compat", b"old-compat"),
-            ("neothd-gui", b"new-gui", b"old-gui"),
-            ("neoth-migrate", b"new-migrate", b"old-migrate"),
-            ("neoth-relay", b"new-relay", b"old-relay"),
-            ("neoth-keet-bridge", b"new-keet", b"old-keet"),
-            ("neoth", b"new-core", b"old-core"),
+        assert!(!commit.receipt.transaction_id.is_empty());
+        assert_eq!(std::fs::read(&core).unwrap(), b"new-core");
+        let executable_names = [
+            binary_filename_for_host("neoth"),
+            binary_filename_for_host("neothd"),
+            binary_filename_for_host("neothd-gui"),
+            binary_filename_for_host("neoth-migrate"),
+            binary_filename_for_host("neoth-relay"),
+            binary_filename_for_host("neoth-keet-bridge"),
         ];
-        let names = binaries
-            .iter()
-            .map(|(binary, _, _)| binary_filename_for_host(binary))
-            .collect::<Vec<_>>();
-        let members = names
-            .iter()
-            .zip(binaries.iter())
-            .map(|(name, (_, new_body, _))| (name.as_str(), *new_body))
-            .collect::<Vec<_>>();
-        let zip_bytes = make_zip_with_members(&members);
-        let mut hasher = Sha256::new();
-        hasher.update(&zip_bytes);
-        let digest = hex_encode(&hasher.finalize());
-
-        let dir = tempdir().unwrap();
-        for (name, (_, _, old_body)) in names.iter().zip(binaries.iter()) {
-            std::fs::write(dir.path().join(name), *old_body).unwrap();
+        for name in release_files(&[], "v9.9.9", target).keys() {
+            let top = name.split('/').next().unwrap();
+            let target = if executable_names.iter().any(|binary| binary == top) {
+                install.path().join(top)
+            } else {
+                install
+                    .path()
+                    .join(crate::updater::release_bundle::PORTABLE_SUPPORT_DIR)
+                    .join(top)
+            };
+            assert!(
+                target.exists(),
+                "installed member missing: {}",
+                target.display()
+            );
         }
-
-        let primary_backup =
-            apply_downloaded_bundle(&zip_bytes, &digest, ArchiveFormat::Zip, "neoth", dir.path())
-                .unwrap();
-
-        for (name, (_, new_body, _)) in names.iter().zip(binaries.iter()) {
-            assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), *new_body);
-        }
-        assert_eq!(std::fs::read(primary_backup).unwrap(), b"old-core");
+        crate::wiki::release_snapshot::VerifiedReleaseSnapshot::open_for_update(
+            install
+                .path()
+                .join(crate::updater::release_bundle::PORTABLE_SUPPORT_DIR)
+                .join("self-knowledge"),
+            "9.9.9",
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(config).unwrap(), b"operator: keep");
+        assert_eq!(std::fs::read(overlay).unwrap(), b"keep-overlay");
     }
 
     #[test]
-    fn apply_downloaded_bundle_preflights_all_members_before_mutating() {
-        let core = binary_filename_for_host("neoth");
-        let gui = binary_filename_for_host("neothd-gui");
-        let zip_bytes = make_zip_with_member(&core, b"new-core");
-        let mut hasher = Sha256::new();
-        hasher.update(&zip_bytes);
-        let digest = hex_encode(&hasher.finalize());
+    fn downloaded_bundle_rejects_bad_bundle_before_mutation() {
+        let target = host_target_triple().expect("test host is in the release matrix");
+        let install = tempdir().unwrap();
+        let core = install.path().join(binary_filename_for_host("neoth"));
+        std::fs::write(&core, b"old-core").unwrap();
+        crate::updater::release_bundle::write_test_portable_ownership_marker(install.path())
+            .unwrap();
 
-        let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join(&core), b"old-core").unwrap();
-        std::fs::write(dir.path().join(&gui), b"old-gui").unwrap();
+        let mut files = release_files(&[], "v9.9.9", target);
+        files.remove("README.md");
+        let missing = encode_release_files(&files, "v9.9.9", target);
+        let error = apply_downloaded_bundle(
+            &missing,
+            &hex_encode(&Sha256::digest(&missing)),
+            archive_format_for_target(target),
+            install.path(),
+            "v9.9.9",
+            target,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("missing required"));
+        assert_eq!(std::fs::read(&core).unwrap(), b"old-core");
 
-        let error =
-            apply_downloaded_bundle(&zip_bytes, &digest, ArchiveFormat::Zip, "neoth", dir.path())
-                .unwrap_err();
-        assert!(
-            format!("{error:#}").contains("neothd-gui"),
-            "missing installed companion must be named"
+        let invalid = make_release_bundle_with_snapshot(
+            &[("self-knowledge/manifest.json", b"{}")],
+            "v9.9.9",
+            target,
         );
-        assert_eq!(std::fs::read(dir.path().join(core)).unwrap(), b"old-core");
-        assert_eq!(std::fs::read(dir.path().join(gui)).unwrap(), b"old-gui");
+        assert!(
+            apply_downloaded_bundle(
+                &invalid,
+                &hex_encode(&Sha256::digest(&invalid)),
+                archive_format_for_target(target),
+                install.path(),
+                "v9.9.9",
+                target,
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(core).unwrap(), b"old-core");
     }
 
+    #[cfg(windows)]
+    fn committed_handoff_receipt(
+        stage_root: PathBuf,
+        install_root: PathBuf,
+        request_sha256: &str,
+    ) -> WindowsHandoffReceipt {
+        WindowsHandoffReceipt {
+            schema_version: WINDOWS_HANDOFF_SCHEMA_VERSION,
+            operation_id: "0123456789abcdef0123456789abcdef".to_string(),
+            status: "committed".to_string(),
+            from_version: "0.9.0".to_string(),
+            to_version: env!("CARGO_PKG_VERSION").to_string(),
+            request_sha256: request_sha256.to_string(),
+            stage_root,
+            install_root,
+            transaction_id: Some("txn-1".to_string()),
+            members: Some(1),
+            automatic_crash_recovery: true,
+            error: None,
+        }
+    }
+
+    #[cfg(windows)]
     #[test]
-    fn bundle_replace_rolls_back_prior_component_on_late_failure() {
-        let dir = tempdir().unwrap();
-        let compat_target = dir.path().join(binary_filename_for_host("neothd"));
-        let core_target = dir.path().join(binary_filename_for_host("neoth"));
-        let compat_staged = dir.path().join("compat.new");
-        let core_staged = dir.path().join("core.new");
-        std::fs::write(&compat_target, b"old-compat").unwrap();
-        std::fs::write(&core_target, b"old-core").unwrap();
-        std::fs::write(&compat_staged, b"new-compat").unwrap();
-        std::fs::write(&core_staged, b"new-core").unwrap();
-        let staged = vec![
-            StagedBundleMember {
-                binary: "neothd".into(),
-                staged_path: compat_staged,
-                target_path: compat_target.clone(),
-            },
-            StagedBundleMember {
-                binary: "neoth".into(),
-                staged_path: core_staged,
-                target_path: core_target.clone(),
-            },
-        ];
-        let mut calls = 0;
-        let error = replace_staged_bundle_with(&staged, "neoth", |new_path, target_path| {
-            calls += 1;
-            if calls == 2 {
-                anyhow::bail!("injected primary replacement failure");
+    fn cleanup_receipt_rejects_arbitrary_stage_and_preserves_sentinel() {
+        let fixture = tempdir().unwrap();
+        let namespace = fixture.path().join("private-namespace");
+        let outside = fixture
+            .path()
+            .join(format!("{WINDOWS_HANDOFF_STAGE_PREFIX}attacker"));
+        std::fs::create_dir_all(&namespace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let sentinel = outside.join("do-not-delete.txt");
+        std::fs::write(&sentinel, b"operator-owned").unwrap();
+        let request_sha256 = "a".repeat(64);
+        let receipt =
+            committed_handoff_receipt(outside, fixture.path().join("install"), &request_sha256);
+
+        validate_committed_windows_handoff_receipt(
+            &receipt,
+            "0123456789abcdef0123456789abcdef",
+            &request_sha256,
+        )
+        .unwrap();
+        assert!(validate_windows_cleanup_namespace(&receipt, &namespace).is_err());
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"operator-owned");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_receipt_requires_exact_hash_and_committed_state() {
+        let fixture = tempdir().unwrap();
+        let request_sha256 = "a".repeat(64);
+        let mut receipt = committed_handoff_receipt(
+            fixture
+                .path()
+                .join(format!("{WINDOWS_HANDOFF_STAGE_PREFIX}fixture")),
+            fixture.path().join("install"),
+            &request_sha256,
+        );
+        assert!(
+            validate_committed_windows_handoff_receipt(
+                &receipt,
+                "0123456789abcdef0123456789abcdef",
+                &"b".repeat(64),
+            )
+            .is_err()
+        );
+        receipt.status = "failed".to_string();
+        assert!(
+            validate_committed_windows_handoff_receipt(
+                &receipt,
+                "0123456789abcdef0123456789abcdef",
+                &request_sha256,
+            )
+            .is_err()
+        );
+        assert!(validate_handoff_request_sha256(&"A".repeat(64)).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn handoff_request_binding_rejects_noncanonical_hash_before_apply() {
+        let bytes = br#"{"schema_version":1}"#;
+        let digest = hex_encode(&Sha256::digest(bytes));
+        validate_windows_handoff_request_binding(bytes, &digest).unwrap();
+        assert!(
+            validate_windows_handoff_request_binding(bytes, &digest.to_ascii_uppercase()).is_err()
+        );
+        assert!(validate_windows_handoff_request_binding(bytes, "abc").is_err());
+        assert!(validate_windows_handoff_request_binding(bytes, &"0".repeat(64)).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn quarantined_cleanup_resumes_after_request_was_already_removed() {
+        let fixture = tempdir().unwrap();
+        let cleanup = fixture
+            .path()
+            .join(".cleanup-0123456789abcdef0123456789abcdef");
+        let nested = cleanup.join("partially-removed");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("remaining.bin"), b"remaining").unwrap();
+
+        validate_windows_cleanup_tree(&cleanup).unwrap();
+        remove_windows_cleanup_tree(&cleanup).unwrap();
+        assert!(!cleanup.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_cleanup_can_query_process_elevation() {
+        windows_process_is_elevated().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn portable_update_policy_rejects_elevated_tokens_deterministically() {
+        validate_windows_portable_update_elevation(false, "test staging").unwrap();
+        let error = validate_windows_portable_update_elevation(true, "test staging").unwrap_err();
+        assert!(format!("{error:#}").contains("signed native installer"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_tree_refuses_reparse_descendants_when_supported() {
+        use std::os::windows::fs::symlink_file;
+
+        let fixture = tempdir().unwrap();
+        let root = fixture.path().join("stage");
+        let outside = fixture.path().join("outside.txt");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&outside, b"outside").unwrap();
+        let link = root.join("link.txt");
+        match symlink_file(&outside, &link) {
+            Ok(()) => {
+                assert!(validate_windows_cleanup_tree(&root).is_err());
+                assert_eq!(std::fs::read(outside).unwrap(), b"outside");
             }
-            atomic_replace_binary(new_path, target_path)
-        })
-        .unwrap_err();
-
-        assert!(format!("{error:#}").contains("rolled back"));
-        assert_eq!(std::fs::read(compat_target).unwrap(), b"old-compat");
-        assert_eq!(std::fs::read(core_target).unwrap(), b"old-core");
-    }
-
-    #[test]
-    fn apply_downloaded_refuses_when_sha256_mismatches() {
-        let want = binary_filename_for_host("neoth");
-        let zip_bytes = make_zip_with_member(&want, b"good-payload");
-        // Wrong digest — payload changed somewhere in transit.
-        let bogus_digest = "0".repeat(64);
-        let companion_text = format!("{bogus_digest}  neoth.zip\n");
-
-        let dir = tempdir().unwrap();
-        let target = dir.path().join(&want);
-        std::fs::write(&target, b"unchanged-daemon").unwrap();
-
-        let err = apply_downloaded(
-            &zip_bytes,
-            &companion_text,
-            ArchiveFormat::Zip,
-            "neoth",
-            dir.path(),
-        )
-        .unwrap_err();
-        // anyhow Display shows only the top-level context; the
-        // full chain ({:#}) carries the underlying "sha256
-        // mismatch" diagnostic.
-        let chain = format!("{err:#}");
-        assert!(
-            chain.contains("sha256 mismatch"),
-            "full error chain must label mismatch: {chain}"
-        );
-
-        // Target file MUST be untouched on verify failure — a
-        // sha256-failing update never gets close to the binary.
-        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged-daemon");
-    }
-
-    #[test]
-    fn apply_downloaded_works_for_tar_gz_format() {
-        // Pin the same end-to-end shape for the Linux/macOS path
-        // via tar.gz (tar.xz would also work but lzma-rs writers
-        // aren't part of the crate; xz round-trip is exercised
-        // implicitly via real release tarballs).
-        let want = binary_filename_for_host("neoth");
-        let tar_gz = make_tar_gz_with_member(&want, b"unix-daemon");
-        let mut hasher = Sha256::new();
-        hasher.update(&tar_gz);
-        let digest = hex_encode(&hasher.finalize());
-        let companion_text = digest.clone();
-
-        let dir = tempdir().unwrap();
-        let target = dir.path().join(&want);
-
-        let backup = apply_downloaded(
-            &tar_gz,
-            &companion_text,
-            ArchiveFormat::TarGz,
-            "neoth",
-            dir.path(),
-        )
-        .unwrap();
-
-        assert_eq!(std::fs::read(&target).unwrap(), b"unix-daemon");
-        // First install — no prior file to back up.
-        assert!(!backup.exists());
-    }
-
-    #[test]
-    fn atomic_replace_binary_works_when_target_does_not_exist_yet() {
-        // First-install path — no prior binary to back up.
-        let dir = tempdir().unwrap();
-        let target = dir.path().join("neoth.bin");
-        let new_path = dir.path().join("neoth.new");
-        std::fs::write(&new_path, b"fresh-install").unwrap();
-
-        let bak = atomic_replace_binary(&new_path, &target).unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), b"fresh-install");
-        // bak path is the expected name even though no file was
-        // moved there.
-        assert!(bak.to_string_lossy().contains(".bak."));
-        assert!(!bak.exists(), "no backup file when target was missing");
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("create Windows reparse fixture: {error}"),
+        }
     }
 }

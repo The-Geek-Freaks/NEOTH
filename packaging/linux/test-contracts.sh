@@ -61,6 +61,12 @@ done
 for name in README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES freedom.yaml.example import-manifest.example.yaml; do
   printf 'fixture %s\n' "$name" >"$fixture/$name"
 done
+mkdir -p "$fixture/self-knowledge/wiki" "$fixture/self-knowledge/obsidian"
+printf '%s\n' '{"schema_version":1,"product":"NEOTH","release_version":"1.0.0","files":[{"path":"graph.json"}]}' \
+  >"$fixture/self-knowledge/manifest.json"
+printf '%s\n' '{"nodes":[{"id":"neoth"}],"links":[]}' >"$fixture/self-knowledge/graph.json"
+printf '%s\n' '# Wiki' >"$fixture/self-knowledge/wiki/index.md"
+printf '%s\n' '# Vault' >"$fixture/self-knowledge/obsidian/index.md"
 cat >"$fake_bin/readelf" <<'EOF'
 #!/usr/bin/env sh
 printf '%s\n' 'ELF Header:' "  Machine:                           ${FAKE_MACHINE:-Advanced Micro Devices X86-64}"
@@ -68,6 +74,12 @@ EOF
 chmod 0755 "$fake_bin/readelf"
 
 PATH="$fake_bin:$PATH" "$BUILDER" --bundle "$fixture" --version 1.0.0 --arch x86_64 --validate-only >/dev/null
+newline_path="$fixture/self-knowledge/wiki/"$'bad\nname.md'
+printf 'bad path\n' >"$newline_path"
+expect_fail_contains 'self-knowledge path contains a newline' \
+  env PATH="$fake_bin:$PATH" "$BUILDER" \
+  --bundle "$fixture" --version 1.0.0 --arch x86_64 --validate-only
+rm -f -- "$newline_path"
 if FAKE_MACHINE=AArch64 PATH="$fake_bin:$PATH" "$BUILDER" --bundle "$fixture" --version 1.0.0 --arch x86_64 --validate-only >/dev/null 2>&1; then
   fail "a mismatched ELF architecture must fail"
 fi

@@ -95,6 +95,8 @@ pub mod ingest;
 pub mod init;
 pub mod installer;
 pub mod interface;
+#[doc(hidden)]
+pub mod internal;
 pub mod jobs;
 pub mod kanban;
 pub mod keys;
@@ -157,6 +159,7 @@ pub mod self_dev_outbox;
 /// Five-layer fail-closed gate stack for self-source edits.
 pub mod self_edit;
 pub mod self_improve;
+pub mod self_knowledge;
 pub mod serve;
 pub mod serve_pipeline;
 pub mod serve_tasks;
@@ -247,6 +250,10 @@ impl Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Private authenticated-release helper surface.
+    #[command(hide = true)]
+    Internal(internal::InternalArgs),
+
     /// Interactive onboarding wizard. Sets up ~/.neoth/ config.
     ///
     /// Re-running when already initialized: shows per-section reconfigure menu.
@@ -408,6 +415,10 @@ pub enum Commands {
     /// status / enable / disable / run / log).
     #[command(name = "self-improve")]
     SelfImprove(self_improve::SelfImproveArgs),
+    /// Inspect and query the release-signed Graphify self-knowledge snapshot.
+    /// Pure local read: no Python/Graphify runtime and no silent mutation.
+    #[command(name = "self-knowledge")]
+    SelfKnowledge(self_knowledge::SelfKnowledgeArgs),
     /// GOLD-ADAPT-JV-MODE-04 — NEOTH toggles its own skills / crons under
     /// sovereign mode (sovereign_buddy && Full autonomy).
     ///
@@ -1388,6 +1399,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let global_output = cli.effective_output();
 
     match cli.command {
+        Commands::Internal(args) => {
+            internal::run_internal(args, global_output).await?;
+        }
         Commands::Init(args) => {
             init::run_init(args).await?;
         }
@@ -1501,6 +1515,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::SelfImprove(args) => {
             self_improve::run_self_improve(args, global_output).await?;
+        }
+        Commands::SelfKnowledge(args) => {
+            self_knowledge::run_self_knowledge(args, global_output)?;
         }
         Commands::SelfActivate(args) => {
             self_activate::run_self_activate(args, global_output)?;

@@ -97,6 +97,20 @@ Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD_PARTY_LICENSES"; DestDir: "{app}"; Flags: ignoreversion
+; The snapshot is intentionally never overlaid onto the live directory. The
+; manifest is the final Files entry so its callback runs once, inside Inno's
+; rollback-capable install phase, after the complete stage was extracted.
+Source: "{#SourceDir}\self-knowledge\*"; DestDir: "{app}\.neoth-self-knowledge-stage"; Excludes: "manifest.json"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
+Source: "{#SourceDir}\self-knowledge\manifest.json"; DestDir: "{app}\.neoth-self-knowledge-stage"; Flags: ignoreversion uninsneveruninstall; AfterInstall: PrepareSelfKnowledgeTransaction
+
+[UninstallDelete]
+; These are package-owned paths. The successful install path removes all three
+; hidden transaction paths; the entries also cover interrupted installations.
+Type: filesandordirs; Name: "{app}\self-knowledge"
+Type: filesandordirs; Name: "{app}\.neoth-self-knowledge-stage"
+Type: filesandordirs; Name: "{app}\.neoth-self-knowledge-backup"
+Type: files; Name: "{app}\.neoth-self-knowledge-committed"
+Type: files; Name: "{app}\.neoth-self-knowledge-committed.tmp"
 
 [Icons]
 Name: "{group}\NEOTH"; Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"; WorkingDir: "{app}"; Comment: "Open NEOTH"
@@ -113,6 +127,278 @@ Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"; Description:
 var
   UninstallOwnsPathEntry: Boolean;
   UninstallOwnedPath: String;
+  SelfKnowledgeSwapActive: Boolean;
+  SelfKnowledgeHadPrevious: Boolean;
+  SelfKnowledgeCommitted: Boolean;
+
+function WindowsGetFileAttributes(FileName: String): Cardinal;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
+
+function SelfKnowledgeLivePath: String;
+begin
+  Result := ExpandConstant('{app}\self-knowledge');
+end;
+
+function SelfKnowledgeStagePath: String;
+begin
+  Result := ExpandConstant('{app}\.neoth-self-knowledge-stage');
+end;
+
+function SelfKnowledgeBackupPath: String;
+begin
+  Result := ExpandConstant('{app}\.neoth-self-knowledge-backup');
+end;
+
+function SelfKnowledgeCommitMarkerPath: String;
+begin
+  Result := ExpandConstant('{app}\.neoth-self-knowledge-committed');
+end;
+
+function PathIsReparsePoint(Path: String): Boolean;
+var
+  Attributes: Cardinal;
+begin
+  Attributes := WindowsGetFileAttributes(Path);
+  Result := (Attributes <> $FFFFFFFF) and ((Attributes and $400) <> 0);
+end;
+
+procedure RequireRegularDirectory(Path, Description: String);
+begin
+  if FileExists(Path) then
+    RaiseException(Description + ' is a file, not a directory: ' + Path);
+  if DirExists(Path) and PathIsReparsePoint(Path) then
+    RaiseException(Description + ' must not be a junction or symbolic link: ' + Path);
+end;
+
+procedure RequireRegularFile(Path, Description: String);
+begin
+  if DirExists(Path) then
+    RaiseException(Description + ' is a directory, not a file: ' + Path);
+  if FileExists(Path) and PathIsReparsePoint(Path) then
+    RaiseException(Description + ' must not be a symbolic link: ' + Path);
+end;
+
+procedure RequireRegularTree(Path, Description: String);
+var
+  FindRec: TFindRec;
+  ChildPath: String;
+begin
+  RequireRegularDirectory(Path, Description);
+  if not DirExists(Path) then
+    Exit;
+  if FindFirst(AddBackslash(Path) + '*', FindRec) then begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then begin
+          ChildPath := AddBackslash(Path) + FindRec.Name;
+          if PathIsReparsePoint(ChildPath) then
+            RaiseException(
+              Description + ' contains a junction or symbolic link: ' + ChildPath);
+          if (FindRec.Attributes and $10) <> 0 then
+            RequireRegularTree(ChildPath, Description);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+procedure DeleteOwnedDirectory(Path, Description: String);
+begin
+  RequireRegularTree(Path, Description);
+  if DirExists(Path) and not DelTree(Path, True, True, True) then
+    RaiseException('Could not remove ' + Description + ': ' + Path);
+end;
+
+procedure DeleteOwnedFile(Path, Description: String);
+begin
+  RequireRegularFile(Path, Description);
+  if FileExists(Path) and not DeleteFile(Path) then
+    RaiseException('Could not remove ' + Description + ': ' + Path);
+end;
+
+function VerifyNewSelfKnowledgeSnapshot(SnapshotPath: String): Boolean;
+var
+  Index, ResultCode: Integer;
+begin
+  Result := False;
+  { Release smoke uses this failpoint to prove that an AfterInstall verification
+    failure restores N while Inno is still able to roll all N+1 files back. }
+  for Index := 1 to ParamCount do begin
+    if CompareText(ParamStr(Index), '/TESTSELFKNOWLEDGEVERIFYFAIL') = 0 then begin
+      Log('Self-knowledge verification failpoint requested by installer smoke.');
+      Result := False;
+      Exit;
+    end;
+  end;
+  if not FileExists(ExpandConstant('{app}\neoth.exe')) or
+     not FileExists(SnapshotPath + '\manifest.json') then
+    Exit;
+  if not Exec(
+       ExpandConstant('{app}\neoth.exe'),
+       '--output json self-knowledge verify --snapshot ' + AddQuotes(SnapshotPath),
+       ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;
+  Result := ResultCode = 0;
+end;
+
+function PowerShellDoubleQuotedLiteral(Value: String): String;
+begin
+  Result := Value;
+  StringChangeEx(Result, '`', '``', True);
+  StringChangeEx(Result, '$', '`$', True);
+  StringChangeEx(Result, '"', '`"', True);
+  Result := '"' + Result + '"';
+end;
+
+function ExistingCandidateHasMatchingAuthenticode(CandidatePath: String): Boolean;
+var
+  PowerShellPath, Command: String;
+  ResultCode: Integer;
+begin
+  Result := False;
+  RequireRegularFile(CandidatePath, 'installed NEOTH recovery executable');
+  if not FileExists(CandidatePath) then
+    Exit;
+  PowerShellPath := ExpandConstant(
+    '{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Command :=
+    '$ErrorActionPreference=[System.Management.Automation.ActionPreference]::Stop;' +
+    '$p=[Security.Principal.WindowsPrincipal]::new(' +
+    '[Security.Principal.WindowsIdentity]::GetCurrent());' +
+    'if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))' +
+    '{exit 52};' +
+    '$a=Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath ' +
+      PowerShellDoubleQuotedLiteral(CandidatePath) + ';' +
+    '$b=Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath ' +
+      PowerShellDoubleQuotedLiteral(ExpandConstant('{srcexe}')) + ';' +
+    '$v=[System.Management.Automation.SignatureStatus]::Valid;' +
+    'if($a.Status -ne $v -or $b.Status -ne $v -or ' +
+    '$null -eq $a.SignerCertificate -or $null -eq $b.SignerCertificate -or ' +
+    '$a.SignerCertificate.Subject -cne $b.SignerCertificate.Subject){exit 53};';
+  if not ExecAsOriginalUser(
+       PowerShellPath,
+       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ' +
+         Command,
+       ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;
+  Result := ResultCode = 0;
+end;
+
+function VerifyInstalledSelfKnowledgeSnapshot(SnapshotPath: String): Boolean;
+var
+  CandidatePath: String;
+  ResultCode: Integer;
+begin
+  CandidatePath := ExpandConstant('{app}\neoth.exe');
+  Result := False;
+  if not ExistingCandidateHasMatchingAuthenticode(CandidatePath) then
+    Exit;
+  if not FileExists(SnapshotPath + '\manifest.json') then
+    Exit;
+  if not ExecAsOriginalUser(
+       CandidatePath,
+       '--output json self-knowledge verify --snapshot ' + AddQuotes(SnapshotPath),
+       ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;
+  Result := ResultCode = 0;
+end;
+
+procedure RollbackSelfKnowledgeTransaction;
+var
+  LivePath, StagePath, BackupPath, MarkerPath: String;
+begin
+  if not SelfKnowledgeSwapActive then
+    Exit;
+  LivePath := SelfKnowledgeLivePath;
+  StagePath := SelfKnowledgeStagePath;
+  BackupPath := SelfKnowledgeBackupPath;
+  MarkerPath := SelfKnowledgeCommitMarkerPath;
+
+  DeleteOwnedDirectory(LivePath, 'uncommitted NEOTH self-knowledge snapshot');
+  if SelfKnowledgeHadPrevious and DirExists(BackupPath) then begin
+    if not RenameFile(BackupPath, LivePath) then
+      RaiseException('Could not roll back the previous NEOTH self-knowledge snapshot.');
+  end;
+  DeleteOwnedDirectory(StagePath, 'NEOTH self-knowledge transaction stage');
+  DeleteOwnedFile(MarkerPath, 'NEOTH self-knowledge commit marker');
+  DeleteOwnedFile(MarkerPath + '.tmp', 'NEOTH self-knowledge temporary commit marker');
+  SelfKnowledgeSwapActive := False;
+end;
+
+procedure PrepareSelfKnowledgeTransaction;
+var
+  LivePath, StagePath, BackupPath, MarkerPath, MarkerTempPath: String;
+begin
+  LivePath := SelfKnowledgeLivePath;
+  StagePath := SelfKnowledgeStagePath;
+  BackupPath := SelfKnowledgeBackupPath;
+  MarkerPath := SelfKnowledgeCommitMarkerPath;
+  MarkerTempPath := MarkerPath + '.tmp';
+
+  RequireRegularTree(LivePath, 'NEOTH self-knowledge snapshot');
+  RequireRegularTree(StagePath, 'NEOTH self-knowledge transaction stage');
+  RequireRegularTree(BackupPath, 'NEOTH self-knowledge transaction backup');
+  if not DirExists(StagePath) or
+     not FileExists(StagePath + '\manifest.json') then
+    RaiseException('Installer self-knowledge transaction stage is incomplete.');
+  if DirExists(BackupPath) then
+    RaiseException('A previous NEOTH self-knowledge transaction was not recovered.');
+  RequireRegularFile(MarkerPath, 'NEOTH self-knowledge commit marker');
+  RequireRegularFile(MarkerTempPath, 'NEOTH self-knowledge transaction marker');
+  if FileExists(MarkerPath) or FileExists(MarkerTempPath) then
+    RaiseException('A previous NEOTH self-knowledge transaction marker was not recovered.');
+  if not SaveStringToFile(MarkerTempPath, '{#AppVersion}', False) then
+    RaiseException('Could not persist the NEOTH self-knowledge transaction state.');
+
+  SelfKnowledgeHadPrevious := DirExists(LivePath);
+  if SelfKnowledgeHadPrevious and not RenameFile(LivePath, BackupPath) then begin
+    DeleteOwnedFile(MarkerTempPath, 'NEOTH self-knowledge transaction marker');
+    RaiseException('Could not stage the previous NEOTH self-knowledge snapshot for rollback.');
+  end;
+  SelfKnowledgeSwapActive := True;
+  if not RenameFile(StagePath, LivePath) then begin
+    if SelfKnowledgeHadPrevious and DirExists(BackupPath) then
+      RenameFile(BackupPath, LivePath);
+    DeleteOwnedFile(MarkerTempPath, 'NEOTH self-knowledge transaction marker');
+    SelfKnowledgeSwapActive := False;
+    RaiseException('Could not atomically activate the new NEOTH self-knowledge snapshot.');
+  end;
+  if not VerifyNewSelfKnowledgeSnapshot(LivePath) then begin
+    RollbackSelfKnowledgeTransaction;
+    RaiseException(
+      'The installed executable rejected its self-knowledge snapshot; the previous snapshot was restored.');
+  end;
+end;
+
+procedure CommitSelfKnowledgeTransaction;
+var
+  BackupPath, MarkerPath, MarkerTempPath: String;
+begin
+  BackupPath := SelfKnowledgeBackupPath;
+  MarkerPath := SelfKnowledgeCommitMarkerPath;
+  MarkerTempPath := MarkerPath + '.tmp';
+  { ssPostInstall is Inno's rollback cutoff. From this point forward the new
+    binaries and their already verified N+1 snapshot stay together; cleanup
+    errors must never restore N under N+1 binaries. }
+  SelfKnowledgeCommitted := True;
+  SelfKnowledgeSwapActive := False;
+  if FileExists(MarkerTempPath) and not RenameFile(MarkerTempPath, MarkerPath) then
+    Log('Warning: could not publish the NEOTH self-knowledge commit marker.');
+  { The marker makes cleanup retryable if deletion is interrupted. A normal
+    successful install nevertheless leaves no backup or transaction metadata. }
+  try
+    DeleteOwnedDirectory(BackupPath, 'previous NEOTH self-knowledge snapshot');
+    DeleteOwnedFile(MarkerPath, 'NEOTH self-knowledge commit marker');
+    DeleteOwnedFile(MarkerTempPath, 'NEOTH self-knowledge transaction marker');
+  except
+    { The live tree is already verified and durably marked committed. Keep it
+      live and let the next installer retry package-owned backup cleanup. }
+    Log('Warning: committed NEOTH self-knowledge cleanup was deferred: ' +
+      GetExceptionMessage);
+  end;
+end;
 
 function TrimQuotes(Value: String): String;
 begin
@@ -130,6 +416,153 @@ end;
 function PathEntryEquals(Entry, Expected: String): Boolean;
 begin
   Result := ComparablePath(Entry) = ComparablePath(Expected);
+end;
+
+function CanonicalInstallPath(Value: String): String;
+var
+  Unquoted: String;
+begin
+  Unquoted := TrimQuotes(Value);
+  if Unquoted = '' then
+    RaiseException('Installation path must not be empty.');
+  Result := RemoveBackslashUnlessRoot(ExpandFileName(Unquoted));
+  if Result = '' then
+    RaiseException('Installation path could not be canonicalized: ' + Value);
+end;
+
+procedure RequireNoReparsePathComponents(Path, Description: String);
+var
+  CurrentPath, ParentPath: String;
+begin
+  CurrentPath := CanonicalInstallPath(Path);
+  while CurrentPath <> '' do begin
+    if PathIsReparsePoint(CurrentPath) then
+      RaiseException(
+        Description + ' contains a junction or symbolic link: ' + CurrentPath);
+    ParentPath := ExtractFileDir(CurrentPath);
+    if (ParentPath = '') or
+       (CompareText(ParentPath, CurrentPath) = 0) then
+      Exit;
+    CurrentPath := ParentPath;
+  end;
+end;
+
+function DirectoryIsEmpty(Path: String): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := True;
+  if not DirExists(Path) then
+    Exit;
+  if FindFirst(AddBackslash(Path) + '*', FindRec) then begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then begin
+          Result := False;
+          Exit;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+function PathIsStrictChild(Path, Parent: String): Boolean;
+var
+  CanonicalPath, CanonicalParent: String;
+begin
+  CanonicalPath := Lowercase(CanonicalInstallPath(Path));
+  CanonicalParent := Lowercase(CanonicalInstallPath(Parent));
+  Result :=
+    (CanonicalPath <> CanonicalParent) and
+    (Pos(AddBackslash(CanonicalParent), AddBackslash(CanonicalPath)) = 1);
+end;
+
+function ExistingAclAnchor(Path: String): String;
+var
+  CurrentPath, ParentPath: String;
+begin
+  CurrentPath := CanonicalInstallPath(Path);
+  while not DirExists(CurrentPath) and not FileExists(CurrentPath) do begin
+    ParentPath := ExtractFileDir(CurrentPath);
+    if (ParentPath = '') or
+       (CompareText(ParentPath, CurrentPath) = 0) then
+      RaiseException('No existing ACL anchor was found for: ' + Path);
+    CurrentPath := ParentPath;
+  end;
+  Result := CurrentPath;
+end;
+
+function MachinePathAclIsTrusted(Path: String): Boolean;
+var
+  PowerShellPath, Command: String;
+  ResultCode: Integer;
+begin
+  Result := False;
+  PowerShellPath := ExpandConstant(
+    '{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Command :=
+    '$ErrorActionPreference=[System.Management.Automation.ActionPreference]::Stop;' +
+    '$id=[Security.Principal.WindowsIdentity]::GetCurrent();' +
+    '$s=[Collections.Generic.HashSet[string]]::new(' +
+      '[StringComparer]::OrdinalIgnoreCase);' +
+    'foreach($v in @(''S-1-1-0'',''S-1-5-4'',''S-1-5-11'',' +
+      '''S-1-5-32-545'')){[void]$s.Add($v)};' +
+    '[void]$s.Add($id.User.Value);' +
+    'foreach($g in $id.Groups){if($g.Value -ne ''S-1-5-32-544'')' +
+      '{[void]$s.Add($g.Value)}};' +
+    '$a=Microsoft.PowerShell.Security\Get-Acl -LiteralPath ' +
+      PowerShellDoubleQuotedLiteral(ExistingAclAnchor(Path)) + ';' +
+    '$o=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value;' +
+    'if($s.Contains($o)){exit 63};' +
+    '$rules=@($a.Access);if($rules.Count -eq 0){exit 64};' +
+    '$danger=[uint64]0x500D0156;' +
+    'foreach($r in $rules){' +
+      'try{$sid=$r.IdentityReference.Translate(' +
+        '[Security.Principal.SecurityIdentifier]).Value}' +
+        'catch{$sid=[string]$r.IdentityReference.Value};' +
+      '$rights=[uint64]([int64]$r.FileSystemRights -band 0xffffffffL);' +
+      'if($r.AccessControlType -eq ' +
+        '[Security.AccessControl.AccessControlType]::Allow -and ' +
+        '$s.Contains($sid) -and ($rights -band $danger) -ne 0){exit 66}' +
+    '};';
+  if not ExecAsOriginalUser(
+       PowerShellPath,
+       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ' +
+         Command,
+       ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;
+  Result := ResultCode = 0;
+end;
+
+procedure RequireTrustedMachineAcl(Path, Description: String);
+begin
+  if not MachinePathAclIsTrusted(Path) then
+    RaiseException(
+      Description + ' is writable by the original user or a low-privilege ' +
+      'security principal: ' + ExistingAclAnchor(Path));
+end;
+
+procedure RequireRegularPayloadDestinations(AppPath: String);
+begin
+  RequireRegularFile(AppPath + '\neoth.exe', 'NEOTH executable destination');
+  RequireRegularFile(AppPath + '\neothd.exe', 'NEOTH compatibility destination');
+  RequireRegularFile(AppPath + '\neothd-gui.exe', 'NEOTH GUI destination');
+  RequireRegularFile(AppPath + '\neoth-migrate.exe', 'NEOTH migrate destination');
+  RequireRegularFile(AppPath + '\neoth-relay.exe', 'NEOTH relay destination');
+  RequireRegularFile(
+    AppPath + '\neoth-keet-bridge.exe', 'NEOTH Keet bridge destination');
+  RequireRegularFile(
+    AppPath + '\freedom.yaml.example', 'NEOTH example policy destination');
+  RequireRegularFile(
+    AppPath + '\import-manifest.example.yaml', 'NEOTH import example destination');
+  RequireRegularFile(AppPath + '\README.md', 'NEOTH README destination');
+  RequireRegularFile(AppPath + '\LICENSE-MIT', 'NEOTH MIT license destination');
+  RequireRegularFile(
+    AppPath + '\LICENSE-APACHE', 'NEOTH Apache license destination');
+  RequireRegularFile(
+    AppPath + '\THIRD_PARTY_LICENSES', 'NEOTH third-party license destination');
 end;
 
 function PathContains(UserPath, Expected: String): Boolean;
@@ -557,6 +990,249 @@ begin
     RaiseException('Internal semantic-version comparator self-test failed.');
 end;
 
+function CommandExecutable(CommandLine: String): String;
+var
+  ClosingQuote, Separator: Integer;
+  Remaining: String;
+begin
+  Remaining := Trim(CommandLine);
+  if Remaining = '' then
+    RaiseException('Registered uninstall command is empty.');
+  if Remaining[1] = '"' then begin
+    Delete(Remaining, 1, 1);
+    ClosingQuote := Pos('"', Remaining);
+    if ClosingQuote = 0 then
+      RaiseException('Registered uninstall command has an unterminated quote.');
+    Result := Copy(Remaining, 1, ClosingQuote - 1);
+  end else begin
+    Separator := Pos(' ', Remaining);
+    if Separator = 0 then
+      Result := Remaining
+    else
+      Result := Copy(Remaining, 1, Separator - 1);
+  end;
+end;
+
+function ReadInstallRegistration(RootKey: Integer; ScopeName: String;
+  var InstallLocation, DisplayVersion, UninstallCommand: String): Boolean;
+var
+  DisplayName, Publisher: String;
+begin
+  Result := RegKeyExists(RootKey, '{#UninstallKey}');
+  if not Result then begin
+    InstallLocation := '';
+    DisplayVersion := '';
+    UninstallCommand := '';
+    Exit;
+  end;
+  if not RegQueryStringValue(
+       RootKey, '{#UninstallKey}', 'InstallLocation', InstallLocation) or
+     not RegQueryStringValue(
+       RootKey, '{#UninstallKey}', 'DisplayVersion', DisplayVersion) or
+     not RegQueryStringValue(
+       RootKey, '{#UninstallKey}', 'UninstallString', UninstallCommand) or
+     not RegQueryStringValue(
+       RootKey, '{#UninstallKey}', 'DisplayName', DisplayName) or
+     not RegQueryStringValue(
+       RootKey, '{#UninstallKey}', 'Publisher', Publisher) then
+    RaiseException(
+      ScopeName + ' NEOTH uninstall registration is incomplete or malformed.');
+  if not IsValidSemVer(DisplayVersion) or
+     (CompareText(DisplayName, 'NEOTH ' + DisplayVersion) <> 0) or
+     (CompareText(Publisher, 'The Geek Freaks') <> 0) then
+    RaiseException(
+      ScopeName + ' NEOTH uninstall registration has an invalid identity.');
+end;
+
+procedure ValidateRegisteredInstallPath(InstallLocation, UninstallCommand,
+  ScopeName, ExpectedPath: String);
+var
+  CanonicalLocation, UninstallerPath, UninstallerName: String;
+  DigitIndex: Integer;
+  UninstallerNameValid: Boolean;
+begin
+  CanonicalLocation := CanonicalInstallPath(InstallLocation);
+  if CompareText(
+       RemoveBackslashUnlessRoot(TrimQuotes(InstallLocation)),
+       CanonicalLocation) <> 0 then
+    RaiseException(
+      ScopeName + ' NEOTH InstallLocation is not canonical: ' + InstallLocation);
+  if CompareText(CanonicalLocation, ExpectedPath) <> 0 then
+    RaiseException(
+      ScopeName + ' NEOTH registration owns ' + CanonicalLocation +
+      ', not the requested target ' + ExpectedPath + '.');
+  RequireNoReparsePathComponents(
+    CanonicalLocation, ScopeName + ' NEOTH InstallLocation');
+  RequireRegularDirectory(
+    CanonicalLocation, ScopeName + ' NEOTH InstallLocation');
+  if not DirExists(CanonicalLocation) then
+    RaiseException(
+      ScopeName + ' NEOTH InstallLocation does not exist: ' + CanonicalLocation);
+
+  UninstallerPath := CanonicalInstallPath(
+    CommandExecutable(UninstallCommand));
+  UninstallerName := Lowercase(ExtractFileName(UninstallerPath));
+  UninstallerNameValid := Length(UninstallerName) = 12;
+  if UninstallerNameValid then begin
+    if (Copy(UninstallerName, 1, 5) <> 'unins') or
+       (Copy(UninstallerName, 9, 4) <> '.exe') then
+      UninstallerNameValid := False;
+    for DigitIndex := 6 to 8 do begin
+      if (UninstallerName[DigitIndex] < '0') or
+         (UninstallerName[DigitIndex] > '9') then
+        UninstallerNameValid := False;
+    end;
+  end;
+  if (CompareText(ExtractFileDir(UninstallerPath), CanonicalLocation) <> 0) or
+     not UninstallerNameValid or
+     (CompareText(Trim(UninstallCommand), AddQuotes(UninstallerPath)) <> 0) then
+    RaiseException(
+      ScopeName + ' NEOTH uninstall command is not the canonical Inno ' +
+      'uninstaller inside its InstallLocation.');
+  RequireNoReparsePathComponents(
+    UninstallerPath, ScopeName + ' NEOTH uninstaller');
+  RequireRegularFile(UninstallerPath, ScopeName + ' NEOTH uninstaller');
+  if not FileExists(UninstallerPath) then
+    RaiseException(
+      ScopeName + ' NEOTH uninstaller does not exist: ' + UninstallerPath);
+end;
+
+procedure AssertInstallTargetOwnership;
+var
+  AppPath, ProgramFilesPath: String;
+  UserLocation, UserVersion, UserUninstall: String;
+  MachineLocation, MachineVersion, MachineUninstall: String;
+  UserRegistered, MachineRegistered: Boolean;
+begin
+  AppPath := CanonicalInstallPath(ExpandConstant('{app}'));
+  if CompareText(
+       RemoveBackslashUnlessRoot(ExpandConstant('{app}')), AppPath) <> 0 then
+    RaiseException('Requested NEOTH install target is not canonical: ' +
+      ExpandConstant('{app}'));
+  if FileExists(AppPath) then
+    RaiseException('NEOTH install target is a file, not a directory: ' + AppPath);
+  RequireNoReparsePathComponents(AppPath, 'NEOTH install target');
+  RequireRegularDirectory(AppPath, 'NEOTH install target');
+  RequireRegularPayloadDestinations(AppPath);
+
+  UserRegistered := ReadInstallRegistration(
+    HKCU, 'Per-user', UserLocation, UserVersion, UserUninstall);
+  MachineRegistered := ReadInstallRegistration(
+    HKLM, 'All-users', MachineLocation, MachineVersion, MachineUninstall);
+  if UserRegistered and MachineRegistered then
+    RaiseException(
+      'NEOTH has ambiguous per-user and all-users uninstall registrations.');
+  if IsAdminInstallMode then begin
+    if UserRegistered then
+      RaiseException(
+        'A per-user NEOTH registration cannot authorize an all-users install.');
+    ProgramFilesPath := CanonicalInstallPath(ExpandConstant('{autopf}'));
+    if not PathIsStrictChild(AppPath, ProgramFilesPath) then
+      RaiseException(
+        'All-users NEOTH must use a new or registered path below Program Files; ' +
+        'user-writable custom targets are not trusted.');
+    RequireTrustedMachineAcl(AppPath, 'All-users NEOTH install target');
+    if MachineRegistered then begin
+      ValidateRegisteredInstallPath(
+        MachineLocation, MachineUninstall, 'All-users', AppPath);
+      if not FileExists(AppPath + '\neoth.exe') then
+        RaiseException(
+          'All-users NEOTH recovery executable does not exist: ' +
+          AppPath + '\neoth.exe');
+      RequireTrustedMachineAcl(
+        AppPath + '\neoth.exe', 'All-users NEOTH recovery executable');
+    end else if DirExists(AppPath) then
+      RaiseException(
+        'A fresh all-users NEOTH target must not already exist: ' + AppPath);
+  end else begin
+    if MachineRegistered then
+      RaiseException(
+        'An all-users NEOTH registration cannot authorize a per-user install.');
+    if UserRegistered then begin
+      ValidateRegisteredInstallPath(
+        UserLocation, UserUninstall, 'Per-user', AppPath);
+    end else if DirExists(AppPath) and not DirectoryIsEmpty(AppPath) then
+      RaiseException(
+        'The requested NEOTH target is non-empty and has no matching ' +
+        'per-user uninstall registration: ' + AppPath);
+  end;
+end;
+
+procedure RecoverSelfKnowledgeTransaction;
+var
+  LivePath, StagePath, BackupPath, MarkerPath, MarkerTempPath: String;
+  MarkerBytes: AnsiString;
+  MarkerVersion: String;
+  LiveVerified, BackupVerified: Boolean;
+begin
+  LivePath := SelfKnowledgeLivePath;
+  StagePath := SelfKnowledgeStagePath;
+  BackupPath := SelfKnowledgeBackupPath;
+  MarkerPath := SelfKnowledgeCommitMarkerPath;
+  MarkerTempPath := MarkerPath + '.tmp';
+
+  RequireRegularTree(LivePath, 'NEOTH self-knowledge snapshot');
+  RequireRegularTree(StagePath, 'NEOTH self-knowledge transaction stage');
+  RequireRegularTree(BackupPath, 'NEOTH self-knowledge transaction backup');
+  RequireRegularFile(MarkerPath, 'NEOTH self-knowledge commit marker');
+  RequireRegularFile(MarkerTempPath, 'NEOTH self-knowledge temporary commit marker');
+
+  { Marker versions describe the installer that created the state, not the
+    installer recovering it. N is therefore valid during an N+1 cleanup. }
+  if FileExists(MarkerPath) then begin
+    if not LoadStringFromFile(MarkerPath, MarkerBytes) then
+      RaiseException('Could not read the NEOTH self-knowledge commit marker.');
+    MarkerVersion := MarkerBytes;
+    if not IsValidSemVer(MarkerVersion) then
+      RaiseException('NEOTH self-knowledge commit marker is malformed.');
+  end;
+  if FileExists(MarkerTempPath) then begin
+    if not LoadStringFromFile(MarkerTempPath, MarkerBytes) then
+      RaiseException('Could not read the NEOTH self-knowledge transaction marker.');
+    MarkerVersion := MarkerBytes;
+    if not IsValidSemVer(MarkerVersion) then
+      RaiseException('NEOTH self-knowledge transaction marker is malformed.');
+  end;
+
+  { Markers are recovery hints, never authority: a local actor can forge them.
+    Before any installed executable may run, the exact registered path/scope,
+    a non-elevated original-user token, and matching valid Authenticode signer
+    are required. The signed executable then performs the closed-set check. }
+  if DirExists(BackupPath) then begin
+    LiveVerified := DirExists(LivePath) and
+      VerifyInstalledSelfKnowledgeSnapshot(LivePath);
+    BackupVerified := VerifyInstalledSelfKnowledgeSnapshot(BackupPath);
+    if LiveVerified then begin
+      DeleteOwnedDirectory(BackupPath, 'superseded NEOTH self-knowledge backup');
+    end else if BackupVerified then begin
+      DeleteOwnedDirectory(LivePath, 'uncommitted NEOTH self-knowledge snapshot');
+      if not RenameFile(BackupPath, LivePath) then
+        RaiseException('Could not restore the verified previous NEOTH self-knowledge snapshot.');
+    end else begin
+      RaiseException(
+        'Neither live nor backup self-knowledge matches the installed NEOTH executable.');
+    end;
+  end else if FileExists(MarkerPath) then begin
+    if not DirExists(LivePath) or
+       not VerifyInstalledSelfKnowledgeSnapshot(LivePath) then
+      RaiseException(
+        'Committed NEOTH self-knowledge state does not match the installed executable.');
+  end else if FileExists(MarkerTempPath) and DirExists(LivePath) then begin
+    if not VerifyInstalledSelfKnowledgeSnapshot(LivePath) then
+      RaiseException(
+        'Interrupted NEOTH self-knowledge state does not match the installed executable.');
+  end else if FileExists(MarkerTempPath) then begin
+    { A first-install interruption before the stage rename has neither live N
+      nor a backup. Discard the incomplete stage so this installer can repair
+      it; a forged marker can never delete an existing live snapshot. }
+    Log('Discarding an incomplete fresh-install self-knowledge transaction.');
+  end;
+
+  DeleteOwnedDirectory(StagePath, 'stale NEOTH self-knowledge transaction stage');
+  DeleteOwnedFile(MarkerPath, 'NEOTH self-knowledge commit marker');
+  DeleteOwnedFile(MarkerTempPath, 'stale NEOTH self-knowledge transaction marker');
+end;
+
 function InitializeSetup(): Boolean;
 var
   UserVersion, MachineVersion, InstalledVersion: String;
@@ -641,6 +1317,22 @@ begin
     Result :=
       'An all-users NEOTH installation already exists. Rerun this installer ' +
       'as administrator with /ALLUSERS, or uninstall the all-users copy first.';
+    Exit;
+  end;
+  try
+    AssertInstallTargetOwnership;
+  except
+    Result :=
+      'NEOTH refused the requested installation target before writing files: ' +
+      GetExceptionMessage;
+    Exit;
+  end;
+  try
+    RecoverSelfKnowledgeTransaction;
+  except
+    Result :=
+      'NEOTH could not safely recover its self-knowledge install transaction: ' +
+      GetExceptionMessage;
   end;
 end;
 
@@ -652,8 +1344,22 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then
+  if CurStep = ssPostInstall then begin
+    CommitSelfKnowledgeTransaction;
     AddInstallDirToPath;
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  if SelfKnowledgeSwapActive and not SelfKnowledgeCommitted then begin
+    try
+      RollbackSelfKnowledgeTransaction;
+    except
+      Log('Error: NEOTH self-knowledge rollback failed during setup shutdown: ' +
+        GetExceptionMessage);
+    end;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -16,6 +16,7 @@
 
 pub mod capabilities;
 pub mod ingest;
+pub mod release_snapshot;
 pub mod renderer;
 pub mod sources;
 pub mod writer;

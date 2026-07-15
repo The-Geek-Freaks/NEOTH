@@ -9,6 +9,10 @@
 //!    `wiki::build_wiki` path the CLI uses.
 //! 3. **Ground-truth pointers** — when `self_wiki.ingest` (idempotent
 //!    revoke-then-insert, scope `neoth-self-wiki`).
+//! 4. **Release Graphify snapshot** — verifies and materializes the exact
+//!    release/HEAD-bound graph + Wiki + Obsidian export, then ingests its
+//!    Markdown into a distinct recall scope. The signed baseline is immutable;
+//!    operator/Self-Improve overlays survive upgrades.
 //!
 //! ## Audit
 //!
@@ -30,6 +34,12 @@ pub struct SelfWikiTickReport {
     pub plan_pages: usize,
     /// Ground-truth pointers inserted (0 when ingest off / no sources).
     pub ingested: usize,
+    /// Files in the verified release Graphify baseline (manifest included).
+    pub release_snapshot_files: usize,
+    /// Recall claims refreshed from the release report/wiki/Obsidian export.
+    pub release_snapshot_claims: usize,
+    /// Operator-attested claims refreshed from persistent release overlays.
+    pub release_overlay_claims: usize,
     /// At least one step failed (details in the log).
     pub had_errors: bool,
 }
@@ -106,6 +116,77 @@ fn run_tick_blocking(cfg: &SelfWikiConfig, views_db: &std::path::Path) -> SelfWi
         }
     }
 
+    // 4. Release Graphify snapshot. The release archive/package signature is
+    // the authenticity boundary; the inner closed manifest catches staging,
+    // install, update, and disk drift before recall sees any byte.
+    match crate::wiki::release_snapshot::VerifiedReleaseSnapshot::discover() {
+        Ok(Some(snapshot)) => match snapshot.materialize_into(&out_dir) {
+            Ok(materialized) => {
+                report.release_snapshot_files = materialized.files;
+                if cfg.ingest {
+                    match crate::memory::store::open(views_db) {
+                        Ok(conn) => {
+                            let now_ns = crate::time::now_unix_ns_i64();
+                            match snapshot.ingest_into(&conn, now_ns) {
+                                Ok(inserted) => report.release_snapshot_claims = inserted,
+                                Err(error) => {
+                                    tracing::error!(
+                                        error = %error,
+                                        "release self-knowledge recall ingest failed closed"
+                                    );
+                                    report.had_errors = true;
+                                }
+                            }
+                            match snapshot.ingest_overlays_into(
+                                &materialized.overlays_dir,
+                                &conn,
+                                now_ns,
+                            ) {
+                                Ok(inserted) => report.release_overlay_claims = inserted,
+                                Err(error) => {
+                                    tracing::error!(
+                                        error = %error,
+                                        "release self-knowledge overlay ingest failed closed"
+                                    );
+                                    report.had_errors = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::error!(error = %error, "open recall store for release self-knowledge failed");
+                            report.had_errors = true;
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    "release self-knowledge materialization failed closed"
+                );
+                report.had_errors = true;
+            }
+        },
+        Ok(None) if cfg!(debug_assertions) => {
+            tracing::debug!(
+                "release self-knowledge absent in a debug/source build; capability wiki remains available"
+            );
+        }
+        Ok(None) => {
+            tracing::error!(
+                "release build has no installed self-knowledge snapshot; release/package contract is incomplete"
+            );
+            report.had_errors = true;
+        }
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                "installed release self-knowledge failed verification"
+            );
+            report.had_errors = true;
+        }
+    }
+
     report
 }
 
@@ -122,9 +203,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_defaults_are_off_and_daily() {
+    fn config_defaults_are_on_and_daily() {
         let cfg = SelfWikiConfig::default();
-        assert!(!cfg.enabled, "self-wiki cron must be opt-in");
+        assert!(
+            cfg.enabled,
+            "release self-knowledge must work on first start"
+        );
         assert_eq!(cfg.subdir, "NEOTH-Wiki");
         assert!(cfg.ingest);
         assert_eq!(

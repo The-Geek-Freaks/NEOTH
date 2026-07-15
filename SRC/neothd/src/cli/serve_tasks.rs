@@ -3257,8 +3257,9 @@ pub(crate) fn spawn_consolidation_sweep_cron(
 /// capability map (+ the PLAN/ design corpus on dev checkouts) into the
 /// operator's Obsidian vault + refreshes the ground-truth pointers.
 /// Reload-aware (interval + paths track `neoth reload`). Audit: tracing
-/// only — no WAL byte free. `None` when `self_wiki.enabled = false`
-/// (the default).
+/// only — no WAL byte free. The default is enabled so a packaged release
+/// materializes its signed graph/wiki without a manual tool; explicit
+/// `self_wiki.enabled = false` still disables it.
 pub(crate) fn spawn_self_wiki_cron(
     config: &FreedomConfig,
     reload_controller: &Arc<ReloadController>,
@@ -3298,6 +3299,9 @@ pub(crate) fn spawn_self_wiki_cron(
                 capability_pages = report.capability_pages,
                 plan_pages = report.plan_pages,
                 ingested = report.ingested,
+                release_snapshot_files = report.release_snapshot_files,
+                release_snapshot_claims = report.release_snapshot_claims,
+                release_overlay_claims = report.release_overlay_claims,
                 had_errors = report.had_errors,
                 "self-wiki rebuild tick complete",
             );

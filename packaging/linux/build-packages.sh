@@ -63,7 +63,7 @@ EOF
 }
 
 emit_preflight_receipt() {
-  local name checksum
+  local name checksum path relative
   printf '%s\n' 'NEOTH-LINUX-PREFLIGHT-V1'
   printf 'version %s\n' "$version"
   printf 'target %s\n' "$target"
@@ -72,6 +72,11 @@ emit_preflight_receipt() {
     checksum=$(sha256sum -- "$bundle/$name" | awk '{print $1}')
     printf '%s  %s\n' "$checksum" "$name"
   done
+  while IFS= read -r -d '' path; do
+    relative=${path#"$bundle/"}
+    checksum=$(sha256sum -- "$path" | awk '{print $1}')
+    printf '%s  %s\n' "$checksum" "$relative"
+  done < <(find "$bundle/self-knowledge" -type f -print0 | sort -z)
 }
 
 write_preflight_receipt_file() {
@@ -118,6 +123,7 @@ print_layout() {
 /usr/share/doc/neoth/THIRD_PARTY_LICENSES
 /usr/share/doc/neoth/examples/freedom.yaml.example
 /usr/share/doc/neoth/examples/import-manifest.example.yaml
+/usr/share/neoth/self-knowledge/manifest.json
 EOF
 }
 
@@ -206,7 +212,9 @@ bundle="$(cd -- "$bundle" && pwd -P)"
 need_cmd readelf
 if [[ -n $write_preflight_receipt || -n $preflight_receipt ]]; then
   need_cmd cmp
+  need_cmd find
   need_cmd sha256sum
+  need_cmd sort
 fi
 if [[ -z $preflight_receipt ]]; then
   need_cmd timeout
@@ -225,6 +233,17 @@ for name in "${SUPPORT_FILES[@]}"; do
   [[ -f $bundle/$name && ! -L $bundle/$name && -s $bundle/$name ]] ||
     die "missing regular non-empty release file: $name"
 done
+snapshot="$bundle/self-knowledge"
+[[ -d $snapshot && ! -L $snapshot && -s $snapshot/manifest.json && ! -L $snapshot/manifest.json ]] ||
+  die "missing regular self-knowledge snapshot and manifest"
+[[ -z $(find "$snapshot" -type l -print -quit) ]] ||
+  die "self-knowledge snapshot must not contain symlinks"
+[[ -z $(find "$snapshot" ! -type f ! -type d -print -quit) ]] ||
+  die "self-knowledge snapshot contains a non-file/non-directory entry"
+while IFS= read -r -d '' path; do
+  [[ $path != *$'\n'* && $path != *$'\r'* ]] ||
+    die "self-knowledge path contains a newline"
+done < <(find "$snapshot" -print0)
 
 if [[ -n $preflight_receipt ]]; then
   verify_preflight_receipt_file "$preflight_receipt"
@@ -251,6 +270,7 @@ fi
 need_cmd date
 need_cmd cmp
 need_cmd cpio
+need_cmd diff
 need_cmd dpkg-deb
 need_cmd dpkg-shlibdeps
 need_cmd du
@@ -296,7 +316,7 @@ payload="$work/payload"
 doc_dir="$payload/usr/share/doc/neoth"
 examples_dir="$doc_dir/examples"
 mkdir -p -- "$payload/usr/bin" "$payload/usr/share/applications" \
-  "$payload/usr/share/icons/hicolor/scalable/apps" "$examples_dir"
+  "$payload/usr/share/icons/hicolor/scalable/apps" "$payload/usr/share/neoth" "$examples_dir"
 
 for name in "${BINARIES[@]}"; do
   install -m 0755 -- "$bundle/$name" "$payload/usr/bin/$name"
@@ -309,6 +329,7 @@ done
 for name in freedom.yaml.example import-manifest.example.yaml; do
   install -m 0644 -- "$bundle/$name" "$examples_dir/$name"
 done
+cp -a -- "$snapshot" "$payload/usr/share/neoth/self-knowledge"
 
 find "$payload" -exec touch --no-dereference --date="@$source_date_epoch" {} +
 
@@ -369,6 +390,8 @@ dpkg-deb -x "$deb_output" "$deb_verify"
 for name in "${BINARIES[@]}"; do
   cmp -s -- "$bundle/$name" "$deb_verify/usr/bin/$name" || die "DEB changed binary $name"
 done
+diff -qr --no-dereference "$snapshot" "$deb_verify/usr/share/neoth/self-knowledge" >/dev/null ||
+  die "DEB changed or omitted self-knowledge payload"
 write_sidecars "$deb_output" deb
 
 rpm_top="$work/rpmbuild"
@@ -423,6 +446,7 @@ cp -a . %{buildroot}/
 %{_bindir}/neoth-keet-bridge
 %{_datadir}/applications/neoth.desktop
 %{_datadir}/icons/hicolor/scalable/apps/neoth.svg
+%{_datadir}/neoth/self-knowledge
 
 %changelog
 * $changelog_date The Geek Freaks <noreply@the-geek-freaks.invalid> - $rpm_core-$rpm_release
@@ -458,6 +482,8 @@ mkdir -p -- "$rpm_verify"
 for name in "${BINARIES[@]}"; do
   cmp -s -- "$bundle/$name" "$rpm_verify/usr/bin/$name" || die "RPM changed binary $name"
 done
+diff -qr --no-dereference "$snapshot" "$rpm_verify/usr/share/neoth/self-knowledge" >/dev/null ||
+  die "RPM changed or omitted self-knowledge payload"
 write_sidecars "$rpm_output" rpm
 
 for artifact in "$deb_output" "$deb_output.sha256" "$deb_output.json" \

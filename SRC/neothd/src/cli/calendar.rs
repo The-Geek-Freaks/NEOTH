@@ -186,6 +186,10 @@ fn render_events(events: &[CalendarEvent], output: OutputFormat) {
 }
 
 fn render_create_outcome(output: OutputFormat, outcome: CreateOutcome, summary: &str, uid: &str) {
+    // A CalDAV UID is a server-side correlation identifier and may encode
+    // operator data. Keep it out of terminal transcripts and structured logs;
+    // the stable opaque reference is enough to correlate a repeated command.
+    let event_ref = calendar_value_hash(uid);
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -196,13 +200,13 @@ fn render_create_outcome(output: OutputFormat, outcome: CreateOutcome, summary: 
                     CreateOutcome::Created => "created",
                     CreateOutcome::AlreadyExists => "already_exists",
                 },
-                "uid": uid,
+                "event_ref": event_ref,
             })
         ),
         OutputFormat::Table => match outcome {
-            CreateOutcome::Created => println!("✓ created \"{summary}\" (uid {uid})"),
+            CreateOutcome::Created => println!("✓ created \"{summary}\" (ref {event_ref})"),
             CreateOutcome::AlreadyExists => {
-                println!("• already exists: \"{summary}\" (uid {uid})");
+                println!("• already exists: \"{summary}\" (ref {event_ref})");
             }
         },
     }

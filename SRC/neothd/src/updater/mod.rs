@@ -24,8 +24,10 @@ use tracing::{info, warn};
 // CLI auto-update logic — same `updater` module, separate file so
 // the GitHub-Releases-API path doesn't entangle with the npm-aware
 // installer path.
+pub mod install_transaction;
 pub mod pipeline;
 pub mod probes;
+pub mod release_bundle;
 pub mod self_update;
 /// MAR-02 — in-process minisign keypair generation + release signing (the
 /// DAU-friendly `neoth release keygen`/`sign`; no external `minisign` binary).

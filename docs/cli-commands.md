@@ -3026,6 +3026,37 @@ Run one SkillOpt consolidation pass — STAGES a proposal for review (never writ
 
 Show the switch state, SkillOpt availability, and the last improvement
 
+## `neoth self-knowledge`
+
+Inspect and query the release-signed Graphify self-knowledge snapshot
+
+### `neoth self-knowledge query`
+
+Search the verified release graph and persistent Markdown overlays
+
+- `<TEXT>` — Plain-text search. Ranking is deterministic and local-only
+- `--limit <LIMIT>` — Maximum combined graph/overlay results (1..=50)
+
+JSON results distinguish the immutable `release_graph` from
+`operator_overlay`, `reviewed_self_improve`, `self_improve_proposal`, and
+`unclassified_overlay`. Overlay hits also carry machine-readable
+`overlay_kind` and `review_state`; an unreviewed proposal is never presented as
+operator-attested or recalled automatically.
+
+### `neoth self-knowledge status`
+
+Verify and describe the installed release self-knowledge snapshot
+
+### `neoth self-knowledge verify`
+
+Verify an extracted release snapshot without materializing it or opening
+`NEOTH_HOME`. In addition to the closed manifest and release identity, this
+runs the exact bounded native graph loader and the real recall-claim parser in
+no-write mode. A signed snapshot that cannot be queried or ingested therefore
+cannot pass the fail-closed bootstrap/release preflight.
+
+- `--snapshot <PATH>` — Exact `self-knowledge/` directory from the release archive
+
 ## `neoth serve`
 
 Run the daemon. Reads ~/.neoth/freedom.yaml, opens the WAL, awaits SIGTERM / Ctrl+C, drains cleanly on shutdown

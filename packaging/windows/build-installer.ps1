@@ -29,6 +29,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+. (Join-Path $PSScriptRoot 'pe-inspection.ps1')
 
 function Stop-Packaging {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -119,8 +120,10 @@ function New-PortableArchive {
                     Sort-Object
             )
             $expectedEntries = @(
-                $RequiredFiles |
-                    ForEach-Object { "$BundleName/$($_)" } |
+                Get-ChildItem -LiteralPath $StagingRoot -Recurse -File -Force |
+                    ForEach-Object {
+                        $_.FullName.Substring($StagingRoot.Length + 1).Replace('\', '/')
+                    } |
                     Sort-Object
             )
             if (Compare-Object -ReferenceObject $expectedEntries -DifferenceObject $actualEntries) {
@@ -163,7 +166,8 @@ function Assert-ZipBundle {
                 Stop-Packaging "duplicate ZIP entry after path normalization: $rawEntryName"
             }
             if ($entryName.EndsWith('/', [StringComparison]::Ordinal)) {
-                if ($entryName -cne "$BundleName/") {
+                if ($entryName -cne "$BundleName/" -and
+                    -not $entryName.StartsWith("$BundleName/self-knowledge/", [StringComparison]::Ordinal)) {
                     Stop-Packaging "unexpected ZIP directory entry: $rawEntryName"
                 }
                 continue
@@ -175,35 +179,121 @@ function Assert-ZipBundle {
                 ForEach-Object { "$BundleName/$($_)" } |
                 Sort-Object
         )
-        if (Compare-Object -ReferenceObject $expectedFiles -DifferenceObject @($actualFiles | Sort-Object)) {
+        $selfKnowledgePrefix = "$BundleName/self-knowledge/"
+        $flatFiles = @($actualFiles | Where-Object { -not $_.StartsWith($selfKnowledgePrefix, [StringComparison]::Ordinal) } | Sort-Object)
+        $selfKnowledgeFiles = @($actualFiles | Where-Object { $_.StartsWith($selfKnowledgePrefix, [StringComparison]::Ordinal) })
+        if (Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $flatFiles) {
             Stop-Packaging 'source ZIP has an unexpected or incomplete entry set'
+        }
+        if ($selfKnowledgeFiles.Count -eq 0 -or
+            $selfKnowledgeFiles -cnotcontains "${selfKnowledgePrefix}manifest.json") {
+            Stop-Packaging 'source ZIP is missing self-knowledge/manifest.json'
         }
     } finally {
         $zip.Dispose()
     }
 }
 
-function Get-PeMachine {
-    param([Parameter(Mandatory = $true)][string]$Path)
+function Assert-SelfKnowledgeSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
 
-    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        Stop-Packaging 'release bundle is missing the self-knowledge directory'
+    }
+    $root = (Resolve-Path -LiteralPath $Path).Path
+    $rootItem = Get-Item -LiteralPath $root -Force
+    if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Stop-Packaging 'self-knowledge root must not be a reparse point'
+    }
+    $manifestPath = Join-Path $root 'manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $manifestPath).Length -eq 0) {
+        Stop-Packaging 'release bundle is missing non-empty self-knowledge/manifest.json'
+    }
     try {
-        $reader = [System.IO.BinaryReader]::new($stream)
-        if ($reader.ReadUInt16() -ne 0x5A4D) {
-            Stop-Packaging "$(Split-Path -Leaf $Path) is not a PE executable"
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    } catch {
+        Stop-Packaging "self-knowledge manifest is invalid JSON: $($_.Exception.Message)"
+    }
+    if ($manifest.schema_version -ne 1 -or
+        $manifest.product -cne 'NEOTH' -or
+        $manifest.release_version -cne $Version -or
+        $manifest.source_head -cnotmatch '^[0-9a-f]{40,64}$' -or
+        $manifest.payload_sha256 -cnotmatch '^[0-9a-f]{64}$') {
+        Stop-Packaging 'self-knowledge manifest identity is invalid or does not match the release version'
+    }
+    $entries = @($manifest.files)
+    if ($entries.Count -eq 0 -or $entries.Count -gt 100000) {
+        Stop-Packaging 'self-knowledge manifest must contain a bounded non-empty file list'
+    }
+
+    $listed = [Collections.Generic.List[string]]::new()
+    $previous = $null
+    $payloadHasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($entry in $entries) {
+            $relative = [string]$entry.path
+            $parts = @($relative -split '/')
+            if ([string]::IsNullOrEmpty($relative) -or
+                $relative.IndexOf('\') -ge 0 -or
+                $relative.StartsWith('/', [StringComparison]::Ordinal) -or
+                $parts -contains '' -or $parts -contains '.' -or $parts -contains '..' -or
+                $entry.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                $null -eq $entry.bytes -or [int64]$entry.bytes -lt 0 -or
+                [string]::IsNullOrEmpty([string]$entry.role)) {
+                Stop-Packaging "self-knowledge manifest contains an invalid entry: $relative"
+            }
+            if ($null -ne $previous -and [string]::CompareOrdinal($previous, $relative) -ge 0) {
+                Stop-Packaging 'self-knowledge manifest paths must be strictly sorted and unique'
+            }
+            $previous = $relative
+            [void]$listed.Add($relative)
+
+            $filePath = $root
+            foreach ($part in $parts) {
+                $filePath = Join-Path $filePath $part
+            }
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+                Stop-Packaging "self-knowledge manifest file is missing: $relative"
+            }
+            $file = Get-Item -LiteralPath $filePath -Force
+            if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                $file.Length -ne [int64]$entry.bytes) {
+                Stop-Packaging "self-knowledge file metadata mismatch: $relative"
+            }
+            $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -cne [string]$entry.sha256) {
+                Stop-Packaging "self-knowledge SHA-256 mismatch: $relative"
+            }
+            $line = "$relative`0$actualHash`0$($file.Length)`0$([string]$entry.role)`n"
+            $bytes = [Text.Encoding]::UTF8.GetBytes($line)
+            [void]$payloadHasher.TransformBlock($bytes, 0, $bytes.Length, $bytes, 0)
         }
-        $stream.Position = 0x3C
-        $peOffset = $reader.ReadUInt32()
-        if ($peOffset -gt ($stream.Length - 6)) {
-            Stop-Packaging "$(Split-Path -Leaf $Path) has an invalid PE header offset"
+        [void]$payloadHasher.TransformFinalBlock([byte[]]::new(0), 0, 0)
+        $payloadHash = [BitConverter]::ToString($payloadHasher.Hash).Replace('-', '').ToLowerInvariant()
+        if ($payloadHash -cne [string]$manifest.payload_sha256) {
+            Stop-Packaging 'self-knowledge canonical payload hash mismatch'
         }
-        $stream.Position = $peOffset
-        if ($reader.ReadUInt32() -ne 0x00004550) {
-            Stop-Packaging "$(Split-Path -Leaf $Path) has no PE signature"
-        }
-        return $reader.ReadUInt16()
     } finally {
-        $stream.Dispose()
+        $payloadHasher.Dispose()
+    }
+
+    $actualFiles = @(
+        Get-ChildItem -LiteralPath $root -Recurse -File -Force |
+            Where-Object { $_.FullName -cne $manifestPath } |
+            ForEach-Object {
+                if (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    Stop-Packaging "self-knowledge contains a reparse point: $($_.FullName)"
+                }
+                $_.FullName.Substring($root.Length + 1).Replace('\', '/')
+            } |
+            Sort-Object
+    )
+    if (Compare-Object -ReferenceObject @($listed) -DifferenceObject $actualFiles) {
+        Stop-Packaging 'self-knowledge closed file set contains an unlisted or missing file'
     }
 }
 
@@ -318,7 +408,7 @@ try {
         }
     }
     $unexpectedDirectories = @(Get-ChildItem -LiteralPath $bundlePath -Directory -Force)
-    if ($unexpectedDirectories.Count -ne 0) {
+    if ($unexpectedDirectories.Count -ne 1 -or $unexpectedDirectories[0].Name -cne 'self-knowledge') {
         Stop-Packaging 'release bundle contains unexpected nested directories'
     }
     $actualFiles = @(Get-ChildItem -LiteralPath $bundlePath -File -Force | ForEach-Object Name | Sort-Object)
@@ -326,9 +416,13 @@ try {
     if (Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles) {
         Stop-Packaging 'release bundle contains an unexpected or incomplete file set'
     }
+    Assert-SelfKnowledgeSnapshot `
+        -Path (Join-Path $bundlePath 'self-knowledge') `
+        -Version $Version
 
     foreach ($name in $requiredFiles | Where-Object { $_.EndsWith('.exe', [System.StringComparison]::Ordinal) }) {
-        $machine = Get-PeMachine -Path (Join-Path $bundlePath $name)
+        $image = Assert-PeStaticMsvcRuntime -Path (Join-Path $bundlePath $name)
+        $machine = $image.Machine
         if ($machine -ne $expectedMachine) {
             Stop-Packaging "$name has PE machine 0x$($machine.ToString('X4')), expected 0x$($expectedMachine.ToString('X4'))"
         }

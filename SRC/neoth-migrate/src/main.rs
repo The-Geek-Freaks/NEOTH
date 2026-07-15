@@ -710,8 +710,7 @@ fn run_import_openclaw(args: ImportOpenclawArgs) -> Result<()> {
         );
     } else if report.activation_blocked {
         eprintln!(
-            "needs action: {} secret field(s) must be supplied through NEOTH credentials before activation",
-            report.summary.needs_secret
+            "needs action: required credentials must be supplied through the NEOTH credential store before activation"
         );
     }
     Ok(())

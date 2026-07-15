@@ -11,6 +11,8 @@
 /Applications/NEOTH.app/Contents/Resources/THIRD_PARTY_LICENSES
 /Applications/NEOTH.app/Contents/Resources/examples/freedom.yaml.example
 /Applications/NEOTH.app/Contents/Resources/examples/import-manifest.example.yaml
+/Applications/NEOTH.app/Contents/Resources/neoth-package-ownership.plist
+/Applications/NEOTH.app/Contents/Resources/self-knowledge/manifest.json
 /Applications/NEOTH.app/Contents/Resources/uninstall-neoth.sh
 /usr/local/bin/neoth
 /usr/local/bin/neothd
