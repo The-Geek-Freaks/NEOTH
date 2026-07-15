@@ -21,11 +21,13 @@ This guide is the map. You do not need to read it all at once — jump to the st
 **Goal:** a working chat on your own machine, zero accounts.
 
 ```bash
-neoth init          # the wizard — pick a provider, autonomy level, optional channels
+neoth               # choose GUI or CLI once, then run the selected wizard
 neoth chat "hello"  # your first turn
 ```
 
-The wizard (`neoth init`) walks you through, in plain language, every choice that matters:
+Bare `neoth` asks for GUI versus CLI exactly once on a graphical desktop and
+persists the answer; SSH/CI/headless sessions stay in CLI. The selected wizard
+walks you through, in plain language, every choice that matters:
 
 - **Provider.** `claude_cli` (uses your Claude subscription via the `claude` CLI — **no
   per-token billing**) is the recommended default. `local_qwen` runs a ~3 GB model entirely

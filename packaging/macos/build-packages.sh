@@ -383,6 +383,8 @@ numeric_version=${version_without_build%%-*}
 sed -e "s/@NUMERIC_VERSION@/$numeric_version/g" -e "s/@RELEASE_VERSION@/$version/g" \
   "$SCRIPT_DIR/Info.plist.in" >"$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
+[[ $(plutil -extract LSEnvironment.NEOTH_PRODUCT_LAUNCHER raw -o - "$app/Contents/Info.plist") == 1 ]] ||
+  die "app product-launcher environment contract drifted"
 
 timestamp="$(date -u -r "$source_date_epoch" '+%Y%m%d%H%M.%S')"
 find "$app" -exec touch -h -t "$timestamp" {} +
@@ -501,6 +503,8 @@ done
 plutil -lint "$app_output/Contents/Info.plist" >/dev/null
 [[ $(plutil -extract CFBundleIdentifier raw -o - "$app_output/Contents/Info.plist") == "$BUNDLE_ID" ]] ||
   die "built app bundle identifier drifted"
+[[ $(plutil -extract LSEnvironment.NEOTH_PRODUCT_LAUNCHER raw -o - "$app_output/Contents/Info.plist") == 1 ]] ||
+  die "built app product-launcher environment contract drifted"
 pkg_payload="$(pkgutil --payload-files "$pkg_output" | sed 's#^\./##')"
 while IFS= read -r required_path; do
   grep -Fqx -- "${required_path#/}" <<<"$pkg_payload" || die "built PKG is missing $required_path"

@@ -221,9 +221,6 @@ pub fn rewrap_key(path: &Path, raw_key: &[u8]) -> Result<()> {
     let encoded = encode_key_for_storage(path, raw_key)?;
     crate::util::atomic_write::atomic_write_private(path, &encoded)
         .with_context(|| format!("atomically replace HMAC key at {}", path.display()))?;
-    #[cfg(windows)]
-    crate::wal::win_acl::restrict_to_owner(path)
-        .with_context(|| format!("restrict HMAC key ACL {}", path.display()))?;
     Ok(())
 }
 
@@ -247,18 +244,8 @@ pub(crate) fn maybe_unwrap_dpapi(body: &[u8], _path: &Path) -> Result<Vec<u8>> {
 
 #[cfg(unix)]
 pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)
+    crate::util::atomic_write::write_private_create_new(path, key)
         .with_context(|| format!("create HMAC key at {} with mode 0600", path.display()))?;
-    use std::io::Write;
-    file.write_all(key)
-        .with_context(|| format!("write HMAC key bytes to {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("fsync HMAC key {}", path.display()))?;
     Ok(())
 }
 
@@ -290,25 +277,8 @@ pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
     // and fall back to plaintext + DACL — the file stays as protected
     // as it was pre-K-Sec-4 instead of failing key generation.
     let payload = encode_key_for_storage(path, key)?;
-    use std::io::Write as _;
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(path)
-        .with_context(|| format!("create HMAC key at {}", path.display()))?;
-    file.write_all(&payload)
-        .with_context(|| format!("write HMAC key at {}", path.display()))?;
-    file.flush()
-        .with_context(|| format!("flush HMAC key {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("fsync HMAC key {}", path.display()))?;
-    if let Err(e) = crate::wal::win_acl::restrict_to_owner(path) {
-        tracing::warn!(
-            path = %path.display(),
-            error = %e,
-            "HMAC key DACL restriction failed; key file inherits parent DACL"
-        );
-    }
+    crate::util::atomic_write::write_private_create_new(path, &payload)
+        .with_context(|| format!("create private HMAC key at {}", path.display()))?;
     Ok(())
 }
 
@@ -661,6 +631,7 @@ mod tests {
         assert_eq!(key.len(), 32);
 
         let on_disk = std::fs::read(&path).unwrap();
+        crate::wal::win_native::verify_private_dacl(&path).unwrap();
         let wrapped = crate::wal::dpapi::is_wrapped(&on_disk);
         let plaintext_fallback = on_disk == key;
         assert!(

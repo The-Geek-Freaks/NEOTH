@@ -99,15 +99,15 @@ Source: "{#SourceDir}\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD_PARTY_LICENSES"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\NEOTH"; Filename: "{app}\neoth.exe"; WorkingDir: "{app}"; Comment: "Open NEOTH"
-Name: "{group}\NEOTH CLI"; Filename: "{cmd}"; Parameters: "/D /K """"{app}\neoth.exe"" interface set cli && ""{app}\neoth.exe"""""; WorkingDir: "{app}"; Comment: "Switch to and open the NEOTH command line"
-Name: "{group}\NEOTH GUI"; Filename: "{app}\neoth.exe"; Parameters: "gui"; WorkingDir: "{app}"; Comment: "Switch to the NEOTH graphical interface"
+Name: "{group}\NEOTH"; Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"; WorkingDir: "{app}"; Comment: "Open NEOTH"
+Name: "{group}\NEOTH CLI"; Filename: "{cmd}"; Parameters: "/D /K ""set NEOTH_INTERFACE=&& ""{app}\neoth.exe"" interface set cli && ""{app}\neoth.exe"""""; WorkingDir: "{app}"; Comment: "Switch to and open the NEOTH command line"
+Name: "{group}\NEOTH GUI"; Filename: "{app}\neothd-gui.exe"; WorkingDir: "{app}"; Comment: "Open the NEOTH graphical interface"
 Name: "{group}\NEOTH Documentation"; Filename: "{app}\README.md"
 Name: "{group}\Uninstall NEOTH"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\NEOTH"; Filename: "{app}\neoth.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\NEOTH"; Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\neoth.exe"; Description: "Launch NEOTH"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"; Description: "Launch NEOTH"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var

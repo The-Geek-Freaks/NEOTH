@@ -1479,6 +1479,29 @@ mod locked_update_tests {
         assert_eq!(std::fs::read(&path).unwrap(), malformed);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn update_at_replaces_a_weak_file_with_process_token_only_dacl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        write_default(&path);
+
+        FreedomConfig::update_at(&path, |cfg| {
+            cfg.operator_id = Some("windows-private-update".into());
+            Ok(())
+        })
+        .unwrap();
+
+        crate::wal::win_native::verify_private_dacl(&path).unwrap();
+        assert_eq!(
+            FreedomConfig::load_from_path(&path)
+                .unwrap()
+                .operator_id
+                .as_deref(),
+            Some("windows-private-update")
+        );
+    }
+
     #[test]
     fn update_at_serialises_concurrent_read_modify_write_cycles() {
         let dir = tempfile::tempdir().unwrap();

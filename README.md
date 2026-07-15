@@ -74,7 +74,7 @@ Current install (source checkout):
 git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH
 NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
-neoth gui
+neoth
 ```
 
 The all-components source installer needs Node.js 22.16+ to compile the Keet
@@ -85,7 +85,7 @@ After the first signed release, one-command install (Linux/macOS):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH" # profile wiring applies automatically to new shells
-neoth gui
+neoth
 ```
 
 The binary installer always verifies SHA-256 plus release authenticity. It uses
@@ -98,7 +98,7 @@ executed; `NEOTH_ALLOW_UNVERIFIED_RECOVERY=1` applies only when the verifier
 cannot be downloaded and the archive was authenticated out of band.
 
 Desktop archives contain `neoth`, the `neothd` compatibility launcher, the
-separate `neothd-gui` binary consumed by `neoth gui`, `neoth-migrate`, and
+separate `neothd-gui` binary consumed by bare `neoth` and `neoth gui`, `neoth-migrate`, and
 `neoth-relay`, plus the zero-dependency `neoth-keet-bridge` standalone. Only the
 explicitly headless musl server archive omits the GUI and the glibc-linked Keet
 companion.
@@ -111,8 +111,16 @@ zero-prompt PowerShell alternative is:
 
 ```powershell
 irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
-neoth gui
+neoth
 ```
+
+Bare `neoth` is the product launcher. On the first display-bearing launch it
+shows one accessible **Graphical setup / Command-line setup** choice and stores
+the answer in the active `NEOTH_HOME`; later launches go straight to that
+surface. SSH, CI, Windows Session 0, and other headless sessions stay in the
+CLI. Automation can choose explicitly with `NEOTH_INTERFACE=gui` or
+`NEOTH_INTERFACE=cli` (exact lowercase values). Switch at any time with `neoth gui`,
+`neoth interface set cli`, or **Open CLI** in the GUI.
 
 Then run the health check:
 

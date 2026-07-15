@@ -1169,9 +1169,6 @@ fn commit_pending_hmac_rotation(
                 .with_context(|| format!("read retiring HMAC key {}", key_path.display()))?;
             crate::util::atomic_write::atomic_write_private(archive, &active)
                 .with_context(|| format!("write HMAC key archive {}", archive.display()))?;
-            #[cfg(windows)]
-            crate::wal::win_acl::restrict_to_owner(archive)
-                .with_context(|| format!("restrict HMAC key archive ACL {}", archive.display()))?;
         }
     }
     crate::wal::compaction::rewrap_key(key_path, &staged)

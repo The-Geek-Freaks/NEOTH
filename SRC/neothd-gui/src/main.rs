@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 //! NEOTH GUI wizard — R-1 Phase 3.
 //!
 //! Multi-screen flow:
@@ -11,7 +13,7 @@
 //!     least one secret) — mode 0600 on unix, ACL-restricted on Windows.
 //!     Mirrors the secrets-split landed by `config/credentials.rs`.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -22,6 +24,498 @@ use tracing_subscriber::EnvFilter;
 // FIX 1 — serialize all freedom.yaml writers so concurrent GUI toggles cannot
 // interleave their read-modify-write cycles and lose an update.
 static FREEDOM_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(windows)]
+mod win_private {
+    use std::fs::File;
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use std::path::Path;
+
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, ERROR_INSUFFICIENT_BUFFER,
+        ERROR_SUCCESS, GetLastError, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
+    };
+    use windows_sys::Win32::Security::Authorization::{
+        EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, GetSecurityInfo,
+        NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW,
+        TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
+    };
+    use windows_sys::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, CONTAINER_INHERIT_ACE,
+        DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetLengthSid,
+        GetSecurityDescriptorControl, GetTokenInformation, INHERITED_ACE,
+        InitializeSecurityDescriptor, IsValidSid, NO_INHERITANCE, OBJECT_INHERIT_ACE,
+        PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
+        SECURITY_DESCRIPTOR, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY,
+        TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        CREATE_NEW, CreateFileW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfoEx,
+        FlushFileBuffers, SetFileInformationByHandle,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    pub fn create_private_file_new(path: &Path) -> io::Result<File> {
+        let path_w = path_to_wide_nul(path)?;
+        let sid = current_process_token_sid()?;
+        let acl = single_trustee_acl(sid.as_ptr() as *mut u16, NO_INHERITANCE)?;
+        let mut descriptor: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
+        let descriptor_ptr = std::ptr::addr_of_mut!(descriptor) as *mut std::ffi::c_void;
+        const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
+        if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) }
+            == 0
+        {
+            return Err(last_win32_error("InitializeSecurityDescriptor"));
+        }
+        if unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0 {
+            return Err(last_win32_error("SetSecurityDescriptorDacl"));
+        }
+        if unsafe {
+            SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
+        } == 0
+        {
+            return Err(last_win32_error("SetSecurityDescriptorControl"));
+        }
+        let security_attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor_ptr,
+            bInheritHandle: 0,
+        };
+        let raw = unsafe {
+            CreateFileW(
+                path_w.as_ptr(),
+                FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE,
+                0,
+                &security_attributes,
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        if raw == INVALID_HANDLE_VALUE {
+            let code = unsafe { GetLastError() };
+            return Err(io::Error::new(
+                win32_io_err(code).kind(),
+                format!(
+                    "CreateFileW(CREATE_NEW): Win32 error {code:#010x} ({})",
+                    win32_io_err(code)
+                ),
+            ));
+        }
+        let owned = OwnedHandle(raw);
+        if let Err(error) = verify_private_handle_for_sid(raw, &sid) {
+            drop(owned);
+            let _ = std::fs::remove_file(path);
+            return Err(error);
+        }
+        Ok(owned.into_file())
+    }
+
+    pub fn replace_private_file_handle(file: &File, target: &Path) -> io::Result<()> {
+        rename_private_file_handle(file, target, true)
+    }
+
+    pub fn create_private_file_handle(file: &File, target: &Path) -> io::Result<()> {
+        rename_private_file_handle(file, target, false)
+    }
+
+    pub fn set_private_directory_dacl(path: &Path) -> io::Result<()> {
+        let mut path_w = path_to_wide_nul(path)?;
+        let sid = current_process_token_sid()?;
+        let acl = single_trustee_acl(
+            sid.as_ptr() as *mut u16,
+            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+        )?;
+        let rc = unsafe {
+            SetNamedSecurityInfoW(
+                path_w.as_mut_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                acl.0,
+                std::ptr::null_mut(),
+            )
+        };
+        map_win32(rc, "SetNamedSecurityInfoW")?;
+        verify_private_directory_dacl(path)
+    }
+
+    fn rename_private_file_handle(
+        file: &File,
+        target: &Path,
+        replace_existing: bool,
+    ) -> io::Result<()> {
+        verify_private_file_handle(file)?;
+        if unsafe { FlushFileBuffers(file.as_raw_handle() as HANDLE) } == 0 {
+            return Err(last_win32_error("FlushFileBuffers"));
+        }
+        let absolute_target = std::path::absolute(target)?;
+        let target_w = path_to_wide_nul(&absolute_target)?;
+        let file_name_units = target_w
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty target path"))?;
+        let file_name_bytes = file_name_units
+            .checked_mul(std::mem::size_of::<u16>())
+            .and_then(|length| u32::try_from(length).ok())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "target path is too long")
+            })?;
+        let file_name_offset = u32::try_from(std::mem::offset_of!(FILE_RENAME_INFO, FileName))
+            .expect("FILE_RENAME_INFO offset fits in u32");
+        let buffer_size = file_name_offset
+            .checked_add(file_name_bytes)
+            .and_then(|length| length.checked_add(std::mem::size_of::<u16>() as u32))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "target path is too long")
+            })?;
+        let mut storage =
+            vec![0usize; (buffer_size as usize).div_ceil(std::mem::size_of::<usize>())];
+        let rename_info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x1;
+        const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
+        let flags = FILE_RENAME_FLAG_POSIX_SEMANTICS
+            | if replace_existing {
+                FILE_RENAME_FLAG_REPLACE_IF_EXISTS
+            } else {
+                0
+            };
+        unsafe {
+            std::ptr::addr_of_mut!((*rename_info).Anonymous)
+                .write(FILE_RENAME_INFO_0 { Flags: flags });
+            std::ptr::addr_of_mut!((*rename_info).RootDirectory).write(std::ptr::null_mut());
+            std::ptr::addr_of_mut!((*rename_info).FileNameLength).write(file_name_bytes);
+            target_w.as_ptr().copy_to_nonoverlapping(
+                std::ptr::addr_of_mut!((*rename_info).FileName).cast::<u16>(),
+                target_w.len(),
+            );
+        }
+        let rc = unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle() as HANDLE,
+                FileRenameInfoEx,
+                rename_info.cast::<std::ffi::c_void>(),
+                buffer_size,
+            )
+        };
+        if rc == 0 {
+            let code = unsafe { GetLastError() };
+            let kind = if !replace_existing
+                && (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS)
+            {
+                io::ErrorKind::AlreadyExists
+            } else {
+                io::ErrorKind::PermissionDenied
+            };
+            return Err(io::Error::new(
+                kind,
+                format!(
+                    "SetFileInformationByHandle(FileRenameInfoEx): Win32 error {code:#010x} ({})",
+                    win32_io_err(code)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_private_file_handle(file: &File) -> io::Result<()> {
+        verify_private_handle_for_sid(
+            file.as_raw_handle() as HANDLE,
+            &current_process_token_sid()?,
+        )
+    }
+
+    fn verify_private_directory_dacl(path: &Path) -> io::Result<()> {
+        let path_w = path_to_wide_nul(path)?;
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut descriptor: *mut std::ffi::c_void = std::ptr::null_mut();
+        let rc = unsafe {
+            GetNamedSecurityInfoW(
+                path_w.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        let descriptor = OwnedLocalDescriptor(descriptor);
+        map_win32(rc, "GetNamedSecurityInfoW")?;
+        verify_private_descriptor(
+            descriptor.0,
+            dacl,
+            &current_process_token_sid()?,
+            (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8,
+        )
+    }
+
+    fn verify_private_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Result<()> {
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut descriptor: *mut std::ffi::c_void = std::ptr::null_mut();
+        let rc = unsafe {
+            GetSecurityInfo(
+                handle,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        let descriptor = OwnedLocalDescriptor(descriptor);
+        map_win32(rc, "GetSecurityInfo")?;
+        verify_private_descriptor(descriptor.0, dacl, expected_sid, NO_INHERITANCE as u8)
+    }
+
+    fn verify_private_descriptor(
+        descriptor: *mut std::ffi::c_void,
+        dacl: *mut ACL,
+        expected_sid: &[u8],
+        expected_flags: u8,
+    ) -> io::Result<()> {
+        if descriptor.is_null() || dacl.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private DACL missing",
+            ));
+        }
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0 {
+            return Err(last_win32_error("GetSecurityDescriptorControl"));
+        }
+        if control & SE_DACL_PROTECTED == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private DACL is not protected",
+            ));
+        }
+        let mut info: ACL_SIZE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe {
+            GetAclInformation(
+                dacl,
+                &mut info as *mut ACL_SIZE_INFORMATION as *mut std::ffi::c_void,
+                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        } == 0
+        {
+            return Err(last_win32_error("GetAclInformation"));
+        }
+        if info.AceCount == 0 || (expected_flags == NO_INHERITANCE as u8 && info.AceCount != 1) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("unexpected private DACL ACE count {}", info.AceCount),
+            ));
+        }
+        const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+        const GENERIC_ALL: u32 = 0x1000_0000;
+        const INHERIT_ONLY_ACE_FLAG: u8 = 0x08;
+        let allowed_flags = if expected_flags == NO_INHERITANCE as u8 {
+            expected_flags
+        } else {
+            expected_flags | INHERIT_ONLY_ACE_FLAG
+        };
+        let mut combined_flags = 0u8;
+        for index in 0..info.AceCount {
+            let mut ace_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+            if unsafe { GetAce(dacl, index, &mut ace_ptr) } == 0 || ace_ptr.is_null() {
+                return Err(last_win32_error("GetAce"));
+            }
+            let ace = unsafe { &*(ace_ptr as *const ACCESS_ALLOWED_ACE) };
+            if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE
+                || ace.Header.AceFlags as u32 & INHERITED_ACE != 0
+                || ace.Header.AceFlags & !allowed_flags != 0
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "unsafe private DACL ACE",
+                ));
+            }
+            combined_flags |= ace.Header.AceFlags & expected_flags;
+            if ace.Mask & GENERIC_ALL != GENERIC_ALL
+                && ace.Mask & FILE_ALL_ACCESS != FILE_ALL_ACCESS
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "private DACL lacks full control",
+                ));
+            }
+            let ace_sid = std::ptr::addr_of!(ace.SidStart) as *mut std::ffi::c_void;
+            if unsafe { IsValidSid(ace_sid) } == 0
+                || unsafe { EqualSid(ace_sid, expected_sid.as_ptr() as *mut std::ffi::c_void) } == 0
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "private DACL SID mismatch",
+                ));
+            }
+        }
+        if combined_flags != expected_flags {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private DACL inheritance flags mismatch",
+            ));
+        }
+        Ok(())
+    }
+
+    fn single_trustee_acl(sid: *mut u16, inheritance: u32) -> io::Result<OwnedLocalAcl> {
+        let trustee = TRUSTEE_W {
+            pMultipleTrustee: std::ptr::null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid,
+        };
+        let mut entry = EXPLICIT_ACCESS_W {
+            grfAccessPermissions: FILE_ALL_ACCESS,
+            grfAccessMode: GRANT_ACCESS,
+            grfInheritance: inheritance,
+            Trustee: trustee,
+        };
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        let rc = unsafe { SetEntriesInAclW(1, &mut entry, std::ptr::null_mut(), &mut acl) };
+        let acl = OwnedLocalAcl(acl);
+        map_win32(rc, "SetEntriesInAclW")?;
+        if acl.0.is_null() {
+            Err(io::Error::other("SetEntriesInAclW returned null ACL"))
+        } else {
+            Ok(acl)
+        }
+    }
+
+    fn current_process_token_sid() -> io::Result<Vec<u8>> {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(last_win32_error("OpenProcessToken"));
+        }
+        let token = OwnedHandle(token);
+        let mut needed = 0u32;
+        let first = unsafe {
+            GetTokenInformation(token.0, TokenUser, std::ptr::null_mut(), 0, &mut needed)
+        };
+        if first != 0 || unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER || needed == 0 {
+            return Err(last_win32_error("GetTokenInformation(size)"));
+        }
+        let mut buffer = vec![0u8; needed as usize];
+        if unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                buffer.as_mut_ptr().cast::<std::ffi::c_void>(),
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(last_win32_error("GetTokenInformation(TokenUser)"));
+        }
+        let token_user = unsafe { &*(buffer.as_ptr() as *const TOKEN_USER) };
+        if unsafe { IsValidSid(token_user.User.Sid) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid TokenUser SID",
+            ));
+        }
+        let sid_len = unsafe { GetLengthSid(token_user.User.Sid) };
+        let mut sid = vec![0u8; sid_len as usize];
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                token_user.User.Sid.cast::<u8>(),
+                sid.as_mut_ptr(),
+                sid.len(),
+            );
+        }
+        Ok(sid)
+    }
+
+    fn path_to_wide_nul(path: &Path) -> io::Result<Vec<u16>> {
+        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if wide.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path contains NUL",
+            ));
+        }
+        wide.push(0);
+        Ok(wide)
+    }
+
+    fn map_win32(code: u32, context: &'static str) -> io::Result<()> {
+        if code == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "{context}: Win32 error {code:#010x} ({})",
+                    win32_io_err(code)
+                ),
+            ))
+        }
+    }
+
+    fn last_win32_error(context: &'static str) -> io::Error {
+        let code = unsafe { GetLastError() };
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{context}: Win32 error {code:#010x} ({})",
+                win32_io_err(code)
+            ),
+        )
+    }
+
+    fn win32_io_err(code: u32) -> io::Error {
+        io::Error::from_raw_os_error(code as i32)
+    }
+
+    struct OwnedHandle(HANDLE);
+
+    impl OwnedHandle {
+        fn into_file(self) -> File {
+            let owned = std::mem::ManuallyDrop::new(self);
+            unsafe { File::from_raw_handle(owned.0) }
+        }
+    }
+
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
+                unsafe { CloseHandle(self.0) };
+            }
+        }
+    }
+
+    struct OwnedLocalAcl(*mut ACL);
+
+    impl Drop for OwnedLocalAcl {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { LocalFree(self.0.cast::<std::ffi::c_void>() as HLOCAL) };
+            }
+        }
+    }
+
+    struct OwnedLocalDescriptor(*mut std::ffi::c_void);
+
+    impl Drop for OwnedLocalDescriptor {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { LocalFree(self.0 as HLOCAL) };
+            }
+        }
+    }
+}
 
 /// GU-03 — persona-adaptive settings-panel visibility rule engine (pure Rust,
 /// unit-tested without Slint). The `.slint` binds its `show_*` properties to
@@ -345,6 +839,28 @@ fn main() -> Result<()> {
     init_tracing();
     info!("neothd-gui starting (R-1 Phase 3 — autonomy + channels + keys)");
 
+    let product_launcher = product_launcher_mode(
+        std::env::args_os().skip(1),
+        std::env::var_os(PRODUCT_LAUNCHER_ENV),
+    )?;
+    let neoth_dir = default_neoth_home();
+    std::fs::create_dir_all(&neoth_dir)
+        .with_context(|| format!("create NEOTH home {}", neoth_dir.display()))?;
+    if product_launcher
+        && matches!(
+            load_gui_interface_preference(&neoth_dir),
+            Ok(Some(GuiInterfacePreference::Cli))
+        )
+    {
+        let bin = which_neothd().context("NEOTH CLI binary is missing beside the GUI")?;
+        switch_to_cli(&bin, &neoth_dir)?;
+        return Ok(());
+    }
+    let gui_parent_handoff = gui_parent_handoff_from_env(&neoth_dir)?;
+    let parent_commits_gui = gui_parent_handoff
+        .as_ref()
+        .is_some_and(|handoff| handoff.parent_commit);
+
     let window = MainWindow::new()?;
 
     // ── Companion overlay — created here, hidden until the operator
@@ -356,7 +872,6 @@ fn main() -> Result<()> {
 
     // B23 fix — read tweaks.toml once so the theme block and the B23 tweaks
     // block below share a single parse (no double I/O).
-    let neoth_dir = default_neoth_home();
     let gui_tweaks = read_gui_tweaks(&neoth_dir);
 
     // Theme — restore the persisted light/dark choice before the window paints.
@@ -563,7 +1078,10 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         let summary = which_neoth_migrate()
             .and_then(|bin| {
-                std::process::Command::new(bin)
+                let mut command = std::process::Command::new(bin);
+                scrub_gui_control_environment(&mut command);
+                suppress_console_window(&mut command);
+                command
                     .arg("detect")
                     .arg("--json")
                     .env("NO_COLOR", "1")
@@ -671,29 +1189,45 @@ fn main() -> Result<()> {
         window.set_settings_show_code_sessions(pv.show_code_sessions);
     }
 
-    let already_initialized = neoth_dir.join("freedom.yaml").exists();
+    let (already_initialized, readiness_error) = match which_neothd()
+        .context("NEOTH CLI binary is missing beside the GUI")
+        .and_then(|bin| gui_initialization_is_ready(&bin, &neoth_dir))
+    {
+        Ok(ready) => (ready, None),
+        Err(error) => (false, Some(error.to_string())),
+    };
+    let freedom_path = neoth_dir.join("freedom.yaml");
+    let (config_present, config_presence_error) = match freedom_path.try_exists() {
+        Ok(present) => (present, None),
+        Err(error) => (
+            false,
+            Some(format!(
+                "could not inspect existing configuration {}: {error}",
+                freedom_path.display()
+            )),
+        ),
+    };
+    let initialization_error = readiness_error.or(config_presence_error);
+    let initialization_state_valid = initialization_error.is_none();
     // GOLD-R4-03 — an absent preference is the one and only state that shows
     // the GUI-vs-CLI chooser. Opening the GUI after a prior CLI choice is an
     // explicit switch back to GUI, so update the canonical CLI-owned contract
     // before skipping the chooser. Existing malformed state remains visible
     // and repairable through an explicit card choice.
-    let (interface_choice_recorded, interface_choice_error) =
-        match load_gui_interface_preference(&neoth_dir) {
-            Ok(Some(GuiInterfacePreference::Gui)) => (true, None),
-            Ok(Some(GuiInterfacePreference::Cli)) => {
-                let result = which_neothd()
-                    .context("NEOTH CLI binary is missing beside the GUI")
-                    .and_then(|bin| {
-                        set_interface_preference_via_cli(&bin, GuiInterfacePreference::Gui)
-                    });
-                match result {
-                    Ok(()) => (true, None),
-                    Err(error) => (false, Some(error.to_string())),
-                }
-            }
-            Ok(None) => (false, None),
-            Err(error) => (false, Some(error.to_string())),
-        };
+    let interface_boot = if parent_commits_gui {
+        interface_boot_decision(true, Ok(None))
+    } else {
+        interface_boot_decision(false, load_gui_interface_preference(&neoth_dir))
+    };
+    let direct_gui_commit = matches!(&interface_boot, GuiInterfaceBootDecision::SwitchCliToGui);
+    let (interface_choice_recorded, interface_choice_error) = match interface_boot {
+        GuiInterfaceBootDecision::Ready => (true, None),
+        // Direct `neothd-gui` is an explicit switch, but the durable write is
+        // deferred to the same live-event-loop commit edge as `neoth gui`.
+        GuiInterfaceBootDecision::SwitchCliToGui => (true, None),
+        GuiInterfaceBootDecision::Choose => (false, None),
+        GuiInterfaceBootDecision::Repair(error) => (false, Some(error)),
+    };
     // GUI-REENTRY-PRESET fix: track whether the re-entry config read succeeded.
     // on_finish_clicked checks this flag and refuses to overwrite the existing
     // config when the read failed (preventing Slint property defaults — which
@@ -701,20 +1235,18 @@ fn main() -> Result<()> {
     // operator's real config). False = first-run or read failed (safe default:
     // no existing config to protect). True = re-entry with config loaded OK.
     let reentry_config_ok = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    if already_initialized {
+    if config_present {
         info!(
-            freedom_path = %neoth_dir.join("freedom.yaml").display(),
-            "freedom.yaml already exists — jumping to done step"
+            freedom_path = %freedom_path.display(),
+            ready = already_initialized,
+            "preloading existing GUI configuration"
         );
-        if interface_choice_recorded {
+        if already_initialized && interface_choice_recorded {
             window.set_step(WizardStep::Done);
         }
-        // The operator already accepted the licence on first run —
-        // freedom.yaml's existence is the proof. Pre-arm the checkbox
-        // state so the "Finish" button stays clickable on re-entry
-        // (otherwise the disabled-by-default checkbox blocks the
-        // operator from re-writing config without walking back to the
-        // licence screen).
+        // Both legacy-complete and daemon-pending GUI config can only be
+        // written after the licence gate. Pre-arm the checkbox so a crash
+        // recovery can resume without walking backwards through onboarding.
         window.set_license_accepted(true);
 
         // M-1 fix — read freedom.yaml back into the wizard properties
@@ -925,15 +1457,22 @@ fn main() -> Result<()> {
             );
         }
 
-        window.set_status_line(
-            format!(
-                "NEOTH is already configured at {}.\n\
-                 Click \"Open Settings →\" to reach the Code Sessions tab,\n\
-                 or click Finish to re-write the config.",
-                neoth_dir.display()
-            )
-            .into(),
-        );
+        if already_initialized {
+            window.set_status_line(
+                format!(
+                    "NEOTH is already configured at {}.\n\
+                     Click \"Open Settings →\" to reach the Code Sessions tab,\n\
+                     or click Finish to re-write the config.",
+                    neoth_dir.display()
+                )
+                .into(),
+            );
+        } else {
+            window.set_status_line(
+                "A previous setup was interrupted before completion. Your saved values were restored; review them and click Finish to resume safely."
+                    .into(),
+            );
+        }
     }
     if interface_choice_recorded && !already_initialized {
         window.set_step(WizardStep::Welcome);
@@ -947,21 +1486,32 @@ fn main() -> Result<()> {
             .into(),
         );
     }
+    if let Some(error) = initialization_error {
+        window.set_step(WizardStep::Welcome);
+        window.set_status_line(
+            format!(
+                "Initialization state needs repair: {error}. Run `neoth init --force` before saving from the GUI."
+            )
+            .into(),
+        );
+    }
 
     // GOLD-R4-03 — both first-run choices cross the canonical CLI writer.
     // Advance/exit only after persistence (and for CLI, a real terminal)
     // succeeds. All subprocess work stays off the Slint event loop.
     let weak_gui_choice = window.as_weak();
+    let gui_choice_home = neoth_dir.clone();
     window.on_gui_mode_chosen(move || {
         if let Some(w) = weak_gui_choice.upgrade() {
             w.set_status_line("Saving GUI as the default interface…".into());
         }
         let weak = weak_gui_choice.clone();
+        let home = gui_choice_home.clone();
         std::thread::spawn(move || {
             let result = which_neothd()
                 .context("NEOTH CLI binary is missing beside the GUI")
                 .and_then(|bin| {
-                    set_interface_preference_via_cli(&bin, GuiInterfacePreference::Gui)
+                    set_interface_preference_via_cli(&bin, &home, GuiInterfacePreference::Gui)
                 });
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(w) = weak.upgrade() else { return };
@@ -989,15 +1539,17 @@ fn main() -> Result<()> {
     });
 
     let weak_cli = window.as_weak();
+    let cli_choice_home = neoth_dir.clone();
     window.on_cli_mode_chosen(move || {
         if let Some(w) = weak_cli.upgrade() {
             w.set_status_line("Opening the NEOTH CLI in a new terminal…".into());
         }
         let weak = weak_cli.clone();
+        let home = cli_choice_home.clone();
         std::thread::spawn(move || {
             let result = which_neothd()
                 .context("NEOTH CLI binary is missing beside the GUI")
-                .and_then(|bin| switch_to_cli(&bin, already_initialized));
+                .and_then(|bin| switch_to_cli(&bin, &home));
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(w) = weak.upgrade() else { return };
                 match result {
@@ -1018,15 +1570,17 @@ fn main() -> Result<()> {
     });
 
     let weak_settings_cli = window.as_weak();
+    let settings_cli_home = neoth_dir.clone();
     window.on_settings_open_cli_clicked(move || {
         if let Some(w) = weak_settings_cli.upgrade() {
             w.set_status_line("Opening the NEOTH CLI in a new terminal…".into());
         }
         let weak = weak_settings_cli.clone();
+        let home = settings_cli_home.clone();
         std::thread::spawn(move || {
             let result = which_neothd()
                 .context("NEOTH CLI binary is missing beside the GUI")
-                .and_then(|bin| switch_to_cli(&bin, true));
+                .and_then(|bin| switch_to_cli(&bin, &home));
             let weak_for_toast = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(w) = weak.upgrade() else { return };
@@ -1975,16 +2529,23 @@ fn main() -> Result<()> {
     });
 
     window.on_open_license_url(|| {
-        let url = "https://github.com/owner/neoth/blob/main/LICENSE";
-        let result = if cfg!(target_os = "windows") {
-            std::process::Command::new("cmd")
-                .args(["/C", "start", "", url])
-                .spawn()
+        let url = "https://github.com/The-Geek-Freaks/NEOTH#license";
+        let mut command = if cfg!(target_os = "windows") {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/C", "start", "", url]);
+            command
         } else if cfg!(target_os = "macos") {
-            std::process::Command::new("open").arg(url).spawn()
+            let mut command = std::process::Command::new("open");
+            command.arg(url);
+            command
         } else {
-            std::process::Command::new("xdg-open").arg(url).spawn()
+            let mut command = std::process::Command::new("xdg-open");
+            command.arg(url);
+            command
         };
+        scrub_gui_control_environment(&mut command);
+        suppress_console_window(&mut command);
+        let result = command.spawn();
         if let Err(e) = result {
             tracing::warn!(error = %e, url, "failed to open license URL");
         }
@@ -6068,12 +6629,19 @@ fn main() -> Result<()> {
             // Re-entry guard: if freedom.yaml already existed but could not be
             // parsed, refuse to write rather than stomp it with type defaults.
             // The operator must fix / inspect the YAML manually first.
-            if already_initialized
+            if config_present
                 && !reentry_config_ok_for_finish.load(std::sync::atomic::Ordering::Acquire)
             {
                 w.set_status_line(
                     "Cannot re-write config: the existing freedom.yaml could not be \
                      read back. Fix or remove it manually, then reopen the wizard."
+                        .into(),
+                );
+                return;
+            }
+            if !initialization_state_valid {
+                w.set_status_line(
+                    "Cannot finish setup while the existing initialization state is invalid. Run `neoth init --force`, then reopen the GUI."
                         .into(),
                 );
                 return;
@@ -6115,21 +6683,54 @@ fn main() -> Result<()> {
                 omi_seed_groundtruth: w.get_wz_omi_seed_groundtruth(),
                 omi_summary_enabled: w.get_wz_omi_summary_enabled(),
             };
-            match finish(&state) {
-                Ok(report) => {
-                    info!(?report.freedom_path, ?report.credentials_path, "wizard finished");
+            let neoth_dir = default_neoth_home();
+            let begun = (|| -> Result<_> {
+                let bin =
+                    which_neothd().context("NEOTH CLI binary is missing beside the GUI")?;
+                validate_begin_and_prepare_gui_finish_with(
+                    || validate_finish_state(&state),
+                    || begin_gui_initialization(&bin, &neoth_dir),
+                    || finish(&state),
+                )
+                .map(|(transaction, report)| (bin, transaction, report))
+            })();
+            match begun {
+                Ok((bin, transaction, report)) => {
+                    info!(?report.freedom_path, ?report.credentials_path, "wizard files prepared");
                     // ZF-05: write parity fields into the freshly-created
                     // freedom.yaml using set_nested_in_freedom so they coexist
                     // with the base config written by write_freedom_yaml.
-                    let neoth_dir = default_neoth_home();
                     let fp = neoth_dir.join("freedom.yaml");
                     let rd = neoth_dir.join(".reload-requested");
-                    write_zf05_fields(&fp, &rd, &state);
-                    w.set_status_line(report.message().into());
+                    match commit_gui_finish_with(
+                        report.message(),
+                        || write_zf05_fields(&fp, &rd, &state),
+                        || complete_gui_initialization(&bin, &neoth_dir, &transaction),
+                    ) {
+                        GuiFinishOutcome::Completed {
+                            marker_path,
+                            status,
+                        } => {
+                            info!(
+                                ?report.freedom_path,
+                                ?report.credentials_path,
+                                marker_path = %marker_path.display(),
+                                "wizard finished"
+                            );
+                            w.set_step(WizardStep::Done);
+                            w.set_status_line(status.into());
+                        }
+                        GuiFinishOutcome::Failed { error, status } => {
+                            tracing::error!(error = %error, "GUI completion commit failed");
+                            w.set_status_line(status.into());
+                        }
+                    }
                 }
                 Err(e) => {
-                    let msg = format!("Setup failed: {e}");
-                    tracing::error!(error = %e, "wizard finish failed");
+                    let msg = format!(
+                        "Setup could not be committed: {e}. No completion was recorded; fix the error and click Finish again."
+                    );
+                    tracing::error!(error = %e, "wizard transaction or file preparation failed");
                     w.set_status_line(msg.into());
                 }
             }
@@ -6305,7 +6906,63 @@ fn main() -> Result<()> {
         });
     } // end companion overlay wiring
 
-    window.run()?;
+    let gui_ready_failure = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    if gui_parent_handoff.is_some() || direct_gui_commit {
+        let weak = window.as_weak();
+        let failure = gui_ready_failure.clone();
+        let direct_home = neoth_dir.clone();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            use slint::winit_030::WinitWindowAccessor;
+
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            let live_window = window.window().with_winit_window(|_| ()).is_some();
+            let result = if !live_window {
+                Err(anyhow::anyhow!("GUI event loop has no live winit window"))
+            } else if let Some(handoff) = gui_parent_handoff.as_ref() {
+                write_gui_parent_ready(handoff)
+            } else {
+                which_neothd()
+                    .context("NEOTH CLI binary is missing beside the GUI")
+                    .and_then(|bin| {
+                        set_interface_preference_via_cli(
+                            &bin,
+                            &direct_home,
+                            GuiInterfacePreference::Gui,
+                        )
+                    })
+            };
+            if let Err(error) = result {
+                let message = format!("GUI readiness commit failed: {error:#}");
+                tracing::error!(error = %error, "GUI readiness commit failed");
+                if gui_parent_handoff.is_some() {
+                    *failure
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);
+                    let _ = window.hide();
+                    let _ = slint::quit_event_loop();
+                } else {
+                    window.set_step(WizardStep::ModeSelection);
+                    window.set_status_line(
+                        format!(
+                            "GUI is open, but it could not become the saved default: {error}. Choose a mode below to retry."
+                        )
+                        .into(),
+                    );
+                }
+            }
+        });
+    }
+    let run_result = window.run();
+    if let Some(error) = gui_ready_failure
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+    {
+        anyhow::bail!(error);
+    }
+    run_result?;
     Ok(())
 }
 
@@ -6425,13 +7082,70 @@ struct FinishReport {
     credentials_path: Option<PathBuf>,
 }
 
+#[derive(Debug)]
+enum GuiFinishOutcome {
+    Completed {
+        marker_path: PathBuf,
+        status: String,
+    },
+    Failed {
+        error: anyhow::Error,
+        status: String,
+    },
+}
+
+fn validate_begin_and_prepare_gui_finish_with<Validate, Begin, Prepare, Transaction, Report>(
+    validate: Validate,
+    begin: Begin,
+    prepare: Prepare,
+) -> Result<(Transaction, Report)>
+where
+    Validate: FnOnce() -> Result<()>,
+    Begin: FnOnce() -> Result<Transaction>,
+    Prepare: FnOnce() -> Result<Report>,
+{
+    validate()?;
+    let transaction = begin()?;
+    let report = prepare()?;
+    Ok((transaction, report))
+}
+
+/// Preserve the only valid GUI completion order: parity writes first, then the
+/// daemon-owned canonical marker. The UI may enter `Done` only for the typed
+/// `Completed` variant.
+fn commit_gui_finish_with<WriteParity, Complete>(
+    prepared_message: String,
+    write_parity: WriteParity,
+    complete: Complete,
+) -> GuiFinishOutcome
+where
+    WriteParity: FnOnce() -> Result<()>,
+    Complete: FnOnce() -> Result<PathBuf>,
+{
+    match write_parity().and_then(|()| complete()) {
+        Ok(marker_path) => GuiFinishOutcome::Completed {
+            status: format!(
+                "{prepared_message}\nSetup complete and verified by {}.",
+                marker_path.display()
+            ),
+            marker_path,
+        },
+        Err(error) => GuiFinishOutcome::Failed {
+            status: format!(
+                "Setup files were prepared, but completion could not be verified: {error}. Reopen NEOTH to check the committed state, then click Finish again if needed."
+            ),
+            error,
+        },
+    }
+}
+
 impl FinishReport {
     fn message(&self) -> String {
         let mut s = format!("Configuration written to {}.", self.freedom_path.display());
         if let Some(p) = &self.credentials_path {
             s.push_str(&format!("\nSecrets stored in {} (mode 0600).", p.display()));
         }
-        s.push_str("\nClose this window and run `neothd serve`.");
+        s.push_str("\nNEOTH is ready; you can keep using this window or open the CLI anytime.");
         s
     }
 }
@@ -6561,14 +7275,7 @@ impl CredentialsYaml {
 }
 
 fn finish(state: &WizardSnapshot) -> Result<FinishReport> {
-    if !state.license_accepted {
-        anyhow::bail!("license not accepted — refusing to write config");
-    }
-    if state.operator_id.trim().is_empty() {
-        anyhow::bail!("operator id is empty — go back and enter one");
-    }
-    validate_autonomy(&state.autonomy)?;
-    validate_wizard_omi(state)?;
+    validate_finish_state(state)?;
 
     let neoth_dir = default_neoth_home();
     std::fs::create_dir_all(&neoth_dir)
@@ -6598,6 +7305,20 @@ fn finish(state: &WizardSnapshot) -> Result<FinishReport> {
         freedom_path,
         credentials_path,
     })
+}
+
+/// Pure validation edge used before the daemon opens a GUI init transaction.
+/// No config, secret, marker, or pending file is touched here.
+fn validate_finish_state(state: &WizardSnapshot) -> Result<()> {
+    if !state.license_accepted {
+        anyhow::bail!("license not accepted — refusing to write config");
+    }
+    if state.operator_id.trim().is_empty() {
+        anyhow::bail!("operator id is empty — go back and enter one");
+    }
+    validate_autonomy(&state.autonomy)?;
+    validate_wizard_omi(state)?;
+    Ok(())
 }
 
 fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBuf> {
@@ -7350,11 +8071,9 @@ fn run_omi_subcommand(home: &Path, args: &[String]) -> Result<String> {
 /// Write the ZF-05 parity fields from the wizard into an already-existing
 /// freedom.yaml. Idempotent: if a field is blank / false / default-port it
 /// is skipped to avoid cluttering a fresh config with empty strings.
-fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
+fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) -> Result<()> {
     let write = |key: &str, val: serde_yaml::Value| {
-        if let Err(e) = set_nested_in_freedom(fp, key, val) {
-            tracing::warn!(key, error = %e, "ZF-05: failed to write parity field");
-        }
+        set_nested_in_freedom(fp, key, val).with_context(|| format!("write GUI parity field {key}"))
     };
 
     // Preset — apply through the real consent path (`neoth preset apply`),
@@ -7370,22 +8089,25 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
             } else {
                 apply_preset_direct(&state.wizard_preset_choice)
             };
+            if !status.starts_with("Applied preset `") {
+                anyhow::bail!("{status}");
+            }
             tracing::info!(
                 preset = %state.wizard_preset_choice,
                 %status,
                 "ZF-05: wizard express preset applied"
             );
         } else {
-            tracing::warn!(
-                preset = %state.wizard_preset_choice,
-                "ZF-05: unknown preset name from wizard — apply skipped"
+            anyhow::bail!(
+                "unknown wizard preset `{}`; refusing partial completion",
+                state.wizard_preset_choice
             );
         }
     }
 
     // HMAC / outbound webhook — only when the operator enabled it.
     if state.wz_hmac_enabled {
-        write("webhook_manager.enabled", serde_yaml::Value::from(true));
+        write("webhook_manager.enabled", serde_yaml::Value::from(true))?;
         if !state.wz_hmac_webhook_url.is_empty() {
             // First endpoint entry: write as a single-element list of mappings.
             let mut ep = serde_yaml::Mapping::new();
@@ -7402,7 +8124,7 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
             write(
                 "webhook_manager.endpoints",
                 serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(ep)]),
-            );
+            )?;
         }
     }
 
@@ -7411,24 +8133,24 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
         write(
             "obsidian_vault",
             serde_yaml::Value::from(state.wz_obsidian_vault.as_str()),
-        );
+        )?;
         let subdir = if state.wz_obsidian_subdir.is_empty() {
             "NEOTH-sessions"
         } else {
             state.wz_obsidian_subdir.as_str()
         };
-        write("obsidian_subdir", serde_yaml::Value::from(subdir));
+        write("obsidian_subdir", serde_yaml::Value::from(subdir))?;
         if state.wz_obsidian_reader_enabled {
             write(
                 "obsidian_vault_reader_enabled",
                 serde_yaml::Value::from(true),
-            );
+            )?;
         }
     }
 
     // n8n — only when enabled.
     if state.wz_n8n_enabled {
-        write("n8n_api.enabled", serde_yaml::Value::from(true));
+        write("n8n_api.enabled", serde_yaml::Value::from(true))?;
         // Parse as u16 so an out-of-range entry ("99999") falls back to the
         // default instead of writing a port the daemon cannot deserialize.
         let port = if state.wz_n8n_port.is_empty() {
@@ -7442,19 +8164,19 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) {
                 }
             }
         };
-        write("n8n_api.port", serde_yaml::Value::from(u64::from(port)));
+        write("n8n_api.port", serde_yaml::Value::from(u64::from(port)))?;
     }
 
     // WASM plugin host — only when enabled.
     if state.wz_wasm_enabled {
-        write("plugins.wasm.enabled", serde_yaml::Value::from(true));
+        write("plugins.wasm.enabled", serde_yaml::Value::from(true))?;
     }
 
     // ONE reload signal after all fields are written — the daemon reloads a
     // complete config instead of racing seven partial writes.
-    if let Err(e) = std::fs::write(rd, b"reload\n") {
-        tracing::warn!(error = %e, "ZF-05: failed to write reload signal");
-    }
+    std::fs::write(rd, b"reload\n")
+        .with_context(|| format!("write GUI reload signal {}", rd.display()))?;
+    Ok(())
 }
 
 // ── DES-09 generic nested writer ──────────────────────────────────────────
@@ -8031,6 +8753,7 @@ mod des09_tests {
 
 /// Per-process-unique sibling temp path for an atomic credentials write
 /// (GOLD-SEC-15 / A-34) — mirrors the daemon helper.
+#[cfg(unix)]
 fn atomic_tmp_path(path: &Path) -> std::path::PathBuf {
     let name = path
         .file_name()
@@ -8066,84 +8789,29 @@ fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
 
 #[cfg(windows)]
 fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
-    // GOLD-SEC-15 / A-34: restrict the DACL to owner-only BEFORE writing
-    // any secret bytes (previously written under the inherited ACL, then
-    // restricted — a readable window), then atomically rename. Fail CLOSED
-    // if the DACL can't be set — it is the only at-rest protection.
     use std::io::Write;
-    let tmp = atomic_tmp_path(path);
-    let _ = std::fs::remove_file(&tmp);
-    // create_new mirrors the Unix O_CREAT|O_EXCL arm: exclusive create
-    // removes the TOCTOU window between remove_file and the first open.
-    // The empty handle is dropped immediately; icacls acts on the path.
-    drop(
-        std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&tmp)
-            .with_context(|| format!("create temp {}", tmp.display()))?,
-    );
-    if let Err(e) = icacls_restrict_to_owner(&tmp) {
-        let _ = std::fs::remove_file(&tmp);
-        anyhow::bail!(
-            "refusing to write {}: could not restrict the file to owner-only \
-             (DACL) — the only at-rest protection for plaintext secrets ({e})",
-            path.display()
-        );
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(&tmp)
-        .with_context(|| format!("open restricted temp {}", tmp.display()))?;
+    let mut random = [0u8; 16];
+    getrandom::getrandom(&mut random)
+        .map_err(|error| anyhow::anyhow!("OS RNG unavailable for private temp name: {error}"))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("private");
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", hex::encode(random)));
+    let mut file = win_private::create_private_file_new(&tmp)
+        .with_context(|| format!("secure create {}", tmp.display()))?;
     file.write_all(body)
         .with_context(|| format!("write body to {}", tmp.display()))?;
+    file.flush()
+        .with_context(|| format!("flush {}", tmp.display()))?;
     file.sync_all()
         .with_context(|| format!("fsync {}", tmp.display()))?;
-    drop(file);
-    // Clean up the tmp if rename fails — never leave a secret-bearing
-    // stale file behind when the target is locked (common on Windows).
-    if let Err(e) = std::fs::rename(&tmp, path) {
+    if let Err(error) = win_private::replace_private_file_handle(&file, path) {
+        drop(file);
         let _ = std::fs::remove_file(&tmp);
-        return Err(e).with_context(|| format!("atomically replace {}", path.display()));
+        return Err(error).with_context(|| format!("atomically replace {}", path.display()));
     }
     Ok(())
-}
-
-#[cfg(windows)]
-fn icacls_restrict_to_owner(path: &Path) -> Result<()> {
-    // Mirrors the daemon's `wal::win_acl::restrict_to_owner`: grant the
-    // current user explicit Full Control without stripping inherited
-    // ACEs. Stripping inheritance locks the owner's own processes out
-    // of the file on some Windows configurations — see SECURITY.md.
-    let username = std::env::var("USERNAME").context("USERNAME not set")?;
-    if !safe_username(&username) {
-        anyhow::bail!("USERNAME contains characters unsafe for icacls argv");
-    }
-    let status = std::process::Command::new("icacls.exe")
-        .arg(path)
-        .arg("/grant:r")
-        .arg(format!("{username}:(F)"))
-        .status()
-        .context("spawn icacls.exe")?;
-    if !status.success() {
-        anyhow::bail!("icacls returned {status}");
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn safe_username(name: &str) -> bool {
-    // M-3 fix — Windows USERNAME with a space is technically legal
-    // but our icacls argument string interpolates the username
-    // directly. Drop space to remove the parse-ambiguity risk; if a
-    // real operator has a space-containing username we fall back to
-    // inherited ACLs (logged at warning level).
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 /// Wall-clock HH:MM:SS for chat bubble timestamps. Pure GUI display —
@@ -8169,11 +8837,46 @@ fn format_now_hms() -> String {
 /// which then surface verbatim in GUI text widgets (FooterBar,
 /// hardware summary, kanban session summary). Centralised here so
 /// every call site stays consistent.
+fn suppress_console_window(command: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
+const TERMINAL_READY_FILE_ENV: &str = "NEOTH_READY_FILE";
+const TERMINAL_READY_TOKEN_ENV: &str = "NEOTH_READY_TOKEN";
+const INTERFACE_OVERRIDE_ENV: &str = "NEOTH_INTERFACE";
+
+/// Launcher and one-shot transaction variables are capabilities, not ambient
+/// configuration. Every unrelated child starts with them explicitly removed;
+/// terminal launchers add only their fresh Ready pair back afterwards.
+fn scrub_gui_control_environment(command: &mut std::process::Command) {
+    for variable in [
+        GUI_READY_FILE_ENV,
+        GUI_READY_TOKEN_ENV,
+        GUI_PARENT_COMMIT_ENV,
+        PRODUCT_LAUNCHER_ENV,
+        TERMINAL_READY_FILE_ENV,
+        TERMINAL_READY_TOKEN_ENV,
+        INTERFACE_OVERRIDE_ENV,
+    ] {
+        command.env_remove(variable);
+    }
+}
+
 fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new(bin);
+    scrub_gui_control_environment(&mut cmd);
     cmd.env("NO_COLOR", "1")
         .env("RUST_LOG_STYLE", "never")
         .env("CLICOLOR", "0")
+        // A parent launcher token is single-purpose. GUI-internal daemon
+        // subprocesses must never inherit authority to acknowledge startup.
         // CRITICAL for stdout parsing: the daemon's `init_tracing` writes
         // tracing events (incl. the `INFO neothd: Neoth ready. Sup.`
         // startup banner) to STDOUT, not stderr. At the default
@@ -8185,6 +8888,7 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
         // Genuine clap/anyhow failures still surface on stderr + via exit
         // code, so the GUI's error handling is unaffected.
         .env("NEOTH_LOG", "error");
+    suppress_console_window(&mut cmd);
     cmd
 }
 
@@ -11592,6 +12296,227 @@ pub fn shape_preset_summary(stdout: &[u8]) -> String {
     }
 }
 
+const GUI_READY_FILE_ENV: &str = "NEOTH_GUI_READY_FILE";
+const GUI_READY_TOKEN_ENV: &str = "NEOTH_GUI_READY_TOKEN";
+const GUI_PARENT_COMMIT_ENV: &str = "NEOTH_GUI_PARENT_COMMIT";
+const GUI_LAUNCH_DIR: &str = ".gui-launch";
+const GUI_READY_TOKEN_BYTES: usize = 56;
+
+#[derive(Clone, Debug)]
+struct GuiParentHandoff {
+    ready_path: PathBuf,
+    token: String,
+    parent_commit: bool,
+}
+
+fn gui_parent_handoff_from_env(home: &Path) -> Result<Option<GuiParentHandoff>> {
+    let ready_file = std::env::var_os(GUI_READY_FILE_ENV);
+    let ready_token = std::env::var(GUI_READY_TOKEN_ENV).ok();
+    let parent_commit = std::env::var(GUI_PARENT_COMMIT_ENV).ok();
+    parse_gui_parent_handoff(
+        home,
+        ready_file.as_deref(),
+        ready_token.as_deref(),
+        parent_commit.as_deref(),
+    )
+}
+
+fn parse_gui_parent_handoff(
+    home: &Path,
+    ready_file: Option<&std::ffi::OsStr>,
+    ready_token: Option<&str>,
+    parent_commit: Option<&str>,
+) -> Result<Option<GuiParentHandoff>> {
+    let (ready_file, ready_token, parent_commit) = match (ready_file, ready_token, parent_commit) {
+        (None, None, None) => return Ok(None),
+        (Some(file), Some(token), Some(commit)) => (PathBuf::from(file), token, commit),
+        _ => anyhow::bail!(
+            "GUI parent handoff requires {GUI_READY_FILE_ENV}, {GUI_READY_TOKEN_ENV}, and {GUI_PARENT_COMMIT_ENV} together"
+        ),
+    };
+    if !ready_file.is_absolute() {
+        anyhow::bail!("{GUI_READY_FILE_ENV} must be an absolute path");
+    }
+    if ready_token.len() != GUI_READY_TOKEN_BYTES
+        || !ready_token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!(
+            "{GUI_READY_TOKEN_ENV} must be an exact {GUI_READY_TOKEN_BYTES}-byte lowercase hexadecimal token"
+        );
+    }
+    let parent_commit = match parent_commit {
+        "0" => false,
+        "1" => true,
+        _ => anyhow::bail!("{GUI_PARENT_COMMIT_ENV} must be exactly 0 or 1"),
+    };
+    if ready_file.file_name() != Some(std::ffi::OsStr::new("ready")) {
+        anyhow::bail!("{GUI_READY_FILE_ENV} must name the canonical ready file");
+    }
+
+    let canonical_home = home
+        .canonicalize()
+        .with_context(|| format!("canonicalize NEOTH_HOME {}", home.display()))?;
+    let root = canonical_home.join(GUI_LAUNCH_DIR);
+    let root_metadata = std::fs::symlink_metadata(&root)
+        .with_context(|| format!("inspect GUI launch root {}", root.display()))?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        anyhow::bail!(
+            "GUI launch root {} must be a real directory",
+            root.display()
+        );
+    }
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("canonicalize GUI launch root {}", root.display()))?;
+    if canonical_root != root {
+        anyhow::bail!(
+            "GUI launch root {} escapes canonical NEOTH_HOME",
+            root.display()
+        );
+    }
+
+    let parent = ready_file
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("{GUI_READY_FILE_ENV} has no parent directory"))?;
+    let parent_metadata = std::fs::symlink_metadata(parent)
+        .with_context(|| format!("inspect GUI launch instance {}", parent.display()))?;
+    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+        anyhow::bail!(
+            "GUI launch instance {} must be a real directory",
+            parent.display()
+        );
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .with_context(|| format!("canonicalize GUI launch instance {}", parent.display()))?;
+    if canonical_parent.parent() != Some(canonical_root.as_path()) {
+        anyhow::bail!(
+            "GUI launch instance {} must be directly under {}",
+            canonical_parent.display(),
+            canonical_root.display()
+        );
+    }
+    let ready_path = canonical_parent.join("ready");
+    match std::fs::symlink_metadata(&ready_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => anyhow::bail!(
+            "GUI ready file {} already exists; refusing a replayed handoff",
+            ready_path.display()
+        ),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect {}", ready_path.display()));
+        }
+    }
+
+    Ok(Some(GuiParentHandoff {
+        ready_path,
+        token: ready_token.to_string(),
+        parent_commit,
+    }))
+}
+
+fn write_gui_parent_ready(handoff: &GuiParentHandoff) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let mut random = [0u8; 16];
+        getrandom::getrandom(&mut random)
+            .map_err(|error| anyhow::anyhow!("GUI ready temp RNG unavailable: {error}"))?;
+        let name = handoff
+            .ready_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("ready");
+        let temporary = handoff
+            .ready_path
+            .with_file_name(format!(".{name}.{}.tmp", hex::encode(random)));
+        let result = (|| -> Result<()> {
+            match std::fs::symlink_metadata(&handoff.ready_path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) => anyhow::bail!(
+                    "GUI ready file {} already exists",
+                    handoff.ready_path.display()
+                ),
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("inspect {}", handoff.ready_path.display()));
+                }
+            }
+            let mut file = win_private::create_private_file_new(&temporary)
+                .with_context(|| format!("create GUI ready temp {}", temporary.display()))?;
+            file.write_all(handoff.token.as_bytes())
+                .with_context(|| format!("write GUI ready temp {}", temporary.display()))?;
+            file.flush()
+                .with_context(|| format!("flush GUI ready temp {}", temporary.display()))?;
+            file.sync_all()
+                .with_context(|| format!("sync GUI ready temp {}", temporary.display()))?;
+            win_private::create_private_file_handle(&file, &handoff.ready_path).with_context(
+                || {
+                    format!(
+                        "commit GUI readiness {} -> {}",
+                        temporary.display(),
+                        handoff.ready_path.display()
+                    )
+                },
+            )?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        return result;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let temporary = handoff.ready_path.with_extension("tmp");
+        let result = (|| -> Result<()> {
+            match std::fs::symlink_metadata(&handoff.ready_path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) => anyhow::bail!(
+                    "GUI ready file {} already exists",
+                    handoff.ready_path.display()
+                ),
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("inspect {}", handoff.ready_path.display()));
+                }
+            }
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options
+                .open(&temporary)
+                .with_context(|| format!("create GUI ready temp {}", temporary.display()))?;
+            file.write_all(handoff.token.as_bytes())
+                .with_context(|| format!("write GUI ready temp {}", temporary.display()))?;
+            file.sync_all()
+                .with_context(|| format!("sync GUI ready temp {}", temporary.display()))?;
+            drop(file);
+            // `hard_link` is the Unix create-if-absent commit primitive. Unlike
+            // rename it cannot replace a raced/replayed Ready file.
+            std::fs::hard_link(&temporary, &handoff.ready_path).with_context(|| {
+                format!(
+                    "commit GUI readiness {} -> {}",
+                    temporary.display(),
+                    handoff.ready_path.display()
+                )
+            })?;
+            let _ = std::fs::remove_file(&temporary);
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        result
+    }
+}
+
 const INTERFACE_SCHEMA_VERSION: u8 = 1;
 const MAX_INTERFACE_PREFERENCE_BYTES: u64 = 4 * 1024;
 
@@ -11599,6 +12524,29 @@ const MAX_INTERFACE_PREFERENCE_BYTES: u64 = 4 * 1024;
 enum GuiInterfacePreference {
     Gui,
     Cli,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum GuiInterfaceBootDecision {
+    Ready,
+    SwitchCliToGui,
+    Choose,
+    Repair(String),
+}
+
+fn interface_boot_decision(
+    parent_commits_gui: bool,
+    loaded: Result<Option<GuiInterfacePreference>>,
+) -> GuiInterfaceBootDecision {
+    if parent_commits_gui {
+        return GuiInterfaceBootDecision::Ready;
+    }
+    match loaded {
+        Ok(Some(GuiInterfacePreference::Gui)) => GuiInterfaceBootDecision::Ready,
+        Ok(Some(GuiInterfacePreference::Cli)) => GuiInterfaceBootDecision::SwitchCliToGui,
+        Ok(None) => GuiInterfaceBootDecision::Choose,
+        Err(error) => GuiInterfaceBootDecision::Repair(error.to_string()),
+    }
 }
 
 impl GuiInterfacePreference {
@@ -11661,8 +12609,13 @@ fn load_gui_interface_preference(home: &Path) -> Result<Option<GuiInterfacePrefe
 
 /// Delegate writes to the canonical CLI implementation and verify its
 /// machine-readable acknowledgement. The GUI never hand-writes the contract.
-fn set_interface_preference_via_cli(bin: &Path, preferred: GuiInterfacePreference) -> Result<()> {
+fn set_interface_preference_via_cli(
+    bin: &Path,
+    home: &Path,
+    preferred: GuiInterfacePreference,
+) -> Result<()> {
     let output = spawn_neothd_plain(bin)
+        .env("NEOTH_HOME", home)
         .args(["--output", "json", "interface", "set", preferred.as_str()])
         .output()
         .with_context(|| format!("run `{}` interface set", bin.display()))?;
@@ -11673,101 +12626,621 @@ fn set_interface_preference_via_cli(bin: &Path, preferred: GuiInterfacePreferenc
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .context("parse interface preference acknowledgement")?;
-    let acknowledged = value.get("changed").and_then(|v| v.as_bool()) == Some(true)
-        && value.get("preferred").and_then(|v| v.as_str()) == Some(preferred.as_str());
-    if !acknowledged {
+    validate_interface_set_result(&output.stdout, home, preferred)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuiInterfaceSetAcknowledgement {
+    chosen: bool,
+    preferred: String,
+    changed: bool,
+    path: PathBuf,
+}
+
+/// Validate the complete `neoth --output json interface set` contract. A
+/// partial/mismatched success must never close the first-run screen.
+fn parse_interface_set_acknowledgement(
+    stdout: &[u8],
+    expected: GuiInterfacePreference,
+    expected_path: &Path,
+) -> Result<()> {
+    let acknowledgement: GuiInterfaceSetAcknowledgement =
+        serde_json::from_slice(stdout).context("parse interface preference acknowledgement")?;
+    // `changed:false` is a valid idempotent write. Presence and bool type are
+    // still enforced by the typed acknowledgement above.
+    let _changed = acknowledgement.changed;
+    let expected_path = std::fs::canonicalize(expected_path).with_context(|| {
+        format!(
+            "resolve expected interface path {}",
+            expected_path.display()
+        )
+    })?;
+    let acknowledged_path = std::fs::canonicalize(&acknowledgement.path).with_context(|| {
+        format!(
+            "resolve acknowledged interface path {}",
+            acknowledgement.path.display()
+        )
+    })?;
+    if !acknowledgement.chosen
+        || acknowledgement.preferred != expected.as_str()
+        || acknowledged_path != expected_path
+    {
         anyhow::bail!("interface preference update returned an invalid acknowledgement");
     }
     Ok(())
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
-fn terminal_shell_script(initialized: bool) -> &'static str {
-    if initialized {
-        "\"$NEOTH_BIN\" status; printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; exec \"${SHELL:-/bin/sh}\" -l"
-    } else {
-        "\"$NEOTH_BIN\" init --cli; printf '\\nNEOTH CLI ready.\\n'; exec \"${SHELL:-/bin/sh}\" -l"
+fn validate_interface_set_result(
+    stdout: &[u8],
+    home: &Path,
+    expected: GuiInterfacePreference,
+) -> Result<()> {
+    let expected_path = home.join("interface.json");
+    parse_interface_set_acknowledgement(stdout, expected, &expected_path)?;
+    match load_gui_interface_preference(home)? {
+        Some(actual) if actual == expected => Ok(()),
+        Some(actual) => anyhow::bail!(
+            "interface preference read-back mismatch: expected {}, found {}",
+            expected.as_str(),
+            actual.as_str()
+        ),
+        None => anyhow::bail!(
+            "interface preference acknowledgement succeeded but {} is missing",
+            expected_path.display()
+        ),
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuiCompletionStatusAcknowledgement {
+    ready: bool,
+    home: PathBuf,
+}
+
+const GUI_INIT_TRANSACTION_HEX_LEN: usize = 64;
+
+struct GuiInitializationTransaction {
+    transaction_id: String,
+    token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuiInitializationBeginAcknowledgement {
+    schema_version: u8,
+    transaction_id: String,
+    token: String,
+    home: PathBuf,
+    pending_path: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuiCompletionAcknowledgement {
+    schema_version: u8,
+    completed: bool,
+    ready: bool,
+    transaction_id: String,
+    home: PathBuf,
+    marker_path: PathBuf,
+}
+
+fn valid_gui_transaction_hex(value: &str) -> bool {
+    value.len() == GUI_INIT_TRANSACTION_HEX_LEN
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn canonical_existing_path(path: &Path, label: &str) -> Result<PathBuf> {
+    path.canonicalize()
+        .with_context(|| format!("resolve {label} {}", path.display()))
+}
+
+fn parse_gui_initialization_begin(
+    stdout: &[u8],
+    expected_home: &Path,
+) -> Result<GuiInitializationTransaction> {
+    let acknowledgement: GuiInitializationBeginAcknowledgement =
+        serde_json::from_slice(stdout).context("parse GUI initialization begin acknowledgement")?;
+    let expected_home = canonical_existing_path(expected_home, "expected NEOTH home")?;
+    let acknowledged_home =
+        canonical_existing_path(&acknowledgement.home, "acknowledged NEOTH home")?;
+    let expected_pending = canonical_existing_path(
+        &expected_home.join(".gui-init").join("pending.json"),
+        "expected GUI initialization pending state",
+    )?;
+    let acknowledged_pending = canonical_existing_path(
+        &acknowledgement.pending_path,
+        "acknowledged GUI initialization pending state",
+    )?;
+    if acknowledgement.schema_version != 1
+        || !valid_gui_transaction_hex(&acknowledgement.transaction_id)
+        || !valid_gui_transaction_hex(&acknowledgement.token)
+        || acknowledged_home != expected_home
+        || acknowledged_pending != expected_pending
+    {
+        anyhow::bail!("GUI initialization begin returned an invalid acknowledgement");
+    }
+    Ok(GuiInitializationTransaction {
+        transaction_id: acknowledgement.transaction_id,
+        token: acknowledgement.token,
+    })
+}
+
+fn begin_gui_initialization(bin: &Path, home: &Path) -> Result<GuiInitializationTransaction> {
+    let output = spawn_neothd_plain(bin)
+        .env("NEOTH_HOME", home)
+        .args(["init", "--begin-from-gui"])
+        .output()
+        .context("begin canonical GUI initialization transaction")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "initialization transaction could not begin (exit {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    parse_gui_initialization_begin(&output.stdout, home)
+}
+
+fn gui_initialization_is_ready(bin: &Path, home: &Path) -> Result<bool> {
+    let output = spawn_neothd_plain(bin)
+        .env("NEOTH_HOME", home)
+        .args(["init", "--check-completion-from-gui"])
+        .output()
+        .context("query canonical GUI initialization readiness")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "initialization readiness check failed (exit {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let acknowledgement: GuiCompletionStatusAcknowledgement =
+        serde_json::from_slice(&output.stdout)
+            .context("parse initialization readiness acknowledgement")?;
+    let expected_home = canonical_existing_path(home, "expected NEOTH home")?;
+    let acknowledged_home =
+        canonical_existing_path(&acknowledgement.home, "acknowledged NEOTH home")?;
+    if acknowledged_home != expected_home {
+        anyhow::bail!(
+            "initialization readiness acknowledgement was bound to {}, expected {}",
+            acknowledgement.home.display(),
+            home.display()
+        );
+    }
+    Ok(acknowledgement.ready)
+}
+
+fn complete_gui_initialization(
+    bin: &Path,
+    home: &Path,
+    transaction: &GuiInitializationTransaction,
+) -> Result<PathBuf> {
+    use std::process::Stdio;
+
+    let mut command = spawn_neothd_plain(bin);
+    let mut child = command
+        .env("NEOTH_HOME", home)
+        .args(["init", "--complete-from-gui"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start canonical GUI initialization commit")?;
+    let write_result = (|| -> Result<()> {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .context("GUI initialization commit stdin is unavailable")?;
+        stdin
+            .write_all(transaction.token.as_bytes())
+            .context("write GUI initialization transaction token")?;
+        stdin
+            .write_all(b"\n")
+            .context("terminate GUI initialization transaction token")?;
+        Ok(())
+    })();
+    drop(child.stdin.take());
+    if let Err(error) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let output = child
+        .wait_with_output()
+        .context("commit canonical GUI initialization marker")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "initialization completion failed (exit {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let acknowledgement: GuiCompletionAcknowledgement = serde_json::from_slice(&output.stdout)
+        .context("parse initialization completion acknowledgement")?;
+    let expected_home = canonical_existing_path(home, "expected NEOTH home")?;
+    let acknowledged_home =
+        canonical_existing_path(&acknowledgement.home, "acknowledged NEOTH home")?;
+    let expected = home.join(".initialized");
+    let expected_canonical = canonical_existing_path(&expected, "committed marker")?;
+    let acknowledged_canonical =
+        canonical_existing_path(&acknowledgement.marker_path, "acknowledged marker")?;
+    if !acknowledgement.completed
+        || !acknowledgement.ready
+        || acknowledgement.schema_version != 1
+        || acknowledgement.transaction_id != transaction.transaction_id
+        || acknowledged_home != expected_home
+        || acknowledged_canonical != expected_canonical
+    {
+        anyhow::bail!("initialization completion returned an invalid acknowledgement");
+    }
+    Ok(expected_canonical)
+}
+
+const TERMINAL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const TERMINAL_READY_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+const MAX_TERMINAL_READY_BYTES: u64 = 256;
+static TERMINAL_HANDSHAKE_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+struct TerminalHandshake {
+    directory: PathBuf,
+    ready_path: PathBuf,
+    token: String,
+}
+
+impl TerminalHandshake {
+    fn create(home: &Path) -> Result<Self> {
+        use std::sync::atomic::Ordering;
+
+        std::fs::create_dir_all(home)
+            .with_context(|| format!("create NEOTH home {}", home.display()))?;
+        let root = home.join(".terminal-launch");
+        let root_created = match std::fs::create_dir(&root) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = std::fs::symlink_metadata(&root)
+                    .with_context(|| format!("inspect {}", root.display()))?;
+                if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                    anyhow::bail!(
+                        "terminal handshake root {} is not a private directory",
+                        root.display()
+                    );
+                }
+                false
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("create {}", root.display()));
+            }
+        };
+        if let Err(error) = set_private_handshake_directory(&root) {
+            if root_created {
+                let _ = std::fs::remove_dir(&root);
+            }
+            return Err(error);
+        }
+
+        let epoch_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        for _ in 0..16 {
+            let counter = TERMINAL_HANDSHAKE_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let name = format!(
+                "gui-{:08x}-{epoch_nanos:032x}-{counter:016x}",
+                std::process::id()
+            );
+            let directory = root.join(name);
+            match std::fs::create_dir(&directory) {
+                Ok(()) => {
+                    if let Err(error) = set_private_handshake_directory(&directory) {
+                        let _ = std::fs::remove_dir(&directory);
+                        if root_created {
+                            let _ = std::fs::remove_dir(&root);
+                        }
+                        return Err(error);
+                    }
+                    return Ok(Self {
+                        ready_path: directory.join("ready"),
+                        directory,
+                        token: format!(
+                            "{:08x}{epoch_nanos:032x}{counter:016x}",
+                            std::process::id()
+                        ),
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    if root_created {
+                        let _ = std::fs::remove_dir(&root);
+                    }
+                    return Err(error).with_context(|| format!("create {}", directory.display()));
+                }
+            }
+        }
+        if root_created {
+            let _ = std::fs::remove_dir(&root);
+        }
+        anyhow::bail!("could not allocate a unique terminal handshake directory")
+    }
+
+    fn cleanup(self) -> Result<()> {
+        let root = self.directory.parent().map(Path::to_path_buf);
+        match std::fs::remove_dir_all(&self.directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("remove {}", self.directory.display()));
+            }
+        }
+        // Best-effort removal keeps the parent free of empty bookkeeping while
+        // remaining race-safe when another GUI launch is using it.
+        if let Some(root) = root {
+            let _ = std::fs::remove_dir(root);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn set_private_handshake_directory(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("restrict terminal handshake directory {}", path.display()))
+}
+
+#[cfg(windows)]
+fn set_private_handshake_directory(path: &Path) -> Result<()> {
+    win_private::set_private_directory_dacl(path)
+        .with_context(|| format!("restrict terminal handshake directory {}", path.display()))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn set_private_handshake_directory(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn finish_terminal_handshake_result(
+    directory: &Path,
+    result: Result<()>,
+    cleanup: Result<()>,
+) -> Result<()> {
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(cleanup_error)) => {
+            tracing::warn!(
+                error = %cleanup_error,
+                path = %directory.display(),
+                "terminal is ready; stale handshake cleanup failed"
+            );
+            Ok(())
+        }
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(cleanup_error)) => Err(error).context(format!(
+            "terminal launch failed and handshake cleanup also failed for {}: {cleanup_error:#}",
+            directory.display()
+        )),
+    }
+}
+
+fn finish_terminal_handshake(handshake: TerminalHandshake, result: Result<()>) -> Result<()> {
+    let directory = handshake.directory.clone();
+    let cleanup = handshake.cleanup();
+    finish_terminal_handshake_result(&directory, result, cleanup)
+}
+
+fn ready_token_matches(path: &Path, token: &str) -> Result<Option<bool>> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("open {}", path.display())),
+    };
+    let mut bytes = Vec::new();
+    file.take(MAX_TERMINAL_READY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", path.display()))?;
+    if bytes.len() as u64 > MAX_TERMINAL_READY_BYTES {
+        anyhow::bail!("terminal ready token at {} is oversized", path.display());
+    }
+    Ok(Some(bytes == token.as_bytes()))
+}
+
+fn wait_for_terminal_ready_with<LauncherStatus>(
+    ready_path: &Path,
+    token: &str,
+    timeout: std::time::Duration,
+    mut launcher_status: LauncherStatus,
+) -> Result<()>
+where
+    LauncherStatus: FnMut() -> Result<Option<bool>>,
+{
+    let started = std::time::Instant::now();
+    let mut mismatched_token_seen = false;
+    loop {
+        if launcher_status()? == Some(false) {
+            anyhow::bail!("terminal launcher exited unsuccessfully before readiness");
+        }
+        match ready_token_matches(ready_path, token)? {
+            Some(true) => return Ok(()),
+            Some(false) => mismatched_token_seen = true,
+            None => {}
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            let detail = if mismatched_token_seen {
+                "a mismatched ready token was observed"
+            } else {
+                "the ready token was not written"
+            };
+            anyhow::bail!(
+                "terminal did not become ready within {} ms ({detail})",
+                timeout.as_millis()
+            );
+        }
+        std::thread::sleep(TERMINAL_READY_POLL.min(timeout - elapsed));
+    }
+}
+
+fn await_spawned_terminal(
+    mut child: std::process::Child,
+    handshake: TerminalHandshake,
+    launcher: &str,
+) -> Result<()> {
+    let result = wait_for_terminal_ready_with(
+        &handshake.ready_path,
+        &handshake.token,
+        TERMINAL_READY_TIMEOUT,
+        || match child.try_wait().context("query terminal launcher status")? {
+            Some(status) if !status.success() => {
+                anyhow::bail!("{launcher} exited with {status} before readiness")
+            }
+            Some(_) => Ok(Some(true)),
+            None => Ok(None),
+        },
+    );
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    finish_terminal_handshake(handshake, result)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn terminal_shell_script() -> String {
+    format!(
+        "unset {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; \"$NEOTH_BIN\" --output json interface set cli --ready-file \"$NEOTH_READY_FILE\" --ready-token \"$NEOTH_READY_TOKEN\" || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; \"$NEOTH_BIN\"; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; else printf '\\nNEOTH needs repair; see the error above, then run: neoth init --force\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l"
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Open a real platform terminal and keep it interactive after the initial
-/// NEOTH command. Returns the launcher child where the platform exposes one;
-/// dropping it deliberately detaches the terminal from the GUI process.
-fn launch_cli_terminal(bin: &Path, initialized: bool) -> Result<Option<std::process::Child>> {
+/// NEOTH command. Success means the terminal shell echoed the unique ready
+/// token, not merely that a launcher process accepted `spawn()`.
+fn launch_cli_terminal(bin: &Path, home: &Path) -> Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
 
         const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        let handshake = TerminalHandshake::create(home)?;
         let path = bin.to_string_lossy().replace('\'', "''");
-        let initial = if initialized {
-            format!("& '{path}' status")
-        } else {
-            format!("& '{path}' init --cli")
-        };
-        let script =
-            format!("{initial}; Write-Host ''; Write-Host 'NEOTH CLI ready. Try: neoth --help'");
-        let child = std::process::Command::new("powershell.exe")
+        let script = format!(
+            "$ErrorActionPreference = 'Stop'; Remove-Item Env:{PRODUCT_LAUNCHER_ENV}, Env:{INTERFACE_OVERRIDE_ENV} -ErrorAction SilentlyContinue; & '{path}' --output json interface set cli --ready-file $env:NEOTH_READY_FILE --ready-token $env:NEOTH_READY_TOKEN; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; Remove-Item Env:NEOTH_READY_FILE, Env:NEOTH_READY_TOKEN -ErrorAction SilentlyContinue; & '{path}'; if ($LASTEXITCODE -eq 0) {{ Write-Host ''; Write-Host 'NEOTH CLI ready. Try: neoth --help' }} else {{ Write-Host ''; Write-Host 'NEOTH needs repair; see the error above, then run: neoth init --force' }}"
+        );
+        let mut command = std::process::Command::new("powershell.exe");
+        scrub_gui_control_environment(&mut command);
+        let child = command
             .args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script])
+            .env("NEOTH_HOME", home)
+            .env(TERMINAL_READY_FILE_ENV, &handshake.ready_path)
+            .env(TERMINAL_READY_TOKEN_ENV, &handshake.token)
             .creation_flags(CREATE_NEW_CONSOLE)
-            .spawn()
-            .context("open Windows PowerShell for the NEOTH CLI")?;
-        return Ok(Some(child));
+            .spawn();
+        return match child {
+            Ok(child) => await_spawned_terminal(child, handshake, "Windows PowerShell"),
+            Err(error) => finish_terminal_handshake(
+                handshake,
+                Err(anyhow::Error::new(error).context("open Windows PowerShell for the NEOTH CLI")),
+            ),
+        };
     }
 
     #[cfg(target_os = "macos")]
     {
         let path = bin
             .to_str()
-            .context("NEOTH binary path is not valid Unicode")?
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"");
-        let command = if initialized { "status" } else { "init --cli" };
-        let script = format!(
-            "set neothBin to \"{path}\"\ntell application \"Terminal\"\nactivate\ndo script ((quoted form of neothBin) & \" {command}; printf '\\\\nNEOTH CLI ready. Try: neoth --help\\\\n'; exec $SHELL -l\")\nend tell"
+            .context("NEOTH binary path is not valid Unicode")?;
+        let home = home
+            .to_str()
+            .context("NEOTH home path is not valid Unicode")?;
+        let handshake = TerminalHandshake::create(Path::new(home))?;
+        let ready_path = handshake
+            .ready_path
+            .to_str()
+            .expect("handshake path extends an already validated Unicode home");
+        let shell_command = format!(
+            "unset {GUI_READY_FILE_ENV} {GUI_READY_TOKEN_ENV} {GUI_PARENT_COMMIT_ENV} {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; NEOTH_HOME={} {} --output json interface set cli --ready-file {} --ready-token {} || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; NEOTH_HOME={} {}; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; else printf '\\nNEOTH needs repair; see the error above, then run: neoth init --force\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l",
+            shell_single_quote(home),
+            shell_single_quote(path),
+            shell_single_quote(ready_path),
+            shell_single_quote(&handshake.token),
+            shell_single_quote(home),
+            shell_single_quote(path),
         );
-        let output = std::process::Command::new("/usr/bin/osascript")
-            .args(["-e", &script])
-            .output()
-            .context("ask Terminal.app to open the NEOTH CLI")?;
-        if !output.status.success() {
-            anyhow::bail!(
+        let shell_command = shell_command.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"Terminal\"\nactivate\ndo script \"{shell_command}\"\nend tell"
+        );
+        let mut command = std::process::Command::new("/usr/bin/osascript");
+        scrub_gui_control_environment(&mut command);
+        let output = command.args(["-e", &script]).output();
+        let result = match output {
+            Ok(output) if output.status.success() => wait_for_terminal_ready_with(
+                &handshake.ready_path,
+                &handshake.token,
+                TERMINAL_READY_TIMEOUT,
+                || Ok(None),
+            ),
+            Ok(output) => Err(anyhow::anyhow!(
                 "Terminal.app launch failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        return Ok(None);
+            )),
+            Err(error) => {
+                Err(anyhow::Error::new(error).context("ask Terminal.app to open the NEOTH CLI"))
+            }
+        };
+        return finish_terminal_handshake(handshake, result);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let script = terminal_shell_script(initialized);
-        let candidates: &[(&str, &[&str])] = &[
-            ("x-terminal-emulator", &["-e", "sh", "-lc", script]),
-            ("gnome-terminal", &["--", "sh", "-lc", script]),
-            ("konsole", &["-e", "sh", "-lc", script]),
-            ("kitty", &["sh", "-lc", script]),
-            ("alacritty", &["-e", "sh", "-lc", script]),
-        ];
-        let mut last_error = None;
-        for (program, args) in candidates {
-            match std::process::Command::new(program)
-                .args(*args)
+        let script = terminal_shell_script();
+        let mut errors = Vec::new();
+        for program in [
+            "x-terminal-emulator",
+            "gnome-terminal",
+            "konsole",
+            "kitty",
+            "alacritty",
+        ] {
+            let handshake = TerminalHandshake::create(home)?;
+            let mut command = std::process::Command::new(program);
+            scrub_gui_control_environment(&mut command);
+            match program {
+                "gnome-terminal" => command.args(["--", "sh", "-lc", &script]),
+                "kitty" => command.args(["sh", "-lc", &script]),
+                _ => command.args(["-e", "sh", "-lc", &script]),
+            };
+            let child = command
                 .env("NEOTH_BIN", bin)
-                .spawn()
-            {
-                Ok(child) => return Ok(Some(child)),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => last_error = Some(format!("{program}: {error}")),
+                .env("NEOTH_HOME", home)
+                .env(TERMINAL_READY_FILE_ENV, &handshake.ready_path)
+                .env(TERMINAL_READY_TOKEN_ENV, &handshake.token)
+                .spawn();
+            let result = match child {
+                Ok(child) => await_spawned_terminal(child, handshake, program),
+                Err(error) => finish_terminal_handshake(
+                    handshake,
+                    Err(anyhow::Error::new(error)
+                        .context(format!("start terminal candidate {program}"))),
+                ),
+            };
+            match result {
+                Ok(()) => return Ok(()),
+                Err(error) => errors.push(format!("{program}: {error:#}")),
             }
         }
         anyhow::bail!(
-            "no supported desktop terminal could be opened{}; run `neoth interface set cli` in an existing terminal",
-            last_error
-                .map(|error| format!(" ({error})"))
-                .unwrap_or_default()
+            "no supported desktop terminal became ready ({}); run `neoth interface set cli` in an existing terminal",
+            errors.join("; ")
         );
     }
 
@@ -11775,33 +13248,17 @@ fn launch_cli_terminal(bin: &Path, initialized: bool) -> Result<Option<std::proc
     anyhow::bail!("opening a CLI terminal is unsupported on this platform")
 }
 
-fn switch_to_cli(bin: &Path, initialized: bool) -> Result<()> {
-    // Persist first: macOS Terminal.app returns no child handle that the GUI
-    // could kill if a later write failed. If the terminal cannot be opened,
-    // restore GUI as the truthful currently-visible surface on every platform.
-    set_interface_preference_via_cli(bin, GuiInterfacePreference::Cli)?;
-    match launch_cli_terminal(bin, initialized) {
-        Ok(terminal) => {
-            drop(terminal);
-            Ok(())
-        }
-        Err(launch_error) => {
-            if let Err(rollback_error) =
-                set_interface_preference_via_cli(bin, GuiInterfacePreference::Gui)
-            {
-                return Err(launch_error).context(format!(
-                    "CLI terminal launch failed and restoring the GUI preference also failed: {rollback_error:#}"
-                ));
-            }
-            Err(launch_error)
-                .context("CLI terminal launch failed; the durable preference was restored to GUI")
-        }
-    }
+fn switch_to_cli(bin: &Path, home: &Path) -> Result<()> {
+    // The terminal itself performs the one canonical transaction. The CLI
+    // writes Ready only after interface.json is durably committed and restores
+    // the exact previous bytes if that Ready write fails.
+    launch_cli_terminal(bin, home)
 }
 
 #[cfg(test)]
 mod interface_preference_tests {
     use super::*;
+    use std::ffi::OsString;
 
     #[test]
     fn gui_reader_distinguishes_missing_gui_cli_and_corruption() {
@@ -11836,24 +13293,511 @@ mod interface_preference_tests {
         assert!(load_gui_interface_preference(dir.path()).is_err());
     }
 
+    #[test]
+    fn parent_handoff_is_paired_scoped_bounded_and_replay_safe() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join(GUI_LAUNCH_DIR);
+        let instance = root.join("gui-test");
+        std::fs::create_dir_all(&instance).unwrap();
+        let ready = instance.join("ready");
+        let token = "a".repeat(GUI_READY_TOKEN_BYTES);
+
+        let handoff = parse_gui_parent_handoff(
+            home.path(),
+            Some(ready.as_os_str()),
+            Some(&token),
+            Some("1"),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            handoff.ready_path,
+            instance.canonicalize().unwrap().join("ready")
+        );
+        assert!(handoff.parent_commit);
+        assert!(
+            parse_gui_parent_handoff(home.path(), Some(ready.as_os_str()), None, Some("1"))
+                .is_err()
+        );
+        assert!(
+            parse_gui_parent_handoff(
+                home.path(),
+                Some(ready.as_os_str()),
+                Some("not-hex"),
+                Some("1")
+            )
+            .is_err()
+        );
+
+        let outside = home.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        assert!(
+            parse_gui_parent_handoff(
+                home.path(),
+                Some(outside.join("ready").as_os_str()),
+                Some(&token),
+                Some("0")
+            )
+            .is_err()
+        );
+
+        std::fs::write(&ready, &token).unwrap();
+        assert!(
+            parse_gui_parent_handoff(
+                home.path(),
+                Some(ready.as_os_str()),
+                Some(&token),
+                Some("1")
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parent_handoff_writer_commits_only_the_exact_token() {
+        let home = tempfile::tempdir().unwrap();
+        let instance = home.path().join(GUI_LAUNCH_DIR).join("gui-write");
+        std::fs::create_dir_all(&instance).unwrap();
+        let ready = instance.join("ready");
+        let token = "b".repeat(GUI_READY_TOKEN_BYTES);
+        let handoff = parse_gui_parent_handoff(
+            home.path(),
+            Some(ready.as_os_str()),
+            Some(&token),
+            Some("0"),
+        )
+        .unwrap()
+        .unwrap();
+
+        write_gui_parent_ready(&handoff).unwrap();
+        assert_eq!(std::fs::read(&ready).unwrap(), token.as_bytes());
+        assert!(!ready.with_extension("tmp").exists());
+        assert!(write_gui_parent_ready(&handoff).is_err());
+    }
+
+    #[test]
+    fn interface_boot_matrix_preserves_chooser_and_parent_repair_semantics() {
+        assert_eq!(
+            interface_boot_decision(true, Err(anyhow::anyhow!("corrupt"))),
+            GuiInterfaceBootDecision::Ready
+        );
+        assert_eq!(
+            interface_boot_decision(false, Ok(None)),
+            GuiInterfaceBootDecision::Choose
+        );
+        assert_eq!(
+            interface_boot_decision(false, Ok(Some(GuiInterfacePreference::Gui))),
+            GuiInterfaceBootDecision::Ready
+        );
+        assert_eq!(
+            interface_boot_decision(false, Ok(Some(GuiInterfacePreference::Cli))),
+            GuiInterfaceBootDecision::SwitchCliToGui
+        );
+        assert!(matches!(
+            interface_boot_decision(false, Err(anyhow::anyhow!("future schema"))),
+            GuiInterfaceBootDecision::Repair(error) if error.contains("future schema")
+        ));
+    }
+
+    #[test]
+    fn product_launcher_and_relative_home_contracts_are_explicit() {
+        assert!(!product_launcher_requested(Vec::<OsString>::new()).unwrap());
+        assert!(product_launcher_requested([OsString::from("--product-launcher")]).unwrap());
+        assert!(product_launcher_requested([OsString::from("--unknown")]).is_err());
+        assert!(product_launcher_environment_requested(Some(OsString::from("1"))).unwrap());
+        assert!(!product_launcher_environment_requested(None).unwrap());
+        assert!(product_launcher_environment_requested(Some(OsString::from("true"))).is_err());
+        assert!(
+            product_launcher_mode(
+                [OsString::from("--product-launcher")],
+                Some(OsString::from("invalid")),
+            )
+            .is_err(),
+            "a valid argv flag must not short-circuit invalid packaged state"
+        );
+
+        let cwd = tempfile::tempdir().unwrap();
+        let home = absolutize_neoth_home(PathBuf::from("relative-home"), cwd.path());
+        assert!(home.is_absolute());
+        assert!(home.ends_with("relative-home"));
+    }
+
+    #[test]
+    fn gui_finish_commits_only_after_parity_and_never_reports_false_success() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let (transaction, prepared) = validate_begin_and_prepare_gui_finish_with(
+            || {
+                calls.borrow_mut().push("validate");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("begin");
+                Ok("transaction")
+            },
+            || {
+                calls.borrow_mut().push("files");
+                Ok("prepared")
+            },
+        )
+        .unwrap();
+        assert_eq!(transaction, "transaction");
+        assert_eq!(prepared, "prepared");
+        assert_eq!(*calls.borrow(), ["validate", "begin", "files"]);
+
+        calls.borrow_mut().clear();
+        let failed = validate_begin_and_prepare_gui_finish_with(
+            || {
+                calls.borrow_mut().push("validate");
+                anyhow::bail!("invalid")
+            },
+            || {
+                calls.borrow_mut().push("begin");
+                Ok("must-not-begin")
+            },
+            || {
+                calls.borrow_mut().push("files");
+                Ok("must-not-write")
+            },
+        );
+        assert!(failed.is_err());
+        assert_eq!(*calls.borrow(), ["validate"]);
+
+        calls.borrow_mut().clear();
+        let marker = PathBuf::from("initialized-v2.json");
+        let outcome = commit_gui_finish_with(
+            "files prepared".to_string(),
+            || {
+                calls.borrow_mut().push("parity");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("daemon-completion");
+                Ok(marker.clone())
+            },
+        );
+        assert_eq!(*calls.borrow(), ["parity", "daemon-completion"]);
+        assert!(matches!(
+            outcome,
+            GuiFinishOutcome::Completed { marker_path, status }
+                if marker_path == marker && status.contains("Setup complete and verified")
+        ));
+
+        calls.borrow_mut().clear();
+        let outcome = commit_gui_finish_with(
+            "files prepared".to_string(),
+            || {
+                calls.borrow_mut().push("parity");
+                anyhow::bail!("parity failed")
+            },
+            || {
+                calls.borrow_mut().push("daemon-completion");
+                Ok(PathBuf::from("must-not-run"))
+            },
+        );
+        assert_eq!(*calls.borrow(), ["parity"]);
+        assert!(matches!(
+            outcome,
+            GuiFinishOutcome::Failed { status, .. }
+                if status.contains("completion could not be verified")
+                    && !status.contains("Setup complete and verified")
+        ));
+    }
+
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn linux_terminal_script_uses_an_environment_path_not_interpolation() {
-        let script = terminal_shell_script(false);
-        assert!(script.contains("\"$NEOTH_BIN\" init --cli"));
+        let script = terminal_shell_script();
+        assert!(script.starts_with(
+            "unset NEOTH_PRODUCT_LAUNCHER NEOTH_INTERFACE; \"$NEOTH_BIN\" --output json interface set cli"
+        ));
+        assert!(script.contains("--ready-file \"$NEOTH_READY_FILE\""));
+        assert!(script.contains("--ready-token \"$NEOTH_READY_TOKEN\""));
+        assert!(!script.contains("printf '%s' \"$NEOTH_READY_TOKEN\""));
+        assert!(script.contains("; \"$NEOTH_BIN\";"));
+        assert!(script.contains("if [ \"$NEOTH_EXIT\" -eq 0 ]"));
+        assert!(script.contains("NEOTH needs repair"));
         assert!(script.contains("exec \"${SHELL:-/bin/sh}\" -l"));
+    }
+
+    #[test]
+    fn every_internal_child_scrubs_launcher_and_interface_capabilities() {
+        let mut command = std::process::Command::new("neoth-test-child");
+        scrub_gui_control_environment(&mut command);
+        for expected in [
+            GUI_READY_FILE_ENV,
+            GUI_READY_TOKEN_ENV,
+            GUI_PARENT_COMMIT_ENV,
+            PRODUCT_LAUNCHER_ENV,
+            TERMINAL_READY_FILE_ENV,
+            TERMINAL_READY_TOKEN_ENV,
+            INTERFACE_OVERRIDE_ENV,
+        ] {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(name, value)| name == expected && value.is_none()),
+                "{expected} was not explicitly removed"
+            );
+        }
+    }
+
+    #[test]
+    fn gui_begin_ack_is_bounded_and_bound_to_the_canonical_home() {
+        let home = tempfile::tempdir().unwrap();
+        let pending_dir = home.path().join(".gui-init");
+        std::fs::create_dir_all(&pending_dir).unwrap();
+        let pending = pending_dir.join("pending.json");
+        std::fs::write(&pending, b"pending").unwrap();
+        let transaction_id = "a".repeat(GUI_INIT_TRANSACTION_HEX_LEN);
+        let token = "b".repeat(GUI_INIT_TRANSACTION_HEX_LEN);
+        let valid = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "transaction_id": transaction_id,
+            "token": token,
+            "home": home.path().canonicalize().unwrap(),
+            "pending_path": pending.canonicalize().unwrap(),
+        }))
+        .unwrap();
+        let parsed = parse_gui_initialization_begin(&valid, home.path()).unwrap();
+        assert_eq!(parsed.transaction_id, transaction_id);
+        assert_eq!(parsed.token, token);
+
+        let invalid = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "transaction_id": "A".repeat(GUI_INIT_TRANSACTION_HEX_LEN),
+            "token": "b".repeat(GUI_INIT_TRANSACTION_HEX_LEN),
+            "home": home.path(),
+            "pending_path": pending,
+        }))
+        .unwrap();
+        assert!(parse_gui_initialization_begin(&invalid, home.path()).is_err());
+    }
+
+    #[test]
+    fn interface_set_acknowledgement_accepts_idempotence_and_binds_path_and_readback() {
+        let home = tempfile::tempdir().unwrap();
+        let expected_path = home.path().join("interface.json");
+        std::fs::write(&expected_path, br#"{"schema_version":1,"preferred":"gui"}"#).unwrap();
+
+        for changed in [true, false] {
+            let valid = serde_json::to_vec(&serde_json::json!({
+                "chosen": true,
+                "preferred": "gui",
+                "changed": changed,
+                "path": expected_path,
+            }))
+            .unwrap();
+            validate_interface_set_result(&valid, home.path(), GuiInterfacePreference::Gui)
+                .unwrap();
+        }
+
+        let wrong_path = home.path().join("not-interface.json");
+        std::fs::write(&wrong_path, b"not the preference").unwrap();
+        for invalid in [
+            serde_json::json!({"chosen": false, "preferred": "gui", "changed": true, "path": expected_path}),
+            serde_json::json!({"chosen": true, "preferred": "cli", "changed": true, "path": expected_path}),
+            serde_json::json!({"chosen": true, "preferred": "gui", "changed": true, "path": wrong_path}),
+            serde_json::json!({"chosen": true, "preferred": "gui", "changed": true}),
+            serde_json::json!({"chosen": true, "preferred": "gui", "changed": true, "path": expected_path, "extra": true}),
+        ] {
+            assert!(
+                validate_interface_set_result(
+                    &serde_json::to_vec(&invalid).unwrap(),
+                    home.path(),
+                    GuiInterfacePreference::Gui,
+                )
+                .is_err()
+            );
+        }
+
+        std::fs::write(&expected_path, br#"{"schema_version":1,"preferred":"cli"}"#).unwrap();
+        let stale = serde_json::to_vec(&serde_json::json!({
+            "chosen": true,
+            "preferred": "gui",
+            "changed": false,
+            "path": expected_path,
+        }))
+        .unwrap();
+        assert!(
+            validate_interface_set_result(&stale, home.path(), GuiInterfacePreference::Gui)
+                .unwrap_err()
+                .to_string()
+                .contains("read-back mismatch")
+        );
+    }
+
+    #[test]
+    fn ready_token_success_and_timeout_both_remove_unique_handshake() {
+        let home = tempfile::tempdir().unwrap();
+
+        let ready = TerminalHandshake::create(home.path()).unwrap();
+        let ready_directory = ready.directory.clone();
+        assert!(ready_directory.starts_with(home.path()));
+        std::fs::write(&ready.ready_path, ready.token.as_bytes()).unwrap();
+        let result = wait_for_terminal_ready_with(
+            &ready.ready_path,
+            &ready.token,
+            std::time::Duration::from_millis(100),
+            || Ok(None),
+        );
+        finish_terminal_handshake(ready, result).unwrap();
+        assert!(!ready_directory.exists());
+
+        let timed_out = TerminalHandshake::create(home.path()).unwrap();
+        let timeout_directory = timed_out.directory.clone();
+        let result = wait_for_terminal_ready_with(
+            &timed_out.ready_path,
+            &timed_out.token,
+            std::time::Duration::from_millis(15),
+            || Ok(None),
+        );
+        let error = finish_terminal_handshake(timed_out, result).unwrap_err();
+        assert!(error.to_string().contains("did not become ready"));
+        assert!(!timeout_directory.exists());
+    }
+
+    #[test]
+    fn ready_terminal_cleanup_failure_is_warning_not_false_launch_failure() {
+        let directory = Path::new("stale-terminal-handshake");
+        finish_terminal_handshake_result(
+            directory,
+            Ok(()),
+            Err(anyhow::anyhow!("locked stale directory")),
+        )
+        .unwrap();
+
+        let error = finish_terminal_handshake_result(
+            directory,
+            Err(anyhow::anyhow!("terminal failed")),
+            Err(anyhow::anyhow!("cleanup failed")),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("cleanup also failed"));
+    }
+
+    #[test]
+    fn failed_launcher_status_is_not_ready_even_with_matching_token() {
+        let home = tempfile::tempdir().unwrap();
+        let handshake = TerminalHandshake::create(home.path()).unwrap();
+        let directory = handshake.directory.clone();
+        std::fs::write(&handshake.ready_path, handshake.token.as_bytes()).unwrap();
+        let result = wait_for_terminal_ready_with(
+            &handshake.ready_path,
+            &handshake.token,
+            std::time::Duration::from_secs(1),
+            || Ok(Some(false)),
+        );
+        assert!(finish_terminal_handshake(handshake, result).is_err());
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn terminal_switch_has_no_prewrite_or_hardcoded_gui_rollback() {
+        let source = include_str!("main.rs");
+        let switch = source
+            .split("fn switch_to_cli(")
+            .nth(1)
+            .and_then(|tail| tail.split("#[cfg(test)]").next())
+            .unwrap();
+        assert!(switch.contains("launch_cli_terminal(bin, home)"));
+        assert!(!switch.contains("set_interface_preference_via_cli"));
+        assert!(!switch.contains("GuiInterfacePreference::Gui"));
+    }
+
+    #[test]
+    fn windows_gui_and_hidden_children_are_console_free_by_contract() {
+        let source = include_str!("main.rs");
+        assert!(source.starts_with("#![cfg_attr(windows, windows_subsystem = \"windows\")]"));
+        assert!(source.contains("const CREATE_NO_WINDOW: u32 = 0x0800_0000;"));
+        assert!(source.contains("suppress_console_window(&mut command);"));
+        assert!(source.contains("const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;"));
+        assert!(
+            source.contains("Remove-Item Env:{PRODUCT_LAUNCHER_ENV}, Env:{INTERFACE_OVERRIDE_ENV}")
+        );
+        assert!(source.contains("{PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; NEOTH_HOME"));
+        assert!(source.contains("exec \\\"${{SHELL:-/bin/sh}}\\\" -l"));
+    }
+
+    #[test]
+    fn packaged_sibling_cli_wins_over_path_and_path_is_the_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let packaged = root.path().join("packaged");
+        let path_dir = root.path().join("path");
+        std::fs::create_dir_all(&packaged).unwrap();
+        std::fs::create_dir_all(&path_dir).unwrap();
+        let gui = packaged.join(if cfg!(windows) {
+            "neothd-gui.exe"
+        } else {
+            "neothd-gui"
+        });
+        let name = if cfg!(windows) { "neoth.exe" } else { "neoth" };
+        let sibling = packaged.join(name);
+        let path_cli = path_dir.join(name);
+        std::fs::write(&sibling, b"packaged").unwrap();
+        std::fs::write(&path_cli, b"path").unwrap();
+        let path_env: OsString = std::env::join_paths([&path_dir]).unwrap();
+
+        assert_eq!(
+            resolve_neothd(Some(&gui), Some(path_env.as_os_str())),
+            Some(sibling.clone())
+        );
+        std::fs::remove_file(&sibling).unwrap();
+        assert_eq!(
+            resolve_neothd(Some(&gui), Some(path_env.as_os_str())),
+            Some(path_cli)
+        );
+    }
+
+    #[test]
+    fn mode_cards_keep_radio_accessibility_and_keyboard_contract() {
+        let ui = include_str!("../ui/components.slint");
+        let mode_card = ui
+            .split("export component ModeCard")
+            .nth(1)
+            .and_then(|tail| tail.split("// ── SovereignFade").next())
+            .unwrap();
+        for contract in [
+            "accessible-role: radio-button",
+            "accessible-label:",
+            "root.recommended ? \" Recommended.\" : \"\"",
+            "accessible-checkable: true",
+            "accessible-checked: root.selected",
+            "accessible-action-default",
+            "forward-focus: key-focus",
+            "event.text == \"\\n\" || event.text == \" \"",
+        ] {
+            assert!(
+                mode_card.contains(contract),
+                "missing ModeCard contract: {contract}"
+            );
+        }
     }
 }
 
-fn which_neothd() -> Option<PathBuf> {
-    let executables = if cfg!(windows) {
+fn neothd_executable_names() -> [&'static str; 2] {
+    if cfg!(windows) {
         ["neoth.exe", "neothd.exe"]
     } else {
         ["neoth", "neothd"]
-    };
-    if let Some(path_env) = std::env::var_os("PATH") {
-        for entry in std::env::split_paths(&path_env) {
-            for exe in executables {
+    }
+}
+
+fn resolve_neothd(
+    current_exe: Option<&Path>,
+    path_env: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    let executables = neothd_executable_names();
+    if let Some(dir) = current_exe.and_then(Path::parent) {
+        for exe in &executables {
+            let candidate = dir.join(exe);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    if let Some(path_env) = path_env {
+        for entry in std::env::split_paths(path_env) {
+            for exe in &executables {
                 let candidate = entry.join(exe);
                 if candidate.is_file() {
                     return Some(candidate);
@@ -11861,12 +13805,13 @@ fn which_neothd() -> Option<PathBuf> {
             }
         }
     }
-    let exe_path = std::env::current_exe().ok()?;
-    let dir = exe_path.parent()?;
-    executables
-        .into_iter()
-        .map(|exe| dir.join(exe))
-        .find(|candidate| candidate.is_file())
+    None
+}
+
+fn which_neothd() -> Option<PathBuf> {
+    let current_exe = std::env::current_exe().ok();
+    let path_env = std::env::var_os("PATH");
+    resolve_neothd(current_exe.as_deref(), path_env.as_deref())
 }
 
 /// GOLD-ADAPT-OH-01 — locate the `neoth-migrate` helper binary (PATH
@@ -11932,12 +13877,59 @@ fn resolve_neoth_home(
     home.join(".neoth")
 }
 
+const PRODUCT_LAUNCHER_ENV: &str = "NEOTH_PRODUCT_LAUNCHER";
+
+fn product_launcher_mode(
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+    environment: Option<std::ffi::OsString>,
+) -> Result<bool> {
+    let requested_by_argument = product_launcher_requested(args)?;
+    let requested_by_environment = product_launcher_environment_requested(environment)?;
+    Ok(requested_by_argument || requested_by_environment)
+}
+
+fn product_launcher_requested(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<bool> {
+    let args: Vec<std::ffi::OsString> = args.into_iter().collect();
+    match args.as_slice() {
+        [] => Ok(false),
+        [argument] if argument == "--product-launcher" => Ok(true),
+        _ => anyhow::bail!(
+            "unsupported GUI arguments: {}",
+            args.iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    }
+}
+
+fn product_launcher_environment_requested(value: Option<std::ffi::OsString>) -> Result<bool> {
+    match value {
+        None => Ok(false),
+        Some(value) if value == "1" => Ok(true),
+        Some(value) => anyhow::bail!(
+            "{PRODUCT_LAUNCHER_ENV} must be exactly `1`, found `{}`",
+            value.to_string_lossy()
+        ),
+    }
+}
+
+fn absolutize_neoth_home(path: PathBuf, current_dir: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        current_dir.join(path)
+    }
+}
+
 fn default_neoth_home() -> PathBuf {
-    resolve_neoth_home(
+    let configured = resolve_neoth_home(
         std::env::var("NEOTH_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
         std::env::var("USERPROFILE").ok().as_deref(),
-    )
+    );
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    absolutize_neoth_home(configured, &current_dir)
 }
 
 // B23 — THEME-TWEAKS-RUNTIME: mirrored contract types.

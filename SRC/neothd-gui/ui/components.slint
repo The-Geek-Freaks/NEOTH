@@ -417,15 +417,31 @@ export component ModeCard inherits Rectangle {
     in property <string> subtitle: "";
     in property <bool> recommended: false;
     in property <bool> selected: false;
+    in property <bool> enabled: true;
     in property <image> glyph;
     callback clicked();
+
+    accessible-role: radio-button;
+    accessible-label: root.title + ". " + root.subtitle
+        + (root.recommended ? " Recommended." : "");
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if root.enabled { root.clicked(); }
+    }
+    forward-focus: key-focus;
 
     width: 260px;
     height: 320px;
     background: root.selected ? Theme.bg-card : Theme.bg-base;
-    border-width: 2px;
-    border-color: root.selected ? Theme.accent-green : Theme.border-subtle;
+    border-width: key-focus.has-focus ? 3px : 2px;
+    border-color: key-focus.has-focus ? Theme.focus-ring
+        : root.selected ? Theme.accent-green
+        : touch.has-hover && root.enabled ? Theme.accent-green.with-alpha(0.6)
+        : Theme.border-subtle;
     border-radius: Theme.radius-card;
+    opacity: root.enabled ? 1.0 : 0.55;
 
     animate border-color {
         duration: Theme.duration-micro;
@@ -494,8 +510,23 @@ export component ModeCard inherits Rectangle {
         }
     }
 
+    key-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
     touch := TouchArea {
-        clicked => { root.clicked(); }
+        enabled: root.enabled;
+        clicked => {
+            key-focus.focus();
+            root.clicked();
+        }
     }
 }
 

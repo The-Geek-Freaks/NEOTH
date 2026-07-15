@@ -7,7 +7,6 @@
 //! exposed here must have a production implementation rather than reserved
 //! placeholder variants.
 
-use anyhow::Context as _;
 use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod adr;
@@ -1269,9 +1268,50 @@ fn choose_default_invocation(
         // wizard without overwriting that desktop preference.
         (Some(InterfacePreference::Gui), false, true) => DefaultInvocation::Init,
         (Some(InterfacePreference::Gui), true, true) => DefaultInvocation::CliHome,
-        (Some(InterfacePreference::Cli), false, _) | (None, _, true) => DefaultInvocation::Init,
+        (Some(InterfacePreference::Cli), false, _) | (None, false, true) => DefaultInvocation::Init,
+        (None, true, true) => DefaultInvocation::CliHome,
         (Some(InterfacePreference::Cli), true, _) => DefaultInvocation::CliHome,
     }
+}
+
+fn resolve_default_invocation_at(
+    home: &std::path::Path,
+    explicit: Option<crate::interface_preference::InterfacePreference>,
+    initialized: bool,
+    headless: bool,
+) -> anyhow::Result<(
+    DefaultInvocation,
+    Option<crate::interface_preference::InterfacePreference>,
+)> {
+    // A CLI environment choice is safe to commit immediately. A graphical GUI
+    // choice is selected now but committed by `gui::run_gui` only after the
+    // GUI reports a live event-loop Ready acknowledgement;
+    // headless GUI is intentionally persisted as a future desktop default while
+    // this session falls back to CLI. Invalid values never reach this function:
+    // `env_override` fails closed first.
+    let preferred = match explicit {
+        Some(crate::interface_preference::InterfacePreference::Cli) => {
+            let preferred = crate::interface_preference::InterfacePreference::Cli;
+            crate::interface_preference::save_at(home, preferred)?;
+            Some(preferred)
+        }
+        Some(crate::interface_preference::InterfacePreference::Gui) if headless => {
+            let preferred = crate::interface_preference::InterfacePreference::Gui;
+            crate::interface_preference::save_at(home, preferred)?;
+            Some(preferred)
+        }
+        Some(crate::interface_preference::InterfacePreference::Gui) => {
+            // On a graphical session, `gui::run_gui` owns the transaction:
+            // only its validated GUI event-loop Ready handshake commits GUI
+            // as the default.
+            Some(crate::interface_preference::InterfacePreference::Gui)
+        }
+        None => crate::interface_preference::load_at(home)?,
+    };
+    Ok((
+        choose_default_invocation(preferred, initialized, headless),
+        preferred,
+    ))
 }
 
 fn launcher_init_args() -> anyhow::Result<init::InitArgs> {
@@ -1287,14 +1327,13 @@ fn launcher_init_args() -> anyhow::Result<init::InitArgs> {
 /// persisted interface, and headless sessions never attempt to open a GUI.
 pub async fn run_default_invocation() -> anyhow::Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let preferred = crate::interface_preference::load_at(&home)?;
-    let marker = home.join(".initialized");
-    let initialized = marker
-        .try_exists()
-        .with_context(|| format!("inspect initialization marker {}", marker.display()))?;
-    let headless = crate::wizard::env_probe::probe_and_classify().is_headless();
+    let explicit = crate::interface_preference::env_override()?;
+    let initialized = init::initialized_home_is_ready(&home)?;
+    let headless = !crate::wizard::env_probe::probe_gui_session_available();
+    let (invocation, preferred) =
+        resolve_default_invocation_at(&home, explicit, initialized, headless)?;
 
-    match choose_default_invocation(preferred, initialized, headless) {
+    match invocation {
         DefaultInvocation::GuiChoice => gui::run_first_launch_chooser(),
         DefaultInvocation::Gui => gui::run_gui(gui::GuiArgs::default(), OutputFormat::Table),
         DefaultInvocation::Init => init::run_init(launcher_init_args()?).await,
@@ -1939,6 +1978,11 @@ mod default_invocation_tests {
             "a headless first launch must never attempt to open a window"
         );
         assert_eq!(
+            choose_default_invocation(None, true, true),
+            DefaultInvocation::CliHome,
+            "an initialized headless instance must not restart onboarding on every bare launch"
+        );
+        assert_eq!(
             choose_default_invocation(Some(InterfacePreference::Gui), true, false),
             DefaultInvocation::Gui
         );
@@ -1967,5 +2011,91 @@ mod default_invocation_tests {
         assert!(!args.non_interactive);
         assert!(!args.gui);
         assert!(!args.cli);
+    }
+
+    #[test]
+    fn empty_home_is_not_initialized() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(!init::initialized_home_is_ready(home.path()).unwrap());
+    }
+
+    #[test]
+    fn explicit_choice_is_persisted_and_first_run_chooser_is_not_repeated() {
+        let home = tempfile::tempdir().unwrap();
+
+        let (first, preferred) = resolve_default_invocation_at(
+            home.path(),
+            Some(InterfacePreference::Cli),
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(first, DefaultInvocation::Init);
+        assert_eq!(preferred, Some(InterfacePreference::Cli));
+        assert_eq!(
+            crate::interface_preference::load_at(home.path()).unwrap(),
+            Some(InterfacePreference::Cli)
+        );
+
+        let (later, preferred) =
+            resolve_default_invocation_at(home.path(), None, true, false).unwrap();
+        assert_eq!(later, DefaultInvocation::CliHome);
+        assert_eq!(preferred, Some(InterfacePreference::Cli));
+        assert_ne!(later, DefaultInvocation::GuiChoice);
+    }
+
+    #[test]
+    fn graphical_gui_override_defers_persistence_until_validated_gui_ready() {
+        let home = tempfile::tempdir().unwrap();
+        crate::interface_preference::save_at(home.path(), InterfacePreference::Cli).unwrap();
+
+        let (decision, preferred) =
+            resolve_default_invocation_at(home.path(), Some(InterfacePreference::Gui), true, false)
+                .unwrap();
+        assert_eq!(decision, DefaultInvocation::Gui);
+        assert_eq!(preferred, Some(InterfacePreference::Gui));
+        assert_eq!(
+            crate::interface_preference::load_at(home.path()).unwrap(),
+            Some(InterfacePreference::Cli),
+            "the launcher must not commit GUI before validated event-loop Ready"
+        );
+
+        // Model the successful `gui::run_gui` Ready commit without opening a
+        // window; the GUI launcher's own tests cover the process handshake.
+        crate::interface_preference::save_at(home.path(), InterfacePreference::Gui).unwrap();
+        let (later, _) = resolve_default_invocation_at(home.path(), None, true, false).unwrap();
+        assert_eq!(later, DefaultInvocation::Gui);
+        assert_ne!(later, DefaultInvocation::GuiChoice);
+    }
+
+    #[test]
+    fn headless_explicit_gui_is_persisted_but_never_launches_or_prompts() {
+        let home = tempfile::tempdir().unwrap();
+
+        let (unfinished, preferred) =
+            resolve_default_invocation_at(home.path(), Some(InterfacePreference::Gui), false, true)
+                .unwrap();
+        assert_eq!(unfinished, DefaultInvocation::Init);
+        assert_eq!(preferred, Some(InterfacePreference::Gui));
+
+        let (ready, _) = resolve_default_invocation_at(home.path(), None, true, true).unwrap();
+        assert_eq!(ready, DefaultInvocation::CliHome);
+        assert_ne!(ready, DefaultInvocation::Gui);
+        assert_ne!(ready, DefaultInvocation::GuiChoice);
+    }
+
+    #[test]
+    fn initialized_headless_without_choice_uses_cli_without_consuming_desktop_choice() {
+        let home = tempfile::tempdir().unwrap();
+
+        let (decision, preferred) =
+            resolve_default_invocation_at(home.path(), None, true, true).unwrap();
+        assert_eq!(decision, DefaultInvocation::CliHome);
+        assert_eq!(preferred, None);
+        assert_eq!(
+            crate::interface_preference::load_at(home.path()).unwrap(),
+            None,
+            "headless fallback must leave the one-time desktop choice unanswered"
+        );
     }
 }

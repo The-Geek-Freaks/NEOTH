@@ -8,6 +8,11 @@
   <string>NEOTH</string>
   <key>CFBundleExecutable</key>
   <string>neothd-gui</string>
+  <key>LSEnvironment</key>
+  <dict>
+    <key>NEOTH_PRODUCT_LAUNCHER</key>
+    <string>1</string>
+  </dict>
   <key>CFBundleIdentifier</key>
   <string>io.github.the-geek-freaks.neoth</string>
   <key>CFBundleInfoDictionaryVersion</key>

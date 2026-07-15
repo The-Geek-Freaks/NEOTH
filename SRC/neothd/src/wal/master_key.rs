@@ -180,30 +180,13 @@ pub fn restore_master_key(raw: &[u8], dst: &Path) -> Result<()> {
 }
 
 /// Write raw bytes owner-only WITHOUT DPAPI-wrapping (for portable backups).
-#[cfg(unix)]
 fn write_raw_owner_only(path: &Path, raw: &[u8]) -> Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)
-        .with_context(|| format!("create master-key backup {} mode 0600", path.display()))?;
-    f.write_all(raw)
-        .with_context(|| format!("write master-key backup {}", path.display()))?;
-    f.sync_all().ok();
-    Ok(())
-}
-
-#[cfg(windows)]
-fn write_raw_owner_only(path: &Path, raw: &[u8]) -> Result<()> {
-    std::fs::write(path, raw)
-        .with_context(|| format!("write master-key backup {}", path.display()))?;
-    if let Err(e) = crate::wal::win_acl::restrict_to_owner(path) {
-        tracing::warn!(path = %path.display(), error = %e, "backup DACL restriction failed");
-    }
+    crate::util::atomic_write::atomic_write_private(path, raw).with_context(|| {
+        format!(
+            "atomically write private master-key backup {}",
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -232,6 +215,8 @@ mod tests {
         backup_master_key(&key_path, &backup).unwrap();
         // The backup is RAW (portable): exactly the 32 key bytes.
         assert_eq!(std::fs::read(&backup).unwrap(), orig_bytes.to_vec());
+        #[cfg(windows)]
+        crate::wal::win_native::verify_private_dacl(&backup).unwrap();
 
         // Restore onto a fresh path re-binds for this machine + matches.
         let restored_path = dir.path().join("wal").join("restored.key");

@@ -1386,7 +1386,7 @@ Multimodal asset ingest pipeline
 Interactive onboarding wizard. Sets up ~/.neoth/ config
 
 - `--non-interactive` — Run without interactive prompts. All values via flags. On a TTY, `neoth init` defaults to interactive; pass this to force non-interactive mode (e.g. inside CI or cloud-init)
-- `--gui` — Skip the GUI/CLI mode-selection prompt and hand off to the GUI surface. The CLI wizard prints launch instructions for `neothd-gui` and exits — the GUI binary owns its own onboarding flow with the same freedom.yaml backing
+- `--gui` — Skip the GUI/CLI mode-selection prompt and hand off to the GUI surface. The CLI launches the packaged GUI sibling and waits for its bounded Ready acknowledgement; the GUI owns its onboarding flow with the same freedom.yaml backing
 - `--cli` — Skip the GUI/CLI mode-selection prompt and stay in the terminal wizard. Useful for scripted bring-up that pipes answers in OR for power users who never want the GUI option surfaced. Mutually exclusive with `--gui`
 - `--accept-license` — Accept license without prompt. Required with --non-interactive
 - `--experience-level <LEVEL>` — NOOB-UX (Session 26) — operator's experience level override. `beginner | intermediate | advanced`. Skips the step1c prompt when set. Drives whether tech-deep wizard prompts surface or silently default. Non-interactive runs default to `beginner`

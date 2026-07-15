@@ -2196,7 +2196,7 @@ jobs:
           \`sudo dnf install ./NEOTH-${VERSION}-x86_64-unknown-linux-gnu.rpm\`
 
           Run \`neoth\` once. NEOTH asks whether this machine should start in
-          the GUI or CLI; \`neoth interface set gui|cli\` switches at any time.
+          the GUI or CLI; \`neoth interface set gui\` and \`neoth interface set cli\` switch at any time.
           Uninstallers preserve \`~/.neoth\` operator state.
 
           Every desktop installer contains \`neoth\`, the \`neothd\`

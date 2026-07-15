@@ -14,7 +14,7 @@ Follow it in order. Do not edit YAML unless you choose the operator path.
 git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH
 NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
-neoth gui
+neoth
 neoth doctor
 ```
 
@@ -33,12 +33,23 @@ Windows (PowerShell): `irm https://raw.githubusercontent.com/The-Geek-Freaks/NEO
 cd NEOTH
 git pull --ff-only
 NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
-neoth gui
+neoth
 ```
 
-## First run wizard
+## First run: choose once
 
-The wizard asks five things:
+Bare `neoth` opens one accessible **Graphical setup / Command-line setup**
+choice on a graphical desktop, persists it in `NEOTH_HOME/interface.json`, and
+does not ask again. SSH, CI, inactive Windows sessions, macOS sessions without
+a matching logged-in console user, and display-less Unix sessions use the CLI
+without opening a popup. Automation can
+set exactly `NEOTH_INTERFACE=gui` or `NEOTH_INTERFACE=cli`; malformed values
+fail closed. You can switch later with `neoth gui`,
+`neoth interface set gui`, `neoth interface set cli`, or **Open CLI** in GUI
+Settings → Maintenance.
+
+The selected wizard asks five things:
+
 
 | Question | Safe default |
 | :-- | :-- |

@@ -26,8 +26,8 @@ pub(crate) fn step0_mode_selection(
     interactive: bool,
     neoth_home: &std::path::Path,
 ) -> Result<WizardModeChoice> {
-    let explicit_env = explicit_interface_from_env()?;
-    let headless = crate::wizard::env_probe::probe_and_classify().is_headless();
+    let explicit_env = crate::interface_preference::env_override()?;
+    let headless = !crate::wizard::env_probe::probe_gui_session_available();
     step0_mode_selection_with_env(args, interactive, neoth_home, explicit_env, headless)
 }
 
@@ -39,25 +39,53 @@ fn step0_mode_selection_with_env(
     headless: bool,
 ) -> Result<WizardModeChoice> {
     debug!("wizard step 0: mode selection");
+    if headless {
+        // CI/SSH/headless wins even over an explicit GUI request: an environment
+        // choice can record the desktop default, but it must never spawn a
+        // window in this session. CLI choices use the same canonical writer as
+        // every surface.
+        let requested = if args.gui {
+            // `--gui` is a one-shot launch request. Keep the existing
+            // transaction contract: without a successful GUI spawn it must not
+            // replace the durable preference.
+            None
+        } else if args.cli {
+            Some(crate::interface_preference::InterfacePreference::Cli)
+        } else {
+            explicit_env
+        };
+        if let Some(preferred) = requested {
+            persist_choice_unless_dry_run(args, neoth_home, preferred)?;
+            if preferred == crate::interface_preference::InterfacePreference::Gui {
+                warn!("GUI requested in a headless/SSH/CI session; using the CLI for this session");
+            }
+        }
+        if args.gui {
+            warn!("GUI requested in a headless/SSH/CI session; using the CLI for this session");
+        }
+        return Ok(WizardModeChoice::Cli);
+    }
     if args.gui {
         return Ok(WizardModeChoice::Gui);
     }
     if args.cli {
-        persist_cli_choice_unless_dry_run(args, neoth_home)?;
+        persist_choice_unless_dry_run(
+            args,
+            neoth_home,
+            crate::interface_preference::InterfacePreference::Cli,
+        )?;
         return Ok(WizardModeChoice::Cli);
     }
     if let Some(preferred) = explicit_env {
         if preferred == crate::interface_preference::InterfacePreference::Cli {
-            persist_cli_choice_unless_dry_run(args, neoth_home)?;
+            persist_choice_unless_dry_run(args, neoth_home, preferred)?;
         }
         return Ok(preferred.into());
     }
-    if !interactive || headless {
-        // Headless and scripted installs never block on a UI question. This is
-        // an execution fallback, not an operator choice, so it deliberately
-        // ignores a stored desktop GUI default and does not consume the one-
-        // time prompt. `--gui` / `NEOTH_INTERFACE=gui` remain explicit escape
-        // hatches for controlled display-bearing automation.
+    if !interactive {
+        // Scripted installs never block on a UI question. This is an execution
+        // fallback, not an operator choice, so it deliberately does not consume
+        // the one-time prompt.
         return Ok(WizardModeChoice::Cli);
     }
     if let Some(preferred) = crate::interface_preference::load_at(neoth_home)? {
@@ -91,7 +119,11 @@ fn step0_mode_selection_with_env(
         match picked {
             0 => Ok(WizardModeChoice::Gui),
             _ => {
-                persist_cli_choice_unless_dry_run(args, neoth_home)?;
+                persist_choice_unless_dry_run(
+                    args,
+                    neoth_home,
+                    crate::interface_preference::InterfacePreference::Cli,
+                )?;
                 Ok(WizardModeChoice::Cli)
             }
         }
@@ -105,21 +137,13 @@ fn step0_mode_selection_with_env(
     }
 }
 
-fn explicit_interface_from_env() -> Result<Option<crate::interface_preference::InterfacePreference>>
-{
-    match std::env::var("NEOTH_INTERFACE") {
-        Ok(raw) if !raw.trim().is_empty() => raw.parse().map(Some),
-        Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(error) => Err(error).context("read NEOTH_INTERFACE"),
-    }
-}
-
-fn persist_cli_choice_unless_dry_run(args: &InitArgs, neoth_home: &std::path::Path) -> Result<()> {
+fn persist_choice_unless_dry_run(
+    args: &InitArgs,
+    neoth_home: &std::path::Path,
+    preferred: crate::interface_preference::InterfacePreference,
+) -> Result<()> {
     if !args.dry_run {
-        crate::interface_preference::save_at(
-            neoth_home,
-            crate::interface_preference::InterfacePreference::Cli,
-        )?;
+        crate::interface_preference::save_at(neoth_home, preferred)?;
     }
     Ok(())
 }
@@ -553,6 +577,40 @@ mod interface_tests {
         assert_eq!(
             crate::interface_preference::load_at(dir.path()).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn headless_masks_every_gui_request_without_losing_explicit_desktop_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = InitArgs {
+            gui: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            step0_mode_selection_with_env(&args, true, dir.path(), None, true).unwrap(),
+            WizardModeChoice::Cli
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(dir.path()).unwrap(),
+            None
+        );
+
+        let second = tempfile::tempdir().unwrap();
+        assert_eq!(
+            step0_mode_selection_with_env(
+                &InitArgs::default(),
+                true,
+                second.path(),
+                Some(InterfacePreference::Gui),
+                true,
+            )
+            .unwrap(),
+            WizardModeChoice::Cli
+        );
+        assert_eq!(
+            crate::interface_preference::load_at(second.path()).unwrap(),
+            Some(InterfacePreference::Gui)
         );
     }
 }

@@ -148,10 +148,9 @@ export component MainWindow inherits Window {
     /// freedom.yaml exists) — the GUI is now the operator's chosen
     /// surface.
     in-out property <bool> mode-gui-chosen: false;
-    /// Operator picked CLI on the mode screen. main.rs handles this
-    /// via the `cli-mode-chosen` callback — typically: print the
-    /// `neoth init` command to stdout + exit so the operator runs
-    /// the CLI wizard manually. Pick #29 contract.
+    /// Operator picked CLI on the mode screen. main.rs persists the choice,
+    /// opens a real platform terminal running `neoth init --cli`, waits for
+    /// its private readiness handshake, then closes the first-run GUI.
     in-out property <bool> mode-cli-chosen: false;
     /// Prevent duplicate launcher processes while the canonical preference
     /// write / platform terminal spawn is in flight.
@@ -1071,11 +1070,12 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 spacing: Theme.space-loose;
                 alignment: center;
-                ModeCard {
+                gui-mode-card := ModeCard {
                     title: "Graphical setup";
                     subtitle: "Click through eight short screens. Recommended if you're new.";
                     recommended: true;
                     selected: root.mode-gui-chosen;
+                    enabled: !root.mode-choice-busy;
                     glyph: @image-url("assets/glyph_gui.svg");
                     clicked => {
                         if (!root.mode-choice-busy) {
@@ -1084,11 +1084,12 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-                ModeCard {
+                cli-mode-card := ModeCard {
                     title: "Command-line setup";
-                    subtitle: "Drop to a terminal. Runs `neoth init`. Claude CLI session management is handled automatically; on Linux/macOS tmux is used when available.";
+                    subtitle: "Drop to a terminal. Runs `neoth init --cli`. Claude CLI session management is handled automatically; on Linux/macOS tmux is used when available.";
                     recommended: false;
                     selected: root.mode-cli-chosen;
+                    enabled: !root.mode-choice-busy;
                     glyph: @image-url("assets/glyph_cli.svg");
                     clicked => {
                         if (!root.mode-choice-busy) {
@@ -1405,8 +1406,8 @@ export component MainWindow inherits Window {
         // G-2 fix: real plain-language summary instead of a single
         // throw-away sentence + dead air. Three bullets cover the
         // MIT/Apache-2.0 promise, the no-warranty disclaimer, and the
-        // operator's freedom to use/modify/share. "View full text →"
-        // opens the canonical licence text in the system browser.
+        // operator's freedom to use/modify/share. "View licenses →"
+        // opens both canonical licence texts in the repository.
         if root.step == WizardStep.license: VerticalLayout {
             spacing: Theme.space-loose;
             ScreenHeader {
@@ -1451,7 +1452,7 @@ export component MainWindow inherits Window {
                         spacing: Theme.space-base;
                         alignment: start;
                         NeothButton {
-                            label: "View full text →";
+                            label: "View licenses →";
                             primary: false;
                             clicked => { root.open-license-url(); }
                         }

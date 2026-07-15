@@ -22,13 +22,21 @@ expect_fail_contains() {
 }
 
 bash -n "$BUILDER" "$SCRIPT_DIR/uninstall-neoth.sh" "$0"
-diff -u "$SCRIPT_DIR/fixtures/expected-layout.txt" <("$BUILDER" --print-layout)
+diff -u <(sed 's/\r$//' "$SCRIPT_DIR/fixtures/expected-layout.txt") <("$BUILDER" --print-layout)
 "$BUILDER" --help >/dev/null
 grep -F 'NEOTH-${version}-${target}.pkg' "$BUILDER" >/dev/null || fail "stable PKG asset name drifted"
 grep -F 'NEOTH-${version}-${target}.dmg' "$BUILDER" >/dev/null || fail "stable DMG asset name drifted"
 grep -F 'neoth-v${version}-${target}.tar.gz' "$BUILDER" >/dev/null || fail "signed portable asset name drifted"
 grep -F '"sha256": "$checksum"' "$BUILDER" >/dev/null || fail "machine-readable checksum sidecar is missing"
 grep -F '"$dmg_root/NEOTH.app"' "$BUILDER" >/dev/null || fail "DMG must expose NEOTH.app at top level"
+grep -A2 -F '<key>LSEnvironment</key>' "$SCRIPT_DIR/Info.plist.in" | grep -F '<key>NEOTH_PRODUCT_LAUNCHER</key>' >/dev/null ||
+  fail "macOS app launch must enter product-launcher mode"
+grep -A1 -F '<key>NEOTH_PRODUCT_LAUNCHER</key>' "$SCRIPT_DIR/Info.plist.in" | grep -F '<string>1</string>' >/dev/null ||
+  fail "macOS product-launcher environment must be exact"
+grep -A1 -F '<key>CFBundleExecutable</key>' "$SCRIPT_DIR/Info.plist.in" | grep -F '<string>neothd-gui</string>' >/dev/null ||
+  fail "macOS app must retain the signed native GUI executable"
+grep -F 'plutil -extract LSEnvironment.NEOTH_PRODUCT_LAUNCHER raw' "$BUILDER" >/dev/null ||
+  fail "macOS builder must verify the staged and final product-launcher contract"
 if "$BUILDER" --unknown >/dev/null 2>&1; then
   fail "unknown arguments must fail"
 fi

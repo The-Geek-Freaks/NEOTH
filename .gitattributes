@@ -3,11 +3,22 @@
 # checkout, which trips rustfmt's "incorrect newline style" check.
 # Pinning per-extension also keeps the working tree byte-identical
 # across operating systems.
+.gitattributes text eol=lf
 *.rs   text eol=lf
 *.toml text eol=lf
 *.yaml text eol=lf
 *.yml  text eol=lf
 *.md   text eol=lf
 *.sh   text eol=lf
+*.slint text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.py    text eol=lf
+*.iss   text eol=lf
+*.txt   text eol=lf
+*.lock  text eol=lf
 packaging/**/fixtures/*.txt text eol=lf
 *.ps1  text eol=crlf

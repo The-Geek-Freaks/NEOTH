@@ -159,11 +159,29 @@ try {
         "RegKeyExists(HKLM, '{#UninstallKey}')",
         'VersionInfoProductVersion={#NumericVersion}',
         'VersionInfoProductTextVersion={#AppVersion}',
-        'VersionInfoTextVersion={#AppVersion}'
+        'VersionInfoTextVersion={#AppVersion}',
+        'Name: "{group}\NEOTH"; Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"',
+        'Name: "{group}\NEOTH CLI"; Filename: "{cmd}"; Parameters: "/D /K ""set NEOTH_INTERFACE=&& ',
+        'Name: "{group}\NEOTH GUI"; Filename: "{app}\neothd-gui.exe"',
+        'Name: "{autodesktop}\NEOTH"; Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"',
+        'Filename: "{app}\neothd-gui.exe"; Parameters: "--product-launcher"; Description: "Launch NEOTH"'
     )) {
         if ($iss.IndexOf($contract, [StringComparison]::Ordinal) -lt 0) {
             Stop-Test "Inno contract is missing: $contract"
         }
+    }
+    foreach ($consoleRoutedGuiContract in @(
+        'Name: "{group}\NEOTH"; Filename: "{app}\neoth.exe"',
+        'Name: "{group}\NEOTH GUI"; Filename: "{app}\neoth.exe"',
+        'Name: "{autodesktop}\NEOTH"; Filename: "{app}\neoth.exe"',
+        'Filename: "{app}\neoth.exe"; Description: "Launch NEOTH"'
+    )) {
+        if ($iss.IndexOf($consoleRoutedGuiContract, [StringComparison]::Ordinal) -ge 0) {
+            Stop-Test "GUI shell entry still routes through the console launcher: $consoleRoutedGuiContract"
+        }
+    }
+    if ($iss -match 'Name: "\{group\}\\NEOTH GUI";[^\r\n]*Parameters: "--product-launcher"') {
+        Stop-Test 'The explicit NEOTH GUI shortcut must force GUI, not product-launcher routing'
     }
     if ($iss.IndexOf("'{#UninstallKey}', 'PathEntryOwned'", [StringComparison]::Ordinal) -ge 0) {
         Stop-Test 'PATH ownership is still tied to the replaceable uninstall key'

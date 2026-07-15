@@ -4,8 +4,11 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::{
     InitArgs, OperatorRole, ProviderKind, WizardState, WizardStep, spawn_daemon_detached,
@@ -354,6 +357,7 @@ pub(crate) fn run_reconfigure_menu(_args: &InitArgs) -> Result<()> {
 ///   - `channels` — sorted, stable list of channel ids configured at
 ///     onboarding (`["telegram"]`, etc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct InitializedMarker {
     pub(crate) wizard_version: u8,
     #[serde(default)]
@@ -367,12 +371,619 @@ pub(crate) struct InitializedMarker {
     pub(crate) provider_kind: Option<ProviderKind>,
     #[serde(default)]
     pub(crate) channels: Vec<String>,
+    /// Present only for a marker committed by the GUI transaction bridge.
+    /// `None` keeps every pre-bridge marker backward compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) gui_transaction_id: Option<String>,
+    /// SHA-256 of the exact `freedom.yaml` bytes validated before the GUI
+    /// marker became visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) config_sha256: Option<String>,
+}
+
+const MAX_INITIALIZED_MARKER_BYTES: u64 = 64 * 1024;
+const MAX_INITIALIZATION_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
+const GUI_INIT_SCHEMA_VERSION: u8 = 1;
+const GUI_INIT_PENDING_DIR: &str = ".gui-init";
+const GUI_INIT_PENDING_FILE: &str = "pending.json";
+const GUI_INIT_LOCK_FILE: &str = ".gui-init.lock";
+const MAX_GUI_INIT_PENDING_BYTES: u64 = 8 * 1024;
+const GUI_INIT_SECRET_HEX_LEN: usize = 64;
+const MAX_GUI_COMPLETION_STDIN_BYTES: u64 = (GUI_INIT_SECRET_HEX_LEN + 2) as u64;
+static GUI_INIT_PROCESS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuiInitPending {
+    schema_version: u8,
+    transaction_id: String,
+    token: String,
+    home: PathBuf,
+    config_path: PathBuf,
+    /// Digest of the marker visible when this transaction began. A matching
+    /// digest is the old generation, not a completion proof.
+    base_marker_sha256: Option<String>,
+    created_unix: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct GuiInitBeginAcknowledgement {
+    pub(crate) schema_version: u8,
+    pub(crate) transaction_id: String,
+    pub(crate) token: String,
+    pub(crate) home: PathBuf,
+    pub(crate) pending_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GuiInitCompletionAcknowledgement {
+    pub(crate) schema_version: u8,
+    pub(crate) completed: bool,
+    pub(crate) ready: bool,
+    pub(crate) transaction_id: String,
+    pub(crate) home: PathBuf,
+    pub(crate) marker_path: PathBuf,
+}
+
+struct InitializedMarkerFile {
+    marker: InitializedMarker,
+    sha256: String,
+}
+
+struct InitializationConfigFile {
+    config: crate::config::FreedomConfig,
+    sha256: String,
+}
+
+/// Canonical launcher/readiness boundary shared by bare CLI dispatch and the
+/// daemon-owned GUI completion command. Missing halves mean onboarding is not
+/// complete. Existing malformed state is never folded into "first run", where
+/// a new wizard could overwrite the evidence.
+pub(crate) fn initialized_home_is_ready(home: &std::path::Path) -> Result<bool> {
+    let metadata = match std::fs::symlink_metadata(home) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", home.display())),
+    };
+    validate_directory_kind(home, &metadata)?;
+    with_gui_init_lock(home, || initialized_home_is_ready_locked(home))
+}
+
+fn initialized_home_is_ready_locked(home: &std::path::Path) -> Result<bool> {
+    let pending = read_gui_init_pending(home)?;
+    let marker = read_initialized_marker(home)?;
+    let config_path = home.join("freedom.yaml");
+    let config = read_initialization_config(&config_path)?;
+
+    if let Some(pending) = pending {
+        let Some(marker) = marker else {
+            if let Some(config) = &config {
+                validated_config_operator(&config.config, &config_path)?;
+            }
+            return Ok(false);
+        };
+        let Some(config) = config else {
+            anyhow::bail!(
+                "{} exists while GUI transaction {} is pending, but {} is missing; finish or restart GUI onboarding",
+                home.join(".initialized").display(),
+                pending.transaction_id,
+                config_path.display()
+            );
+        };
+        validated_config_operator(&config.config, &config_path)?;
+
+        let baseline_marker = pending.base_marker_sha256.as_deref() == Some(marker.sha256.as_str());
+        if baseline_marker {
+            // The old marker may name the previous operator/config while GUI
+            // reconfiguration is preparing the replacement. The current
+            // config is valid, but this generation has not committed yet.
+            return Ok(false);
+        }
+
+        let same_gui_transaction =
+            marker.marker.gui_transaction_id.as_deref() == Some(pending.transaction_id.as_str());
+        validate_marker_config_pair(&marker.marker, &config, home, &config_path)?;
+        let newer_valid_marker = !same_gui_transaction;
+        if same_gui_transaction || newer_valid_marker {
+            cleanup_gui_init_pending_best_effort(home);
+            return Ok(true);
+        }
+
+        // The marker is exactly the baseline generation captured by begin.
+        // It must not make an in-progress reconfiguration look complete.
+        return Ok(false);
+    }
+
+    let (marker, config) = match (marker, config) {
+        (None, None) => return Ok(false),
+        // Legacy GUI onboarding wrote the complete, validated config but no
+        // marker. A canonical operator identity is the minimum completion
+        // proof; a parseable default YAML stub is still incomplete.
+        (None, Some(config)) => {
+            validated_config_operator(&config.config, &config_path)?;
+            return Ok(true);
+        }
+        (Some(_), None) => {
+            anyhow::bail!(
+                "{} declares completed onboarding but {} is missing; run `neoth init --force` to repair the pair",
+                home.join(".initialized").display(),
+                config_path.display()
+            );
+        }
+        (Some(marker), Some(config)) => (marker, config),
+    };
+    validate_marker_config_pair(&marker.marker, &config, home, &config_path)?;
+    Ok(true)
+}
+
+fn validate_marker_config_pair(
+    marker: &InitializedMarker,
+    config: &InitializationConfigFile,
+    home: &Path,
+    config_path: &Path,
+) -> Result<()> {
+    let config_operator = validated_config_operator(&config.config, config_path)?;
+    super::validate_operator_id(marker.operator_id.trim()).with_context(|| {
+        format!(
+            "initialization marker {} has an invalid operator_id",
+            home.join(".initialized").display()
+        )
+    })?;
+    if config_operator != marker.operator_id.trim() {
+        anyhow::bail!(
+            "initialization identity mismatch: {} names `{}` but {} names `{}`; run `neoth init --force` to repair the pair",
+            home.join(".initialized").display(),
+            marker.operator_id,
+            config_path.display(),
+            config_operator
+        );
+    }
+    Ok(())
+}
+
+fn validated_config_operator<'a>(
+    config: &'a crate::config::FreedomConfig,
+    config_path: &std::path::Path,
+) -> Result<&'a str> {
+    let operator = config
+        .operator_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|operator| !operator.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "initialization config {} has no operator_id; run `neoth init --force` to finish onboarding",
+                config_path.display()
+            )
+        })?;
+    super::validate_operator_id(operator).with_context(|| {
+        format!(
+            "initialization config {} has an invalid operator_id",
+            config_path.display()
+        )
+    })?;
+    Ok(operator)
+}
+
+fn read_initialized_marker(home: &std::path::Path) -> Result<Option<InitializedMarkerFile>> {
+    let path = home.join(".initialized");
+    let Some(bytes) = read_bounded_regular_file(&path, MAX_INITIALIZED_MARKER_BYTES)? else {
+        return Ok(None);
+    };
+    let marker: InitializedMarker = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "initialization marker {} is malformed; run `neoth init --force` to repair it",
+            path.display()
+        )
+    })?;
+    validate_initialized_marker(&marker, &path)?;
+    Ok(Some(InitializedMarkerFile {
+        marker,
+        sha256: sha256_hex(&bytes),
+    }))
+}
+
+fn validate_initialized_marker(marker: &InitializedMarker, path: &std::path::Path) -> Result<()> {
+    if !matches!(marker.wizard_version, 1 | 2) {
+        anyhow::bail!(
+            "initialization marker {} uses unsupported wizard_version {}; supported versions are 1 and 2; run `neoth init --force` to repair it",
+            path.display(),
+            marker.wizard_version
+        );
+    }
+    if marker.operator_id.trim().is_empty() {
+        anyhow::bail!(
+            "initialization marker {} has an empty operator_id; run `neoth init --force` to repair it",
+            path.display()
+        );
+    }
+    if marker.steps_completed.is_empty() {
+        anyhow::bail!(
+            "initialization marker {} has no completed wizard steps; run `neoth init --force` to repair it",
+            path.display()
+        );
+    }
+    let mut seen_steps = std::collections::HashSet::new();
+    for &raw in &marker.steps_completed {
+        WizardStep::try_from(raw).with_context(|| {
+            format!(
+                "initialization marker {} contains unknown wizard step {raw}; run `neoth init --force` to repair it",
+                path.display()
+            )
+        })?;
+        seen_steps.insert(raw);
+    }
+    if marker.wizard_version == 1 {
+        if let Some(missing) = (1u8..=7).find(|step| !seen_steps.contains(step)) {
+            anyhow::bail!(
+                "legacy initialization marker {} is missing completed core step {missing}; run `neoth init --force` to finish onboarding",
+                path.display()
+            );
+        }
+    } else if !seen_steps.contains(&u8::from(WizardStep::Summary)) {
+        anyhow::bail!(
+            "initialization marker {} does not include the completed Summary step; run `neoth init --force` to finish onboarding",
+            path.display()
+        );
+    }
+    if marker.init_time_unix == 0 {
+        anyhow::bail!(
+            "initialization marker {} has an invalid zero init_time_unix; run `neoth init --force` to repair it",
+            path.display()
+        );
+    }
+
+    if marker.wizard_version == 2 {
+        if marker.neoth_version.trim().is_empty() {
+            anyhow::bail!(
+                "initialization marker {} has no neoth_version; run `neoth init --force` to repair it",
+                path.display()
+            );
+        }
+        let parsed_time = chrono::DateTime::parse_from_rfc3339(&marker.init_time_iso8601)
+            .with_context(|| {
+                format!(
+                    "initialization marker {} has an invalid init_time_iso8601; run `neoth init --force` to repair it",
+                    path.display()
+                )
+            })?;
+        if parsed_time.timestamp() < 0 || parsed_time.timestamp() as u64 != marker.init_time_unix {
+            anyhow::bail!(
+                "initialization marker {} has disagreeing init timestamps; run `neoth init --force` to repair it",
+                path.display()
+            );
+        }
+        if marker
+            .channels
+            .iter()
+            .any(|channel| channel.trim().is_empty())
+            || marker.channels.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            anyhow::bail!(
+                "initialization marker {} has non-canonical channels; run `neoth init --force` to repair it",
+                path.display()
+            );
+        }
+    }
+    match (&marker.gui_transaction_id, &marker.config_sha256) {
+        (None, None) => {}
+        (Some(transaction_id), Some(config_sha256)) => {
+            require_lower_hex_64(transaction_id, "GUI transaction id")?;
+            require_lower_hex_64(config_sha256, "GUI config SHA-256")?;
+            if marker.wizard_version != 2 {
+                anyhow::bail!(
+                    "initialization marker {} binds a GUI transaction with legacy wizard_version {}; run `neoth init --force` to repair it",
+                    path.display(),
+                    marker.wizard_version
+                );
+            }
+        }
+        _ => {
+            anyhow::bail!(
+                "initialization marker {} has an incomplete GUI transaction binding; run `neoth init --force` to repair it",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn read_initialization_config(path: &Path) -> Result<Option<InitializationConfigFile>> {
+    let Some(bytes) = read_bounded_regular_file(path, MAX_INITIALIZATION_CONFIG_BYTES)
+        .with_context(|| format!("inspect initialization config {}", path.display()))?
+    else {
+        return Ok(None);
+    };
+    let config: crate::config::FreedomConfig = serde_yaml::from_slice(&bytes).with_context(|| {
+        format!(
+            "existing initialization config {} is invalid; run `neoth init --force` to repair it",
+            path.display()
+        )
+    })?;
+    config
+        .companion
+        .validate()
+        .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
+    config
+        .swarm
+        .validate()
+        .map_err(|error| anyhow::anyhow!("invalid swarm config: {error}"))?;
+    config
+        .cluster
+        .validate()
+        .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
+    Ok(Some(InitializationConfigFile {
+        config,
+        sha256: sha256_hex(&bytes),
+    }))
+}
+
+fn read_bounded_regular_file(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        anyhow::bail!("{} must be a regular, non-symlink file", path.display());
+    }
+    if metadata.len() > max_bytes {
+        anyhow::bail!("{} exceeds the {max_bytes}-byte limit", path.display());
+    }
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("open {}", path.display()))?;
+    let mut bytes = Vec::with_capacity(metadata.len().min(max_bytes) as usize);
+    file.take(max_bytes + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", path.display()))?;
+    if bytes.len() as u64 > max_bytes {
+        anyhow::bail!("{} exceeds the {max_bytes}-byte limit", path.display());
+    }
+    Ok(Some(bytes))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+fn require_lower_hex_64(value: &str, field: &str) -> Result<()> {
+    if value.len() != GUI_INIT_SECRET_HEX_LEN
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!("{field} must be exactly 64 lowercase hexadecimal characters");
+    }
+    Ok(())
+}
+
+fn gui_init_pending_dir(home: &Path) -> PathBuf {
+    home.join(GUI_INIT_PENDING_DIR)
+}
+
+fn gui_init_pending_path(home: &Path) -> PathBuf {
+    gui_init_pending_dir(home).join(GUI_INIT_PENDING_FILE)
+}
+
+fn with_gui_init_lock<T>(home: &Path, action: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _process_guard = GUI_INIT_PROCESS_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("GUI initialization process lock is poisoned"))?;
+    let lock_path = home.join(GUI_INIT_LOCK_FILE);
+    let _file_guard =
+        crate::util::locked_file::lock_file_blocking(&lock_path, "GUI initialization transaction")?;
+    action()
+}
+
+fn read_gui_init_pending(home: &Path) -> Result<Option<GuiInitPending>> {
+    let pending_dir = gui_init_pending_dir(home);
+    let metadata = match std::fs::symlink_metadata(&pending_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect {}", pending_dir.display()));
+        }
+    };
+    validate_private_directory_metadata(&pending_dir, &metadata)?;
+
+    let pending_path = gui_init_pending_path(home);
+    let file_metadata = match std::fs::symlink_metadata(&pending_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect {}", pending_path.display()));
+        }
+    };
+    validate_private_file_metadata(&pending_path, &file_metadata)?;
+    let bytes = read_bounded_regular_file(&pending_path, MAX_GUI_INIT_PENDING_BYTES)?
+        .ok_or_else(|| anyhow::anyhow!("GUI Pending-State disappeared while it was read"))?;
+    let pending: GuiInitPending = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "GUI Pending-State {} is malformed; restart GUI onboarding after preserving it for diagnosis",
+            pending_path.display()
+        )
+    })?;
+    validate_gui_init_pending(&pending, home, &pending_path)?;
+    Ok(Some(pending))
+}
+
+fn validate_gui_init_pending(pending: &GuiInitPending, home: &Path, path: &Path) -> Result<()> {
+    if pending.schema_version != GUI_INIT_SCHEMA_VERSION {
+        anyhow::bail!(
+            "GUI Pending-State {} uses unsupported schema_version {}",
+            path.display(),
+            pending.schema_version
+        );
+    }
+    require_lower_hex_64(&pending.transaction_id, "GUI transaction id")?;
+    require_lower_hex_64(&pending.token, "GUI completion token")?;
+    if let Some(base_marker_sha256) = &pending.base_marker_sha256 {
+        require_lower_hex_64(base_marker_sha256, "GUI baseline marker SHA-256")?;
+    }
+    if pending.created_unix == 0 {
+        anyhow::bail!(
+            "GUI Pending-State {} has an invalid timestamp",
+            path.display()
+        );
+    }
+
+    let canonical_home = std::fs::canonicalize(home)
+        .with_context(|| format!("canonicalize GUI initialization home {}", home.display()))?;
+    let expected_config = canonical_home.join("freedom.yaml");
+    if pending.home != canonical_home || pending.config_path != expected_config {
+        anyhow::bail!(
+            "GUI Pending-State {} is bound to a different home/config; preserve it and restart onboarding from {}",
+            path.display(),
+            canonical_home.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_private_directory_metadata(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
+    validate_directory_kind(path, metadata)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o777 != 0o700 {
+            anyhow::bail!("{} must have mode 0700", path.display());
+        }
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::verify_private_directory_dacl(path)
+        .with_context(|| format!("verify private DACL on {}", path.display()))?;
+    Ok(())
+}
+
+fn validate_directory_kind(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
+    let mut is_link_or_reparse = metadata.file_type().is_symlink();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        is_link_or_reparse |= metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0;
+    }
+    if is_link_or_reparse || !metadata.is_dir() {
+        anyhow::bail!(
+            "{} must be a private, non-symlink directory",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_private_file_metadata(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        anyhow::bail!("{} must be a private, non-symlink file", path.display());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            anyhow::bail!("{} must have mode 0600", path.display());
+        }
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::verify_private_dacl(path)
+        .with_context(|| format!("verify private DACL on {}", path.display()))?;
+    Ok(())
+}
+
+fn gui_begin_ack(pending: &GuiInitPending) -> GuiInitBeginAcknowledgement {
+    GuiInitBeginAcknowledgement {
+        schema_version: GUI_INIT_SCHEMA_VERSION,
+        transaction_id: pending.transaction_id.clone(),
+        token: pending.token.clone(),
+        home: pending.home.clone(),
+        pending_path: gui_init_pending_path(&pending.home),
+    }
+}
+
+pub(crate) fn parse_gui_completion_token(input: &str) -> Result<&str> {
+    let token = input
+        .strip_suffix("\r\n")
+        .or_else(|| input.strip_suffix('\n'))
+        .unwrap_or(input);
+    require_lower_hex_64(token, "GUI completion token")?;
+    Ok(token)
+}
+
+pub(crate) fn read_gui_completion_token_from_stdin() -> Result<String> {
+    let mut input = String::new();
+    std::io::stdin()
+        .lock()
+        .take(MAX_GUI_COMPLETION_STDIN_BYTES + 1)
+        .read_to_string(&mut input)
+        .context("read bounded GUI completion token from stdin")?;
+    if input.len() as u64 > MAX_GUI_COMPLETION_STDIN_BYTES {
+        anyhow::bail!("GUI completion token input exceeds the bounded stdin contract");
+    }
+    Ok(parse_gui_completion_token(&input)?.to_string())
+}
+
+fn cleanup_gui_init_pending_best_effort(home: &Path) {
+    let pending_path = gui_init_pending_path(home);
+    if let Err(error) = std::fs::remove_file(&pending_path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            warn!(
+                %error,
+                path = %pending_path.display(),
+                "GUI initialization committed; stale Pending-State cleanup will be retried"
+            );
+        }
+    }
+    let pending_dir = gui_init_pending_dir(home);
+    if let Err(error) = std::fs::remove_dir(&pending_dir) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            warn!(
+                %error,
+                path = %pending_dir.display(),
+                "GUI initialization committed; Pending-State directory cleanup was best-effort"
+            );
+        }
+    }
 }
 
 pub(crate) fn ensure_dir_secure(dir: &std::path::Path) -> Result<()> {
-    if !dir.exists() {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("create_dir_all {}", dir.display()))?;
+    match std::fs::symlink_metadata(dir) {
+        Ok(metadata) => validate_directory_kind(dir, &metadata)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) = dir.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("create parent directory {}", parent.display()))?;
+            }
+            #[cfg(unix)]
+            let builder = {
+                use std::os::unix::fs::DirBuilderExt;
+                let mut builder = std::fs::DirBuilder::new();
+                builder.mode(0o700);
+                builder
+            };
+            #[cfg(not(unix))]
+            let builder = std::fs::DirBuilder::new();
+            if let Err(error) = builder.create(dir) {
+                if error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(error)
+                        .with_context(|| format!("create private directory {}", dir.display()));
+                }
+            }
+            let metadata = std::fs::symlink_metadata(dir)
+                .with_context(|| format!("inspect created directory {}", dir.display()))?;
+            validate_directory_kind(dir, &metadata)?;
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect directory {}", dir.display()));
+        }
     }
     #[cfg(unix)]
     {
@@ -381,69 +992,238 @@ pub(crate) fn ensure_dir_secure(dir: &std::path::Path) -> Result<()> {
         std::fs::set_permissions(dir, perms)
             .with_context(|| format!("chmod 0700 {}", dir.display()))?;
     }
+    #[cfg(windows)]
+    crate::wal::win_native::set_private_current_user_directory_dacl(dir)
+        .with_context(|| format!("set private DACL on {}", dir.display()))?;
+    let metadata = std::fs::symlink_metadata(dir)
+        .with_context(|| format!("verify private directory {}", dir.display()))?;
+    validate_private_directory_metadata(dir, &metadata)?;
     Ok(())
 }
 
-/// Open a file for exclusive create with mode 0600 (unix).
-/// Windows: parent DACL inherited; warning emitted at daemon startup.
+/// Open a file for exclusive create with mode 0600/current-user-only DACL
+/// before the caller can write any bytes.
 pub(crate) fn open_for_create_secure(path: &std::path::Path) -> Result<std::fs::File> {
-    let mut opts = std::fs::OpenOptions::new();
-    opts.create_new(true).write(true);
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
+        return crate::wal::win_native::create_private_file_new(path)
+            .with_context(|| format!("secure create {}", path.display()));
     }
-    opts.open(path)
-        .with_context(|| format!("open_for_create {}", path.display()))
+
+    #[cfg(not(windows))]
+    {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let file = opts
+            .open(path)
+            .with_context(|| format!("open_for_create {}", path.display()))?;
+        Ok(file)
+    }
 }
 
-/// Atomic write: `target.tmp` → fsync → rename → parent dir fsync (unix).
-/// On `--force` paths, the caller is responsible for removing existing `target`
-/// before invoking (we accept a target that already exists by removing it).
-pub(crate) fn write_atomically(target: &std::path::Path, contents: &[u8]) -> Result<()> {
-    use std::io::Write;
+fn private_temp_sibling(target: &Path) -> Result<PathBuf> {
+    let mut random = [0u8; 16];
+    getrandom::getrandom(&mut random)
+        .map_err(|error| anyhow::anyhow!("OS RNG unavailable for private temp name: {error}"))?;
+    let mut name = target
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_default();
+    name.push(format!(".{}.tmp", hex::encode(random)));
+    Ok(target.with_file_name(name))
+}
 
-    let tmp = target.with_extension("tmp");
-    if tmp.exists() {
-        std::fs::remove_file(&tmp).ok();
-    }
+struct PrivateStage {
+    path: Option<PathBuf>,
+    file: Option<std::fs::File>,
+}
 
-    {
-        let mut f = open_for_create_secure(&tmp)?;
-        f.write_all(contents)?;
-        f.sync_all()?;
-    }
-
-    if target.exists() {
-        std::fs::remove_file(target).with_context(|| {
-            format!("remove existing target {} before rename", target.display())
-        })?;
-    }
-    std::fs::rename(&tmp, target)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
-
-    // Durable rename on unix: fsync the parent directory.
-    // Windows: rename is durable via NTFS metadata journal; no portable
-    // equivalent of dir-fsync, so we skip.
-    #[cfg(unix)]
-    {
-        if let Some(parent) = target.parent() {
-            if parent.exists() {
-                let dir = std::fs::File::open(parent)?;
-                dir.sync_all().ok();
-            }
+impl PrivateStage {
+    fn new(path: PathBuf, file: std::fs::File) -> Self {
+        Self {
+            path: Some(path),
+            file: Some(file),
         }
     }
 
-    // Windows: restrict DACL to current user. Logs warning on failure, never
-    // fails the write (degrades to "file inherits parent DACL").
-    #[cfg(windows)]
-    {
-        let _ = crate::wal::win_acl::restrict_to_owner(target);
+    fn path(&self) -> &Path {
+        self.path.as_deref().expect("private stage path is present")
     }
 
+    fn file(&self) -> &std::fs::File {
+        self.file.as_ref().expect("private stage file is present")
+    }
+
+    fn file_mut(&mut self) -> &mut std::fs::File {
+        self.file.as_mut().expect("private stage file is present")
+    }
+
+    fn disarm_after_rename(mut self) {
+        self.path = None;
+    }
+
+    #[cfg(not(windows))]
+    fn remove_after_link(mut self) -> std::io::Result<()> {
+        drop(self.file.take());
+        let path = self.path.take().expect("private stage path is present");
+        std::fs::remove_file(path)
+    }
+}
+
+impl Drop for PrivateStage {
+    fn drop(&mut self) {
+        // The Windows primitive denies delete sharing. Close the exact handle
+        // before removing an unpublished stage on every error/panic path.
+        drop(self.file.take());
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn stage_private_file(target: &Path, bytes: &[u8]) -> Result<PrivateStage> {
+    let temp = private_temp_sibling(target)?;
+    let file = open_for_create_secure(&temp)?;
+    let mut stage = PrivateStage::new(temp, file);
+    let display = stage.path().display().to_string();
+    stage
+        .file_mut()
+        .write_all(bytes)
+        .with_context(|| format!("write private stage {display}"))?;
+    stage
+        .file_mut()
+        .flush()
+        .with_context(|| format!("flush private stage {display}"))?;
+    stage
+        .file_mut()
+        .sync_all()
+        .with_context(|| format!("fsync private stage {display}"))?;
+    #[cfg(windows)]
+    crate::wal::win_native::verify_private_file_handle(stage.file())
+        .with_context(|| format!("verify private stage {display}"))?;
+    #[cfg(not(windows))]
+    {
+        let metadata = std::fs::symlink_metadata(stage.path())
+            .with_context(|| format!("verify private stage {display}"))?;
+        validate_private_file_metadata(stage.path(), &metadata)?;
+    }
+    Ok(stage)
+}
+
+/// Publish a fully prepared private file only if the target is still absent.
+/// A hard link is the single visibility point; after it succeeds every
+/// remaining operation is warning-only so success cannot be rolled back by
+/// temp cleanup or directory fsync.
+fn publish_private_create_new(target: &Path, bytes: &[u8]) -> Result<bool> {
+    let stage = stage_private_file(target, bytes)?;
+    #[cfg(windows)]
+    {
+        match crate::wal::win_native::create_private_file_handle(stage.file(), target) {
+            Ok(()) => {
+                stage.disarm_after_rename();
+                sync_parent_best_effort(target);
+                return Ok(true);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                drop(stage);
+                return Ok(false);
+            }
+            Err(error) => {
+                drop(stage);
+                return Err(error).with_context(|| {
+                    format!(
+                        "publish private state {} with create-if-absent semantics",
+                        target.display()
+                    )
+                });
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    match std::fs::hard_link(stage.path(), target) {
+        Ok(()) => {
+            let temp = stage.path().to_path_buf();
+            if let Err(error) = stage.remove_after_link() {
+                warn!(
+                    %error,
+                    path = %temp.display(),
+                    "private state is visible; staged hard-link cleanup was best-effort"
+                );
+            }
+            sync_parent_best_effort(target);
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            drop(stage);
+            Ok(false)
+        }
+        Err(error) => {
+            drop(stage);
+            Err(error).with_context(|| {
+                format!(
+                    "publish private state {} with create-if-absent semantics",
+                    target.display()
+                )
+            })
+        }
+    }
+}
+
+/// Atomically replace the target with a fully prepared private file. The
+/// rename is the marker commit point. Nothing after a successful rename can
+/// turn the externally visible success into an error.
+fn publish_private_replace_commit(target: &Path, bytes: &[u8]) -> Result<()> {
+    let stage = stage_private_file(target, bytes)?;
+    if let Err(error) = replace_file_commit(&stage, target) {
+        drop(stage);
+        return Err(error)
+            .with_context(|| format!("publish committed marker {}", target.display()));
+    }
+    stage.disarm_after_rename();
+    sync_parent_best_effort(target);
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_file_commit(stage: &PrivateStage, target: &Path) -> std::io::Result<()> {
+    std::fs::rename(stage.path(), target)
+}
+
+#[cfg(windows)]
+fn replace_file_commit(stage: &PrivateStage, target: &Path) -> std::io::Result<()> {
+    crate::wal::win_native::replace_private_file_handle(stage.file(), target)
+}
+
+fn sync_parent_best_effort(target: &Path) {
+    #[cfg(unix)]
+    if let Some(parent) = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        if let Err(error) = std::fs::File::open(parent).and_then(|dir| dir.sync_all()) {
+            warn!(
+                %error,
+                path = %parent.display(),
+                "visible private-state directory fsync was best-effort"
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = target;
+}
+
+/// Atomic private write: stage under the final file's directory, fsync, replace
+/// in one operation, then fsync the parent on Unix. The staged file receives
+/// its private ACL/mode before the first byte; replacing it preserves that
+/// protection without a remove-before-rename visibility gap.
+pub(crate) fn write_atomically(target: &std::path::Path, contents: &[u8]) -> Result<()> {
+    publish_private_replace_commit(target, contents)
+        .with_context(|| format!("atomically replace private file {}", target.display()))
 }
 
 /// A3-tail: emit a `ConfigWrite` PRE_MUTATION_SNAPSHOT for the prior
@@ -752,19 +1532,216 @@ pub(crate) fn write_initialized_marker(
         wizard_version: 2, // F-22: bumped to 2 after extending the schema
         neoth_version: env!("CARGO_PKG_VERSION").to_string(),
         operator_id: state.operator_id.clone().unwrap_or_default(),
-        steps_completed: state.steps_completed.clone(),
+        steps_completed: {
+            let mut seen = std::collections::HashSet::new();
+            state
+                .steps_completed
+                .iter()
+                .copied()
+                .filter(|step| seen.insert(*step))
+                .collect()
+        },
         init_time_unix: now,
         init_time_iso8601: format_iso8601(now),
         provider_kind: state.provider_kind,
         channels: configured_channels(state),
+        gui_transaction_id: None,
+        config_sha256: None,
     };
 
+    write_initialized_marker_value(neoth_dir, &marker).map(|_| ())
+}
+
+fn write_initialized_marker_value(
+    neoth_dir: &std::path::Path,
+    marker: &InitializedMarker,
+) -> Result<std::path::PathBuf> {
+    ensure_dir_secure(neoth_dir)?;
     let path = neoth_dir.join(".initialized");
     let json =
         serde_json::to_string_pretty(&marker).context("serialize InitializedMarker as JSON")?;
-    write_atomically(&path, json.as_bytes())?;
+    with_gui_init_lock(neoth_dir, || {
+        publish_private_replace_commit(&path, json.as_bytes())?;
+        cleanup_gui_init_pending_best_effort(neoth_dir);
+        Ok(())
+    })?;
     info!(path = %path.display(), "init marker written (mode 0600 on unix)");
-    Ok(())
+    Ok(path)
+}
+
+/// Create or resume the one authoritative GUI initialization transaction for
+/// this home. The token exists only in this private record and the JSON ack.
+pub(crate) fn begin_initialized_home_from_gui(
+    neoth_dir: &std::path::Path,
+) -> Result<GuiInitBeginAcknowledgement> {
+    ensure_dir_secure(neoth_dir)?;
+    let canonical_home = std::fs::canonicalize(neoth_dir).with_context(|| {
+        format!(
+            "canonicalize GUI initialization home {}",
+            neoth_dir.display()
+        )
+    })?;
+    with_gui_init_lock(&canonical_home, || {
+        if let Some(pending) = read_gui_init_pending(&canonical_home)? {
+            return Ok(gui_begin_ack(&pending));
+        }
+
+        let base_marker_sha256 = read_initialized_marker(&canonical_home)?.map(|file| file.sha256);
+        let pending_dir = gui_init_pending_dir(&canonical_home);
+        ensure_dir_secure(&pending_dir)?;
+
+        let now = crate::time::now_unix_secs();
+        if now == 0 {
+            anyhow::bail!("system clock cannot produce a valid GUI transaction timestamp");
+        }
+        let mut transaction_id = [0u8; 32];
+        let mut token = [0u8; 32];
+        getrandom::getrandom(&mut transaction_id).map_err(|error| {
+            anyhow::anyhow!("OS RNG unavailable for GUI transaction id: {error}")
+        })?;
+        getrandom::getrandom(&mut token).map_err(|error| {
+            anyhow::anyhow!("OS RNG unavailable for GUI completion token: {error}")
+        })?;
+        let pending = GuiInitPending {
+            schema_version: GUI_INIT_SCHEMA_VERSION,
+            transaction_id: hex::encode(transaction_id),
+            token: hex::encode(token),
+            home: canonical_home.clone(),
+            config_path: canonical_home.join("freedom.yaml"),
+            base_marker_sha256,
+            created_unix: now,
+        };
+        let bytes = serde_json::to_vec(&pending).context("serialize GUI Pending-State")?;
+        if bytes.len() as u64 > MAX_GUI_INIT_PENDING_BYTES {
+            anyhow::bail!("serialized GUI Pending-State exceeds its bounded record contract");
+        }
+        let pending_path = gui_init_pending_path(&canonical_home);
+        if publish_private_create_new(&pending_path, &bytes)? {
+            return Ok(gui_begin_ack(&pending));
+        }
+
+        let winner = read_gui_init_pending(&canonical_home)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "GUI Pending-State publication raced but no authoritative record remained"
+            )
+        })?;
+        Ok(gui_begin_ack(&winner))
+    })
+}
+
+/// Finish GUI onboarding through the daemon-owned marker contract. The GUI is
+/// allowed to prepare freedom/credentials only; it cannot claim completion.
+pub(crate) fn complete_initialized_home_from_gui(
+    neoth_dir: &std::path::Path,
+    provided_token: &str,
+) -> Result<GuiInitCompletionAcknowledgement> {
+    require_lower_hex_64(provided_token, "GUI completion token")?;
+    ensure_dir_secure(neoth_dir)?;
+    let canonical_home = std::fs::canonicalize(neoth_dir).with_context(|| {
+        format!(
+            "canonicalize GUI initialization home {}",
+            neoth_dir.display()
+        )
+    })?;
+    with_gui_init_lock(&canonical_home, || {
+        let pending = read_gui_init_pending(&canonical_home)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no GUI Pending-State exists for {}; run `neoth init --begin-from-gui` first",
+                canonical_home.display()
+            )
+        })?;
+        if !crate::n8n_api::constant_time_token_eq(provided_token, &pending.token) {
+            anyhow::bail!("GUI completion token does not authorize the active transaction");
+        }
+
+        let freedom_path = pending.config_path.clone();
+        let config = read_initialization_config(&freedom_path)?.ok_or_else(|| {
+            anyhow::anyhow!("GUI configuration {} is missing", freedom_path.display())
+        })?;
+        // The exact public bytes above own the transaction hash. Load the
+        // effective view as well so split credentials contribute truthful
+        // non-secret marker metadata (currently the Telegram channel bit).
+        let effective_config = crate::config::FreedomConfig::load_from_path(&freedom_path)
+            .with_context(|| format!("load effective GUI config {}", freedom_path.display()))?;
+        let operator_id = config
+            .config
+            .operator_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("GUI configuration has no operator_id"))?;
+        super::validate_operator_id(operator_id).context("validate GUI operator_id")?;
+
+        let now = crate::time::now_unix_secs();
+        if now == 0 {
+            anyhow::bail!("system clock cannot produce a valid initialization timestamp");
+        }
+        let mut channels = Vec::new();
+        if effective_config.telegram_token.is_some() {
+            channels.push("telegram".to_string());
+        }
+        let marker = InitializedMarker {
+            wizard_version: 2,
+            neoth_version: env!("CARGO_PKG_VERSION").to_string(),
+            operator_id: operator_id.to_string(),
+            steps_completed: [
+                WizardStep::License,
+                WizardStep::OperatorId,
+                WizardStep::Provider,
+                WizardStep::Channel,
+                WizardStep::Autonomy,
+                WizardStep::Summary,
+            ]
+            .map(u8::from)
+            .to_vec(),
+            init_time_unix: now,
+            init_time_iso8601: format_iso8601(now),
+            provider_kind: config.config.provider_kind,
+            channels,
+            gui_transaction_id: Some(pending.transaction_id.clone()),
+            config_sha256: Some(config.sha256.clone()),
+        };
+        let marker_path = canonical_home.join(".initialized");
+        validate_initialized_marker(&marker, &marker_path)?;
+
+        if let Some(existing) = read_initialized_marker(&canonical_home)? {
+            if existing.marker.gui_transaction_id.as_deref()
+                == Some(pending.transaction_id.as_str())
+            {
+                validate_marker_config_pair(
+                    &existing.marker,
+                    &config,
+                    &canonical_home,
+                    &freedom_path,
+                )?;
+                cleanup_gui_init_pending_best_effort(&canonical_home);
+                return Ok(GuiInitCompletionAcknowledgement {
+                    schema_version: GUI_INIT_SCHEMA_VERSION,
+                    completed: true,
+                    ready: true,
+                    transaction_id: pending.transaction_id,
+                    home: canonical_home.clone(),
+                    marker_path,
+                });
+            }
+        }
+
+        let marker_bytes =
+            serde_json::to_vec_pretty(&marker).context("serialize GUI initialization marker")?;
+        publish_private_replace_commit(&marker_path, &marker_bytes)?;
+
+        // Marker visibility is the irreversible commit point. Cleanup is
+        // deliberately warning-only and no readiness postcheck is permitted.
+        cleanup_gui_init_pending_best_effort(&canonical_home);
+        Ok(GuiInitCompletionAcknowledgement {
+            schema_version: GUI_INIT_SCHEMA_VERSION,
+            completed: true,
+            ready: true,
+            transaction_id: pending.transaction_id,
+            home: canonical_home.clone(),
+            marker_path,
+        })
+    })
 }
 
 /// Format a UTC epoch-seconds value as ISO-8601 / RFC 3339 with `Z`

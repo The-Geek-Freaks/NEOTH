@@ -10,16 +10,22 @@ The CLI is the operator cockpit for NEOTH. GUI users can ignore most of this; pr
 ## First run
 
 ```bash
-neoth init
+neoth
+neoth init --cli
 neoth gui
+neoth interface show
+neoth interface set gui
+neoth interface set cli
 neoth doctor
 neoth status
 ```
 
 | Command | Purpose |
 | :-- | :-- |
-| `neoth init` | Run CLI onboarding wizard. |
+| `neoth` | First launch: choose GUI or CLI once; later launches open the persisted surface. Headless sessions use CLI without a popup. |
+| `neoth init --cli` | Run CLI onboarding explicitly. |
 | `neoth gui` | Start the GUI wizard/chat/control surface. |
+| `neoth interface show/set` | Inspect or switch the instance-wide default surface. |
 | `neoth doctor` | Diagnose setup, providers, channels, local models, WAL, policy. |
 | `neoth status` | Show daemon, memory, provider, channel, cluster, and model status. |
 

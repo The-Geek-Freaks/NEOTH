@@ -1440,10 +1440,6 @@ impl FreedomConfig {
         let body = self.public_yaml()?;
         crate::util::atomic_write::atomic_write_private(path, body.as_bytes())
             .with_context(|| format!("atomically write {}", path.display()))?;
-        #[cfg(windows)]
-        {
-            let _ = crate::wal::win_acl::restrict_to_owner(path);
-        }
         Ok(())
     }
 

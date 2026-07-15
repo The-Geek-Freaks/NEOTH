@@ -208,11 +208,42 @@ pub struct InitArgs {
     pub non_interactive: bool,
 
     /// Skip the GUI/CLI mode-selection prompt and hand off to the GUI
-    /// surface. The CLI wizard prints launch instructions for
-    /// `neothd-gui` and exits — the GUI binary owns its own
-    /// onboarding flow with the same freedom.yaml backing.
+    /// surface. The CLI launches the packaged GUI sibling and waits for its
+    /// bounded Ready acknowledgement; the GUI owns its onboarding flow with
+    /// the same freedom.yaml backing.
     #[arg(long)]
     pub gui: bool,
+
+    /// Internal GUI-to-daemon transaction start. Creates or resumes one
+    /// private, home-bound Pending-State and prints its JSON acknowledgement.
+    #[arg(
+        long = "begin-from-gui",
+        hide = true,
+        exclusive = true,
+        conflicts_with_all = ["complete_from_gui", "check_completion_from_gui"]
+    )]
+    pub begin_from_gui: bool,
+
+    /// Internal GUI-to-daemon completion bridge. The GUI prepares its config;
+    /// this command reads the opaque transaction token from stdin, validates
+    /// the exact config and owns the canonical marker commit.
+    #[arg(
+        long = "complete-from-gui",
+        hide = true,
+        exclusive = true,
+        conflicts_with_all = ["begin_from_gui", "check_completion_from_gui"]
+    )]
+    pub complete_from_gui: bool,
+
+    /// Internal read-only companion to `--complete-from-gui` so the GUI uses
+    /// the same strict readiness validator as the bare launcher.
+    #[arg(
+        long = "check-completion-from-gui",
+        hide = true,
+        exclusive = true,
+        conflicts_with_all = ["begin_from_gui", "complete_from_gui"]
+    )]
+    pub check_completion_from_gui: bool,
 
     /// Skip the GUI/CLI mode-selection prompt and stay in the
     /// terminal wizard. Useful for scripted bring-up that pipes

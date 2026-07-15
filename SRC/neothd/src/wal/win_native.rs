@@ -18,30 +18,38 @@
 
 use std::fs::File;
 use std::io;
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::Path;
 
 use tracing::warn;
 
 // ── E-11 imports ───────────────────────────────────────────────────────────
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, GetLastError, HANDLE, HLOCAL, LocalFree,
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS,
+    GetLastError, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
 };
 use windows_sys::Win32::Security::Authorization::{
-    EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT,
-    SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_NAME, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
-    TRUSTEE_W,
+    EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, GetSecurityInfo, NO_MULTIPLE_TRUSTEE,
+    SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_NAME, TRUSTEE_IS_SID,
+    TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-    EqualSid, GetAce, GetAclInformation, GetLengthSid, GetSecurityDescriptorControl,
-    GetTokenInformation, INHERITED_ACE, IsValidSid, NO_INHERITANCE,
-    PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, CONTAINER_INHERIT_ACE,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetLengthSid,
+    GetSecurityDescriptorControl, GetTokenInformation, INHERITED_ACE, InitializeSecurityDescriptor,
+    IsValidSid, NO_INHERITANCE, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
+    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl,
+    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 // ── E-12 import ────────────────────────────────────────────────────────────
-use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FlushFileBuffers};
+use windows_sys::Win32::Storage::FileSystem::{
+    CREATE_NEW, CreateFileW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ,
+    FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfoEx, FlushFileBuffers,
+    SetFileInformationByHandle,
+};
 
 // ───────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -50,6 +58,19 @@ use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FlushFileBuffers}
 /// Encode a Rust `&str` as a null-terminated UTF-16 `Vec<u16>` for Win32.
 fn to_wide_nul(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0u16)).collect()
+}
+
+/// Encode a Windows path losslessly as a null-terminated UTF-16 string.
+fn path_to_wide_nul(path: &Path) -> io::Result<Vec<u16>> {
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if wide.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Windows path contains an interior NUL",
+        ));
+    }
+    wide.push(0);
+    Ok(wide)
 }
 
 /// Convert a Win32 error code to an `io::Error`.
@@ -103,8 +124,34 @@ pub fn set_owner_dacl(path: &Path, account: &str) -> io::Result<()> {
 /// written, so a permissive parent-directory ACL can never leak those bytes.
 pub fn set_private_current_user_dacl(path: &Path) -> io::Result<()> {
     let sid = current_process_token_sid()?;
-    set_trustee_dacl(path, sid.as_ptr() as *mut u16, TRUSTEE_IS_SID, true)?;
-    verify_private_dacl_for_sid(path, &sid)
+    set_trustee_dacl(
+        path,
+        sid.as_ptr() as *mut u16,
+        TRUSTEE_IS_SID,
+        NO_INHERITANCE,
+        true,
+    )?;
+    verify_private_dacl_for_sid(path, &sid, NO_INHERITANCE as u8)
+}
+
+/// Replace a directory DACL with one protected TokenUser Full Control ACE
+/// inherited by both child files and child directories.
+///
+/// This is intentionally separate from [`set_private_current_user_dacl`]: a
+/// private file must not carry inheritable ACE flags, while a private
+/// directory must protect children during their own creation, before a caller
+/// can apply a more specific descriptor to them.
+pub fn set_private_current_user_directory_dacl(path: &Path) -> io::Result<()> {
+    let sid = current_process_token_sid()?;
+    let inheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+    set_trustee_dacl(
+        path,
+        sid.as_ptr() as *mut u16,
+        TRUSTEE_IS_SID,
+        inheritance,
+        true,
+    )?;
+    verify_private_dacl_for_sid(path, &sid, inheritance as u8)
 }
 
 fn set_owner_dacl_impl(path: &Path, account: &str, protected: bool) -> io::Result<()> {
@@ -113,6 +160,7 @@ fn set_owner_dacl_impl(path: &Path, account: &str, protected: bool) -> io::Resul
         path,
         account_w.as_ptr() as *mut u16,
         TRUSTEE_IS_NAME,
+        NO_INHERITANCE,
         protected,
     )
 }
@@ -121,10 +169,63 @@ fn set_trustee_dacl(
     path: &Path,
     trustee: *mut u16,
     trustee_form: i32,
+    inheritance: u32,
     protected: bool,
 ) -> io::Result<()> {
-    let path_w = to_wide_nul(&path.to_string_lossy());
+    let path_w = path_to_wide_nul(path)?;
+    let new_acl = single_trustee_acl(trustee, trustee_form, inheritance)?;
 
+    // Apply the new DACL to the named file.
+    //
+    // Security flags: we set only the DACL. Private state additionally marks
+    // the DACL protected, which prevents parent-directory ACE inheritance.
+    //
+    // SAFETY:
+    //  - `path_w.as_ptr()` is a valid non-null, null-terminated UTF-16
+    //    string; it outlives this call.
+    //  - `SE_FILE_OBJECT` is the correct object type for file system paths.
+    //  - `psidowner` / `psidgroup` / `psacl` are null — Win32 interprets
+    //    null pointer arguments as "do not change this field" when the
+    //    corresponding `SECURITY_INFORMATION` bit is not set.
+    //  - `new_acl` owns the valid ACL returned by `SetEntriesInAclW` and
+    //    remains live until after Win32 has copied it into the descriptor.
+    let rc = unsafe {
+        SetNamedSecurityInfoW(
+            path_w.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION
+                | if protected {
+                    PROTECTED_DACL_SECURITY_INFORMATION
+                } else {
+                    0
+                },
+            std::ptr::null_mut(), // psidowner — unchanged
+            std::ptr::null_mut(), // psidgroup — unchanged
+            new_acl.0,
+            std::ptr::null_mut(), // psacl — unchanged
+        )
+    };
+
+    map_win32(rc, "SetNamedSecurityInfoW")
+}
+
+struct OwnedLocalAcl(*mut ACL);
+
+impl Drop for OwnedLocalAcl {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: `SetEntriesInAclW` returned this LocalAlloc-owned ACL.
+            // The guard is its sole owner and releases it exactly once.
+            unsafe { LocalFree(self.0 as HLOCAL) };
+        }
+    }
+}
+
+fn single_trustee_acl(
+    trustee: *mut u16,
+    trustee_form: i32,
+    inheritance: u32,
+) -> io::Result<OwnedLocalAcl> {
     // Build one EXPLICIT_ACCESS_W entry for the named account with
     // Full Control. We initialise the struct to zero first (all-integer
     // POD fields), then fill in the fields by hand to match the
@@ -140,10 +241,7 @@ fn set_trustee_dacl(
     // GENERIC_ALL — grants all access including read, write, execute, delete.
     ea.grfAccessPermissions = 0x1000_0000u32;
     ea.grfAccessMode = GRANT_ACCESS;
-    // NO_INHERITANCE (0): this ACE applies to the named file only, not
-    // inherited by child objects (files don't have children, but explicit is
-    // better than implicit).
-    ea.grfInheritance = NO_INHERITANCE;
+    ea.grfInheritance = inheritance;
 
     // Initialise the TRUSTEE_W in-place.
     //
@@ -171,69 +269,242 @@ fn set_trustee_dacl(
     //    lifetime covers this call.
     //  - `oldacl` is null — we are constructing a fresh ACL, not merging.
     //  - `&mut new_acl` is a valid out-pointer; Win32 fills it with a
-    //    heap-allocated ACL (`LocalAlloc`'d, released by `LocalFree`). We pass
-    //    it to `SetNamedSecurityInfoW`, which deep-copies the ACL into the
-    //    file's security descriptor, then free `new_acl` with `LocalFree`
-    //    after that call returns (SC-08a — see the free site below). On a
-    //    `SetEntriesInAclW` failure `new_acl` stays null and the `?` below
-    //    returns early, so the error path allocates nothing to leak.
+    //    heap-allocated ACL (`LocalAlloc`'d, released by `OwnedLocalAcl` on
+    //    both success and defensive non-null failure paths).
     let rc = unsafe { SetEntriesInAclW(1, &ea, std::ptr::null(), &mut new_acl) };
 
+    // Guard even a defensive non-null failure output before propagating the
+    // Win32 status, so every LocalAlloc-owned return is released exactly once.
+    let new_acl = OwnedLocalAcl(new_acl);
     map_win32(rc, "SetEntriesInAclW")?;
+    if new_acl.0.is_null() {
+        return Err(io::Error::other(
+            "SetEntriesInAclW succeeded with a null ACL",
+        ));
+    }
+    Ok(new_acl)
+}
 
-    // Apply the new DACL to the named file.
-    //
-    // Security flags: we set only the DACL. Private state additionally marks
-    // the DACL protected, which prevents parent-directory ACE inheritance.
-    //
-    // SAFETY:
-    //  - `path_w.as_ptr()` is a valid non-null, null-terminated UTF-16
-    //    string; it outlives this call.
-    //  - `SE_FILE_OBJECT` is the correct object type for file system paths.
-    //  - `psidowner` / `psidgroup` / `psacl` are null — Win32 interprets
-    //    null pointer arguments as "do not change this field" when the
-    //    corresponding `SECURITY_INFORMATION` bit is not set.
-    //  - `new_acl` was produced by a successful `SetEntriesInAclW` and is
-    //    a valid, non-null `*mut ACL`.
-    let rc = unsafe {
-        SetNamedSecurityInfoW(
-            path_w.as_ptr(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION
-                | if protected {
-                    PROTECTED_DACL_SECURITY_INFORMATION
-                } else {
-                    0
-                },
-            std::ptr::null_mut(), // psidowner — unchanged
-            std::ptr::null_mut(), // psidgroup — unchanged
-            new_acl,
-            std::ptr::null_mut(), // psacl — unchanged
-        )
-    };
+/// Atomically create a new private file for the current process TokenUser.
+///
+/// The protected, single-SID DACL is supplied to `CreateFileW` through
+/// `SECURITY_ATTRIBUTES`, so the file never exists with an inherited or token
+/// default DACL. The returned [`File`] owns the exact handle created by that
+/// call. Read, write, and delete sharing are all disabled for its lifetime.
+///
+/// The descriptor is verified through `GetSecurityInfo` on that handle before
+/// it is returned, avoiding path replacement races in the security check.
+pub fn create_private_file_new(path: &Path) -> io::Result<File> {
+    let path_w = path_to_wide_nul(path)?;
+    let sid = current_process_token_sid()?;
+    let acl = single_trustee_acl(sid.as_ptr() as *mut u16, TRUSTEE_IS_SID, NO_INHERITANCE)?;
 
-    // SC-08a: release the ACL buffer that `SetEntriesInAclW` allocated on the
-    // process heap. `SetNamedSecurityInfoW` has already deep-copied the ACL
-    // into the file's security descriptor by this point, so the buffer is no
-    // longer referenced and MUST be freed per MSDN ("free the returned buffer
-    // by calling the LocalFree function"). We free regardless of the
-    // `SetNamedSecurityInfoW` result code — the buffer was allocated by the
-    // already-succeeded `SetEntriesInAclW`, so it must be released on both the
-    // success and the apply-failure path.
-    //
+    // SAFETY: SECURITY_DESCRIPTOR is a Win32 POD structure. Zero is the
+    // documented pre-initialization state and the API below initializes it.
+    let mut descriptor: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
+    let descriptor_ptr = std::ptr::addr_of_mut!(descriptor) as *mut std::ffi::c_void;
+    // SECURITY_DESCRIPTOR_REVISION is defined by Win32 as 1. Keeping the
+    // value local avoids enabling the large SystemServices feature solely for
+    // this constant.
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
+
     // SAFETY:
-    //  - Reaching here means `SetEntriesInAclW` succeeded (its `map_win32`
-    //    returned `Ok` above), so `new_acl` is a valid, non-null,
-    //    `LocalAlloc`-owned `*mut ACL`.
-    //  - It is freed exactly once: no other path frees it and the function
-    //    returns immediately after.
-    //  - `SetNamedSecurityInfoW` does not retain the pointer (it deep-copies
-    //    the ACL), so this is not a use-after-free.
-    if !new_acl.is_null() {
-        unsafe { LocalFree(new_acl as HLOCAL) };
+    // - `descriptor_ptr` addresses writable storage of the exact descriptor
+    //   layout for the whole call.
+    // - the revision is the documented Win32 revision.
+    if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) } == 0 {
+        return Err(last_win32_error("InitializeSecurityDescriptor"));
+    }
+    // SAFETY:
+    // - `descriptor_ptr` is initialized above.
+    // - `acl.0` is a valid LocalAlloc-owned ACL and stays live through
+    //   `CreateFileW`; Win32 reads but does not retain this process buffer.
+    // - TRUE/FALSE select a present, non-defaulted DACL.
+    if unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0 {
+        return Err(last_win32_error("SetSecurityDescriptorDacl"));
+    }
+    // SAFETY: the absolute descriptor is initialized and writable. Setting
+    // SE_DACL_PROTECTED prevents CreateFileW from merging parent ACEs into the
+    // supplied exact TokenUser DACL.
+    if unsafe { SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED) }
+        == 0
+    {
+        return Err(last_win32_error("SetSecurityDescriptorControl"));
     }
 
-    map_win32(rc, "SetNamedSecurityInfoW")
+    let security_attributes = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor_ptr,
+        bInheritHandle: 0,
+    };
+
+    // SAFETY:
+    // - `path_w` is a lossless, live, null-terminated UTF-16 path.
+    // - `security_attributes`, its descriptor, ACL, and SID-derived ACL bytes
+    //   all remain live until the call returns.
+    // - CREATE_NEW prevents replacement/truncation of an existing object.
+    // - share mode 0 excludes read, write, and delete sharing.
+    // - a null template handle is documented for ordinary file creation.
+    let raw_handle = unsafe {
+        CreateFileW(
+            path_w.as_ptr(),
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE,
+            0,
+            &security_attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+    if raw_handle == INVALID_HANDLE_VALUE {
+        // SAFETY: no Win32 call intervened after the failed CreateFileW.
+        let code = unsafe { GetLastError() };
+        return Err(io::Error::new(
+            win32_io_err(code).kind(),
+            format!(
+                "CreateFileW(CREATE_NEW): Win32 error {code:#010x} ({})",
+                win32_io_err(code)
+            ),
+        ));
+    }
+    let owned_handle = OwnedHandle(raw_handle);
+
+    if let Err(verification_error) = verify_private_handle_for_sid(raw_handle, &sid) {
+        // Close first because the zero-share handle intentionally prevents
+        // deletion even by this process. The file is already private, but a
+        // failed proof must not leave it as a caller-visible committed object.
+        drop(owned_handle);
+        if let Err(cleanup_error) = std::fs::remove_file(path) {
+            return Err(io::Error::new(
+                verification_error.kind(),
+                format!(
+                    "{verification_error}; cleanup of unverified private file failed: {cleanup_error}"
+                ),
+            ));
+        }
+        return Err(verification_error);
+    }
+
+    Ok(owned_handle.into_file())
+}
+
+/// Atomically replace `target` with the private file behind `file` without
+/// closing or reopening its handle.
+///
+/// `file` must originate from [`create_private_file_new`]; this function
+/// verifies that contract handle-bound, flushes its contents, and publishes it
+/// with `SetFileInformationByHandle(FileRenameInfoEx)`. There is deliberately
+/// no path-based fallback: closing before `MoveFileExW` would reopen a
+/// temp-path substitution window.
+///
+/// A relative `target` is resolved to one absolute current-directory snapshot
+/// before the kernel call. Source and target must be on the same volume, as
+/// required for an atomic filesystem rename.
+pub fn replace_private_file_handle(file: &File, target: &Path) -> io::Result<()> {
+    rename_private_file_handle(file, target, true)
+}
+
+/// Atomically publish the private file behind `file` only when `target` is
+/// absent. A raced existing target returns `AlreadyExists`; no path fallback is
+/// used because the still-open handle is the security boundary.
+pub fn create_private_file_handle(file: &File, target: &Path) -> io::Result<()> {
+    rename_private_file_handle(file, target, false)
+}
+
+fn rename_private_file_handle(
+    file: &File,
+    target: &Path,
+    replace_existing: bool,
+) -> io::Result<()> {
+    verify_private_file_handle(file)?;
+    flush_file_buffers(file)?;
+
+    let absolute_target = std::path::absolute(target)?;
+    let target_w = path_to_wide_nul(&absolute_target)?;
+    let file_name_units = target_w
+        .len()
+        .checked_sub(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty target path"))?;
+    let file_name_bytes = file_name_units
+        .checked_mul(std::mem::size_of::<u16>())
+        .and_then(|length| u32::try_from(length).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "target path is too long"))?;
+    let file_name_offset = u32::try_from(std::mem::offset_of!(FILE_RENAME_INFO, FileName))
+        .expect("FILE_RENAME_INFO offset fits in u32");
+    // Include storage for the trailing NUL even though FileNameLength excludes
+    // it. This matches the Win32 variable-length structure contract.
+    let buffer_size = file_name_offset
+        .checked_add(file_name_bytes)
+        .and_then(|length| length.checked_add(std::mem::size_of::<u16>() as u32))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "target path is too long"))?;
+    let machine_words = (buffer_size as usize).div_ceil(std::mem::size_of::<usize>());
+    // usize storage guarantees at least FILE_RENAME_INFO pointer alignment.
+    let mut storage = vec![0usize; machine_words];
+    let rename_info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+
+    // FILE_RENAME_FLAG_* live under a windows-sys feature this crate does not
+    // otherwise need. These values are stable Win32 ABI constants.
+    const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x1;
+    const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
+    let flags = FILE_RENAME_FLAG_POSIX_SEMANTICS
+        | if replace_existing {
+            FILE_RENAME_FLAG_REPLACE_IF_EXISTS
+        } else {
+            0
+        };
+
+    // SAFETY:
+    // - `storage` is zeroed, aligned for FILE_RENAME_INFO, and sized through
+    //   the complete variable-length FileName including its trailing NUL.
+    // - every fixed field is initialized before the API reads it.
+    // - the copy length exactly equals the allocated UTF-16 filename region.
+    unsafe {
+        std::ptr::addr_of_mut!((*rename_info).Anonymous).write(FILE_RENAME_INFO_0 { Flags: flags });
+        std::ptr::addr_of_mut!((*rename_info).RootDirectory).write(std::ptr::null_mut());
+        std::ptr::addr_of_mut!((*rename_info).FileNameLength).write(file_name_bytes);
+        target_w.as_ptr().copy_to_nonoverlapping(
+            std::ptr::addr_of_mut!((*rename_info).FileName).cast::<u16>(),
+            target_w.len(),
+        );
+    }
+
+    // SAFETY:
+    // - `file` keeps the successful CreateFileW handle alive and that handle
+    //   includes DELETE access.
+    // - `rename_info` points to a fully initialized buffer of `buffer_size`
+    //   bytes and the API neither retains nor frees it.
+    // - FileRenameInfoEx with REPLACE_IF_EXISTS is the atomic commit point;
+    //   POSIX_SEMANTICS permits replacement without a close/reopen fallback.
+    let rc = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle() as HANDLE,
+            FileRenameInfoEx,
+            rename_info.cast::<std::ffi::c_void>(),
+            buffer_size,
+        )
+    };
+    if rc == 0 {
+        // SAFETY: no Win32 call intervened after the failed rename.
+        let code = unsafe { GetLastError() };
+        let kind =
+            if !replace_existing && (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) {
+                io::ErrorKind::AlreadyExists
+            } else {
+                io::ErrorKind::PermissionDenied
+            };
+        return Err(io::Error::new(
+            kind,
+            format!(
+                "SetFileInformationByHandle(FileRenameInfoEx): Win32 error {code:#010x} ({})",
+                win32_io_err(code)
+            ),
+        ));
+    }
+
+    // Rename is the commit point. All fallible security and durability checks
+    // happen before it so a successful namespace commit is never reported as
+    // failure by a later proof step.
+    Ok(())
 }
 
 /// Verify that `path` has a protected DACL containing exactly one explicit
@@ -241,13 +512,49 @@ fn set_trustee_dacl(
 /// principal that could read operator-private state.
 pub fn verify_private_dacl(path: &Path) -> io::Result<()> {
     let expected_sid = current_process_token_sid()?;
-    verify_private_dacl_for_sid(path, &expected_sid)
+    verify_private_dacl_for_sid(path, &expected_sid, NO_INHERITANCE as u8)
 }
 
-fn verify_private_dacl_for_sid(path: &Path, expected_sid: &[u8]) -> io::Result<()> {
-    let path_w = to_wide_nul(&path.to_string_lossy());
+/// Verify a private file descriptor through its already-open kernel handle.
+///
+/// This binds the proof to the object used by the caller rather than to a
+/// path that could resolve to a different object between operations.
+pub fn verify_private_file_handle(file: &File) -> io::Result<()> {
+    let expected_sid = current_process_token_sid()?;
+    verify_private_handle_for_sid(file.as_raw_handle() as HANDLE, &expected_sid)
+}
+
+/// Verify the protected, inheritable TokenUser DACL expected on a private
+/// directory.
+pub fn verify_private_directory_dacl(path: &Path) -> io::Result<()> {
+    let expected_sid = current_process_token_sid()?;
+    verify_private_dacl_for_sid(
+        path,
+        &expected_sid,
+        (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8,
+    )
+}
+
+struct OwnedLocalDescriptor(*mut std::ffi::c_void);
+
+impl Drop for OwnedLocalDescriptor {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: the Win32 security-info APIs returned this
+            // LocalAlloc-owned descriptor. The guard owns it exactly once.
+            unsafe { LocalFree(self.0 as HLOCAL) };
+        }
+    }
+}
+
+fn verify_private_dacl_for_sid(
+    path: &Path,
+    expected_sid: &[u8],
+    expected_ace_flags: u8,
+) -> io::Result<()> {
+    let path_w = path_to_wide_nul(path)?;
     let mut dacl: *mut ACL = std::ptr::null_mut();
-    let mut descriptor = std::ptr::null_mut();
+    let mut descriptor: *mut std::ffi::c_void = std::ptr::null_mut();
 
     // SAFETY:
     // - `path_w` is a live, null-terminated UTF-16 path.
@@ -266,25 +573,71 @@ fn verify_private_dacl_for_sid(path: &Path, expected_sid: &[u8]) -> io::Result<(
             &mut descriptor,
         )
     };
-    if rc != ERROR_SUCCESS {
-        if !descriptor.is_null() {
-            // SAFETY: any non-null descriptor returned by this API is
-            // LocalAlloc-owned, including a partial failure result.
-            unsafe { LocalFree(descriptor as HLOCAL) };
-        }
-        return map_win32(rc, "GetNamedSecurityInfoW");
-    }
-    if descriptor.is_null() {
+    let descriptor = OwnedLocalDescriptor(descriptor);
+    map_win32(rc, "GetNamedSecurityInfoW")?;
+    if descriptor.0.is_null() {
         return Err(io::Error::other(
             "GetNamedSecurityInfoW returned a null security descriptor",
         ));
     }
+    verify_private_descriptor(descriptor.0, dacl, expected_sid, expected_ace_flags)
+}
 
-    let verification = (|| {
+fn verify_private_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Result<()> {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot verify a null or invalid file handle",
+        ));
+    }
+    let mut dacl: *mut ACL = std::ptr::null_mut();
+    let mut descriptor: *mut std::ffi::c_void = std::ptr::null_mut();
+
+    // SAFETY:
+    // - `handle` is an open file handle with READ_CONTROL access.
+    // - all unused SID/SACL out-pointers are null.
+    // - `dacl` and `descriptor` are valid out-pointers. Any returned
+    //   descriptor is LocalAlloc-owned and immediately guarded below.
+    let rc = unsafe {
+        GetSecurityInfo(
+            handle,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut dacl,
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    let descriptor = OwnedLocalDescriptor(descriptor);
+    map_win32(rc, "GetSecurityInfo")?;
+    if descriptor.0.is_null() {
+        return Err(io::Error::other(
+            "GetSecurityInfo returned a null security descriptor",
+        ));
+    }
+    verify_private_descriptor(descriptor.0, dacl, expected_sid, NO_INHERITANCE as u8)
+}
+
+fn verify_private_descriptor(
+    descriptor: *mut std::ffi::c_void,
+    dacl: *mut ACL,
+    expected_sid: &[u8],
+    expected_ace_flags: u8,
+) -> io::Result<()> {
+    if descriptor.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot verify a null security descriptor",
+        ));
+    }
+
+    (|| {
         if dacl.is_null() {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "private file has a null DACL (access is unrestricted)",
+                "private object has a null DACL (access is unrestricted)",
             ));
         }
 
@@ -298,7 +651,7 @@ fn verify_private_dacl_for_sid(path: &Path, expected_sid: &[u8]) -> io::Result<(
         if control & SE_DACL_PROTECTED == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "private file DACL is not protected from inherited ACEs",
+                "private object DACL is not protected from inherited ACEs",
             ));
         }
 
@@ -318,7 +671,13 @@ fn verify_private_dacl_for_sid(path: &Path, expected_sid: &[u8]) -> io::Result<(
         {
             return Err(last_win32_error("GetAclInformation"));
         }
-        if info.AceCount != 1 {
+        if info.AceCount == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private object DACL has no ACEs",
+            ));
+        }
+        if expected_ace_flags == NO_INHERITANCE as u8 && info.AceCount != 1 {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!(
@@ -328,72 +687,92 @@ fn verify_private_dacl_for_sid(path: &Path, expected_sid: &[u8]) -> io::Result<(
             ));
         }
 
-        let mut ace_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
-        // SAFETY: `dacl` is valid and contains exactly one ACE, so index 0 is
-        // in bounds; `ace_ptr` is a valid out-pointer.
-        if unsafe { GetAce(dacl, 0, &mut ace_ptr) } == 0 {
-            return Err(last_win32_error("GetAce"));
-        }
-        if ace_ptr.is_null() {
-            return Err(io::Error::other("GetAce returned a null ACE"));
-        }
-        // SAFETY: GetAce returned an ACE header. We inspect the header before
-        // relying on ACCESS_ALLOWED_ACE-specific fields.
-        let ace = unsafe { &*(ace_ptr as *const ACCESS_ALLOWED_ACE) };
-        // Win32 ACE_TYPE value for ACCESS_ALLOWED_ACE. Keep this local so the
-        // ACL primitive does not pull in the unrelated SystemServices feature.
         const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
-        if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "private file's only ACE is not an allow ACE",
-            ));
-        }
-        if ace.Header.AceFlags as u32 & INHERITED_ACE != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "private file's only ACE is inherited",
-            ));
-        }
         const GENERIC_ALL: u32 = 0x1000_0000;
-        let has_generic_all = ace.Mask & GENERIC_ALL == GENERIC_ALL;
-        // Windows may map GENERIC_ALL into the object-specific access mask
-        // when the DACL is stored. Both encodings represent full file control.
-        let has_file_all_access = ace.Mask & FILE_ALL_ACCESS == FILE_ALL_ACCESS;
-        if !has_generic_all && !has_file_all_access {
+        const INHERIT_ONLY_ACE_FLAG: u8 = 0x08;
+        let allowed_ace_flags = if expected_ace_flags == NO_INHERITANCE as u8 {
+            expected_ace_flags
+        } else {
+            expected_ace_flags | INHERIT_ONLY_ACE_FLAG
+        };
+
+        let mut combined_flags = 0u8;
+        for index in 0..info.AceCount {
+            let mut ace_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+            // SAFETY: `dacl` is valid and `index` is bounded by AceCount;
+            // `ace_ptr` is a valid out-pointer.
+            if unsafe { GetAce(dacl, index, &mut ace_ptr) } == 0 {
+                return Err(last_win32_error("GetAce"));
+            }
+            if ace_ptr.is_null() {
+                return Err(io::Error::other("GetAce returned a null ACE"));
+            }
+            // SAFETY: GetAce returned an ACE header. We inspect the header
+            // before relying on ACCESS_ALLOWED_ACE-specific fields.
+            let ace = unsafe { &*(ace_ptr as *const ACCESS_ALLOWED_ACE) };
+            if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("private object ACE {index} is not an allow ACE"),
+                ));
+            }
+            if ace.Header.AceFlags as u32 & INHERITED_ACE != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("private object ACE {index} is inherited"),
+                ));
+            }
+            if ace.Header.AceFlags & !allowed_ace_flags != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "private object ACE {index} has flags {:#04x}; expected subset of {expected_ace_flags:#04x}",
+                        ace.Header.AceFlags
+                    ),
+                ));
+            }
+            combined_flags |= ace.Header.AceFlags & expected_ace_flags;
+
+            let has_generic_all = ace.Mask & GENERIC_ALL == GENERIC_ALL;
+            // Windows may map GENERIC_ALL into the object-specific access mask
+            // when the DACL is stored. Both encodings represent full file control.
+            let has_file_all_access = ace.Mask & FILE_ALL_ACCESS == FILE_ALL_ACCESS;
+            if !has_generic_all && !has_file_all_access {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "private object ACE {index} does not grant Full Control (mask {:#010x})",
+                        ace.Mask
+                    ),
+                ));
+            }
+            let ace_sid = std::ptr::addr_of!(ace.SidStart) as *mut std::ffi::c_void;
+            // SAFETY: ACCESS_ALLOWED_ACE stores its variable-length SID
+            // beginning at SidStart; descriptor and ACE buffer stay live here.
+            if unsafe { IsValidSid(ace_sid) } == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("private object ACE {index} contains an invalid SID"),
+                ));
+            }
+            // SAFETY: both SIDs are valid and EqualSid only reads them.
+            if unsafe { EqualSid(ace_sid, expected_sid.as_ptr() as *mut std::ffi::c_void) } == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("private object ACE {index} does not belong to the current user"),
+                ));
+            }
+        }
+        if combined_flags != expected_ace_flags {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!(
-                    "private file's only ACE does not grant Full Control (mask {:#010x})",
-                    ace.Mask
+                    "private object DACL combined flags {combined_flags:#04x}; expected {expected_ace_flags:#04x}"
                 ),
             ));
         }
-        let ace_sid = std::ptr::addr_of!(ace.SidStart) as *mut std::ffi::c_void;
-        // SAFETY: ACCESS_ALLOWED_ACE stores its variable-length SID beginning
-        // at SidStart; the descriptor and ACE buffer remain live here.
-        if unsafe { IsValidSid(ace_sid) } == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "private file's allow ACE contains an invalid SID",
-            ));
-        }
-        // SAFETY: the ACE SID is valid above and `expected_sid` was copied from
-        // the current process TokenUser SID; EqualSid only reads both buffers.
-        if unsafe { EqualSid(ace_sid, expected_sid.as_ptr() as *mut std::ffi::c_void) } == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "private file's only ACE does not belong to the current user",
-            ));
-        }
         Ok(())
-    })();
-
-    // SAFETY: successful GetNamedSecurityInfoW returned this descriptor from
-    // LocalAlloc. It is released exactly once after all borrowed ACL/ACE data
-    // is no longer used.
-    unsafe { LocalFree(descriptor as HLOCAL) };
-    verification
+    })()
 }
 
 fn last_win32_error(context: &'static str) -> io::Error {
@@ -411,11 +790,20 @@ fn last_win32_error(context: &'static str) -> io::Error {
 
 struct OwnedHandle(HANDLE);
 
+impl OwnedHandle {
+    fn into_file(self) -> File {
+        let owned = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `owned.0` is a successful CreateFileW handle, is not closed
+        // by ManuallyDrop, and ownership moves exactly once into `File`.
+        unsafe { File::from_raw_handle(owned.0) }
+    }
+}
+
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        if !self.0.is_null() {
-            // SAFETY: this wrapper owns the successful OpenProcessToken handle
-            // and closes it exactly once when the guard leaves scope.
+        if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
+            // SAFETY: this wrapper owns one successful Win32 handle and closes
+            // it exactly once when the guard leaves scope.
             unsafe { CloseHandle(self.0) };
         }
     }
@@ -586,8 +974,9 @@ pub async fn flush_file_buffers_async(file: File) -> io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
+    use std::fs::{File, OpenOptions};
     use std::io::Write;
+    use std::os::windows::ffi::OsStringExt;
     use tempfile::tempdir;
 
     // ── shared helper ──────────────────────────────────────────────────────
@@ -628,6 +1017,134 @@ mod tests {
 
         set_private_current_user_dacl(&path).expect("set protected token-SID DACL");
         verify_private_dacl(&path).expect("read-back must match process TokenUser SID");
+    }
+
+    #[test]
+    fn private_directory_dacl_is_protected_and_inheritable() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("private-state");
+        std::fs::create_dir(&path).unwrap();
+
+        set_private_current_user_directory_dacl(&path)
+            .expect("set protected inheritable TokenUser DACL");
+        verify_private_directory_dacl(&path)
+            .expect("directory ACE must carry exact OI+CI inheritance flags");
+
+        let child = path.join("child.txt");
+        std::fs::write(&child, b"owner can create children").unwrap();
+        assert_eq!(std::fs::read(&child).unwrap(), b"owner can create children");
+    }
+
+    #[test]
+    fn private_create_is_atomic_handle_bound_and_unicode_safe() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neoth-私密-🔐.json");
+
+        let mut file = create_private_file_new(&path).expect("atomic private create");
+        verify_private_file_handle(&file).expect("handle-bound DACL proof");
+        verify_private_dacl(&path).expect("path proof agrees with handle proof");
+        file.write_all(b"secret").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        assert_eq!(std::fs::read(path).unwrap(), b"secret");
+    }
+
+    #[test]
+    fn private_create_never_truncates_an_existing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("already-exists.json");
+        let mut original = create_private_file_new(&path).unwrap();
+        original.write_all(b"preserve-me").unwrap();
+        original.sync_all().unwrap();
+
+        let second = create_private_file_new(&path);
+        assert!(second.is_err(), "CREATE_NEW must reject an existing path");
+        drop(original);
+        assert_eq!(std::fs::read(path).unwrap(), b"preserve-me");
+    }
+
+    #[test]
+    fn private_create_disables_read_write_and_delete_sharing() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("zero-share.json");
+        let file = create_private_file_new(&path).unwrap();
+
+        assert!(
+            OpenOptions::new().read(true).open(&path).is_err(),
+            "a second read handle must be rejected while the private handle is live"
+        );
+        assert!(
+            OpenOptions::new().write(true).open(&path).is_err(),
+            "a second write handle must be rejected while the private handle is live"
+        );
+        assert!(
+            std::fs::remove_file(&path).is_err(),
+            "delete sharing must be disabled while the private handle is live"
+        );
+
+        drop(file);
+        std::fs::remove_file(path).expect("file is removable after the handle closes");
+    }
+
+    #[test]
+    fn private_create_rejects_interior_nul_without_path_truncation() {
+        let dir = tempdir().unwrap();
+        let mut raw: Vec<u16> = dir.path().as_os_str().encode_wide().collect();
+        raw.push(b'\\' as u16);
+        raw.extend("nul".encode_utf16());
+        raw.push(0);
+        raw.extend("suffix".encode_utf16());
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_wide(&raw));
+
+        let error = create_private_file_new(&path).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(!dir.path().join("nul").exists());
+    }
+
+    #[test]
+    fn handle_bound_replace_atomically_replaces_unicode_target() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("private-temp.json");
+        let target = dir.path().join("最终-🔐.json");
+        std::fs::write(&target, b"old-value").unwrap();
+
+        let mut private_file = create_private_file_new(&source).unwrap();
+        private_file.write_all(b"new-private-value").unwrap();
+        replace_private_file_handle(&private_file, &target)
+            .expect("same-handle atomic replacement");
+        assert!(!source.exists(), "source name must be consumed by rename");
+        verify_private_file_handle(&private_file).expect("renamed handle remains private");
+        drop(private_file);
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new-private-value");
+        verify_private_dacl(&target).expect("final target keeps protected TokenUser DACL");
+    }
+
+    #[test]
+    fn failed_handle_bound_replace_preserves_old_target() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("private-temp.json");
+        let target = dir.path().join("existing-target");
+        std::fs::create_dir(&target).unwrap();
+        let old_target = target.join("old-target.txt");
+        std::fs::write(&old_target, b"old-target").unwrap();
+
+        let mut private_file = create_private_file_new(&source).unwrap();
+        private_file.write_all(b"unpublished-value").unwrap();
+        let result = replace_private_file_handle(&private_file, &target);
+        assert!(
+            result.is_err(),
+            "a file must not replace a non-empty directory target"
+        );
+        assert!(source.exists(), "failed rename must retain its source name");
+        verify_private_file_handle(&private_file)
+            .expect("failed publication must not alter the private source DACL");
+
+        drop(private_file);
+        assert!(target.is_dir(), "failed rename must preserve target type");
+        assert_eq!(std::fs::read(&old_target).unwrap(), b"old-target");
+        assert_eq!(std::fs::read(&source).unwrap(), b"unpublished-value");
     }
 
     /// Calling set_owner_dacl twice on the same file must be idempotent

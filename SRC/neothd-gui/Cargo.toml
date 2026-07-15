@@ -40,6 +40,11 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 tracing.workspace    = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+getrandom = "0.2"
+hex = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [build-dependencies]
 slint-build = "1.8"

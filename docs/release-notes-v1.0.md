@@ -37,7 +37,7 @@ These are documented 1.0.0 limitations — tracked, not hidden:
 
 | Area | Status |
 | :-- | :-- |
-| GUI first run | Guided setup, privacy defaults, provider/local-model choice, memory consent, channel selection. |
+| GUI/CLI first run | Bare `neoth` presents one accessible GUI/CLI choice on a graphical session, persists it in the authoritative instance home, and never opens a popup in SSH/CI/headless sessions. Either surface provides a real switch to the other. |
 | CLI | Chat, recall, profile, privacy audit, Doctor, providers, channels, plugins, cluster, coding, credential-safe-by-default backup, WAL verification. |
 | Memory | Five-tier local memory + vault ingest, with profile facts, evidence, confidence, redaction, recall, and consolidation. |
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |

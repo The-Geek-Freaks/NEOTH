@@ -6,7 +6,7 @@
 //! the `wizard` Cargo feature (enabled by default). Non-interactive operation
 //! works without `wizard` and is driven entirely by CLI flags + env vars.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::{debug, info};
 
 mod catalog;
@@ -35,11 +35,39 @@ pub use validation::*;
 
 /// Main entry point for `neoth init`.
 pub async fn run_init(args: InitArgs) -> Result<()> {
+    let neoth_dir = crate::config::FreedomConfig::default_neoth_home();
+    if args.begin_from_gui {
+        let acknowledgement = begin_initialized_home_from_gui(&neoth_dir)?;
+        println!(
+            "{}",
+            serde_json::to_string(&acknowledgement)
+                .context("serialize GUI transaction acknowledgement")?
+        );
+        return Ok(());
+    }
+    if args.complete_from_gui {
+        let token = read_gui_completion_token_from_stdin()?;
+        let acknowledgement = complete_initialized_home_from_gui(&neoth_dir, &token)?;
+        println!(
+            "{}",
+            serde_json::to_string(&acknowledgement)
+                .context("serialize GUI completion acknowledgement")?
+        );
+        return Ok(());
+    }
+    if args.check_completion_from_gui {
+        println!(
+            "{}",
+            serde_json::json!({
+                "ready": initialized_home_is_ready(&neoth_dir)?,
+                "home": neoth_dir,
+            })
+        );
+        return Ok(());
+    }
+
     let interactive = is_interactive(&args);
     debug!(interactive, force = args.force, "neoth init starting");
-
-    let neoth_dir = crate::config::FreedomConfig::default_neoth_home();
-    let marker = neoth_dir.join(".initialized");
 
     // Step 0 — operator picks GUI or CLI mode before anything else, including
     // legacy `.initialized` reconfiguration and checkpoint-resume prompts.
@@ -49,8 +77,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // NEOTH targets non-developer operators ("noobs") who land on a
     // mode-selection screen, not a tracing-style logspew. If the
     // operator picks GUI here we launch the packaged sibling directly. The
-    // launcher's successful spawn is the commit point for the durable GUI
-    // preference; dry-run only reports the handoff and writes nothing.
+    // launcher's validated Slint event-loop Ready is the commit point for the
+    // durable GUI preference; dry-run only reports the handoff and writes nothing.
     if step0_mode_selection(&args, interactive, &neoth_dir)?.exit_for_gui() {
         if args.dry_run {
             println!("[dry-run] Would launch the NEOTH GUI; no preference written.");
@@ -63,7 +91,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         return Ok(());
     }
 
-    if marker.exists() && !args.force {
+    if !args.force && initialized_home_is_ready(&neoth_dir)? {
         info!("Already initialized. Showing reconfigure menu.");
         return run_reconfigure_menu(&args);
     }
@@ -191,7 +219,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
                  \n    n8n:        neoth n8n connect        (workflow automation)\
                  \n    Mobile:     neoth mobile-mcp setup   (iOS/Android control)\
                  \n    tududi:     neoth tududi setup        (task manager)\
-                 \n    GUI tab:    start neothd-gui → Channels / Integrations tab\
+                 \n    GUI tab:    neoth gui → Channels / Integrations tab\
                  \n"
             );
         }
@@ -1352,13 +1380,13 @@ audit_rpc:
         let dir = tempfile::tempdir().unwrap();
         let neoth_dir = dir.path().join(".neoth");
         std::fs::create_dir_all(&neoth_dir).unwrap();
-        let freedom_path = neoth_dir.join("freedom.yaml");
-        std::fs::write(&freedom_path, b"operator_id: [unterminated\n").unwrap();
         let cred_path = neoth_dir.join("credentials.yaml");
         let mut existing = crate::config::credentials::Credentials::default();
         existing.whatsapp_phone_id = Some("must-survive".to_string());
         existing.write(&cred_path).unwrap();
         let before = std::fs::read(&cred_path).unwrap();
+        let freedom_path = neoth_dir.join("freedom.yaml");
+        std::fs::write(&freedom_path, b"operator_id: [unterminated\n").unwrap();
 
         let result = write_config(&neoth_dir, &fixture_state()).await;
         assert!(result.is_err());
@@ -1487,9 +1515,51 @@ audit_rpc:
             .await
             .expect("write_config");
 
-        // After successful write, the .tmp sibling must be gone (rename consumed it).
-        let tmp = neoth_dir.join("freedom.tmp");
-        assert!(!tmp.exists(), "intermediate .tmp must be renamed away");
+        // After successful write, every random private stage must be gone.
+        let leftovers: Vec<_> = std::fs::read_dir(&neoth_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with("freedom.yaml.") && name.ends_with(".tmp")
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "private config stage leaked");
+        #[cfg(windows)]
+        crate::wal::win_native::verify_private_dacl(&neoth_dir.join("freedom.yaml"))
+            .expect("freedom.yaml must retain the exact process-token DACL");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_atomically_preserves_old_target_and_cleans_stage_on_replace_failure() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("freedom.yaml");
+        std::fs::write(&target, b"old").unwrap();
+        let guard = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&target)
+            .unwrap();
+
+        write_atomically(&target, b"new").unwrap_err();
+        drop(guard);
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        let leaked = std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .ok()
+                .map(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with("freedom.yaml.") && name.ends_with(".tmp")
+                })
+                .unwrap_or(false)
+        });
+        assert!(!leaked, "failed private replace left a staged file");
     }
 
     #[tokio::test]
@@ -1588,6 +1658,263 @@ audit_rpc:
         let channels = parsed["channels"].as_array().unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0], "telegram");
+    }
+
+    #[test]
+    fn initialized_marker_writer_stably_deduplicates_completed_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(&neoth_dir).unwrap();
+        let mut state = fixture_state();
+        state.steps_completed = vec![1, 2, 2, 3, 1, 4, 5, 6, 7, 8, 8];
+
+        write_initialized_marker(&neoth_dir, &state).expect("marker write");
+
+        let body = std::fs::read_to_string(neoth_dir.join(".initialized")).unwrap();
+        let marker: InitializedMarker = serde_json::from_str(&body).unwrap();
+        assert_eq!(marker.steps_completed, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn gui_begin_is_concurrent_safe_and_restart_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let home = neoth_dir.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    begin_initialized_home_from_gui(&home)
+                })
+            })
+            .collect();
+        let first = handles[0].thread().id();
+        let mut acknowledgements = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_ne!(first, std::thread::current().id());
+        let second = acknowledgements.pop().unwrap();
+        let first = acknowledgements.pop().unwrap();
+        assert_eq!(first.transaction_id, second.transaction_id);
+        assert_eq!(first.token, second.token);
+        assert_eq!(first.schema_version, 1);
+        assert_eq!(first.pending_path, second.pending_path);
+
+        let restarted = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        assert_eq!(restarted.transaction_id, first.transaction_id);
+        assert_eq!(restarted.token, first.token);
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: alice\n").unwrap();
+        assert!(!initialized_home_is_ready(&neoth_dir).unwrap());
+    }
+
+    #[test]
+    fn gui_wrong_or_stale_token_cannot_commit_or_cleanup_the_winner() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let first = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: alice\n").unwrap();
+        let wrong = if first.token.starts_with('0') {
+            "1".repeat(64)
+        } else {
+            "0".repeat(64)
+        };
+        assert!(complete_initialized_home_from_gui(&neoth_dir, &wrong).is_err());
+        assert!(!neoth_dir.join(".initialized").exists());
+        assert!(first.pending_path.exists());
+
+        complete_initialized_home_from_gui(&neoth_dir, &first.token).unwrap();
+        let winner = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        assert_ne!(winner.transaction_id, first.transaction_id);
+        assert!(complete_initialized_home_from_gui(&neoth_dir, &first.token).is_err());
+        let resumed = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        assert_eq!(resumed.transaction_id, winner.transaction_id);
+        assert_eq!(resumed.token, winner.token);
+        assert!(winner.pending_path.exists());
+    }
+
+    #[test]
+    fn gui_complete_commits_marker_then_crash_recovery_is_monotone() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let transaction = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        let pending_bytes = std::fs::read(&transaction.pending_path).unwrap();
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: alice\n").unwrap();
+        std::fs::write(
+            neoth_dir.join("credentials.yaml"),
+            "telegram_token: gui-split-secret\n",
+        )
+        .unwrap();
+
+        let acknowledgement =
+            complete_initialized_home_from_gui(&neoth_dir, &transaction.token).unwrap();
+        assert!(acknowledgement.completed);
+        assert!(acknowledgement.ready);
+        assert_eq!(acknowledgement.schema_version, 1);
+        assert_eq!(acknowledgement.transaction_id, transaction.transaction_id);
+        assert_eq!(
+            acknowledgement.marker_path,
+            neoth_dir.canonicalize().unwrap().join(".initialized")
+        );
+        assert!(!transaction.pending_path.exists());
+        assert!(initialized_home_is_ready(&neoth_dir).unwrap());
+
+        let marker_bytes = std::fs::read(&acknowledgement.marker_path).unwrap();
+        let marker: InitializedMarker = serde_json::from_slice(&marker_bytes).unwrap();
+        assert_eq!(
+            marker.gui_transaction_id.as_deref(),
+            Some(transaction.transaction_id.as_str())
+        );
+        assert!(marker.config_sha256.is_some());
+        assert_eq!(marker.channels, vec!["telegram"]);
+        assert!(!String::from_utf8_lossy(&marker_bytes).contains("gui-split-secret"));
+
+        // Simulate a crash after marker visibility but before Pending cleanup,
+        // followed by a normal same-operator settings edit. Same-tx marker is
+        // the monotone commit proof; readiness cleans the stale record only.
+        ensure_dir_secure(&neoth_dir.join(".gui-init")).unwrap();
+        crate::util::atomic_write::atomic_write_private(&transaction.pending_path, &pending_bytes)
+            .unwrap();
+        std::fs::write(
+            neoth_dir.join("freedom.yaml"),
+            "operator_id: alice\n# later settings edit\n",
+        )
+        .unwrap();
+        assert!(initialized_home_is_ready(&neoth_dir).unwrap());
+        assert!(!transaction.pending_path.exists());
+    }
+
+    #[test]
+    fn gui_reconfigure_hides_baseline_until_new_marker_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let initial = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: alice\n").unwrap();
+        complete_initialized_home_from_gui(&neoth_dir, &initial.token).unwrap();
+        assert!(initialized_home_is_ready(&neoth_dir).unwrap());
+
+        let reconfigure = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        assert_ne!(reconfigure.transaction_id, initial.transaction_id);
+        assert!(!initialized_home_is_ready(&neoth_dir).unwrap());
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: bob\n").unwrap();
+        assert!(!initialized_home_is_ready(&neoth_dir).unwrap());
+        let restarted = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        assert_eq!(restarted.transaction_id, reconfigure.transaction_id);
+
+        complete_initialized_home_from_gui(&neoth_dir, &reconfigure.token).unwrap();
+        assert!(initialized_home_is_ready(&neoth_dir).unwrap());
+        let marker: InitializedMarker =
+            serde_json::from_slice(&std::fs::read(neoth_dir.join(".initialized")).unwrap())
+                .unwrap();
+        assert_eq!(marker.operator_id, "bob");
+        assert_eq!(
+            marker.gui_transaction_id.as_deref(),
+            Some(reconfigure.transaction_id.as_str())
+        );
+    }
+
+    #[test]
+    fn normal_marker_commit_repairs_malformed_gui_pending_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let transaction = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        std::fs::write(&transaction.pending_path, b"{not-json").unwrap();
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: alice\n").unwrap();
+        assert!(initialized_home_is_ready(&neoth_dir).is_err());
+
+        let mut state = fixture_state();
+        state.operator_id = Some("alice".into());
+        write_initialized_marker(&neoth_dir, &state).unwrap();
+        assert!(!transaction.pending_path.exists());
+        assert!(initialized_home_is_ready(&neoth_dir).unwrap());
+    }
+
+    #[test]
+    fn config_only_with_empty_operator_is_actionable_not_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("freedom.yaml"), "{}\n").unwrap();
+
+        let error = initialized_home_is_ready(dir.path()).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("operator_id"));
+        assert!(message.contains("neoth init --force"));
+    }
+
+    #[test]
+    fn hidden_gui_completion_flags_are_exclusive_init_transactions() {
+        use clap::Parser;
+
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "init", "--begin-from-gui"]).is_ok());
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "init", "--complete-from-gui"]).is_ok());
+        assert!(
+            crate::cli::Cli::try_parse_from(["neoth", "init", "--check-completion-from-gui"])
+                .is_ok()
+        );
+        for arguments in [
+            vec!["neoth", "init", "--begin-from-gui", "--force"],
+            vec!["neoth", "init", "--complete-from-gui", "--force"],
+            vec![
+                "neoth",
+                "init",
+                "--check-completion-from-gui",
+                "--operator-id",
+                "alice",
+            ],
+            vec!["neoth", "init", "--begin-from-gui", "--complete-from-gui"],
+            vec![
+                "neoth",
+                "init",
+                "--complete-from-gui",
+                "--check-completion-from-gui",
+            ],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(arguments).is_err());
+        }
+    }
+
+    #[test]
+    fn gui_completion_token_parser_is_exact_and_bounded() {
+        let token = "a".repeat(64);
+        assert_eq!(parse_gui_completion_token(&token).unwrap(), token);
+        assert_eq!(
+            parse_gui_completion_token(&format!("{token}\n")).unwrap(),
+            token
+        );
+        assert_eq!(
+            parse_gui_completion_token(&format!("{token}\r\n")).unwrap(),
+            token
+        );
+        for invalid in [
+            format!(" {token}"),
+            format!("{token} "),
+            "A".repeat(64),
+            "a".repeat(63),
+            "a".repeat(65),
+            format!("{token}\n\n"),
+        ] {
+            assert!(parse_gui_completion_token(&invalid).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secure_directory_rejects_symlink_before_changing_target_permissions() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = dir.path().join("linked-home");
+        symlink(&target, &link).unwrap();
+
+        assert!(ensure_dir_secure(&link).is_err());
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
 
     #[test]

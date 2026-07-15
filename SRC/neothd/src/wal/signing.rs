@@ -304,36 +304,14 @@ fn install_signing_key_atomically(path: &Path, key: &SigningKey) -> Result<()> {
     let encoded = Zeroizing::new(encoded_signing_seed(&seed)?);
     crate::util::atomic_write::atomic_write_private(path, &encoded)
         .with_context(|| format!("atomically write proof signing key {}", path.display()))?;
-    #[cfg(windows)]
-    crate::wal::win_acl::restrict_to_owner(path)
-        .with_context(|| format!("restrict proof signing key ACL {}", path.display()))?;
     Ok(())
 }
 
 fn write_new_signing_key_securely(path: &Path, key: &SigningKey, what: &str) -> Result<()> {
-    use std::io::Write as _;
-
     let seed = Zeroizing::new(key.to_bytes());
     let encoded = Zeroizing::new(encoded_signing_seed(&seed)?);
-    let mut options = std::fs::OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("create {what} {}", path.display()))?;
-    file.write_all(&encoded)
-        .with_context(|| format!("write {what} {}", path.display()))?;
-    file.flush()
-        .with_context(|| format!("flush {what} {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("fsync {what} {}", path.display()))?;
-    #[cfg(windows)]
-    crate::wal::win_acl::restrict_to_owner(path)
-        .with_context(|| format!("restrict {what} ACL {}", path.display()))?;
+    crate::util::atomic_write::write_private_create_new(path, &encoded)
+        .with_context(|| format!("create private {what} {}", path.display()))?;
     Ok(())
 }
 
@@ -924,6 +902,8 @@ mod tests {
         assert!(!path.exists());
         let k1 = load_or_init_signing_key(&path).expect("first load generates");
         assert!(path.exists(), "key file is persisted on first use");
+        #[cfg(windows)]
+        crate::wal::win_native::verify_private_dacl(&path).unwrap();
         let k2 = load_or_init_signing_key(&path).expect("second load reads existing");
         // Same key both times (the public key is deterministic from the seed).
         assert_eq!(
@@ -1054,6 +1034,11 @@ mod tests {
             old_public,
             "the retiring secret remains available only in its protected archive"
         );
+        #[cfg(windows)]
+        {
+            crate::wal::win_native::verify_private_dacl(&key_path).unwrap();
+            crate::wal::win_native::verify_private_dacl(&archive_path).unwrap();
+        }
         assert!(!rotation_journal_path(&key_path).exists());
         assert!(
             private_files(&wal_dir)

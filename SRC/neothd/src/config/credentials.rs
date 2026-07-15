@@ -498,16 +498,17 @@ impl Credentials {
         Self::load_or_default(&default_path())
     }
 
-    /// Write atomically mode 0600 (unix) or icacls-locked (windows).
+    /// Write atomically mode 0600 (Unix) or process-token-private (Windows).
     /// Skips entirely when both fields are `None` so a credentials-free
     /// install doesn't leave an empty placeholder file behind.
     pub fn write(&self, path: &Path) -> Result<()> {
         if self.is_empty() {
             // Nothing to write. Remove any existing stub to keep the
-            // directory honest.
-            if path.exists() {
-                let _ = std::fs::remove_file(path);
-            }
+            // directory honest. Revocation is a real mutation: a failed
+            // removal must never be reported as success while old secrets
+            // remain active.
+            crate::util::atomic_write::durable_remove_file(path)
+                .with_context(|| format!("remove empty credential store {}", path.display()))?;
             return Ok(());
         }
         if let Some(parent) = path.parent() {
@@ -944,32 +945,47 @@ fn rollback_file_pair(
     }
 }
 
-/// Per-process-unique sibling temp path for an atomic credentials write
+/// Unpredictable sibling temp path for an atomic credentials write
 /// (GOLD-SEC-15 / A-34). Lives next to the target so the final
 /// `fs::rename` stays on the same filesystem (atomic).
-fn atomic_tmp_path(path: &Path) -> std::path::PathBuf {
+fn atomic_tmp_path(path: &Path) -> Result<std::path::PathBuf> {
+    let mut nonce = [0_u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(|error| {
+        anyhow::anyhow!("OS RNG unavailable for credentials temp name: {error}")
+    })?;
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("credentials.yaml");
-    path.with_file_name(format!(".{name}.tmp{}", std::process::id()))
+    Ok(path.with_file_name(format!(".{name}.{}.tmp", hex::encode(nonce))))
 }
 
 /// GR-081 — RAII cleanup that removes a secret temp file on drop (any early
 /// return or panic) UNLESS disarmed after a successful rename, so a
 /// partially-written plaintext secret never lingers on disk on a write / fsync /
-/// rename / DACL-restrict error path. Best-effort removal (a failed unlink is no
+/// rename / secure-create error path. Best-effort removal (a failed unlink is no
 /// worse than the prior leak).
 struct SecretTmpGuard {
     path: Option<PathBuf>,
+    file: Option<std::fs::File>,
 }
 
 impl SecretTmpGuard {
-    fn new(path: &Path) -> Self {
+    fn new(path: &Path, file: std::fs::File) -> Self {
         Self {
             path: Some(path.to_path_buf()),
+            file: Some(file),
         }
     }
+
+    fn file(&self) -> &std::fs::File {
+        self.file.as_ref().expect("secret temp file is present")
+    }
+
+    fn file_mut(&mut self) -> &mut std::fs::File {
+        self.file.as_mut().expect("secret temp file is present")
+    }
+
     /// Call after the atomic rename succeeds — the temp is gone (renamed), so
     /// there is nothing left to clean up.
     fn disarm(mut self) {
@@ -979,6 +995,9 @@ impl SecretTmpGuard {
 
 impl Drop for SecretTmpGuard {
     fn drop(&mut self) {
+        // Windows private files deliberately deny delete sharing. Close the
+        // exact created handle before attempting error-path cleanup.
+        drop(self.file.take());
         if let Some(p) = self.path.take() {
             let _ = std::fs::remove_file(p);
         }
@@ -993,9 +1012,8 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     // target. The mode is set at create time so the secrets are never on
     // disk under a wider mode, and a crash mid-write leaves the old file
     // intact (GOLD-SEC-15 / A-34).
-    let tmp = atomic_tmp_path(path);
-    let _ = std::fs::remove_file(&tmp);
-    let mut file = std::fs::OpenOptions::new()
+    let tmp = atomic_tmp_path(path)?;
+    let file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
         .mode(0o600)
@@ -1003,12 +1021,15 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
         .with_context(|| format!("create credentials temp {} mode 0600", tmp.display()))?;
     // GR-081 — remove the secret temp on any early return below (write / fsync /
     // rename error or panic); disarmed only after the rename succeeds.
-    let guard = SecretTmpGuard::new(&tmp);
-    file.write_all(body)
+    let mut guard = SecretTmpGuard::new(&tmp, file);
+    guard
+        .file_mut()
+        .write_all(body)
         .with_context(|| format!("write credentials body to {}", tmp.display()))?;
-    file.sync_all()
+    guard
+        .file_mut()
+        .sync_all()
         .with_context(|| format!("fsync credentials temp {}", tmp.display()))?;
-    drop(file);
     std::fs::rename(&tmp, path)
         .with_context(|| format!("atomically replace credentials {}", path.display()))?;
     guard.disarm();
@@ -1022,37 +1043,26 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     // bytes are written. Previously the body was written under the
     // inherited (potentially wider) ACL and only restricted afterwards —
     // a window where provider keys / channel tokens were readable on
-    // disk. We create an empty temp, restrict it, write into the
-    // already-restricted file, then atomically rename over the target.
+    // disk. The protected TokenUser DACL is supplied to CreateFileW itself;
+    // the exact verified handle remains open through the handle-bound rename.
     // Fail CLOSED: the DACL is the only at-rest protection, so if it can
     // not be set we refuse to write the secrets at all.
-    let tmp = atomic_tmp_path(path);
-    let _ = std::fs::remove_file(&tmp);
-    std::fs::File::create(&tmp)
+    let tmp = atomic_tmp_path(path)?;
+    let file = crate::wal::win_native::create_private_file_new(&tmp)
         .with_context(|| format!("create credentials temp {}", tmp.display()))?;
-    // GR-081 — the secret temp is removed on ANY early return below (DACL-restrict
-    // failure, open / write / fsync / rename error, or panic); disarmed only after
+    // GR-081 — the secret temp is removed on ANY early return below (secure-create,
+    // write / fsync / rename error, or panic); disarmed only after
     // a successful rename.
-    let guard = SecretTmpGuard::new(&tmp);
-    if let Err(e) = crate::wal::win_acl::restrict_to_owner(&tmp) {
-        return Err(anyhow::anyhow!(
-            "refusing to write credentials {}: could not restrict the file to \
-             owner-only (DACL) — the only at-rest protection for plaintext \
-             secrets ({e})",
-            path.display()
-        ));
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(&tmp)
-        .with_context(|| format!("open restricted credentials temp {}", tmp.display()))?;
-    file.write_all(body)
+    let mut guard = SecretTmpGuard::new(&tmp, file);
+    guard
+        .file_mut()
+        .write_all(body)
         .with_context(|| format!("write credentials body to {}", tmp.display()))?;
-    file.sync_all()
+    guard
+        .file_mut()
+        .sync_all()
         .with_context(|| format!("fsync credentials temp {}", tmp.display()))?;
-    drop(file);
-    std::fs::rename(&tmp, path)
+    crate::wal::win_native::replace_private_file_handle(guard.file(), path)
         .with_context(|| format!("atomically replace credentials {}", path.display()))?;
     guard.disarm();
     Ok(())
@@ -1065,6 +1075,18 @@ mod tests {
     fn conf_key(seed: u8) -> crate::wal::crypto::WalSegmentKey {
         let m = crate::wal::crypto::WalMasterKey::from_bytes(&[seed; 32]).unwrap();
         crate::wal::crypto::derive_subkey(&m, crate::wal::crypto::INFO_CONFIG).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_credentials_write_uses_the_process_token_sid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+
+        write_mode_0600(&path, b"provider_key: secret\n").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"provider_key: secret\n");
+        crate::wal::win_native::verify_private_dacl(&path).unwrap();
     }
 
     #[test]
@@ -1113,7 +1135,11 @@ mod tests {
         let leaked = dir.path().join(".leak.tmp");
         std::fs::write(&leaked, b"secret-bytes").unwrap();
         {
-            let _g = SecretTmpGuard::new(&leaked);
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&leaked)
+                .unwrap();
+            let _g = SecretTmpGuard::new(&leaked, file);
         } // dropped without disarm → removed
         assert!(
             !leaked.exists(),
@@ -1123,7 +1149,8 @@ mod tests {
         let kept = dir.path().join(".kept.tmp");
         std::fs::write(&kept, b"secret-bytes").unwrap();
         {
-            let g = SecretTmpGuard::new(&kept);
+            let file = std::fs::OpenOptions::new().write(true).open(&kept).unwrap();
+            let g = SecretTmpGuard::new(&kept, file);
             g.disarm();
         }
         assert!(
@@ -1329,6 +1356,18 @@ mod tests {
         let c = Credentials::default();
         c.write(&path).unwrap();
         assert!(!path.exists(), "empty credentials must not create the file");
+    }
+
+    #[test]
+    fn write_empty_credentials_reports_a_failed_revocation() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        std::fs::create_dir(&path).unwrap();
+
+        let error = Credentials::default().write(&path).unwrap_err();
+
+        assert!(error.to_string().contains("remove empty credential store"));
+        assert!(path.is_dir(), "failed revocation must remain observable");
     }
 
     #[test]

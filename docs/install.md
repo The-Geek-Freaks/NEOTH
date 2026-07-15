@@ -25,7 +25,7 @@ the verified release installer; Rust users may use
 git clone https://github.com/The-Geek-Freaks/NEOTH && cd NEOTH
 NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
 neoth --version
-neoth gui
+neoth
 ```
 
 This all-components source path needs Node.js 22.16+ to compile the Keet
@@ -65,7 +65,7 @@ Then put the binaries on your PATH and run:
 ```bash
 neoth --version
 neoth doctor
-neoth gui
+neoth
 ```
 
 Typical Linux/macOS layout (the target-aware branch keeps the headless musl
@@ -155,7 +155,7 @@ Then:
 ```powershell
 neoth --version
 neoth doctor
-neoth gui
+neoth
 ```
 
 The PowerShell installer needs no preinstalled signature utility. It applies the install directory to both the real user
@@ -246,13 +246,22 @@ The wizard can detect and help install optional dependencies.
 ## First run
 
 ```bash
-neoth gui
+neoth
 ```
 
-or:
+On a desktop this asks **Graphical setup / Command-line setup** exactly once and
+persists the answer under the active `NEOTH_HOME`. SSH, CI, Windows Session 0,
+and display-less Unix sessions stay in the CLI without opening a window. For a
+scripted install, set exactly `NEOTH_INTERFACE=gui` or
+`NEOTH_INTERFACE=cli`; malformed values stop with an actionable error.
+
+Direct launch and switching remain available:
 
 ```bash
-neoth init
+neoth gui
+neoth init --cli
+neoth interface set gui
+neoth interface set cli
 neoth chat "hello"
 ```
 

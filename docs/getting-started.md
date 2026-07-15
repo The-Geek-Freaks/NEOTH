@@ -50,19 +50,41 @@ neoth doctor
 
 See [install.md](install.md) for release binaries, Linux/macOS installer, Windows MSVC, and source-build details.
 
-## 2. Run the wizard
+## 2. Choose GUI or CLI once
 
-GUI:
+Start the installed product:
+
+```bash
+neoth
+```
+
+On a desktop, the first launch presents one keyboard- and screen-reader-safe
+GUI/CLI choice and persists it under the active `NEOTH_HOME`. Later bare
+launches open the chosen surface without asking again. SSH, CI, and headless
+sessions never wait for a popup and use the CLI for that session.
+
+For automation, set the exact lowercase override
+`NEOTH_INTERFACE=gui` or `NEOTH_INTERFACE=cli`. The explicit choice becomes
+the instance default; invalid, empty, differently-cased, or whitespace-padded
+values fail closed instead of silently choosing another surface.
+
+Direct GUI launch:
+
 
 ```bash
 neoth gui
 ```
 
-CLI:
+Direct CLI setup:
 
 ```bash
-neoth init
+neoth init --cli
 ```
+
+Switch later with `neoth gui`, `neoth interface set gui`,
+`neoth interface set cli`, or **Open CLI** under GUI Settings → Maintenance.
+
+## 3. Run the wizard
 
 The wizard configures:
 
@@ -77,7 +99,7 @@ The wizard configures:
 
 The normal path does not require editing YAML. Advanced config still lives in `~/.neoth/freedom.yaml` for operators who want it.
 
-## 3. First chat
+## 4. First chat
 
 ```bash
 neoth chat "hello"
@@ -94,7 +116,7 @@ neoth recall "how do I like answers?"
 
 Depending on your autonomy setting, NEOTH may ask in the GUI instead of requiring CLI approval.
 
-## 4. Check what NEOTH knows
+## 5. Check what NEOTH knows
 
 ```bash
 neoth profile show --evidence
@@ -112,7 +134,7 @@ Useful actions:
 | `neoth privacy audit` | Show provider destinations, network surfaces, and sensitive events. |
 | `neoth verify` | Verify HMAC compaction markers in the local WAL. |
 
-## 5. Connect a first channel
+## 6. Connect a first channel
 
 Telegram is usually the fastest phone path.
 
@@ -144,7 +166,7 @@ Other surfaces:
 
 See [channels.md](channels.md) for credentials, allowlists, webhook notes, and E2E checks.
 
-## 6. Set up local models
+## 7. Set up local models
 
 Local models are optional, but they are the best default for private profile learning.
 
@@ -170,7 +192,7 @@ Qwen, Ouro, CLIP, and Whisper workflows.
 
 See [local-models.md](local-models.md).
 
-## 7. Use the coding buddy
+## 8. Use the coding buddy
 
 ```bash
 cd ~/src/my-project

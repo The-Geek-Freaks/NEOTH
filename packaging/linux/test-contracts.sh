@@ -22,11 +22,16 @@ expect_fail_contains() {
 }
 
 bash -n "$BUILDER" "$0"
-diff -u "$SCRIPT_DIR/fixtures/expected-layout.txt" <("$BUILDER" --print-layout)
+diff -u <(sed 's/\r$//' "$SCRIPT_DIR/fixtures/expected-layout.txt") <("$BUILDER" --print-layout)
 "$BUILDER" --help >/dev/null
 grep -F 'NEOTH-${version}-${target}.deb' "$BUILDER" >/dev/null || fail "stable DEB asset name drifted"
 grep -F 'NEOTH-${version}-${target}.rpm' "$BUILDER" >/dev/null || fail "stable RPM asset name drifted"
 grep -F '"sha256": "$checksum"' "$BUILDER" >/dev/null || fail "machine-readable checksum sidecar is missing"
+grep -Fx 'Exec=/usr/bin/neothd-gui --product-launcher' "$SCRIPT_DIR/neoth.desktop" >/dev/null ||
+  fail "desktop launch must honor the saved GUI/CLI product preference"
+if grep -Fx 'Exec=/usr/bin/neothd-gui' "$SCRIPT_DIR/neoth.desktop" >/dev/null; then
+  fail "generic desktop launch must not force GUI"
+fi
 if "$BUILDER" --unknown >/dev/null 2>&1; then
   fail "unknown arguments must fail"
 fi
