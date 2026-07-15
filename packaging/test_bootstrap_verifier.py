@@ -460,11 +460,21 @@ if ($failures.Count -gt 0) {
         if os.name == "nt":
             command.extend(["-ExecutionPolicy", "Bypass"])
         command.extend(["-File", str(runner)])
+        # PowerShell Core on Linux has no Windows LOCALAPPDATA default. Bind
+        # every installer path used while loading the extracted function prefix
+        # to this fixture instead of depending on the host runner environment.
+        local_app_data = base / "local-app-data"
+        local_app_data.mkdir()
         result = subprocess.run(
             command,
             check=False,
             capture_output=True,
-            env={**os.environ, "NEOTH_TEST_CASES": str(manifest_path)},
+            env={
+                **os.environ,
+                "LOCALAPPDATA": str(local_app_data),
+                "NEOTH_INSTALL_DIR": str(base / "install-root"),
+                "NEOTH_TEST_CASES": str(manifest_path),
+            },
             text=True,
             timeout=90,
         )
