@@ -9,4 +9,5 @@
 *.yml  text eol=lf
 *.md   text eol=lf
 *.sh   text eol=lf
+packaging/**/fixtures/*.txt text eol=lf
 *.ps1  text eol=crlf
