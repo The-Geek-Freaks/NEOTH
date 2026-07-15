@@ -101,11 +101,10 @@ pub fn load_results_from_wal(segment_path: &Path) -> Result<Vec<UpdaterTaskResul
     // GOLD-ARCH-03: for_each_frame so UPDATER_TASK_RESULT frames inside a
     // v2/zstd-compressed segment are read, not silently skipped.
     if let Err(e) = crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
-        if decoded.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
-            if let Ok(payload) = serde_json::from_slice::<UpdaterTaskResultPayload>(decoded.payload)
-            {
-                out.push(payload);
-            }
+        if decoded.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT
+            && let Ok(payload) = serde_json::from_slice::<UpdaterTaskResultPayload>(decoded.payload)
+        {
+            out.push(payload);
         }
         Ok(())
     }) {

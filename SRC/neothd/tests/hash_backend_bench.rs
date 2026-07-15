@@ -13,9 +13,8 @@
 //! cargo test --features hash-bench -- bench_hash_backends --ignored --nocapture
 //! ```
 //!
-//! Requires rustc >= 1.88 (opthash 0.10.x MSRV).  On a 1.86 toolchain cargo
-//! will report an MSRV conflict for the `opthash` dep — upgrade the toolchain or
-//! accept the verdict: SKIP, keep std.
+//! Opthash itself requires rustc >= 1.88; NEOTH's package MSRV is 1.90.
+//! Cargo enforces the same floor for both normal and opt-in benchmark builds.
 //!
 //! # Default build
 //!

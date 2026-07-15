@@ -376,14 +376,14 @@ mod win_private {
             TrusteeType: TRUSTEE_IS_UNKNOWN,
             ptstrName: sid,
         };
-        let mut entry = EXPLICIT_ACCESS_W {
+        let entry = EXPLICIT_ACCESS_W {
             grfAccessPermissions: FILE_ALL_ACCESS,
             grfAccessMode: GRANT_ACCESS,
             grfInheritance: inheritance,
             Trustee: trustee,
         };
         let mut acl: *mut ACL = std::ptr::null_mut();
-        let rc = unsafe { SetEntriesInAclW(1, &mut entry, std::ptr::null_mut(), &mut acl) };
+        let rc = unsafe { SetEntriesInAclW(1, &entry, std::ptr::null_mut(), &mut acl) };
         let acl = OwnedLocalAcl(acl);
         map_win32(rc, "SetEntriesInAclW")?;
         if acl.0.is_null() {
@@ -522,6 +522,7 @@ mod win_private {
 /// [`panel_logic::PanelVisibility`], populated on startup from the operator's
 /// complexity level.
 mod buddy_activity;
+mod gui_action;
 mod panel_logic;
 mod wizard_logic;
 
@@ -927,34 +928,34 @@ fn main() -> Result<()> {
     {
         if let Some(ref tc) = gui_tweaks {
             // font-sans-override: non-empty string overrides the built-in font-sans token.
-            if let Some(ref family) = tc.theme.font_family {
-                if !family.is_empty() {
-                    window
-                        .global::<Theme>()
-                        .set_font_sans_override(family.as_str().into());
-                }
+            if let Some(ref family) = tc.theme.font_family
+                && !family.is_empty()
+            {
+                window
+                    .global::<Theme>()
+                    .set_font_sans_override(family.as_str().into());
             }
             // Convert points to logical pixels at the CSS/Slint 96dpi ratio.
-            if let Some(pt) = tc.theme.font_size_pt {
-                if pt > 0 {
-                    window
-                        .global::<Theme>()
-                        .set_font_size_override(pt as f32 * (96.0 / 72.0));
-                }
+            if let Some(pt) = tc.theme.font_size_pt
+                && pt > 0
+            {
+                window
+                    .global::<Theme>()
+                    .set_font_size_override(pt as f32 * (96.0 / 72.0));
             }
             // sidebar-w-override: non-zero px overrides the 248px built-in.
-            if let Some(px) = tc.theme.sidebar_width_px {
-                if px > 0 {
-                    window.global::<Theme>().set_sidebar_w_override(px as f32);
-                }
+            if let Some(px) = tc.theme.sidebar_width_px
+                && px > 0
+            {
+                window.global::<Theme>().set_sidebar_w_override(px as f32);
             }
             // Convert requested text lines to the composer's logical-pixel floor.
-            if let Some(lines) = tc.theme.input_height_lines {
-                if lines > 0 {
-                    window
-                        .global::<Theme>()
-                        .set_input_height_override(lines as f32 * 22.0 + 16.0);
-                }
+            if let Some(lines) = tc.theme.input_height_lines
+                && lines > 0
+            {
+                window
+                    .global::<Theme>()
+                    .set_input_height_override(lines as f32 * 22.0 + 16.0);
             }
             if let Some(raw) = tc.theme.accent_color.as_deref() {
                 if let Some(color) = parse_theme_color(raw) {
@@ -988,17 +989,18 @@ fn main() -> Result<()> {
                     tracing::warn!(value = raw, "invalid foreground_color; ignoring");
                 }
             }
-            if let Some(radius) = tc.theme.border_radius_px {
-                if radius > 0 {
-                    window
-                        .global::<Theme>()
-                        .set_border_radius_override(radius as f32);
-                }
+            if let Some(radius) = tc.theme.border_radius_px
+                && radius > 0
+            {
+                window
+                    .global::<Theme>()
+                    .set_border_radius_override(radius as f32);
             }
-            if let Some(opacity) = tc.theme.panel_opacity {
-                if opacity.is_finite() && (0.0..=1.0).contains(&opacity) {
-                    window.global::<Theme>().set_panel_opacity(opacity);
-                }
+            if let Some(opacity) = tc.theme.panel_opacity
+                && opacity.is_finite()
+                && (0.0..=1.0).contains(&opacity)
+            {
+                window.global::<Theme>().set_panel_opacity(opacity);
             }
             if let Some(show) = tc.theme.show_token_count {
                 window.global::<Theme>().set_show_token_count(show);
@@ -1028,12 +1030,12 @@ fn main() -> Result<()> {
             }
             // compact_mode → density_mode, only when .gui-density dotfile is absent
             // (dotfile wins: already applied by the density block above).
-            if !neoth_dir.join(".gui-density").exists() {
-                if let Some(compact) = tc.theme.compact_mode {
-                    let density = if compact { 0 } else { 1 };
-                    window.global::<Theme>().set_density_mode(density);
-                    window.set_chat_density_mode(density);
-                }
+            if !neoth_dir.join(".gui-density").exists()
+                && let Some(compact) = tc.theme.compact_mode
+            {
+                let density = if compact { 0 } else { 1 };
+                window.global::<Theme>().set_density_mode(density);
+                window.set_chat_density_mode(density);
             }
         }
     }
@@ -1687,10 +1689,10 @@ fn main() -> Result<()> {
         let body = text.trim().to_string();
         // ODY-10: capture before the empty-guard so the recall buffer is
         // always up-to-date for the most recent non-empty send.
-        if !body.is_empty() {
-            if let Ok(mut last) = last_operator_input_for_send.lock() {
-                *last = body.clone();
-            }
+        if !body.is_empty()
+            && let Ok(mut last) = last_operator_input_for_send.lock()
+        {
+            *last = body.clone();
         }
         if body.is_empty() {
             return;
@@ -2026,10 +2028,10 @@ fn main() -> Result<()> {
         let child_slot = chat_child.clone();
         let weak_stop = window.as_weak();
         window.on_chat_stall_stop(move || {
-            if let Ok(mut slot) = child_slot.lock() {
-                if let Some(child) = slot.as_mut() {
-                    let _ = child.kill();
-                }
+            if let Ok(mut slot) = child_slot.lock()
+                && let Some(child) = slot.as_mut()
+            {
+                let _ = child.kill();
             }
             if let Some(w) = weak_stop.upgrade() {
                 w.set_chat_stall_active(false);
@@ -3095,15 +3097,25 @@ fn main() -> Result<()> {
                     if !timeout.trim().is_empty() {
                         args.extend(["--timeout", timeout.trim()]);
                     }
-                    let out = run_neothd_probe(&args);
-                    let msg = if out.trim().is_empty() {
-                        format!("added {}", id.trim())
-                    } else {
-                        out.trim().to_string()
-                    };
-                    let weak2 = weak.clone();
-                    push_toast(&weak, "success", "Cron", &msg);
-                    std::thread::spawn(move || refresh_cron(weak2));
+                    let result = run_neothd_json_action_receipt::<gui_action::CronMutationAck>(
+                        &args, "Cron add",
+                    )
+                    .and_then(|receipt| {
+                        receipt.acknowledgement.verify("add", id.trim())?;
+                        Ok(receipt)
+                    });
+                    match result {
+                        Ok(receipt) => {
+                            let weak2 = weak.clone();
+                            let message = receipt.stderr.map_or_else(
+                                || format!("Added {}.", id.trim()),
+                                |warning| format!("Added {}. {warning}", id.trim()),
+                            );
+                            push_toast(&weak, "success", "Cron", &message);
+                            std::thread::spawn(move || refresh_cron(weak2));
+                        }
+                        Err(error) => push_toast(&weak, "warn", "Cron add failed", &error),
+                    }
                 });
             },
         );
@@ -3114,16 +3126,28 @@ fn main() -> Result<()> {
             let id = id.to_string();
             let weak = weak_cron_run.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["cron", "run", id.trim()]);
-                let (kind, title) = if out.to_lowercase().contains("refused")
-                    || out.to_lowercase().contains("daemon")
-                    || out.to_lowercase().contains("live")
-                {
-                    ("warn", "Cron run refused")
-                } else {
-                    ("info", "Cron run")
-                };
-                push_toast(&weak, kind, title, out.trim());
+                let result = run_neothd_json_action::<gui_action::CronRunAck>(
+                    &["cron", "run", id.trim()],
+                    "Cron run",
+                )
+                .and_then(|ack| {
+                    ack.verify(id.trim())?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => push_toast(
+                        &weak,
+                        "success",
+                        "Cron run",
+                        &format!(
+                            "{} completed in {} ms ({} output bytes).",
+                            id.trim(),
+                            ack.duration_ms,
+                            ack.output_bytes
+                        ),
+                    ),
+                    Err(error) => push_toast(&weak, "warn", "Cron run refused", &error),
+                }
             });
         });
 
@@ -3134,19 +3158,31 @@ fn main() -> Result<()> {
             let weak = weak_cron_tog.clone();
             std::thread::spawn(move || {
                 let enabled_str = if new_enabled { "true" } else { "false" };
-                let out = run_neothd_probe(&["cron", "edit", id.trim(), "--enabled", enabled_str]);
-                let msg = if out.trim().is_empty() {
-                    format!(
-                        "{} {}",
-                        if new_enabled { "enabled" } else { "disabled" },
-                        id.trim()
-                    )
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "info", "Cron", &msg);
-                std::thread::spawn(move || refresh_cron(weak2));
+                let result = run_neothd_json_action_receipt::<gui_action::CronMutationAck>(
+                    &["cron", "edit", id.trim(), "--enabled", enabled_str],
+                    "Cron toggle",
+                )
+                .and_then(|receipt| {
+                    receipt.acknowledgement.verify("edit", id.trim())?;
+                    Ok(receipt)
+                });
+                match result {
+                    Ok(receipt) => {
+                        let weak2 = weak.clone();
+                        let state = if new_enabled { "Enabled" } else { "Disabled" };
+                        let message = receipt.stderr.map_or_else(
+                            || format!("{state} {}.", id.trim()),
+                            |warning| format!("{state} {}. {warning}", id.trim()),
+                        );
+                        push_toast(&weak, "info", "Cron", &message);
+                        std::thread::spawn(move || refresh_cron(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Cron toggle failed", &error);
+                        std::thread::spawn(move || refresh_cron(weak2));
+                    }
+                }
             });
         });
 
@@ -3156,15 +3192,22 @@ fn main() -> Result<()> {
             let id = id.to_string();
             let weak = weak_cron_rem.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["cron", "remove", id.trim()]);
-                let msg = if out.trim().is_empty() {
-                    format!("removed {}", id.trim())
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "warn", "Cron", &msg);
-                std::thread::spawn(move || refresh_cron(weak2));
+                let result = run_neothd_json_action::<gui_action::CronMutationAck>(
+                    &["cron", "remove", id.trim()],
+                    "Cron remove",
+                )
+                .and_then(|ack| {
+                    ack.verify("remove", id.trim())?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(_) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Cron", &format!("Removed {}.", id.trim()));
+                        std::thread::spawn(move || refresh_cron(weak2));
+                    }
+                    Err(error) => push_toast(&weak, "warn", "Cron remove failed", &error),
+                }
             });
         });
 
@@ -3231,15 +3274,23 @@ fn main() -> Result<()> {
         window.on_babel_enable_clicked(move || {
             let weak = weak_babel_en.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["babel", "enable"]);
-                let msg = if out.trim().is_empty() {
-                    "enabled".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "success", "Babel", &msg);
-                std::thread::spawn(move || refresh_babel(weak2));
+                let result = run_neothd_json_action::<gui_action::ToggleAck>(
+                    &["babel", "enable"],
+                    "Babel enable",
+                )
+                .and_then(|ack| ack.verify("enable", true));
+                match result {
+                    Ok(()) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "success", "Babel", "Enabled.");
+                        std::thread::spawn(move || refresh_babel(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Babel enable failed", &error);
+                        std::thread::spawn(move || refresh_babel(weak2));
+                    }
+                }
             });
         });
 
@@ -3247,15 +3298,23 @@ fn main() -> Result<()> {
         window.on_babel_disable_clicked(move || {
             let weak = weak_babel_dis.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["babel", "disable"]);
-                let msg = if out.trim().is_empty() {
-                    "disabled".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "info", "Babel", &msg);
-                std::thread::spawn(move || refresh_babel(weak2));
+                let result = run_neothd_json_action::<gui_action::ToggleAck>(
+                    &["babel", "disable"],
+                    "Babel disable",
+                )
+                .and_then(|ack| ack.verify("disable", false));
+                match result {
+                    Ok(()) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "info", "Babel", "Disabled.");
+                        std::thread::spawn(move || refresh_babel(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Babel disable failed", &error);
+                        std::thread::spawn(move || refresh_babel(weak2));
+                    }
+                }
             });
         });
     }
@@ -3298,6 +3357,7 @@ fn main() -> Result<()> {
                         summary.trim().to_string(),
                         "--start".into(),
                         start.trim().to_string(),
+                        "--yes".into(),
                     ]
                 } else {
                     vec![
@@ -3308,25 +3368,43 @@ fn main() -> Result<()> {
                         start.trim().to_string(),
                         "--end".into(),
                         end.trim().to_string(),
+                        "--yes".into(),
                     ]
                 };
                 let probe_refs: Vec<&str> = probe_args.iter().map(String::as_str).collect();
-                let out = run_neothd_probe(&probe_refs);
-                let result = if out.trim().is_empty() {
-                    "Event added.".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(w) = weak.upgrade() {
-                        w.set_cal_add_result(result.as_str().into());
-                        w.set_cal_add_summary("".into());
-                        w.set_cal_add_start("".into());
-                        w.set_cal_add_end("".into());
-                    }
+                let result = run_neothd_json_action::<gui_action::CalendarAddAck>(
+                    &probe_refs,
+                    "Calendar add",
+                )
+                .and_then(|ack| {
+                    ack.verify()?;
+                    Ok(ack)
                 });
-                std::thread::spawn(move || refresh_calendar(weak2));
+                match result {
+                    Ok(ack) => {
+                        let message = match ack.outcome.as_str() {
+                            "created" => format!("Event added ({}).", ack.uid),
+                            _ => format!("Event already exists ({}).", ack.uid),
+                        };
+                        let weak2 = weak.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak.upgrade() {
+                                w.set_cal_add_result(message.as_str().into());
+                                w.set_cal_add_summary("".into());
+                                w.set_cal_add_start("".into());
+                                w.set_cal_add_end("".into());
+                            }
+                        });
+                        std::thread::spawn(move || refresh_calendar(weak2));
+                    }
+                    Err(error) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak.upgrade() {
+                                w.set_cal_add_result(error.as_str().into());
+                            }
+                        });
+                    }
+                }
             });
         });
 
@@ -3351,15 +3429,23 @@ fn main() -> Result<()> {
         window.on_si_enable_clicked(move || {
             let weak = weak_si_en.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["self-improve", "enable"]);
-                let msg = if out.trim().is_empty() {
-                    "enabled".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "success", "Self-Improve", &msg);
-                std::thread::spawn(move || refresh_selfimprove(weak2));
+                let result = run_neothd_json_action::<gui_action::SelfImproveToggleAck>(
+                    &["self-improve", "enable"],
+                    "Self-Improve enable",
+                )
+                .and_then(|ack| ack.verify("enable", true, false));
+                match result {
+                    Ok(()) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "success", "Self-Improve", "Enabled (manual).");
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Self-Improve enable failed", &error);
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                }
             });
         });
 
@@ -3367,15 +3453,23 @@ fn main() -> Result<()> {
         window.on_si_disable_clicked(move || {
             let weak = weak_si_dis.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["self-improve", "disable"]);
-                let msg = if out.trim().is_empty() {
-                    "disabled".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "info", "Self-Improve", &msg);
-                std::thread::spawn(move || refresh_selfimprove(weak2));
+                let result = run_neothd_json_action::<gui_action::SelfImproveToggleAck>(
+                    &["self-improve", "disable"],
+                    "Self-Improve disable",
+                )
+                .and_then(|ack| ack.verify("disable", false, false));
+                match result {
+                    Ok(()) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "info", "Self-Improve", "Disabled.");
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Self-Improve disable failed", &error);
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                }
             });
         });
 
@@ -3383,8 +3477,25 @@ fn main() -> Result<()> {
         window.on_si_run_dry_clicked(move || {
             let weak = weak_si_dry.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["self-improve", "run", "--dry-run"]);
-                push_toast(&weak, "info", "Self-Improve dry-run", out.trim());
+                let result = run_neothd_json_action::<gui_action::SelfImproveDryRunAck>(
+                    &["self-improve", "run", "--dry-run"],
+                    "Self-Improve dry-run",
+                )
+                .and_then(|ack| {
+                    ack.verify()?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => {
+                        let message = if ack.diff.trim().is_empty() {
+                            ack.message
+                        } else {
+                            format!("{}\n{}", ack.message, ack.diff)
+                        };
+                        push_toast(&weak, "info", "Self-Improve dry-run", &message);
+                    }
+                    Err(error) => push_toast(&weak, "warn", "Self-Improve dry-run failed", &error),
+                }
             });
         });
 
@@ -3393,15 +3504,35 @@ fn main() -> Result<()> {
             let id = id.to_string();
             let weak = weak_si_acc.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["self-improve", "accept", id.trim()]);
-                let msg = if out.trim().is_empty() {
-                    id.clone()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "consent", "Accepted", &msg);
-                std::thread::spawn(move || refresh_selfimprove(weak2));
+                let result = run_neothd_json_action::<gui_action::ProposalMutationAck>(
+                    &["self-improve", "accept", id.trim()],
+                    "Self-Improve accept",
+                )
+                .and_then(|ack| {
+                    ack.verify("accept", id.trim(), "accepted")?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => {
+                        let weak2 = weak.clone();
+                        let message = if ack.upstream_pr_available == Some(true) {
+                            format!(
+                                "{} accepted. This bundled skill can be contributed with `neoth self-improve pr {}`.",
+                                id.trim(),
+                                id.trim()
+                            )
+                        } else {
+                            id.trim().to_string()
+                        };
+                        push_toast(&weak, "consent", "Accepted", &message);
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Self-Improve accept failed", &error);
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                }
             });
         });
 
@@ -3410,15 +3541,23 @@ fn main() -> Result<()> {
             let id = id.to_string();
             let weak = weak_si_rb.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["self-improve", "rollback", id.trim()]);
-                let msg = if out.trim().is_empty() {
-                    id.clone()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "warn", "Rolled back", &msg);
-                std::thread::spawn(move || refresh_selfimprove(weak2));
+                let result = run_neothd_json_action::<gui_action::ProposalMutationAck>(
+                    &["self-improve", "rollback", id.trim()],
+                    "Self-Improve rollback",
+                )
+                .and_then(|ack| ack.verify("rollback", id.trim(), "rolled_back"));
+                match result {
+                    Ok(()) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Rolled back", id.trim());
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Self-Improve rollback failed", &error);
+                        std::thread::spawn(move || refresh_selfimprove(weak2));
+                    }
+                }
             });
         });
 
@@ -3461,14 +3600,35 @@ fn main() -> Result<()> {
                 w.set_sd_scan_running(true);
             }
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["self-dev", "scan"]);
-                let msg = if out.trim().is_empty() {
-                    "scan complete".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                push_toast(&weak, "info", "Self-Dev", &msg);
-                refresh_selfdev(weak);
+                let result = run_neothd_json_action::<gui_action::SelfDevScanAck>(
+                    &["self-dev", "scan"],
+                    "Self-Dev scan",
+                )
+                .and_then(|ack| {
+                    ack.verify()?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => {
+                        push_toast(
+                            &weak,
+                            "info",
+                            "Self-Dev",
+                            &format!(
+                                "Scan complete: {} signal(s), {} proposal(s) staged, {} already deployed, {} not auto-safe.",
+                                ack.signals,
+                                ack.proposals_staged,
+                                ack.proposals_skipped_deployed,
+                                ack.proposals_skipped_not_auto_safe,
+                            ),
+                        );
+                        refresh_selfdev(weak);
+                    }
+                    Err(error) => {
+                        push_toast(&weak, "warn", "Self-Dev scan failed", &error);
+                        refresh_selfdev(weak);
+                    }
+                }
             });
         });
 
@@ -3482,16 +3642,24 @@ fn main() -> Result<()> {
                     push_toast(&weak, "warn", "Self-Dev", "invalid proposal id");
                     return;
                 }
-                let out = run_neothd_probe(&["self-dev", "accept", id.trim()]);
-                let msg = if out.trim().is_empty() {
-                    format!("Accepted (pending apply): {}", id.trim())
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "consent", "Accepted (pending apply)", &msg);
-                // Refresh so accepted proposal shows updated status-badge.
-                std::thread::spawn(move || refresh_selfdev(weak2));
+                let result = run_neothd_json_action::<gui_action::ProposalMutationAck>(
+                    &["self-dev", "accept", id.trim()],
+                    "Self-Dev accept",
+                )
+                .and_then(|ack| ack.verify("accept", id.trim(), "accepted"));
+                match result {
+                    Ok(()) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "consent", "Accepted (pending apply)", id.trim());
+                        // Refresh so accepted proposal shows updated status-badge.
+                        std::thread::spawn(move || refresh_selfdev(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Self-Dev accept failed", &error);
+                        std::thread::spawn(move || refresh_selfdev(weak2));
+                    }
+                }
             });
         });
 
@@ -3506,16 +3674,28 @@ fn main() -> Result<()> {
                     return;
                 }
                 // RED LINE: reason is the hard-coded literal "declined" — never user text.
-                let out =
-                    run_neothd_probe(&["self-dev", "decline", id.trim(), "--reason", "declined"]);
-                let msg = if out.trim().is_empty() {
-                    format!("declined: {}", id.trim())
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "info", "Self-Dev", &msg);
-                std::thread::spawn(move || refresh_selfdev(weak2));
+                let result = run_neothd_json_action::<gui_action::ProposalMutationAck>(
+                    &["self-dev", "decline", id.trim(), "--reason", "declined"],
+                    "Self-Dev decline",
+                )
+                .and_then(|ack| ack.verify("decline", id.trim(), "declined"));
+                match result {
+                    Ok(()) => {
+                        let weak2 = weak.clone();
+                        push_toast(
+                            &weak,
+                            "info",
+                            "Self-Dev",
+                            &format!("Declined {}.", id.trim()),
+                        );
+                        std::thread::spawn(move || refresh_selfdev(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Self-Dev decline failed", &error);
+                        std::thread::spawn(move || refresh_selfdev(weak2));
+                    }
+                }
             });
         });
 
@@ -3547,24 +3727,36 @@ fn main() -> Result<()> {
                     );
                     return;
                 }
-                let out = run_neothd_probe(&[
-                    "self-edit",
-                    "--diff",
-                    patch_path.trim(),
-                    "--yes",
-                    "--expect-hash",
-                    sha,
-                ]);
-                let ok = out.contains("applied") || out.contains("passed");
-                let (level, title) = if ok {
-                    ("consent", "Source Edit Applied")
-                } else {
-                    ("warn", "Source Edit Refused")
-                };
-                push_toast(&weak, level, title, out.trim());
-                // Refresh so any status change is reflected.
-                let weak2 = weak.clone();
-                std::thread::spawn(move || refresh_selfdev(weak2));
+                let result = run_neothd_json_action::<gui_action::SelfEditAck>(
+                    &[
+                        "self-edit",
+                        "--diff",
+                        patch_path.trim(),
+                        "--yes",
+                        "--expect-hash",
+                        sha,
+                    ],
+                    "Self-Dev source apply",
+                )
+                .and_then(|ack| ack.verify_applied(sha));
+                match result {
+                    Ok(()) => {
+                        push_toast(
+                            &weak,
+                            "consent",
+                            "Source Edit Applied",
+                            "All five gates passed and the bound diff was applied.",
+                        );
+                        // Refresh so any status change is reflected.
+                        let weak2 = weak.clone();
+                        std::thread::spawn(move || refresh_selfdev(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Source Edit Refused", &error);
+                        std::thread::spawn(move || refresh_selfdev(weak2));
+                    }
+                }
             });
         });
 
@@ -3596,16 +3788,37 @@ fn main() -> Result<()> {
                 .map(|w| w.get_obs_vault_path().to_string())
                 .unwrap_or_default();
             std::thread::spawn(move || {
+                if vault.trim().is_empty() {
+                    push_toast(&weak, "warn", "Obsidian sync", "Choose a vault first.");
+                    return;
+                }
                 let args = ["obsidian", "sync", vault.trim()];
-                let out = run_neothd_probe(&args);
-                let msg = if out.trim().is_empty() {
-                    "Sync started.".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "success", "Obsidian", &msg);
-                std::thread::spawn(move || refresh_obsidian(weak2));
+                let result =
+                    run_neothd_json_action::<gui_action::ObsidianSyncAck>(&args, "Obsidian sync")
+                        .and_then(|ack| {
+                            ack.verify()?;
+                            Ok(ack)
+                        });
+                match result {
+                    Ok(ack) => {
+                        let weak2 = weak.clone();
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Obsidian",
+                            &format!(
+                                "Sync complete: {} copied, {} unchanged.",
+                                ack.copied, ack.skipped_identical
+                            ),
+                        );
+                        std::thread::spawn(move || refresh_obsidian(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Obsidian sync failed", &error);
+                        std::thread::spawn(move || refresh_obsidian(weak2));
+                    }
+                }
             });
         });
 
@@ -3617,16 +3830,39 @@ fn main() -> Result<()> {
                 .map(|w| w.get_obs_vault_path().to_string())
                 .unwrap_or_default();
             std::thread::spawn(move || {
+                if vault.trim().is_empty() {
+                    push_toast(&weak, "warn", "Obsidian wiki", "Choose a vault first.");
+                    return;
+                }
                 let args = ["obsidian", "wiki-build", vault.trim()];
-                let out = run_neothd_probe(&args);
-                let msg = if out.trim().is_empty() {
-                    "Wiki build started.".to_string()
-                } else {
-                    out.trim().to_string()
-                };
-                let weak2 = weak.clone();
-                push_toast(&weak, "success", "Obsidian", &msg);
-                std::thread::spawn(move || refresh_obsidian(weak2));
+                let result = run_neothd_json_action::<gui_action::WikiBuildAck>(
+                    &args,
+                    "Obsidian wiki build",
+                )
+                .and_then(|ack| {
+                    ack.verify()?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => {
+                        let weak2 = weak.clone();
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Obsidian",
+                            &format!(
+                                "Wiki build complete: {} page(s) written.",
+                                ack.pages_written
+                            ),
+                        );
+                        std::thread::spawn(move || refresh_obsidian(weak2));
+                    }
+                    Err(error) => {
+                        let weak2 = weak.clone();
+                        push_toast(&weak, "warn", "Obsidian wiki failed", &error);
+                        std::thread::spawn(move || refresh_obsidian(weak2));
+                    }
+                }
             });
         });
 
@@ -3682,11 +3918,23 @@ fn main() -> Result<()> {
                         }
                     }
                 });
-                let out = run_neothd_probe(&["dream", "now"]);
-                let msg = if out.trim().is_empty() {
-                    "Dream recorded.".to_string()
-                } else {
-                    out.trim().to_string()
+                let result = run_neothd_json_action::<gui_action::DreamNowAck>(
+                    &["dream", "now"],
+                    "Dream now",
+                )
+                .and_then(|ack| {
+                    ack.verify()?;
+                    Ok(ack)
+                });
+                let (msg, succeeded) = match result {
+                    Ok(ack) => (
+                        format!(
+                            "{} dream(s) recorded from {} event(s).",
+                            ack.dreams_written, ack.events_considered
+                        ),
+                        true,
+                    ),
+                    Err(error) => (error, false),
                 };
                 let weak2 = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -3695,7 +3943,16 @@ fn main() -> Result<()> {
                         w.set_dr_dream_now_result(msg.as_str().into());
                     }
                 });
-                push_toast(&weak2, "success", "Dreaming", "Dream now complete.");
+                if succeeded {
+                    push_toast(&weak2, "success", "Dreaming", "Dream now complete.");
+                } else {
+                    push_toast(
+                        &weak2,
+                        "warn",
+                        "Dream now failed",
+                        "See the result for details.",
+                    );
+                }
                 std::thread::spawn(move || refresh_dreaming(weak2));
             });
         });
@@ -3712,18 +3969,58 @@ fn main() -> Result<()> {
                         }
                     }
                 });
-                let out = run_neothd_probe(&["reflect"]);
-                let msg = if out.trim().is_empty() {
-                    "Reflect complete.".to_string()
-                } else {
-                    out.trim().to_string()
+                let result = run_neothd_json_action::<gui_action::ReflectionAck>(
+                    &["reflect", "digest", "daily"],
+                    "Daily reflection",
+                )
+                .and_then(|ack| {
+                    ack.verify_daily()?;
+                    Ok(ack)
+                });
+                let (msg, succeeded) = match result {
+                    Ok(ack) if ack.written => {
+                        let mut message = format!("Daily reflection {} written.", ack.tag);
+                        if let Some(body) = ack.body.as_deref().filter(|body| !body.is_empty()) {
+                            message.push('\n');
+                            message.push_str(body);
+                        }
+                        if !ack.topics.is_empty() {
+                            message.push_str("\nTopics: ");
+                            message.push_str(&ack.topics.join(", "));
+                        }
+                        if let Some(path) = ack.obsidian.as_deref().filter(|path| !path.is_empty())
+                        {
+                            message.push_str("\nObsidian: ");
+                            message.push_str(path);
+                        }
+                        (message, true)
+                    }
+                    Ok(ack) => (
+                        format!(
+                            "Daily reflection {} unchanged: {}.",
+                            ack.tag,
+                            ack.reason.as_deref().unwrap_or("no topics in the window")
+                        ),
+                        true,
+                    ),
+                    Err(error) => (error, false),
                 };
+                let weak2 = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
                         w.set_dr_reflect_loading(false);
                         w.set_dr_reflect_result(msg.as_str().into());
                     }
                 });
+                if !succeeded {
+                    push_toast(
+                        &weak2,
+                        "warn",
+                        "Daily reflection failed",
+                        "See the result for details.",
+                    );
+                }
+                std::thread::spawn(move || refresh_dreaming(weak2));
             });
         });
 
@@ -3785,17 +4082,24 @@ fn main() -> Result<()> {
             let weak = weak_bc_sa.clone();
             std::thread::spawn(move || {
                 let flag = if enable { "--enable" } else { "--disable" };
-                let out = run_neothd_probe(&["buddy", "self-activation", flag]);
-                let msg = if out.trim().is_empty() {
-                    format!(
-                        "Self-activation {}.",
-                        if enable { "enabled" } else { "disabled" }
-                    )
-                } else {
-                    out.trim().to_string()
-                };
+                let result = run_neothd_json_action::<gui_action::BuddySelfActivationAck>(
+                    &["buddy", "self-activation", flag],
+                    "Buddy self-activation update",
+                )
+                .and_then(|ack| ack.verify(enable));
+                match result {
+                    Ok(()) => push_toast(
+                        &weak,
+                        "success",
+                        "Buddy",
+                        &format!(
+                            "Self-activation {}.",
+                            if enable { "enabled" } else { "disabled" }
+                        ),
+                    ),
+                    Err(error) => push_toast(&weak, "warn", "Buddy update failed", &error),
+                }
                 let weak2 = weak.clone();
-                push_toast(&weak, "success", "Buddy", &msg);
                 std::thread::spawn(move || refresh_buddyconfig(weak2));
             });
         });
@@ -3806,41 +4110,125 @@ fn main() -> Result<()> {
             let weak = weak_bc_pr.clone();
             std::thread::spawn(move || {
                 let flag = if enable { "--enable" } else { "--disable" };
-                let out = run_neothd_probe(&["buddy", "proactive", flag]);
-                let msg = if out.trim().is_empty() {
-                    format!(
-                        "Proactive mode {}.",
-                        if enable { "enabled" } else { "disabled" }
-                    )
-                } else {
-                    out.trim().to_string()
-                };
+                let result = run_neothd_json_action::<gui_action::BuddyProactiveAck>(
+                    &["buddy", "proactive", flag],
+                    "Buddy proactive update",
+                )
+                .and_then(|ack| ack.verify(enable));
+                match result {
+                    Ok(()) => push_toast(
+                        &weak,
+                        "success",
+                        "Buddy",
+                        &format!(
+                            "Proactive mode {}.",
+                            if enable { "enabled" } else { "disabled" }
+                        ),
+                    ),
+                    Err(error) => push_toast(&weak, "warn", "Buddy update failed", &error),
+                }
                 let weak2 = weak.clone();
-                push_toast(&weak, "success", "Buddy", &msg);
                 std::thread::spawn(move || refresh_buddyconfig(weak2));
             });
         });
 
-        // Sovereign toggle — read-only; redirect the operator to Privacy tab.
-        let weak_bc_sov = window.as_weak();
-        window.on_bc_sovereign_toggle(move |_| {
-            push_toast(
-                &weak_bc_sov,
-                "info",
-                "Buddy Config",
-                "Change sovereign buddy in the Privacy tab.",
-            );
+        // Sovereign enable deliberately remains a real TTY-only typed-phrase
+        // ceremony. The GUI can open the exact command, but receives no bypass
+        // token and cannot claim that activation completed.
+        let weak_bc_sov_enable = window.as_weak();
+        let sovereign_home = neoth_dir.clone();
+        window.on_bc_sovereign_enable_cli(move || {
+            let weak = weak_bc_sov_enable.clone();
+            let home = sovereign_home.clone();
+            std::thread::spawn(move || {
+                let result = which_neothd()
+                    .context("NEOTH CLI binary is missing beside the GUI")
+                    .and_then(|bin| launch_sovereign_ceremony(&bin, &home));
+                match result {
+                    Ok(()) => push_toast(
+                        &weak,
+                        "consent",
+                        "Sovereign activation",
+                        "Secure terminal opened. Review the consequences and type `sovereign` there to enable; then refresh this panel.",
+                    ),
+                    Err(error) => push_toast(
+                        &weak,
+                        "warn",
+                        "Could not open Sovereign ceremony",
+                        &format!("{error:#}"),
+                    ),
+                }
+            });
         });
 
-        // Smart-approve toggle — read-only per-channel; redirect to Privacy tab.
+        // Sovereign disable needs no ceremony, but still traverses the real
+        // autonomy policy writer and must return a typed acknowledgement.
+        let weak_bc_sov_disable = window.as_weak();
+        window.on_bc_sovereign_disable(move || {
+            let weak = weak_bc_sov_disable.clone();
+            std::thread::spawn(move || {
+                let result = run_neothd_json_action::<gui_action::SovereignDisableAck>(
+                    &["autonomy", "sovereign", "--disable"],
+                    "Sovereign disable",
+                )
+                .and_then(|ack| {
+                    ack.verify()?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => push_toast(
+                        &weak,
+                        "info",
+                        "Sovereign disabled",
+                        &format!(
+                            "Buddy is no longer sovereign. Autonomy remains {} (mode: {}).",
+                            ack.previous_autonomy, ack.mode
+                        ),
+                    ),
+                    Err(error) => push_toast(&weak, "warn", "Sovereign disable failed", &error),
+                }
+                let weak2 = weak.clone();
+                std::thread::spawn(move || refresh_buddyconfig(weak2));
+            });
+        });
+
+        // Smart-Approve is the global security-policy master switch. Per-MCP
+        // server opt-ins remain an additional AND gate.
         let weak_bc_sma = window.as_weak();
-        window.on_bc_smart_approve_toggle(move |_| {
-            push_toast(
-                &weak_bc_sma,
-                "info",
-                "Buddy Config",
-                "Smart-approve is a per-channel setting — configure in Privacy tab.",
-            );
+        window.on_bc_smart_approve_toggle(move |enable| {
+            let weak = weak_bc_sma.clone();
+            std::thread::spawn(move || {
+                let flag = if enable { "--enable" } else { "--disable" };
+                let result = run_neothd_json_action::<gui_action::SmartApproveAck>(
+                    &["security", "set", "smart-approve", flag],
+                    "Smart-Approve update",
+                )
+                .and_then(|ack| {
+                    ack.verify(enable)?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => push_toast(
+                        &weak,
+                        "info",
+                        "Smart-Approve",
+                        if ack.changed {
+                            if enable {
+                                "Global master enabled. Individual MCP servers must still opt in."
+                            } else {
+                                "Global master disabled. Read-only tools will ask again."
+                            }
+                        } else if enable {
+                            "Global master was already enabled."
+                        } else {
+                            "Global master was already disabled."
+                        },
+                    ),
+                    Err(error) => push_toast(&weak, "warn", "Smart-Approve update failed", &error),
+                }
+                let weak2 = weak.clone();
+                std::thread::spawn(move || refresh_buddyconfig(weak2));
+            });
         });
 
         // Fire once at startup.
@@ -3872,26 +4260,33 @@ fn main() -> Result<()> {
                         }
                     }
                 });
-                let out =
-                    run_neothd_probe(&["companion", "pair-phone", "--write-invite-for-serve"]);
-                let pair_url = out
-                    .lines()
-                    .find(|l| l.starts_with("neoth://companion/pair"))
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let ok = !pair_url.is_empty();
-                let url_copy = pair_url.clone();
+                let result = run_neothd_json_action::<gui_action::CompanionInviteAck>(
+                    &["companion", "pair-phone", "--write-invite-for-serve"],
+                    "Companion invite",
+                )
+                .and_then(|ack| {
+                    ack.verify()?;
+                    Ok(ack)
+                });
+                let weak2 = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
                         w.set_cp_loading(false);
-                        w.set_cp_pair_url(url_copy.as_str().into());
-                        w.set_cp_invite_pending(ok);
-                        if !ok {
-                            w.set_cp_error("Failed to generate invite URL.".into());
+                        match result {
+                            Ok(ack) => {
+                                w.set_cp_pair_url(ack.pair_url.as_str().into());
+                                w.set_cp_invite_pending(true);
+                                w.set_cp_error("".into());
+                            }
+                            Err(error) => {
+                                w.set_cp_pair_url("".into());
+                                w.set_cp_invite_pending(false);
+                                w.set_cp_error(error.as_str().into());
+                            }
                         }
                     }
                 });
+                std::thread::spawn(move || refresh_companion(weak2));
             });
         });
     }
@@ -4152,10 +4547,10 @@ fn main() -> Result<()> {
         let weak_loop_kill = window.as_weak();
         let child_kill = loop_child.clone();
         window.on_loop_kill_clicked(move || {
-            if let Ok(mut slot) = child_kill.lock() {
-                if let Some(child) = slot.as_mut() {
-                    let _ = child.kill();
-                }
+            if let Ok(mut slot) = child_kill.lock()
+                && let Some(child) = slot.as_mut()
+            {
+                let _ = child.kill();
             }
             if let Some(w) = weak_loop_kill.upgrade() {
                 w.set_loop_status_note(
@@ -5347,16 +5742,16 @@ fn main() -> Result<()> {
                         // the daemon's most-recent (≤30s) WAL event. Only override
                         // when the daemon is actively doing something (!= idle) so
                         // a quiet daemon leaves the last user-action mood intact.
-                        if let Some((act, cap)) = fetch_activity_warm(&client) {
-                            if act != "idle" {
-                                let weak_b = weak.clone();
-                                let _ = slint::invoke_from_event_loop(move || {
-                                    if let Some(w) = weak_b.upgrade() {
-                                        w.set_buddy_mood(act.into());
-                                        w.set_buddy_caption(cap.into());
-                                    }
-                                });
-                            }
+                        if let Some((act, cap)) = fetch_activity_warm(&client)
+                            && act != "idle"
+                        {
+                            let weak_b = weak.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = weak_b.upgrade() {
+                                    w.set_buddy_mood(act.into());
+                                    w.set_buddy_caption(cap.into());
+                                }
+                            });
                         }
                         if want_board {
                             let snap = fetch_board_warm_or_cold(&client);
@@ -6777,12 +7172,22 @@ fn main() -> Result<()> {
                 }
             });
             // Seed the overlay with the current buddy state so it is not blank.
-            if let Some(ov2) = overlay_weak_for_minimize.upgrade() {
-                if let Some(win2) = window_weak_for_minimize.upgrade() {
-                    ov2.set_buddy_mood(win2.get_buddy_mood());
-                    ov2.set_status_text(win2.get_buddy_caption());
-                    ov2.set_daemon_state(win2.get_daemon_state());
-                }
+            if let Some(ov2) = overlay_weak_for_minimize.upgrade()
+                && let Some(win2) = window_weak_for_minimize.upgrade()
+            {
+                ov2.set_buddy_mood(win2.get_buddy_mood());
+                ov2.set_status_text(win2.get_buddy_caption());
+                ov2.set_daemon_state(win2.get_daemon_state());
+            }
+        });
+
+        // The docked Buddy orb is a second UI entry point into the exact same
+        // overlay transition. Keep hide/show, always-on-top, positioning and
+        // state seeding centralized in `minimize-to-companion`.
+        let window_weak_for_buddy = window.as_weak();
+        window.on_buddy_clicked(move || {
+            if let Some(win) = window_weak_for_buddy.upgrade() {
+                win.invoke_minimize_to_companion();
             }
         });
 
@@ -8944,6 +9349,77 @@ fn run_neothd_probe(args: &[&str]) -> String {
     }
 }
 
+/// Execute one GUI-triggered CLI action through the structured automation
+/// contract. A successful exit without a valid typed acknowledgement is still
+/// a failure; callers must additionally verify action-specific fields.
+fn run_neothd_json_action<T>(args: &[&str], action: &str) -> std::result::Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut command = neothd_json_command(args)?;
+    gui_action::run_json(&mut command, action)
+}
+
+fn run_neothd_json_action_receipt<T>(
+    args: &[&str],
+    action: &str,
+) -> std::result::Result<gui_action::JsonReceipt<T>, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut command = neothd_json_command(args)?;
+    gui_action::run_json_receipt(&mut command, action)
+}
+
+fn neothd_json_command(args: &[&str]) -> std::result::Result<std::process::Command, String> {
+    let bin = which_neothd()
+        .ok_or_else(|| "NEOTH CLI not found. Reinstall or repair PATH, then retry.".to_string())?;
+    let mut command = spawn_neothd_plain(&bin);
+    command.args(["--output", "json"]);
+    command.args(args);
+    Ok(command)
+}
+
+/// The Buddy status command is read-only but still requires a successful
+/// subprocess exit before its status snapshot may be parsed.
+fn validate_buddy_exit(
+    action: &str,
+    success: bool,
+    stderr: &[u8],
+    code: Option<i32>,
+) -> std::result::Result<(), String> {
+    if success {
+        return Ok(());
+    }
+    let diagnostic = String::from_utf8_lossy(stderr)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(400).collect::<String>())
+        .unwrap_or_else(|| "NEOTH CLI returned no diagnostic".to_string());
+    let exit = code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    Err(format!("Buddy {action} failed (exit {exit}): {diagnostic}"))
+}
+
+fn fetch_buddy_status() -> std::result::Result<panel_logic::BuddyStatusSnap, String> {
+    let bin = which_neothd().ok_or_else(|| {
+        "NEOTH CLI not found. Reinstall or repair PATH, then refresh.".to_string()
+    })?;
+    let output = spawn_neothd_plain(&bin)
+        .args(["--output", "json", "buddy", "status"])
+        .output()
+        .map_err(|error| format!("could not start NEOTH Buddy status probe: {error}"))?;
+    validate_buddy_exit(
+        "status probe",
+        output.status.success(),
+        &output.stderr,
+        output.status.code(),
+    )?;
+    panel_logic::parse_buddy_status(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// Central Buddy driver — the ONE place a GUI event becomes an orb reaction.
 /// Every handler that wants the Buddy to react calls `buddy(&w, GuiActivity::X)`
 /// instead of poking `set_buddy_mood` directly, so the orb's vocabulary stays
@@ -9699,12 +10175,11 @@ fn fetch_hemisphere_model_ids(provider: &str) -> Vec<String> {
                 .arg("--output")
                 .arg("json")
                 .output()
+                && o.status.success()
             {
-                if o.status.success() {
-                    out.extend(panel_logic::parse_model_recommend_refs(
-                        &String::from_utf8_lossy(&o.stdout),
-                    ));
-                }
+                out.extend(panel_logic::parse_model_recommend_refs(
+                    &String::from_utf8_lossy(&o.stdout),
+                ));
             }
         }
     } else if let Ok(o) = spawn_neothd_plain(&bin)
@@ -9715,13 +10190,12 @@ fn fetch_hemisphere_model_ids(provider: &str) -> Vec<String> {
         .arg("--output")
         .arg("json")
         .output()
+        && o.status.success()
     {
-        if o.status.success() {
-            out.extend(panel_logic::parse_catalog_model_ids(
-                &String::from_utf8_lossy(&o.stdout),
-                provider,
-            ));
-        }
+        out.extend(panel_logic::parse_catalog_model_ids(
+            &String::from_utf8_lossy(&o.stdout),
+            provider,
+        ));
     }
     out.dedup();
     out
@@ -9839,14 +10313,13 @@ fn apply_preset_direct(name: &str) -> String {
         Ok(o) if o.status.success() => {
             // Try to extract fields_changed count from JSON output.
             let stdout = String::from_utf8_lossy(&o.stdout);
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                if let Some(n) = v
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stdout)
+                && let Some(n) = v
                     .get("fields_changed")
                     .and_then(|f| f.as_array())
                     .map(|a| a.len())
-                {
-                    return format!("Applied preset `{name}` ({n} fields changed).");
-                }
+            {
+                return format!("Applied preset `{name}` ({n} fields changed).");
             }
             format!("Applied preset `{name}`.")
         }
@@ -11407,19 +11880,19 @@ mod chat_subprocess_tests {
 
         // Simulate what on_chat_send_clicked does on a non-empty body.
         let body = "  hello world  ".trim().to_string();
-        if !body.is_empty() {
-            if let Ok(mut last) = buf.lock() {
-                *last = body.clone();
-            }
+        if !body.is_empty()
+            && let Ok(mut last) = buf.lock()
+        {
+            *last = body.clone();
         }
         assert_eq!(*buf.lock().unwrap(), "hello world");
 
         // A second non-empty send overwrites the buffer.
         let body2 = "second message".to_string();
-        if !body2.is_empty() {
-            if let Ok(mut last) = buf.lock() {
-                *last = body2.clone();
-            }
+        if !body2.is_empty()
+            && let Ok(mut last) = buf.lock()
+        {
+            *last = body2.clone();
         }
         assert_eq!(*buf.lock().unwrap(), "second message");
     }
@@ -11431,10 +11904,10 @@ mod chat_subprocess_tests {
 
         // An empty body (early-return guard) must NOT overwrite the buffer.
         let body = "  ".trim().to_string();
-        if !body.is_empty() {
-            if let Ok(mut last) = buf.lock() {
-                *last = body.clone();
-            }
+        if !body.is_empty()
+            && let Ok(mut last) = buf.lock()
+        {
+            *last = body.clone();
         }
         assert_eq!(
             *buf.lock().unwrap(),
@@ -11769,21 +12242,35 @@ fn apply_wiki(weak: slint::Weak<MainWindow>, rows: Vec<panel_logic::WikiRowData>
 // ── Wave 4b — Buddy Config probe ─────────────────────────────────────────────
 fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
-    let out = run_neothd_probe(&["buddy", "status", "--output", "json"]);
-    let snap = panel_logic::parse_buddy_status(&out);
-    let ts = panel_logic::now_hhmm();
+    let result = fetch_buddy_status();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
-        let skill_rows: Vec<SelfActSkill> = snap
-            .self_activation_skills
-            .into_iter()
-            .map(|name| SelfActSkill { name: name.into() })
-            .collect();
-        w.set_bc_self_activation_skills(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
-            skill_rows,
-        ))));
-        w.set_bc_autonomy(snap.autonomy.as_str().into());
-        w.set_bc_refreshed_at(ts.as_str().into());
+        match result {
+            Ok(snap) => {
+                let skill_rows: Vec<SelfActSkill> = snap
+                    .self_activation_skills
+                    .into_iter()
+                    .map(|name| SelfActSkill { name: name.into() })
+                    .collect();
+                w.set_bc_self_activation_skills(slint::ModelRc::new(std::rc::Rc::new(
+                    VecModel::from(skill_rows),
+                )));
+                w.set_bc_sovereign_buddy(snap.sovereign_buddy);
+                w.set_bc_self_activation_enabled(snap.self_activation_enabled);
+                w.set_bc_smart_approve(snap.smart_approve_any);
+                w.set_bc_autonomy(snap.autonomy.as_str().into());
+                w.set_bc_proactive_enabled(snap.proactive_enabled);
+                w.set_bc_refreshed_at(panel_logic::now_hhmm().into());
+                w.set_bc_status_valid(true);
+                w.set_bc_status_error("".into());
+            }
+            Err(error) => {
+                // Keep every previously rendered value as last-known-good.
+                // Only freshness/error state changes on a failed probe.
+                w.set_bc_status_valid(false);
+                w.set_bc_status_error(error.into());
+            }
+        }
     });
 }
 
@@ -12465,7 +12952,7 @@ fn write_gui_parent_ready(handoff: &GuiParentHandoff) -> Result<()> {
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
         }
-        return result;
+        result
     }
 
     #[cfg(not(windows))]
@@ -13085,6 +13572,7 @@ where
     }
 }
 
+#[cfg(any(windows, all(unix, not(target_os = "macos"))))]
 fn await_spawned_terminal(
     mut child: std::process::Child,
     handshake: TerminalHandshake,
@@ -13109,11 +13597,22 @@ fn await_spawned_terminal(
     finish_terminal_handshake(handshake, result)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalLaunch {
+    SwitchToCli,
+    SovereignCeremony,
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
-fn terminal_shell_script() -> String {
-    format!(
-        "unset {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; \"$NEOTH_BIN\" --output json interface set cli --ready-file \"$NEOTH_READY_FILE\" --ready-token \"$NEOTH_READY_TOKEN\" || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; \"$NEOTH_BIN\"; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; else printf '\\nNEOTH needs repair; see the error above, then run: neoth init --force\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l"
-    )
+fn terminal_shell_script(launch: TerminalLaunch) -> String {
+    match launch {
+        TerminalLaunch::SwitchToCli => format!(
+            "unset {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; \"$NEOTH_BIN\" --output json interface set cli --ready-file \"$NEOTH_READY_FILE\" --ready-token \"$NEOTH_READY_TOKEN\" || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; \"$NEOTH_BIN\"; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; else printf '\\nNEOTH needs repair; see the error above, then run: neoth init --force\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l"
+        ),
+        TerminalLaunch::SovereignCeremony => format!(
+            "unset {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; \"$NEOTH_BIN\" --output json interface terminal-ready --ready-file \"$NEOTH_READY_FILE\" --ready-token \"$NEOTH_READY_TOKEN\" >/dev/null || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; \"$NEOTH_BIN\" autonomy sovereign --enable; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nSovereign mode updated. Return to the GUI and refresh Buddy status.\\n'; else printf '\\nSovereign mode was not enabled. Review the error above or retry this command.\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l"
+        ),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -13124,7 +13623,7 @@ fn shell_single_quote(value: &str) -> String {
 /// Open a real platform terminal and keep it interactive after the initial
 /// NEOTH command. Success means the terminal shell echoed the unique ready
 /// token, not merely that a launcher process accepted `spawn()`.
-fn launch_cli_terminal(bin: &Path, home: &Path) -> Result<()> {
+fn launch_cli_terminal(bin: &Path, home: &Path, launch: TerminalLaunch) -> Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -13132,9 +13631,14 @@ fn launch_cli_terminal(bin: &Path, home: &Path) -> Result<()> {
         const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
         let handshake = TerminalHandshake::create(home)?;
         let path = bin.to_string_lossy().replace('\'', "''");
-        let script = format!(
-            "$ErrorActionPreference = 'Stop'; Remove-Item Env:{PRODUCT_LAUNCHER_ENV}, Env:{INTERFACE_OVERRIDE_ENV} -ErrorAction SilentlyContinue; & '{path}' --output json interface set cli --ready-file $env:NEOTH_READY_FILE --ready-token $env:NEOTH_READY_TOKEN; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; Remove-Item Env:NEOTH_READY_FILE, Env:NEOTH_READY_TOKEN -ErrorAction SilentlyContinue; & '{path}'; if ($LASTEXITCODE -eq 0) {{ Write-Host ''; Write-Host 'NEOTH CLI ready. Try: neoth --help' }} else {{ Write-Host ''; Write-Host 'NEOTH needs repair; see the error above, then run: neoth init --force' }}"
-        );
+        let script = match launch {
+            TerminalLaunch::SwitchToCli => format!(
+                "$ErrorActionPreference = 'Stop'; Remove-Item Env:{PRODUCT_LAUNCHER_ENV}, Env:{INTERFACE_OVERRIDE_ENV} -ErrorAction SilentlyContinue; & '{path}' --output json interface set cli --ready-file $env:NEOTH_READY_FILE --ready-token $env:NEOTH_READY_TOKEN; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; Remove-Item Env:NEOTH_READY_FILE, Env:NEOTH_READY_TOKEN -ErrorAction SilentlyContinue; & '{path}'; if ($LASTEXITCODE -eq 0) {{ Write-Host ''; Write-Host 'NEOTH CLI ready. Try: neoth --help' }} else {{ Write-Host ''; Write-Host 'NEOTH needs repair; see the error above, then run: neoth init --force' }}"
+            ),
+            TerminalLaunch::SovereignCeremony => format!(
+                "$ErrorActionPreference = 'Stop'; Remove-Item Env:{PRODUCT_LAUNCHER_ENV}, Env:{INTERFACE_OVERRIDE_ENV} -ErrorAction SilentlyContinue; & '{path}' --output json interface terminal-ready --ready-file $env:NEOTH_READY_FILE --ready-token $env:NEOTH_READY_TOKEN > $null; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; Remove-Item Env:NEOTH_READY_FILE, Env:NEOTH_READY_TOKEN -ErrorAction SilentlyContinue; & '{path}' autonomy sovereign --enable; if ($LASTEXITCODE -eq 0) {{ Write-Host ''; Write-Host 'Sovereign mode updated. Return to the GUI and refresh Buddy status.' }} else {{ Write-Host ''; Write-Host 'Sovereign mode was not enabled. Review the error above or retry this command.' }}"
+            ),
+        };
         let mut command = std::process::Command::new("powershell.exe");
         scrub_gui_control_environment(&mut command);
         let child = command
@@ -13144,13 +13648,13 @@ fn launch_cli_terminal(bin: &Path, home: &Path) -> Result<()> {
             .env(TERMINAL_READY_TOKEN_ENV, &handshake.token)
             .creation_flags(CREATE_NEW_CONSOLE)
             .spawn();
-        return match child {
+        match child {
             Ok(child) => await_spawned_terminal(child, handshake, "Windows PowerShell"),
             Err(error) => finish_terminal_handshake(
                 handshake,
                 Err(anyhow::Error::new(error).context("open Windows PowerShell for the NEOTH CLI")),
             ),
-        };
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -13166,15 +13670,26 @@ fn launch_cli_terminal(bin: &Path, home: &Path) -> Result<()> {
             .ready_path
             .to_str()
             .expect("handshake path extends an already validated Unicode home");
-        let shell_command = format!(
-            "unset {GUI_READY_FILE_ENV} {GUI_READY_TOKEN_ENV} {GUI_PARENT_COMMIT_ENV} {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; NEOTH_HOME={} {} --output json interface set cli --ready-file {} --ready-token {} || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; NEOTH_HOME={} {}; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; else printf '\\nNEOTH needs repair; see the error above, then run: neoth init --force\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l",
-            shell_single_quote(home),
-            shell_single_quote(path),
-            shell_single_quote(ready_path),
-            shell_single_quote(&handshake.token),
-            shell_single_quote(home),
-            shell_single_quote(path),
-        );
+        let shell_command = match launch {
+            TerminalLaunch::SwitchToCli => format!(
+                "unset {GUI_READY_FILE_ENV} {GUI_READY_TOKEN_ENV} {GUI_PARENT_COMMIT_ENV} {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; NEOTH_HOME={} {} --output json interface set cli --ready-file {} --ready-token {} || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; NEOTH_HOME={} {}; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nNEOTH CLI ready. Try: neoth --help\\n'; else printf '\\nNEOTH needs repair; see the error above, then run: neoth init --force\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l",
+                shell_single_quote(home),
+                shell_single_quote(path),
+                shell_single_quote(ready_path),
+                shell_single_quote(&handshake.token),
+                shell_single_quote(home),
+                shell_single_quote(path),
+            ),
+            TerminalLaunch::SovereignCeremony => format!(
+                "unset {GUI_READY_FILE_ENV} {GUI_READY_TOKEN_ENV} {GUI_PARENT_COMMIT_ENV} {PRODUCT_LAUNCHER_ENV} {INTERFACE_OVERRIDE_ENV}; NEOTH_HOME={} {} --output json interface terminal-ready --ready-file {} --ready-token {} >/dev/null || exit $?; unset NEOTH_READY_FILE NEOTH_READY_TOKEN; NEOTH_HOME={} {} autonomy sovereign --enable; NEOTH_EXIT=$?; if [ \"$NEOTH_EXIT\" -eq 0 ]; then printf '\\nSovereign mode updated. Return to the GUI and refresh Buddy status.\\n'; else printf '\\nSovereign mode was not enabled. Review the error above or retry this command.\\n'; fi; exec \"${{SHELL:-/bin/sh}}\" -l",
+                shell_single_quote(home),
+                shell_single_quote(path),
+                shell_single_quote(ready_path),
+                shell_single_quote(&handshake.token),
+                shell_single_quote(home),
+                shell_single_quote(path),
+            ),
+        };
         let shell_command = shell_command.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
             "tell application \"Terminal\"\nactivate\ndo script \"{shell_command}\"\nend tell"
@@ -13197,12 +13712,12 @@ fn launch_cli_terminal(bin: &Path, home: &Path) -> Result<()> {
                 Err(anyhow::Error::new(error).context("ask Terminal.app to open the NEOTH CLI"))
             }
         };
-        return finish_terminal_handshake(handshake, result);
+        finish_terminal_handshake(handshake, result)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let script = terminal_shell_script();
+        let script = terminal_shell_script(launch);
         let mut errors = Vec::new();
         for program in [
             "x-terminal-emulator",
@@ -13252,7 +13767,14 @@ fn switch_to_cli(bin: &Path, home: &Path) -> Result<()> {
     // The terminal itself performs the one canonical transaction. The CLI
     // writes Ready only after interface.json is durably committed and restores
     // the exact previous bytes if that Ready write fails.
-    launch_cli_terminal(bin, home)
+    launch_cli_terminal(bin, home, TerminalLaunch::SwitchToCli)
+}
+
+fn launch_sovereign_ceremony(bin: &Path, home: &Path) -> Result<()> {
+    // Enabling sovereign mode remains inside the CLI's real TTY-only typed
+    // phrase ceremony. The GUI opens that exact command but receives no bypass
+    // token and never mutates the policy itself.
+    launch_cli_terminal(bin, home, TerminalLaunch::SovereignCeremony)
 }
 
 #[cfg(test)]
@@ -13506,7 +14028,7 @@ mod interface_preference_tests {
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn linux_terminal_script_uses_an_environment_path_not_interpolation() {
-        let script = terminal_shell_script();
+        let script = terminal_shell_script(TerminalLaunch::SwitchToCli);
         assert!(script.starts_with(
             "unset NEOTH_PRODUCT_LAUNCHER NEOTH_INTERFACE; \"$NEOTH_BIN\" --output json interface set cli"
         ));
@@ -13517,6 +14039,17 @@ mod interface_preference_tests {
         assert!(script.contains("if [ \"$NEOTH_EXIT\" -eq 0 ]"));
         assert!(script.contains("NEOTH needs repair"));
         assert!(script.contains("exec \"${SHELL:-/bin/sh}\" -l"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn sovereign_terminal_runs_the_real_tty_ceremony_without_switching_interface() {
+        let script = terminal_shell_script(TerminalLaunch::SovereignCeremony);
+        assert!(script.contains("interface terminal-ready"));
+        assert!(script.contains("\"$NEOTH_BIN\" autonomy sovereign --enable"));
+        assert!(!script.contains("interface set"));
+        assert!(!script.contains("gui-confirmed"));
+        assert!(!script.contains("gui-token"));
     }
 
     #[test]
@@ -13699,7 +14232,7 @@ mod interface_preference_tests {
             .nth(1)
             .and_then(|tail| tail.split("#[cfg(test)]").next())
             .unwrap();
-        assert!(switch.contains("launch_cli_terminal(bin, home)"));
+        assert!(switch.contains("launch_cli_terminal(bin, home, TerminalLaunch::SwitchToCli)"));
         assert!(!switch.contains("set_interface_preference_via_cli"));
         assert!(!switch.contains("GuiInterfacePreference::Gui"));
     }
@@ -15342,6 +15875,151 @@ mod deep_link_tests {
         ] {
             assert!(NAV_PANELS.contains(&p), "{p} must be a nav panel");
         }
+    }
+}
+
+/// Buddy dock and six-field status wiring must not drift back to decorative UI.
+#[cfg(test)]
+mod buddy_wiring_tests {
+    use super::validate_buddy_exit;
+
+    #[test]
+    fn buddy_click_reuses_the_companion_overlay_transition() {
+        let source = include_str!("main.rs");
+        let marker = ["let window_weak_for_", "buddy"].concat();
+        let end = ["// overlay restore-", "clicked"].concat();
+        let wiring = source
+            .split(&marker)
+            .nth(1)
+            .and_then(|tail| tail.split(&end).next())
+            .expect("Buddy overlay wiring block");
+        assert!(wiring.contains(&["window.on_buddy_", "clicked"].concat()));
+        assert!(wiring.contains(&["win.invoke_minimize_to_", "companion()"].concat()));
+    }
+
+    #[test]
+    fn main_window_forwards_all_buddy_status_booleans() {
+        let source = include_str!("main.rs");
+        let ui = include_str!("../ui/main.slint");
+        for property in [
+            "bc-sovereign-buddy",
+            "bc-self-activation-enabled",
+            "bc-smart-approve",
+            "bc-proactive-enabled",
+        ] {
+            assert!(
+                ui.contains(&format!("in property <bool>            {property}: false;")),
+                "missing MainWindow property {property}"
+            );
+            assert!(
+                ui.contains(&format!("{property}: root.{property};")),
+                "BuddyConfigView does not receive {property}"
+            );
+        }
+        for setter_suffix in [
+            "bc_sovereign_buddy",
+            "bc_self_activation_enabled",
+            "bc_self_activation_skills",
+            "bc_smart_approve",
+            "bc_autonomy",
+            "bc_proactive_enabled",
+        ] {
+            assert!(
+                source.contains(&["w.set_", setter_suffix, "("].concat()),
+                "refresh_buddyconfig does not set {setter_suffix}"
+            );
+        }
+        assert!(ui.contains("in property <bool>            bc-status-valid: false;"));
+        assert!(ui.contains("in property <string>          bc-status-error: \"\";"));
+
+        let buddy_ui = include_str!("../ui/buddyconfig.slint");
+        assert!(buddy_ui.contains("Buddy status unavailable"));
+        assert!(buddy_ui.contains("controls-enabled: root.bc-status-valid;"));
+    }
+
+    #[test]
+    fn failed_refresh_keeps_last_known_buddy_values() {
+        let source = include_str!("main.rs");
+        let refresh = source
+            .split("fn refresh_buddyconfig")
+            .nth(1)
+            .and_then(|tail| tail.split("// ── Wave 4b — Companion probe").next())
+            .expect("refresh_buddyconfig body");
+        let failure = refresh
+            .split("Err(error) =>")
+            .nth(1)
+            .expect("explicit Buddy refresh failure arm");
+        assert!(failure.contains("set_bc_status_valid(false)"));
+        assert!(failure.contains("set_bc_status_error(error.into())"));
+        for value_setter in [
+            "set_bc_sovereign_buddy",
+            "set_bc_self_activation_enabled",
+            "set_bc_self_activation_skills",
+            "set_bc_smart_approve",
+            "set_bc_autonomy",
+            "set_bc_proactive_enabled",
+            "set_bc_refreshed_at",
+        ] {
+            assert!(
+                !failure.contains(value_setter),
+                "failed refresh must preserve last-known-good `{value_setter}`"
+            );
+        }
+    }
+
+    #[test]
+    fn buddy_status_requires_zero_exit_before_snapshot_parsing() {
+        assert!(validate_buddy_exit("proactive", true, b"", Some(0)).is_ok());
+        let error = validate_buddy_exit("proactive", false, b"policy denied\n", Some(2))
+            .expect_err("non-zero exit must fail");
+        assert!(error.contains("exit 2"));
+        assert!(error.contains("policy denied"));
+    }
+
+    #[test]
+    fn buddy_policy_controls_are_real_and_sovereign_enable_keeps_the_tty_gate() {
+        let source = include_str!("main.rs");
+        let ui = include_str!("../ui/buddyconfig.slint");
+        let callbacks = source
+            .split("Wave 4b — Buddy Config panel callbacks")
+            .nth(1)
+            .and_then(|tail| {
+                tail.split("Wave 4b — Companion / Smartphone Pairing")
+                    .next()
+            })
+            .expect("Buddy callback block");
+
+        assert!(callbacks.contains("on_bc_sovereign_enable_cli"));
+        assert!(callbacks.contains("launch_sovereign_ceremony"));
+        assert!(callbacks.contains("gui_action::BuddySelfActivationAck"));
+        assert!(callbacks.contains("&[\"buddy\", \"self-activation\", flag]"));
+        assert!(callbacks.contains("\"Buddy self-activation update\""));
+        assert!(callbacks.contains("gui_action::BuddyProactiveAck"));
+        assert!(callbacks.contains("&[\"buddy\", \"proactive\", flag]"));
+        assert!(callbacks.contains("\"Buddy proactive update\""));
+        assert!(callbacks.contains("on_bc_sovereign_disable"));
+        assert!(callbacks.contains("gui_action::SovereignDisableAck"));
+        assert!(callbacks.contains("&[\"autonomy\", \"sovereign\", \"--disable\"]"));
+        assert!(callbacks.contains("gui_action::SmartApproveAck"));
+        assert!(callbacks.contains("&[\"security\", \"set\", \"smart-approve\", flag]"));
+        assert!(!callbacks.contains("Change sovereign buddy in the Privacy tab"));
+        assert!(!callbacks.contains("Smart-approve is a per-channel setting"));
+        assert!(!callbacks.contains("run_buddy_toggle"));
+
+        assert!(ui.contains("label: \"Enable in CLI\""));
+        assert!(ui.contains("root.bc-sovereign-enable-cli()"));
+        assert!(ui.contains("root.bc-sovereign-disable()"));
+        assert!(!ui.contains("bc-sovereign-toggle(bool)"));
+
+        let launcher = source
+            .split("enum TerminalLaunch")
+            .nth(1)
+            .and_then(|tail| tail.split("fn switch_to_cli").next())
+            .expect("terminal launcher contract");
+        assert!(launcher.contains("interface terminal-ready"));
+        assert!(launcher.contains("autonomy sovereign --enable"));
+        assert!(!launcher.contains("gui-confirmed"));
+        assert!(!launcher.contains("gui-token"));
     }
 }
 

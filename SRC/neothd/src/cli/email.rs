@@ -295,10 +295,10 @@ async fn run_fetch(
 /// error. App-password env wins (works for any IMAP host); otherwise mint an
 /// XOAUTH2 access token from the stored Google OAuth refresh token.
 async fn resolve_auth(username: &str) -> Result<AuthMethod> {
-    if let Ok(pw) = std::env::var("NEOTH_IMAP_PASSWORD") {
-        if !pw.is_empty() {
-            return Ok(AuthMethod::PasswordPlain { password: pw });
-        }
+    if let Ok(pw) = std::env::var("NEOTH_IMAP_PASSWORD")
+        && !pw.is_empty()
+    {
+        return Ok(AuthMethod::PasswordPlain { password: pw });
     }
 
     let creds = crate::config::credentials::Credentials::load_or_default(

@@ -1363,27 +1363,27 @@ fn normalize_markdown_frontmatter(
 ) -> String {
     let text = text.replace("\r\n", "\n");
     let fields = frontmatter_fields(manifest, policy);
-    if let Some(rest) = text.strip_prefix("---\n") {
-        if let Some(end) = rest.find("\n---\n") {
-            let (frontmatter, body_with_delim) = rest.split_at(end);
-            let body = &body_with_delim["\n---\n".len()..];
-            let mut out = String::from("---\n");
-            out.push_str(frontmatter);
-            if !frontmatter.ends_with('\n') && !frontmatter.is_empty() {
+    if let Some(rest) = text.strip_prefix("---\n")
+        && let Some(end) = rest.find("\n---\n")
+    {
+        let (frontmatter, body_with_delim) = rest.split_at(end);
+        let body = &body_with_delim["\n---\n".len()..];
+        let mut out = String::from("---\n");
+        out.push_str(frontmatter);
+        if !frontmatter.ends_with('\n') && !frontmatter.is_empty() {
+            out.push('\n');
+        }
+        for (key, value) in fields {
+            if !frontmatter_has_key(frontmatter, key) {
+                out.push_str(key);
+                out.push_str(": ");
+                out.push_str(&value);
                 out.push('\n');
             }
-            for (key, value) in fields {
-                if !frontmatter_has_key(frontmatter, key) {
-                    out.push_str(key);
-                    out.push_str(": ");
-                    out.push_str(&value);
-                    out.push('\n');
-                }
-            }
-            out.push_str("---\n");
-            out.push_str(body);
-            return out;
         }
+        out.push_str("---\n");
+        out.push_str(body);
+        return out;
     }
 
     let mut out = String::from("---\n");
@@ -1399,10 +1399,10 @@ fn normalize_markdown_frontmatter(
 }
 
 fn strip_frontmatter(text: &str) -> &str {
-    if let Some(rest) = text.strip_prefix("---\n") {
-        if let Some(end) = rest.find("\n---\n") {
-            return &rest[end + "\n---\n".len()..];
-        }
+    if let Some(rest) = text.strip_prefix("---\n")
+        && let Some(end) = rest.find("\n---\n")
+    {
+        return &rest[end + "\n---\n".len()..];
     }
     text
 }
@@ -1823,16 +1823,16 @@ pub async fn preload_template(
             // and the file's template-relative path are individually safe.
             // Fail-closed: skip the file on any error or boundary violation.
             let parent = dst.parent().unwrap_or(vault);
-            if let Some(cv) = &canonical_vault {
-                if let Err(e) = assert_target_within_vault(cv, parent) {
-                    tracing::warn!(
-                        file = %file.rel.display(),
-                        error = %e,
-                        "preload: skipping file — write target escapes vault boundary"
-                    );
-                    stats.skipped_containment += 1;
-                    continue;
-                }
+            if let Some(cv) = &canonical_vault
+                && let Err(e) = assert_target_within_vault(cv, parent)
+            {
+                tracing::warn!(
+                    file = %file.rel.display(),
+                    error = %e,
+                    "preload: skipping file — write target escapes vault boundary"
+                );
+                stats.skipped_containment += 1;
+                continue;
             }
             coalescer.push(dst, file.bytes.clone());
             state
@@ -2594,10 +2594,10 @@ async fn fetch_and_write_source(
     }
 
     // Content-Length pre-check: cooperative servers get an early rejection.
-    if let Some(cl) = resp.content_length() {
-        if cl > MIRROR_SIZE_CAP {
-            anyhow::bail!("Content-Length {cl} exceeds mirror size cap ({MIRROR_SIZE_CAP} bytes)");
-        }
+    if let Some(cl) = resp.content_length()
+        && cl > MIRROR_SIZE_CAP
+    {
+        anyhow::bail!("Content-Length {cl} exceeds mirror size cap ({MIRROR_SIZE_CAP} bytes)");
     }
 
     // Stream body via chunk() (no StreamExt import needed; reqwest `stream`

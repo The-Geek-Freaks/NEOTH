@@ -898,8 +898,7 @@ impl ApplyPlan {
                 let target = snap.target.clone();
                 let bytes = before.clone();
                 let summary = format!(
-                    "write {} B back to `{}` (replacing current content)",
-                    before_state_bytes_len, target
+                    "write {before_state_bytes_len} B back to `{target}` (replacing current content)"
                 );
                 Ok(ApplyPlan {
                     summary,
@@ -934,8 +933,7 @@ impl ApplyPlan {
                 let target = snap.target.clone();
                 let bytes = before.clone();
                 let summary = format!(
-                    "restore config file `{}` to its prior {} B state",
-                    target, before_state_bytes_len
+                    "restore config file `{target}` to its prior {before_state_bytes_len} B state"
                 );
                 Ok(ApplyPlan {
                     summary,
@@ -992,14 +990,14 @@ fn collect_snapshots(
         // absolute_offset rollback records + later resolves in find_snapshot_at.
         // A single unreconstructable segment is skipped, not fatal to the scan.
         let _ = crate::wal::scan::for_each_frame(&bytes, |cursor, frame| {
-            if frame.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
-                if let Ok(snap) = serde_json::from_slice::<PreMutationSnapshot>(frame.payload) {
-                    let kind_matches = kind_filter
-                        .map(|k| kind_to_string(&snap.mutation_kind).eq_ignore_ascii_case(k.trim()))
-                        .unwrap_or(true);
-                    if kind_matches {
-                        out.push(((segment_display.clone(), cursor as u64), snap));
-                    }
+            if frame.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT
+                && let Ok(snap) = serde_json::from_slice::<PreMutationSnapshot>(frame.payload)
+            {
+                let kind_matches = kind_filter
+                    .map(|k| kind_to_string(&snap.mutation_kind).eq_ignore_ascii_case(k.trim()))
+                    .unwrap_or(true);
+                if kind_matches {
+                    out.push(((segment_display.clone(), cursor as u64), snap));
                 }
             }
             Ok(())

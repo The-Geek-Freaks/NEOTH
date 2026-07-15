@@ -1190,8 +1190,7 @@ pub fn migrate(conn: &mut Connection, current: i64, target: i64) -> Result<i64> 
     }
     if current < 0 {
         return Err(anyhow!(
-            "negative current schema version {} — refusing to migrate",
-            current,
+            "negative current schema version {current} — refusing to migrate",
         ));
     }
 
@@ -1501,8 +1500,8 @@ mod tests {
         let mut conn = open_with_meta(MIGRATIONS.iter().map(|m| m.to).max().unwrap_or(0));
         let target = MIGRATIONS.iter().map(|m| m.to).max().unwrap_or(0) + 1;
         let r = migrate(&mut conn, target - 1, target);
-        assert!(r.is_err(), "expected error when step missing, got {:?}", r);
-        assert!(format!("{:?}", r).contains("no registered migration"));
+        assert!(r.is_err(), "expected error when step missing, got {r:?}");
+        assert!(format!("{r:?}").contains("no registered migration"));
     }
 
     #[test]

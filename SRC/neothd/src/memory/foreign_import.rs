@@ -93,7 +93,7 @@ pub fn read_openclaw_layer(path: &Path) -> Result<Vec<ImportedClaim>> {
 pub fn read_openclaw_dir(dir: &Path) -> Result<Vec<ImportedClaim>> {
     let mut all = Vec::new();
     for i in 1..=12 {
-        let path = dir.join(format!("layer_{:02}.md", i));
+        let path = dir.join(format!("layer_{i:02}.md"));
         if !path.exists() {
             continue;
         }

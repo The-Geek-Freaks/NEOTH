@@ -435,7 +435,7 @@ aws_secret_access_key = secret-upper
             secret_access_key: SecretString::new("very-very-secret".into()),
             session_token: Some(SecretString::new("session-secret".into())),
         };
-        let formatted = format!("{:?}", creds);
+        let formatted = format!("{creds:?}");
         assert!(!formatted.contains("VERY-SECRET"));
         assert!(!formatted.contains("session-secret"));
         assert!(formatted.contains("REDACTED"));

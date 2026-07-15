@@ -783,8 +783,7 @@ fn run_confirm(
         "hysteria_relay" | "hysteria" => crate::cluster::discovery::DiscoveryVia::HysteriaRelay,
         "manual" | "" => crate::cluster::discovery::DiscoveryVia::Manual,
         other => anyhow::bail!(
-            "unknown discovered_via `{}` — use mdns/tailscale/hysteria_relay/manual",
-            other
+            "unknown discovered_via `{other}` — use mdns/tailscale/hysteria_relay/manual"
         ),
     };
     let home = FreedomConfig::default_neoth_home();
@@ -869,15 +868,15 @@ fn revoke_peer(home: &std::path::Path, arg: &str) -> Result<RevokeOutcome> {
         emit_revoke_sidecar(home, &key);
         return Ok(RevokeOutcome::ByKey(key));
     }
-    if let Some(peer) = crate::cluster::registry::find_by_hostname(home, arg.trim()) {
-        if crate::cluster::registry::remove(home, &peer.pub_key_hex)? {
-            emit_revoke_sidecar(home, &peer.pub_key_hex);
-            return Ok(RevokeOutcome::ByHostname {
-                label: peer.instance_label,
-                hostname: arg.trim().to_string(),
-                key: peer.pub_key_hex,
-            });
-        }
+    if let Some(peer) = crate::cluster::registry::find_by_hostname(home, arg.trim())
+        && crate::cluster::registry::remove(home, &peer.pub_key_hex)?
+    {
+        emit_revoke_sidecar(home, &peer.pub_key_hex);
+        return Ok(RevokeOutcome::ByHostname {
+            label: peer.instance_label,
+            hostname: arg.trim().to_string(),
+            key: peer.pub_key_hex,
+        });
     }
     Ok(RevokeOutcome::NoMatch)
 }
@@ -1873,7 +1872,7 @@ mod tests {
 
     fn sample_peer(idx: u8) -> DiscoveredPeer {
         DiscoveredPeer {
-            pub_key_hex: format!("{:02x}", idx).repeat(32),
+            pub_key_hex: format!("{idx:02x}").repeat(32),
             label: format!("peer-{idx}"),
             addr: format!("192.0.2.{idx}:4242"),
         }

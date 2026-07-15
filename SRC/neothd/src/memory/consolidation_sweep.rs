@@ -126,7 +126,7 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
 
 /// Decode a little-endian f32 blob. Returns empty Vec on length mismatch.
 fn blob_to_floats(blob: &[u8]) -> Vec<f32> {
-    if blob.len() % 4 != 0 {
+    if !blob.len().is_multiple_of(4) {
         return Vec::new();
     }
     blob.chunks_exact(4)

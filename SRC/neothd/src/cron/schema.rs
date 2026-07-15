@@ -322,15 +322,15 @@ pub fn preflight(job: &Job) -> Vec<String> {
     // (3) schedule fires more often than every minute (< 1-min granularity)
     // Standard 5-field cron minimum is 1 minute; we check by computing two
     // consecutive fire times and measuring the gap.
-    if let Some(t0) = job.schedule.next_after(crate::time::utc_now()) {
-        if let Some(t1) = job.schedule.next_after(t0) {
-            let gap_secs = (t1 - t0).num_seconds();
-            if gap_secs > 0 && gap_secs < 60 {
-                warnings.push(format!(
-                    "schedule fires every ~{gap_secs}s (sub-minute) — \
+    if let Some(t0) = job.schedule.next_after(crate::time::utc_now())
+        && let Some(t1) = job.schedule.next_after(t0)
+    {
+        let gap_secs = (t1 - t0).num_seconds();
+        if gap_secs > 0 && gap_secs < 60 {
+            warnings.push(format!(
+                "schedule fires every ~{gap_secs}s (sub-minute) — \
                      the scheduler tick is 30 s so this is fine but unusual"
-                ));
-            }
+            ));
         }
     }
 
@@ -836,12 +836,12 @@ impl ExecutionPolicy {
         {
             anyhow::bail!("execution.model must not be empty");
         }
-        if let Some(profile) = &self.profile {
-            if crate::profile::presets::ProfilePreset::parse(profile).is_none() {
-                anyhow::bail!(
-                    "unknown execution.profile `{profile}` (expected lowkey, formal, deepdive, tutor, or opsec)"
-                );
-            }
+        if let Some(profile) = &self.profile
+            && crate::profile::presets::ProfilePreset::parse(profile).is_none()
+        {
+            anyhow::bail!(
+                "unknown execution.profile `{profile}` (expected lowkey, formal, deepdive, tutor, or opsec)"
+            );
         }
         if self.thinking_budget == Some(0) {
             anyhow::bail!("execution.thinking_budget must be greater than zero");

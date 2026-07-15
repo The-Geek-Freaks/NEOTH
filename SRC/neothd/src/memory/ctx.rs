@@ -930,8 +930,7 @@ mod tests {
         for slice in &slices {
             assert!(
                 std::str::from_utf8(slice.as_bytes()).is_ok(),
-                "hard_slice produced invalid UTF-8: {:?}",
-                slice
+                "hard_slice produced invalid UTF-8: {slice:?}"
             );
         }
     }

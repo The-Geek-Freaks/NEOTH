@@ -304,11 +304,11 @@ pub fn run_consolidation_pass(
     // IO), draft the forgotten hot rows into the Obsidian vault. Best-
     // effort — `write_pre_decay_drafts` logs + skips individual failures
     // and never errors, so a full/read-only vault can't fail a decay pass.
-    if let Some(vault) = vault_path {
-        if !forgotten.is_empty() {
-            report.pre_decay_drafted =
-                crate::memory::pre_decay_export::write_pre_decay_drafts(vault, &forgotten);
-        }
+    if let Some(vault) = vault_path
+        && !forgotten.is_empty()
+    {
+        report.pre_decay_drafted =
+            crate::memory::pre_decay_export::write_pre_decay_drafts(vault, &forgotten);
     }
     Ok(report)
 }

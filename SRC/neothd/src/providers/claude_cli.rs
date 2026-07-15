@@ -1109,12 +1109,12 @@ async fn complete_tmux_uncached(
     // model. Fail before touching the pane instead of authorizing one model
     // and silently sending another. Operators who need per-call switching
     // stay on `backend: subprocess`.
-    if let Some(req_model) = req.model.as_ref() {
-        if req_model != model_default {
-            anyhow::bail!(
-                "claude tmux session is pinned to model `{model_default}` and cannot send the authorized per-call model `{req_model}`; use `backend: subprocess` for per-call model switching"
-            );
-        }
+    if let Some(req_model) = req.model.as_ref()
+        && req_model != model_default
+    {
+        anyhow::bail!(
+            "claude tmux session is pinned to model `{model_default}` and cannot send the authorized per-call model `{req_model}`; use `backend: subprocess` for per-call model switching"
+        );
     }
     let model = model_default.to_string();
     let payload = build_prompt_payload(&req);
@@ -1135,11 +1135,11 @@ async fn complete_tmux_uncached(
         // Repair stale slot: tmux may have lost the session (operator
         // killed it, OS OOM, server restart). Detect + clear so the
         // session-start branch below spawns a fresh one.
-        if let Some(s) = guard.as_ref() {
-            if !s.exists().await {
-                warn!(name = s.name(), "claude tmux session vanished — recreating");
-                *guard = None;
-            }
+        if let Some(s) = guard.as_ref()
+            && !s.exists().await
+        {
+            warn!(name = s.name(), "claude tmux session vanished — recreating");
+            *guard = None;
         }
         // Session-start branch: spawn a fresh warm session when none is held
         // (first attempt, a vanished pane, or a retry that reset the session).
@@ -1190,10 +1190,10 @@ async fn complete_tmux_uncached(
         };
 
         // Success: a non-empty pane reply ends the loop.
-        if let Ok(r) = &send_result {
-            if !r.trim().is_empty() {
-                break r.clone();
-            }
+        if let Ok(r) = &send_result
+            && !r.trim().is_empty()
+        {
+            break r.clone();
         }
 
         // Failure path: model the outcome as a `claude_retry::FailureSignal`.

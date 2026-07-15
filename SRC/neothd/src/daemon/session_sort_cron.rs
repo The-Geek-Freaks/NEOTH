@@ -816,8 +816,7 @@ mod tests {
         assert_eq!(
             folder_tag,
             Some("folder:folder-a"),
-            "first folder assignment must win; got {:?}",
-            folder_tag
+            "first folder assignment must win; got {folder_tag:?}"
         );
     }
 

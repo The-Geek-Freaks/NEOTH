@@ -221,7 +221,7 @@ async fn fetch_server_tools(
     let tools = match tokio::time::timeout(CATALOGUE_SERVER_TIMEOUT, work).await {
         Ok(Ok(t)) => t,
         Ok(Err(e)) => return Err(e),
-        Err(_) => anyhow::bail!("timed out after {:?}", CATALOGUE_SERVER_TIMEOUT),
+        Err(_) => anyhow::bail!("timed out after {CATALOGUE_SERVER_TIMEOUT:?}"),
     };
     if tools.is_empty() {
         return Ok(None);
@@ -370,7 +370,7 @@ async fn build_server_block(cfg: &crate::mcp::config::McpServerConfig) -> Result
     let tools = match tokio::time::timeout(CATALOGUE_SERVER_TIMEOUT, work).await {
         Ok(Ok(t)) => t,
         Ok(Err(e)) => return Err(e),
-        Err(_) => anyhow::bail!("timed out after {:?}", CATALOGUE_SERVER_TIMEOUT),
+        Err(_) => anyhow::bail!("timed out after {CATALOGUE_SERVER_TIMEOUT:?}"),
     };
     if tools.is_empty() {
         return Ok(None);

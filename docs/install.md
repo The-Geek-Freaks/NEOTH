@@ -222,7 +222,7 @@ If `cargo` uses the GNU target, plugin registration can compile but fail at runt
 | Requirement | Minimum | Recommended |
 | :-- | :-- | :-- |
 | OS | Linux, macOS, Windows | Recent Linux/macOS/Windows 11 |
-| Rust | 1.86+ for source builds | Latest stable |
+| Rust | 1.90+ for source builds | Latest stable |
 | Node.js | 22.16+ only for building the Keet companion from source | 22 LTS; release archives need no Node.js |
 | Disk | 2 GB | 10+ GB if using local models and document indexes |
 | RAM | 4 GB | 8-32 GB depending on local models |

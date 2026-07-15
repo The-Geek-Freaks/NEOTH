@@ -273,10 +273,10 @@ fn diff_top_level(old: &FreedomConfig, new: &FreedomConfig) -> Result<Vec<String
     // (each appears in both `keys()` iterators) and yields a stable sorted list.
     let mut changed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for key in old_map.keys().chain(new_map.keys()) {
-        if let Value::String(name) = key {
-            if old_map.get(key) != new_map.get(key) {
-                changed.insert(name.clone());
-            }
+        if let Value::String(name) = key
+            && old_map.get(key) != new_map.get(key)
+        {
+            changed.insert(name.clone());
         }
     }
     Ok(changed.into_iter().collect())

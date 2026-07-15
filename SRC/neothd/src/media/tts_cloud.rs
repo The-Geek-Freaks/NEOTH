@@ -8,10 +8,10 @@
 //! ## Network-guard posture
 //!
 //! No provider constructs a `reqwest::Client` directly. Credential-bearing
-//! public requests use the shared no-redirect builder; trusted local/private
+//! public requests use the shared no-redirect builder; trusted loopback
 //! ViitorVoice requests additionally bypass proxies. The endpoints are either
 //! fixed vendor origins or an explicitly configured URL that passes the
-//! HTTPS/private-self-hosted validator.
+//! HTTPS/loopback-only validator.
 //!
 //! Piper is a native subprocess provider over an operator-supplied ONNX voice;
 //! the factory never downloads model bytes. Edge is also a subprocess but is
@@ -101,8 +101,8 @@ fn validate_elevenlabs_voice_id(voice_id: &str) -> Result<(), String> {
 
 /// Validate and canonicalise the operator-configured ViitorVoice base URL.
 /// Public hosts require HTTPS. Plain HTTP is accepted only for the same
-/// loopback/private/CGNAT/ULA address policy used by the self-hosted OMI
-/// endpoint guard. URL userinfo, query strings, and fragments are rejected so
+/// machine-local loopback boundary used by its default sidecar deployment.
+/// URL userinfo, query strings, and fragments are rejected so
 /// neither reference audio nor future credentials can be redirected or
 /// smuggled into an ambiguous target.
 fn validate_viitor_endpoint(raw: &str) -> Result<(url::Url, bool), String> {
@@ -127,10 +127,10 @@ fn validate_viitor_endpoint(raw: &str) -> Result<(url::Url, bool), String> {
         return Err("viitor_voice endpoint must not contain a query or fragment".into());
     }
 
-    let direct = crate::installers::omi::is_local_endpoint(raw).is_ok();
+    let direct = crate::providers::http_client::url_has_loopback_host(&parsed);
     if parsed.scheme() == "http" && !direct {
         return Err(
-            "public viitor_voice endpoints must use https://; http:// is allowed only for explicit loopback/private self-hosted addresses"
+            "public viitor_voice endpoints must use https://; http:// is allowed only for explicit loopback addresses"
                 .into(),
         );
     }
@@ -1083,7 +1083,7 @@ mod tests {
     }
 
     #[test]
-    fn viitor_endpoint_policy_accepts_explicit_https_and_private_http() {
+    fn viitor_endpoint_policy_accepts_explicit_https_and_loopback_http() {
         let (public_https, direct) =
             validate_viitor_endpoint("https://voice.example.com/gateway").unwrap();
         assert_eq!(
@@ -1095,10 +1095,8 @@ mod tests {
         for endpoint in [
             "http://localhost:8200",
             "http://127.0.0.1:8200",
-            "http://10.0.0.4:8200/base",
-            "http://192.168.1.5:8200",
-            "http://100.64.0.5:8200",
-            "http://[fc00::1]:8200",
+            "http://127.42.0.9:8200/base",
+            "http://[::1]:8200",
         ] {
             let (_, direct) = validate_viitor_endpoint(endpoint)
                 .unwrap_or_else(|error| panic!("{endpoint} should pass: {error}"));
@@ -1112,6 +1110,10 @@ mod tests {
             "http://voice.example.com",
             "http://localhost.evil.example:8200",
             "http://8.8.8.8:8200",
+            "http://10.0.0.4:8200/base",
+            "http://192.168.1.5:8200",
+            "http://100.64.0.5:8200",
+            "http://[fc00::1]:8200",
             "http://169.254.169.254/latest/meta-data",
             "file:///tmp/voice",
             "ws://127.0.0.1:8200",
@@ -1517,7 +1519,7 @@ mod tests {
     }
 
     #[test]
-    fn tts_output_commit_is_atomic_and_failure_preserves_old_file() {
+    fn tts_output_is_atomic_and_any_write_failure_preserves_old_file() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("voice.wav");
         std::fs::write(&target, b"old").unwrap();
@@ -1525,14 +1527,50 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"RIFF0000WAVEnew");
 
         std::fs::write(&target, b"stable-old").unwrap();
-        let temp = target.with_file_name(format!(
-            "{}.{}.tmp",
-            target.file_name().unwrap().to_string_lossy(),
-            std::process::id()
-        ));
-        std::fs::create_dir(&temp).unwrap();
-        assert!(write_tts_output_atomic(&target, b"replacement").is_err());
-        assert_eq!(std::fs::read(&target).unwrap(), b"stable-old");
+
+        #[cfg(windows)]
+        let (result, after) = {
+            // FileRenameInfoEx does not carry IGNORE_READONLY_ATTRIBUTE, so
+            // this reliably exercises a failure at the Windows commit point.
+            // Restore the attribute before asserting so a failed assertion
+            // cannot strand a read-only fixture in TempDir cleanup.
+            let original_permissions = std::fs::metadata(&target).unwrap().permissions();
+            let mut read_only_permissions = original_permissions.clone();
+            read_only_permissions.set_readonly(true);
+            std::fs::set_permissions(&target, read_only_permissions).unwrap();
+            let result = write_tts_output_atomic(&target, b"replacement");
+            let after = std::fs::read(&target).unwrap();
+            std::fs::set_permissions(&target, original_permissions).unwrap();
+            (result, after)
+        };
+
+        #[cfg(not(windows))]
+        let (result, after, temp) = {
+            // Unix uses the deterministic PID-scoped stage. Occupying that
+            // path proves that a failure before publication cannot damage the
+            // prior target; rename-failure coverage lives in atomic_write.
+            let temp = target.with_file_name(format!(
+                "{}.{}.tmp",
+                target.file_name().unwrap().to_string_lossy(),
+                std::process::id()
+            ));
+            std::fs::create_dir(&temp).unwrap();
+            let result = write_tts_output_atomic(&target, b"replacement");
+            let after = std::fs::read(&target).unwrap();
+            (result, after, temp)
+        };
+        #[cfg(not(windows))]
+        std::fs::remove_dir(temp).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(after, b"stable-old");
+        assert!(
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")),
+            "failed TTS write left a staged file behind"
+        );
     }
 
     // ── GOLD-ADAPT-SYS-02 — ViitorVoice voice-cloning sidecar ────────────────

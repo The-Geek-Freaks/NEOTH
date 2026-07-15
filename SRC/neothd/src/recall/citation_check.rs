@@ -241,19 +241,19 @@ pub fn audit_offline(text: &str) -> CitationAudit {
     // Suspicious-future-year signal.
     let current_year = current_year_unix() as i32;
     for cap in AUTHOR_YEAR_RE.captures_iter(text) {
-        if let Some(year) = cap.get(2).and_then(|m| m.as_str().parse::<i32>().ok()) {
-            if year > current_year + 1 {
-                let full = cap.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
-                signals.push(ContaminationSignal {
-                    kind: "suspicious_future_year".to_string(),
-                    message: format!(
-                        "narrative citation references year {year} which is beyond \
+        if let Some(year) = cap.get(2).and_then(|m| m.as_str().parse::<i32>().ok())
+            && year > current_year + 1
+        {
+            let full = cap.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+            signals.push(ContaminationSignal {
+                kind: "suspicious_future_year".to_string(),
+                message: format!(
+                    "narrative citation references year {year} which is beyond \
                          the current year + 1. Likely typo or LLM hallucination — \
                          verify the source exists."
-                    ),
-                    citation_raw: full,
-                });
-            }
+                ),
+                citation_raw: full,
+            });
         }
     }
 

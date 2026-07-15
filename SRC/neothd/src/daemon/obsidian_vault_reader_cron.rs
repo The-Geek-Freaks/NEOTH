@@ -571,8 +571,7 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
 
         // Build the synthesis note.
         let mut body = format!(
-            "---\nsource: neoth-synthesis\nweek: {}\n---\n\n# NEOTH Weekly Synthesis — {}\n\n",
-            week_label, week_label
+            "---\nsource: neoth-synthesis\nweek: {week_label}\n---\n\n# NEOTH Weekly Synthesis — {week_label}\n\n"
         );
         body.push_str("## Verified ground-truth snapshot\n\n");
         for (statement, scope, source, _evidence) in &rows {
@@ -585,7 +584,7 @@ pub async fn run_synthesis_if_new_week(vault: &Path, home: &Path) -> bool {
             warn!(error = %e, "obsidian synthesis: failed to create NEOTH-Synthesis dir");
             return false;
         }
-        let note_path = synth_dir.join(format!("{}.md", week_label));
+        let note_path = synth_dir.join(format!("{week_label}.md"));
         let tmp = note_path.with_extension("tmp");
         if let Err(e) = std::fs::write(&tmp, body.as_bytes()) {
             warn!(error = %e, "obsidian synthesis: failed to write tmp note");

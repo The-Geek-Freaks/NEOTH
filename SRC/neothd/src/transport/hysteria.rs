@@ -148,7 +148,7 @@ fn which_hysteria_on_path() -> Result<PathBuf> {
             return Ok(candidate);
         }
     }
-    anyhow::bail!("{} not on PATH", exe);
+    anyhow::bail!("{exe} not on PATH");
 }
 
 /// Render the operator's config as the YAML shape Hysteria expects on

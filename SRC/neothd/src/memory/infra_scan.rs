@@ -217,15 +217,15 @@ pub fn parse_nmap_output(text: &str) -> Vec<Host> {
             } else {
                 current = Some((ip, hostname));
             }
-        } else if trimmed.starts_with("Host is up") {
-            if let Some((ip, hostname)) = current.take() {
-                hosts.push(Host {
-                    ip,
-                    hostname,
-                    mac: None,
-                    source: ScanSource::Nmap,
-                });
-            }
+        } else if trimmed.starts_with("Host is up")
+            && let Some((ip, hostname)) = current.take()
+        {
+            hosts.push(Host {
+                ip,
+                hostname,
+                mac: None,
+                source: ScanSource::Nmap,
+            });
         }
     }
     hosts

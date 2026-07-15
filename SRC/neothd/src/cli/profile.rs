@@ -616,12 +616,11 @@ fn find_baseline_snapshot_id(frames: &[u8]) -> Option<String> {
             Ok(d) => d,
             Err(_) => break,
         };
-        if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT {
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(dec.payload) {
-                if let Some(id) = v.get("snapshot_id").and_then(|s| s.as_str()) {
-                    return Some(id.to_string());
-                }
-            }
+        if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT
+            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(dec.payload)
+            && let Some(id) = v.get("snapshot_id").and_then(|s| s.as_str())
+        {
+            return Some(id.to_string());
         }
         let total = dec.header.total_len as usize;
         if total == 0 {
@@ -799,13 +798,12 @@ fn find_baseline_snapshot_full(
             Ok(d) => d,
             Err(_) => break,
         };
-        if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT {
-            if let Ok(snap) = serde_json::from_slice::<
+        if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT
+            && let Ok(snap) = serde_json::from_slice::<
                 crate::profile::baseline_snapshot::BaselineSnapshot,
             >(dec.payload)
-            {
-                return Some(snap);
-            }
+        {
+            return Some(snap);
         }
         let total = dec.header.total_len as usize;
         if total == 0 {

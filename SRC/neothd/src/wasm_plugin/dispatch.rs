@@ -322,22 +322,21 @@ pub fn invoke_plugin_with_state(
             if matches!(
                 e.downcast_ref::<wasmtime::Trap>(),
                 Some(wasmtime::Trap::OutOfFuel)
-            ) {
-                if let Some(w) = &store.data().wal_writer {
-                    let payload = serde_json::to_vec(&serde_json::json!({
-                        "plugin": plugin_id,
-                        "fuel_budget": store.data().fuel_budget,
-                    }))
-                    .unwrap_or_else(|_| b"{}".to_vec());
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED,
-                        &payload,
-                    )
-                    .build();
-                    if let Err(we) = w.try_append_sync(header, payload) {
-                        tracing::warn!(error = %we, plugin = %plugin_id,
+            ) && let Some(w) = &store.data().wal_writer
+            {
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "plugin": plugin_id,
+                    "fuel_budget": store.data().fuel_budget,
+                }))
+                .unwrap_or_else(|_| b"{}".to_vec());
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED,
+                    &payload,
+                )
+                .build();
+                if let Err(we) = w.try_append_sync(header, payload) {
+                    tracing::warn!(error = %we, plugin = %plugin_id,
                             "0xC5 fuel-exhausted WAL frame failed (best-effort)");
-                    }
                 }
             }
             InvocationOutcome {

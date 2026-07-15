@@ -203,25 +203,25 @@ pub fn scan_cost_by_session(wal_dir: &Path) -> BTreeMap<String, SessionCost> {
             if total == 0 {
                 break;
             }
-            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE {
-                if let Ok(p) = serde_json::from_slice::<CostFrame>(dec.payload) {
-                    let key = match p.session_id {
-                        Some(s) if !s.is_empty() => s,
-                        _ => UNATTRIBUTED.to_string(),
-                    };
-                    let ts = (dec.header.hlc.physical_ns() / 1_000_000_000) as i64;
-                    let e = by_session.entry(key).or_default();
-                    e.input_tokens = e.input_tokens.saturating_add(p.input_tokens);
-                    e.output_tokens = e.output_tokens.saturating_add(p.output_tokens);
-                    e.responses = e.responses.saturating_add(1);
-                    if let Some(m) = p.model {
-                        if !m.is_empty() {
-                            e.models.insert(m);
-                        }
-                    }
-                    if ts > e.last_ts_unix {
-                        e.last_ts_unix = ts;
-                    }
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+                && let Ok(p) = serde_json::from_slice::<CostFrame>(dec.payload)
+            {
+                let key = match p.session_id {
+                    Some(s) if !s.is_empty() => s,
+                    _ => UNATTRIBUTED.to_string(),
+                };
+                let ts = (dec.header.hlc.physical_ns() / 1_000_000_000) as i64;
+                let e = by_session.entry(key).or_default();
+                e.input_tokens = e.input_tokens.saturating_add(p.input_tokens);
+                e.output_tokens = e.output_tokens.saturating_add(p.output_tokens);
+                e.responses = e.responses.saturating_add(1);
+                if let Some(m) = p.model
+                    && !m.is_empty()
+                {
+                    e.models.insert(m);
+                }
+                if ts > e.last_ts_unix {
+                    e.last_ts_unix = ts;
                 }
             }
             cursor = cursor.saturating_add(total);

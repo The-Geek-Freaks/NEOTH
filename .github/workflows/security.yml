@@ -34,7 +34,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.86.0'
+          toolchain: '1.90.0'
 
       - name: Cache Cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -83,7 +83,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.86.0'
+          toolchain: '1.90.0'
 
       - name: Verify exact shipped Rust license notices
         run: python3 packaging/generate_rust_notices.py --check
@@ -94,7 +94,7 @@ jobs:
           manifest-path: SRC/neothd/Cargo.toml
           command: check
           arguments: --all-features
-          rust-version: '1.86'
+          rust-version: '1.90'
 
       - name: Run cargo-deny for isolated release signer
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
@@ -103,7 +103,7 @@ jobs:
           command: check
           arguments: --all-features
           command-arguments: --config SRC/deny.toml
-          rust-version: '1.86'
+          rust-version: '1.90'
 
   bridge-audit:
     name: pnpm audit / ${{ matrix.bridge }}
@@ -130,6 +130,10 @@ jobs:
           corepack prepare pnpm@10.32.1 --activate
           test "$(pnpm --version)" = 10.32.1
 
+      - name: Test fail-closed npm audit client
+        if: matrix.bridge == 'keet'
+        run: node --test scripts/npm_bulk_audit.test.mjs
+
       - name: Validate frozen dependency graph
         working-directory: bridges/${{ matrix.bridge }}
         # Keet's notice drift check also resolves the six pinned desktop
@@ -150,12 +154,15 @@ jobs:
         # but their native runtime payload is embedded in the redistributed
         # standalone executable. They are therefore part of the shipped trust
         # boundary and must not be hidden behind a production-only audit.
-        run: pnpm audit --audit-level high
+        # pnpm's legacy quick/full audit endpoints were retired by the npm
+        # registry. Query the supported bulk endpoint from the exact installed
+        # graph; the repository-owned client fails closed on graph/API errors.
+        run: node ../../scripts/npm_bulk_audit.mjs --audit-level high
 
       - name: Block high and critical WhatsApp production findings
         if: matrix.bridge == 'whatsapp-baileys'
         working-directory: bridges/${{ matrix.bridge }}
-        run: pnpm audit --prod --audit-level high
+        run: node ../../scripts/npm_bulk_audit.mjs --prod --audit-level high
 
   codeql:
     name: CodeQL / Rust
@@ -171,7 +178,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.86.0'
+          toolchain: '1.90.0'
 
       # Rust supports CodeQL's build-mode none: rust-analyzer evaluates build
       # scripts and macros while the scanner covers every Rust source file,

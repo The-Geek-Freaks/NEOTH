@@ -47,7 +47,7 @@ fn lock_registry() -> std::sync::MutexGuard<'static, ()> {
 /// writers all SPIN here and trip the 5s give-up under CPU load (it flaked
 /// the concurrent registry tests). A cross-process CLI write still blocks on
 /// this lock for the whole load→save, so it can't land mid-cycle (silent
-/// lost-update). Built on the same MSRV-1.86-safe primitives as
+/// lost-update). Built on the same MSRV-1.90-safe primitives as
 /// `daemon/pidfile.rs` (`std::fs::File::lock` needs 1.89): non-blocking
 /// acquire retried every 50ms, failing loudly after 5s instead of
 /// deadlocking on a stuck holder.
@@ -292,11 +292,7 @@ pub fn remove(home: &Path, key_or_prefix: &str) -> Result<bool> {
             save(home, &reg)?;
             Ok(true)
         }
-        n => anyhow::bail!(
-            "prefix `{}` matches {} peers — use a longer prefix",
-            key_or_prefix,
-            n
-        ),
+        n => anyhow::bail!("prefix `{key_or_prefix}` matches {n} peers — use a longer prefix"),
     }
 }
 

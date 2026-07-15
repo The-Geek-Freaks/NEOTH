@@ -159,10 +159,10 @@ pub fn quarantine_pair(cpt_path: &Path, ts_unix: u64) -> Result<PathBuf> {
     if hmac_path.exists() {
         // Sidecar may not exist (missing-hmac branch) — ignore the
         // error if so, surface real I/O failures otherwise.
-        if let Err(e) = fs::rename(&hmac_path, &hmac_quarantine) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                return Err(e).context(format!("quarantine .hmac {}", hmac_path.display()));
-            }
+        if let Err(e) = fs::rename(&hmac_path, &hmac_quarantine)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(e).context(format!("quarantine .hmac {}", hmac_path.display()));
         }
     }
     Ok(cpt_quarantine)

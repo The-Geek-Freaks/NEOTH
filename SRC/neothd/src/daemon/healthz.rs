@@ -474,7 +474,7 @@ mod tests {
         // GUI client renders an inert status bar instead of crashing.
         assert!(
             body.contains("{}"),
-            "no-meter response must be empty JSON: {body}"
+            "no-meter response must contain an empty JSON object"
         );
         task.abort();
     }
@@ -508,7 +508,7 @@ mod tests {
         ] {
             assert!(
                 body.contains(field),
-                "field {field} missing from body: {body}"
+                "metrics response is missing required field {field}"
             );
         }
         // header_line must carry the operator-readable format the GUI
@@ -532,7 +532,10 @@ mod tests {
         .unwrap();
         // Sibling path that doesn't match must still 404.
         let body = raw_get(addr, "/metrics/nope").await;
-        assert!(body.contains("HTTP/1.1 404"), "got: {body}");
+        assert!(
+            body.contains("HTTP/1.1 404"),
+            "unknown metrics path must return HTTP 404"
+        );
         task.abort();
     }
 }

@@ -232,16 +232,16 @@ fn prompt_for_property(name: &str, schema: &PropertySchema) -> Option<String> {
     }
 
     // Enum → Select
-    if let Some(variants) = &schema.variants {
-        if !variants.is_empty() {
-            let idx = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt(&label)
-                .items(variants)
-                .default(0)
-                .interact_opt()
-                .ok()??;
-            return Some(variants[idx].clone());
-        }
+    if let Some(variants) = &schema.variants
+        && !variants.is_empty()
+    {
+        let idx = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(&label)
+            .items(variants)
+            .default(0)
+            .interact_opt()
+            .ok()??;
+        return Some(variants[idx].clone());
     }
 
     // Default → free-text Input

@@ -460,10 +460,10 @@ fn aggregate_ledger(uses: Vec<CapUse>, filter_id: Option<&str>) -> Vec<LedgerRow
     use std::collections::BTreeMap;
     let mut acc: BTreeMap<(String, String), LedgerRow> = BTreeMap::new();
     for u in uses {
-        if let Some(want) = filter_id {
-            if u.plugin != want {
-                continue;
-            }
+        if let Some(want) = filter_id
+            && u.plugin != want
+        {
+            continue;
         }
         let row = acc
             .entry((u.plugin.clone(), u.capability.clone()))
@@ -515,24 +515,22 @@ fn walk_hostcall_frames(frames: &[u8], plugin_id: &str, out: &mut Vec<EventEntry
             Err(_) => break,
         };
         let total = dec.header.total_len as usize;
-        if dec.header.event_type == EVENT_TYPE_PLUGIN_HOSTCALL {
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(dec.payload) {
-                if v.get("plugin").and_then(|p| p.as_str()) == Some(plugin_id) {
-                    let kind = v
-                        .get("kind")
-                        .and_then(|k| k.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let payload_bytes =
-                        v.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
-                    let ts_unix = dec.header.hlc.physical_ns() / 1_000_000_000;
-                    out.push(EventEntry {
-                        kind,
-                        payload_bytes,
-                        ts_unix,
-                    });
-                }
-            }
+        if dec.header.event_type == EVENT_TYPE_PLUGIN_HOSTCALL
+            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(dec.payload)
+            && v.get("plugin").and_then(|p| p.as_str()) == Some(plugin_id)
+        {
+            let kind = v
+                .get("kind")
+                .and_then(|k| k.as_str())
+                .unwrap_or("")
+                .to_string();
+            let payload_bytes = v.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+            let ts_unix = dec.header.hlc.physical_ns() / 1_000_000_000;
+            out.push(EventEntry {
+                kind,
+                payload_bytes,
+                ts_unix,
+            });
         }
         if total == 0 {
             break;
@@ -715,7 +713,7 @@ fn emit_events_output(
                     let kind = e.get("kind").and_then(|k| k.as_str()).unwrap_or("-");
                     let pb = e.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
                     let ts = e.get("ts_unix").and_then(|x| x.as_u64()).unwrap_or(0);
-                    println!("{:<40}  {:>14}  {}", kind, pb, ts);
+                    println!("{kind:<40}  {pb:>14}  {ts}");
                 }
             }
         }
@@ -1023,7 +1021,7 @@ fn render_test_report(
             println!("Plugin `{}` (v{})", manifest.id, manifest.version);
             println!("  name:        {}", manifest.name);
             println!("  hook stages: {:?}", manifest.hook_stages);
-            println!("  wasm size:   {} bytes", wasm_size);
+            println!("  wasm size:   {wasm_size} bytes");
             println!("  manifest:    valid");
             match outcome {
                 Some(o) => {
@@ -1483,11 +1481,11 @@ fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
     // Best-effort: remove the activation entry from freedom.yaml. If the
     // config can't be loaded/saved the removal already succeeded; log nothing
     // (the directory is gone — discovery is the authoritative source).
-    if let Ok(mut cfg) = FreedomConfig::load_from_default_path() {
-        if cfg.plugins.wasm.activations.remove(id).is_some() {
-            // Ignore a save failure — non-fatal, stranded key is harmless.
-            let _ = cfg.save_public_to_default_path();
-        }
+    if let Ok(mut cfg) = FreedomConfig::load_from_default_path()
+        && cfg.plugins.wasm.activations.remove(id).is_some()
+    {
+        // Ignore a save failure — non-fatal, stranded key is harmless.
+        let _ = cfg.save_public_to_default_path();
     }
 
     match output {

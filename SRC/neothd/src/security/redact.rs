@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn qu_04_always_redact_keys_is_lowercase_and_drives_field_guard() {
-        assert!(!ALWAYS_REDACT_KEYS.is_empty());
+        assert!(ALWAYS_REDACT_KEYS.contains(&"token"));
         for k in ALWAYS_REDACT_KEYS {
             assert_eq!(
                 *k,

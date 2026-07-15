@@ -370,19 +370,18 @@ pub async fn run_loop(
     for round_num in 1..=config.max_rounds {
         // Token budget check before each round (except the first — we need
         // at least one round to produce any output).
-        if round_num > 1 {
-            if let Some(budget) = config.tool_call_budget {
-                if state.accumulated_tool_calls >= budget {
-                    info!(
-                        loop_id = %loop_id,
-                        accumulated_tool_calls = state.accumulated_tool_calls,
-                        budget,
-                        "loop-engine: tool-call budget exceeded — stopping"
-                    );
-                    stop_reason = StopReason::BudgetExceeded;
-                    break;
-                }
-            }
+        if round_num > 1
+            && let Some(budget) = config.tool_call_budget
+            && state.accumulated_tool_calls >= budget
+        {
+            info!(
+                loop_id = %loop_id,
+                accumulated_tool_calls = state.accumulated_tool_calls,
+                budget,
+                "loop-engine: tool-call budget exceeded — stopping"
+            );
+            stop_reason = StopReason::BudgetExceeded;
+            break;
         }
 
         state.current_round = round_num;

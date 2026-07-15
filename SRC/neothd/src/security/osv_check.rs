@@ -33,6 +33,46 @@ const MALWARE_ID_PREFIX: &str = "MAL-";
 /// or bricks an install.
 const OSV_TIMEOUT: Duration = Duration::from_secs(6);
 
+/// A parsed OSV endpoint whose transport policy has already been checked.
+///
+/// Production builds accept HTTPS only. Unit tests additionally accept plain
+/// HTTP on the loopback interface so `wiremock` can exercise the real request
+/// path without weakening the runtime boundary.
+#[derive(Clone, Debug)]
+struct OsvEndpoint(reqwest::Url);
+
+impl OsvEndpoint {
+    fn parse(raw: &str) -> Result<Self, String> {
+        let endpoint =
+            reqwest::Url::parse(raw).map_err(|error| format!("invalid OSV endpoint: {error}"))?;
+        if !osv_transport_allowed(&endpoint) {
+            return Err("OSV endpoint must use HTTPS".to_string());
+        }
+        Ok(Self(endpoint))
+    }
+
+    fn url(&self) -> reqwest::Url {
+        self.0.clone()
+    }
+}
+
+fn osv_transport_allowed(endpoint: &reqwest::Url) -> bool {
+    if endpoint.scheme() == "https" {
+        return true;
+    }
+
+    #[cfg(test)]
+    {
+        endpoint.scheme() == "http"
+            && crate::providers::http_client::url_has_loopback_host(endpoint)
+    }
+
+    #[cfg(not(test))]
+    {
+        false
+    }
+}
+
 // ── Severity classification (GOLD-ADAPT-SNYK-01) ─────────────────────────────
 
 /// CVSS / OSV severity level, ordered from lowest to highest.
@@ -420,6 +460,10 @@ async fn check_package_at(
     ecosystem: &str,
     version: Option<&str>,
 ) -> OsvVerdict {
+    let endpoint = match OsvEndpoint::parse(url) {
+        Ok(endpoint) => endpoint,
+        Err(reason) => return OsvVerdict::Unknown { reason },
+    };
     let client = match reqwest::Client::builder().timeout(OSV_TIMEOUT).build() {
         Ok(c) => c,
         Err(e) => {
@@ -428,12 +472,12 @@ async fn check_package_at(
             };
         }
     };
-    check_package_with_client(&client, url, name, ecosystem, version).await
+    check_package_with_client(&client, &endpoint, name, ecosystem, version).await
 }
 
 async fn check_package_with_client(
     client: &reqwest::Client,
-    url: &str,
+    endpoint: &OsvEndpoint,
     name: &str,
     ecosystem: &str,
     version: Option<&str>,
@@ -442,7 +486,7 @@ async fn check_package_with_client(
         package: OsvPackage { name, ecosystem },
         version,
     };
-    let resp = match client.post(url).json(&query).send().await {
+    let resp = match client.post(endpoint.url()).json(&query).send().await {
         Ok(r) => r,
         Err(e) => {
             return OsvVerdict::Unknown {
@@ -471,6 +515,22 @@ async fn check_packages_batch_at(
     if queries.is_empty() {
         return Vec::new();
     }
+    let (batch_endpoint, query_endpoint) =
+        match (OsvEndpoint::parse(batch_url), OsvEndpoint::parse(query_url)) {
+            (Ok(batch_endpoint), Ok(query_endpoint)) => (batch_endpoint, query_endpoint),
+            (batch, query) => {
+                let reason = batch
+                    .err()
+                    .or_else(|| query.err())
+                    .unwrap_or_else(|| "invalid OSV endpoint".to_string());
+                return queries
+                    .iter()
+                    .map(|_| OsvVerdict::Unknown {
+                        reason: reason.clone(),
+                    })
+                    .collect();
+            }
+        };
     let client = match reqwest::Client::builder().timeout(OSV_TIMEOUT).build() {
         Ok(client) => client,
         Err(e) => {
@@ -501,7 +561,12 @@ async fn check_packages_batch_at(
                 })
                 .collect(),
         };
-        let response = match client.post(batch_url).json(&request).send().await {
+        let response = match client
+            .post(batch_endpoint.url())
+            .json(&request)
+            .send()
+            .await
+        {
             Ok(response) if response.status().is_success() => response,
             Ok(response) => {
                 let reason = format!("OSV batch returned HTTP {}", response.status());
@@ -587,7 +652,7 @@ async fn check_packages_batch_at(
             verdicts.push(
                 check_package_with_client(
                     &client,
-                    query_url,
+                    &query_endpoint,
                     query.name,
                     query.ecosystem,
                     query.version,
@@ -793,6 +858,15 @@ mod tests {
 
     // ── network tests (wiremock) ──────────────────────────────────────────────
 
+    #[test]
+    fn endpoint_transport_policy_is_https_except_for_test_loopback() {
+        assert!(OsvEndpoint::parse("https://api.osv.dev/v1/query").is_ok());
+        assert!(OsvEndpoint::parse("http://api.osv.dev/v1/query").is_err());
+        assert!(OsvEndpoint::parse("http://192.0.2.1/v1/query").is_err());
+        assert!(OsvEndpoint::parse("http://127.0.0.1:1234/v1/query").is_ok());
+        assert!(OsvEndpoint::parse("http://[::1]:1234/v1/query").is_ok());
+    }
+
     #[tokio::test]
     async fn check_package_blocks_on_mal_advisory() {
         use wiremock::matchers::{method, path};
@@ -973,9 +1047,9 @@ mod tests {
 
     #[tokio::test]
     async fn check_package_fails_open_on_unreachable_host() {
-        // Reserved-for-docs TEST-NET-1 (RFC 5737) on a dead port → connection
-        // error → fail open (never block an install on a network blip).
-        let v = check_package_at("http://192.0.2.1:1/v1/query", "anything", "npm", None).await;
+        // Loopback port 1 is expected to be closed. HTTPS keeps the production
+        // transport contract intact while exercising the connection-error path.
+        let v = check_package_at("https://127.0.0.1:1/v1/query", "anything", "npm", None).await;
         assert!(
             matches!(v, OsvVerdict::Unknown { .. }),
             "an unreachable OSV host must fail open: {v:?}"

@@ -126,7 +126,14 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
                 if args.dry_run { " [DRY RUN]" } else { "" },
             );
         }
-        OutputFormat::Json | OutputFormat::Jsonl => {
+        OutputFormat::Json => {
+            eprintln!(
+                "self-edit: evaluating {} path(s), {line_count} changed line(s){}",
+                target_paths.len(),
+                if args.dry_run { " [DRY RUN]" } else { "" },
+            );
+        }
+        OutputFormat::Jsonl => {
             println!(
                 r#"{{"status":"evaluating","paths":{},"lines":{line_count},"dry_run":{}}}"#,
                 serde_json::to_string(&target_paths)
@@ -175,13 +182,12 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
     // before the process can exit. A kill between apply and flush would
     // otherwise leave a live-tree mutation with no `applied` forensic record.
     drop(wal_handle);
-    if let Some(join) = wal_join {
-        if tokio::time::timeout(std::time::Duration::from_secs(5), join)
+    if let Some(join) = wal_join
+        && tokio::time::timeout(std::time::Duration::from_secs(5), join)
             .await
             .is_err()
-        {
-            warn!("self_edit: WAL writer did not flush within 5s — audit frame may be incomplete");
-        }
+    {
+        warn!("self_edit: WAL writer did not flush within 5s — audit frame may be incomplete");
     }
 
     match result {

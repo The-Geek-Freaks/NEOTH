@@ -218,7 +218,7 @@ fn count_rows(conn: &Connection, table: &str) -> Result<i64> {
     // an error as "unknown" rather than failing the whole command.
     let sql = format!("SELECT count(*) FROM \"{}\"", table.replace('"', "\"\""));
     conn.query_row(&sql, [], |r| r.get::<_, i64>(0))
-        .map_err(|e| anyhow::anyhow!("count {}: {e}", table))
+        .map_err(|e| anyhow::anyhow!("count {table}: {e}"))
 }
 
 fn pragma_columns(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>> {

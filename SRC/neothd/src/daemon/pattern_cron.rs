@@ -410,39 +410,39 @@ pub fn run_pattern_tick_once(
     if let Some(i) = detect_inactivity_gap(&conn, now_ns, config.inactivity_gap_secs) {
         items.push(i);
     }
-    if config.query_repeat_enabled {
-        if let Some(i) = detect_query_repeat(
+    if config.query_repeat_enabled
+        && let Some(i) = detect_query_repeat(
             &conn,
             now_ns,
             config.query_repeat_window_secs,
             config.query_repeat_min_count,
-        ) {
-            items.push(i);
-        }
+        )
+    {
+        items.push(i);
     }
-    if config.topic_burst_enabled {
-        if let Some(i) = detect_topic_burst(
+    if config.topic_burst_enabled
+        && let Some(i) = detect_topic_burst(
             &conn,
             now_ns,
             config.topic_burst_recent_secs,
             config.topic_burst_baseline_secs,
             config.topic_burst_min_count,
             config.topic_burst_factor,
-        ) {
-            items.push(i);
-        }
+        )
+    {
+        items.push(i);
     }
-    if config.tod_shift_enabled {
-        if let Some(i) = detect_time_of_day_shift(
+    if config.tod_shift_enabled
+        && let Some(i) = detect_time_of_day_shift(
             &conn,
             now_ns,
             config.tod_shift_recent_secs,
             config.tod_shift_baseline_secs,
             config.tod_shift_min_hours,
             config.tod_shift_min_episodes,
-        ) {
-            items.push(i);
-        }
+        )
+    {
+        items.push(i);
     }
     if items.is_empty() {
         return Ok(0);

@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 use tracing::{info, warn};
 
-use crate::config::FreedomConfig;
+use crate::config::{FreedomConfig, InstancePaths};
 use crate::providers::{self, CompletionChunk, Provider, Request};
 use crate::wal::events::{
     EVENT_TYPE_AUTO_SKILL_EXTRACTED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN,
@@ -140,6 +140,50 @@ pub struct ChatArgs {
     /// Example: `--until "build green" --until "tests pass"`.
     #[arg(long, value_name = "CRITERION")]
     pub until: Vec<String>,
+}
+
+/// Per-turn operator registries loaded from one explicit instance home.
+///
+/// Chat and channel turns use the same loader so malformed existing MCP,
+/// tweaks, or profile-extension state fails closed before provider dispatch.
+/// No field in this snapshot may fall back to process-global HOME state.
+pub(crate) struct InstanceTurnState {
+    pub(crate) mcp_servers: crate::mcp::McpServers,
+    pub(crate) tweaks: crate::tweaks::Tweaks,
+    pub(crate) profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry,
+}
+
+pub(crate) fn load_instance_turn_state(paths: &InstancePaths) -> Result<InstanceTurnState> {
+    let mcp_servers = crate::mcp::McpServers::load_from(&paths.mcp_servers).with_context(|| {
+        format!(
+            "load MCP server configuration at {}",
+            paths.mcp_servers.display()
+        )
+    })?;
+    let tweaks = crate::tweaks::Tweaks::load_or_default(&paths.tweaks)
+        .with_context(|| format!("tweaks.toml invalid: {}", paths.tweaks.display()))?;
+    let profile_extensions = crate::profile::extension_registry::TypedExtensionRegistry::load_from(
+        &paths.profile_extensions,
+    )
+    .with_context(|| {
+        format!(
+            "load profile extension registry from {}",
+            paths.profile_extensions.display()
+        )
+    })?;
+
+    Ok(InstanceTurnState {
+        mcp_servers,
+        tweaks,
+        profile_extensions,
+    })
+}
+
+fn persist_chat_onboarding_complete(config_path: &std::path::Path) -> Result<()> {
+    FreedomConfig::update_at(config_path, |config| {
+        config.chat_onboarding_completed = true;
+        Ok(())
+    })
 }
 
 pub async fn run_chat(args: ChatArgs) -> Result<()> {
@@ -726,39 +770,36 @@ async fn build_prompt_bundle(
             stage1_floor,
             &active_files,
         );
-        if skill_match.is_none() || config.skills.always_embed_route {
-            if let Some(embed_provider) =
+        if (skill_match.is_none() || config.skills.always_embed_route)
+            && let Some(embed_provider) =
                 crate::providers::embed_provider_from_config(&config).await
-            {
-                if let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
-                    &prompt,
-                    &installed_skills,
-                    embed_provider.as_ref(),
-                )
-                .await
-                {
-                    info!(
-                        skill = skill.id(),
-                        cosine = score,
-                        overrode_keyword = skill_match.is_some(),
-                        "skill activated via Stage-2 embedding re-rank"
-                    );
-                    skill_match = Some(crate::skills::router::RouteMatch {
-                        skill,
-                        matched_keywords: Vec::new(),
-                        embedding_score: Some(score),
-                    });
-                }
-            }
+            && let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
+                &prompt,
+                &installed_skills,
+                embed_provider.as_ref(),
+            )
+            .await
+        {
+            info!(
+                skill = skill.id(),
+                cosine = score,
+                overrode_keyword = skill_match.is_some(),
+                "skill activated via Stage-2 embedding re-rank"
+            );
+            skill_match = Some(crate::skills::router::RouteMatch {
+                skill,
+                matched_keywords: Vec::new(),
+                embedding_score: Some(score),
+            });
         }
-        if let Some(m) = &skill_match {
-            if m.embedding_score.is_none() {
-                info!(
-                    skill = m.skill.id(),
-                    matched_keywords = ?m.matched_keywords,
-                    "skill activated"
-                );
-            }
+        if let Some(m) = &skill_match
+            && m.embedding_score.is_none()
+        {
+            info!(
+                skill = m.skill.id(),
+                matched_keywords = ?m.matched_keywords,
+                "skill activated"
+            );
         }
         crate::analytics::babel::signals::emit(match &skill_match {
             Some(m) if m.embedding_score.is_some() => {
@@ -852,10 +893,7 @@ async fn build_prompt_bundle(
                 persona_override.as_deref(),
             );
             if let Some(aug) = augmented {
-                eprintln!(
-                    "[neoth:mds-tone] intensity={:?} modifier={:?}",
-                    intensity, aug
-                );
+                eprintln!("[neoth:mds-tone] intensity={intensity:?} modifier={aug:?}");
                 Some(aug)
             } else {
                 persona_override
@@ -881,8 +919,13 @@ async fn build_prompt_bundle(
 
     // ── K-Repo-Map Phase 3c — pre-compute the auto-context block ─────────
     // Best-effort: any failure silently skips injection.
-    let mut repo_context_block = maybe_repo_context_block(&config, &prompt);
-    if let Some(findings) = maybe_architecture_findings_for_skill(used_skill_id.as_deref(), &cwd) {
+    let prompt_instance_paths = InstancePaths::for_home(&home);
+    let mut repo_context_block = maybe_repo_context_block(&config, &prompt, &prompt_instance_paths);
+    if let Some(findings) = maybe_architecture_findings_for_skill(
+        used_skill_id.as_deref(),
+        &prompt_instance_paths,
+        &cwd,
+    ) {
         info!(
             roots_scanned = findings.roots_scanned,
             edges_scanned = findings.edges_scanned,
@@ -1183,18 +1226,18 @@ async fn enforce_preflight(
             }
         };
         let now = crate::providers::quota::now_unix();
-        if let Some(state) = tracker.get(provider_name) {
-            if !state.is_healthy(now) {
-                let remaining = state.backoff_remaining_secs(now);
-                drop(writer);
-                let _ = writer_join.await;
-                anyhow::bail!(
-                    "{provider_name}: backoff active ({remaining}s remaining). \
+        if let Some(state) = tracker.get(provider_name)
+            && !state.is_healthy(now)
+        {
+            let remaining = state.backoff_remaining_secs(now);
+            drop(writer);
+            let _ = writer_join.await;
+            anyhow::bail!(
+                "{provider_name}: backoff active ({remaining}s remaining). \
                      Wait for the window to clear, switch providers via `neoth init`, \
                      or run `neoth quota reset {provider_name}` if you're confident \
                      the remote has recovered."
-                );
-            }
+            );
         }
         Some(tracker)
     } else {
@@ -1516,31 +1559,31 @@ async fn enforce_preflight(
     // catches any out-of-band modification (editor saves, injection scripts,
     // race with another process) and also proves tamper-detection is active
     // in the WAL audit trail via HOOK_BLOCKED (0x81).
-    if let Some(ref expected_hash) = plan_attest_hash {
-        if !crate::skills::plan_attestation::verify_plan_hash(home, expected_hash) {
-            let payload = serde_json::to_vec(&serde_json::json!({
+    if let Some(ref expected_hash) = plan_attest_hash
+        && !crate::skills::plan_attestation::verify_plan_hash(home, expected_hash)
+    {
+        let payload = serde_json::to_vec(&serde_json::json!({
                 "name": "plan-attest-guard",
                 "stage": "pre_provider_call",
                 "reason": "[PLAN TAMPERED] task_plan.md hash mismatch — plan was modified after injection",
                 "ts_unix": crate::time::now_unix_secs(),
             }))
             .unwrap_or_default();
-            if !payload.is_empty() {
-                let header = crate::wal::HeaderBuilder::new(
-                    crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                    &payload,
-                )
-                .build();
-                if let Err(e) = writer.append(header, payload).await {
-                    tracing::warn!(error = %e, "WAL append HOOK_BLOCKED (plan tamper) failed");
-                }
+        if !payload.is_empty() {
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                &payload,
+            )
+            .build();
+            if let Err(e) = writer.append(header, payload).await {
+                tracing::warn!(error = %e, "WAL append HOOK_BLOCKED (plan tamper) failed");
             }
-            drop(writer);
-            let _ = writer_join.await;
-            anyhow::bail!(
-                "[PLAN TAMPERED] task_plan.md was modified after plan injection — aborting turn"
-            );
         }
+        drop(writer);
+        let _ = writer_join.await;
+        anyhow::bail!(
+            "[PLAN TAMPERED] task_plan.md was modified after plan injection — aborting turn"
+        );
     }
 
     let hook_dir = home.join("hooks");
@@ -2138,10 +2181,10 @@ async fn dispatch_provider(
             // TOKEN_TPS_SAMPLE). Best-effort; a WAL hiccup never fails the turn.
             {
                 let tps = tps_meter.finish();
-                if tps.has_data() {
-                    if let Err(e) = crate::daemon::metering::emit_tps_sample(&tps, &writer).await {
-                        tracing::debug!(error = %e, "tps-sample WAL emit failed (non-fatal)");
-                    }
+                if tps.has_data()
+                    && let Err(e) = crate::daemon::metering::emit_tps_sample(&tps, &writer).await
+                {
+                    tracing::debug!(error = %e, "tps-sample WAL emit failed (non-fatal)");
                 }
             }
             {
@@ -2586,7 +2629,7 @@ async fn dispatch_provider(
                         crate::context::compress::CompressionRuntime::persistent(
                             config.compression.gate(),
                             config.compression.thresholds(),
-                            crate::context::compress::default_ccr_dir(),
+                            home.join("ccr"),
                         ),
                         // HERMES-04 — pass the provider as judge when judge_enabled AND a
                         // goal is set. Uses the same provider instance (no extra config).
@@ -2884,7 +2927,8 @@ async fn run_post_reply_pipelines(
     hooks: Vec<crate::hooks::schema::HookDef>,
     segment_path: std::path::PathBuf,
     raw_event_id: i64,
-    first_tour_home: std::path::PathBuf,
+    instance_paths: InstancePaths,
+    profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry,
     chat_ts_unix: i64,
     current_session_id: String,
     prompt_token_estimate: u32,
@@ -2913,6 +2957,7 @@ async fn run_post_reply_pipelines(
     // Empty vec when no BlockFilter hooks fired this turn (no-op).
     pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
 ) -> Result<()> {
+    let first_tour_home = instance_paths.home.clone();
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
     // Used by the turn-end context bar further below.
@@ -3333,10 +3378,10 @@ async fn run_post_reply_pipelines(
     // hit writes `~/.neoth/adr/NNNN-<slug>.md`. Failures log but never
     // block — ADR capture is operator-side bookkeeping, not load-bearing.
     {
-        let adr_dir = crate::adr::default_adr_dir();
+        let adr_dir = &instance_paths.adr;
         let decisions = crate::adr::extract_decisions(&response_text);
         for d in &decisions {
-            match crate::adr::write_adr(&adr_dir, d) {
+            match crate::adr::write_adr(adr_dir, d) {
                 Ok(path) => info!(adr = %path.display(), title = %d.title, "ADR captured"),
                 Err(e) => tracing::warn!(error = %e, title = %d.title, "ADR write failed"),
             }
@@ -3351,7 +3396,7 @@ async fn run_post_reply_pipelines(
     // ODY-09: incognito turns leave no session-archive trace.
     if !args.incognito {
         let archive = crate::memory::archive::SessionArchive::new(
-            crate::memory::archive::default_archive_root(),
+            instance_paths.archive.clone(),
             format!("cli-{}", uuid::Uuid::new_v4()),
             chrono::Utc::now(),
         );
@@ -3485,19 +3530,13 @@ async fn run_post_reply_pipelines(
                 match crate::memory::store::open(&views_path) {
                     Ok(mut conn) => {
                         let pipeline_fut = async {
-                            let extensions = match crate::profile::extension_registry::TypedExtensionRegistry::load() {
-                                Ok(extensions) => extensions,
-                                Err(error) => {
-                                    tracing::warn!(
-                                        path = %crate::profile::extension_registry::TypedExtensionRegistry::default_path().display(),
-                                        error = %error,
-                                        "profile extension registry unavailable — skipping post-reply profile pipeline"
-                                    );
-                                    return;
-                                }
-                            };
-                            if let Err(e) =
-                                crate::memory::indexer::replay_once(&mut conn, &segment_path).await
+                            if let Err(e) = crate::memory::indexer::replay_once_audited_at_home(
+                                &first_tour_home,
+                                &mut conn,
+                                &segment_path,
+                                None,
+                            )
+                            .await
                             {
                                 tracing::warn!(
                                     error = %e,
@@ -3537,7 +3576,7 @@ async fn run_post_reply_pipelines(
                                 raw_event_id,
                                 2,
                                 &guard,
-                                &extensions,
+                                &profile_extensions,
                                 now_unix(),
                                 // ADV-03 Phase 5 (Session 24): gate context
                                 // None preserves pre-gate behaviour. Wiring
@@ -3609,50 +3648,50 @@ async fn run_post_reply_pipelines(
     // Activates only when (a) the operator dispatched via `/agent`, and (b)
     // `freedom.yaml::review_gate_enabled` is true. Costs 2× extra provider
     // calls so it stays opt-in.
-    if let Some((agent_name, original_prompt)) = review_context {
-        if config.review_gate_enabled {
-            tracing::info!(agent = %agent_name, "running two-stage review gate");
-            match crate::sub_agents::review::two_stage_review(
-                provider,
-                &original_prompt,
-                &response_text,
-            )
-            .await
-            {
-                Ok(verdicts) => {
-                    println!("\n── review gate ──");
-                    for v in &verdicts {
-                        let mark = if v.passed { "PASS" } else { "FAIL" };
-                        println!("  {}: {}", v.stage.as_str(), mark);
-                        // One WAL frame per stage. Body is hashed, not stored,
-                        // to keep the WAL small per the event-type doc.
-                        let payload = serde_json::to_vec(&serde_json::json!({
-                            "agent_name": agent_name,
-                            "stage": v.stage.as_str(),
-                            "passed": v.passed,
-                            "feedback_hash_xxh3": xxhash_rust::xxh3::xxh3_64(v.feedback.as_bytes()),
-                        }))
-                        .unwrap_or_default();
-                        let header = crate::wal::HeaderBuilder::new(
-                            crate::wal::events::EVENT_TYPE_SUBAGENT_REVIEW_STAGE,
-                            &payload,
-                        )
-                        .build();
-                        if let Err(e) = writer.append(header, payload).await {
-                            tracing::warn!(error = %e, "failed to write review WAL frame");
-                        }
-                    }
-                    // Surface the feedback bodies inline so the operator
-                    // sees them in the same terminal — they were paid for.
-                    for v in &verdicts {
-                        if !v.feedback.is_empty() {
-                            println!("\n[{}]\n{}", v.stage.as_str(), v.feedback);
-                        }
+    if let Some((agent_name, original_prompt)) = review_context
+        && config.review_gate_enabled
+    {
+        tracing::info!(agent = %agent_name, "running two-stage review gate");
+        match crate::sub_agents::review::two_stage_review(
+            provider,
+            &original_prompt,
+            &response_text,
+        )
+        .await
+        {
+            Ok(verdicts) => {
+                println!("\n── review gate ──");
+                for v in &verdicts {
+                    let mark = if v.passed { "PASS" } else { "FAIL" };
+                    println!("  {}: {}", v.stage.as_str(), mark);
+                    // One WAL frame per stage. Body is hashed, not stored,
+                    // to keep the WAL small per the event-type doc.
+                    let payload = serde_json::to_vec(&serde_json::json!({
+                        "agent_name": agent_name,
+                        "stage": v.stage.as_str(),
+                        "passed": v.passed,
+                        "feedback_hash_xxh3": xxhash_rust::xxh3::xxh3_64(v.feedback.as_bytes()),
+                    }))
+                    .unwrap_or_default();
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_SUBAGENT_REVIEW_STAGE,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(e) = writer.append(header, payload).await {
+                        tracing::warn!(error = %e, "failed to write review WAL frame");
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "two-stage review gate errored; printing primary reply only");
+                // Surface the feedback bodies inline so the operator
+                // sees them in the same terminal — they were paid for.
+                for v in &verdicts {
+                    if !v.feedback.is_empty() {
+                        println!("\n[{}]\n{}", v.stage.as_str(), v.feedback);
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "two-stage review gate errored; printing primary reply only");
             }
         }
     }
@@ -3818,14 +3857,12 @@ async fn run_post_reply_pipelines(
 
     // GOLD-ADAPT-OH-11: flip chat_onboarding_completed = true on first successful
     // chat turn. Only persists when the flag is currently false (no-op on every
-    // subsequent turn). Uses save_public_to_default_path which strips all secrets
-    // before writing — never writes raw keys to freedom.yaml.
-    if !config.chat_onboarding_completed {
-        let mut updated = config.clone();
-        updated.chat_onboarding_completed = true;
-        if let Err(e) = updated.save_public_to_default_path() {
-            tracing::warn!(error = %e, "OH-11: could not persist chat_onboarding_completed=true (non-fatal)");
-        }
+    // subsequent turn). Update the exact selected config path under its lock;
+    // a custom `--config` must never mutate the process-default freedom.yaml.
+    if !config.chat_onboarding_completed
+        && let Err(e) = persist_chat_onboarding_complete(&instance_paths.config)
+    {
+        tracing::warn!(error = %e, "OH-11: could not persist chat_onboarding_completed=true (non-fatal)");
     }
 
     drop(writer);
@@ -3839,7 +3876,15 @@ pub async fn run_chat_with(
     provider: &dyn crate::providers::Provider,
 ) -> Result<()> {
     info!(provider = provider.name(), "neoth chat");
-    let first_tour_home = chat_neoth_home(args.config.as_deref());
+    let selected_config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(FreedomConfig::default_path);
+    let instance_paths = InstancePaths::new(
+        chat_neoth_home(args.config.as_deref()),
+        selected_config_path,
+    );
+    let first_tour_home = instance_paths.home.clone();
 
     // R-05 (Session 24) — surface the first-tour greeting at most
     // once per wizard run. `consume_first_tour_marker` reads + deletes
@@ -3903,9 +3948,11 @@ pub async fn run_chat_with(
     // One immutable MCP configuration snapshot per chat turn. Bad YAML is an
     // operator error and fails loud instead of silently removing tools. This
     // exact snapshot drives prompt injection, autoroute and resume metadata.
-    let mcp_path = first_tour_home.join("mcp_servers.yaml");
-    let current_mcp_servers = crate::mcp::McpServers::load_from(&mcp_path)
-        .with_context(|| format!("load MCP server configuration at {}", mcp_path.display()))?;
+    let InstanceTurnState {
+        mcp_servers: current_mcp_servers,
+        tweaks,
+        profile_extensions,
+    } = load_instance_turn_state(&instance_paths)?;
     let mcp_servers = match resumed_mcp_scope.as_deref() {
         Some(scope) => restrict_mcp_servers_to_checkpoint(current_mcp_servers, scope)
             .map_err(|why| anyhow::anyhow!("resume MCP scope validation failed: {why}"))?,
@@ -4135,25 +4182,24 @@ pub async fn run_chat_with(
     // through to the normal provider path below unchanged.
     // GR-039: gated on `memory.recall_shortcut` (default true) so operators
     // can route recall-looking prompts to the provider like any other turn.
-    if config.memory.recall_shortcut {
-        if let Some(reply) = crate::cli::recall::answer_conversational_recall(
+    if config.memory.recall_shortcut
+        && let Some(reply) = crate::cli::recall::answer_conversational_recall(
             &prompt,
             &first_tour_home.join("views.db"),
         )
         .await
-        {
-            println!("{reply}");
-            // GR-090: machine consumers in --stream mode block on the
-            // done-sentinel — the recall early-return must emit it too.
-            if args.stream {
-                println!();
-                println!("{}", serde_json::json!({"neoth_stream":"done","count":1}));
-            }
-            // Same WAL-writer teardown every other early return in this fn uses.
-            drop(writer);
-            let _ = writer_join.await;
-            return Ok(());
+    {
+        println!("{reply}");
+        // GR-090: machine consumers in --stream mode block on the
+        // done-sentinel — the recall early-return must emit it too.
+        if args.stream {
+            println!();
+            println!("{}", serde_json::json!({"neoth_stream":"done","count":1}));
         }
+        // Same WAL-writer teardown every other early return in this fn uses.
+        drop(writer);
+        let _ = writer_join.await;
+        return Ok(());
     }
 
     // ── Prompt-bundle hash + token-budget gate ────────────────────────────
@@ -4177,18 +4223,6 @@ pub async fn run_chat_with(
         content: &prompt,
     });
     let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
-
-    // B22-TWEAKS-MODEL-01 — fail-loud Tweaks load at the chat-turn boundary.
-    // Bad `tweaks.toml` surfaces here with path context rather than being
-    // silently swallowed inside build_prompt_bundle via `.ok()`.
-    // Loaded once per turn; threaded into build_prompt_bundle, enforce_preflight,
-    // dispatch_provider, and run_post_reply_pipelines so every consumer reads
-    // the same value.
-    let tweaks = {
-        let p = crate::tweaks::Tweaks::default_path();
-        crate::tweaks::Tweaks::load_or_default(&p)
-            .with_context(|| format!("tweaks.toml invalid: {}", p.display()))?
-    };
 
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
@@ -4493,7 +4527,8 @@ pub async fn run_chat_with(
         hooks,
         segment_path,
         raw_event_id,
-        first_tour_home,
+        instance_paths,
+        profile_extensions,
         chat_ts_unix,
         current_session_id,
         prompt_token_estimate,
@@ -4905,11 +4940,14 @@ async fn emit_stream_chunk(
 }
 
 fn chat_neoth_home(config_path: Option<&std::path::Path>) -> PathBuf {
-    config_path
-        .and_then(std::path::Path::parent)
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(FreedomConfig::default_neoth_home)
+    match config_path {
+        Some(path) => path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(".")),
+        None => FreedomConfig::default_neoth_home(),
+    }
 }
 
 async fn resolve_prompt(
@@ -5059,10 +5097,10 @@ async fn resolve_prompt_base(args: &ChatArgs) -> Result<String> {
         }
         return Ok(input);
     }
-    if let Some(m) = &args.message {
-        if !m.trim().is_empty() {
-            return Ok(m.clone());
-        }
+    if let Some(m) = &args.message
+        && !m.trim().is_empty()
+    {
+        return Ok(m.clone());
     }
     use tokio::io::AsyncReadExt;
     let mut buf = String::new();
@@ -5825,23 +5863,38 @@ fn partial_refusal_prefix(outcome: &crate::council::CouncilDebate) -> Option<Str
 /// never block on code-map state. Operator who hasn't run
 /// `neoth code-map persist` yet sees their chat work normally.
 ///
-/// Production entry resolves the db_path from the operator's HOME;
-/// see [`maybe_repo_context_block_at`] for the test-friendly variant
-/// that accepts an explicit path (avoids env-var mutation in tests
-/// that would otherwise race under parallel execution).
-pub(crate) fn maybe_repo_context_block(config: &FreedomConfig, prompt: &str) -> Option<String> {
-    let db_path = crate::code_map::persist::default_path();
-    maybe_repo_context_block_at(config, prompt, &db_path)
+/// Production resolves both stores from the selected runtime instance home;
+/// unit tests use a test-only explicit-path seam.
+pub(crate) fn maybe_repo_context_block(
+    config: &FreedomConfig,
+    prompt: &str,
+    paths: &InstancePaths,
+) -> Option<String> {
+    maybe_repo_context_block_at_paths(config, prompt, &paths.code_map, &paths.ccr)
 }
 
 /// Test-friendly inner: resolve the code-map DB at an explicit path
 /// instead of through `HOME` / `USERPROFILE`. Same best-effort
 /// contract as [`maybe_repo_context_block`] — every failure path
 /// produces `None`, never an error.
+#[cfg(test)]
 pub(crate) fn maybe_repo_context_block_at(
     config: &FreedomConfig,
     prompt: &str,
     db_path: &std::path::Path,
+) -> Option<String> {
+    let ccr_dir = db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("ccr");
+    maybe_repo_context_block_at_paths(config, prompt, db_path, &ccr_dir)
+}
+
+fn maybe_repo_context_block_at_paths(
+    config: &FreedomConfig,
+    prompt: &str,
+    db_path: &std::path::Path,
+    ccr_dir: &std::path::Path,
 ) -> Option<String> {
     let max = config.code_map.auto_context_max_files as usize;
     if max == 0 {
@@ -5869,7 +5922,7 @@ pub(crate) fn maybe_repo_context_block_at(
     if let Some(rt) = crate::context::compress::CompressionRuntime::persistent(
         config.compression.gate(),
         config.compression.thresholds(),
-        crate::context::compress::default_ccr_dir(),
+        ccr_dir.to_path_buf(),
     ) {
         return Some(rt.compress_for_llm(&block).0);
     }
@@ -5883,10 +5936,10 @@ pub(crate) fn maybe_repo_context_block_at(
 /// explicit request to run its bounded local analysis.
 pub(crate) fn maybe_architecture_findings_for_skill(
     skill_id: Option<&str>,
+    paths: &InstancePaths,
     current_path: &std::path::Path,
 ) -> Option<crate::code_map::recall::ArchitectureFindings> {
-    let db_path = crate::code_map::persist::default_path();
-    maybe_architecture_findings_for_skill_at(skill_id, &db_path, current_path)
+    maybe_architecture_findings_for_skill_at(skill_id, &paths.code_map, current_path)
 }
 
 fn maybe_architecture_findings_for_skill_at(
@@ -7884,6 +7937,89 @@ mod tests {
             smart_approve: false,
             autonomy_gate: None,
         }
+    }
+
+    #[test]
+    fn relative_custom_config_uses_its_working_directory_as_instance_home() {
+        assert_eq!(
+            chat_neoth_home(Some(std::path::Path::new("custom-policy.yaml"))),
+            std::path::PathBuf::from(".")
+        );
+    }
+
+    #[test]
+    fn instance_turn_state_loads_every_registry_from_the_custom_home() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = InstancePaths::new(home.path(), home.path().join("selected-policy.yaml"));
+        std::fs::write(
+            &paths.mcp_servers,
+            "servers:\n  - id: custom-home\n    command: custom-mcp\n",
+        )
+        .unwrap();
+        std::fs::write(&paths.tweaks, "persona_override = \"custom persona\"\n").unwrap();
+        std::fs::write(
+            &paths.profile_extensions,
+            "[extensions]\npets = \"Vec<Pet>\"\n",
+        )
+        .unwrap();
+
+        let state = load_instance_turn_state(&paths).unwrap();
+        assert_eq!(state.mcp_servers.servers[0].id, "custom-home");
+        assert_eq!(
+            state.tweaks.persona_override.as_deref(),
+            Some("custom persona")
+        );
+        assert!(state.profile_extensions.is_known("pets"));
+    }
+
+    #[test]
+    fn instance_turn_state_rejects_each_malformed_existing_registry() {
+        for (file_name, body, expected) in [
+            ("mcp_servers.yaml", "servers: [broken\n", "MCP server"),
+            ("tweaks.toml", "persona_override = [broken\n", "tweaks.toml"),
+            (
+                "profile_extensions.toml",
+                "[extensions\nbroken = true\n",
+                "profile extension registry",
+            ),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let paths = InstancePaths::for_home(home.path());
+            std::fs::write(home.path().join(file_name), body).unwrap();
+
+            let error = load_instance_turn_state(&paths)
+                .err()
+                .expect("malformed existing registry must fail the turn preflight");
+            let detail = format!("{error:#}");
+            assert!(detail.contains(expected), "{file_name}: {detail}");
+            assert!(detail.contains(file_name), "{file_name}: {detail}");
+        }
+    }
+
+    #[test]
+    fn onboarding_completion_updates_only_the_selected_config_file() {
+        let home = tempfile::tempdir().unwrap();
+        let selected_path = home.path().join("selected-policy.yaml");
+        let default_path = home.path().join("freedom.yaml");
+        let mut config = FreedomConfig::default();
+        config.chat_onboarding_completed = false;
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        std::fs::write(&selected_path, &yaml).unwrap();
+        std::fs::write(&default_path, &yaml).unwrap();
+        let default_before = std::fs::read(&default_path).unwrap();
+
+        persist_chat_onboarding_complete(&selected_path).unwrap();
+
+        assert!(
+            FreedomConfig::load_from_path(&selected_path)
+                .unwrap()
+                .chat_onboarding_completed
+        );
+        assert_eq!(
+            std::fs::read(&default_path).unwrap(),
+            default_before,
+            "a selected custom config must not mutate sibling freedom.yaml"
+        );
     }
 
     #[test]

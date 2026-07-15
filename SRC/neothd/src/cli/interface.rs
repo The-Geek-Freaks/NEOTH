@@ -33,6 +33,16 @@ pub enum InterfaceAction {
         #[arg(long, hide = true, requires = "ready_file")]
         ready_token: Option<String>,
     },
+    /// Internal terminal readiness handshake that does not change the saved
+    /// GUI/CLI preference. Used when the GUI opens a security ceremony in a
+    /// real TTY rather than switching the product's default surface.
+    #[command(name = "terminal-ready", hide = true)]
+    TerminalReady {
+        #[arg(long)]
+        ready_file: PathBuf,
+        #[arg(long)]
+        ready_token: String,
+    },
 }
 
 #[derive(Debug)]
@@ -78,8 +88,28 @@ pub fn run_interface(args: InterfaceArgs, output: OutputFormat) -> Result<()> {
             let (path, changed) = set_preference_at(&home, preferred, ready.as_ref())?;
             render(Some(preferred), &path, output, changed);
         }
+        InterfaceAction::TerminalReady {
+            ready_file,
+            ready_token,
+        } => {
+            let path = commit_terminal_ready(&home, &ready_file, &ready_token)?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::json!({ "ready": true, "path": path }))
+                }
+                OutputFormat::Table => println!("Terminal handoff ready ({}).", path.display()),
+            }
+        }
     }
     Ok(())
+}
+
+fn commit_terminal_ready(home: &Path, ready_file: &Path, ready_token: &str) -> Result<PathBuf> {
+    let ready = prepare_ready_commit(home, Some(ready_file), Some(ready_token))?
+        .expect("both terminal-ready arguments were supplied");
+    publish_ready_token(&ready.path, &ready.token)
+        .with_context(|| format!("publish terminal ready token {}", ready.path.display()))?;
+    Ok(ready.path)
 }
 
 /// Persist one authoritative interface choice and report a truthful state
@@ -104,9 +134,9 @@ fn set_preference_at(
 fn publish_ready_token(path: &Path, token: &[u8]) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        return publish_ready_token_with(path, token, |file, target| {
+        publish_ready_token_with(path, token, |file, target| {
             crate::wal::win_native::create_private_file_handle(file, target)
-        });
+        })
     }
     #[cfg(not(windows))]
     publish_ready_token_with(path, token, |temporary, target| {
@@ -221,7 +251,7 @@ fn set_preference_at_with_writer(
         home,
         preferred,
         ready,
-        |path, bytes| crate::util::atomic_write::atomic_write_private(path, bytes),
+        crate::util::atomic_write::atomic_write_private,
         write_ready,
     )
 }
@@ -595,6 +625,24 @@ mod tests {
                 "token",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn terminal_ready_handshake_does_not_change_interface_preference() {
+        let home = tempfile::tempdir().unwrap();
+        let launch = home.path().join(TERMINAL_LAUNCH_DIR).join("ceremony");
+        std::fs::create_dir_all(&launch).unwrap();
+        let ready = launch.join("ready");
+
+        let committed = commit_terminal_ready(home.path(), &ready, "ceremony-token").unwrap();
+
+        assert_eq!(committed, ready);
+        assert_eq!(std::fs::read(&ready).unwrap(), b"ceremony-token");
+        assert_eq!(
+            interface_preference::load_at(home.path()).unwrap(),
+            None,
+            "a security ceremony must not switch the product's default surface"
         );
     }
 

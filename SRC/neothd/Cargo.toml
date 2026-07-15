@@ -2,7 +2,7 @@
 name = "neoth"
 version = "1.0.0"
 edition = "2024"
-rust-version = "1.86"
+rust-version = "1.90"
 default-run = "neoth"
 autobins = false
 license = "MIT OR Apache-2.0"
@@ -199,7 +199,7 @@ irc-channel = ["dep:irc"]
 # needs the feature.
 nostr-channel = ["dep:nostr-sdk"]
 # B9 — Google Chat via a GCP Pub/Sub PULL subscription (no public URL; NEOTH
-# dials out). Off by default — needs `jsonwebtoken` (ring RS256) for the
+# dials out). Off by default — needs `jsonwebtoken` (RustCrypto RS256) for the
 # service-account JWT. The `ChannelKind::GoogleChat` variant + formatter +
 # probe row + the pure `gchat_api` mapping stay compiled in every build; only
 # the pull/send adapter needs the feature.
@@ -217,9 +217,8 @@ recursive-mas = []
 # Council verdict: NO production default; evaluation only. The dep and all
 # bench code are completely absent from the default build.
 #
-# Requires rustc >= 1.88 (opthash 0.10.x MSRV) — users running the bench
-# must have a recent toolchain; the package's own rust-version = "1.86" pin
-# only constrains the production code paths.
+# Opthash 0.10.x itself requires rustc >= 1.88, below NEOTH's 1.90 package
+# MSRV, so enabling the bench adds no separate toolchain-floor requirement.
 #
 # Run the bench:
 #   cargo test --features hash-bench -- bench_hash_backends --ignored --nocapture
@@ -228,8 +227,8 @@ hash-bench = ["dep:opthash"]
 [dependencies]
 # GOLD-ADAPT-HASH-01 — ElasticHashMap + FunnelHashMap bench spike.
 # Optional, default-OFF; never present in a release binary. Pulled only when
-# the `hash-bench` feature is active. opthash 0.10.x MSRV = 1.88 — that
-# constraint only applies to the bench-enabled build, not the default path.
+# the `hash-bench` feature is active. Its 1.88 MSRV remains below NEOTH's 1.90
+# package floor; the separation here is about release size, not compatibility.
 # default-features keeps the `foldhash` DefaultHashBuilder active (realistic
 # production hasher; disabling it would skew the bench toward a slower fallback).
 opthash = { version = "0.10", optional = true }
@@ -242,8 +241,8 @@ irc = { version = "1", default-features = false, features = ["tls-rust"], option
 # default features keep the tokio relay-pool + rustls WSS transport.
 nostr-sdk = { version = "0.44", features = ["nip59"], optional = true }
 # B9 — Google Chat channel (optional, behind `gchat-channel`). RS256 service-
-# account JWT signing; rides the ring 0.17 already in the tree (russh).
-jsonwebtoken = { version = "10.3", optional = true }
+# account JWT signing through jsonwebtoken's RustCrypto-backed RSA implementation.
+jsonwebtoken = { version = "10.4", optional = true }
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
 semver             = "1"

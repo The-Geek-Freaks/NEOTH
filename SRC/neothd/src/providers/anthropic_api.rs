@@ -65,19 +65,19 @@ fn validate_model_sampling_controls(model: &str, req: &Request) -> Result<()> {
     if !uses_restricted_sampling_compatibility(model) {
         return Ok(());
     }
-    if let Some(temperature) = req.temperature {
-        if temperature != 1.0 {
-            anyhow::bail!(
-                "provider `anthropic_api`: model `{model}` accepts temperature only in the range [1.0, 1.0], got {temperature}"
-            );
-        }
+    if let Some(temperature) = req.temperature
+        && temperature != 1.0
+    {
+        anyhow::bail!(
+            "provider `anthropic_api`: model `{model}` accepts temperature only in the range [1.0, 1.0], got {temperature}"
+        );
     }
-    if let Some(top_p) = req.top_p {
-        if top_p < 0.99 {
-            anyhow::bail!(
-                "provider `anthropic_api`: model `{model}` accepts top_p only in the range [0.99, 1.0], got {top_p}"
-            );
-        }
+    if let Some(top_p) = req.top_p
+        && top_p < 0.99
+    {
+        anyhow::bail!(
+            "provider `anthropic_api`: model `{model}` accepts top_p only in the range [0.99, 1.0], got {top_p}"
+        );
     }
     Ok(())
 }

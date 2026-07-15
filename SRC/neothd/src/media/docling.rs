@@ -336,16 +336,16 @@ fn parse_docling_output(stdout: &str) -> (String, usize) {
             }
         }
         // Fallback: content.text (older Docling builds)
-        if let Some(text) = v["content"]["text"].as_str() {
-            if !text.trim().is_empty() {
-                return (text.to_string(), 1);
-            }
+        if let Some(text) = v["content"]["text"].as_str()
+            && !text.trim().is_empty()
+        {
+            return (text.to_string(), 1);
         }
         // Fallback: top-level "text"
-        if let Some(text) = v["text"].as_str() {
-            if !text.trim().is_empty() {
-                return (text.to_string(), 1);
-            }
+        if let Some(text) = v["text"].as_str()
+            && !text.trim().is_empty()
+        {
+            return (text.to_string(), 1);
         }
     }
 

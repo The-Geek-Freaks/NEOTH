@@ -105,12 +105,12 @@ async fn fetch_via_jina_at_authorized(
 
         // GR-017/095 — fast-path: refuse before reading a single body byte when the
         // server honestly advertises an oversized payload.
-        if let Some(len) = resp.content_length() {
-            if len > JINA_MAX_BYTES as u64 {
-                anyhow::bail!(
-                    "jina_reader: Content-Length {len} exceeds ceiling {JINA_MAX_BYTES} for {url}"
-                );
-            }
+        if let Some(len) = resp.content_length()
+            && len > JINA_MAX_BYTES as u64
+        {
+            anyhow::bail!(
+                "jina_reader: Content-Length {len} exceeds ceiling {JINA_MAX_BYTES} for {url}"
+            );
         }
 
         // GR-017/095 — stream the body chunk-by-chunk and abort the instant the

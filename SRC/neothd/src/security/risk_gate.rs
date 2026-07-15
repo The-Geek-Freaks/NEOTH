@@ -163,13 +163,13 @@ pub fn evaluate_tool_risk(risk: &ToolCallRisk, policy: &SecurityPolicy) -> RiskG
     }
     // GOLD-ADOPT-23 P1 — optionally gate HIGH-severity findings (git push
     // --force, curl|sh). Off by default (warn-only); `confirm_high` → Confirm.
-    if policy.confirm_high {
-        if let Some(f) = risk.dangerous.iter().find(|f| f.severity == Severity::High) {
-            verdict = verdict.max(RiskGate::Confirm(format!(
-                "dangerous-command (high) `{}` ({}) needs operator approval (confirm_high).",
-                f.id, f.reason
-            )));
-        }
+    if policy.confirm_high
+        && let Some(f) = risk.dangerous.iter().find(|f| f.severity == Severity::High)
+    {
+        verdict = verdict.max(RiskGate::Confirm(format!(
+            "dangerous-command (high) `{}` ({}) needs operator approval (confirm_high).",
+            f.id, f.reason
+        )));
     }
 
     // ── Egress findings ───────────────────────────────────────────────────

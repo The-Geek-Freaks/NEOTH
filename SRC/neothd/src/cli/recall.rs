@@ -847,14 +847,14 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         .map(|h| h.event_id)
         .take(ASSOC_TOP_K)
         .collect();
-    if episodic_ids.len() >= 2 {
-        if let Ok(conn) = store::open(&db_path) {
-            let now_unix = crate::time::now_unix_i64();
-            if let Err(e) =
-                crate::memory::assoc_graph::reinforce_co_access(&conn, &episodic_ids, now_unix)
-            {
-                tracing::debug!(error = %e, "assoc_graph: co-access reinforce failed (non-fatal)");
-            }
+    if episodic_ids.len() >= 2
+        && let Ok(conn) = store::open(&db_path)
+    {
+        let now_unix = crate::time::now_unix_i64();
+        if let Err(e) =
+            crate::memory::assoc_graph::reinforce_co_access(&conn, &episodic_ids, now_unix)
+        {
+            tracing::debug!(error = %e, "assoc_graph: co-access reinforce failed (non-fatal)");
         }
     }
     append_assoc_facts(&db_path, &episodic_ids, args.output);
@@ -940,13 +940,13 @@ fn append_graph_facts(db_path: &std::path::Path, query: &str, output: crate::cli
         if cand.is_empty() || !seen.insert(cand.to_lowercase()) {
             continue;
         }
-        if let Ok(neighbors) = crate::memory::entities::get_neighbors(&conn, &cand, 2) {
-            if !neighbors.is_empty() {
-                print!(
-                    "\n{}",
-                    crate::memory::context_inject::build_facts_block(&cand, &neighbors)
-                );
-            }
+        if let Ok(neighbors) = crate::memory::entities::get_neighbors(&conn, &cand, 2)
+            && !neighbors.is_empty()
+        {
+            print!(
+                "\n{}",
+                crate::memory::context_inject::build_facts_block(&cand, &neighbors)
+            );
         }
     }
 }

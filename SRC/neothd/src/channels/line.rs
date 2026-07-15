@@ -134,8 +134,9 @@ mod tests {
     }
 
     #[test]
-    fn setup_hint_is_single_paragraph() {
-        assert!(!LineChannel::SETUP_HINT.is_empty());
+    fn setup_hint_has_actionable_single_paragraph_contract() {
+        assert!(LineChannel::SETUP_HINT.contains("LINE Messaging API"));
+        assert!(LineChannel::SETUP_HINT.contains("credentials.yaml"));
         assert_eq!(LineChannel::SETUP_HINT.matches('\n').count(), 0);
     }
 

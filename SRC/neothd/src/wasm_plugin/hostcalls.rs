@@ -33,8 +33,6 @@
 //!
 //! Compiled only when the `wasm-plugin-host` Cargo feature is on.
 
-#![cfg(feature = "wasm-plugin-host")]
-
 use anyhow::{Context, Result};
 use neoth_plugin_sdk::guest::{
     HOSTCALL_EMIT_EVENT, HOSTCALL_FUEL_LEFT, HOSTCALL_LOG, HOSTCALL_RECALL_TOP, IMPORT_MODULE,
@@ -1094,15 +1092,14 @@ mod tests {
         let as_i64 = raw as i64;
         assert!(as_i64 < 0, "fixture should produce a negative i64");
 
-        let stored_hash = format!("{:016x}", raw);
+        let stored_hash = format!("{raw:016x}");
         let db = std::sync::Arc::new(std::sync::Mutex::new(fixture_views_db_with_hashes(&[
             &stored_hash,
         ])));
         let n = recall_count_by_text_hash(&db, as_i64).expect("query succeeds");
         assert_eq!(
             n, 1,
-            "negative i64 prompt_hash must still match the {:016x}-formatted row",
-            raw
+            "negative i64 prompt_hash must still match the {raw:016x}-formatted row"
         );
     }
 

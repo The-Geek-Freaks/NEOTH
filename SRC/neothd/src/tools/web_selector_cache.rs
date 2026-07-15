@@ -134,10 +134,10 @@ pub async fn extract_with_cache(
     let (result, audits) = {
         let mut guard = cache.write().await;
         let outcome = guard.apply(&raw.raw_html, url, cache_key, selector)?;
-        if let Some(path) = CACHE_PATH.get() {
-            if let Err(e) = guard.save(path) {
-                tracing::warn!(error = %e, "web_selector_cache save failed (extract still returned)");
-            }
+        if let Some(path) = CACHE_PATH.get()
+            && let Err(e) = guard.save(path)
+        {
+            tracing::warn!(error = %e, "web_selector_cache save failed (extract still returned)");
         }
         outcome
     };

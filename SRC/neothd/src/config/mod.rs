@@ -1,6 +1,7 @@
 pub mod automation;
 pub mod features;
 pub mod inference;
+mod instance_paths;
 pub mod memory;
 pub mod ops;
 pub mod policy;
@@ -9,6 +10,8 @@ pub mod reload;
 pub mod rollback;
 pub mod tools;
 pub mod wal;
+
+pub(crate) use instance_paths::InstancePaths;
 
 // FreedomConfig — runtime view of ~/.neoth/freedom.yaml.
 //
@@ -1519,10 +1522,10 @@ fn neoth_home() -> PathBuf {
     // and operators who keep `~/.neoth` on a non-default mount. The
     // override IS the home dir (no `.neoth` suffix appended). HOME /
     // USERPROFILE fallback keeps the long-standing default.
-    if let Ok(explicit) = std::env::var("NEOTH_HOME") {
-        if !explicit.is_empty() {
-            return PathBuf::from(explicit);
-        }
+    if let Ok(explicit) = std::env::var("NEOTH_HOME")
+        && !explicit.is_empty()
+    {
+        return PathBuf::from(explicit);
     }
     let home = std::env::var("HOME")
         .map(PathBuf::from)

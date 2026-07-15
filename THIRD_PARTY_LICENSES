@@ -529,7 +529,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `js-sys 0.3.98` - `MIT OR Apache-2.0` - https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `js_int 0.2.2` - `MIT` - https://github.com/ruma/js_int - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `js_option 0.2.0` - `MIT` - https://github.com/ruma/js_option - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `jsonwebtoken 9.3.1` - `MIT` - https://github.com/Keats/jsonwebtoken - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `jsonwebtoken 10.4.0` - `MIT` - https://github.com/Keats/jsonwebtoken - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `keyboard-types 0.7.0` - `MIT OR Apache-2.0` - https://github.com/pyfisch/keyboard-types - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, x86_64-apple-darwin, x86_64-pc-windows-msvc
 - `khronos_api 3.1.0` - `Apache-2.0` - https://github.com/brendanzab/gl-rs/ - targets: aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `konst 0.4.3` - `Zlib` - https://github.com/rodrimati1992/konst/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -23700,7 +23700,7 @@ SOFTWARE.
 
 #### SHA-256 `a8012be84ea176195305bfb4e9109ed6f28860a8e697bc50302e75c2040813f3`
 
-Applies to: `jsonwebtoken 9.3.1`
+Applies to: `jsonwebtoken 10.4.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 The MIT License (MIT)

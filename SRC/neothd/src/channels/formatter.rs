@@ -744,8 +744,7 @@ mod tests {
             let escaped = format!("\\{c}");
             assert!(
                 s.contains(&escaped),
-                "expected escaped `{}` in output: {s}",
-                c
+                "expected escaped `{c}` in output: {s}"
             );
         }
     }

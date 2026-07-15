@@ -923,7 +923,11 @@ mod tests {
 
     #[test]
     fn every_bundled_skill_has_nonempty_body() {
-        assert!(!BUNDLED_SKILLS.is_empty());
+        assert!(
+            BUNDLED_SKILLS
+                .iter()
+                .any(|(id, _)| *id == "academic_research")
+        );
         for (id, body) in BUNDLED_SKILLS {
             assert!(
                 !body.trim().is_empty(),

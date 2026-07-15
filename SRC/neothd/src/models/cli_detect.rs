@@ -124,7 +124,7 @@ fn wait_with_timeout(
         }),
         Ok((Err(e), _, _)) => Err(anyhow::anyhow!(e).context("child wait failed")),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            anyhow::bail!("CLI probe timed out after {:?}", timeout)
+            anyhow::bail!("CLI probe timed out after {timeout:?}")
         }
         Err(e) => Err(anyhow::anyhow!(e).context("CLI probe channel error")),
     }

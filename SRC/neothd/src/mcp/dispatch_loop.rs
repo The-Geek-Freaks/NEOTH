@@ -341,44 +341,41 @@ where
             // judge call. If the judge says the goal IS met, skip the nudge and
             // let the loop exit normally. Fail-open: a provider error from the
             // judge lets the nudge fire as if the judge were absent.
-            if iterations < max_iterations {
-                if let (Some(provider), Some(goal_text)) =
+            if iterations < max_iterations
+                && let (Some(provider), Some(goal_text)) =
                     (judge_provider, goal_tracker.active_goal())
-                {
-                    if crate::mcp::goal_judge::judge_goal_met(
-                        goal_text,
-                        &current_text,
-                        provider,
-                        writer,
-                    )
-                    .await
-                    {
-                        tracing::info!(
-                            iteration = iterations,
-                            "HERMES-04: judge confirmed goal met — exiting loop early"
-                        );
-                        // Consume the goal so the nudge path doesn't fire.
-                        goal_tracker.mark_goal_met();
-                        // GOLD-TASK-05 — record that the loop exited because the goal
-                        // was confirmed met; the caller emits the WAL frame.
-                        goal_outcome = GoalOutcome::Met;
-                        break;
-                    }
-                }
+                && crate::mcp::goal_judge::judge_goal_met(
+                    goal_text,
+                    &current_text,
+                    provider,
+                    writer,
+                )
+                .await
+            {
+                tracing::info!(
+                    iteration = iterations,
+                    "HERMES-04: judge confirmed goal met — exiting loop early"
+                );
+                // Consume the goal so the nudge path doesn't fire.
+                goal_tracker.mark_goal_met();
+                // GOLD-TASK-05 — record that the loop exited because the goal
+                // was confirmed met; the caller emits the WAL frame.
+                goal_outcome = GoalOutcome::Met;
+                break;
             }
-            if iterations < max_iterations {
-                if let Some(nudge) = goal_tracker.on_clean_exit() {
-                    // Visibility (GOLD-ADOPT-22): a grind keeps re-firing — make
-                    // sure the operator can see WHY the loop won't stop, and how
-                    // to stop it.
-                    warn!(
-                        iteration = iterations,
-                        "goal/grind ACTIVE — injecting a nudge instead of stopping \
+            if iterations < max_iterations
+                && let Some(nudge) = goal_tracker.on_clean_exit()
+            {
+                // Visibility (GOLD-ADOPT-22): a grind keeps re-firing — make
+                // sure the operator can see WHY the loop won't stop, and how
+                // to stop it.
+                warn!(
+                    iteration = iterations,
+                    "goal/grind ACTIVE — injecting a nudge instead of stopping \
                          (clear with `neoth goal off`)"
-                    );
-                    prompt = format!("{prompt}\n\n{current_text}\n\n{nudge}");
-                    continue;
-                }
+                );
+                prompt = format!("{prompt}\n\n{current_text}\n\n{nudge}");
+                continue;
             }
             // GR-128: when a grind run is cut by the iteration cap, the model
             // emits no tool calls and exits HERE (the nudge is gated on
@@ -1501,23 +1498,21 @@ fn consume_risk_leases_at(
     let now = crate::time::now_unix_i64();
 
     let mut consumed: Option<String> = None;
-    if consume_dangerous {
-        if let Some(id) = store
+    if consume_dangerous
+        && let Some(id) = store
             .find_covering(RISK_LEASE_SUBJECT, &LeaseScope::DangerousCommand, now)
             .map(|l| l.lease_id.clone())
-        {
-            store.revoke(&id);
-            consumed = Some(id);
-        }
+    {
+        store.revoke(&id);
+        consumed = Some(id);
     }
-    if consume_egress {
-        if let Some(id) = store
+    if consume_egress
+        && let Some(id) = store
             .find_covering(RISK_LEASE_SUBJECT, &LeaseScope::Egress, now)
             .map(|l| l.lease_id.clone())
-        {
-            store.revoke(&id);
-            consumed.get_or_insert(id);
-        }
+    {
+        store.revoke(&id);
+        consumed.get_or_insert(id);
     }
     if consumed.is_some() {
         store

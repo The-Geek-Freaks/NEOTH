@@ -289,16 +289,15 @@ pub fn init_global() -> bool {
                         // GOLD-WIRE-10b: persist the live snapshot whenever a
                         // provider response lands, so the GUI / `neoth meter`
                         // subprocess can read it without sharing the bus.
-                        if ev.kind() == "provider_responded" {
-                            if let Err(e) =
+                        if ev.kind() == "provider_responded"
+                            && let Err(e) =
                                 write_meter_snapshot(&meter_path, &meter_for_task.snapshot())
-                            {
-                                tracing::debug!(
-                                    error = %e,
-                                    path = %meter_path.display(),
-                                    "meter snapshot persist failed (best-effort)"
-                                );
-                            }
+                        {
+                            tracing::debug!(
+                                error = %e,
+                                path = %meter_path.display(),
+                                "meter snapshot persist failed (best-effort)"
+                            );
                         }
                     }
                     // A drainer that lagged behind a burst counts the dropped
@@ -578,7 +577,7 @@ mod tests {
         // receiver count so `dbg!(&bus)` is useful in a live shell.
         let bus = EventBus::new();
         let _rx = bus.subscribe();
-        let dbg = format!("{:?}", bus);
+        let dbg = format!("{bus:?}");
         assert!(dbg.contains("receiver_count"), "got: {dbg}");
         assert!(dbg.contains("EventBus"), "got: {dbg}");
     }

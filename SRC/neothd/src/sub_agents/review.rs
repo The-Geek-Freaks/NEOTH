@@ -80,8 +80,7 @@ pub fn code_quality_system_prompt() -> &'static str {
 /// stages so the dispatcher can construct it uniformly.
 pub fn build_reviewer_user_message(operator_prompt: &str, primary_reply: &str) -> String {
     format!(
-        "Operator prompt:\n```\n{}\n```\n\nSub-agent reply:\n```\n{}\n```\n",
-        operator_prompt, primary_reply
+        "Operator prompt:\n```\n{operator_prompt}\n```\n\nSub-agent reply:\n```\n{primary_reply}\n```\n"
     )
 }
 

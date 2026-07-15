@@ -379,8 +379,7 @@ pub fn resolve_effective_gui_theme(
         Some(s) => {
             // Non-empty but unrecognised → fall through with diagnostic.
             e.diagnostics.push(format!(
-                "invalid dotfile theme '{}'; falling through to tweaks color_theme",
-                s
+                "invalid dotfile theme '{s}'; falling through to tweaks color_theme"
             ));
             resolve_dark_from_tweaks(tweaks, &mut e);
         }
@@ -397,8 +396,7 @@ pub fn resolve_effective_gui_theme(
         }
         Some(v) => {
             e.diagnostics.push(format!(
-                "invalid dotfile density {}; falling through to tweaks compact_mode",
-                v
+                "invalid dotfile density {v}; falling through to tweaks compact_mode"
             ));
             resolve_density_from_tweaks(tweaks, &mut e);
         }
@@ -529,8 +527,7 @@ fn resolve_dark_from_tweaks(tweaks: &Tweaks, e: &mut EffectiveGuiTheme) {
         }
         Some(other) => {
             e.diagnostics.push(format!(
-                "color_theme '{}' is not a valid value (light|dark|auto); using built-in dark",
-                other
+                "color_theme '{other}' is not a valid value (light|dark|auto); using built-in dark"
             ));
             e.dark = true;
             e.dark_source = ThemeSource::BuiltIn;
@@ -1046,13 +1043,11 @@ animation_speed = "reduced"
         for key in &["accent_color", "animation_speed", "chat_bubble_style"] {
             assert!(
                 e.unsupported_keys.contains(&(*key).to_string()),
-                "missing from unsupported_keys: {}",
-                key
+                "missing from unsupported_keys: {key}"
             );
             assert!(
                 e.diagnostics.iter().any(|d| d.contains(key)),
-                "no diagnostic for: {}",
-                key
+                "no diagnostic for: {key}"
             );
         }
     }
@@ -1147,8 +1142,7 @@ animation_speed = "reduced"
         ] {
             assert!(
                 keys.contains(field),
-                "support matrix missing ThemeConfig field: {}",
-                field
+                "support matrix missing ThemeConfig field: {field}"
             );
         }
         // Top-level theme-surface fields

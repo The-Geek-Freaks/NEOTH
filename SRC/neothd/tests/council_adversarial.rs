@@ -315,8 +315,7 @@ fn test_prompt_bundle_replay_determinism() {
         let hash_tweaked = compute_prompt_bundle_hash(&tweaked);
         assert_ne!(
             hash_a, hash_tweaked,
-            "1-char tweak in {:?} MUST change the bundle hash",
-            tweak_block,
+            "1-char tweak in {tweak_block:?} MUST change the bundle hash",
         );
     }
 

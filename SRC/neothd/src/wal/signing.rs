@@ -383,14 +383,11 @@ pub(crate) fn collect_valid_proof_key_rotations(
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
                 && frame.header.event_subtype
                     == crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8
-            {
-                if let Ok(payload) =
+                && let Ok(payload) =
                     serde_json::from_slice::<ProofKeyRotationPayload>(frame.payload)
-                {
-                    if payload.validate().is_ok() {
-                        out.push(payload);
-                    }
-                }
+                && payload.validate().is_ok()
+            {
+                out.push(payload);
             }
             if total == 0 {
                 break;

@@ -130,10 +130,10 @@ impl ApiTokenRecord {
         if self.revoked_at.is_some() {
             return false;
         }
-        if let Some(exp) = self.expires_at {
-            if now_secs >= exp {
-                return false;
-            }
+        if let Some(exp) = self.expires_at
+            && now_secs >= exp
+        {
+            return false;
         }
         true
     }

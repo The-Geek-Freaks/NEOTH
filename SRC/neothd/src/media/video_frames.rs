@@ -117,7 +117,7 @@ pub fn plan_frame_timestamps(
             let mut frame_idx = 0u32;
             let mut v = Vec::new();
             while t < duration_ms {
-                if frame_idx % n == 0 {
+                if frame_idx.is_multiple_of(n) {
                     v.push(t);
                 }
                 t += frame_ms.max(1);

@@ -49,7 +49,9 @@ with the matching NEOTH core/GUI artifacts.
 
 ## First setup
 
-Run once:
+Run once. The default storage follows the same `NEOTH_HOME` override as the
+NEOTH runtime (`$NEOTH_HOME/keet-bridge`); without it the companion uses
+`~/.neoth/keet-bridge`:
 
 ```sh
 neoth-keet-bridge setup

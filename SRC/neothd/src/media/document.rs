@@ -168,10 +168,10 @@ fn detect_format(asset: &Asset) -> Option<DocFormat> {
     if let Some(f) = DocFormat::from_mime(asset.mime()) {
         return Some(f);
     }
-    if let Asset::Path { path, .. } = asset {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            return DocFormat::from_ext(ext);
-        }
+    if let Asset::Path { path, .. } = asset
+        && let Some(ext) = path.extension().and_then(|e| e.to_str())
+    {
+        return DocFormat::from_ext(ext);
     }
     None
 }
@@ -385,16 +385,15 @@ fn decode_entities(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'&' {
-            if let Some(semi) = s[i..].find(';').map(|rel| i + rel) {
-                if semi - i <= 12 {
-                    let entity = &s[i + 1..semi];
-                    if let Some(ch) = decode_one_entity(entity) {
-                        out.push(ch);
-                        i = semi + 1;
-                        continue;
-                    }
-                }
+        if bytes[i] == b'&'
+            && let Some(semi) = s[i..].find(';').map(|rel| i + rel)
+            && semi - i <= 12
+        {
+            let entity = &s[i + 1..semi];
+            if let Some(ch) = decode_one_entity(entity) {
+                out.push(ch);
+                i = semi + 1;
+                continue;
             }
         }
         // Not a recognised entity — copy the byte's char.
@@ -529,13 +528,13 @@ fn handle_rtf_control(
         Some('\'') => {
             let h1 = chars.get(i + 2).copied();
             let h2 = chars.get(i + 3).copied();
-            if let (Some(a), Some(b)) = (h1, h2) {
-                if let Ok(byte) = u8::from_str_radix(&format!("{a}{b}"), 16) {
-                    if !skipping {
-                        out.push(cp1252_to_char(byte));
-                    }
-                    return i + 4;
+            if let (Some(a), Some(b)) = (h1, h2)
+                && let Ok(byte) = u8::from_str_radix(&format!("{a}{b}"), 16)
+            {
+                if !skipping {
+                    out.push(cp1252_to_char(byte));
                 }
+                return i + 4;
             }
             i + 2
         }
@@ -584,12 +583,13 @@ fn handle_rtf_control(
             }
 
             // `\uN` is followed by a fallback char we must discard.
-            if word == "u" {
-                if let Some(&fb) = chars.get(j) {
-                    if fb != '\\' && fb != '{' && fb != '}' {
-                        j += 1;
-                    }
-                }
+            if word == "u"
+                && let Some(&fb) = chars.get(j)
+                && fb != '\\'
+                && fb != '{'
+                && fb != '}'
+            {
+                j += 1;
             }
             j
         }

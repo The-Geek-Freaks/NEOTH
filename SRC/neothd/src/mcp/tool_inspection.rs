@@ -238,11 +238,11 @@ impl ToolInspector for ManifestInstallInspector {
                 },
             },
             ParsedInstall::Scan(intent) => {
-                if let Some(approval) = self.approved.take() {
-                    if validate_approval(&approval, &intent).is_ok() {
-                        self.ready = Some(approval);
-                        return InspectorVerdict::Allow;
-                    }
+                if let Some(approval) = self.approved.take()
+                    && validate_approval(&approval, &intent).is_ok()
+                {
+                    self.ready = Some(approval);
+                    return InspectorVerdict::Allow;
                 }
                 InspectorVerdict::Block {
                     inspector: "manifest_install",

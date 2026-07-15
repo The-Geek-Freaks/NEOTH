@@ -64,10 +64,10 @@ impl OllamaAdapter {
                 parsed.scheme()
             );
         }
-        let host = parsed
-            .host_str()
+        parsed
+            .host()
             .with_context(|| format!("Ollama endpoint `{base_url}` has no host"))?;
-        let is_loopback_endpoint = is_loopback_host(host);
+        let is_loopback_endpoint = super::http_client::url_has_loopback_host(&parsed);
         let http = if is_loopback_endpoint {
             crate::providers::http_client::build_direct_client_no_redirect()?
         } else {
@@ -80,14 +80,6 @@ impl OllamaAdapter {
             http,
         })
     }
-}
-
-fn is_loopback_host(host: &str) -> bool {
-    let host = host.trim_end_matches('.');
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
 }
 
 #[async_trait]

@@ -28,11 +28,11 @@ pub fn probe_local_bridge_sync() -> Option<String> {
         .ok()?;
     for url in CANDIDATES {
         let probe = format!("{url}/models");
-        if let Ok(resp) = client.get(&probe).send() {
-            if resp.status().is_success() || resp.status().as_u16() == 401 {
-                tracing::info!(endpoint = url, "detected local OpenAI-compat server");
-                return Some((*url).to_string());
-            }
+        if let Ok(resp) = client.get(&probe).send()
+            && (resp.status().is_success() || resp.status().as_u16() == 401)
+        {
+            tracing::info!(endpoint = url, "detected local OpenAI-compat server");
+            return Some((*url).to_string());
         }
     }
     None

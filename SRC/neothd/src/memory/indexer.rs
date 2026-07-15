@@ -813,8 +813,7 @@ mod tests {
         assert!(
             cursor_after_first > SEGMENT_HEADER_LEN as i64,
             "cursor must advance past the corrupt frame start to break the infinite stall; \
-             got cursor={cursor_after_first}, header_len={}",
-            SEGMENT_HEADER_LEN
+             got cursor={cursor_after_first}, header_len={SEGMENT_HEADER_LEN}"
         );
     }
 

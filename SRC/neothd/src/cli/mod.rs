@@ -445,10 +445,10 @@ pub enum Commands {
     /// same authoritative file under `NEOTH_HOME`.
     Interface(interface::InterfaceArgs),
 
-    /// Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves
-    /// the separate GUI binary (next to `neoth`, else via PATH) and spawns it.
-    /// `--locate` resolves + prints the path without launching. Prints the
-    /// install command if the GUI binary isn't present.
+    /// Launch the NEOTH desktop GUI (`neothd-gui`). The thin launcher accepts
+    /// only the GUI binary installed beside this exact `neoth`; it never trusts
+    /// a same-named PATH entry. `--locate` reports the paired path or the
+    /// actionable full-installer repair guidance without launching.
     Gui(gui::GuiArgs),
 
     /// Persistent NDJSON request/response channel for `neothd-gui`
@@ -637,7 +637,9 @@ pub enum Commands {
     /// aggregator. `neoth security audit` runs every available
     /// security check (HMAC key + WAL segment health + memory drift
     /// + credential sidecar) and prints a pass/warn/fail checklist.
-    /// Exit code 1 iff any check FAILed; warnings don't change exit.
+    /// `security set smart-approve --enable|--disable` is the canonical
+    /// global Smart-Approve policy mutation path. Exit code 1 iff an audit
+    /// check FAILed; warnings don't change exit.
     Security(security::SecurityArgs),
 
     /// GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time
@@ -834,7 +836,8 @@ pub enum Commands {
     /// safe toggles. `status` reads six buddy-config fields from freedom.yaml;
     /// `self-activation --enable/--disable` toggles `self_activation.enabled`;
     /// `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign
-    /// and smart-approve are read-only here — they have their own gated paths.
+    /// and Smart-Approve are surfaced here but mutate only through their
+    /// canonical `autonomy sovereign` and `security set` policy paths.
     Buddy(buddy::BuddyArgs),
 
     /// ZF-04 — RecursiveMAS consent gate + status inspector. `consent`
@@ -1245,10 +1248,10 @@ pub enum ChannelAction {
     Remove { channel: String },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum DefaultInvocation {
-    GuiChoice,
-    Gui,
+    GuiChoice(gui::GuiBinary),
+    Gui(gui::GuiBinary),
     Init,
     CliHome,
 }
@@ -1257,19 +1260,24 @@ fn choose_default_invocation(
     preferred: Option<crate::interface_preference::InterfacePreference>,
     initialized: bool,
     headless: bool,
+    gui_availability: gui::GuiAvailability,
 ) -> DefaultInvocation {
     use crate::interface_preference::InterfacePreference;
 
-    match (preferred, initialized, headless) {
-        (None, _, false) => DefaultInvocation::GuiChoice,
-        (Some(InterfacePreference::Gui), _, false) => DefaultInvocation::Gui,
+    let gui_binary = match (headless, gui_availability) {
+        (false, gui::GuiAvailability::Installed(binary)) => Some(binary),
+        _ => None,
+    };
+    match (preferred, initialized, gui_binary) {
+        (None, _, Some(binary)) => DefaultInvocation::GuiChoice(binary),
+        (Some(InterfacePreference::Gui), _, Some(binary)) => DefaultInvocation::Gui(binary),
         // A stored desktop GUI preference must never make SSH/headless launch
-        // a window. An unfinished instance continues through the CLI-capable
-        // wizard without overwriting that desktop preference.
-        (Some(InterfacePreference::Gui), false, true) => DefaultInvocation::Init,
-        (Some(InterfacePreference::Gui), true, true) => DefaultInvocation::CliHome,
-        (Some(InterfacePreference::Cli), false, _) | (None, false, true) => DefaultInvocation::Init,
-        (None, true, true) => DefaultInvocation::CliHome,
+        // a window. The same CLI fallback applies to a core-only installation:
+        // no optimistic PATH spawn may strand a fresh operator before init.
+        (Some(InterfacePreference::Gui), false, None) => DefaultInvocation::Init,
+        (Some(InterfacePreference::Gui), true, None) => DefaultInvocation::CliHome,
+        (Some(InterfacePreference::Cli), false, _) | (None, false, None) => DefaultInvocation::Init,
+        (None, true, None) => DefaultInvocation::CliHome,
         (Some(InterfacePreference::Cli), true, _) => DefaultInvocation::CliHome,
     }
 }
@@ -1279,10 +1287,21 @@ fn resolve_default_invocation_at(
     explicit: Option<crate::interface_preference::InterfacePreference>,
     initialized: bool,
     headless: bool,
+    gui_availability: gui::GuiAvailability,
 ) -> anyhow::Result<(
     DefaultInvocation,
     Option<crate::interface_preference::InterfacePreference>,
 )> {
+    // An explicit GUI environment request is an operator command, not an
+    // implicit surface preference. Fail before any preference write when this
+    // core-only installation cannot honour it; a same-named PATH entry is not
+    // the GUI paired with this `neoth` binary.
+    if explicit == Some(crate::interface_preference::InterfacePreference::Gui)
+        && matches!(&gui_availability, gui::GuiAvailability::Missing)
+    {
+        return Err(gui::missing_gui_error());
+    }
+
     // A CLI environment choice is safe to commit immediately. A graphical GUI
     // choice is selected now but committed by `gui::run_gui` only after the
     // GUI reports a live event-loop Ready acknowledgement;
@@ -1309,7 +1328,7 @@ fn resolve_default_invocation_at(
         None => crate::interface_preference::load_at(home)?,
     };
     Ok((
-        choose_default_invocation(preferred, initialized, headless),
+        choose_default_invocation(preferred, initialized, headless, gui_availability),
         preferred,
     ))
 }
@@ -1330,19 +1349,27 @@ pub async fn run_default_invocation() -> anyhow::Result<()> {
     let explicit = crate::interface_preference::env_override()?;
     let initialized = init::initialized_home_is_ready(&home)?;
     let headless = !crate::wizard::env_probe::probe_gui_session_available();
+    let gui_availability = gui::gui_availability();
+    let gui_missing = matches!(&gui_availability, gui::GuiAvailability::Missing);
     let (invocation, preferred) =
-        resolve_default_invocation_at(&home, explicit, initialized, headless)?;
+        resolve_default_invocation_at(&home, explicit, initialized, headless, gui_availability)?;
 
     match invocation {
-        DefaultInvocation::GuiChoice => gui::run_first_launch_chooser(),
-        DefaultInvocation::Gui => gui::run_gui(gui::GuiArgs::default(), OutputFormat::Table),
+        DefaultInvocation::GuiChoice(binary) => gui::run_first_launch_chooser(binary),
+        DefaultInvocation::Gui(binary) => gui::run_installed_gui(binary, OutputFormat::Table),
         DefaultInvocation::Init => init::run_init(launcher_init_args()?).await,
         DefaultInvocation::CliHome => {
             println!("NEOTH CLI is ready.");
             if preferred == Some(crate::interface_preference::InterfacePreference::Gui) {
-                println!(
-                    "The GUI remains your desktop default; this headless session is using CLI fallback."
-                );
+                if gui_missing {
+                    println!(
+                        "The GUI remains your preference but is not installed beside `neoth`; this session is using CLI fallback. Run `neoth gui` for repair guidance."
+                    );
+                } else {
+                    println!(
+                        "The GUI remains your desktop default; this headless session is using CLI fallback."
+                    );
+                }
             }
             println!("  Chat       neoth chat \"What should we work on?\"");
             println!("  Health     neoth doctor");
@@ -1756,16 +1783,14 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             checkpoint::run_checkpoint(args).await?;
         }
         Commands::Security(args) => {
-            // SC-04: security audit aggregator has its own output
-            // shape (checklist with status markers), so it doesn't
-            // share the global_output channel-switch.
-            security::run_security(args).await?;
+            // Audit keeps its checklist shape; structured policy mutations use
+            // the global output contract for GUI/automation acknowledgements.
+            security::run_security(args, global_output).await?;
         }
         Commands::Companion(args) => {
             // GOLD-COMPANION-P2P-01: mints invite, shows QR, and drives the
             // Noise P2P listener until the phone pairs or the TTL expires.
-            // No global_output channel switch, like `neoth security`.
-            companion::run_companion(args).await?;
+            companion::run_companion(args, global_output).await?;
         }
         Commands::Profile(mut args) => {
             args.output = global_output;
@@ -1960,48 +1985,115 @@ mod default_invocation_tests {
     use super::*;
     use crate::interface_preference::InterfacePreference;
 
+    fn installed_gui() -> gui::GuiAvailability {
+        gui::installed_gui_for_test(std::path::PathBuf::from("/installed/neothd-gui"))
+    }
+
     #[test]
     fn bare_launcher_honours_preference_without_opening_gui_headless() {
-        assert_eq!(
-            choose_default_invocation(None, false, false),
-            DefaultInvocation::GuiChoice,
+        assert!(
+            matches!(
+                choose_default_invocation(None, false, false, installed_gui()),
+                DefaultInvocation::GuiChoice(_)
+            ),
             "a fresh desktop launch opens the graphical chooser without pre-selecting a surface"
         );
-        assert_eq!(
-            choose_default_invocation(None, true, false),
-            DefaultInvocation::GuiChoice,
+        assert!(
+            matches!(
+                choose_default_invocation(None, true, false, installed_gui()),
+                DefaultInvocation::GuiChoice(_)
+            ),
             "a legacy initialized desktop install still needs the graphical one-time choice"
         );
         assert_eq!(
-            choose_default_invocation(None, false, true),
+            choose_default_invocation(None, false, true, installed_gui()),
             DefaultInvocation::Init,
             "a headless first launch must never attempt to open a window"
         );
         assert_eq!(
-            choose_default_invocation(None, true, true),
+            choose_default_invocation(None, true, true, installed_gui()),
             DefaultInvocation::CliHome,
             "an initialized headless instance must not restart onboarding on every bare launch"
         );
+        assert!(matches!(
+            choose_default_invocation(Some(InterfacePreference::Gui), true, false, installed_gui()),
+            DefaultInvocation::Gui(_)
+        ));
         assert_eq!(
-            choose_default_invocation(Some(InterfacePreference::Gui), true, false),
-            DefaultInvocation::Gui
-        );
-        assert_eq!(
-            choose_default_invocation(Some(InterfacePreference::Gui), false, true),
+            choose_default_invocation(Some(InterfacePreference::Gui), false, true, installed_gui(),),
             DefaultInvocation::Init
         );
         assert_eq!(
-            choose_default_invocation(Some(InterfacePreference::Gui), true, true),
+            choose_default_invocation(Some(InterfacePreference::Gui), true, true, installed_gui(),),
             DefaultInvocation::CliHome
         );
         assert_eq!(
-            choose_default_invocation(Some(InterfacePreference::Cli), true, false),
+            choose_default_invocation(Some(InterfacePreference::Cli), true, false, installed_gui(),),
             DefaultInvocation::CliHome
         );
         assert_eq!(
-            choose_default_invocation(Some(InterfacePreference::Cli), false, false),
+            choose_default_invocation(
+                Some(InterfacePreference::Cli),
+                false,
+                false,
+                installed_gui(),
+            ),
             DefaultInvocation::Init
         );
+    }
+
+    #[test]
+    fn core_only_bare_launch_falls_back_to_cli_without_a_path_guess() {
+        assert_eq!(
+            choose_default_invocation(None, false, false, gui::GuiAvailability::Missing),
+            DefaultInvocation::Init,
+            "a fresh core-only install must enter CLI onboarding"
+        );
+        assert_eq!(
+            choose_default_invocation(None, true, false, gui::GuiAvailability::Missing),
+            DefaultInvocation::CliHome,
+            "an initialized core-only install must enter the CLI home"
+        );
+        assert_eq!(
+            choose_default_invocation(
+                Some(InterfacePreference::Gui),
+                false,
+                false,
+                gui::GuiAvailability::Missing,
+            ),
+            DefaultInvocation::Init,
+            "a stale GUI preference cannot strand an unfinished core-only install"
+        );
+        assert_eq!(
+            choose_default_invocation(
+                Some(InterfacePreference::Gui),
+                true,
+                false,
+                gui::GuiAvailability::Missing,
+            ),
+            DefaultInvocation::CliHome,
+            "a stale GUI preference cannot strand an initialized core-only install"
+        );
+    }
+
+    #[test]
+    fn explicit_gui_on_core_only_install_fails_before_preference_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        crate::interface_preference::save_at(home.path(), InterfacePreference::Cli).unwrap();
+        let preference_path = home.path().join("interface.json");
+        let before = std::fs::read(&preference_path).unwrap();
+
+        let error = resolve_default_invocation_at(
+            home.path(),
+            Some(InterfacePreference::Gui),
+            true,
+            true,
+            gui::GuiAvailability::Missing,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("core-only NEOTH installation"));
+        assert_eq!(std::fs::read(preference_path).unwrap(), before);
     }
 
     #[test]
@@ -2028,6 +2120,7 @@ mod default_invocation_tests {
             Some(InterfacePreference::Cli),
             false,
             false,
+            installed_gui(),
         )
         .unwrap();
         assert_eq!(first, DefaultInvocation::Init);
@@ -2038,10 +2131,10 @@ mod default_invocation_tests {
         );
 
         let (later, preferred) =
-            resolve_default_invocation_at(home.path(), None, true, false).unwrap();
+            resolve_default_invocation_at(home.path(), None, true, false, installed_gui()).unwrap();
         assert_eq!(later, DefaultInvocation::CliHome);
         assert_eq!(preferred, Some(InterfacePreference::Cli));
-        assert_ne!(later, DefaultInvocation::GuiChoice);
+        assert!(!matches!(later, DefaultInvocation::GuiChoice(_)));
     }
 
     #[test]
@@ -2049,10 +2142,15 @@ mod default_invocation_tests {
         let home = tempfile::tempdir().unwrap();
         crate::interface_preference::save_at(home.path(), InterfacePreference::Cli).unwrap();
 
-        let (decision, preferred) =
-            resolve_default_invocation_at(home.path(), Some(InterfacePreference::Gui), true, false)
-                .unwrap();
-        assert_eq!(decision, DefaultInvocation::Gui);
+        let (decision, preferred) = resolve_default_invocation_at(
+            home.path(),
+            Some(InterfacePreference::Gui),
+            true,
+            false,
+            installed_gui(),
+        )
+        .unwrap();
+        assert!(matches!(decision, DefaultInvocation::Gui(_)));
         assert_eq!(preferred, Some(InterfacePreference::Gui));
         assert_eq!(
             crate::interface_preference::load_at(home.path()).unwrap(),
@@ -2063,25 +2161,32 @@ mod default_invocation_tests {
         // Model the successful `gui::run_gui` Ready commit without opening a
         // window; the GUI launcher's own tests cover the process handshake.
         crate::interface_preference::save_at(home.path(), InterfacePreference::Gui).unwrap();
-        let (later, _) = resolve_default_invocation_at(home.path(), None, true, false).unwrap();
-        assert_eq!(later, DefaultInvocation::Gui);
-        assert_ne!(later, DefaultInvocation::GuiChoice);
+        let (later, _) =
+            resolve_default_invocation_at(home.path(), None, true, false, installed_gui()).unwrap();
+        assert!(matches!(&later, DefaultInvocation::Gui(_)));
+        assert!(!matches!(&later, DefaultInvocation::GuiChoice(_)));
     }
 
     #[test]
     fn headless_explicit_gui_is_persisted_but_never_launches_or_prompts() {
         let home = tempfile::tempdir().unwrap();
 
-        let (unfinished, preferred) =
-            resolve_default_invocation_at(home.path(), Some(InterfacePreference::Gui), false, true)
-                .unwrap();
+        let (unfinished, preferred) = resolve_default_invocation_at(
+            home.path(),
+            Some(InterfacePreference::Gui),
+            false,
+            true,
+            installed_gui(),
+        )
+        .unwrap();
         assert_eq!(unfinished, DefaultInvocation::Init);
         assert_eq!(preferred, Some(InterfacePreference::Gui));
 
-        let (ready, _) = resolve_default_invocation_at(home.path(), None, true, true).unwrap();
+        let (ready, _) =
+            resolve_default_invocation_at(home.path(), None, true, true, installed_gui()).unwrap();
         assert_eq!(ready, DefaultInvocation::CliHome);
-        assert_ne!(ready, DefaultInvocation::Gui);
-        assert_ne!(ready, DefaultInvocation::GuiChoice);
+        assert!(!matches!(&ready, DefaultInvocation::Gui(_)));
+        assert!(!matches!(&ready, DefaultInvocation::GuiChoice(_)));
     }
 
     #[test]
@@ -2089,7 +2194,7 @@ mod default_invocation_tests {
         let home = tempfile::tempdir().unwrap();
 
         let (decision, preferred) =
-            resolve_default_invocation_at(home.path(), None, true, true).unwrap();
+            resolve_default_invocation_at(home.path(), None, true, true, installed_gui()).unwrap();
         assert_eq!(decision, DefaultInvocation::CliHome);
         assert_eq!(preferred, None);
         assert_eq!(

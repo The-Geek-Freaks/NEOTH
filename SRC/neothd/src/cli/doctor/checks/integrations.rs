@@ -391,8 +391,7 @@ pub(crate) fn check_cloud_archive_dest(home: &Path) -> CheckOutcome {
             name: "cloud archive",
             status: CheckStatus::Warn,
             detail: format!(
-                "configured dest {} does not exist (is the cloud client running?)",
-                dest_str,
+                "configured dest {dest_str} does not exist (is the cloud client running?)",
             ),
         };
     }

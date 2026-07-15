@@ -59,11 +59,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prompt_is_non_empty() {
-        assert!(!SELF_SUMMARY_SYSTEM_PROMPT.is_empty());
-    }
-
-    #[test]
     fn prompt_contains_density_directive() {
         // The research plan specifies the prompt must contain "DENSE"
         assert!(

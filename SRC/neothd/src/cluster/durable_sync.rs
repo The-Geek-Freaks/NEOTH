@@ -534,7 +534,7 @@ fn materialize_envelope(
         "materialize durable mesh envelope: outer/inner WAL metadata mismatch"
     );
     let content = match event_type {
-        0x90 | 0x91 | 0x92 => {
+        0x90..=0x92 => {
             let event_id = json_i64(decoded.payload, "event_id")?;
             SyncContent::Memory(load_memory_snapshot(conn, event_id)?)
         }
@@ -951,7 +951,7 @@ fn validate_content_shape(
         "mesh envelope timestamp does not match WAL source"
     );
     match (&frame.envelope.content, event_type) {
-        (SyncContent::Memory(snapshot), 0x90 | 0x91 | 0x92) => {
+        (SyncContent::Memory(snapshot), 0x90..=0x92) => {
             ensure!(
                 snapshot.importance_micros <= 1_000_000,
                 "memory importance exceeds canonical range"

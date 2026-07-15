@@ -188,10 +188,10 @@ pub fn list_identities(conn: &Connection, channel_filter: Option<&str>) -> Resul
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
-        if let Some(cf) = channel_filter {
-            if !aliases.iter().any(|a| a.channel == cf) {
-                continue;
-            }
+        if let Some(cf) = channel_filter
+            && !aliases.iter().any(|a| a.channel == cf)
+        {
+            continue;
         }
         out.push(Identity {
             uuid,

@@ -39,10 +39,10 @@ pub fn parse(body: &str) -> Result<ForeignSession> {
         match v.get("type").and_then(Value::as_str).unwrap_or("") {
             "session_meta" => {
                 if let Some(p) = payload {
-                    if session_id.is_empty() {
-                        if let Some(id) = p.get("id").and_then(Value::as_str) {
-                            session_id = format!("codex:{id}");
-                        }
+                    if session_id.is_empty()
+                        && let Some(id) = p.get("id").and_then(Value::as_str)
+                    {
+                        session_id = format!("codex:{id}");
                     }
                     if project.is_none() {
                         project = p.get("cwd").and_then(Value::as_str).map(str::to_string);
@@ -99,21 +99,19 @@ pub fn parse(body: &str) -> Result<ForeignSession> {
                 }
             }
             "event_msg" => {
-                if let Some(p) = payload {
-                    if p.get("type").and_then(Value::as_str) == Some("token_count") {
-                        if let Some(tu) = p.get("info").and_then(|i| i.get("last_token_usage")) {
-                            let input = tu.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
-                            let cached = tu
-                                .get("cached_input_tokens")
-                                .and_then(Value::as_u64)
-                                .unwrap_or(0);
-                            let output =
-                                tu.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
-                            usage.input_tokens += input.saturating_sub(cached);
-                            usage.cache_read_tokens += cached;
-                            usage.output_tokens += output;
-                        }
-                    }
+                if let Some(p) = payload
+                    && p.get("type").and_then(Value::as_str) == Some("token_count")
+                    && let Some(tu) = p.get("info").and_then(|i| i.get("last_token_usage"))
+                {
+                    let input = tu.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    let cached = tu
+                        .get("cached_input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let output = tu.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    usage.input_tokens += input.saturating_sub(cached);
+                    usage.cache_read_tokens += cached;
+                    usage.output_tokens += output;
                 }
             }
             _ => {}

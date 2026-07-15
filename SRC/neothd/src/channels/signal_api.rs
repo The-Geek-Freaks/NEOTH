@@ -35,6 +35,72 @@ use super::{ChannelError, ChannelKind, InboundMessage, MessageId};
 /// adapter's convention for cross-channel grep consistency).
 const USER_AGENT: &str = "NEOTH/0.1 (+https://neoth.dev)";
 
+/// Validated signal-cli origin. Remote services require HTTPS; the customary
+/// local signal-cli daemon may use HTTP only on an explicit loopback host.
+/// Loopback traffic bypasses proxies and all requests reject redirects.
+pub(crate) struct SignalEndpoint {
+    base: reqwest::Url,
+    http: reqwest::Client,
+}
+
+impl SignalEndpoint {
+    pub(crate) fn parse(raw: &str) -> Result<Self> {
+        if raw.is_empty() || raw.trim() != raw {
+            anyhow::bail!("Signal base URL must be non-empty and contain no outer whitespace");
+        }
+        let base = super::readiness::parse_base_url(raw, "Signal")?;
+        base.host().context("Signal base URL must contain a host")?;
+        let loopback = crate::providers::http_client::url_has_loopback_host(&base);
+        match base.scheme() {
+            "https" => {}
+            "http" if loopback => {}
+            "http" => {
+                anyhow::bail!("remote Signal endpoints must use HTTPS; HTTP is loopback-only")
+            }
+            scheme => {
+                anyhow::bail!("Signal base URL must use HTTPS or loopback HTTP, got `{scheme}`")
+            }
+        }
+        let http = if loopback {
+            crate::providers::http_client::build_direct_client_no_redirect()
+        } else {
+            crate::providers::http_client::build_client_no_redirect()
+        }
+        .context("build Signal HTTP client")?;
+        Ok(Self { base, http })
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        self.base.as_str().trim_end_matches('/')
+    }
+
+    fn client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
+    fn api_url(&self, suffix: &str) -> reqwest::Url {
+        super::readiness::append_path(self.base.clone(), suffix)
+    }
+
+    fn receive_url(&self, our_number: &str) -> std::result::Result<reqwest::Url, ChannelError> {
+        let mut url = self.api_url("/v1/receive");
+        url.path_segments_mut()
+            .map_err(|_| {
+                ChannelError::Transport("Signal base URL cannot be a URL base".to_string())
+            })?
+            .push(our_number);
+        Ok(url)
+    }
+}
+
+pub(crate) fn validate_signal_number(number: &str) -> Result<()> {
+    let digits = number.strip_prefix('+').unwrap_or_default();
+    if !(7..=15).contains(&digits.len()) || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        anyhow::bail!("Signal phone number must be E.164 (`+` followed by 7-15 digits)");
+    }
+    Ok(())
+}
+
 // ── Inbound wire types ───────────────────────────────────────────────────
 
 /// One element of the `GET /v1/receive/{number}` JSON array.
@@ -144,15 +210,15 @@ pub fn envelope_to_inbound(env: &ReceiveEnvelope) -> Option<InboundMessage> {
 /// registered accounts without consuming the receive queue (unlike
 /// `/v1/receive/{number}`), so `channel test` cannot lose a real message.
 pub async fn probe_registration(base_url: &str, our_number: &str) -> Result<String> {
-    let base = super::readiness::parse_base_url(base_url, "Signal")?;
-    let endpoint = super::readiness::append_path(base, "/v1/accounts");
-    probe_registration_at(endpoint, our_number).await
+    validate_signal_number(our_number)?;
+    let endpoint = SignalEndpoint::parse(base_url)?;
+    probe_registration_at(&endpoint, our_number).await
 }
 
-async fn probe_registration_at(endpoint: reqwest::Url, our_number: &str) -> Result<String> {
-    let client = super::readiness::probe_client(&endpoint)?;
-    let response = client
-        .get(endpoint)
+async fn probe_registration_at(endpoint: &SignalEndpoint, our_number: &str) -> Result<String> {
+    let response = endpoint
+        .client()
+        .get(endpoint.api_url("/v1/accounts"))
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .timeout(super::readiness::PROBE_TIMEOUT)
         .send()
@@ -186,21 +252,21 @@ async fn probe_registration_at(endpoint: reqwest::Url, our_number: &str) -> Resu
 /// (a number or `group.<id>`). Mirrors the discord adapter's status-code
 /// → [`ChannelError`] mapping (429 → RateLimited, 401/403 → Auth, other
 /// non-2xx → Transport).
-pub async fn send_signal_message(
-    http: &reqwest::Client,
-    base_url: &str,
+pub(crate) async fn send_signal_message(
+    endpoint: &SignalEndpoint,
     our_number: &str,
     recipient: &str,
     text: &str,
 ) -> std::result::Result<MessageId, ChannelError> {
-    let url = format!("{}/v2/send", base_url.trim_end_matches('/'));
+    let url = endpoint.api_url("/v2/send");
     let body = SendRequest {
         message: text,
         number: our_number,
         recipients: vec![recipient.to_string()],
     };
-    let response = http
-        .post(&url)
+    let response = endpoint
+        .client()
+        .post(url.clone())
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .json(&body)
@@ -223,18 +289,14 @@ pub async fn send_signal_message(
 /// `GET {base_url}/v1/receive/{number}` — drain pending inbound envelopes.
 /// signal-cli returns them as a JSON array (possibly empty). An empty array
 /// is `Ok(vec![])`, not an error.
-pub async fn receive_messages(
-    http: &reqwest::Client,
-    base_url: &str,
+pub(crate) async fn receive_messages(
+    endpoint: &SignalEndpoint,
     our_number: &str,
 ) -> std::result::Result<Vec<ReceiveEnvelope>, ChannelError> {
-    let url = format!(
-        "{}/v1/receive/{}",
-        base_url.trim_end_matches('/'),
-        our_number
-    );
-    let response = http
-        .get(&url)
+    let url = endpoint.receive_url(our_number)?;
+    let response = endpoint
+        .client()
+        .get(url.clone())
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .send()
         .await
@@ -382,16 +444,53 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
             .mount(&server)
             .await;
-        let error = send_signal_message(
-            &reqwest::Client::new(),
-            &server.uri(),
-            "+4400",
-            "+4411",
-            "hello",
-        )
-        .await
-        .unwrap_err();
+        let endpoint = SignalEndpoint::parse(&server.uri()).unwrap();
+        let error = send_signal_message(&endpoint, "+4400", "+4411", "hello")
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("response parse"), "got: {error}");
+    }
+
+    #[tokio::test]
+    async fn signal_message_does_not_follow_cross_origin_redirects() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let target = MockServer::start().await;
+        let source = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/send"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("location", format!("{}/capture", target.uri())),
+            )
+            .mount(&source)
+            .await;
+        let endpoint = SignalEndpoint::parse(&source.uri()).unwrap();
+        let error = send_signal_message(&endpoint, "+491234567", "+499876543", "private message")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("307"), "got: {error}");
+        assert!(
+            target.received_requests().await.unwrap().is_empty(),
+            "redirect target received the Signal message"
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_uses_the_validated_loopback_endpoint() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let endpoint = SignalEndpoint::parse(&server.uri()).unwrap();
+        let messages = receive_messages(&endpoint, "+491234567").await.unwrap();
+        assert!(messages.is_empty());
     }
 
     #[tokio::test]
@@ -409,14 +508,14 @@ mod tests {
             .expect(2)
             .mount(&server)
             .await;
-        let endpoint = reqwest::Url::parse(&format!("{}/v1/accounts", server.uri())).unwrap();
+        let endpoint = SignalEndpoint::parse(&server.uri()).unwrap();
         assert!(
-            probe_registration_at(endpoint.clone(), "+491234")
+            probe_registration_at(&endpoint, "+491234")
                 .await
                 .unwrap()
                 .contains("registered")
         );
-        let error = probe_registration_at(endpoint, "+490000")
+        let error = probe_registration_at(&endpoint, "+490000")
             .await
             .unwrap_err()
             .to_string();

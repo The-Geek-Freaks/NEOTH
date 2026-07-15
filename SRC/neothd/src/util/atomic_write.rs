@@ -86,10 +86,10 @@ pub fn durable_remove_file(path: &Path) -> std::io::Result<()> {
 }
 
 fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     #[cfg(windows)]
     let tmp = if private {
@@ -159,10 +159,6 @@ fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Resul
         std::fs::rename(staged.path(), path)?;
         staged.disarm();
     }
-    #[cfg(windows)]
-    if private {
-        crate::wal::win_native::verify_private_dacl(path)?;
-    }
     // GR-088 — fsync the PARENT directory so the new directory entry created by
     // the rename is durable. The file's DATA was fsynced above, but on POSIX the
     // rename only updates the parent inode's metadata, which survives a power
@@ -195,6 +191,7 @@ impl AtomicTemp {
         self.path.as_deref().expect("atomic temp path is present")
     }
 
+    #[cfg(windows)]
     fn file(&self) -> &std::fs::File {
         self.file.as_ref().expect("atomic temp file is present")
     }

@@ -275,25 +275,25 @@ pub async fn run_once(
     // a local-named fallback/compactor can never wander to a cloud child. This
     // preserves the no-background-billing contract. Best-effort: a denied child
     // call skips the summary and never fails the consolidation pass.
-    if let Some(p) = provider.as_ref() {
-        if crate::providers::is_local_provider(p.name()) && !report.days_needing_summary.is_empty()
-        {
-            summarize_consolidated_days(
-                config_path,
-                db_path,
-                p.as_ref(),
-                &report.days_needing_summary,
-                wal_writer,
-            )
-            .await;
-        }
+    if let Some(p) = provider.as_ref()
+        && crate::providers::is_local_provider(p.name())
+        && !report.days_needing_summary.is_empty()
+    {
+        summarize_consolidated_days(
+            config_path,
+            db_path,
+            p.as_ref(),
+            &report.days_needing_summary,
+            wal_writer,
+        )
+        .await;
     }
 
     // KF-10: audit the pass when the daemon owns the writer + it touched rows.
-    if let Some(w) = wal_writer {
-        if pass_did_work(&report) {
-            emit_consolidation_pass(w, &report).await;
-        }
+    if let Some(w) = wal_writer
+        && pass_did_work(&report)
+    {
+        emit_consolidation_pass(w, &report).await;
     }
     Ok(report)
 }

@@ -577,10 +577,10 @@ fn plugin_activation_label(
         .get(&plugin.manifest.id)
         .cloned()
         .unwrap_or_default();
-    if record.state == PluginActivation::Active {
-        if let Err(error) = record.validate_for(plugin) {
-            return format!("reconsent_required ({error})");
-        }
+    if record.state == PluginActivation::Active
+        && let Err(error) = record.validate_for(plugin)
+    {
+        return format!("reconsent_required ({error})");
     }
     record.state.as_str().to_string()
 }

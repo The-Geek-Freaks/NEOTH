@@ -115,24 +115,39 @@ fn open_views() -> Result<rusqlite::Connection> {
     Ok(conn)
 }
 
-fn set_enabled(enabled: bool) -> Result<()> {
+fn set_enabled(enabled: bool, output: OutputFormat) -> Result<()> {
     let path = crate::config::FreedomConfig::default_path();
     let mut fc = crate::config::FreedomConfig::load_from_path(&path)
         .with_context(|| format!("load {}", path.display()))?;
     if fc.babel.enabled == enabled {
-        println!(
-            "babel observer already {}",
-            if enabled { "enabled" } else { "disabled" }
-        );
+        render_enabled(enabled, output, true);
         return Ok(());
     }
     fc.babel.enabled = enabled;
     fc.save_public_to_default_path()?;
-    println!(
-        "babel observer {} (takes effect on the next daemon start / reload)",
-        if enabled { "enabled" } else { "disabled" }
-    );
+    render_enabled(enabled, output, false);
     Ok(())
+}
+
+fn render_enabled(enabled: bool, output: OutputFormat, unchanged: bool) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "ok": true,
+                "action": if enabled { "enable" } else { "disable" },
+                "enabled": enabled,
+            })
+        ),
+        OutputFormat::Table if unchanged => println!(
+            "babel observer already {}",
+            if enabled { "enabled" } else { "disabled" }
+        ),
+        OutputFormat::Table => println!(
+            "babel observer {} (takes effect on the next daemon start / reload)",
+            if enabled { "enabled" } else { "disabled" }
+        ),
+    }
 }
 
 pub async fn run_babel(args: BabelArgs) -> Result<()> {
@@ -440,8 +455,8 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 None => println!("cleared negative-control tag from {window_id}"),
             }
         }
-        BabelAction::Enable => set_enabled(true)?,
-        BabelAction::Disable => set_enabled(false)?,
+        BabelAction::Enable => set_enabled(true, args.output)?,
+        BabelAction::Disable => set_enabled(false, args.output)?,
         BabelAction::Federate { enable, disable } => {
             let path = crate::config::FreedomConfig::default_path();
             let mut fc = crate::config::FreedomConfig::load_from_path(&path)

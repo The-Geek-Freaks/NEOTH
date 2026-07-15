@@ -574,7 +574,7 @@ fn evaluate_strict(action: &Action) -> Decision {
         | Action::WriteOutsideHome
         | Action::ExecScripts
         | Action::ExecArbitrary
-        | Action::ChannelSend => Decision::Confirm(format!("strict: confirm {:?}", action)),
+        | Action::ChannelSend => Decision::Confirm(format!("strict: confirm {action:?}")),
         Action::PaidProviderCall {
             provider,
             model,
@@ -1750,8 +1750,7 @@ mod tests {
             assert_eq!(
                 evaluate(&action, AutonomyLevel::Custom),
                 evaluate(&action, AutonomyLevel::Standard),
-                "Custom must match Standard until override map lands; action {:?}",
-                action,
+                "Custom must match Standard until override map lands; action {action:?}",
             );
         }
     }

@@ -151,13 +151,15 @@ pub async fn run(
 ) -> Result<()> {
     match args.action {
         SelfDevAction::Review { min_confidence } => run_review(home, min_confidence, output),
-        SelfDevAction::Accept { id } => run_accept(home, &id, writer).await,
-        SelfDevAction::Decline { id, reason } => run_decline(home, &id, &reason, writer).await,
+        SelfDevAction::Accept { id } => run_accept(home, &id, writer, output).await,
+        SelfDevAction::Decline { id, reason } => {
+            run_decline(home, &id, &reason, writer, output).await
+        }
         SelfDevAction::Propose {
             from_profile,
             current_preset,
         } => run_propose(home, &from_profile, &current_preset, writer).await,
-        SelfDevAction::Scan => run_scan(home).await,
+        SelfDevAction::Scan => run_scan(home, output).await,
     }
 }
 
@@ -255,7 +257,12 @@ fn run_review(home: &Path, min_confidence: f64, output: crate::cli::OutputFormat
     Ok(())
 }
 
-async fn run_accept(home: &Path, id: &str, writer: Option<&WalWriterHandle>) -> Result<()> {
+async fn run_accept(
+    home: &Path,
+    id: &str,
+    writer: Option<&WalWriterHandle>,
+    output: crate::cli::OutputFormat,
+) -> Result<()> {
     let mut store = load_store(home)?;
     let entry = store
         .entries
@@ -263,7 +270,15 @@ async fn run_accept(home: &Path, id: &str, writer: Option<&WalWriterHandle>) -> 
         .find(|e| e.proposal.id == id)
         .with_context(|| format!("proposal id `{id}` not found"))?;
     if entry.status == ProposalStatus::Accepted {
-        println!("proposal `{id}` already accepted (no-op)");
+        render_proposal_mutation(
+            output,
+            "accept",
+            id,
+            "accepted",
+            true,
+            writer.is_some(),
+            None,
+        );
         return Ok(());
     }
     if entry.status == ProposalStatus::Declined {
@@ -276,10 +291,8 @@ async fn run_accept(home: &Path, id: &str, writer: Option<&WalWriterHandle>) -> 
     entry.status_at_unix = ts;
     entry.decline_reason.clear();
     save_store(home, &store)?;
-    println!("✓ accepted proposal `{id}`");
     if let Some(w) = writer {
         emit_accepted(w, id, ts).await?;
-        println!("  (WAL frame 0x1D SELF_DEV_ACCEPTED emitted)");
     } else {
         // No in-process writer (CLI invocation). Enqueue for the
         // daemon's drain task so the WAL frame STILL lands.
@@ -288,8 +301,16 @@ async fn run_accept(home: &Path, id: &str, writer: Option<&WalWriterHandle>) -> 
             &super::self_dev_outbox::PendingEvent::accepted(id, ts),
         )
         .await?;
-        println!("  (queued for daemon WAL emit — lands within 5s on the live daemon)");
     }
+    render_proposal_mutation(
+        output,
+        "accept",
+        id,
+        "accepted",
+        false,
+        writer.is_some(),
+        None,
+    );
     Ok(())
 }
 
@@ -298,6 +319,7 @@ async fn run_decline(
     id: &str,
     reason: &str,
     writer: Option<&WalWriterHandle>,
+    output: crate::cli::OutputFormat,
 ) -> Result<()> {
     if reason != "declined" && reason != "timeout" {
         anyhow::bail!("--reason must be `declined` or `timeout`, got `{reason}`");
@@ -309,7 +331,15 @@ async fn run_decline(
         .find(|e| e.proposal.id == id)
         .with_context(|| format!("proposal id `{id}` not found"))?;
     if entry.status == ProposalStatus::Declined {
-        println!("proposal `{id}` already declined (no-op)");
+        render_proposal_mutation(
+            output,
+            "decline",
+            id,
+            "declined",
+            true,
+            writer.is_some(),
+            Some(reason),
+        );
         return Ok(());
     }
     if entry.status == ProposalStatus::Accepted {
@@ -322,19 +352,69 @@ async fn run_decline(
     entry.status_at_unix = ts;
     entry.decline_reason = reason.to_string();
     save_store(home, &store)?;
-    println!("✓ declined proposal `{id}` (reason: {reason})");
     if let Some(w) = writer {
         emit_declined(w, id, reason, ts).await?;
-        println!("  (WAL frame 0x1E SELF_DEV_DECLINED emitted)");
     } else {
         super::self_dev_outbox::enqueue(
             home,
             &super::self_dev_outbox::PendingEvent::declined(id, reason, ts),
         )
         .await?;
-        println!("  (queued for daemon WAL emit — lands within 5s on the live daemon)");
     }
+    render_proposal_mutation(
+        output,
+        "decline",
+        id,
+        "declined",
+        false,
+        writer.is_some(),
+        Some(reason),
+    );
     Ok(())
+}
+
+fn render_proposal_mutation(
+    output: crate::cli::OutputFormat,
+    action: &str,
+    id: &str,
+    status: &str,
+    unchanged: bool,
+    wal_direct: bool,
+    reason: Option<&str>,
+) {
+    match output {
+        crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "ok": true,
+                "action": action,
+                "id": id,
+                "status": status,
+            })
+        ),
+        crate::cli::OutputFormat::Table if unchanged => {
+            println!("proposal `{id}` already {status} (no-op)");
+        }
+        crate::cli::OutputFormat::Table if action == "accept" => {
+            println!("✓ accepted proposal `{id}`");
+            if wal_direct {
+                println!("  (WAL frame 0x1D SELF_DEV_ACCEPTED emitted)");
+            } else {
+                println!("  (queued for daemon WAL emit — lands within 5s on the live daemon)");
+            }
+        }
+        crate::cli::OutputFormat::Table => {
+            println!(
+                "✓ declined proposal `{id}` (reason: {})",
+                reason.unwrap_or("declined")
+            );
+            if wal_direct {
+                println!("  (WAL frame 0x1E SELF_DEV_DECLINED emitted)");
+            } else {
+                println!("  (queued for daemon WAL emit — lands within 5s on the live daemon)");
+            }
+        }
+    }
 }
 
 /// Shared proposal-generation core (SPEC-05 extracted this from
@@ -496,7 +576,7 @@ async fn emit_declined(
 ///
 /// Use this to exercise the HERMES-06 pipeline end-to-end without waiting for
 /// the 24h daemon cron tick.
-async fn run_scan(home: &Path) -> Result<()> {
+async fn run_scan(home: &Path, output: crate::cli::OutputFormat) -> Result<()> {
     use crate::config::FreedomConfig;
     use crate::daemon::capability_evolver::run_evolver_pass;
     use crate::daemon::self_improvement_collector::run_self_improvement_collector_tick;
@@ -526,16 +606,31 @@ async fn run_scan(home: &Path) -> Result<()> {
     tmp_join.await.ok();
     let _ = std::fs::remove_file(&tmp_seg);
 
-    println!(
-        "scan complete: {} signal(s), {} proposal(s) staged, \
-         {} skipped (already deployed), {} skipped (not auto-safe)",
-        report.signals.len(),
-        evolver.proposals_staged,
-        evolver.proposals_skipped_deployed,
-        evolver.proposals_skipped_not_auto_safe,
-    );
-    for s in &report.signals {
-        println!("  {s:?}");
+    match output {
+        crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "ok": true,
+                "action": "scan",
+                "signals": report.signals.len(),
+                "proposals_staged": evolver.proposals_staged,
+                "proposals_skipped_deployed": evolver.proposals_skipped_deployed,
+                "proposals_skipped_not_auto_safe": evolver.proposals_skipped_not_auto_safe,
+            })
+        ),
+        crate::cli::OutputFormat::Table => {
+            println!(
+                "scan complete: {} signal(s), {} proposal(s) staged, \
+                 {} skipped (already deployed), {} skipped (not auto-safe)",
+                report.signals.len(),
+                evolver.proposals_staged,
+                evolver.proposals_skipped_deployed,
+                evolver.proposals_skipped_not_auto_safe,
+            );
+            for s in &report.signals {
+                println!("  {s:?}");
+            }
+        }
     }
     Ok(())
 }

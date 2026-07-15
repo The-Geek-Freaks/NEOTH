@@ -14,13 +14,14 @@
 //! - `neoth buddy proactive --enable | --disable [--output json]`
 //!   Toggle `proactive.enabled` in freedom.yaml, same mechanism.
 //!
-//! ## Read-only fields
+//! ## Separately gated fields
 //!
 //! `sovereign_buddy` and `smart_approve_any` are surfaced by `status` but
 //! have NO toggle here:
 //!   - `sovereign_buddy` requires the typed-phrase consent ceremony in
 //!     `neoth autonomy sovereign` (bypassing it was an earlier P0 fix; this
-//!     command must never re-introduce that bypass).
+//!     command must never re-introduce that bypass). Safe deactivation uses
+//!     `neoth autonomy sovereign --disable`.
 //!   - `smart_approve_any` reflects the global master SmartApprove switch
 //!     (`security.smart_approve` in freedom.yaml, GR-018). Toggling it here
 //!     would bypass the security-policy mutation path; use
@@ -36,10 +37,13 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+
+const SELF_ACTIVATION_ACTION: &str = "set_self_activation";
+const PROACTIVE_ACTION: &str = "set_proactive";
 
 // ── Args ──────────────────────────────────────────────────────────────────────
 
@@ -47,8 +51,8 @@ use crate::config::FreedomConfig;
 ///
 /// `status` reads six buddy-config fields from freedom.yaml (no LLM, no daemon
 /// required). `self-activation` and `proactive` toggle the corresponding
-/// `freedom.yaml` fields atomically. `sovereign` and `smart-approve` are
-/// read-only here — they have their own gated mutation paths.
+/// `freedom.yaml` fields atomically. `sovereign` and `smart-approve` have their
+/// own gated mutation paths and are intentionally not duplicated here.
 #[derive(Args, Debug, Clone)]
 pub struct BuddyArgs {
     #[command(subcommand)]
@@ -72,7 +76,8 @@ pub enum BuddyAction {
     /// Toggle `self_activation.enabled` in freedom.yaml.
     ///
     /// Exactly one of `--enable` or `--disable` is required.
-    /// `--output json` → `{"ok": true, "self_activation_enabled": bool}`.
+    /// `--output json` →
+    /// `{"ok":true,"action":"set_self_activation","self_activation_enabled":bool}`.
     #[command(name = "self-activation")]
     SelfActivation {
         /// Enable self-activation.
@@ -86,7 +91,8 @@ pub enum BuddyAction {
     /// Toggle `proactive.enabled` in freedom.yaml.
     ///
     /// Exactly one of `--enable` or `--disable` is required.
-    /// `--output json` → `{"ok": true, "proactive_enabled": bool}`.
+    /// `--output json` →
+    /// `{"ok":true,"action":"set_proactive","proactive_enabled":bool}`.
     Proactive {
         /// Enable proactive messaging.
         #[arg(long, conflicts_with = "disable")]
@@ -159,6 +165,22 @@ fn run_status(output: OutputFormat) -> Result<()> {
 
 // ── self-activation toggle ────────────────────────────────────────────────────
 
+fn self_activation_ack(enabled: bool) -> Value {
+    json!({
+        "ok": true,
+        "action": SELF_ACTIVATION_ACTION,
+        "self_activation_enabled": enabled,
+    })
+}
+
+fn proactive_ack(enabled: bool) -> Value {
+    json!({
+        "ok": true,
+        "action": PROACTIVE_ACTION,
+        "proactive_enabled": enabled,
+    })
+}
+
 fn run_self_activation(enable: bool, disable: bool, output: OutputFormat) -> Result<()> {
     if !enable && !disable {
         anyhow::bail!("pass --enable or --disable");
@@ -176,10 +198,7 @@ fn run_self_activation(enable: bool, disable: bool, output: OutputFormat) -> Res
     let verb = if turn_on { "enabled" } else { "disabled" };
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!(
-                "{}",
-                json!({ "ok": true, "self_activation_enabled": turn_on })
-            );
+            println!("{}", self_activation_ack(turn_on));
         }
         OutputFormat::Table => {
             println!("self_activation.enabled → {verb}");
@@ -207,7 +226,7 @@ fn run_proactive(enable: bool, disable: bool, output: OutputFormat) -> Result<()
     let verb = if turn_on { "enabled" } else { "disabled" };
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", json!({ "ok": true, "proactive_enabled": turn_on }));
+            println!("{}", proactive_ack(turn_on));
         }
         OutputFormat::Table => {
             println!("proactive.enabled → {verb}");
@@ -310,6 +329,21 @@ mod tests {
         assert_eq!(v["smart_approve_any"], false);
         assert_eq!(v["autonomy"], "standard");
         assert_eq!(v["proactive_enabled"], false);
+    }
+
+    #[test]
+    fn toggle_acknowledgements_bind_canonical_action_and_target_state() {
+        let self_activation = self_activation_ack(true);
+        assert_eq!(self_activation["ok"], true);
+        assert_eq!(self_activation["action"], SELF_ACTIVATION_ACTION);
+        assert_eq!(self_activation["self_activation_enabled"], true);
+        assert_eq!(self_activation.as_object().unwrap().len(), 3);
+
+        let proactive = proactive_ack(false);
+        assert_eq!(proactive["ok"], true);
+        assert_eq!(proactive["action"], PROACTIVE_ACTION);
+        assert_eq!(proactive["proactive_enabled"], false);
+        assert_eq!(proactive.as_object().unwrap().len(), 3);
     }
 
     // ── smart_approve_any reflects live security.smart_approve ───────────────

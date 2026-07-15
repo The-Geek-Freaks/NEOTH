@@ -61,10 +61,10 @@ pub const APPLICABLE_SKILLS: &[&str] = &["writing_plans", "executing_plans"];
 /// Returns `None` when neither location has the file.
 fn locate_plan_file(neoth_home: &Path) -> Option<PathBuf> {
     let cwd_candidate = std::env::current_dir().ok().map(|d| d.join("task_plan.md"));
-    if let Some(p) = cwd_candidate {
-        if p.exists() {
-            return Some(p);
-        }
+    if let Some(p) = cwd_candidate
+        && p.exists()
+    {
+        return Some(p);
     }
     let home_candidate = neoth_home.join("task_plan.md");
     if home_candidate.exists() {

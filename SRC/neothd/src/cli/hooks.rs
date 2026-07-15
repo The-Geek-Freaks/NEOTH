@@ -165,10 +165,10 @@ async fn run_validate(hook_dir: &std::path::Path, output: &OutputFormat) -> Resu
         .with_context(|| format!("load hooks from {}", hook_dir.display()))?;
     let mut bad: Vec<(String, String)> = Vec::new();
     for h in &hooks {
-        if let Some(m) = &h.matcher {
-            if let Err(e) = regex::Regex::new(&m.pattern) {
-                bad.push((h.name.clone(), format!("bad regex: {e}")));
-            }
+        if let Some(m) = &h.matcher
+            && let Err(e) = regex::Regex::new(&m.pattern)
+        {
+            bad.push((h.name.clone(), format!("bad regex: {e}")));
         }
     }
 

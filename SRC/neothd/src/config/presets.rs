@@ -224,7 +224,7 @@ pub fn set_active(home: &Path, name: &str) -> Result<()> {
     // list`); consumers of the active pointer resolve via [`resolve`],
     // which falls back to the compiled-in set.
     if !file.presets.contains_key(name) && super::preset_builtins::builtin_by_name(name).is_none() {
-        anyhow::bail!("preset `{}` not found", name);
+        anyhow::bail!("preset `{name}` not found");
     }
     file.active = Some(name.to_string());
     save(home, &file)
@@ -269,7 +269,7 @@ pub fn resolve(home: &Path, name: &str) -> Result<Preset> {
         return Ok(p.clone());
     }
     super::preset_builtins::builtin_by_name(name)
-        .ok_or_else(|| anyhow::anyhow!("preset `{}` not found", name))
+        .ok_or_else(|| anyhow::anyhow!("preset `{name}` not found"))
 }
 
 /// ZF-01 — plan an apply WITHOUT writing: returns the report + the
@@ -316,13 +316,13 @@ fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String
         ("inject_prefix", &preset.inject_prefix),
         ("inject_suffix", &preset.inject_suffix),
     ] {
-        if let Some(s) = v {
-            if s.len() > MAX_INJECT_LEN {
-                anyhow::bail!(
-                    "preset {label} is {} bytes — max {MAX_INJECT_LEN} (rides every user turn)",
-                    s.len()
-                );
-            }
+        if let Some(s) = v
+            && s.len() > MAX_INJECT_LEN
+        {
+            anyhow::bail!(
+                "preset {label} is {} bytes — max {MAX_INJECT_LEN} (rides every user turn)",
+                s.len()
+            );
         }
     }
 
@@ -614,13 +614,13 @@ fn set_nested<F: FnOnce(&mut serde_yaml::Mapping, &str)>(
     // ZF-01 — a non-mapping value under `block` (malformed manual edit)
     // must not be silently replaced: preserve it and record the skip so
     // the operator sees WHY the field didn't change.
-    if let Some(existing) = mapping.get(&block_key) {
-        if !existing.is_mapping() {
-            report.fields_changed.push(format!(
-                "{block}.{key} (SKIPPED: `{block}` is not a mapping)"
-            ));
-            return;
-        }
+    if let Some(existing) = mapping.get(&block_key)
+        && !existing.is_mapping()
+    {
+        report.fields_changed.push(format!(
+            "{block}.{key} (SKIPPED: `{block}` is not a mapping)"
+        ));
+        return;
     }
     let mut inner = mapping
         .get(&block_key)

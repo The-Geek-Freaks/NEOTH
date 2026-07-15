@@ -182,7 +182,6 @@ mod tests {
 
     #[test]
     fn setup_hint_is_non_empty_and_single_paragraph() {
-        assert!(!WhatsAppChannel::SETUP_HINT.is_empty());
         assert!(WhatsAppChannel::SETUP_HINT.contains("app secret"));
         assert!(WhatsAppChannel::SETUP_HINT.contains("neoth serve"));
         assert!(!WhatsAppChannel::SETUP_HINT.contains("Phase 2"));

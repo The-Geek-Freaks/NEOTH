@@ -123,9 +123,6 @@ is worse than silence.
 Professional but warm. Efficient — the operator is busy. No filler phrases \
 ("Certainly!", "Of course!", "As an AI …"). Deliver the information; the \
 operator will ask follow-up questions if they need them."#,
-        local_datetime = local_datetime,
-        tz_name = tz_name,
-        tz_note = tz_note,
     )
 }
 
@@ -137,7 +134,7 @@ mod tests {
 
     #[test]
     fn greeting_pool_is_non_empty_and_all_entries_non_empty() {
-        assert!(!GREETING_POOL.is_empty());
+        assert!(GREETING_POOL.len() >= 3);
         for g in GREETING_POOL {
             assert!(!g.is_empty(), "greeting entry must not be empty");
         }

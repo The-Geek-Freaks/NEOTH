@@ -883,9 +883,8 @@ mod tests {
         assert!(p.contains("event_id=4"), "newest segment must be included");
         for excluded in 0..3 {
             assert!(
-                !p.contains(&format!("event_id={}", excluded)),
-                "old segment id={} must be excluded by budget",
-                excluded
+                !p.contains(&format!("event_id={excluded}")),
+                "old segment id={excluded} must be excluded by budget"
             );
         }
     }
@@ -901,7 +900,7 @@ mod tests {
         };
         let p = render_user_prompt(&w, 30);
         for i in 0..3 {
-            assert!(p.contains(&format!("event_id={}", i)));
+            assert!(p.contains(&format!("event_id={i}")));
         }
     }
 
@@ -1030,17 +1029,15 @@ mod tests {
         // The 5 NEWEST segments (event_id 5-9) must appear in the prompt.
         for i in 5..10i64 {
             assert!(
-                req.prompt.contains(&format!("event_id={}", i)),
-                "newest segment event_id={} must be included",
-                i
+                req.prompt.contains(&format!("event_id={i}")),
+                "newest segment event_id={i} must be included"
             );
         }
         // The 5 OLDEST segments (event_id 0-4) must NOT appear.
         for i in 0..5i64 {
             assert!(
-                !req.prompt.contains(&format!("event_id={}", i)),
-                "old segment event_id={} must be excluded by budget",
-                i
+                !req.prompt.contains(&format!("event_id={i}")),
+                "old segment event_id={i} must be excluded by budget"
             );
         }
     }

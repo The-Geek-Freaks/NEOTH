@@ -328,7 +328,7 @@ surface. https://github.com/The-Geek-Freaks/NEOTH
 - `freedom.yaml` and `policy.yaml` templates (operator-agnostic)
 - `umask 0o077` startup hardening (unix)
 - Tracing via `tracing-subscriber` with `NEOTH_LOG` env filter
-- Rust 2024 edition, MSRV 1.86
+- Rust 2024 edition, MSRV 1.90
 
 ### Documentation
 - 23 normative specs in `PLAN/` covering wire format, WAL lifecycle, skill plugins, proactive learning, recall parity, local inference, council governance, channels, profile claim guard, mirror refusal

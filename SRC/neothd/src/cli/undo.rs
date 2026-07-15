@@ -432,10 +432,10 @@ fn scan_preset_frames(
         // GOLD-ARCH-03: for_each_frame so PROFILE_PRESET_APPLIED frames inside a
         // v2/zstd-compressed segment are found, not silently skipped.
         if let Err(e) = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
-            if dec.header.event_type == events::EVENT_TYPE_PROFILE_PRESET_APPLIED {
-                if let Some(p) = parse_preset_name(dec.payload) {
-                    out.push((dec.header.hlc.physical_ns(), p));
-                }
+            if dec.header.event_type == events::EVENT_TYPE_PROFILE_PRESET_APPLIED
+                && let Some(p) = parse_preset_name(dec.payload)
+            {
+                out.push((dec.header.hlc.physical_ns(), p));
             }
             Ok(())
         }) {

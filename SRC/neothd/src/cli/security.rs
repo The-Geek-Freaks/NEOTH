@@ -38,6 +38,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
+use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 
 #[derive(Args, Debug, Clone)]
@@ -102,6 +103,29 @@ pub enum SecurityCommand {
     /// without spelunking `freedom.yaml`. Always exits 0 (it is a status
     /// view, not a pass/fail gate).
     SafeMode(SafeModeArgs),
+    /// Mutate a named security-policy control through the canonical config
+    /// writer. These commands are intentionally explicit and scriptable; JSON
+    /// output is a typed acknowledgement for GUI and automation callers.
+    Set(SecuritySetArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct SecuritySetArgs {
+    #[command(subcommand)]
+    pub command: SecuritySetCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum SecuritySetCommand {
+    /// Toggle the global Smart-Approve master switch. Individual MCP servers
+    /// must still opt in separately; this never relaxes their local policy.
+    #[command(name = "smart-approve")]
+    SmartApprove {
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        #[arg(long, conflicts_with = "enable")]
+        disable: bool,
+    },
 }
 
 #[derive(Args, Debug, Clone)]
@@ -260,7 +284,7 @@ impl AuditReport {
     }
 }
 
-pub async fn run_security(args: SecurityArgs) -> Result<()> {
+pub async fn run_security(args: SecurityArgs, output: OutputFormat) -> Result<()> {
     match args.command {
         SecurityCommand::Audit(a) => {
             let report = run_audit_collect(&a)?;
@@ -276,7 +300,45 @@ pub async fn run_security(args: SecurityArgs) -> Result<()> {
         SecurityCommand::BackupMasterKey(a) => run_backup_master_key(&a),
         SecurityCommand::RestoreMasterKey(a) => run_restore_master_key(&a),
         SecurityCommand::SafeMode(a) => run_safe_mode(&a),
+        SecurityCommand::Set(a) => run_security_set(a, output),
     }
+}
+
+fn run_security_set(args: SecuritySetArgs, output: OutputFormat) -> Result<()> {
+    match args.command {
+        SecuritySetCommand::SmartApprove { enable, disable } => {
+            if enable == disable {
+                anyhow::bail!("pass exactly one of --enable or --disable");
+            }
+            let path = FreedomConfig::default_path();
+            let changed =
+                FreedomConfig::update_at(&path, |cfg| Ok(apply_smart_approve(cfg, enable)))
+                    .context("persist security.smart_approve to freedom.yaml")?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "action": "set_smart_approve",
+                        "smart_approve": enable,
+                        "changed": changed,
+                    })
+                ),
+                OutputFormat::Table => println!(
+                    "security.smart_approve -> {}{}",
+                    if enable { "enabled" } else { "disabled" },
+                    if changed { "" } else { " (unchanged)" },
+                ),
+            }
+            Ok(())
+        }
+    }
+}
+
+fn apply_smart_approve(cfg: &mut FreedomConfig, enabled: bool) -> bool {
+    let changed = cfg.security.smart_approve != enabled;
+    cfg.security.smart_approve = enabled;
+    changed
 }
 
 // ── GR-10: unified safe-mode / rails status surface ──────────────────
@@ -1103,35 +1165,34 @@ fn commit_pending_hmac_rotation(
     pending.validate()?;
     let (staged_path, archive_path) = pending_rotation_paths(key_path, &pending)?;
     let current_storage = current_key_storage_hash(key_path)?;
-    if key_path.exists() {
-        if let Ok(current) = crate::wal::compaction::load_or_init_key(key_path) {
-            if sha256_hex(&current) == pending.payload.new_key_sha256 {
-                if let Some(archive) = &archive_path {
-                    let expected = pending
-                        .payload
-                        .previous_key_storage_sha256
-                        .as_deref()
-                        .context("committed HMAC archive has no signed predecessor hash")?;
-                    let archived = std::fs::read(archive).with_context(|| {
-                        format!("read committed HMAC key archive {}", archive.display())
-                    })?;
-                    if sha256_hex(&archived) != expected {
-                        anyhow::bail!(
-                            "committed HMAC key archive {} does not match the signed predecessor",
-                            archive.display()
-                        );
-                    }
-                }
-                remove_rotation_file(&staged_path)?;
-                remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
-                sync_rotation_parent(key_path)?;
-                return Ok(HmacKeyRotationResult {
-                    payload: pending.payload,
-                    archive_path,
-                    recovered: true,
-                });
+    if key_path.exists()
+        && let Ok(current) = crate::wal::compaction::load_or_init_key(key_path)
+        && sha256_hex(&current) == pending.payload.new_key_sha256
+    {
+        if let Some(archive) = &archive_path {
+            let expected = pending
+                .payload
+                .previous_key_storage_sha256
+                .as_deref()
+                .context("committed HMAC archive has no signed predecessor hash")?;
+            let archived = std::fs::read(archive).with_context(|| {
+                format!("read committed HMAC key archive {}", archive.display())
+            })?;
+            if sha256_hex(&archived) != expected {
+                anyhow::bail!(
+                    "committed HMAC key archive {} does not match the signed predecessor",
+                    archive.display()
+                );
             }
         }
+        remove_rotation_file(&staged_path)?;
+        remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
+        sync_rotation_parent(key_path)?;
+        return Ok(HmacKeyRotationResult {
+            payload: pending.payload,
+            archive_path,
+            recovered: true,
+        });
     }
     if current_storage != pending.payload.previous_key_storage_sha256 {
         anyhow::bail!(
@@ -1340,11 +1401,11 @@ pub(crate) async fn rotate_hmac_key_with_audit(
     sync_rotation_parent(key_path)?;
     let payload_bytes =
         serde_json::to_vec(&pending.payload).context("serialize HMAC-key rotation audit")?;
-    if let Err(audit_error) = append_hmac_key_rotated(home, daemon_live, &payload_bytes).await {
-        if !hmac_rotation_event_is_durable(home, &payload_bytes, &signing_key_path)? {
-            abort_pending_hmac_rotation(key_path, &pending)?;
-            return Err(audit_error);
-        }
+    if let Err(audit_error) = append_hmac_key_rotated(home, daemon_live, &payload_bytes).await
+        && !hmac_rotation_event_is_durable(home, &payload_bytes, &signing_key_path)?
+    {
+        abort_pending_hmac_rotation(key_path, &pending)?;
+        return Err(audit_error);
     }
     if !hmac_rotation_event_is_durable(home, &payload_bytes, &signing_key_path)? {
         anyhow::bail!("HMAC-key rotation audit append returned success but is not durable");
@@ -1458,11 +1519,11 @@ pub fn run_backup_hmac_key(args: &BackupHmacKeyArgs) -> Result<()> {
 
     // Ensure the parent dir exists so a fresh `--output ~/safe/key`
     // works without the operator pre-mkdiring.
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow::anyhow!("create backup parent {}: {e}", parent.display()))?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("create backup parent {}: {e}", parent.display()))?;
     }
 
     write_backup_file(&output, &key_bytes, args.force)?;
@@ -1868,14 +1929,12 @@ fn check_credential_files(home: &Path, report: &mut AuditReport) {
                 continue;
             }
             found_sidecar = true;
-            if let Ok(meta) = entry.metadata() {
-                if let Ok(modified) = meta.modified() {
-                    if let Ok(age) = modified.elapsed() {
-                        if age.as_secs() > 7 * 24 * 3600 {
-                            stale_count += 1;
-                        }
-                    }
-                }
+            if let Ok(meta) = entry.metadata()
+                && let Ok(modified) = meta.modified()
+                && let Ok(age) = modified.elapsed()
+                && age.as_secs() > 7 * 24 * 3600
+            {
+                stale_count += 1;
             }
         }
     }
@@ -1920,7 +1979,58 @@ fn print_report(report: &AuditReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser as _;
     use tempfile::TempDir;
+
+    #[test]
+    fn smart_approve_cli_contract_uses_the_canonical_security_path() {
+        for flag in ["--enable", "--disable"] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth",
+                    "--output",
+                    "json",
+                    "security",
+                    "set",
+                    "smart-approve",
+                    flag,
+                ])
+                .is_ok(),
+                "canonical Smart-Approve command rejected {flag}"
+            );
+        }
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "security",
+                "set",
+                "smart-approve",
+                "--enable",
+                "--disable",
+            ])
+            .is_err(),
+            "mutually exclusive policy states must not parse together"
+        );
+    }
+
+    #[test]
+    fn smart_approve_setter_reports_change_and_preserves_other_policy() {
+        let mut cfg = FreedomConfig::default();
+        let baseline = cfg.security.clone();
+
+        assert!(apply_smart_approve(&mut cfg, true));
+        assert!(cfg.security.smart_approve);
+        let mut normalized = cfg.security.clone();
+        normalized.smart_approve = baseline.smart_approve;
+        assert_eq!(normalized, baseline, "only the master switch may change");
+
+        assert!(
+            !apply_smart_approve(&mut cfg, true),
+            "idempotent enable must report unchanged"
+        );
+        assert!(apply_smart_approve(&mut cfg, false));
+        assert!(!cfg.security.smart_approve);
+    }
 
     // ── GR-10 safe-mode rails ─────────────────────────────────────────
 

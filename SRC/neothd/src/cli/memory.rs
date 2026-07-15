@@ -545,7 +545,7 @@ async fn run_memory_tier(args: &MemoryArgs, tier: TierFilter) -> Result<()> {
             println!("# {} hit(s) in {} tier", rows.len(), neoth_tier.as_str());
             for (id, text, imp, _ts) in &rows {
                 let preview: String = text.chars().take(80).collect();
-                println!("  [{:>10}] imp={:.3}  {preview}", id, imp);
+                println!("  [{id:>10}] imp={imp:.3}  {preview}");
             }
         }
     }
@@ -634,7 +634,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     let now_unix = crate::time::now_unix_i64();
     let wal_dir = crate::config::FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
-    let segment = wal_dir.join(format!("memory-forget-{}.wal", now_unix));
+    let segment = wal_dir.join(format!("memory-forget-{now_unix}.wal"));
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer for tombstone")?;
     // `rusqlite::Connection` is Send but not Sync. Move it through the
@@ -823,7 +823,7 @@ async fn run_physical_redaction(
     // Open a dedicated audit-only segment for the REDACTION_MARKER
     // frames. Same pattern as the TOMBSTONE_REQUESTED segment.
     std::fs::create_dir_all(wal_dir).context("create WAL dir for redaction audit")?;
-    let audit_segment = wal_dir.join(format!("memory-redact-{}.wal", now_unix));
+    let audit_segment = wal_dir.join(format!("memory-redact-{now_unix}.wal"));
     let (audit_writer, audit_join) = crate::wal::writer::spawn(audit_segment.clone())
         .context("spawn WAL writer for redaction audit")?;
 

@@ -157,12 +157,12 @@ pub fn open(path: &Path) -> Result<Connection> {
             )
             .optional()
             .context("read code_map schema_version")?;
-        if let Some(v) = current_version {
-            if v < CODE_MAP_SCHEMA_VERSION {
-                migrate_code_map(&conn, v).with_context(|| {
-                    format!("migrate code_map DB from v{v} to v{CODE_MAP_SCHEMA_VERSION}")
-                })?;
-            }
+        if let Some(v) = current_version
+            && v < CODE_MAP_SCHEMA_VERSION
+        {
+            migrate_code_map(&conn, v).with_context(|| {
+                format!("migrate code_map DB from v{v} to v{CODE_MAP_SCHEMA_VERSION}")
+            })?;
         }
         // If meta table doesn't exist yet (pre-schema DB), apply_schema
         // handles it; the is_new branch already covers that case via
@@ -379,11 +379,12 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     let mut changed_files: Vec<&super::walker::RepoFile> = Vec::new();
 
     for file in &map.files {
-        if let Some((stored_sha, stored_mtime)) = stored.get(&file.path) {
-            if *stored_sha == file.sha256 && *stored_mtime == file.mtime_ns as i64 {
-                unchanged_paths.insert(&file.path);
-                continue;
-            }
+        if let Some((stored_sha, stored_mtime)) = stored.get(&file.path)
+            && *stored_sha == file.sha256
+            && *stored_mtime == file.mtime_ns as i64
+        {
+            unchanged_paths.insert(&file.path);
+            continue;
         }
         changed_files.push(file);
     }

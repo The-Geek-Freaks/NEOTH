@@ -346,19 +346,18 @@ impl ProfileClaimGuard {
         //     LLM "Operator visited Berlin in 2008" hallucinations when
         //     the entire window is from yesterday. Runs only when the
         //     caller provided a policy.
-        if let Some(policy) = timestamp_policy {
-            if let Some(bad_field) =
+        if let Some(policy) = timestamp_policy
+            && let Some(bad_field) =
                 crate::profile::timestamp_check::first_out_of_window_field(&delta, policy)
-            {
-                let bad_field_owned = bad_field.to_string();
-                let hash = delta_hash(&delta);
-                return GuardOutcome::Rejected {
-                    reason: GuardReason::TimestampOutsideWindow {
-                        field: bad_field_owned,
-                    },
-                    blocked_delta_hash: hash,
-                };
-            }
+        {
+            let bad_field_owned = bad_field.to_string();
+            let hash = delta_hash(&delta);
+            return GuardOutcome::Rejected {
+                reason: GuardReason::TimestampOutsideWindow {
+                    field: bad_field_owned,
+                },
+                blocked_delta_hash: hash,
+            };
         }
 
         // 5. Confidence floor — silently drops low-confidence claims

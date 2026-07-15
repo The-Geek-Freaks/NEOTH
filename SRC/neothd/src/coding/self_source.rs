@@ -140,10 +140,10 @@ fn dir_is_workspace(dir: &Path) -> bool {
 fn strip_verbatim(p: PathBuf) -> PathBuf {
     if cfg!(windows) {
         let s = p.display().to_string();
-        if let Some(rest) = s.strip_prefix(r"\\?\") {
-            if !rest.starts_with("UNC") {
-                return PathBuf::from(rest);
-            }
+        if let Some(rest) = s.strip_prefix(r"\\?\")
+            && !rest.starts_with("UNC")
+        {
+            return PathBuf::from(rest);
         }
     }
     p

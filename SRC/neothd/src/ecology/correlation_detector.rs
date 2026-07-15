@@ -124,10 +124,10 @@ fn walk_winner_frames(frames: &[u8], out: &mut Vec<WinnerRecord>) {
             Ok(d) => d,
             Err(_) => break,
         };
-        if dec.header.event_type == EVENT_TYPE_COUNCIL_WINNER_SELECTED {
-            if let Some(rec) = parse_winner_payload(dec.payload) {
-                out.push(rec);
-            }
+        if dec.header.event_type == EVENT_TYPE_COUNCIL_WINNER_SELECTED
+            && let Some(rec) = parse_winner_payload(dec.payload)
+        {
+            out.push(rec);
         }
         let total = dec.header.total_len as usize;
         if total == 0 {

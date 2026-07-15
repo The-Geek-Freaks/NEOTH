@@ -9,6 +9,13 @@ import { securePrivatePath, securePrivatePaths } from './windows-acl.mjs'
 
 const SNAPSHOT_RE = /^config-([1-9][0-9]*)\.json$/
 
+export function defaultBridgeStorage (environment, homeDirectory) {
+  const neothHome = environment.NEOTH_HOME
+  return typeof neothHome === 'string' && neothHome.length > 0
+    ? path.join(neothHome, 'keet-bridge')
+    : path.join(homeDirectory, '.neoth', 'keet-bridge')
+}
+
 export function ensurePrivateDirectory (directory) {
   preparePrivateDirectory(directory)
   securePrivatePath(path.resolve(directory), { directory: true })

@@ -260,8 +260,7 @@ pub(crate) fn check_provider_flapping(home: &Path) -> CheckOutcome {
             name: "provider flapping",
             status: CheckStatus::Pass,
             detail: format!(
-                "every provider with ≥{FLAPPING_MIN_SAMPLES} samples is below {:.0}% errors",
-                FLAPPING_THRESHOLD_PCT,
+                "every provider with ≥{FLAPPING_MIN_SAMPLES} samples is below {FLAPPING_THRESHOLD_PCT:.0}% errors",
             ),
         };
     }

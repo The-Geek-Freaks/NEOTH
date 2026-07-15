@@ -19,6 +19,70 @@ use serde::Serialize;
 
 use crate::providers::http_client;
 
+/// A CalDAV collection URL whose transport boundary has already been checked.
+///
+/// Credentials and calendar/task bodies may only leave the machine over HTTPS.
+/// Plain HTTP remains available for an explicitly loopback-hosted CalDAV
+/// server, which is useful for local deployments and deterministic tests. The
+/// loopback client bypasses proxies and every client rejects redirects so Basic
+/// credentials cannot be bounced onto a different origin.
+pub(super) struct CaldavEndpoint {
+    collection: reqwest::Url,
+    loopback: bool,
+}
+
+impl CaldavEndpoint {
+    pub(super) fn parse(raw: &str) -> Result<Self> {
+        if raw.is_empty() || raw.trim() != raw {
+            anyhow::bail!("CalDAV URL must be non-empty and contain no outer whitespace");
+        }
+        let collection = reqwest::Url::parse(raw).context("parse CalDAV collection URL")?;
+        if !collection.username().is_empty() || collection.password().is_some() {
+            anyhow::bail!("CalDAV URL must not contain credentials; use the credential fields");
+        }
+        if collection.query().is_some() || collection.fragment().is_some() {
+            anyhow::bail!("CalDAV URL must not contain a query or fragment");
+        }
+        collection
+            .host()
+            .context("CalDAV URL must contain a host")?;
+        let loopback = http_client::url_has_loopback_host(&collection);
+        match collection.scheme() {
+            "https" => {}
+            "http" if loopback => {}
+            "http" => anyhow::bail!("remote CalDAV URLs must use HTTPS; HTTP is loopback-only"),
+            scheme => anyhow::bail!("CalDAV URL must use HTTPS or loopback HTTP, got `{scheme}`"),
+        }
+        Ok(Self {
+            collection,
+            loopback,
+        })
+    }
+
+    pub(super) fn collection_url(&self) -> reqwest::Url {
+        self.collection.clone()
+    }
+
+    pub(super) fn resource_url(&self, uid: &str) -> Result<reqwest::Url> {
+        validate_uid(uid)?;
+        let mut resource = self.collection.clone();
+        resource
+            .path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("CalDAV collection URL cannot be a base URL"))?
+            .pop_if_empty()
+            .push(&format!("{uid}.ics"));
+        Ok(resource)
+    }
+
+    pub(super) fn client(&self) -> Result<reqwest::Client> {
+        if self.loopback {
+            http_client::build_direct_client_no_redirect()
+        } else {
+            http_client::build_client_no_redirect()
+        }
+    }
+}
+
 /// The `REPORT` body: a `calendar-query` filtering for `VTODO`, asking for the
 /// full `calendar-data` of each match.
 pub const CALENDAR_QUERY_VTODO: &str = r#"<?xml version="1.0" encoding="utf-8" ?>
@@ -231,12 +295,14 @@ pub fn parse_open_tasks(multistatus_xml: &str) -> Vec<CaldavTask> {
 /// `REPORT` calendar-query (HTTP Basic auth, `Depth: 1`) + parses the
 /// response. The network shell; the parsing is in the pure fns above.
 pub async fn list_tasks(base_url: &str, username: &str, password: &str) -> Result<Vec<CaldavTask>> {
+    let endpoint = CaldavEndpoint::parse(base_url)?;
     let method = reqwest::Method::from_bytes(b"REPORT").expect("REPORT is a valid method token");
     // Use the shared hardened client (timeouts + TLS posture) from
     // `providers::http_client` — same path todoist/google_tasks use, and the
     // only place the `no_outbound_network` guard allows a client to be built.
-    let resp = http_client::build_client()?
-        .request(method, base_url)
+    let resp = endpoint
+        .client()?
+        .request(method, endpoint.collection_url())
         .basic_auth(username, Some(password))
         .header("Depth", "1")
         .header(
@@ -387,10 +453,12 @@ pub async fn create_task(
     due: Option<&str>,
 ) -> Result<(String, CreateOutcome)> {
     let uid = task_uid(summary);
-    let url = resource_url(base_url, &uid);
+    let endpoint = CaldavEndpoint::parse(base_url)?;
+    let url = endpoint.resource_url(&uid)?;
     let body = build_vtodo_ics(&uid, summary, due);
-    let resp = http_client::build_client()?
-        .put(&url)
+    let resp = endpoint
+        .client()?
+        .put(url.clone())
         .basic_auth(username, Some(password))
         .header(reqwest::header::IF_NONE_MATCH, "*")
         .header(
@@ -430,10 +498,11 @@ pub async fn close_task(
     uid: &str,
 ) -> Result<CloseOutcome> {
     validate_uid(uid)?;
-    let url = resource_url(base_url, uid);
-    let client = http_client::build_client()?;
+    let endpoint = CaldavEndpoint::parse(base_url)?;
+    let url = endpoint.resource_url(uid)?;
+    let client = endpoint.client()?;
     let get = client
-        .get(&url)
+        .get(url.clone())
         .basic_auth(username, Some(password))
         .send()
         .await
@@ -452,7 +521,7 @@ pub async fn close_task(
     let ics = get.text().await.context("read CalDAV resource body")?;
     let completed = set_status_completed(&ics);
     let mut put = client
-        .put(&url)
+        .put(url.clone())
         .basic_auth(username, Some(password))
         .header(
             reqwest::header::CONTENT_TYPE,
@@ -625,6 +694,62 @@ END:VCALENDAR</cal:calendar-data>
     fn resource_url_handles_trailing_slash() {
         assert_eq!(resource_url("https://h/dav/", "u"), "https://h/dav/u.ics");
         assert_eq!(resource_url("https://h/dav", "u"), "https://h/dav/u.ics");
+    }
+
+    #[test]
+    fn endpoint_policy_allows_https_and_loopback_http_only() {
+        assert!(CaldavEndpoint::parse("https://calendar.example/dav/tasks").is_ok());
+        assert!(CaldavEndpoint::parse("http://localhost:8080/dav/tasks").is_ok());
+        assert!(CaldavEndpoint::parse("http://127.0.0.1:8080/dav/tasks").is_ok());
+        assert!(CaldavEndpoint::parse("http://[::1]:8080/dav/tasks").is_ok());
+        for rejected in [
+            "http://calendar.example/dav/tasks",
+            "http://192.168.1.4/dav/tasks",
+            "http://localhost.evil.test/dav/tasks",
+            "https://user:password@calendar.example/dav/tasks",
+            "https://calendar.example/dav/tasks?token=x",
+            "https://calendar.example/dav/tasks#fragment",
+            " https://calendar.example/dav/tasks",
+        ] {
+            assert!(
+                CaldavEndpoint::parse(rejected).is_err(),
+                "accepted unsafe CalDAV endpoint: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn endpoint_appends_resource_as_one_encoded_path_segment() {
+        let endpoint = CaldavEndpoint::parse("https://calendar.example/dav/tasks/").unwrap();
+        assert_eq!(
+            endpoint.resource_url("task@home").unwrap().as_str(),
+            "https://calendar.example/dav/tasks/task@home.ics"
+        );
+        assert!(endpoint.resource_url("../escape").is_err());
+    }
+
+    #[tokio::test]
+    async fn caldav_basic_auth_and_body_do_not_follow_redirects() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let target = MockServer::start().await;
+        let source = MockServer::start().await;
+        Mock::given(method("REPORT"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("location", format!("{}/capture", target.uri())),
+            )
+            .mount(&source)
+            .await;
+        let error = list_tasks(&source.uri(), "private-user", "private-password")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("HTTP 307"), "got: {error}");
+        assert!(
+            target.received_requests().await.unwrap().is_empty(),
+            "redirect target received CalDAV credentials or calendar body"
+        );
     }
 
     #[test]

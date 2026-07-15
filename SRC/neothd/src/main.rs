@@ -50,10 +50,10 @@ fn main() -> Result<()> {
     // every Drop ran (WAL flush, DB close, tokio runtime drain) — so it is now
     // safe to translate the marker into the requested exit code without the
     // anyhow Debug crash dump that a plain `Err` would print.
-    if let Err(e) = &outcome {
-        if let Some(neothd::QuietExit(code)) = e.downcast_ref::<neothd::QuietExit>() {
-            std::process::exit(*code);
-        }
+    if let Err(e) = &outcome
+        && let Some(neothd::QuietExit(code)) = e.downcast_ref::<neothd::QuietExit>()
+    {
+        std::process::exit(*code);
     }
     outcome
 }

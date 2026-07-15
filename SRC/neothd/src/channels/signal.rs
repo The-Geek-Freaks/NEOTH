@@ -19,11 +19,14 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use tracing::{error, info, warn};
 
-use super::signal_api::{envelope_to_inbound, receive_messages, send_signal_message};
+use super::signal_api::{
+    SignalEndpoint, envelope_to_inbound, receive_messages, send_signal_message,
+    validate_signal_number,
+};
 use super::{Channel, ChannelError, MessageId, PipelineHandler};
 
 /// Default receive-poll cadence. 2s matches the parity-doc default — low
@@ -34,9 +37,8 @@ pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// number, a shared HTTP client, and the poll cadence. Stateless beyond
 /// that — every send/receive is one HTTP round trip.
 pub struct SignalChannel {
-    cli_url: String,
+    endpoint: SignalEndpoint,
     phone_number: String,
-    http: reqwest::Client,
     poll_interval: Duration,
 }
 
@@ -44,12 +46,13 @@ impl SignalChannel {
     /// Build against a running signal-cli daemon. `cli_url` e.g.
     /// `http://127.0.0.1:8080`; `phone_number` the registered `+E.164`.
     pub fn new(cli_url: impl Into<String>, phone_number: impl Into<String>) -> Result<Self> {
-        let http = crate::providers::http_client::build_client()
-            .context("build reqwest client for Signal adapter")?;
+        let cli_url = cli_url.into();
+        let phone_number = phone_number.into();
+        validate_signal_number(&phone_number)?;
+        let endpoint = SignalEndpoint::parse(&cli_url)?;
         Ok(Self {
-            cli_url: cli_url.into().trim_end_matches('/').to_string(),
-            phone_number: phone_number.into(),
-            http,
+            endpoint,
+            phone_number,
             poll_interval: DEFAULT_POLL_INTERVAL,
         })
     }
@@ -75,12 +78,12 @@ impl Channel for SignalChannel {
     /// until the daemon aborts the spawned task at shutdown.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
         info!(
-            url = %self.cli_url,
+            url = %self.endpoint.as_str(),
             poll_secs = self.poll_interval.as_secs(),
             "signal receive poll loop starting"
         );
         loop {
-            match receive_messages(&self.http, &self.cli_url, &self.phone_number).await {
+            match receive_messages(&self.endpoint, &self.phone_number).await {
                 Ok(envelopes) => {
                     for env in &envelopes {
                         let Some(inbound) = envelope_to_inbound(env) else {
@@ -89,8 +92,7 @@ impl Channel for SignalChannel {
                         match handler(inbound).await {
                             Ok(Some(out)) => {
                                 if let Err(e) = send_signal_message(
-                                    &self.http,
-                                    &self.cli_url,
+                                    &self.endpoint,
                                     &self.phone_number,
                                     &out.recipient_id,
                                     &out.text,
@@ -138,7 +140,7 @@ impl Channel for SignalChannel {
         chat_id: &str,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
-        send_signal_message(&self.http, &self.cli_url, &self.phone_number, chat_id, text).await
+        send_signal_message(&self.endpoint, &self.phone_number, chat_id, text).await
     }
 
     /// Proactive send delegates to `send_text` — the signal-cli POST is
@@ -160,28 +162,38 @@ mod tests {
 
     #[test]
     fn adapter_reports_signal_name() {
-        let a = SignalChannel::new("http://127.0.0.1:8080", "+4400").unwrap();
+        let a = SignalChannel::new("http://127.0.0.1:8080", "+441234567").unwrap();
         assert_eq!(a.name(), "signal");
     }
 
     #[test]
     fn new_trims_trailing_slash_from_url() {
-        let a = SignalChannel::new("http://127.0.0.1:8080/", "+4400").unwrap();
+        let a = SignalChannel::new("http://127.0.0.1:8080/", "+441234567").unwrap();
         assert_eq!(
-            a.cli_url, "http://127.0.0.1:8080",
+            a.endpoint.as_str(),
+            "http://127.0.0.1:8080",
             "trailing slash stripped"
         );
     }
 
     #[test]
     fn with_poll_interval_overrides_default() {
-        let a = SignalChannel::new("http://x", "+1")
+        let a = SignalChannel::new("https://signal.example", "+491234567")
             .unwrap()
             .with_poll_interval(Duration::from_millis(500));
         assert_eq!(a.poll_interval, Duration::from_millis(500));
         // default sanity
-        let b = SignalChannel::new("http://x", "+1").unwrap();
+        let b = SignalChannel::new("https://signal.example", "+491234567").unwrap();
         assert_eq!(b.poll_interval, DEFAULT_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn transport_policy_rejects_remote_http_and_accepts_https_or_loopback() {
+        assert!(SignalChannel::new("http://signal.example", "+491234567").is_err());
+        assert!(SignalChannel::new("https://signal.example", "+491234567").is_ok());
+        assert!(SignalChannel::new("http://127.0.0.1:8080", "+491234567").is_ok());
+        assert!(SignalChannel::new("http://[::1]:8080", "+491234567").is_ok());
+        assert!(SignalChannel::new("http://localhost.evil.test", "+491234567").is_err());
     }
 
     /// Verify the rate-limit arm is reachable (parse + re-surface path).

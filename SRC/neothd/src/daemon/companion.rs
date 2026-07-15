@@ -122,10 +122,10 @@ impl CompanionState {
         // Fast path: check under a read lock first.
         {
             let guard = self.tokens.read().await;
-            if let Some(entry) = guard.get(session_id) {
-                if !entry.is_expired() {
-                    return entry.token.clone();
-                }
+            if let Some(entry) = guard.get(session_id)
+                && !entry.is_expired()
+            {
+                return entry.token.clone();
             }
         }
 
@@ -133,10 +133,10 @@ impl CompanionState {
         let mut guard = self.tokens.write().await;
 
         // Double-check: another caller may have minted between read and write.
-        if let Some(entry) = guard.get(session_id) {
-            if !entry.is_expired() {
-                return entry.token.clone();
-            }
+        if let Some(entry) = guard.get(session_id)
+            && !entry.is_expired()
+        {
+            return entry.token.clone();
         }
 
         // Evict expired entries while we hold the write lock (bounded overhead).
@@ -1379,8 +1379,7 @@ mod tests {
         let limited = Limited::new(oversized, COMPANION_BODY_LIMIT_BYTES);
         assert!(
             limited.collect().await.is_err(),
-            "Limited must error on a body 1 byte over the {} cap",
-            COMPANION_BODY_LIMIT_BYTES
+            "Limited must error on a body 1 byte over the {COMPANION_BODY_LIMIT_BYTES} cap"
         );
     }
 
@@ -1392,8 +1391,7 @@ mod tests {
         let limited = Limited::new(at_cap, COMPANION_BODY_LIMIT_BYTES);
         assert!(
             limited.collect().await.is_ok(),
-            "Limited must allow a body at exactly the {} byte cap",
-            COMPANION_BODY_LIMIT_BYTES
+            "Limited must allow a body at exactly the {COMPANION_BODY_LIMIT_BYTES} byte cap"
         );
     }
 

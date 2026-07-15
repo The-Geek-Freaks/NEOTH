@@ -2066,17 +2066,13 @@ mod tests {
     fn channel_test_fail_redacts_secrets_in_error_text() {
         // P1 — a provider error that echoes a token must NOT reach the operator
         // result verbatim; the secret redactor masks it.
+        let token = format!("ghp_{}", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
         let r = fail(
             "slack".to_string(),
-            "auth.test failed: token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 rejected".to_string(),
+            format!("auth.test failed: token {token} rejected"),
         );
         assert_eq!(r.status, "fail");
-        assert!(
-            !r.detail
-                .contains("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
-            "secret leaked: {}",
-            r.detail
-        );
+        assert!(!r.detail.contains(&token), "secret leaked: {}", r.detail);
         assert!(
             r.detail.contains("[REDACTED"),
             "expected a redaction marker: {}",

@@ -382,12 +382,12 @@ pub(crate) fn custom_requested_decision(
 
     // Full historically allows paid calls without inspecting the estimate.
     // Custom still may not auto-allow malformed cost data.
-    if let Action::PaidProviderCall { eur_estimate, .. } = action {
-        if !eur_estimate.is_finite() || *eur_estimate < 0.0 {
-            return Decision::Confirm(format!(
-                "custom safety floor: invalid paid-provider EUR estimate ({eur_estimate}) requires confirm"
-            ));
-        }
+    if let Action::PaidProviderCall { eur_estimate, .. } = action
+        && (!eur_estimate.is_finite() || *eur_estimate < 0.0)
+    {
+        return Decision::Confirm(format!(
+            "custom safety floor: invalid paid-provider EUR estimate ({eur_estimate}) requires confirm"
+        ));
     }
 
     requested

@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn known_profiles_table_is_non_empty_and_each_key_unique() {
-        assert!(!KNOWN_PROFILES.is_empty(), "table must not be empty");
+        assert!(KNOWN_PROFILES.iter().any(|entry| entry.key == "gemma-4"));
         let mut seen: HashMap<&'static str, usize> = HashMap::new();
         for (i, e) in KNOWN_PROFILES.iter().enumerate() {
             assert!(

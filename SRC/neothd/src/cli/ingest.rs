@@ -404,13 +404,12 @@ async fn emit_audit_events(
         {
             tracing::debug!(error = %e, "ingest 0x2C forward skipped (daemon listener unreachable)");
         }
-        if let Some(p) = &embed_payload {
-            if let Err(e) =
+        if let Some(p) = &embed_payload
+            && let Err(e) =
                 crate::daemon::audit_rpc::try_post_audit_frame(&home, EVENT_TYPE_EMBED_PERSISTED, p)
                     .await
-            {
-                tracing::debug!(error = %e, "ingest 0x2D forward skipped (daemon listener unreachable)");
-            }
+        {
+            tracing::debug!(error = %e, "ingest 0x2D forward skipped (daemon listener unreachable)");
         }
         return Ok(());
     }

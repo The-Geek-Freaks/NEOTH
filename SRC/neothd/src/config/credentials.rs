@@ -978,6 +978,7 @@ impl SecretTmpGuard {
         }
     }
 
+    #[cfg(windows)]
     fn file(&self) -> &std::fs::File {
         self.file.as_ref().expect("secret temp file is present")
     }

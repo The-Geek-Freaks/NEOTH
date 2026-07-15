@@ -241,7 +241,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
         OutputFormat::Table => {
             println!("# Ouro provider status");
             println!();
-            println!("  active                : {}", active);
+            println!("  active                : {active}");
             println!("  configured model      : {configured_model}");
             println!("  accelerator override  : {accelerator_override}");
             println!("  max new tokens        : {max_new_tokens}");

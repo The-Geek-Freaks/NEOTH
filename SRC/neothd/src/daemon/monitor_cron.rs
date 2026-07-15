@@ -381,51 +381,51 @@ pub async fn run_monitor_tick(
     }
 
     // ── 0x49 CRASH_LOG_ALERT ────────────────────────────────────────────────
-    if let Some(ref c) = crash {
-        if c.new_crashes > 0 {
-            let payload = serde_json::to_vec(&serde_json::json!({
-                "crash_log_path": c.crash_log_path.to_string_lossy(),
-                "new_crashes_since_last_check": c.new_crashes,
-                "last_crash_ts_unix": c.last_crash_ts_unix,
-                "ts_unix": ts_unix,
-            }))
-            .map_err(|e| format!("serialize crash_log payload: {e}"))?;
-            let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_CRASH_LOG_ALERT, &payload)
-                .flags(crate::wal::EventFlags::SYNTHETIC)
-                .build();
-            writer
-                .append(header, payload)
-                .await
-                .map_err(|e| format!("wal append CRASH_LOG_ALERT: {e}"))?;
-            tracing::warn!(
-                new_crashes = c.new_crashes,
-                last_crash_ts = c.last_crash_ts_unix,
-                path = %c.crash_log_path.display(),
-                "monitor: new daemon panics in crash.log — inspect and report",
-            );
-            crash_alerted = true;
+    if let Some(ref c) = crash
+        && c.new_crashes > 0
+    {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "crash_log_path": c.crash_log_path.to_string_lossy(),
+            "new_crashes_since_last_check": c.new_crashes,
+            "last_crash_ts_unix": c.last_crash_ts_unix,
+            "ts_unix": ts_unix,
+        }))
+        .map_err(|e| format!("serialize crash_log payload: {e}"))?;
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_CRASH_LOG_ALERT, &payload)
+            .flags(crate::wal::EventFlags::SYNTHETIC)
+            .build();
+        writer
+            .append(header, payload)
+            .await
+            .map_err(|e| format!("wal append CRASH_LOG_ALERT: {e}"))?;
+        tracing::warn!(
+            new_crashes = c.new_crashes,
+            last_crash_ts = c.last_crash_ts_unix,
+            path = %c.crash_log_path.display(),
+            "monitor: new daemon panics in crash.log — inspect and report",
+        );
+        crash_alerted = true;
 
-            // GOLD-ADAPT-HERMES-07b — categorise the NEW panic lines into
-            // staged, operator-reviewable PatchProposals. Advisory only: nothing
-            // is auto-applied (`neoth self-heal list` surfaces them). Best-effort.
-            if let Ok(content) = std::fs::read_to_string(&c.crash_log_path) {
-                let panic_lines: Vec<&str> = content
-                    .lines()
-                    .filter(|l| l.contains("[neoth panic]") || l.contains("panicked at"))
-                    .collect();
-                // The newly-appeared panics are the tail of the file.
-                let take = (c.new_crashes as usize).min(panic_lines.len());
-                let new_lines = &panic_lines[panic_lines.len() - take..];
-                let proposals = crate::daemon::self_heal::analyse_panic_lines(new_lines, ts_unix);
-                if let Some(home) = c.crash_log_path.parent() {
-                    match crate::daemon::self_heal::stage_proposals(home, &proposals) {
-                        Ok(()) if !proposals.is_empty() => tracing::info!(
-                            staged = proposals.len(),
-                            "HERMES-07b: staged self-heal patch proposals for operator review",
-                        ),
-                        Ok(()) => {}
-                        Err(e) => tracing::warn!(error = %e, "self-heal: stage proposals failed"),
-                    }
+        // GOLD-ADAPT-HERMES-07b — categorise the NEW panic lines into
+        // staged, operator-reviewable PatchProposals. Advisory only: nothing
+        // is auto-applied (`neoth self-heal list` surfaces them). Best-effort.
+        if let Ok(content) = std::fs::read_to_string(&c.crash_log_path) {
+            let panic_lines: Vec<&str> = content
+                .lines()
+                .filter(|l| l.contains("[neoth panic]") || l.contains("panicked at"))
+                .collect();
+            // The newly-appeared panics are the tail of the file.
+            let take = (c.new_crashes as usize).min(panic_lines.len());
+            let new_lines = &panic_lines[panic_lines.len() - take..];
+            let proposals = crate::daemon::self_heal::analyse_panic_lines(new_lines, ts_unix);
+            if let Some(home) = c.crash_log_path.parent() {
+                match crate::daemon::self_heal::stage_proposals(home, &proposals) {
+                    Ok(()) if !proposals.is_empty() => tracing::info!(
+                        staged = proposals.len(),
+                        "HERMES-07b: staged self-heal patch proposals for operator review",
+                    ),
+                    Ok(()) => {}
+                    Err(e) => tracing::warn!(error = %e, "self-heal: stage proposals failed"),
                 }
             }
         }
@@ -599,9 +599,8 @@ pub async fn run_pipeline_scorecard_tick(
         // Tight sync scope: open, query, drop.
         match crate::memory::store::open(&store_path) {
             Ok(conn) => {
-                let r = read_and_compute_pipeline_scorecard(&conn, now_unix);
                 // conn is dropped here (end of block)
-                r
+                read_and_compute_pipeline_scorecard(&conn, now_unix)
             }
             Err(e) => {
                 tracing::warn!(error = %e, "pipeline scorecard tick: cannot open memory store");

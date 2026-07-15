@@ -328,7 +328,6 @@ mod tests {
 
     #[test]
     fn catalog_has_entries() {
-        assert!(!KNOWN_ENDPOINTS.is_empty());
         assert!(
             KNOWN_ENDPOINTS.len() >= 10,
             "catalog should cover at least the major direct + meta providers"

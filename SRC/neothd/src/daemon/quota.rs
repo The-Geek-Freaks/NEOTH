@@ -74,10 +74,10 @@ pub fn measure_dir(dir: &Path) -> u64 {
             }
             if file_type.is_dir() {
                 total += walk(&entry.path());
-            } else if file_type.is_file() {
-                if let Ok(meta) = entry.metadata() {
-                    total = total.saturating_add(meta.len());
-                }
+            } else if file_type.is_file()
+                && let Ok(meta) = entry.metadata()
+            {
+                total = total.saturating_add(meta.len());
             }
         }
         total

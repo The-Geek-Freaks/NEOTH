@@ -177,7 +177,7 @@ Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
 
 ## `neoth buddy`
 
-GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + two safe toggles. `status` reads six buddy-config fields from freedom.yaml; `self-activation --enable/--disable` toggles `self_activation.enabled`; `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign and smart-approve are read-only here — they have their own gated paths
+GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + two safe toggles. `status` reads six buddy-config fields from freedom.yaml; `self-activation --enable/--disable` toggles `self_activation.enabled`; `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign and Smart-Approve are surfaced here but mutate only through their canonical `autonomy sovereign` and `security set` policy paths
 
 ### `neoth buddy proactive`
 
@@ -1238,7 +1238,7 @@ GOLD-ADAPT-MEM-01 — set a fact's trust state. Only `verified` facts are surfac
 
 ## `neoth gui`
 
-Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves the separate GUI binary (next to `neoth`, else via PATH) and spawns it. `--locate` resolves + prints the path without launching. Prints the install command if the GUI binary isn't present
+Launch the NEOTH desktop GUI (`neothd-gui`). The thin launcher accepts only the GUI binary installed beside this exact `neoth`; it never trusts a same-named PATH entry. `--locate` reports the paired path or the actionable full-installer repair guidance without launching
 
 - `--locate` — Resolve + print the `neothd-gui` binary path (and whether it was found beside `neoth`) WITHOUT launching it. Diagnostic / scriptable / headless-safe — the launch path needs a display the CI box lacks
 
@@ -1468,6 +1468,13 @@ Set the default surface used by onboarding and future launchers
 ### `neoth interface show`
 
 Show whether the one-time GUI/CLI choice has been recorded
+
+### `neoth interface terminal-ready` _(hidden)_
+
+Internal terminal readiness handshake that does not change the saved GUI/CLI preference. Used when the GUI opens a security ceremony in a real TTY rather than switching the product's default surface
+
+- `--ready-file <READY_FILE>`
+- `--ready-token <READY_TOKEN>`
 
 ## `neoth jobs`
 
@@ -2835,7 +2842,7 @@ Web search via Brave / Tavily (A-20)
 
 ## `neoth security`
 
-Round-3 v0.4 SC-04 — operator-facing security posture aggregator. `neoth security audit` runs every available security check (HMAC key + WAL segment health + memory drift + credential sidecar) and prints a pass/warn/fail checklist. Exit code 1 iff any check FAILed; warnings don't change exit
+Round-3 v0.4 SC-04 — operator-facing security posture aggregator. `neoth security audit` runs every available security check (HMAC key + WAL segment health + memory drift + credential sidecar) and prints a pass/warn/fail checklist. `security set smart-approve --enable|--disable` is the canonical global Smart-Approve policy mutation path. Exit code 1 iff an audit check FAILed; warnings don't change exit
 
 ### `neoth security audit`
 
@@ -2881,6 +2888,17 @@ GR-10 — single-glance view of the active safety RAILS: which protective defaul
 
 - `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests)
 - `--json` — Emit JSON instead of the human-readable table
+
+### `neoth security set`
+
+Mutate a named security-policy control through the canonical config writer. These commands are intentionally explicit and scriptable; JSON output is a typed acknowledgement for GUI and automation callers
+
+#### `neoth security set smart-approve`
+
+Toggle the global Smart-Approve master switch. Individual MCP servers must still opt in separately; this never relaxes their local policy
+
+- `--enable`
+- `--disable`
 
 ## `neoth self-activate`
 

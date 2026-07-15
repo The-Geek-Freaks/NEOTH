@@ -187,10 +187,7 @@ fn git_status_compress(text: &str) -> String {
     });
     let modified = count_lines(text, |l| l.contains("modified:"));
     let untracked = count_lines(text, |l| l.starts_with('\t') && !l.contains(':'));
-    format!(
-        "{}\n{} staged  |  {} modified  |  {} untracked",
-        branch, staged, modified, untracked
-    )
+    format!("{branch}\n{staged} staged  |  {modified} modified  |  {untracked} untracked")
 }
 
 /// GIT-04  git fetch / pull output
@@ -341,7 +338,7 @@ fn git_branch_compress(text: &str) -> String {
         .map(|l| l.trim())
         .unwrap_or("(no current branch)");
     let total = text.lines().filter(|l| !l.trim().is_empty()).count();
-    format!("{}\n… ({} branches total)", current, total)
+    format!("{current}\n… ({total} branches total)")
 }
 
 /// GIT-08  git show (commit header + diff body)
@@ -498,10 +495,7 @@ fn lockfile_diff_matches(text: &str) -> bool {
 fn lockfile_diff_compress(text: &str) -> String {
     let added = count_lines(text, |l| l.starts_with('+') && !l.starts_with("+++"));
     let removed = count_lines(text, |l| l.starts_with('-') && !l.starts_with("---"));
-    format!(
-        "[lockfile diff suppressed: +{} / -{} lines — review with git diff --stat]",
-        added, removed
-    )
+    format!("[lockfile diff suppressed: +{added} / -{removed} lines — review with git diff --stat]")
 }
 
 // ---------------------------------------------------------------------------
@@ -528,7 +522,7 @@ fn cargo_compiling_compress(text: &str) -> String {
     if !out.is_empty() {
         out.push('\n');
     }
-    out.push_str(&format!("[{} crates compiled]", total));
+    out.push_str(&format!("[{total} crates compiled]"));
     out
 }
 
@@ -552,7 +546,7 @@ fn cargo_test_passing_compress(text: &str) -> String {
         .lines()
         .find(|l| l.contains("test result:"))
         .unwrap_or("");
-    let mut out = format!("[{} tests ok]\n", pass);
+    let mut out = format!("[{pass} tests ok]\n");
     if !fail_lines.is_empty() {
         out.push_str(&fail_lines.join("\n"));
         out.push('\n');
@@ -701,7 +695,7 @@ fn prettier_compress(text: &str) -> String {
         (l.trim_start().starts_with("- ") || l.trim_start().starts_with("+ "))
             && (l.contains(".js") || l.contains(".ts"))
     });
-    format!("[prettier: {} files reformatted]", changed)
+    format!("[prettier: {changed} files reformatted]")
 }
 
 /// LINT-03  TypeScript tsc output
@@ -765,7 +759,7 @@ fn clippy_warn_compress(text: &str) -> String {
     );
     let total_warns = count_lines(text, |l| l.trim_start().starts_with("warning:"));
     let mut out = warnings.join("\n");
-    out.push_str(&format!("\n[{} warnings total]", total_warns));
+    out.push_str(&format!("\n[{total_warns} warnings total]"));
     out
 }
 
@@ -1190,8 +1184,8 @@ mod tests {
     fn lockfile_diff_suppressed() {
         let mut diff = "--- a/package-lock.json\n+++ b/package-lock.json\n".to_string();
         for i in 0..30 {
-            diff.push_str(&format!("-  \"version\": \"1.{}.0\",\n", i));
-            diff.push_str(&format!("+  \"version\": \"1.{}.1\",\n", i));
+            diff.push_str(&format!("-  \"version\": \"1.{i}.0\",\n"));
+            diff.push_str(&format!("+  \"version\": \"1.{i}.1\",\n"));
         }
         let result = apply_rules(&diff);
         assert_eq!(result.matched_rule, Some("lockfile-diff"));
@@ -1255,7 +1249,7 @@ mod tests {
         let test_out = {
             let mut s = String::new();
             for i in 0..10 {
-                s.push_str(&format!("test module::test_{} ... ok\n", i));
+                s.push_str(&format!("test module::test_{i} ... ok\n"));
             }
             s.push_str("test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured");
             s

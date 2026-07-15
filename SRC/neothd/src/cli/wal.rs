@@ -1265,7 +1265,7 @@ mod tests {
     }
 
     fn write_segment(dir: &std::path::Path, seq: u64, frames: usize) -> PathBuf {
-        let path = dir.join(format!("{:06}.wal", seq));
+        let path = dir.join(format!("{seq:06}.wal"));
         let now = crate::time::now_unix_ns();
         let mut bytes: Vec<u8> = Vec::new();
         let sh = SegmentHeader::new(0, seq, 0, now, [0u8; 16]);
@@ -1284,7 +1284,7 @@ mod tests {
 
     /// Write a segment with `raw` RAW_TEXT frames plus one COMPACTION_MARKER.
     fn write_segment_with_marker(dir: &std::path::Path, seq: u64, raw: usize) -> PathBuf {
-        let path = dir.join(format!("{:06}.wal", seq));
+        let path = dir.join(format!("{seq:06}.wal"));
         let mut bytes: Vec<u8> = Vec::new();
         let sh = SegmentHeader::new(0, seq, 0, 0, [0u8; 16]);
         bytes.extend_from_slice(&sh.to_le_bytes());
@@ -1630,7 +1630,7 @@ mod tests {
     /// type so the `--type` filter has something to discriminate.
     fn write_mixed_segment(dir: &std::path::Path, seq: u64) -> PathBuf {
         use crate::wal::events::EVENT_TYPE_BOOT;
-        let path = dir.join(format!("{:06}.wal", seq));
+        let path = dir.join(format!("{seq:06}.wal"));
         let now = 1_700_000_000_000_000_000u64;
         let mut bytes: Vec<u8> = Vec::new();
         let sh = SegmentHeader::new(0, seq, 0, now, [0u8; 16]);

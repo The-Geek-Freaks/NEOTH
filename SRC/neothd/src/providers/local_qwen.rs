@@ -583,12 +583,12 @@ pub(crate) fn device_for(accel: Option<Accelerator>) -> candle_core::Device {
 /// trailing `<|im_start|>assistant\n` cues the model to produce the reply.
 pub(crate) fn build_chatml_prompt(system: Option<&str>, user: &str) -> String {
     let mut s = String::new();
-    if let Some(sys) = system {
-        if !sys.is_empty() {
-            s.push_str("<|im_start|>system\n");
-            s.push_str(sys);
-            s.push_str("<|im_end|>\n");
-        }
+    if let Some(sys) = system
+        && !sys.is_empty()
+    {
+        s.push_str("<|im_start|>system\n");
+        s.push_str(sys);
+        s.push_str("<|im_end|>\n");
     }
     s.push_str("<|im_start|>user\n");
     s.push_str(user);
@@ -841,7 +841,7 @@ fn ensure_loaded(
             }
             let elapsed = start.elapsed().as_secs();
             // Every 5s emit a heartbeat so the operator sees life.
-            if elapsed > 0 && elapsed % 5 == 0 {
+            if elapsed > 0 && elapsed.is_multiple_of(5) {
                 eprintln!("  …still loading ({elapsed}s elapsed)");
                 // Sleep an extra second to avoid double-emit at the
                 // boundary (the loop runs every 500ms).
@@ -1000,7 +1000,7 @@ fn run_forward(
         // amortise the tokenizer cost on long generations.
         // N=4 keeps the latency hit under ~1ms per check on a
         // typical Qwen3 vocabulary.
-        if stop_active && new_tokens.len() % 4 == 0 {
+        if stop_active && new_tokens.len().is_multiple_of(4) {
             let body = loaded_model
                 .tokenizer
                 .decode(&new_tokens, true)
@@ -1216,10 +1216,10 @@ impl LocalQwenAdapter {
     /// config.json when cold so the consumer can build dim-mismatch
     /// guards without forcing the embed model into memory.
     pub fn embed_dim_hint(&self) -> usize {
-        if let Ok(slot) = self.loaded_embed.lock() {
-            if let Some(loaded) = slot.as_ref() {
-                return loaded.hidden_size;
-            }
+        if let Ok(slot) = self.loaded_embed.lock()
+            && let Some(loaded) = slot.as_ref()
+        {
+            return loaded.hidden_size;
         }
         // Cold path: parse config.json on demand.
         std::fs::read_to_string(&self.config_path)

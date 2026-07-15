@@ -44,11 +44,11 @@ fn build_template(prefill: Option<&str>) -> String {
     );
     s.push_str(PROMPT_MARKER);
     s.push_str("\n\n");
-    if let Some(p) = prefill {
-        if !p.trim().is_empty() {
-            s.push_str(p);
-            s.push('\n');
-        }
+    if let Some(p) = prefill
+        && !p.trim().is_empty()
+    {
+        s.push_str(p);
+        s.push('\n');
     }
     s
 }

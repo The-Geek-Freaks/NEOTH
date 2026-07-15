@@ -850,13 +850,13 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
         }
         // IMPR-02 + GR-fix: drift check — ABORT (not just warn) if the target skill
         // file changed since the proposal was staged.
-        if let Some(sha) = p.spec.as_ref().and_then(|s| s.drift_sha.as_deref()) {
-            if let Some(diff) = git_diff_stat_since(sha, &p.skill_path) {
-                anyhow::bail!(
-                    "drift detected: `{}` changed since the proposal was staged (sha {sha}):\n{diff}\n   The proposal is stale — re-stage it (`neoth self-improve run`) and review the fresh diff before accepting.",
-                    p.skill_path
-                );
-            }
+        if let Some(sha) = p.spec.as_ref().and_then(|s| s.drift_sha.as_deref())
+            && let Some(diff) = git_diff_stat_since(sha, &p.skill_path)
+        {
+            anyhow::bail!(
+                "drift detected: `{}` changed since the proposal was staged (sha {sha}):\n{diff}\n   The proposal is stale — re-stage it (`neoth self-improve run`) and review the fresh diff before accepting.",
+                p.skill_path
+            );
         }
         let path = Path::new(&p.skill_path);
         // SAFETY-FIX NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01(b): propagate read failure
@@ -1086,26 +1086,20 @@ fn upstream_pr_script(
     format!(
         "#!/usr/bin/env bash\n\
          set -euo pipefail\n\
-         # Contribute a SkillOpt bundled-skill improvement to {repo}.\n\
+         # Contribute a SkillOpt bundled-skill improvement to {NEOTH_REPO}.\n\
          # Requires an authenticated `gh`. Safe to re-run (uses a fresh temp clone).\n\
-         REPO=\"{repo}\"\n\
+         REPO=\"{NEOTH_REPO}\"\n\
          WORK=\"$(mktemp -d)\"\n\
          gh repo fork \"$REPO\" --clone=true --default-branch-only \"$WORK/neoth\" \\\n\
            || gh repo clone \"$REPO\" \"$WORK/neoth\"\n\
          cd \"$WORK/neoth\"\n\
          git checkout -b \"{branch}\"\n\
-         mkdir -p \"$(dirname \"{asset}\")\"\n\
-         cp \"{content}\" \"{asset}\"\n\
-         git add \"{asset}\"\n\
+         mkdir -p \"$(dirname \"{asset_path}\")\"\n\
+         cp \"{content_file}\" \"{asset_path}\"\n\
+         git add \"{asset_path}\"\n\
          git commit -m \"{title}\"\n\
          git push -u origin \"{branch}\"\n\
-         gh pr create --repo \"$REPO\" --title \"{title}\" --body-file \"{body}\"\n",
-        repo = NEOTH_REPO,
-        branch = branch,
-        asset = asset_path,
-        content = content_file,
-        title = title,
-        body = body_file,
+         gh pr create --repo \"$REPO\" --title \"{title}\" --body-file \"{body_file}\"\n",
     )
 }
 
@@ -1181,57 +1175,55 @@ pub struct ProposalQuality {
 /// empty (plain-text still works unchanged — IMPR-01).
 pub fn parse_proposal_output(stdout: &str) -> (String, ProposalQuality, Option<ProposalSpec>) {
     let trimmed = stdout.trim_start();
-    if trimmed.starts_with('{') {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if let Some(content) = v
-                .get("skill")
-                .or_else(|| v.get("content"))
-                .and_then(|s| s.as_str())
-            {
-                let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
-                let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-                let quality = ProposalQuality {
-                    score_before: f("score_before"),
-                    score_after: f("score_after"),
-                    heldout_eval_summary: s("heldout_eval_summary"),
-                    why_this_improves: s("why_this_improves"),
-                    risk_notes: s("risk_notes"),
-                };
-                // IMPR-01: parse ProposalSpec fields from the envelope.
-                let verification_command = v
-                    .get("verification_command")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string);
-                let done_criteria = v
-                    .get("done_criteria")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string);
-                let stop_conditions: Vec<String> = v
-                    .get("stop_conditions")
-                    .and_then(|x| x.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|e| e.as_str())
-                            .map(str::to_string)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let spec = if verification_command.is_some()
-                    || done_criteria.is_some()
-                    || !stop_conditions.is_empty()
-                {
-                    Some(ProposalSpec {
-                        verification_command,
-                        done_criteria,
-                        stop_conditions,
-                        drift_sha: None, // populated at stage time
-                    })
-                } else {
-                    None
-                };
-                return (content.to_string(), quality, spec);
-            }
-        }
+    if trimmed.starts_with('{')
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && let Some(content) = v
+            .get("skill")
+            .or_else(|| v.get("content"))
+            .and_then(|s| s.as_str())
+    {
+        let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let quality = ProposalQuality {
+            score_before: f("score_before"),
+            score_after: f("score_after"),
+            heldout_eval_summary: s("heldout_eval_summary"),
+            why_this_improves: s("why_this_improves"),
+            risk_notes: s("risk_notes"),
+        };
+        // IMPR-01: parse ProposalSpec fields from the envelope.
+        let verification_command = v
+            .get("verification_command")
+            .and_then(|x| x.as_str())
+            .map(str::to_string);
+        let done_criteria = v
+            .get("done_criteria")
+            .and_then(|x| x.as_str())
+            .map(str::to_string);
+        let stop_conditions: Vec<String> = v
+            .get("stop_conditions")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let spec = if verification_command.is_some()
+            || done_criteria.is_some()
+            || !stop_conditions.is_empty()
+        {
+            Some(ProposalSpec {
+                verification_command,
+                done_criteria,
+                stop_conditions,
+                drift_sha: None, // populated at stage time
+            })
+        } else {
+            None
+        };
+        return (content.to_string(), quality, spec);
     }
     (stdout.to_string(), ProposalQuality::default(), None)
 }

@@ -733,10 +733,13 @@ async fn run_sovereign(
     if enable {
         // Consent ceremony — TTY-only, typed phrase, no GUI bypass.
         confirm_sovereign()?;
-        let (next, previous) = apply_sovereign_mode(cfg);
-        let applied = next.autonomy;
-        next.save_public_to_default_path()
-            .context("persist sovereign-buddy mode to freedom.yaml")?;
+        let (previous, applied) = FreedomConfig::update_at(&FreedomConfig::default_path(), |cfg| {
+            let (next, previous) = apply_sovereign_mode(cfg.clone());
+            let applied = next.autonomy;
+            *cfg = next;
+            Ok((previous, applied))
+        })
+        .context("persist sovereign-buddy mode to freedom.yaml")?;
         // WAL audit: 0xA2 LEVEL_ELEVATED + 0xDD SUDOMODE_PRESET_APPLIED.
         // The 0xD0 CONFIG_RELOADED fires automatically on next daemon hot-reload
         // when it sees sovereign_buddy in changed_fields. Three-frame sequence
@@ -778,10 +781,14 @@ async fn run_sovereign(
         }
     } else {
         // Disable path — no ceremony.
-        let (next, previous) = apply_sovereign_disable(cfg);
-        let applied = next.autonomy;
-        let mode_after = operating_mode_label(&next);
-        next.save_public_to_default_path()
+        let (previous, applied, mode_after) =
+            FreedomConfig::update_at(&FreedomConfig::default_path(), |cfg| {
+                let (next, previous) = apply_sovereign_disable(cfg.clone());
+                let applied = next.autonomy;
+                let mode_after = operating_mode_label(&next);
+                *cfg = next;
+                Ok((previous, applied, mode_after))
+            })
             .context("persist sovereign-buddy disable to freedom.yaml")?;
         emit_autonomy_change(
             previous,

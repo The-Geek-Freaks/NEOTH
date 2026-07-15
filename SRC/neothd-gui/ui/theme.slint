@@ -251,10 +251,9 @@ export global Theme {
     // ══ MOTION ═════════════════════════════════════════════════════════
     // The "Sovereign Curve" — fast start, long majestic settle.
     // Canonical: animate <p> { duration: ...; easing: cubic-bezier(0.16,1,0.3,1); }
-    // GOLD-ADAPT-GUI-02 — "ease-back" overshoot token (nullframe
-    // --ease-back). For SHORT movements only (nav rails, active bars):
-    // the 1.56 overshoot reads snappy at ≤40px travel, rubbery beyond.
-    out property <easing> ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+    // GOLD-ADAPT-GUI-02 — the ease-back overshoot curve is intentionally
+    // inlined at its three short-travel animation sites. Slint 1.16 cannot
+    // expose `easing` through a public global API without a generator warning.
     // Ambient-motion periods (design-taste audit B8): named so a
     // theme-wide timing pass reaches them.
     out property <duration> duration-sweep:   root.animation-mode == 0 ? 0ms : (root.animation-mode == 1 ? 350ms : 700ms);

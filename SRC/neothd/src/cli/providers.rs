@@ -399,8 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn openai_compat_targets_is_non_empty() {
-        assert!(!OPENAI_COMPAT_TARGETS.is_empty());
+    fn openai_compat_targets_cover_local_and_hosted_providers() {
         assert!(OPENAI_COMPAT_TARGETS.iter().any(|t| t.contains("groq")));
         assert!(OPENAI_COMPAT_TARGETS.iter().any(|t| t.contains("ollama")));
     }

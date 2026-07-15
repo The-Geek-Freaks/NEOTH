@@ -220,10 +220,8 @@ impl ChannelRouting {
         if let Some(ch) = self.by_source.get(source) {
             return Some(ch.clone());
         }
-        if is_failure {
-            if let Some(ch) = &self.failure_channel {
-                return Some(ch.clone());
-            }
+        if is_failure && let Some(ch) = &self.failure_channel {
+            return Some(ch.clone());
         }
         self.default_channel.clone()
     }

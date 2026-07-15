@@ -44,9 +44,41 @@ fn run_bare_relative(workdir: &Path, relative_home: &Path, interface: Option<&st
         .expect("run public bare neoth binary with relative NEOTH_HOME")
 }
 
+fn copy_core_only_neoth(install_dir: &Path) -> std::path::PathBuf {
+    let public = Path::new(env!("CARGO_BIN_EXE_neoth"));
+    let copied = install_dir.join(public.file_name().expect("public binary filename"));
+    std::fs::copy(public, &copied).expect("copy public binary into core-only install");
+    assert!(
+        !install_dir
+            .join(format!("neothd-gui{}", std::env::consts::EXE_SUFFIX))
+            .exists(),
+        "core-only fixture accidentally contains the GUI"
+    );
+    copied
+}
+
+fn core_only_command(binary: &Path, home: &Path) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .env("NEOTH_HOME", home)
+        .env("NO_COLOR", "1")
+        .env("DISPLAY", ":99")
+        .env("WAYLAND_DISPLAY", "neoth-test")
+        .env_remove("NEOTH_INTERFACE")
+        .env_remove("SSH_CLIENT")
+        .env_remove("SSH_TTY")
+        .env_remove("CI")
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("GITLAB_CI")
+        .env_remove("CIRCLECI");
+    command
+}
+
 fn write_valid_config(home: &Path) {
-    let mut config = neothd::config::FreedomConfig::default();
-    config.operator_id = Some(TEST_OPERATOR.to_string());
+    let config = neothd::config::FreedomConfig {
+        operator_id: Some(TEST_OPERATOR.to_string()),
+        ..Default::default()
+    };
     std::fs::write(
         home.join("freedom.yaml"),
         serde_yaml::to_string(&config).unwrap(),
@@ -97,6 +129,103 @@ fn write_cli_preference(home: &Path) {
         b"{\n  \"schema_version\": 1,\n  \"preferred\": \"cli\"\n}\n",
     )
     .unwrap();
+}
+
+#[test]
+fn core_only_bare_first_launch_reaches_cli_init_instead_of_failing_on_gui() {
+    let install = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let binary = copy_core_only_neoth(install.path());
+
+    let output = core_only_command(&binary, home.path())
+        .output()
+        .expect("run core-only public binary");
+
+    // Captured stdin is non-interactive, so reaching the normal init licence
+    // gate is the deterministic real-process proof that GUI absence fell back.
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--accept-license is required"),
+        "core-only bare launch did not reach CLI init: {stderr}"
+    );
+    assert!(
+        !stderr.contains("GUI binary"),
+        "implicit first launch still failed on the absent GUI: {stderr}"
+    );
+}
+
+#[test]
+fn core_only_explicit_gui_fails_clearly_without_searching_path() {
+    let install = tempfile::tempdir().unwrap();
+    let fake_path = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let binary = copy_core_only_neoth(install.path());
+    std::fs::write(
+        fake_path
+            .path()
+            .join(format!("neothd-gui{}", std::env::consts::EXE_SUFFIX)),
+        b"not the packaged GUI",
+    )
+    .unwrap();
+
+    let output = core_only_command(&binary, home.path())
+        .arg("gui")
+        .env("PATH", fake_path.path())
+        .output()
+        .expect("run explicit GUI command from core-only install");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("core-only NEOTH installation"),
+        "explicit GUI error is not actionable: {stderr}"
+    );
+    assert!(
+        stderr.contains("PATH entries are deliberately not used"),
+        "explicit GUI still implied a PATH fallback: {stderr}"
+    );
+}
+
+#[test]
+fn core_only_explicit_gui_environment_fails_without_mutating_cli_preference() {
+    let install = tempfile::tempdir().unwrap();
+    let fake_path = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let binary = copy_core_only_neoth(install.path());
+    write_valid_initialized_home(home.path());
+    write_cli_preference(home.path());
+    let preference_path = home.path().join("interface.json");
+    let before = std::fs::read(&preference_path).unwrap();
+    std::fs::write(
+        fake_path
+            .path()
+            .join(format!("neothd-gui{}", std::env::consts::EXE_SUFFIX)),
+        b"not the packaged GUI",
+    )
+    .unwrap();
+
+    let output = core_only_command(&binary, home.path())
+        .env("NEOTH_INTERFACE", "gui")
+        .env("PATH", fake_path.path())
+        .output()
+        .expect("run explicit GUI environment request from core-only install");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("core-only NEOTH installation"),
+        "explicit GUI environment request did not fail clearly: {stderr}"
+    );
+    assert!(
+        stderr.contains("PATH entries are deliberately not used"),
+        "fake PATH GUI was not rejected: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read(preference_path).unwrap(),
+        before,
+        "failed explicit GUI request mutated the durable CLI preference"
+    );
 }
 
 #[test]

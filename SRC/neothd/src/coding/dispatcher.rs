@@ -1514,7 +1514,7 @@ fn reinjection_hint(strategy_hint: &str, diagnosis: &str) -> String {
         // Walk back to the nearest UTF-8 char boundary at/below the cap
         // so a multi-byte char straddling it can't panic the slice.
         // (`str::floor_char_boundary` would be cleaner but is only
-        // stable since 1.91; MSRV is 1.86.)
+        // stable since 1.91; MSRV is 1.90.)
         let mut end = REINJECTED_DIAGNOSIS_CAP;
         while end > 0 && !diag.is_char_boundary(end) {
             end -= 1;

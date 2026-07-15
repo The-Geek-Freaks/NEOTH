@@ -226,7 +226,7 @@ component ConversationItem inherits Rectangle {
         y: (parent.height - self.height) / 2;
         background: Theme.accent-green;
         border-radius: 2px;
-        animate height { duration: Theme.duration-base; easing: Theme.ease-back; }
+        animate height { duration: Theme.duration-base; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
     }
 
     VerticalLayout {
@@ -658,7 +658,7 @@ export component ChatView inherits Rectangle {
                                 y: (parent.height - self.height) / 2;
                                 background: Theme.accent-green;
                                 border-radius: 2px;
-                                animate height { duration: Theme.duration-base; easing: Theme.ease-back; }
+                                animate height { duration: Theme.duration-base; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
                             }
                             VerticalLayout {
                                 x: Theme.space-base;

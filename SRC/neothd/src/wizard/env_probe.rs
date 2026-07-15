@@ -100,10 +100,10 @@ pub fn classify(
     }
 
     // DMI product name contains a known cloud / hypervisor keyword → server.
-    if let Some(name) = dmi_product_name {
-        if is_server_dmi(name) {
-            return EnvironmentClass::Server;
-        }
+    if let Some(name) = dmi_product_name
+        && is_server_dmi(name)
+    {
+        return EnvironmentClass::Server;
     }
 
     // No graphical session on a non-Windows platform → headless → server.

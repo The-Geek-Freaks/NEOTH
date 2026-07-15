@@ -212,10 +212,10 @@ async fn emit_lease(home: &std::path::Path, event_type: u8, lease: &CapabilityLe
         return;
     }
     let segment = home.join("wal").join("000001.wal");
-    if let Some(parent) = segment.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
+    if let Some(parent) = segment.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return;
     }
     let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
     match crate::wal::spawn(segment) {

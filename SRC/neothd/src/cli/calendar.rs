@@ -150,15 +150,7 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
             )
             .await;
 
-            match outcome {
-                CreateOutcome::Created => {
-                    render_msg(args.output, &format!("✓ created \"{summary}\" (uid {uid})"))
-                }
-                CreateOutcome::AlreadyExists => render_msg(
-                    args.output,
-                    &format!("• already exists: \"{summary}\" (uid {uid})"),
-                ),
-            }
+            render_create_outcome(args.output, outcome, summary, &uid);
             Ok(())
         }
     }
@@ -193,12 +185,26 @@ fn render_events(events: &[CalendarEvent], output: OutputFormat) {
     }
 }
 
-fn render_msg(output: OutputFormat, msg: &str) {
+fn render_create_outcome(output: OutputFormat, outcome: CreateOutcome, summary: &str, uid: &str) {
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::json!({ "message": msg }));
-        }
-        OutputFormat::Table => println!("{msg}"),
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "ok": true,
+                "action": "add",
+                "outcome": match outcome {
+                    CreateOutcome::Created => "created",
+                    CreateOutcome::AlreadyExists => "already_exists",
+                },
+                "uid": uid,
+            })
+        ),
+        OutputFormat::Table => match outcome {
+            CreateOutcome::Created => println!("✓ created \"{summary}\" (uid {uid})"),
+            CreateOutcome::AlreadyExists => {
+                println!("• already exists: \"{summary}\" (uid {uid})");
+            }
+        },
     }
 }
 

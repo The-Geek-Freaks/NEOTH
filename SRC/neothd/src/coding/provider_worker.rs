@@ -350,16 +350,16 @@ fn extract_tests_line(text: &str) -> TestSummary {
         };
         let mut s = TestSummary::ZERO;
         for kv in rest.split_whitespace() {
-            if let Some((k, v)) = kv.split_once('=') {
-                if let Ok(n) = v.parse::<u32>() {
-                    match k {
-                        "added" => s.added = n,
-                        "total" => s.total = n,
-                        "passing" => s.passing = n,
-                        "failing" => s.failing = n,
-                        "skipped" => s.skipped = n,
-                        _ => {}
-                    }
+            if let Some((k, v)) = kv.split_once('=')
+                && let Ok(n) = v.parse::<u32>()
+            {
+                match k {
+                    "added" => s.added = n,
+                    "total" => s.total = n,
+                    "passing" => s.passing = n,
+                    "failing" => s.failing = n,
+                    "skipped" => s.skipped = n,
+                    _ => {}
                 }
             }
         }

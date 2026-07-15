@@ -281,7 +281,7 @@ mod tests {
         let mut prev: u8 = 0;
         for s in order {
             let n = s.step_number();
-            assert!(n > prev, "step {:?} number not increasing", s);
+            assert!(n > prev, "step {s:?} number not increasing");
             prev = n;
         }
         assert_eq!(WizardStepId::TOTAL_STEPS, 9);
@@ -368,7 +368,7 @@ mod tests {
             },
         ];
         for m in &op_msgs {
-            assert!(m.is_operator_input(), "{:?} should be operator input", m);
+            assert!(m.is_operator_input(), "{m:?} should be operator input");
             assert!(!m.is_daemon_status());
         }
 
@@ -389,7 +389,7 @@ mod tests {
             WizardIpcMessage::Finished,
         ];
         for m in &daemon_msgs {
-            assert!(m.is_daemon_status(), "{:?} should be daemon status", m);
+            assert!(m.is_daemon_status(), "{m:?} should be daemon status");
             assert!(!m.is_operator_input());
         }
     }

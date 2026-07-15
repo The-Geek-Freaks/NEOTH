@@ -370,7 +370,7 @@ async fn run_call(
             println!("# {server_id} :: {tool}");
             println!("  is_error: {}", result.is_error);
             for (i, c) in result.content.iter().enumerate() {
-                println!("  content[{i}]: {:?}", c);
+                println!("  content[{i}]: {c:?}");
             }
         }
     }

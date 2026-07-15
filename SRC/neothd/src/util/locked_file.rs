@@ -15,7 +15,7 @@
 //! `flock`/`share_mode` code per module.
 //!
 //! No new dependencies: `libc` is already a `cfg(unix)` dep and
-//! `std::os::windows::fs::OpenOptionsExt` is std. Built on the MSRV-1.86-safe
+//! `std::os::windows::fs::OpenOptionsExt` is std. Built on the MSRV-1.90-safe
 //! primitives used by `daemon::pidfile` (std `File::lock` needs 1.89):
 //! non-blocking acquire retried every 50 ms, failing loudly after 5 s instead
 //! of deadlocking on a stuck holder.
@@ -41,11 +41,11 @@ const GIVE_UP_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 /// that go through this same lock path, which every write path in a given store
 /// does.
 pub fn lock_file_blocking(lock_path: &Path, what: &str) -> Result<std::fs::File> {
-    if let Some(parent) = lock_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create {what} lock dir {}", parent.display()))?;
-        }
+    if let Some(parent) = lock_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create {what} lock dir {}", parent.display()))?;
     }
     let started = std::time::Instant::now();
     loop {

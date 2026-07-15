@@ -866,13 +866,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 .into_iter()
                 .map(|kind| (kind, 0))
                 .collect();
-            let mut pending: Option<(
+            type PendingChannelReload = (
                 std::time::Instant,
                 std::collections::HashMap<crate::channels::ChannelKind, u64>,
                 std::sync::Arc<FreedomConfig>,
                 crate::config::credentials::Credentials,
                 bool,
-            )> = None;
+            );
+            let mut pending: Option<PendingChannelReload> = None;
 
             loop {
                 let explicit_retry = tokio::select! {

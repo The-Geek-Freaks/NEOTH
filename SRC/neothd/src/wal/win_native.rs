@@ -35,12 +35,13 @@ use windows_sys::Win32::Security::Authorization::{
     TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, CONTAINER_INHERIT_ACE,
-    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetLengthSid,
-    GetSecurityDescriptorControl, GetTokenInformation, INHERITED_ACE, InitializeSecurityDescriptor,
-    IsValidSid, NO_INHERITANCE, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
-    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl,
-    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+    CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
+    GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERITED_ACE,
+    InitializeSecurityDescriptor, IsValidAcl, IsValidSid, NO_INHERITANCE, OBJECT_INHERIT_ACE,
+    PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
+    SECURITY_DESCRIPTOR, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY,
+    TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -620,6 +621,29 @@ fn verify_private_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Res
     verify_private_descriptor(descriptor.0, dacl, expected_sid, NO_INHERITANCE as u8)
 }
 
+const SID_HEADER_LEN: usize = 8;
+
+fn checked_access_allowed_sid_len(ace_size: usize, sub_authority_count: u8) -> io::Result<usize> {
+    let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+    let sid_len = usize::from(sub_authority_count)
+        .checked_mul(4)
+        .and_then(|sub_authorities_len| SID_HEADER_LEN.checked_add(sub_authorities_len))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "ACE SID length overflow"))?;
+    let sid_capacity = ace_size.checked_sub(sid_offset).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "allow ACE is shorter than its SID offset",
+        )
+    })?;
+    if sid_capacity < sid_len {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "allow ACE contains a truncated SID",
+        ));
+    }
+    Ok(sid_len)
+}
+
 fn verify_private_descriptor(
     descriptor: *mut std::ffi::c_void,
     dacl: *mut ACL,
@@ -638,6 +662,15 @@ fn verify_private_descriptor(
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "private object has a null DACL (access is unrestricted)",
+            ));
+        }
+        // SAFETY: `dacl` belongs to the live security descriptor. Validating
+        // the complete ACL before walking it ensures GetAce can only expose
+        // structurally bounded ACE records.
+        if unsafe { IsValidAcl(dacl) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "private object contains an invalid DACL",
             ));
         }
 
@@ -704,18 +737,31 @@ fn verify_private_descriptor(
             if unsafe { GetAce(dacl, index, &mut ace_ptr) } == 0 {
                 return Err(last_win32_error("GetAce"));
             }
-            if ace_ptr.is_null() {
-                return Err(io::Error::other("GetAce returned a null ACE"));
-            }
-            // SAFETY: GetAce returned an ACE header. We inspect the header
-            // before relying on ACCESS_ALLOWED_ACE-specific fields.
-            let ace = unsafe { &*(ace_ptr as *const ACCESS_ALLOWED_ACE) };
-            if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE {
+            let ace_ptr = std::ptr::NonNull::new(ace_ptr.cast::<u8>())
+                .ok_or_else(|| io::Error::other("GetAce returned a null ACE"))?;
+            // SAFETY: IsValidAcl accepted the complete ACL and GetAce
+            // succeeded for an in-range index. Copy only the common header
+            // first; do not construct a reference to a larger ACE layout.
+            let header = unsafe { std::ptr::read_unaligned(ace_ptr.as_ptr().cast::<ACE_HEADER>()) };
+            if header.AceType != ACCESS_ALLOWED_ACE_TYPE {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     format!("private object ACE {index} is not an allow ACE"),
                 ));
             }
+            let ace_size = usize::from(header.AceSize);
+            let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+            if ace_size < sid_offset + SID_HEADER_LEN {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("private object ACE {index} is too short for a SID"),
+                ));
+            }
+            // SAFETY: the validated AceSize is now large enough for the fixed
+            // ACCESS_ALLOWED_ACE prefix. Copying avoids a reference whose
+            // lifetime could accidentally outlive the descriptor buffer.
+            let ace =
+                unsafe { std::ptr::read_unaligned(ace_ptr.as_ptr().cast::<ACCESS_ALLOWED_ACE>()) };
             if ace.Header.AceFlags as u32 & INHERITED_ACE != 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -746,13 +792,28 @@ fn verify_private_descriptor(
                     ),
                 ));
             }
-            let ace_sid = std::ptr::addr_of!(ace.SidStart) as *mut std::ffi::c_void;
-            // SAFETY: ACCESS_ALLOWED_ACE stores its variable-length SID
-            // beginning at SidStart; descriptor and ACE buffer stay live here.
+            // SAFETY: AceSize was checked to contain the complete fixed SID
+            // header, so reading its SubAuthorityCount byte is in bounds.
+            let ace_sid = unsafe { ace_ptr.as_ptr().add(sid_offset) };
+            let sub_authority_count = unsafe { ace_sid.add(1).read() };
+            let sid_len =
+                checked_access_allowed_sid_len(ace_size, sub_authority_count).map_err(|error| {
+                    io::Error::new(error.kind(), format!("private object ACE {index}: {error}"))
+                })?;
+            let ace_sid = ace_sid.cast::<std::ffi::c_void>();
+            // SAFETY: the variable-length SID was bounded against AceSize and
+            // the descriptor remains live for the whole verification call.
             if unsafe { IsValidSid(ace_sid) } == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("private object ACE {index} contains an invalid SID"),
+                ));
+            }
+            // SAFETY: IsValidSid succeeded, so GetLengthSid may inspect it.
+            if unsafe { GetLengthSid(ace_sid) } as usize != sid_len {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("private object ACE {index} has an inconsistent SID length"),
                 ));
             }
             // SAFETY: both SIDs are valid and EqualSid only reads them.
@@ -985,6 +1046,22 @@ mod tests {
     /// Tests that need a valid account name skip gracefully if unset.
     fn current_username() -> Option<String> {
         std::env::var("USERNAME").ok().filter(|u| !u.is_empty())
+    }
+
+    #[test]
+    fn access_allowed_ace_sid_bounds_reject_truncated_records() {
+        let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+
+        assert!(checked_access_allowed_sid_len(sid_offset + 7, 0).is_err());
+        assert_eq!(
+            checked_access_allowed_sid_len(sid_offset + SID_HEADER_LEN, 0).unwrap(),
+            SID_HEADER_LEN
+        );
+        assert!(checked_access_allowed_sid_len(sid_offset + SID_HEADER_LEN, 1).is_err());
+        assert_eq!(
+            checked_access_allowed_sid_len(sid_offset + SID_HEADER_LEN + 4, 1).unwrap(),
+            SID_HEADER_LEN + 4
+        );
     }
 
     // ── E-11: DACL set round-trip ──────────────────────────────────────────

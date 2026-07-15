@@ -459,36 +459,36 @@ fn extract_redaction_authorisations(
             Err(_) => break,
         };
         let total = dec.header.total_len as usize;
-        if dec.header.event_type == EVENT_TYPE_REDACTION_MARKER {
-            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(dec.payload) {
-                let segment = payload["segment"].as_str().unwrap_or("").to_string();
-                let offsets: Vec<u64> = payload["redacted_offsets"]
-                    .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
-                    .unwrap_or_default();
-                let bytes_redacted = payload["bytes_redacted"].as_u64().unwrap_or(0);
-                let topic = payload["topic"].as_str().unwrap_or("");
-                let ts_unix = payload["ts_unix"].as_i64().unwrap_or(0);
-                let signer_pubkey = payload["signer_pubkey"].as_str().unwrap_or("");
-                let sig = payload["sig"].as_str().unwrap_or("");
-                // AUTHENTICATE: the marker's signature MUST verify against the
-                // OPERATOR's own key over the canonical authorisation. A forged
-                // CRC32c-only frame has no valid signature ⇒ ignored. We verify
-                // against a key in the current operator's dual-signed predecessor
-                // chain. An attacker-controlled payload key is harmless unless
-                // that exact key is connected to the current local trust root.
-                let msg = crate::wal::redact::redaction_authorisation_message(
-                    &segment,
-                    &offsets,
-                    bytes_redacted,
-                    topic,
-                    ts_unix,
-                );
-                let authentic = trusted_pubkeys.contains(signer_pubkey)
-                    && crate::wal::signing::verify_b64(signer_pubkey, sig, &msg).is_ok();
-                if authentic && !segment.is_empty() && !offsets.is_empty() {
-                    out.push(AuthorisedRange { segment, offsets });
-                }
+        if dec.header.event_type == EVENT_TYPE_REDACTION_MARKER
+            && let Ok(payload) = serde_json::from_slice::<serde_json::Value>(dec.payload)
+        {
+            let segment = payload["segment"].as_str().unwrap_or("").to_string();
+            let offsets: Vec<u64> = payload["redacted_offsets"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
+                .unwrap_or_default();
+            let bytes_redacted = payload["bytes_redacted"].as_u64().unwrap_or(0);
+            let topic = payload["topic"].as_str().unwrap_or("");
+            let ts_unix = payload["ts_unix"].as_i64().unwrap_or(0);
+            let signer_pubkey = payload["signer_pubkey"].as_str().unwrap_or("");
+            let sig = payload["sig"].as_str().unwrap_or("");
+            // AUTHENTICATE: the marker's signature MUST verify against the
+            // OPERATOR's own key over the canonical authorisation. A forged
+            // CRC32c-only frame has no valid signature ⇒ ignored. We verify
+            // against a key in the current operator's dual-signed predecessor
+            // chain. An attacker-controlled payload key is harmless unless
+            // that exact key is connected to the current local trust root.
+            let msg = crate::wal::redact::redaction_authorisation_message(
+                &segment,
+                &offsets,
+                bytes_redacted,
+                topic,
+                ts_unix,
+            );
+            let authentic = trusted_pubkeys.contains(signer_pubkey)
+                && crate::wal::signing::verify_b64(signer_pubkey, sig, &msg).is_ok();
+            if authentic && !segment.is_empty() && !offsets.is_empty() {
+                out.push(AuthorisedRange { segment, offsets });
             }
         }
         if total == 0 {
@@ -570,10 +570,10 @@ fn extract_markers_with_offsets_from(
             Err(_) => break, // partial trailing frame — stop walking
         };
         let total = dec.header.total_len as usize;
-        if dec.header.event_type == EVENT_TYPE_COMPACTION_MARKER {
-            if let Ok(payload) = serde_json::from_slice::<compaction::MarkerPayload>(dec.payload) {
-                out.push((cursor, payload));
-            }
+        if dec.header.event_type == EVENT_TYPE_COMPACTION_MARKER
+            && let Ok(payload) = serde_json::from_slice::<compaction::MarkerPayload>(dec.payload)
+        {
+            out.push((cursor, payload));
         }
         if total == 0 {
             break;

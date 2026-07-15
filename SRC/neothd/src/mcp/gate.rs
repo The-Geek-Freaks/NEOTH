@@ -290,30 +290,30 @@ pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
     // earlier than the per-action `evaluate` below, so an elevated-only server
     // never reaches per-tool resolution under Strict/Standard. `None` (the
     // default) keeps the pre-CCS-02 behaviour: no per-server floor.
-    if let Some(required) = cfg.autonomy_gate {
-        if !autonomy.meets_gate(required) {
-            if let Some(w) = writer {
-                emit_reject(
-                    w,
-                    &cfg.id,
-                    tool,
-                    &format!(
-                        "server autonomy_gate requires ≥ {} (current {})",
-                        required.as_str(),
-                        autonomy.as_str()
-                    ),
-                    now_unix,
-                )
-                .await
-                .map_err(GateError::Wal)?;
-            }
-            return Err(GateError::AutonomyGate {
-                server: cfg.id.clone(),
-                tool: tool.to_string(),
-                required,
-                current: autonomy,
-            });
+    if let Some(required) = cfg.autonomy_gate
+        && !autonomy.meets_gate(required)
+    {
+        if let Some(w) = writer {
+            emit_reject(
+                w,
+                &cfg.id,
+                tool,
+                &format!(
+                    "server autonomy_gate requires ≥ {} (current {})",
+                    required.as_str(),
+                    autonomy.as_str()
+                ),
+                now_unix,
+            )
+            .await
+            .map_err(GateError::Wal)?;
         }
+        return Err(GateError::AutonomyGate {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+            required,
+            current: autonomy,
+        });
     }
 
     // Layer 2 — autonomy gate.

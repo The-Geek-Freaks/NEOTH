@@ -381,10 +381,10 @@ fn detect_outliers(items: &[Value]) -> BTreeSet<usize> {
             }
         }
         for (idx, obj) in &objs {
-            if let Some(v) = obj.get(*field) {
-                if !top.contains(&v.to_string()) {
-                    must_keep.insert(*idx);
-                }
+            if let Some(v) = obj.get(*field)
+                && !top.contains(&v.to_string())
+            {
+                must_keep.insert(*idx);
             }
         }
     }

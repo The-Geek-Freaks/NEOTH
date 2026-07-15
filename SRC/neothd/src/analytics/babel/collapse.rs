@@ -282,17 +282,16 @@ fn detect_context_limit_failure(events: &[CollapseEventRecord]) -> Option<i64> {
         {
             near_limit_ts = Some(ev.ts_unix);
         }
-        if let Some(ts) = near_limit_ts {
-            if (ev.event_type == CollapseEventType::ToolError
+        if let Some(ts) = near_limit_ts
+            && (ev.event_type == CollapseEventType::ToolError
                 || ev.event_type == CollapseEventType::InferenceEnd)
-                && ev
-                    .error_kind
-                    .as_deref()
-                    .map(|s| s.contains("context") || s.contains("truncation"))
-                    .unwrap_or(false)
-            {
-                return Some(ts);
-            }
+            && ev
+                .error_kind
+                .as_deref()
+                .map(|s| s.contains("context") || s.contains("truncation"))
+                .unwrap_or(false)
+        {
+            return Some(ts);
         }
     }
     None

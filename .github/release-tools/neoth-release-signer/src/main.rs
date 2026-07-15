@@ -6,12 +6,7 @@ use anyhow::{Context as _, Result, bail};
 use base64::Engine as _;
 use zeroize::Zeroizing;
 
-// Reuse the updater's canonical minisign-compatible implementation. This
-// signer remains a separate, narrowly scoped executable and never links or
-// executes the product artifact whose bytes it signs.
-#[allow(dead_code)]
-#[path = "../../../../SRC/neothd/src/updater/sig_keygen.rs"]
-mod sig_keygen;
+mod minisign;
 
 const SECRET_ENV: &str = "NEOTH_RELEASE_MINISIGN_SECRET";
 const PUBKEY_ENV: &str = "NEOTH_RELEASE_MINISIGN_PUBKEY";
@@ -23,7 +18,7 @@ fn signature_path(asset: &Path) -> PathBuf {
 }
 
 fn sign_one(
-    keypair: &sig_keygen::ReleaseKeypair,
+    keypair: &minisign::ReleaseKeypair,
     public_key: &minisign_verify::PublicKey,
     asset: &Path,
 ) -> Result<PathBuf> {
@@ -97,7 +92,7 @@ fn run() -> Result<()> {
             .decode(secret.trim())
             .with_context(|| format!("{SECRET_ENV} is not valid base64"))?,
     );
-    let keypair = sig_keygen::ReleaseKeypair::from_secret_bytes(&secret)
+    let keypair = minisign::ReleaseKeypair::from_secret_bytes(&secret)
         .with_context(|| format!("{SECRET_ENV} is not a valid release secret"))?;
     if keypair.public_key_base64() != expected_pubkey {
         bail!("release minisign secret does not match the pinned public key");
@@ -126,7 +121,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let asset = dir.path().join("neoth-v1.0.0.tar.gz");
         std::fs::write(&asset, b"release bytes").unwrap();
-        let keypair = sig_keygen::ReleaseKeypair::generate().unwrap();
+        let keypair = minisign::ReleaseKeypair::from_secret_bytes(&[7u8; 40]).unwrap();
         let public_key =
             minisign_verify::PublicKey::from_base64(&keypair.public_key_base64()).unwrap();
 

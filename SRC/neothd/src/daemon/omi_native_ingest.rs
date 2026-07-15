@@ -903,7 +903,7 @@ async fn process_audio(
     let speaker = optional_header(headers, "x-omi-speaker")?;
     validate_optional_text(speaker.as_deref(), 256, "speaker")?;
     let speaker_id = optional_parsed_header::<i64>(headers, "x-omi-speaker-id")?;
-    if body.is_empty() || body.len() % std::mem::size_of::<f32>() != 0 {
+    if body.is_empty() || !body.len().is_multiple_of(std::mem::size_of::<f32>()) {
         return Err(IngestError::BadRequest(
             "audio body must contain non-empty f32 little-endian mono samples",
         ));

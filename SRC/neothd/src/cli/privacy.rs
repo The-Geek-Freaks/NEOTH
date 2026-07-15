@@ -289,11 +289,11 @@ fn render_window_table(w: &WalWindowSummary) {
 }
 
 fn humanize_secs(secs: u64) -> String {
-    if secs % 86_400 == 0 {
+    if secs.is_multiple_of(86_400) {
         format!("{}d", secs / 86_400)
-    } else if secs % 3_600 == 0 {
+    } else if secs.is_multiple_of(3_600) {
         format!("{}h", secs / 3_600)
-    } else if secs % 60 == 0 {
+    } else if secs.is_multiple_of(60) {
         format!("{}m", secs / 60)
     } else {
         format!("{secs}s")

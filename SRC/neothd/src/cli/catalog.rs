@@ -240,7 +240,7 @@ fn run_list(
                     }
                 }
                 if let Some(err) = &pc.last_error {
-                    println!("    last_error: {}", err);
+                    println!("    last_error: {err}");
                 }
             }
         }

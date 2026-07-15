@@ -664,14 +664,14 @@ fn pubkey(key_path: &std::path::Path, output: OutputFormat) -> Result<()> {
 /// Load the signing key: the `NEOTH_RELEASE_MINISIGN_SECRET` env (CI) wins over
 /// the saved key file (local maintainer), so a CI runner needs no key on disk.
 fn load_signing_key(key_path: &std::path::Path) -> Result<ReleaseKeypair> {
-    if let Ok(b64) = std::env::var(SECRET_ENV) {
-        if !b64.trim().is_empty() {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(b64.trim())
-                .with_context(|| format!("{SECRET_ENV} is not valid base64"))?;
-            return ReleaseKeypair::from_secret_bytes(&bytes)
-                .with_context(|| format!("{SECRET_ENV} is not a valid release secret"));
-        }
+    if let Ok(b64) = std::env::var(SECRET_ENV)
+        && !b64.trim().is_empty()
+    {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64.trim())
+            .with_context(|| format!("{SECRET_ENV} is not valid base64"))?;
+        return ReleaseKeypair::from_secret_bytes(&bytes)
+            .with_context(|| format!("{SECRET_ENV} is not a valid release secret"));
     }
     sig_keygen::load_secret_key(key_path).with_context(|| {
         format!(

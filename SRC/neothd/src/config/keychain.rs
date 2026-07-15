@@ -117,10 +117,10 @@ fn get_with_legacy_fallback(
     if let Some(secret) = store.get(field)? {
         return Ok((Some(secret), field.to_string()));
     }
-    if let Some(legacy) = legacy_store_key(field) {
-        if let Some(secret) = store.get(legacy)? {
-            return Ok((Some(secret), legacy.to_string()));
-        }
+    if let Some(legacy) = legacy_store_key(field)
+        && let Some(secret) = store.get(legacy)?
+    {
+        return Ok((Some(secret), legacy.to_string()));
     }
     Ok((None, field.to_string()))
 }

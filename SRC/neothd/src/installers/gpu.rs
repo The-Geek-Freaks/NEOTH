@@ -169,20 +169,20 @@ pub fn classify_from_subprocess(
     rocm_smi_stdout: Option<&str>,
     system_profiler_stdout: Option<&str>,
 ) -> GpuReport {
-    if let Some(out) = nvidia_smi_stdout {
-        if let Some(r) = out.lines().find_map(parse_nvidia_smi_line) {
-            return r;
-        }
+    if let Some(out) = nvidia_smi_stdout
+        && let Some(r) = out.lines().find_map(parse_nvidia_smi_line)
+    {
+        return r;
     }
-    if let Some(out) = rocm_smi_stdout {
-        if let Some(r) = parse_rocm_smi_output(out) {
-            return r;
-        }
+    if let Some(out) = rocm_smi_stdout
+        && let Some(r) = parse_rocm_smi_output(out)
+    {
+        return r;
     }
-    if let Some(out) = system_profiler_stdout {
-        if let Some(r) = parse_system_profiler_output(out) {
-            return r;
-        }
+    if let Some(out) = system_profiler_stdout
+        && let Some(r) = parse_system_profiler_output(out)
+    {
+        return r;
     }
     GpuReport::cpu()
 }

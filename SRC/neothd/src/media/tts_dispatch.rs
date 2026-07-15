@@ -414,7 +414,7 @@ mod tests {
             TtsProvider::EdgeTts,
             TtsProvider::ViitorVoice,
         ] {
-            assert!(!p.description().is_empty(), "{:?}", p);
+            assert!(!p.description().is_empty(), "{p:?}");
         }
     }
 

@@ -2973,10 +2973,15 @@ pub struct WikiRowData {
 }
 
 /// Snapshot from `neoth buddy status --output json`.
-#[derive(Debug, Default)]
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuddyStatusSnap {
+    pub sovereign_buddy: bool,
+    pub self_activation_enabled: bool,
     pub self_activation_skills: Vec<String>,
+    pub smart_approve_any: bool,
     pub autonomy: String,
+    pub proactive_enabled: bool,
 }
 
 /// One peer from `neoth cluster status --output json`.
@@ -3139,29 +3144,29 @@ pub fn filter_wiki_rows(rows: Vec<WikiRowData>, search: &str, kind: &str) -> Vec
 
 /// Parse `neoth buddy status --output json` → `BuddyStatusSnap`.
 ///
-/// Expected shape: `{"sovereign_buddy":"...","self_activation_enabled":true,
+/// Expected shape: `{"sovereign_buddy":true,"self_activation_enabled":true,
 ///   "self_activation_skills":["sk1","sk2"],"smart_approve_any":false,
 ///   "autonomy":"standard","proactive_enabled":true}`
-pub fn parse_buddy_status(json: &str) -> BuddyStatusSnap {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let skills = v
-        .get("self_activation_skills")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let autonomy = v
-        .get("autonomy")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-    BuddyStatusSnap {
-        self_activation_skills: skills,
-        autonomy,
+pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
+    let snapshot: BuddyStatusSnap = serde_json::from_str(json)
+        .map_err(|error| format!("invalid Buddy status JSON: {error}"))?;
+    if !matches!(
+        snapshot.autonomy.as_str(),
+        "strict" | "standard" | "elevated" | "full" | "custom"
+    ) {
+        return Err(format!(
+            "Buddy status returned unknown autonomy `{}`",
+            snapshot.autonomy
+        ));
     }
+    if snapshot
+        .self_activation_skills
+        .iter()
+        .any(|skill| skill.trim().is_empty())
+    {
+        return Err("Buddy status contains an empty self-activation skill id".to_string());
+    }
+    Ok(snapshot)
 }
 
 /// Parse `neoth cluster status --output json` → `MeshStatusSnap`.
@@ -5469,18 +5474,41 @@ mod tests {
 
     #[test]
     fn parse_buddy_status_happy_path() {
-        let json = r#"{"sovereign_buddy":"claude","self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":true}"#;
-        let snap = super::parse_buddy_status(json);
+        let json = r#"{"sovereign_buddy":true,"self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":true,"autonomy":"standard","proactive_enabled":true}"#;
+        let snap = super::parse_buddy_status(json).expect("valid Buddy status");
+        assert!(snap.sovereign_buddy);
+        assert!(snap.self_activation_enabled);
         assert_eq!(snap.self_activation_skills.len(), 2);
         assert_eq!(snap.self_activation_skills[0], "code");
+        assert!(snap.smart_approve_any);
         assert_eq!(snap.autonomy, "standard");
+        assert!(snap.proactive_enabled);
     }
 
     #[test]
-    fn parse_buddy_status_malformed_returns_defaults() {
-        let snap = super::parse_buddy_status("not json");
-        assert!(snap.self_activation_skills.is_empty());
-        assert!(snap.autonomy.is_empty());
+    fn parse_buddy_status_rejects_malformed_or_lossy_payloads() {
+        assert!(super::parse_buddy_status("not json").is_err());
+        assert!(
+            super::parse_buddy_status(
+                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard"}"#
+            )
+            .is_err(),
+            "missing proactive_enabled must not render as false"
+        );
+        assert!(
+            super::parse_buddy_status(
+                r#"{"sovereign_buddy":false,"self_activation_enabled":"false","self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false}"#
+            )
+            .is_err(),
+            "wrong-typed booleans must not render as false"
+        );
+        assert!(
+            super::parse_buddy_status(
+                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"future","proactive_enabled":false}"#
+            )
+            .is_err(),
+            "unknown autonomy must be explicit"
+        );
     }
 
     // ── Wave 4b: parse_mesh_status ────────────────────────────────────────────

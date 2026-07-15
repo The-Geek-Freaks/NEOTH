@@ -519,20 +519,20 @@ impl ProviderCallAuditTicket {
                 self.call_scope
             )))
         })?;
-        if let Some(home) = self.usage_home {
-            if let Err(error) = crate::daemon::usage_log::append(&home, &usage_event) {
-                // The fsync-acknowledged 0x21/0x22 frame above is the canonical
-                // usage row. Failing the already-paid provider result here
-                // could trigger a duplicate retry; aggregate/repair instead
-                // projects this invocation id exactly once from the WAL.
-                tracing::warn!(
-                    error = %error,
-                    invocation_id = %self.invocation_id,
-                    provider = self.provider,
-                    model = %self.wire_model,
-                    "provider usage projection append failed; durable terminal WAL retained for idempotent repair"
-                );
-            }
+        if let Some(home) = self.usage_home
+            && let Err(error) = crate::daemon::usage_log::append(&home, &usage_event)
+        {
+            // The fsync-acknowledged 0x21/0x22 frame above is the canonical
+            // usage row. Failing the already-paid provider result here
+            // could trigger a duplicate retry; aggregate/repair instead
+            // projects this invocation id exactly once from the WAL.
+            tracing::warn!(
+                error = %error,
+                invocation_id = %self.invocation_id,
+                provider = self.provider,
+                model = %self.wire_model,
+                "provider usage projection append failed; durable terminal WAL retained for idempotent repair"
+            );
         }
         Ok(())
     }

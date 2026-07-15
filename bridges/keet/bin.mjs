@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 
 import os from '#os'
-import path from '#path'
 import process from '#process'
 
 import b4a from 'b4a'
 
 import { KeetBridgeService } from './src/bridge.mjs'
-import { addTopic, loadConfig, removeTopic, saveConfig } from './src/config.mjs'
+import { addTopic, defaultBridgeStorage, loadConfig, removeTopic, saveConfig } from './src/config.mjs'
+import { BRIDGE_VERSION } from './src/contract.mjs'
 import { BridgeHttpServer } from './src/server.mjs'
 import { createIdentity, generateMnemonic, randomToken, randomTopicId } from './src/identity.mjs'
 import { closeRuntime, createShutdownHandler } from './src/shutdown.mjs'
 import { StorageLock, verifyStorageIdle } from './src/storage-lock.mjs'
 
-const VERSION = '1.0.0'
+const VERSION = BRIDGE_VERSION
 const argv = globalThis.Bare
   ? Bare.argv.slice(import.meta.url.startsWith('bare:') ? 1 : 2)
   : process.argv.slice(2)
@@ -148,7 +148,7 @@ async function serve (options) {
 function parseArgs (args) {
   const result = {
     command: 'serve',
-    storage: path.join(os.homedir(), '.neoth', 'keet-bridge'),
+    storage: defaultBridgeStorage(process.env, os.homedir()),
     host: '127.0.0.1',
     port: 9130,
     displayName: 'NEOTH',

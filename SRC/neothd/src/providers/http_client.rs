@@ -79,6 +79,23 @@ pub fn build_direct_client_no_redirect() -> Result<reqwest::Client> {
         .context("build direct no-redirect reqwest client")
 }
 
+/// Return whether a parsed URL names the local loopback interface.
+///
+/// Match the typed host instead of reparsing `host_str()`: the `url` crate
+/// renders IPv6 host strings with brackets (`[::1]`), which `IpAddr::from_str`
+/// intentionally rejects. Keeping this in the shared HTTP boundary prevents
+/// provider, channel, tool, and security clients from drifting on IPv6.
+pub(crate) fn url_has_loopback_host(url: &reqwest::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => {
+            host.trim_end_matches('.').eq_ignore_ascii_case("localhost")
+        }
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
 fn build_client_with(redirect_policy: reqwest::redirect::Policy) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -151,6 +168,29 @@ mod tests {
         match previous {
             Some(value) => unsafe { std::env::set_var("NEOTH_HTTP_PROXY", value) },
             None => unsafe { std::env::remove_var("NEOTH_HTTP_PROXY") },
+        }
+    }
+
+    #[test]
+    fn loopback_host_detection_handles_typed_ipv4_ipv6_and_localhost() {
+        for endpoint in [
+            "http://localhost:8080",
+            "http://localhost.:8080",
+            "http://127.0.0.1:8080",
+            "http://127.42.0.9:8080",
+            "http://[::1]:8080",
+            "https://[0:0:0:0:0:0:0:1]:8443",
+        ] {
+            let parsed = reqwest::Url::parse(endpoint).unwrap();
+            assert!(url_has_loopback_host(&parsed), "not loopback: {endpoint}");
+        }
+        for endpoint in [
+            "https://localhost.evil.test",
+            "https://192.168.1.4",
+            "https://[fc00::1]",
+        ] {
+            let parsed = reqwest::Url::parse(endpoint).unwrap();
+            assert!(!url_has_loopback_host(&parsed), "loopback: {endpoint}");
         }
     }
 }

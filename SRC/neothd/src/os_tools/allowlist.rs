@@ -203,12 +203,12 @@ pub fn resolve_write_target(
     // If the target already exists, resolve it through any symlink. Its real
     // location must still sit DIRECTLY in `canon_parent` — otherwise a symlink
     // at the target is being used to escape the allowlisted directory.
-    if let Ok(canon_existing) = std::fs::canonicalize(&resolved) {
-        if canon_existing.parent() != Some(canon_parent.as_path()) {
-            return Err(AllowlistError::NotInAllowlist(
-                canon_existing.display().to_string(),
-            ));
-        }
+    if let Ok(canon_existing) = std::fs::canonicalize(&resolved)
+        && canon_existing.parent() != Some(canon_parent.as_path())
+    {
+        return Err(AllowlistError::NotInAllowlist(
+            canon_existing.display().to_string(),
+        ));
     }
 
     let allowed = allowed_write_paths.iter().any(|prefix| {

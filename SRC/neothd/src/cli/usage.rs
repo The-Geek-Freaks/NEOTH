@@ -59,20 +59,18 @@ pub fn run(home: &Path, args: UsageArgs) -> Result<()> {
 ///   2. `freedom.yaml::usage_currency`
 ///   3. USD (default)
 pub fn resolve_currency(home: &Path, flag: Option<&str>) -> Currency {
-    if let Some(s) = flag {
-        if let Some(c) = Currency::parse(s) {
-            return c;
-        }
+    if let Some(s) = flag
+        && let Some(c) = Currency::parse(s)
+    {
+        return c;
     }
     let path = home.join("freedom.yaml");
-    if let Ok(body) = std::fs::read_to_string(&path) {
-        if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&body) {
-            if let Some(s) = val.get("usage_currency").and_then(|v| v.as_str()) {
-                if let Some(c) = Currency::parse(s) {
-                    return c;
-                }
-            }
-        }
+    if let Ok(body) = std::fs::read_to_string(&path)
+        && let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&body)
+        && let Some(s) = val.get("usage_currency").and_then(|v| v.as_str())
+        && let Some(c) = Currency::parse(s)
+    {
+        return c;
     }
     Currency::default()
 }

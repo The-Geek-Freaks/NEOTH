@@ -105,7 +105,7 @@ where
             stream.read_exact(&mut name).await?;
             String::from_utf8(name).map_err(|_| anyhow::anyhow!("socks5: non-utf8 domain"))?
         }
-        other => bail!("socks5: unsupported address type {:#x}", other),
+        other => bail!("socks5: unsupported address type {other:#x}"),
     };
     let mut port = [0u8; 2];
     stream.read_exact(&mut port).await?;
@@ -173,7 +173,7 @@ pub async fn socks5_connect(
             s.read_exact(&mut len).await?;
             len[0] as usize
         }
-        other => bail!("socks5: bad reply address type {:#x}", other),
+        other => bail!("socks5: bad reply address type {other:#x}"),
     };
     let mut rest = vec![0u8; skip + 2]; // bound addr + 2-byte port
     s.read_exact(&mut rest).await?;

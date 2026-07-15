@@ -10,7 +10,7 @@ set -euo pipefail
 NEOTH_REPO="${NEOTH_REPO:-https://github.com/The-Geek-Freaks/NEOTH.git}"
 NEOTH_SRC_DIR="${NEOTH_SRC_DIR:-$HOME/.local/src/neoth}"
 NEOTH_BIN_DIR="${NEOTH_BIN_DIR:-$HOME/.local/bin}"
-NEOTH_MIN_RUST_VER="1.86"
+NEOTH_MIN_RUST_VER="1.90"
 NEOTH_MIN_NODE_VER="22.16.0"
 NEOTH_PNPM_VER="10.32.1"
 NEOTH_BRANCH="${NEOTH_BRANCH:-main}"

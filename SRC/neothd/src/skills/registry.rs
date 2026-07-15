@@ -28,7 +28,8 @@
 //! [`SkillRegistry::watch`] spawns a tokio task that owns a
 //! `notify::RecommendedWatcher` over the user skills directory. On
 //! `Create | Modify | Remove` events affecting `*/skill.yaml` it calls
-//! [`crate::skills::load_all`] again and stores the new Vec atomically.
+//! [`SkillRegistry::reload_now`], validates the complete Skill/Mode snapshot,
+//! and only then publishes the new Vec atomically.
 //! Bundled skills always re-load too — they live in `include_str!` and
 //! never change without a binary rebuild, but re-running the loader is
 //! the simplest path and the cost is sub-millisecond (deserializing N
@@ -44,6 +45,16 @@ use tracing::{debug, info, warn};
 
 use super::load_all;
 use super::schema::Skill;
+
+/// Build the complete skill snapshot and validate every cross-skill mode id
+/// before the value can reach an [`ArcSwap`]. A mode collision is a registry
+/// load error, not a per-request routing error.
+pub(crate) async fn load_validated_skills(skills_dir: &Path) -> Result<Vec<Skill>> {
+    let skills = load_all(skills_dir).await?;
+    super::mode_registry::ModeRegistry::from_skills(&skills)
+        .context("validate unique mode ids in skill registry")?;
+    Ok(skills)
+}
 
 /// Process-wide live skill registry. Set by `serve.rs::run_serve` at
 /// daemon boot via [`init_global`]; chat / channel-pipeline / skill
@@ -92,7 +103,7 @@ impl SkillRegistry {
     /// explicitly optional missing paths resolve to an empty user layer.
     pub async fn load(skills_dir: impl AsRef<Path>) -> Result<Arc<Self>> {
         let skills_dir = skills_dir.as_ref().to_path_buf();
-        let initial = load_all(&skills_dir).await.with_context(|| {
+        let initial = load_validated_skills(&skills_dir).await.with_context(|| {
             format!("load initial skill registry from {}", skills_dir.display())
         })?;
         info!(
@@ -127,21 +138,16 @@ impl SkillRegistry {
         &self.skills_dir
     }
 
-    /// Atomically replace the live skill set. Called by the watcher task
-    /// after a successful reload. Returns the previous count for logging.
-    pub fn store(&self, new: Vec<Skill>) -> usize {
-        let prev = self.inner.load().len();
-        self.inner.store(Arc::new(new));
-        prev
-    }
-
     /// Manually trigger a reload from disk. Returns (previous_count,
     /// new_count). Useful for operator-driven reload (`neoth skills
     /// reload`) without waiting for the watcher debounce.
     pub async fn reload_now(&self) -> Result<(usize, usize)> {
-        let new = load_all(&self.skills_dir).await?;
+        let new = load_validated_skills(&self.skills_dir)
+            .await
+            .with_context(|| format!("reload skill registry from {}", self.skills_dir.display()))?;
         let new_count = new.len();
-        let prev = self.store(new);
+        let prev = self.inner.load().len();
+        self.inner.store(Arc::new(new));
         Ok((prev, new_count))
     }
 
@@ -218,14 +224,14 @@ mod watcher {
         // this watch makes those operator edits take effect WITHOUT a restart.
         // Best-effort + NonRecursive: a failed watch leaves skill.yaml hot-
         // reload working (unlike the mandatory skills_dir watch above).
-        if let Some(parent) = registry.skills_dir.parent() {
-            if let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive) {
-                warn!(
-                    dir = %parent.display(),
-                    error = %e,
-                    "could not watch freedom.yaml dir; skills.* edits need a restart to apply"
-                );
-            }
+        if let Some(parent) = registry.skills_dir.parent()
+            && let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive)
+        {
+            warn!(
+                dir = %parent.display(),
+                error = %e,
+                "could not watch freedom.yaml dir; skills.* edits need a restart to apply"
+            );
         }
 
         info!(
@@ -329,6 +335,22 @@ mod tests {
         write(sd.join("skill.yaml"), body).await.unwrap();
     }
 
+    fn skill_with_mode(id: &str, mode_id: &str) -> String {
+        format!(
+            r#"id: {id}
+description: duplicate-mode registry fixture
+system_prompt: test
+modes:
+  - id: {mode_id}
+    description: test mode
+    spectrum: balanced
+    oversight: low
+    output:
+      format: markdown
+"#
+        )
+    }
+
     #[tokio::test]
     async fn load_primes_registry_with_bundled_set() {
         let dir = tempdir().unwrap();
@@ -352,6 +374,64 @@ mod tests {
         assert!(detail.contains("load initial skill registry"));
         assert!(detail.contains("parse YAML"));
         assert!(detail.contains("broken"));
+    }
+
+    #[tokio::test]
+    async fn initial_load_rejects_duplicate_mode_ids_before_publishing_registry() {
+        let dir = tempdir().unwrap();
+        write_skill(
+            dir.path(),
+            "mode-owner-a",
+            &skill_with_mode("mode-owner-a", "registry-duplicate-mode"),
+        )
+        .await;
+        write_skill(
+            dir.path(),
+            "mode-owner-b",
+            &skill_with_mode("mode-owner-b", "registry-duplicate-mode"),
+        )
+        .await;
+
+        let error = SkillRegistry::load(dir.path())
+            .await
+            .err()
+            .expect("duplicate mode ids must reject the initial registry");
+        let detail = format!("{error:#}");
+        assert!(detail.contains("validate unique mode ids"));
+        assert!(detail.contains("registry-duplicate-mode"));
+        assert!(detail.contains("mode-owner-a"));
+        assert!(detail.contains("mode-owner-b"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_mode_reload_retains_the_previous_atomic_snapshot() {
+        let dir = tempdir().unwrap();
+        let reg = SkillRegistry::load(dir.path()).await.unwrap();
+        let pinned = reg.snapshot_owned();
+
+        write_skill(
+            dir.path(),
+            "reload-mode-owner-a",
+            &skill_with_mode("reload-mode-owner-a", "reload-duplicate-mode"),
+        )
+        .await;
+        write_skill(
+            dir.path(),
+            "reload-mode-owner-b",
+            &skill_with_mode("reload-mode-owner-b", "reload-duplicate-mode"),
+        )
+        .await;
+
+        let error = reg
+            .reload_now()
+            .await
+            .expect_err("invalid mode snapshot must not be published");
+        assert!(format!("{error:#}").contains("reload-duplicate-mode"));
+        let live = reg.snapshot_owned();
+        assert!(
+            Arc::ptr_eq(&pinned, &live),
+            "failed reload must retain the exact previous Arc snapshot"
+        );
     }
 
     #[tokio::test]

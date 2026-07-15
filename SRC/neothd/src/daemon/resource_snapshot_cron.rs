@@ -153,14 +153,13 @@ fn probe_vram() -> Option<crate::daemon::resource_watch::VramReading> {
             "--format=csv,noheader,nounits",
         ])
         .output()
+        && out.status.success()
     {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            if let Some(line) = text.lines().next() {
-                if let Some(r) = crate::daemon::resource_watch::parse_vram_used_total(line) {
-                    return Some(r);
-                }
-            }
+        let text = String::from_utf8_lossy(&out.stdout);
+        if let Some(line) = text.lines().next()
+            && let Some(r) = crate::daemon::resource_watch::parse_vram_used_total(line)
+        {
+            return Some(r);
         }
     }
 
@@ -168,11 +167,10 @@ fn probe_vram() -> Option<crate::daemon::resource_watch::VramReading> {
     if let Ok(out) = std::process::Command::new("rocm-smi")
         .args(["--showmeminfo", "vram", "--csv"])
         .output()
+        && out.status.success()
     {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            return crate::daemon::resource_watch::parse_amd_vram_csv(&text);
-        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        return crate::daemon::resource_watch::parse_amd_vram_csv(&text);
     }
 
     None

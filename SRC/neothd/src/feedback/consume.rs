@@ -122,12 +122,11 @@ pub fn aggregate_recent_feedback(
             if total == 0 {
                 break;
             }
-            if dec.header.event_type == EVENT_TYPE_OPERATOR_FEEDBACK {
-                if let Some(ts) = ingest_feedback_payload(dec.payload, cutoff, &mut pattern_counts)
-                {
-                    corrections += 1;
-                    latest_unix = Some(latest_unix.map_or(ts, |cur| cur.max(ts)));
-                }
+            if dec.header.event_type == EVENT_TYPE_OPERATOR_FEEDBACK
+                && let Some(ts) = ingest_feedback_payload(dec.payload, cutoff, &mut pattern_counts)
+            {
+                corrections += 1;
+                latest_unix = Some(latest_unix.map_or(ts, |cur| cur.max(ts)));
             }
             cursor = cursor.saturating_add(total);
         }

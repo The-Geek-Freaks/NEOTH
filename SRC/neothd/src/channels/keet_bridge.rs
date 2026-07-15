@@ -18,6 +18,7 @@ use crate::secret::SecretString;
 
 pub const BRIDGE_PROTOCOL: &str = "neoth-keet-bridge";
 pub const BRIDGE_PROTOCOL_VERSION: u16 = 1;
+pub const BRIDGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_BRIDGE_URL: &str = "http://127.0.0.1:9130";
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -84,6 +85,10 @@ impl KeetBridge {
         validate_bearer_token(token.expose())?;
         let http = reqwest::Client::builder()
             .connect_timeout(CONTROL_TIMEOUT)
+            // The bearer belongs to a numeric-loopback companion. Environment
+            // and system proxies must never observe it, even when an operator
+            // has configured a global HTTP(S)_PROXY.
+            .no_proxy()
             // A loopback-only trust boundary must stay loopback-only. Do not
             // let a compromised companion redirect an authenticated request
             // to a different origin or silently substitute another endpoint.
@@ -450,25 +455,20 @@ fn validate_health(health: &BridgeHealth) -> Result<(), KeetBridgeError> {
             "unsupported companion protocol version",
         ));
     }
-    if health.bridge_version.trim().is_empty()
-        || health.bridge_version.len() > 128
-        || health.bridge_version.chars().any(char::is_control)
-    {
+    if health.bridge_version != BRIDGE_VERSION {
         return Err(KeetBridgeError::Protocol(
-            "companion omitted its bridge version",
+            "companion release version does not match NEOTH",
         ));
     }
     if !health.ready {
         return Err(KeetBridgeError::Protocol("companion is not ready"));
     }
-    let send = health.capabilities.iter().any(|value| value == "send_text");
-    let receive = health
-        .capabilities
-        .iter()
-        .any(|value| value == "receive_text");
-    if !send || !receive {
+    if health.capabilities.len() != 2
+        || health.capabilities[0] != "send_text"
+        || health.capabilities[1] != "receive_text"
+    {
         return Err(KeetBridgeError::Protocol(
-            "companion must declare both send_text and receive_text",
+            "companion capability contract does not match NEOTH",
         ));
     }
     Ok(())
@@ -621,11 +621,11 @@ mod tests {
     }
 
     #[test]
-    fn health_rejects_outbound_only_companion() {
+    fn health_requires_exact_release_and_capability_contract() {
         let outbound_only = BridgeHealth {
             protocol: BRIDGE_PROTOCOL.into(),
             protocol_version: BRIDGE_PROTOCOL_VERSION,
-            bridge_version: "1.0.0".into(),
+            bridge_version: BRIDGE_VERSION.into(),
             ready: true,
             capabilities: vec!["send_text".into()],
         };
@@ -638,6 +638,28 @@ mod tests {
             ..outbound_only
         };
         assert!(validate_health(&full_duplex).is_ok());
+
+        let wrong_release = BridgeHealth {
+            bridge_version: "1.0.1".into(),
+            ..full_duplex.clone()
+        };
+        assert!(matches!(
+            validate_health(&wrong_release),
+            Err(KeetBridgeError::Protocol(_))
+        ));
+
+        let expanded_contract = BridgeHealth {
+            capabilities: vec![
+                "send_text".into(),
+                "receive_text".into(),
+                "send_media".into(),
+            ],
+            ..full_duplex
+        };
+        assert!(matches!(
+            validate_health(&expanded_contract),
+            Err(KeetBridgeError::Protocol(_))
+        ));
     }
 
     #[test]

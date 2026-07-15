@@ -266,10 +266,11 @@ pub(crate) async fn step5_provider(
                 // For OpenaiCompat: auto-probe the local Claude bridge so the
                 // operator does not have to type the URL when it is the common
                 // path on this machine. Probe runs at wizard time only.
-                if kind == ProviderKind::OpenaiCompat && default_endpoint.is_empty() {
-                    if let Some(probed) = probe_local_bridge_sync() {
-                        default_endpoint = probed;
-                    }
+                if kind == ProviderKind::OpenaiCompat
+                    && default_endpoint.is_empty()
+                    && let Some(probed) = probe_local_bridge_sync()
+                {
+                    default_endpoint = probed;
                 }
                 let endpoint = if let Some(e) = args.provider_endpoint.clone() {
                     e
@@ -668,13 +669,11 @@ pub(crate) async fn offer_cli_installs(
                     .default(true)
                     .interact()
                     .context("login confirm prompt")?;
-            if login_it {
-                if let Err(e) = crate::installers::login_kind(*kind).await {
-                    println!(
-                        "  ! {} login error: {e} (you can re-run later)",
-                        kind.display
-                    );
-                }
+            if login_it && let Err(e) = crate::installers::login_kind(*kind).await {
+                println!(
+                    "  ! {} login error: {e} (you can re-run later)",
+                    kind.display
+                );
             }
         } else {
             let hint = match kind.install {

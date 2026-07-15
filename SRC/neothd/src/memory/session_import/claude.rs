@@ -29,10 +29,10 @@ pub fn parse(body: &str) -> Result<ForeignSession> {
             continue;
         };
 
-        if session_id.is_empty() {
-            if let Some(s) = v.get("sessionId").and_then(Value::as_str) {
-                session_id = s.to_string();
-            }
+        if session_id.is_empty()
+            && let Some(s) = v.get("sessionId").and_then(Value::as_str)
+        {
+            session_id = s.to_string();
         }
 
         let ty = v.get("type").and_then(Value::as_str).unwrap_or("");

@@ -326,10 +326,7 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
             .with_context(|| format!("read body of {url}"))?;
         let bytes = body.len();
         if bytes > MAX_RESPONSE_BYTES {
-            anyhow::bail!(
-                "web_fetch: response {bytes} bytes exceeds ceiling {}",
-                MAX_RESPONSE_BYTES
-            );
+            anyhow::bail!("web_fetch: response {bytes} bytes exceeds ceiling {MAX_RESPONSE_BYTES}");
         }
         let raw = String::from_utf8_lossy(&body).into_owned();
         let (text, truncated) = derive_text(&raw, &content_type);

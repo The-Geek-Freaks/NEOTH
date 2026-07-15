@@ -182,7 +182,7 @@ pub(crate) fn do_ping(
             } else {
                 endpoint.unwrap_or("https://api.openai.com/v1").to_string()
             };
-            let url = format!("{base}/chat/completions", base = default_base);
+            let url = format!("{default_base}/chat/completions");
             let req = client
                 .post(&url)
                 .header("content-type", "application/json")
@@ -416,10 +416,10 @@ pub(crate) fn apply_local_abliterated_preset(
     // Mirror the first local onto default_slot only when every hemisphere is
     // local (matches apply_local_only_preset); a mixed setup keeps the cloud
     // default so unspecified surfaces still reach a capable provider.
-    if preset.is_all_local() {
-        if let Some(first) = preset.locals.first() {
-            topology.default_slot = make_slot(&first.ollama_model_ref);
-        }
+    if preset.is_all_local()
+        && let Some(first) = preset.locals.first()
+    {
+        topology.default_slot = make_slot(&first.ollama_model_ref);
     }
 }
 
@@ -510,12 +510,11 @@ pub(crate) fn collect_ollama_model_refs(
     for slot in [&topo.left, &topo.right, &topo.cerebellum] {
         if slot.provider == Some(InferenceProvider::OpenAiCompat)
             && slot.endpoint.as_deref() == Some(endpoint.as_str())
+            && let Some(m) = slot.model.as_deref()
+            && m.starts_with("hf.co/")
+            && !refs.iter().any(|r| r == m)
         {
-            if let Some(m) = slot.model.as_deref() {
-                if m.starts_with("hf.co/") && !refs.iter().any(|r| r == m) {
-                    refs.push(m.to_string());
-                }
-            }
+            refs.push(m.to_string());
         }
     }
     refs
@@ -676,10 +675,10 @@ pub(crate) fn catalog_or_bundled_default_model_for(
         let home = FreedomConfig::default_neoth_home();
         let catalog_path = ModelsCatalog::default_path(&home);
         let catalog = ModelsCatalog::load_from(&catalog_path);
-        if let Some(pc) = catalog.provider(key) {
-            if let Some(recommended) = pc.recommended_default() {
-                return Some(recommended.id.clone());
-            }
+        if let Some(pc) = catalog.provider(key)
+            && let Some(recommended) = pc.recommended_default()
+        {
+            return Some(recommended.id.clone());
         }
     }
     default_model_for(role, provider).map(String::from)

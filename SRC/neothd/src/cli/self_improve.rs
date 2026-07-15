@@ -90,15 +90,26 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
             cfg.auto = auto;
             cfg.asked = true;
             cfg.save(&home)?;
-            println!(
-                "self-improvement ENABLED{}. {}",
-                if auto { " (nightly auto)" } else { " (manual)" },
-                if si::is_installed() {
-                    "SkillOpt ready."
-                } else {
-                    "SkillOpt not installed yet — `pip install skillopt`."
-                }
-            );
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "action": "enable",
+                        "enabled": true,
+                        "auto": auto,
+                    })
+                ),
+                OutputFormat::Table => println!(
+                    "self-improvement ENABLED{}. {}",
+                    if auto { " (nightly auto)" } else { " (manual)" },
+                    if si::is_installed() {
+                        "SkillOpt ready."
+                    } else {
+                        "SkillOpt not installed yet — `pip install skillopt`."
+                    }
+                ),
+            }
             Ok(())
         }
         SelfImproveAction::Disable => {
@@ -113,7 +124,18 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
             // silently overriding this Disable. Mirrors the Enable branch.
             cfg.asked = true;
             cfg.save(&home)?;
-            println!("self-improvement disabled.");
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "action": "disable",
+                        "enabled": false,
+                        "auto": false,
+                    })
+                ),
+                OutputFormat::Table => println!("self-improvement disabled."),
+            }
             Ok(())
         }
         SelfImproveAction::Run {
@@ -128,16 +150,53 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
         ),
         SelfImproveAction::Review => review(&home, output),
         SelfImproveAction::Accept { id } => {
+            // Resolve optional GUI metadata before the mutation so a later
+            // read error cannot turn a committed accept into a false failure.
+            let upstream_pr_available =
+                if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+                    Some(bundled_proposal_skill(&home, &id)?.is_some())
+                } else {
+                    None
+                };
             si::accept_proposal(&home, &id)?;
-            println!(
-                "✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo)."
-            );
-            offer_upstream_pr_if_bundled(&home, &id)?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "ok": true,
+                            "action": "accept",
+                            "id": id,
+                            "status": "accepted",
+                            "upstream_pr_available": upstream_pr_available.unwrap_or(false),
+                        })
+                    );
+                }
+                OutputFormat::Table => {
+                    println!(
+                        "✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo)."
+                    );
+                    offer_upstream_pr_if_bundled(&home, &id)?;
+                }
+            }
             Ok(())
         }
         SelfImproveAction::Rollback { id } => {
             si::rollback_proposal(&home, &id)?;
-            println!("✓ proposal {id} rolled back — skill file restored.");
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "action": "rollback",
+                        "id": id,
+                        "status": "rolled_back",
+                    })
+                ),
+                OutputFormat::Table => {
+                    println!("✓ proposal {id} rolled back — skill file restored.");
+                }
+            }
             Ok(())
         }
         SelfImproveAction::Pr { id, submit } => pr(&home, &id, submit, output),
@@ -245,9 +304,26 @@ fn run_pass(
     // engine (a dry-run is supposed to be side-effect-free). The prior `&& !dry_run`
     // gate let a disabled `--dry-run` fall through to the engine-spawn path below.
     if !cfg.enabled && dry_run {
-        println!(
-            "dry-run: self-improvement is disabled — would run SkillOpt for `{persona}` once enabled (engine NOT spawned)."
-        );
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({
+                    "ok": true,
+                    "action": "dry_run",
+                    "enabled": false,
+                    "staged": false,
+                    "persona": persona,
+                    "skill_path": serde_json::Value::Null,
+                    "diff": "",
+                    "message": format!(
+                        "self-improvement is disabled; SkillOpt for `{persona}` was not spawned"
+                    ),
+                })
+            ),
+            OutputFormat::Table => println!(
+                "dry-run: self-improvement is disabled — would run SkillOpt for `{persona}` once enabled (engine NOT spawned)."
+            ),
+        }
         return Ok(());
     }
     // Resolve the production skill file (explicit, else <skills>/<persona>/skill.md).
@@ -266,20 +342,30 @@ fn run_pass(
             std::fs::read_to_string(&from).with_context(|| format!("read {}", from.display()))?;
         (content, si::ProposalQuality::default(), None)
     } else if si::is_installed() {
-        println!("running SkillOpt for `{persona}` (this can take a while)…");
+        if matches!(output, OutputFormat::Table) {
+            println!("running SkillOpt for `{persona}` (this can take a while)…");
+        } else {
+            eprintln!("running SkillOpt for `{persona}` (this can take a while)…");
+        }
         match si::skillopt_command(persona).output() {
-            Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
-            Err(e) => {
-                println!("SkillOpt run failed: {e}");
-                return Ok(());
+            Ok(o) if o.status.success() => {
+                si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout))
             }
+            Ok(o) => anyhow::bail!(
+                "SkillOpt run failed (exit {}): {}",
+                o.status
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+            Err(e) => anyhow::bail!("SkillOpt run failed: {e}"),
         }
     } else {
-        println!(
+        anyhow::bail!(
             "SkillOpt not installed — `{}` (or stage a proposal with --from <file>)",
             si::SKILLOPT_INSTALL
         );
-        return Ok(());
     };
     // Operator-supplied rationale overrides whatever the engine reported.
     if let Some(w) = why {
@@ -291,17 +377,32 @@ fn run_pass(
 
     let diff = si::line_diff(&before, &after);
     if dry_run {
-        println!(
-            "── DRY RUN (nothing staged, skill file untouched) ──\nskill: {}\n{}{diff}",
-            skill_path.display(),
-            quality_lines(
-                quality.score_before,
-                quality.score_after,
-                &quality.heldout_eval_summary,
-                &quality.why_this_improves,
-                &quality.risk_notes,
-            )
-        );
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({
+                    "ok": true,
+                    "action": "dry_run",
+                    "enabled": true,
+                    "staged": false,
+                    "persona": persona,
+                    "skill_path": skill_path.display().to_string(),
+                    "diff": diff,
+                    "message": "nothing staged; skill file unchanged",
+                })
+            ),
+            OutputFormat::Table => println!(
+                "── DRY RUN (nothing staged, skill file untouched) ──\nskill: {}\n{}{diff}",
+                skill_path.display(),
+                quality_lines(
+                    quality.score_before,
+                    quality.score_after,
+                    &quality.heldout_eval_summary,
+                    &quality.why_this_improves,
+                    &quality.risk_notes,
+                )
+            ),
+        }
         return Ok(());
     }
 
@@ -437,16 +538,25 @@ fn quality_lines(
 /// to contribute the improvement upstream. NEOTH asks — the operator decides by
 /// running `pr`. Best-effort: a lookup miss just prints nothing.
 fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) -> Result<()> {
-    let Some(p) = si::load_proposals(home)?.into_iter().find(|p| p.id == id) else {
-        return Ok(());
-    };
-    if crate::skills::bundled::is_bundled(&p.skill) {
+    if let Some(skill) = bundled_proposal_skill(home, id)? {
         println!(
-            "\n  ↑ `{}` is a BUNDLED skill — want to contribute this improvement back to NEOTH?\n    `neoth self-improve pr {id}`        (prepare the PR bundle for review)\n    `neoth self-improve pr {id} --submit` (open it now via your `gh`)",
-            p.skill
+            "\n  ↑ `{skill}` is a BUNDLED skill — want to contribute this improvement back to NEOTH?\n    `neoth self-improve pr {id}`        (prepare the PR bundle for review)\n    `neoth self-improve pr {id} --submit` (open it now via your `gh`)"
         );
     }
     Ok(())
+}
+
+fn bundled_proposal_skill(home: &std::path::Path, id: &str) -> Result<Option<String>> {
+    Ok(si::load_proposals(home)?
+        .into_iter()
+        .find(|proposal| proposal.id == id)
+        .and_then(|proposal| {
+            if crate::skills::bundled::is_bundled(&proposal.skill) {
+                Some(proposal.skill)
+            } else {
+                None
+            }
+        }))
 }
 
 /// IMPR-03: verification-gated execute scaffold for a pending proposal.

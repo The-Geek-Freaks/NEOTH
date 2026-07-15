@@ -2,11 +2,12 @@
 //!
 //! The GUI ships as its OWN binary (`neothd-gui`) so the daemon/CLI stays
 //! dependency-light (no Slint/wgpu linked into `neoth`). This subcommand
-//! resolves that binary — a copy sitting next to the current `neoth`
-//! executable first (the normal `cargo install` / release layout puts both
-//! bins in the same dir), else a bare-name spawn the OS resolves via `PATH` —
-//! and launches it so the onboarding-documented `neoth gui` command Just Works
-//! under one roof instead of asking operators to know the second binary name.
+//! resolves the copy sitting next to the current `neoth` executable (the full
+//! release layout puts both bins in the same dir) and launches it so the
+//! onboarding-documented `neoth gui` command Just Works under one roof instead
+//! of asking operators to know the second binary name. The launcher never
+//! searches `PATH`: a different same-named program must not masquerade as the
+//! GUI belonging to this NEOTH installation.
 //!
 //! If the GUI isn't installed it prints the EXACT install command rather than a
 //! raw OS spawn error. Deliberately thin: zero GUI code links here, so the CLI
@@ -40,6 +41,33 @@ const GUI_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 const GUI_READY_POLL: std::time::Duration = std::time::Duration::from_millis(25);
 const MAX_GUI_READY_BYTES: u64 = 256;
 static GUI_HANDSHAKE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A GUI binary proven to be a file beside this exact `neoth` executable.
+/// Carrying this type into the default-launch decision prevents a missing GUI
+/// from becoming an optimistic bare-name `PATH` spawn later.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GuiBinary(PathBuf);
+
+impl GuiBinary {
+    fn from_path(path: PathBuf) -> Self {
+        Self(path)
+    }
+
+    fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum GuiAvailability {
+    Installed(GuiBinary),
+    Missing,
+}
+
+#[cfg(test)]
+pub(crate) fn installed_gui_for_test(path: PathBuf) -> GuiAvailability {
+    GuiAvailability::Installed(GuiBinary::from_path(path))
+}
 
 struct GuiLaunchHandshake {
     directory: PathBuf,
@@ -144,18 +172,16 @@ fn set_private_gui_handshake_directory(path: &Path) -> Result<()> {
         .with_context(|| format!("restrict GUI handshake directory {}", path.display()))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn set_private_gui_handshake_directory(path: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        return crate::wal::win_native::set_private_current_user_directory_dacl(path)
-            .with_context(|| format!("restrict GUI handshake directory {}", path.display()));
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        Ok(())
-    }
+    crate::wal::win_native::set_private_current_user_directory_dacl(path)
+        .with_context(|| format!("restrict GUI handshake directory {}", path.display()))
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn set_private_gui_handshake_directory(path: &Path) -> Result<()> {
+    let _ = path;
+    Ok(())
 }
 
 fn finish_gui_handshake_result(
@@ -292,70 +318,96 @@ fn gui_bin_filename() -> String {
 }
 
 /// Resolve the GUI binary sitting next to the current `neoth` executable — the
-/// layout `cargo install` and the release archive both produce. Returns `None`
-/// when the current exe can't be located or no sibling exists (the caller then
-/// falls back to a bare-name spawn that the OS resolves through `PATH`).
-fn sibling_gui_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let candidate = dir.join(gui_bin_filename());
-    candidate.is_file().then_some(candidate)
+/// layout produced by the full release installer. A core-only install is a
+/// first-class `Missing` state; it never falls through to `PATH`.
+pub(crate) fn gui_availability() -> GuiAvailability {
+    let Some(executable) = std::env::current_exe().ok() else {
+        return GuiAvailability::Missing;
+    };
+    gui_availability_beside(&executable)
+}
+
+fn gui_availability_beside(executable: &Path) -> GuiAvailability {
+    let Some(directory) = executable.parent() else {
+        return GuiAvailability::Missing;
+    };
+    let candidate = directory.join(gui_bin_filename());
+    if candidate.is_file() {
+        GuiAvailability::Installed(GuiBinary::from_path(candidate))
+    } else {
+        GuiAvailability::Missing
+    }
 }
 
 /// Human/JSON description of where the launcher would find the GUI binary.
-fn resolved_label(resolved: &Option<PathBuf>) -> String {
-    resolved
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| format!("{} (resolved via PATH)", gui_bin_filename()))
+fn resolved_label(availability: &GuiAvailability) -> String {
+    match availability {
+        GuiAvailability::Installed(binary) => binary.as_path().display().to_string(),
+        GuiAvailability::Missing => format!("{} (missing beside neoth)", gui_bin_filename()),
+    }
+}
+
+pub(crate) fn missing_gui_error() -> anyhow::Error {
+    anyhow::anyhow!(
+        "GUI binary `{}` is not installed beside `neoth`. This is a core-only NEOTH installation: run `neoth init` to use the CLI, or repair/update NEOTH with the full installer to add the GUI. PATH entries are deliberately not used.",
+        gui_bin_filename()
+    )
 }
 
 pub fn run_gui(args: GuiArgs, output: OutputFormat) -> Result<()> {
-    launch_gui(args, output, true)
+    let availability = gui_availability();
+    if args.locate {
+        render_location(&availability, output);
+        return Ok(());
+    }
+    let GuiAvailability::Installed(binary) = availability else {
+        return Err(missing_gui_error());
+    };
+    launch_gui(binary, output, true)
 }
 
 /// Open the packaged GUI for the product's first desktop launch without
 /// pre-selecting GUI. The GUI owns the exactly-once GUI-vs-CLI chooser and
 /// persists the operator's answer only after they click a choice.
-pub(crate) fn run_first_launch_chooser() -> Result<()> {
-    launch_gui(GuiArgs::default(), OutputFormat::Table, false)
+pub(crate) fn run_first_launch_chooser(binary: GuiBinary) -> Result<()> {
+    launch_gui(binary, OutputFormat::Table, false)
 }
 
-fn launch_gui(args: GuiArgs, output: OutputFormat, commit_gui_preference: bool) -> Result<()> {
-    let resolved = sibling_gui_path();
+pub(crate) fn run_installed_gui(binary: GuiBinary, output: OutputFormat) -> Result<()> {
+    launch_gui(binary, output, true)
+}
 
-    if args.locate {
-        let found = resolved.is_some();
-        let shown = resolved_label(&resolved);
-        match output {
-            OutputFormat::Json | OutputFormat::Jsonl => println!(
-                "{}",
-                serde_json::json!({
-                    "binary": GUI_BIN_STEM,
-                    "resolved": shown,
-                    "found_beside_neoth": found,
-                })
-            ),
-            OutputFormat::Table => {
-                println!("GUI binary       : {shown}");
-                println!("beside `neoth`   : {found}");
-                if !found {
-                    println!(
-                        "(GUI missing — repair/update NEOTH with the latest installer; source developers can run `cargo build --release -p neothd-gui`)"
-                    );
-                }
+fn render_location(availability: &GuiAvailability, output: OutputFormat) {
+    let found = matches!(availability, GuiAvailability::Installed(_));
+    let shown = resolved_label(availability);
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "binary": GUI_BIN_STEM,
+                "resolved": shown,
+                "found_beside_neoth": found,
+            })
+        ),
+        OutputFormat::Table => {
+            println!("GUI binary       : {shown}");
+            println!("beside `neoth`   : {found}");
+            if !found {
+                println!(
+                    "(GUI missing — the CLI remains available via `neoth init`; repair/update NEOTH with the full installer to add the GUI)"
+                );
             }
         }
-        return Ok(());
     }
+}
 
-    // Prefer the sibling path; else spawn by bare name and let the OS resolve
-    // it through PATH. The unique handshake makes the real Slint event loop,
-    // not a successful `spawn()`, the interface-preference commit point.
-    let program = resolved.unwrap_or_else(|| PathBuf::from(GUI_BIN_STEM));
+fn launch_gui(binary: GuiBinary, output: OutputFormat, commit_gui_preference: bool) -> Result<()> {
+    // The unique handshake makes the real Slint event loop, not a successful
+    // spawn(), the interface-preference commit point.
+    let program = binary.as_path();
     let home = canonical_gui_home(&crate::config::FreedomConfig::default_neoth_home())?;
     let handshake = GuiLaunchHandshake::create(&home)?;
-    let mut command = Command::new(&program);
+    let mut command = Command::new(program);
     command
         .env("NEOTH_HOME", &home)
         .env(GUI_READY_FILE_ENV, &handshake.ready_path)
@@ -369,7 +421,7 @@ fn launch_gui(args: GuiArgs, output: OutputFormat, commit_gui_preference: bool) 
         Err(error) => {
             let result = if error.kind() == std::io::ErrorKind::NotFound {
                 Err(anyhow::anyhow!(
-                    "GUI binary `{}` is missing. Repair or update NEOTH with the latest installer, then run `neoth gui` again. Source developers can build it with `cargo build --release -p neothd-gui`.",
+                    "GUI binary `{}` disappeared after it was detected beside `neoth`. Repair or update NEOTH with the full installer, then run `neoth gui` again.",
                     gui_bin_filename()
                 ))
             } else {
@@ -434,11 +486,46 @@ mod tests {
     }
 
     #[test]
-    fn resolved_label_distinguishes_path_vs_path_fallback() {
-        let none = resolved_label(&None);
-        assert!(none.contains("neothd-gui") && none.contains("PATH"));
-        let some = resolved_label(&Some(PathBuf::from("/opt/neoth/neothd-gui")));
-        assert!(some.contains("/opt/neoth/neothd-gui") && !some.contains("PATH"));
+    fn availability_label_never_promises_a_path_fallback() {
+        let missing = resolved_label(&GuiAvailability::Missing);
+        assert!(missing.contains("neothd-gui") && missing.contains("missing"));
+        assert!(!missing.contains("PATH"));
+
+        let installed = resolved_label(&GuiAvailability::Installed(GuiBinary::from_path(
+            PathBuf::from("/opt/neoth/neothd-gui"),
+        )));
+        assert!(installed.contains("/opt/neoth/neothd-gui"));
+        assert!(!installed.contains("PATH"));
+    }
+
+    #[test]
+    fn sibling_availability_requires_a_real_file() {
+        let installation = tempfile::tempdir().unwrap();
+        let executable = installation
+            .path()
+            .join(format!("neoth{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&executable, b"cli").unwrap();
+
+        assert_eq!(
+            gui_availability_beside(&executable),
+            GuiAvailability::Missing
+        );
+
+        let gui = installation.path().join(gui_bin_filename());
+        std::fs::write(&gui, b"gui").unwrap();
+        assert_eq!(
+            gui_availability_beside(&executable),
+            GuiAvailability::Installed(GuiBinary::from_path(gui))
+        );
+    }
+
+    #[test]
+    fn explicit_gui_missing_error_is_actionable_and_rejects_path() {
+        let error = missing_gui_error().to_string();
+        assert!(error.contains("core-only NEOTH installation"));
+        assert!(error.contains("neoth init"));
+        assert!(error.contains("full installer"));
+        assert!(error.contains("PATH entries are deliberately not used"));
     }
 
     #[test]

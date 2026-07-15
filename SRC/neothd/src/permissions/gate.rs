@@ -519,7 +519,7 @@ mod tests {
     async fn allow_path_lets_action_through() {
         let gate = Gate::for_level(AutonomyLevel::Standard);
         let r = gate.check(&Action::Read, None).await;
-        assert!(r.is_ok(), "Read on Standard must Allow, got {:?}", r);
+        assert!(r.is_ok(), "Read on Standard must Allow, got {r:?}");
     }
 
     #[tokio::test]
@@ -566,7 +566,7 @@ mod tests {
         let r = gate
             .check(&Action::DangerousTarget("home-server".into()), None)
             .await;
-        assert!(matches!(r, Err(GateError::Denied(_))), "got {:?}", r);
+        assert!(matches!(r, Err(GateError::Denied(_))), "got {r:?}");
     }
 
     #[tokio::test]
@@ -576,7 +576,7 @@ mod tests {
         let gate =
             Gate::for_level(AutonomyLevel::Standard).with_confirm(ConfirmStrategy::FailClosed);
         let r = gate.check(&Action::WriteOutsideHome, None).await;
-        assert!(matches!(r, Err(GateError::Denied(_))), "got {:?}", r);
+        assert!(matches!(r, Err(GateError::Denied(_))), "got {r:?}");
     }
 
     #[tokio::test]
@@ -586,7 +586,7 @@ mod tests {
         let gate =
             Gate::for_level(AutonomyLevel::Standard).with_confirm(ConfirmStrategy::AlwaysAllow);
         let r = gate.check(&Action::WriteOutsideHome, None).await;
-        assert!(r.is_ok(), "AlwaysAllow must succeed, got {:?}", r);
+        assert!(r.is_ok(), "AlwaysAllow must succeed, got {r:?}");
     }
 
     #[tokio::test]
@@ -833,8 +833,7 @@ mod tests {
         let r = gate.check(&action, Some(&writer)).await;
         assert!(
             matches!(r, Err(GateError::Denied(_))),
-            "expected Denied via FailClosed; got {:?}",
-            r
+            "expected Denied via FailClosed; got {r:?}"
         );
 
         drop(writer);
@@ -862,8 +861,7 @@ mod tests {
         let r = gate.check(&action, Some(&writer)).await;
         assert!(
             r.is_ok(),
-            "cheap paid call at €0.10 must Allow under Standard; got {:?}",
-            r
+            "cheap paid call at €0.10 must Allow under Standard; got {r:?}"
         );
 
         drop(writer);
@@ -888,8 +886,7 @@ mod tests {
         let r = gate.check(&Action::ChannelSend, Some(&writer)).await;
         assert!(
             matches!(r, Err(GateError::Denied(_))),
-            "ChannelSend on Strict must Deny under FailClosed; got {:?}",
-            r
+            "ChannelSend on Strict must Deny under FailClosed; got {r:?}"
         );
 
         drop(writer);
@@ -912,7 +909,7 @@ mod tests {
         let gate =
             Gate::for_level(AutonomyLevel::Standard).with_confirm(ConfirmStrategy::FailClosed);
         let r = gate.check(&Action::ChannelSend, Some(&writer)).await;
-        assert!(r.is_ok(), "ChannelSend on Standard must Allow; got {:?}", r);
+        assert!(r.is_ok(), "ChannelSend on Standard must Allow; got {r:?}");
 
         drop(writer);
         join.await.unwrap();
@@ -943,7 +940,7 @@ mod tests {
             },
         ] {
             let r = gate.check(&action, Some(&writer)).await;
-            assert!(r.is_ok(), "Full must Allow {:?}; got {:?}", action, r,);
+            assert!(r.is_ok(), "Full must Allow {action:?}; got {r:?}",);
         }
 
         drop(writer);
@@ -980,8 +977,7 @@ mod tests {
             .await;
         assert!(
             matches!(r, Err(GateError::Denied(_))),
-            "Full must still gate DangerousTarget; got {:?}",
-            r
+            "Full must still gate DangerousTarget; got {r:?}"
         );
 
         drop(writer);

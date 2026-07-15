@@ -232,11 +232,10 @@ pub async fn silent_install_windows() -> anyhow::Result<()> {
         let ps_block = format!(
             r#"$ProgressPreference = 'SilentlyContinue'; \
 $dest = "$env:TEMP\OllamaSetup.exe"; \
-Invoke-WebRequest -Uri '{url}' -OutFile $dest; \
+Invoke-WebRequest -Uri '{OLLAMA_SETUP_EXE_URL}' -OutFile $dest; \
 $proc = Start-Process -FilePath $dest -ArgumentList '/VERYSILENT', '/NORESTART', '/SUPPRESSMSGBOXES', '/CURRENTUSER' -PassThru -Wait; \
 Remove-Item -Force $dest -ErrorAction SilentlyContinue; \
 exit $proc.ExitCode"#,
-            url = OLLAMA_SETUP_EXE_URL,
         );
         let status = Command::new("powershell")
             .args([

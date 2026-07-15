@@ -381,10 +381,7 @@ pub(crate) fn step7c_wasm_plugin_activation(
                 .activations
                 .insert(plugin.manifest.id.clone(), state_val);
         }
-        println!(
-            "  [7c/9] {} plugin(s) Active, {} Disabled.",
-            active_count, disabled_count,
-        );
+        println!("  [7c/9] {active_count} plugin(s) Active, {disabled_count} Disabled.",);
     }
     #[cfg(not(feature = "wizard"))]
     {

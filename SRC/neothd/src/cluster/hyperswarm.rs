@@ -135,10 +135,10 @@ impl SwarmHandle {
         // 1. Unannounce + stop discovery for our topic (best-effort — the
         //    handle-drop below also tears the swarm down, this just makes the
         //    unannounce prompt rather than waiting for the actor to wind down).
-        if let Some(h) = self.peer_handle.as_ref() {
-            if let Err(e) = h.leave(self.topic).await {
-                debug!(error = %e, "hyperswarm: leave on shutdown failed (continuing teardown)");
-            }
+        if let Some(h) = self.peer_handle.as_ref()
+            && let Err(e) = h.leave(self.topic).await
+        {
+            debug!(error = %e, "hyperswarm: leave on shutdown failed (continuing teardown)");
         }
         // 2. Drop the command handle → last cmd_tx gone → actor breaks its loop
         //    → DHT destroyed + unannounced.
@@ -817,27 +817,27 @@ async fn handle_peeroxide_connection(
                             seen_first_heartbeat = true;
                             emit_heartbeat_first_wal(wal_writer.as_deref(), &peer_id, &b);
                         }
-                        if let Some(prev) = last_healthy {
-                            if prev != b.healthy {
-                                emit_peer_health_changed_wal(
-                                    wal_writer.as_deref(),
-                                    &peer_id,
-                                    prev,
-                                    b.healthy,
-                                    b.tokens_per_sec,
-                                );
-                            }
+                        if let Some(prev) = last_healthy
+                            && prev != b.healthy
+                        {
+                            emit_peer_health_changed_wal(
+                                wal_writer.as_deref(),
+                                &peer_id,
+                                prev,
+                                b.healthy,
+                                b.tokens_per_sec,
+                            );
                         }
                         last_healthy = Some(b.healthy);
 
-                        if let Some(prev_hash) = last_capabilities_hash {
-                            if prev_hash != b.capabilities_hash {
-                                emit_capabilities_changed_wal(
-                                    wal_writer.as_deref(),
-                                    &peer_id,
-                                    &peer_capabilities,
-                                );
-                            }
+                        if let Some(prev_hash) = last_capabilities_hash
+                            && prev_hash != b.capabilities_hash
+                        {
+                            emit_capabilities_changed_wal(
+                                wal_writer.as_deref(),
+                                &peer_id,
+                                &peer_capabilities,
+                            );
                         }
                         last_capabilities_hash = Some(b.capabilities_hash);
                     }

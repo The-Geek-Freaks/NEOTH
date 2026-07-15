@@ -74,13 +74,13 @@ impl BaselineSnapshot {
     /// exceed `MAX_EMBEDDING_B64_BYTES` so the frame stays under
     /// the WAL payload ceiling.
     pub fn to_payload(&self) -> Result<Vec<u8>, BaselineError> {
-        if let Some(b64) = &self.embedding_b64 {
-            if b64.len() > MAX_EMBEDDING_B64_BYTES {
-                return Err(BaselineError::EmbeddingTooLarge {
-                    actual: b64.len(),
-                    cap: MAX_EMBEDDING_B64_BYTES,
-                });
-            }
+        if let Some(b64) = &self.embedding_b64
+            && b64.len() > MAX_EMBEDDING_B64_BYTES
+        {
+            return Err(BaselineError::EmbeddingTooLarge {
+                actual: b64.len(),
+                cap: MAX_EMBEDDING_B64_BYTES,
+            });
         }
         if self.claim_count as usize != self.claim_hashes.len() {
             return Err(BaselineError::ClaimCountMismatch {

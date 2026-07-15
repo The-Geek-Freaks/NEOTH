@@ -58,7 +58,7 @@ pub struct RunOutcome {
 
 enum JobProvider<'a> {
     Borrowed(&'a AuthorizedProvider),
-    Owned(AuthorizedProvider),
+    Owned(Box<AuthorizedProvider>),
 }
 
 impl JobProvider<'_> {
@@ -210,7 +210,7 @@ async fn resolve_job_provider<'a>(
             .or_else(|| scoped.provider_model.clone()),
         "cron.job",
     );
-    Ok(JobProvider::Owned(authorized))
+    Ok(JobProvider::Owned(Box::new(authorized)))
 }
 
 /// Resolve credentials only from a slot that explicitly names `provider`.
@@ -297,9 +297,8 @@ async fn validate_delivery_target(
                 .iter()
                 .find(|endpoint| endpoint.url == url)
                 .with_context(|| {
-                    format!(
-                        "Cron webhook target is not registered in freedom.yaml webhook_manager.endpoints"
-                    )
+                    "Cron webhook target is not registered in freedom.yaml webhook_manager.endpoints"
+                        .to_string()
                 })?;
             crate::daemon::webhook_manager::validate_cron_endpoint(endpoint)
                 .await
@@ -673,159 +672,148 @@ async fn run_job_with_paths(
     let mut delivery_queued = false;
     let mut delivery_id = None;
     let mut delivery_status = None;
-    if ok {
-        if let Some(delivery) = &job.delivery {
-            match delivery.mode {
-                DeliveryMode::None => {
-                    delivery_status = Some(DeliveryStatus::Skipped);
-                }
-                DeliveryMode::Announce | DeliveryMode::Webhook => {
-                    let target = if delivery.mode == DeliveryMode::Webhook {
-                        delivery
-                            .webhook_url
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                    } else {
-                        format!(
-                            "{}:{}:{}:{}",
-                            delivery.channel,
-                            delivery.recipient.as_deref().unwrap_or("configured-route"),
-                            delivery.account.as_deref().unwrap_or("default-account"),
-                            delivery.thread.as_deref().unwrap_or("root-thread"),
-                        )
-                    };
-                    let id = cron_delivery_id(&job.id, fired_event_id, &target);
-                    let begin = RuntimeState::modify(home, |state| {
-                        state.begin_delivery(
-                            id.clone(),
-                            job.id.clone(),
-                            fired_event_id,
-                            delivery.mode,
-                            target_hash(&target),
-                            delivery.best_effort,
-                        );
-                        Ok(())
-                    });
-                    if let Err(error) = begin {
-                        ok = false;
-                        err_text = Some(format!(
-                            "provider completed, but Cron delivery state could not be persisted: {error:#}"
-                        ));
-                    } else {
-                        delivery_id = Some(id.clone());
-                        match delivery.mode {
-                            DeliveryMode::Announce => {
-                                let channel = delivery.channel.trim().to_ascii_lowercase();
-                                let dedup_key = format!("cron-delivery:{id}");
-                                match enqueue_cron_delivery(
-                                    proactive_queue_path,
-                                    &job.id,
-                                    &channel,
-                                    &output_text,
-                                    &dedup_key,
-                                    now_unix_secs(),
-                                ) {
-                                    Ok(inserted) => {
-                                        delivery_queued = true;
-                                        delivery_status = Some(DeliveryStatus::Queued);
-                                        if let Err(error) = RuntimeState::modify(home, |state| {
-                                            state.update_delivery(&id, DeliveryStatus::Queued, None)
-                                        }) {
-                                            delivery_status = Some(DeliveryStatus::Failed);
-                                            ok = false;
-                                            err_text = Some(format!(
-                                                "delivery was queued, but its durable correlation state could not be updated: {error:#}"
-                                            ));
-                                            warn!(job_id = %job.id, delivery_id = %id, error = %error,
-                                                "Cron announce correlation update failed after enqueue");
-                                        } else {
-                                            info!(
-                                                job_id = %job.id,
-                                                channel = %channel,
-                                                delivery_id = %id,
-                                                inserted,
-                                                "Cron announce durably queued; not yet claimed delivered"
-                                            );
-                                        }
-                                    }
-                                    Err(error) => {
-                                        let message = format!(
-                                            "provider completed, but delivery queue persistence failed for channel `{channel}`: {error:#}"
-                                        );
+    if ok && let Some(delivery) = &job.delivery {
+        match delivery.mode {
+            DeliveryMode::None => {
+                delivery_status = Some(DeliveryStatus::Skipped);
+            }
+            DeliveryMode::Announce | DeliveryMode::Webhook => {
+                let target = if delivery.mode == DeliveryMode::Webhook {
+                    delivery
+                        .webhook_url
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_string()
+                } else {
+                    format!(
+                        "{}:{}:{}:{}",
+                        delivery.channel,
+                        delivery.recipient.as_deref().unwrap_or("configured-route"),
+                        delivery.account.as_deref().unwrap_or("default-account"),
+                        delivery.thread.as_deref().unwrap_or("root-thread"),
+                    )
+                };
+                let id = cron_delivery_id(&job.id, fired_event_id, &target);
+                let begin = RuntimeState::modify(home, |state| {
+                    state.begin_delivery(
+                        id.clone(),
+                        job.id.clone(),
+                        fired_event_id,
+                        delivery.mode,
+                        target_hash(&target),
+                        delivery.best_effort,
+                    );
+                    Ok(())
+                });
+                if let Err(error) = begin {
+                    ok = false;
+                    err_text = Some(format!(
+                        "provider completed, but Cron delivery state could not be persisted: {error:#}"
+                    ));
+                } else {
+                    delivery_id = Some(id.clone());
+                    match delivery.mode {
+                        DeliveryMode::Announce => {
+                            let channel = delivery.channel.trim().to_ascii_lowercase();
+                            let dedup_key = format!("cron-delivery:{id}");
+                            match enqueue_cron_delivery(
+                                proactive_queue_path,
+                                &job.id,
+                                &channel,
+                                &output_text,
+                                &dedup_key,
+                                now_unix_secs(),
+                            ) {
+                                Ok(inserted) => {
+                                    delivery_queued = true;
+                                    delivery_status = Some(DeliveryStatus::Queued);
+                                    if let Err(error) = RuntimeState::modify(home, |state| {
+                                        state.update_delivery(&id, DeliveryStatus::Queued, None)
+                                    }) {
                                         delivery_status = Some(DeliveryStatus::Failed);
-                                        if let Err(state_error) =
-                                            RuntimeState::modify(home, |state| {
-                                                state.update_delivery(
-                                                    &id,
-                                                    DeliveryStatus::Failed,
-                                                    Some(message.clone()),
-                                                )
-                                            })
-                                        {
-                                            warn!(job_id = %job.id, delivery_id = %id, error = %state_error,
-                                                "Cron delivery failure could not be recorded in correlation state");
-                                        }
-                                        warn!(job_id = %job.id, channel = %channel, error = %error,
-                                            "Cron announce enqueue failed");
-                                        if !delivery.best_effort {
-                                            ok = false;
-                                            err_text = Some(message);
-                                        }
+                                        ok = false;
+                                        err_text = Some(format!(
+                                            "delivery was queued, but its durable correlation state could not be updated: {error:#}"
+                                        ));
+                                        warn!(job_id = %job.id, delivery_id = %id, error = %error,
+                                                "Cron announce correlation update failed after enqueue");
+                                    } else {
+                                        info!(
+                                            job_id = %job.id,
+                                            channel = %channel,
+                                            delivery_id = %id,
+                                            inserted,
+                                            "Cron announce durably queued; not yet claimed delivered"
+                                        );
                                     }
                                 }
-                            }
-                            DeliveryMode::Webhook => {
-                                let url = delivery.webhook_url.as_deref().unwrap_or_default();
-                                let endpoint = config
-                                    .webhook_manager
-                                    .endpoints
-                                    .iter()
-                                    .find(|endpoint| endpoint.url == url)
-                                    .expect("validated Cron webhook endpoint must remain present");
-                                use crate::daemon::webhook_manager::{
-                                    CronWebhookDelivery, deliver_cron_result,
-                                };
-                                let terminal = deliver_cron_result(
-                                    endpoint,
-                                    &job.id,
-                                    &id,
-                                    &output_text,
-                                    writer,
-                                )
-                                .await;
-                                let (status, error) = match terminal {
-                                    CronWebhookDelivery::Delivered => {
-                                        (DeliveryStatus::Delivered, None)
-                                    }
-                                    CronWebhookDelivery::PermanentFailure => (
-                                        DeliveryStatus::Failed,
-                                        Some("permanent webhook delivery failure".to_string()),
-                                    ),
-                                    CronWebhookDelivery::RetryableFailure => (
-                                        DeliveryStatus::Failed,
-                                        Some("retryable webhook delivery failure".to_string()),
-                                    ),
-                                };
-                                delivery_status = Some(status);
-                                if let Err(state_error) = RuntimeState::modify(home, |state| {
-                                    state.update_delivery(&id, status, error.clone())
-                                }) {
+                                Err(error) => {
+                                    let message = format!(
+                                        "provider completed, but delivery queue persistence failed for channel `{channel}`: {error:#}"
+                                    );
                                     delivery_status = Some(DeliveryStatus::Failed);
-                                    ok = false;
-                                    err_text = Some(format!(
-                                        "webhook reached a terminal state, but its durable correlation state could not be updated: {state_error:#}"
-                                    ));
-                                    warn!(job_id = %job.id, delivery_id = %id, error = %state_error,
-                                        "Cron webhook correlation update failed");
-                                }
-                                if status != DeliveryStatus::Delivered && !delivery.best_effort {
-                                    ok = false;
-                                    err_text = error;
+                                    if let Err(state_error) = RuntimeState::modify(home, |state| {
+                                        state.update_delivery(
+                                            &id,
+                                            DeliveryStatus::Failed,
+                                            Some(message.clone()),
+                                        )
+                                    }) {
+                                        warn!(job_id = %job.id, delivery_id = %id, error = %state_error,
+                                                "Cron delivery failure could not be recorded in correlation state");
+                                    }
+                                    warn!(job_id = %job.id, channel = %channel, error = %error,
+                                            "Cron announce enqueue failed");
+                                    if !delivery.best_effort {
+                                        ok = false;
+                                        err_text = Some(message);
+                                    }
                                 }
                             }
-                            DeliveryMode::None => unreachable!(),
                         }
+                        DeliveryMode::Webhook => {
+                            let url = delivery.webhook_url.as_deref().unwrap_or_default();
+                            let endpoint = config
+                                .webhook_manager
+                                .endpoints
+                                .iter()
+                                .find(|endpoint| endpoint.url == url)
+                                .expect("validated Cron webhook endpoint must remain present");
+                            use crate::daemon::webhook_manager::{
+                                CronWebhookDelivery, deliver_cron_result,
+                            };
+                            let terminal =
+                                deliver_cron_result(endpoint, &job.id, &id, &output_text, writer)
+                                    .await;
+                            let (status, error) = match terminal {
+                                CronWebhookDelivery::Delivered => (DeliveryStatus::Delivered, None),
+                                CronWebhookDelivery::PermanentFailure => (
+                                    DeliveryStatus::Failed,
+                                    Some("permanent webhook delivery failure".to_string()),
+                                ),
+                                CronWebhookDelivery::RetryableFailure => (
+                                    DeliveryStatus::Failed,
+                                    Some("retryable webhook delivery failure".to_string()),
+                                ),
+                            };
+                            delivery_status = Some(status);
+                            if let Err(state_error) = RuntimeState::modify(home, |state| {
+                                state.update_delivery(&id, status, error.clone())
+                            }) {
+                                delivery_status = Some(DeliveryStatus::Failed);
+                                ok = false;
+                                err_text = Some(format!(
+                                    "webhook reached a terminal state, but its durable correlation state could not be updated: {state_error:#}"
+                                ));
+                                warn!(job_id = %job.id, delivery_id = %id, error = %state_error,
+                                        "Cron webhook correlation update failed");
+                            }
+                            if status != DeliveryStatus::Delivered && !delivery.best_effort {
+                                ok = false;
+                                err_text = error;
+                            }
+                        }
+                        DeliveryMode::None => unreachable!(),
                     }
                 }
             }
@@ -1597,6 +1585,37 @@ mod workstream_c_tests {
         }
     }
 
+    struct DelayedQualityProvider {
+        calls: Arc<AtomicUsize>,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl Provider for DelayedQualityProvider {
+        fn name(&self) -> &'static str {
+            "delayed-quality-mock"
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.delay).await;
+            Ok(Completion {
+                text: if call == 0 {
+                    "too short".into()
+                } else {
+                    passing_briefing()
+                },
+                identity: Default::default(),
+                model: "mock".into(),
+                latency: self.delay,
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
     fn passing_briefing() -> String {
         let facts = (0..90)
             .map(|index| format!("fact-{index}"))
@@ -1767,6 +1786,65 @@ mod workstream_c_tests {
                     .as_str()
                     .is_some_and(|error| error.contains("quality gate"))
         }));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn quality_retry_uses_original_absolute_job_deadline() {
+        let dir = tempdir().unwrap();
+        let queue_path = dir.path().join("proactive_queue.json");
+        let seg = dir.path().join("quality-shared-deadline.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(DelayedQualityProvider {
+            calls: calls.clone(),
+            // Each leaf fits inside a fresh one-second timeout. Together they
+            // exceed one second, so only a shared absolute deadline can make
+            // the regeneration time out.
+            delay: Duration::from_millis(750),
+        });
+        let mut job = briefing_job();
+        job.timeout_seconds = 1;
+        job.delivery = Some(Delivery::new("telegram"));
+
+        let outcome = run_job_with_paths(
+            dir.path(),
+            &job,
+            &provider,
+            &writer,
+            &queue_path,
+            &dir.path().join("hooks"),
+            crate::hooks::run_stage,
+            &crate::config::FreedomConfig::default(),
+        )
+        .await
+        .expect("deadline exhaustion must be represented in RunOutcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert!(!outcome.success);
+        assert!(!outcome.delivery_queued);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "one initial request and exactly one regeneration are allowed"
+        );
+        assert!(outcome.error.as_deref().is_some_and(|error| {
+            error.contains("briefing regeneration timed out within the 1s job deadline")
+        }));
+        let queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
+        assert!(
+            queue
+                .peek()
+                .iter()
+                .all(|item| item.source != "cron:morning_brief"),
+            "a regeneration that exceeds the original deadline must never be delivered"
+        );
+        assert!(
+            wal_json_events(&seg)
+                .iter()
+                .any(|(event_type, _)| *event_type == EVENT_TYPE_JOB_FAILED),
+            "deadline exhaustion must end in a durable JOB_FAILED event"
+        );
     }
 
     #[tokio::test]
@@ -2418,8 +2496,7 @@ mod workstream_c_tests {
         let sys = captured_system.lock().unwrap().clone();
         assert!(
             sys.is_none(),
-            "non-Briefing job must receive system: None, got Some({:?})",
-            sys
+            "non-Briefing job must receive system: None, got Some({sys:?})"
         );
     }
 }

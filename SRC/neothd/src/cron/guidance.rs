@@ -113,8 +113,7 @@ pub fn classify(spec: &JobSpec<'_>) -> Recommendation {
     let est_fires = estimate_fires_per_day(spec.cron_expr);
     if est_fires > 24 {
         n8n_reasons.push(format!(
-            "estimated {} fires/day (> 24) — n8n's visual debug helps at high frequency",
-            est_fires,
+            "estimated {est_fires} fires/day (> 24) — n8n's visual debug helps at high frequency",
         ));
     }
 
@@ -124,8 +123,7 @@ pub fn classify(spec: &JobSpec<'_>) -> Recommendation {
     }
     if est_fires <= 4 {
         local_reasons.push(format!(
-            "estimated {} fires/day (≤ 4) — local cron keeps the schedule visible in freedom.yaml",
-            est_fires,
+            "estimated {est_fires} fires/day (≤ 4) — local cron keeps the schedule visible in freedom.yaml",
         ));
     }
 
@@ -236,23 +234,22 @@ fn field_density(field: &str, max: u32) -> u32 {
     if field == "*" {
         return max;
     }
-    if let Some(rest) = field.strip_prefix("*/") {
-        if let Ok(step) = rest.parse::<u32>() {
-            if step == 0 {
-                return 1;
-            }
-            return max.div_ceil(step);
+    if let Some(rest) = field.strip_prefix("*/")
+        && let Ok(step) = rest.parse::<u32>()
+    {
+        if step == 0 {
+            return 1;
         }
+        return max.div_ceil(step);
     }
     if field.contains(',') {
         return field.split(',').count() as u32;
     }
-    if let Some((a, b)) = field.split_once('-') {
-        if let (Ok(lo), Ok(hi)) = (a.parse::<u32>(), b.parse::<u32>()) {
-            if hi >= lo {
-                return hi - lo + 1;
-            }
-        }
+    if let Some((a, b)) = field.split_once('-')
+        && let (Ok(lo), Ok(hi)) = (a.parse::<u32>(), b.parse::<u32>())
+        && hi >= lo
+    {
+        return hi - lo + 1;
     }
     1
 }

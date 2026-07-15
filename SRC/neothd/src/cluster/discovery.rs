@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn debug_redacts_full_cluster_key() {
         let key = cluster_key(PHRASE).unwrap();
-        let dbg = format!("{:?}", key);
+        let dbg = format!("{key:?}");
         assert_eq!(
             dbg, "ClusterKey(<redacted>)",
             "Debug must emit a fixed redaction marker with NO key bytes"

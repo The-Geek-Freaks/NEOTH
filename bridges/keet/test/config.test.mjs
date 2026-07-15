@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { addTopic, loadConfig, saveConfig } from '../src/config.mjs'
+import { addTopic, defaultBridgeStorage, loadConfig, saveConfig } from '../src/config.mjs'
 
 function fixture () {
   return {
@@ -15,6 +15,19 @@ function fixture () {
     topics: [`nk1_${'a'.repeat(42)}A`]
   }
 }
+
+test('default storage follows the same NEOTH_HOME instance as the Rust runtime', () => {
+  const fallbackHome = path.join('fallback', 'home')
+  const customHome = path.join('custom', 'neoth-home')
+  assert.equal(
+    defaultBridgeStorage({ NEOTH_HOME: customHome }, fallbackHome),
+    path.join(customHome, 'keet-bridge')
+  )
+  assert.equal(
+    defaultBridgeStorage({ NEOTH_HOME: '' }, fallbackHome),
+    path.join(fallbackHome, '.neoth', 'keet-bridge')
+  )
+})
 
 test('config snapshots are append-only and recover from a torn newest generation', (context) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'neoth-keet-config-'))

@@ -443,15 +443,15 @@ fn list_recipes(output: OutputFormat) -> Result<()> {
             if !is_yaml {
                 continue;
             }
-            if let Ok(body) = std::fs::read_to_string(&path) {
-                if let Ok(spec) = RecipeSpec::parse(&body) {
-                    let fname = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    found.push((fname, spec.name, spec.description));
-                }
+            if let Ok(body) = std::fs::read_to_string(&path)
+                && let Ok(spec) = RecipeSpec::parse(&body)
+            {
+                let fname = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                found.push((fname, spec.name, spec.description));
             }
         }
     }

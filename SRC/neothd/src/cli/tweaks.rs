@@ -266,7 +266,7 @@ fn render_show(t: &Tweaks, path: &std::path::Path, output: &OutputFormat) -> Res
                         prefix,
                         t.theme
                             .panel_opacity
-                            .map_or("(default)".to_string(), |v| format!("{:.2}", v)),
+                            .map_or("(default)".to_string(), |v| format!("{v:.2}")),
                         sink
                     ),
                     "accent_color" => println!(

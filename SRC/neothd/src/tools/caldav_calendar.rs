@@ -18,9 +18,8 @@
 
 use anyhow::{Context, Result};
 
-use super::caldav::{CreateOutcome, parse_multistatus, parse_property, resource_url, unfold_ics};
+use super::caldav::{CaldavEndpoint, CreateOutcome, parse_multistatus, parse_property, unfold_ics};
 use crate::email::calendar::{CalendarEvent, render_ics};
-use crate::providers::http_client;
 
 /// The `REPORT` body: a `calendar-query` filtering for `VEVENT`, asking for the
 /// `calendar-data` of each match. Mirrors `caldav::CALENDAR_QUERY_VTODO`.
@@ -134,9 +133,11 @@ pub async fn list_events_against(
     username: &str,
     password: &str,
 ) -> Result<Vec<CalendarEvent>> {
+    let endpoint = CaldavEndpoint::parse(calendar_url)?;
     let method = reqwest::Method::from_bytes(b"REPORT").expect("REPORT is a valid method token");
-    let resp = http_client::build_client()?
-        .request(method, calendar_url)
+    let resp = endpoint
+        .client()?
+        .request(method, endpoint.collection_url())
         .basic_auth(username, Some(password))
         .header("Depth", "1")
         .header(
@@ -191,9 +192,11 @@ pub async fn create_event_against(
     event.event_id = uid.clone();
     let body = render_ics(&event).replace('\n', "\r\n");
 
-    let url = resource_url(calendar_url, &uid);
-    let resp = http_client::build_client()?
-        .put(&url)
+    let endpoint = CaldavEndpoint::parse(calendar_url)?;
+    let url = endpoint.resource_url(&uid)?;
+    let resp = endpoint
+        .client()?
+        .put(url.clone())
         .basic_auth(username, Some(password))
         .header(
             reqwest::header::CONTENT_TYPE,
@@ -326,5 +329,37 @@ mod tests {
     fn unescape_handles_all_escapes() {
         assert_eq!(unescape_ics_text(r"a\,b\;c\\d\ne"), "a,b;c\\d\ne");
         assert_eq!(unescape_ics_text("plain"), "plain");
+    }
+
+    #[tokio::test]
+    async fn event_network_paths_reject_remote_plain_http_before_dispatch() {
+        let list_error = list_events_against(
+            "http://calendar.example/dav/events",
+            "private-user",
+            "private-password",
+        )
+        .await
+        .unwrap_err();
+        assert!(list_error.to_string().contains("must use HTTPS"));
+
+        let event = CalendarEvent {
+            calendar_id: "primary".into(),
+            event_id: "evt-1".into(),
+            summary: "Private meeting".into(),
+            description: "Sensitive notes".into(),
+            location: String::new(),
+            start_rfc3339: "2026-05-30T09:00:00Z".into(),
+            end_rfc3339: "2026-05-30T10:00:00Z".into(),
+            attendees: vec![],
+        };
+        let create_error = create_event_against(
+            "http://calendar.example/dav/events",
+            "private-user",
+            "private-password",
+            &event,
+        )
+        .await
+        .unwrap_err();
+        assert!(create_error.to_string().contains("must use HTTPS"));
     }
 }

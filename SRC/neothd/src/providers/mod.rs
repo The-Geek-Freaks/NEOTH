@@ -254,12 +254,12 @@ impl ProviderRequestControls {
                 unsupported.join(", ")
             );
         }
-        if let (Some(temperature), Some(maximum)) = (req.temperature, self.maximum_temperature) {
-            if temperature > maximum as f32 {
-                anyhow::bail!(
-                    "provider `{provider}`: temperature must be within [0.0, {maximum}.0], got {temperature}"
-                );
-            }
+        if let (Some(temperature), Some(maximum)) = (req.temperature, self.maximum_temperature)
+            && temperature > maximum as f32
+        {
+            anyhow::bail!(
+                "provider `{provider}`: temperature must be within [0.0, {maximum}.0], got {temperature}"
+            );
         }
         Ok(())
     }
@@ -275,27 +275,27 @@ pub(crate) fn validate_portable_request_controls(provider: &str, req: &Request) 
     const MAX_STOP_SEQUENCE_TOTAL_BYTES: usize = 2_048;
     const MAX_THINKING_BUDGET: u32 = 1_000_000;
 
-    if let Some(temperature) = req.temperature {
-        if !temperature.is_finite() || !(0.0..=2.0).contains(&temperature) {
-            anyhow::bail!(
-                "provider `{provider}`: temperature must be finite and within [0.0, 2.0], got {temperature}"
-            );
-        }
+    if let Some(temperature) = req.temperature
+        && (!temperature.is_finite() || !(0.0..=2.0).contains(&temperature))
+    {
+        anyhow::bail!(
+            "provider `{provider}`: temperature must be finite and within [0.0, 2.0], got {temperature}"
+        );
     }
-    if let Some(top_p) = req.top_p {
-        if !top_p.is_finite() || top_p <= 0.0 || top_p > 1.0 {
-            anyhow::bail!(
-                "provider `{provider}`: top_p must be finite and within (0.0, 1.0], got {top_p}"
-            );
-        }
+    if let Some(top_p) = req.top_p
+        && (!top_p.is_finite() || top_p <= 0.0 || top_p > 1.0)
+    {
+        anyhow::bail!(
+            "provider `{provider}`: top_p must be finite and within (0.0, 1.0], got {top_p}"
+        );
     }
-    if let Some(seed) = req.sampling_seed {
-        if seed > u64::from(u32::MAX) {
-            anyhow::bail!(
-                "provider `{provider}`: sampling_seed must be within [0, {}], got {seed}",
-                u32::MAX
-            );
-        }
+    if let Some(seed) = req.sampling_seed
+        && seed > u64::from(u32::MAX)
+    {
+        anyhow::bail!(
+            "provider `{provider}`: sampling_seed must be within [0, {}], got {seed}",
+            u32::MAX
+        );
     }
     if req.stop_sequences.len() > MAX_STOP_SEQUENCES {
         anyhow::bail!(
@@ -324,12 +324,12 @@ pub(crate) fn validate_portable_request_controls(provider: &str, req: &Request) 
             "provider `{provider}`: stop sequences exceed {MAX_STOP_SEQUENCE_TOTAL_BYTES} total UTF-8 bytes"
         );
     }
-    if let Some(thinking_budget) = req.thinking_budget {
-        if thinking_budget == 0 || thinking_budget > MAX_THINKING_BUDGET {
-            anyhow::bail!(
-                "provider `{provider}`: thinking_budget must be within [1, {MAX_THINKING_BUDGET}], got {thinking_budget}"
-            );
-        }
+    if let Some(thinking_budget) = req.thinking_budget
+        && (thinking_budget == 0 || thinking_budget > MAX_THINKING_BUDGET)
+    {
+        anyhow::bail!(
+            "provider `{provider}`: thinking_budget must be within [1, {MAX_THINKING_BUDGET}], got {thinking_budget}"
+        );
     }
     Ok(())
 }
@@ -1093,13 +1093,13 @@ fn build_utility_config(config: &FreedomConfig) -> Option<FreedomConfig> {
     // a bare name (not a valid HF repo path), so the local adapter manages its own
     // model. GR-076: with `resolve_exact`, a missing `fast` row genuinely leaves
     // `provider_model` unset (the prior `resolve` always returned the flagship).
-    if !is_local_provider(kind.as_str()) {
-        if let Some(fast) = crate::providers::model_roles::default_table().resolve_exact(
+    if !is_local_provider(kind.as_str())
+        && let Some(fast) = crate::providers::model_roles::default_table().resolve_exact(
             kind.as_str(),
             crate::providers::model_roles::ModelRole::Fast,
-        ) {
-            synthetic.provider_model = Some(fast.to_string());
-        }
+        )
+    {
+        synthetic.provider_model = Some(fast.to_string());
     }
     Some(synthetic)
 }
@@ -1816,8 +1816,7 @@ mod tests {
             let slot = cfg.inference.slot_for(role);
             assert!(
                 slot.provider.is_none(),
-                "single mode default_slot must leave per-role provider unset for {:?}",
-                role
+                "single mode default_slot must leave per-role provider unset for {role:?}"
             );
         }
     }

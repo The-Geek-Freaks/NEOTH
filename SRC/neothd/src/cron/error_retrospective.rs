@@ -180,10 +180,9 @@ fn recommendation_for(cause: &ErrorCause, consecutive_failures: u32) -> String {
         ErrorCause::Timeout => {
             if recurring {
                 format!(
-                    "Job has timed out {} consecutive times. \
+                    "Job has timed out {consecutive_failures} consecutive times. \
                      Increase `timeout_seconds` in jobs.yaml, or reduce the \
-                     prompt scope.",
-                    consecutive_failures
+                     prompt scope."
                 )
             } else {
                 "Job timed out. Check provider latency or increase \
@@ -194,10 +193,9 @@ fn recommendation_for(cause: &ErrorCause, consecutive_failures: u32) -> String {
         ErrorCause::ProviderError => {
             if recurring {
                 format!(
-                    "Provider error repeated {} times. \
+                    "Provider error repeated {consecutive_failures} times. \
                      Verify API credentials, check quota/rate-limits, or \
-                     switch to a fallback provider in freedom.yaml.",
-                    consecutive_failures
+                     switch to a fallback provider in freedom.yaml."
                 )
             } else {
                 "Provider returned an error. Check credentials and \
@@ -217,9 +215,8 @@ fn recommendation_for(cause: &ErrorCause, consecutive_failures: u32) -> String {
         ErrorCause::Unknown => {
             if recurring {
                 format!(
-                    "Unknown error class repeated {} times. \
-                     Inspect `neoth cron logs --id <job>` for the raw error text.",
-                    consecutive_failures
+                    "Unknown error class repeated {consecutive_failures} times. \
+                     Inspect `neoth cron logs --id <job>` for the raw error text."
                 )
             } else {
                 "Unknown error. Inspect `neoth cron logs --id <job>` for \

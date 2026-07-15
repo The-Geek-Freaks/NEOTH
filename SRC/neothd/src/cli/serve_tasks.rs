@@ -2456,21 +2456,20 @@ pub(crate) fn spawn_omi_ingest(
                 .await
                 {
                     Ok(outcome) => {
-                        if outcome.changed() {
-                            if let Err(error) =
+                        if outcome.changed()
+                            && let Err(error) =
                                 crate::daemon::omi_ingest_task::emit_privacy_enforcement_audit(
                                     &writer, outcome,
                                 )
-                            {
-                                // Privacy deletion wins over audit failure. The
-                                // deletion remains applied and the runtime may
-                                // use only the stricter candidate policy.
-                                tracing::error!(
-                                    %error,
-                                    ?outcome,
-                                    "OMI privacy policy committed without audit frame"
-                                );
-                            }
+                        {
+                            // Privacy deletion wins over audit failure. The
+                            // deletion remains applied and the runtime may
+                            // use only the stricter candidate policy.
+                            tracing::error!(
+                                %error,
+                                ?outcome,
+                                "OMI privacy policy committed without audit frame"
+                            );
                         }
                         applied_privacy_config = Some(config.omi.clone());
                         Ok(())
@@ -4138,10 +4137,10 @@ pub(crate) fn spawn_usage_export(home: &std::path::Path) -> JoinHandle<()> {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            if let Some(snap) = crate::domain_events::global_meter_snapshot() {
-                if let Err(e) = write_usage_snapshot(&path, &snap) {
-                    tracing::debug!(error = %e, "usage-meter export write failed (best-effort)");
-                }
+            if let Some(snap) = crate::domain_events::global_meter_snapshot()
+                && let Err(e) = write_usage_snapshot(&path, &snap)
+            {
+                tracing::debug!(error = %e, "usage-meter export write failed (best-effort)");
             }
         }
     })

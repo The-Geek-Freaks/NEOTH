@@ -86,17 +86,17 @@ impl SubdirHintTracker {
             return;
         };
         for key in FILE_KEYS {
-            if let Some(s) = obj.get(key).and_then(|v| v.as_str()) {
-                if let Some(dir) = resolve_parent_dir(s, working_dir) {
-                    self.push_pending(dir);
-                }
+            if let Some(s) = obj.get(key).and_then(|v| v.as_str())
+                && let Some(dir) = resolve_parent_dir(s, working_dir)
+            {
+                self.push_pending(dir);
             }
         }
         for key in DIR_KEYS {
-            if let Some(s) = obj.get(key).and_then(|v| v.as_str()) {
-                if let Some(dir) = resolve_dir(s, working_dir) {
-                    self.push_pending(dir);
-                }
+            if let Some(s) = obj.get(key).and_then(|v| v.as_str())
+                && let Some(dir) = resolve_dir(s, working_dir)
+            {
+                self.push_pending(dir);
             }
         }
         // A shell-ish `command` string: treat path-looking tokens as files.
@@ -105,10 +105,10 @@ impl SubdirHintTracker {
                 if tok.starts_with('-') {
                     continue;
                 }
-                if tok.contains('/') || tok.contains('\\') || tok.contains('.') {
-                    if let Some(dir) = resolve_parent_dir(tok, working_dir) {
-                        self.push_pending(dir);
-                    }
+                if (tok.contains('/') || tok.contains('\\') || tok.contains('.'))
+                    && let Some(dir) = resolve_parent_dir(tok, working_dir)
+                {
+                    self.push_pending(dir);
                 }
             }
         }
@@ -260,7 +260,7 @@ fn load_single_dir_hints(
         if let Ok(body) = std::fs::read_to_string(&file_canon) {
             let capped = cap_chars(&body, MAX_HINT_BYTES);
             if !capped.trim().is_empty() {
-                parts.push(format!("--- {} ---\n{}", fname, capped));
+                parts.push(format!("--- {fname} ---\n{capped}"));
             }
         }
     }

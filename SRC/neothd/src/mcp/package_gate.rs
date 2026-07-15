@@ -890,9 +890,7 @@ pub(super) fn parse_install(call: &ParsedToolCall) -> ParsedInstall {
                 ParsedInstall::NotInstall
             };
         }
-    } else if manager == PackageManager::Uv
-        && lower_args.iter().position(|arg| arg == "pip").is_some()
-    {
+    } else if manager == PackageManager::Uv && lower_args.iter().any(|arg| arg == "pip") {
         let Some(index) = lower_args.iter().position(|arg| arg == "install") else {
             return ParsedInstall::Unverified(UnverifiedInstallIntent {
                 code: "unsupported_package_manager_action",

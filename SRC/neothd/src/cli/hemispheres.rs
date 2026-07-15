@@ -257,7 +257,7 @@ async fn run_preset(
     let prior_yaml_bytes = std::fs::read(&path).unwrap_or_default();
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres preset audit")?;
-    let snapshot_segment = wal_dir.join(format!("hemispheres-preset-snapshot-{}.wal", now_unix));
+    let snapshot_segment = wal_dir.join(format!("hemispheres-preset-snapshot-{now_unix}.wal"));
     let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment)
         .context("spawn WAL writer for hemispheres preset rollback snapshot")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
@@ -267,7 +267,7 @@ async fn run_preset(
         path.display().to_string(),
         &prior_yaml_bytes,
         now_unix,
-        Some(format!("hemispheres preset {:?} via CLI", name)),
+        Some(format!("hemispheres preset {name:?} via CLI")),
     )
     .await
     .context("emit pre-mutation snapshot for freedom.yaml preset write")?;
@@ -427,7 +427,7 @@ async fn run_mode_single(
     let prior_yaml_bytes = std::fs::read(&path).unwrap_or_default();
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
-    let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{}.wal", now_unix));
+    let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{now_unix}.wal"));
     let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment.clone())
         .context("spawn WAL writer for hemispheres rollback snapshot")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
@@ -681,7 +681,7 @@ async fn emit_rebind_audit_to(
     now_unix: i64,
 ) -> Result<std::path::PathBuf> {
     std::fs::create_dir_all(wal_dir).context("create WAL dir for hemisphere rebind audit")?;
-    let segment = wal_dir.join(format!("hemisphere-rebind-{}.wal", now_unix));
+    let segment = wal_dir.join(format!("hemisphere-rebind-{now_unix}.wal"));
 
     let payload = serde_json::to_vec(&serde_json::json!({
         "role": role.as_str(),

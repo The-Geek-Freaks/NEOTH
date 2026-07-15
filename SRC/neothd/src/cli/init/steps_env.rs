@@ -277,10 +277,10 @@ pub(crate) async fn step1b_detect_environment(
                 // audit frame. The wizard has no WAL writer of its
                 // own — at-least-once via sidecar matches the
                 // installer_ran + credentials_import path.
-                if let Some(payload) = outcome.frame_payload.as_ref() {
-                    if let Err(e) = write_detect_complete_sidecar(neoth_dir, now_unix, payload) {
-                        warn!(error = %e, "detect_complete sidecar write failed (non-fatal)");
-                    }
+                if let Some(payload) = outcome.frame_payload.as_ref()
+                    && let Err(e) = write_detect_complete_sidecar(neoth_dir, now_unix, payload)
+                {
+                    warn!(error = %e, "detect_complete sidecar write failed (non-fatal)");
                 }
             } else {
                 println!("  (using cached snapshot from earlier today)");

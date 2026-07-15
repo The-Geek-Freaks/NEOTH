@@ -836,14 +836,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
         // GR-010: skip duplicate wamids — a Meta reconnect-storm re-delivers the
         // same message_id, and without this every re-delivery would re-run the
         // whole pipeline (and re-send the reply when send creds are wired).
-        if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref()) {
-            if dedup.lock().await.check_and_insert(mid) {
-                debug!(
-                    message_id = mid,
-                    "webhook: duplicate wamid — skipping re-delivery"
-                );
-                continue;
-            }
+        if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref())
+            && dedup.lock().await.check_and_insert(mid)
+        {
+            debug!(
+                message_id = mid,
+                "webhook: duplicate wamid — skipping re-delivery"
+            );
+            continue;
         }
         let chat_id = msg.chat_id.clone();
         match (cfg.pipeline)(msg).await {
@@ -1082,14 +1082,14 @@ async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMe
     for msg in msgs {
         // LINE re-delivers the SAME webhookEventId (carried as message_id); skip
         // a duplicate before it re-runs the pipeline (+ re-sends the reply).
-        if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref()) {
-            if dedup.lock().await.check_and_insert(mid) {
-                debug!(
-                    message_id = mid,
-                    "LINE webhook: duplicate event — skipping redelivery"
-                );
-                continue;
-            }
+        if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref())
+            && dedup.lock().await.check_and_insert(mid)
+        {
+            debug!(
+                message_id = mid,
+                "LINE webhook: duplicate event — skipping redelivery"
+            );
+            continue;
         }
         let chat_id = msg.chat_id.clone();
         match (cfg.pipeline)(msg).await {
@@ -1732,7 +1732,7 @@ mod tests {
         });
         // Give the server a beat to bind.
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
         let (status, body) = http_get(
             &host,
             "/webhook?hub.mode=subscribe&hub.verify_token=verify123&hub.challenge=NONCE-1",
@@ -1777,7 +1777,7 @@ mod tests {
             .await;
         });
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
 
         let body = br#"{"object":"whatsapp_business_account","entry":[]}"#;
         let sig = sign_meta(body, b"appsecret");
@@ -1848,7 +1848,7 @@ mod tests {
             .await;
         });
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
 
         // A real WhatsApp text message → decode_payload yields Messages → the
         // pipeline is invoked (and blocks on the semaphore).
@@ -1991,7 +1991,7 @@ mod tests {
             .await;
         });
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
 
         let body = br#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.X","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
         let sig = sign_meta(body, b"appsecret");
@@ -2055,7 +2055,7 @@ mod tests {
             .await;
         });
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
 
         let body = br#"{"type":"url_verification","challenge":"slack-nonce-7"}"#;
         let ts = std::time::SystemTime::now()
@@ -2106,7 +2106,7 @@ mod tests {
             .await;
         });
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
         let (status, body) = http_get(&host, "/nope").await;
         assert_eq!(status, 404);
         assert!(body.contains("not found"));
@@ -2149,7 +2149,7 @@ mod tests {
         // Submit body slightly over the cap. The smallest possible
         // over-cap exercises the Limited<> rejection path without
         // contending with parallel webhook tests for scheduler time.
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
         let big = vec![b'A'; MAX_BODY_BYTES + 64];
         let url = format!("http://{host}/webhook");
         let resp = reqwest::Client::new()
@@ -2204,7 +2204,7 @@ mod tests {
             .await;
         });
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-        let host = format!("{}", addr);
+        let host = format!("{addr}");
 
         // Fire many requests in parallel; at least one must hit the
         // 429 cap. We can't deterministically time it perfectly under
@@ -2227,11 +2227,11 @@ mod tests {
         }
         let mut saw_429 = false;
         for h in handles {
-            if let Ok(Ok(status)) = h.await {
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    saw_429 = true;
-                    break;
-                }
+            if let Ok(Ok(status)) = h.await
+                && status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            {
+                saw_429 = true;
+                break;
             }
         }
         assert!(

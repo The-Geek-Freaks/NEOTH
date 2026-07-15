@@ -437,8 +437,8 @@ impl Provider for OpenAiAdapter {
                 let tail = buf.trim();
                 if let Some(data) = sse_data(tail) {
                     let data = data.trim();
-                    if !data.is_empty() && data != "[DONE]" {
-                        if let Ok(parsed) = serde_json::from_str::<SseChunk>(data) {
+                    if !data.is_empty() && data != "[DONE]"
+                        && let Ok(parsed) = serde_json::from_str::<SseChunk>(data) {
                             if let Some(u) = &parsed.usage {
                                 input_tokens = Some(u.prompt_tokens);
                                 output_tokens = Some(u.completion_tokens);
@@ -448,8 +448,7 @@ impl Provider for OpenAiAdapter {
                                 .into_iter()
                                 .next()
                                 .and_then(|c| c.delta.content)
-                            {
-                                if !delta.is_empty() {
+                                && !delta.is_empty() {
                                     yield CompletionChunk {
                                         delta,
                                         done: false,
@@ -460,9 +459,7 @@ impl Provider for OpenAiAdapter {
                                         cache_read_tokens: None,
                                     };
                                 }
-                            }
                         }
-                    }
                 }
                 // Stream ended without [DONE] — emit a done-chunk so consumers
                 // see a clean terminator even from misbehaving endpoints.

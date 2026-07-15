@@ -1589,8 +1589,7 @@ mod tests {
         // Prose block should NOT cross 80 tokens with 200 chars.
         assert!(
             prose_tokens <= 80,
-            "prose block (200 chars → {} tokens) must not exceed threshold of 80",
-            prose_tokens
+            "prose block (200 chars → {prose_tokens} tokens) must not exceed threshold of 80"
         );
     }
 }

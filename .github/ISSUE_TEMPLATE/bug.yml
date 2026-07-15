@@ -37,7 +37,7 @@ body:
     attributes:
       label: Rust version
       description: Output of `rustc --version` (if built from source)
-      placeholder: "rustc 1.86.0 (stable)"
+      placeholder: "rustc 1.90.0 (stable)"
     validations:
       required: false
 

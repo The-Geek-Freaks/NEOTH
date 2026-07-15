@@ -37,7 +37,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.86.0'
+          toolchain: '1.90.0'
 
       - name: Verify tag, package names, binaries, and SDK dependency
         id: contract
@@ -153,7 +153,7 @@ jobs:
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.86.0'
+          toolchain: '1.90.0'
 
       # Build the exact immutable archive before looking at crates.io. A crate's
       # `repository` metadata is self-asserted and therefore not ownership

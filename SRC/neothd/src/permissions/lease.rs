@@ -115,15 +115,15 @@ impl LeaseScope {
     /// risk-confirm` call this so a `--ttl 9999d` can't leave a safety block
     /// permanently lifted.
     pub fn check_ttl(&self, ttl_secs: i64) -> Result<()> {
-        if let Some(max) = self.max_ttl_secs() {
-            if ttl_secs > max {
-                anyhow::bail!(
-                    "{} lease TTL {ttl_secs}s exceeds the {}h maximum for a risk-override \
+        if let Some(max) = self.max_ttl_secs()
+            && ttl_secs > max
+        {
+            anyhow::bail!(
+                "{} lease TTL {ttl_secs}s exceeds the {}h maximum for a risk-override \
                      window — a safety-block override must auto-expire; request a shorter --ttl",
-                    self.as_str(),
-                    max / 3600
-                );
-            }
+                self.as_str(),
+                max / 3600
+            );
         }
         Ok(())
     }

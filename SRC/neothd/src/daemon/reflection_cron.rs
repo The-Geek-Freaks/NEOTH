@@ -285,13 +285,12 @@ pub fn run_reflection_tick_once(
     // operator reads staged observations via `neoth proactive intelligence`.
     if let Some(obs) =
         crate::reflection::build_reflection_observation(&iso_week_tag, &topics, now_unix)
+        && let Err(e) = crate::reflection::append_staged_observation(home, &obs)
     {
-        if let Err(e) = crate::reflection::append_staged_observation(home, &obs) {
-            warn!(
-                error = %e,
-                "reflection cron: staged observation write failed (non-fatal)"
-            );
-        }
+        warn!(
+            error = %e,
+            "reflection cron: staged observation write failed (non-fatal)"
+        );
     }
 
     Ok(enqueued)
@@ -593,8 +592,7 @@ mod tests {
         let tag = iso_week_tag_from_unix(ts);
         assert!(
             tag.starts_with("2026-W") || tag.starts_with("2025-W"),
-            "{} should look like YYYY-WXX",
-            tag
+            "{tag} should look like YYYY-WXX"
         );
         assert_eq!(tag.len(), 8, "format is YYYY-WXX = 8 chars");
     }

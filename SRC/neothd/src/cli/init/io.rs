@@ -865,14 +865,15 @@ fn validate_private_directory_metadata(path: &Path, metadata: &std::fs::Metadata
 }
 
 fn validate_directory_kind(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
-    let mut is_link_or_reparse = metadata.file_type().is_symlink();
+    let is_link_or_reparse = metadata.file_type().is_symlink();
     #[cfg(windows)]
-    {
+    let is_link_or_reparse = {
         use std::os::windows::fs::MetadataExt;
-        is_link_or_reparse |= metadata.file_attributes()
-            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
-            != 0;
-    }
+        is_link_or_reparse
+            || metadata.file_attributes()
+                & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+                != 0
+    };
     if is_link_or_reparse || !metadata.is_dir() {
         anyhow::bail!(
             "{} must be a private, non-symlink directory",
@@ -933,24 +934,24 @@ pub(crate) fn read_gui_completion_token_from_stdin() -> Result<String> {
 
 fn cleanup_gui_init_pending_best_effort(home: &Path) {
     let pending_path = gui_init_pending_path(home);
-    if let Err(error) = std::fs::remove_file(&pending_path) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            warn!(
-                %error,
-                path = %pending_path.display(),
-                "GUI initialization committed; stale Pending-State cleanup will be retried"
-            );
-        }
+    if let Err(error) = std::fs::remove_file(&pending_path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        warn!(
+            %error,
+            path = %pending_path.display(),
+            "GUI initialization committed; stale Pending-State cleanup will be retried"
+        );
     }
     let pending_dir = gui_init_pending_dir(home);
-    if let Err(error) = std::fs::remove_dir(&pending_dir) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            warn!(
-                %error,
-                path = %pending_dir.display(),
-                "GUI initialization committed; Pending-State directory cleanup was best-effort"
-            );
-        }
+    if let Err(error) = std::fs::remove_dir(&pending_dir)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        warn!(
+            %error,
+            path = %pending_dir.display(),
+            "GUI initialization committed; Pending-State directory cleanup was best-effort"
+        );
     }
 }
 
@@ -971,11 +972,11 @@ pub(crate) fn ensure_dir_secure(dir: &std::path::Path) -> Result<()> {
             };
             #[cfg(not(unix))]
             let builder = std::fs::DirBuilder::new();
-            if let Err(error) = builder.create(dir) {
-                if error.kind() != std::io::ErrorKind::AlreadyExists {
-                    return Err(error)
-                        .with_context(|| format!("create private directory {}", dir.display()));
-                }
+            if let Err(error) = builder.create(dir)
+                && error.kind() != std::io::ErrorKind::AlreadyExists
+            {
+                return Err(error)
+                    .with_context(|| format!("create private directory {}", dir.display()));
             }
             let metadata = std::fs::symlink_metadata(dir)
                 .with_context(|| format!("inspect created directory {}", dir.display()))?;
@@ -1006,8 +1007,8 @@ pub(crate) fn ensure_dir_secure(dir: &std::path::Path) -> Result<()> {
 pub(crate) fn open_for_create_secure(path: &std::path::Path) -> Result<std::fs::File> {
     #[cfg(windows)]
     {
-        return crate::wal::win_native::create_private_file_new(path)
-            .with_context(|| format!("secure create {}", path.display()));
+        crate::wal::win_native::create_private_file_new(path)
+            .with_context(|| format!("secure create {}", path.display()))
     }
 
     #[cfg(not(windows))]
@@ -1055,6 +1056,7 @@ impl PrivateStage {
         self.path.as_deref().expect("private stage path is present")
     }
 
+    #[cfg(windows)]
     fn file(&self) -> &std::fs::File {
         self.file.as_ref().expect("private stage file is present")
     }
@@ -1127,20 +1129,20 @@ fn publish_private_create_new(target: &Path, bytes: &[u8]) -> Result<bool> {
             Ok(()) => {
                 stage.disarm_after_rename();
                 sync_parent_best_effort(target);
-                return Ok(true);
+                Ok(true)
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 drop(stage);
-                return Ok(false);
+                Ok(false)
             }
             Err(error) => {
                 drop(stage);
-                return Err(error).with_context(|| {
+                Err(error).with_context(|| {
                     format!(
                         "publish private state {} with create-if-absent semantics",
                         target.display()
                     )
-                });
+                })
             }
         }
     }
@@ -1377,21 +1379,20 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
 
     let mut wizard_value =
         serde_yaml::to_value(&public_state).context("serialize WizardState as YAML value")?;
-    if public_state.bootstrap_vault {
-        if let Some(vault_path) = public_state.vault_path.as_ref() {
-            if let serde_yaml::Value::Mapping(map) = &mut wizard_value {
-                map.insert(
-                    serde_yaml::Value::String("obsidian_vault".to_string()),
-                    serde_yaml::Value::String(vault_path.display().to_string()),
-                );
-                let subdir_key = serde_yaml::Value::String("obsidian_subdir".to_string());
-                if !map.contains_key(&subdir_key) {
-                    map.insert(
-                        subdir_key,
-                        serde_yaml::Value::String("NEOTH-sessions".to_string()),
-                    );
-                }
-            }
+    if public_state.bootstrap_vault
+        && let Some(vault_path) = public_state.vault_path.as_ref()
+        && let serde_yaml::Value::Mapping(map) = &mut wizard_value
+    {
+        map.insert(
+            serde_yaml::Value::String("obsidian_vault".to_string()),
+            serde_yaml::Value::String(vault_path.display().to_string()),
+        );
+        let subdir_key = serde_yaml::Value::String("obsidian_subdir".to_string());
+        if !map.contains_key(&subdir_key) {
+            map.insert(
+                subdir_key,
+                serde_yaml::Value::String("NEOTH-sessions".to_string()),
+            );
         }
     }
 
@@ -1506,14 +1507,14 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     // before overwriting so `neoth rollback list --kind config_write`
     // surfaces this rewrite. First-run wizard has no prior bytes →
     // skip (would produce a useless empty-restore snapshot).
-    if freedom_yaml.exists() {
-        if let Err(e) = snapshot_existing_config(&freedom_yaml).await {
-            tracing::warn!(
-                error = %e,
-                path = %freedom_yaml.display(),
-                "could not capture pre-overwrite snapshot for freedom.yaml — proceeding without rollback coverage for this write"
-            );
-        }
+    if freedom_yaml.exists()
+        && let Err(e) = snapshot_existing_config(&freedom_yaml).await
+    {
+        tracing::warn!(
+            error = %e,
+            path = %freedom_yaml.display(),
+            "could not capture pre-overwrite snapshot for freedom.yaml — proceeding without rollback coverage for this write"
+        );
     }
 
     write_atomically(&freedom_yaml, serialized.as_bytes())?;
@@ -1704,26 +1705,20 @@ pub(crate) fn complete_initialized_home_from_gui(
         let marker_path = canonical_home.join(".initialized");
         validate_initialized_marker(&marker, &marker_path)?;
 
-        if let Some(existing) = read_initialized_marker(&canonical_home)? {
-            if existing.marker.gui_transaction_id.as_deref()
+        if let Some(existing) = read_initialized_marker(&canonical_home)?
+            && existing.marker.gui_transaction_id.as_deref()
                 == Some(pending.transaction_id.as_str())
-            {
-                validate_marker_config_pair(
-                    &existing.marker,
-                    &config,
-                    &canonical_home,
-                    &freedom_path,
-                )?;
-                cleanup_gui_init_pending_best_effort(&canonical_home);
-                return Ok(GuiInitCompletionAcknowledgement {
-                    schema_version: GUI_INIT_SCHEMA_VERSION,
-                    completed: true,
-                    ready: true,
-                    transaction_id: pending.transaction_id,
-                    home: canonical_home.clone(),
-                    marker_path,
-                });
-            }
+        {
+            validate_marker_config_pair(&existing.marker, &config, &canonical_home, &freedom_path)?;
+            cleanup_gui_init_pending_best_effort(&canonical_home);
+            return Ok(GuiInitCompletionAcknowledgement {
+                schema_version: GUI_INIT_SCHEMA_VERSION,
+                completed: true,
+                ready: true,
+                transaction_id: pending.transaction_id,
+                home: canonical_home.clone(),
+                marker_path,
+            });
         }
 
         let marker_bytes =

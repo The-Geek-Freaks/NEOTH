@@ -615,8 +615,7 @@ mod self_score_tests {
         assert_eq!(EVENT_TYPE_COUNCIL_SELF_SCORE, 0x6A);
         assert!(
             (0x60..=0x6F).contains(&EVENT_TYPE_COUNCIL_SELF_SCORE),
-            "0x{:02X} not in council band",
-            EVENT_TYPE_COUNCIL_SELF_SCORE
+            "0x{EVENT_TYPE_COUNCIL_SELF_SCORE:02X} not in council band"
         );
         // spot-check it doesn't collide with known council events
         use crate::wal::events::{

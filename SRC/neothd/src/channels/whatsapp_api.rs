@@ -25,6 +25,78 @@ use crate::secret::SecretString;
 /// it with a `wiremock` base URL via the `*_at` variants below.
 pub const GRAPH_API_BASE: &str = "https://graph.facebook.com/v18.0";
 
+struct GraphEndpoint {
+    base: reqwest::Url,
+    loopback: bool,
+}
+
+impl GraphEndpoint {
+    fn parse(raw: &str) -> Result<Self> {
+        if raw.is_empty() || raw.trim() != raw {
+            anyhow::bail!("WhatsApp Graph base URL must be non-empty and unpadded");
+        }
+        let base = reqwest::Url::parse(raw).context("parse WhatsApp Graph base URL")?;
+        if !base.username().is_empty() || base.password().is_some() {
+            anyhow::bail!("WhatsApp Graph base URL must not contain credentials");
+        }
+        if base.query().is_some() || base.fragment().is_some() {
+            anyhow::bail!("WhatsApp Graph base URL must not contain a query or fragment");
+        }
+        base.host()
+            .context("WhatsApp Graph base URL must contain a host")?;
+        let loopback = http_client::url_has_loopback_host(&base);
+        if !graph_transport_allowed(&base, loopback) {
+            anyhow::bail!(
+                "WhatsApp Graph base URL must use HTTPS (loopback HTTP exists only in unit tests)"
+            );
+        }
+        Ok(Self { base, loopback })
+    }
+
+    fn phone_url(&self, phone_number_id: &str) -> Result<reqwest::Url> {
+        validate_phone_number_id(phone_number_id)?;
+        let mut url = self.base.clone();
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("WhatsApp Graph base URL cannot be a URL base"))?
+            .pop_if_empty()
+            .push(phone_number_id);
+        Ok(url)
+    }
+
+    fn messages_url(&self, phone_number_id: &str) -> Result<reqwest::Url> {
+        let mut url = self.phone_url(phone_number_id)?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("WhatsApp Graph base URL cannot be a URL base"))?
+            .push("messages");
+        Ok(url)
+    }
+
+    fn client(&self) -> Result<reqwest::Client> {
+        if self.loopback {
+            http_client::build_direct_client_no_redirect()
+        } else {
+            http_client::build_client_no_redirect()
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn graph_transport_allowed(base: &reqwest::Url, _loopback: bool) -> bool {
+    base.scheme() == "https"
+}
+
+#[cfg(test)]
+fn graph_transport_allowed(base: &reqwest::Url, loopback: bool) -> bool {
+    base.scheme() == "https" || (base.scheme() == "http" && loopback)
+}
+
+fn validate_phone_number_id(phone_number_id: &str) -> Result<()> {
+    if phone_number_id.is_empty() || !phone_number_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        anyhow::bail!("whatsapp_phone_id must be the numeric phone-number id from Meta");
+    }
+    Ok(())
+}
+
 /// Result of a `messages` POST. `id` is WhatsApp's wamid (e.g.
 /// `"wamid.HBgL..."`); operators can correlate it with delivery-status
 /// events received by the live webhook path.
@@ -63,13 +135,11 @@ pub(crate) async fn send_text_message_at(
     to: &str,
     message: &str,
 ) -> Result<SendMessageResult> {
-    if phone_number_id.is_empty() {
-        anyhow::bail!("whatsapp_phone_id is empty — set it in credentials.yaml");
-    }
-    let url = format!("{base_url}/{phone_number_id}/messages");
-    let client = http_client::build_client()?;
+    let endpoint = GraphEndpoint::parse(base_url)?;
+    let url = endpoint.messages_url(phone_number_id)?;
+    let client = endpoint.client()?;
     let resp = client
-        .post(&url)
+        .post(url)
         .bearer_auth(access_token.expose())
         .header("Content-Type", "application/json")
         .body(
@@ -94,17 +164,15 @@ pub(crate) async fn send_text_message_at(
 pub(crate) fn parse_send_response(http_ok: bool, body: &str) -> Result<SendMessageResult> {
     // Try the success shape first; on parse failure or http_ok=false,
     // fall back to the error envelope.
-    if http_ok {
-        if let Ok(success) = serde_json::from_str::<SuccessBody>(body) {
-            let first_msg = success.messages.into_iter().next();
-            let first_contact = success.contacts.into_iter().next();
-            return Ok(SendMessageResult {
-                ok: true,
-                wa_id: first_contact.map(|c| c.wa_id),
-                message_id: first_msg.map(|m| m.id),
-                error: None,
-            });
-        }
+    if http_ok && let Ok(success) = serde_json::from_str::<SuccessBody>(body) {
+        let first_msg = success.messages.into_iter().next();
+        let first_contact = success.contacts.into_iter().next();
+        return Ok(SendMessageResult {
+            ok: true,
+            wa_id: first_contact.map(|c| c.wa_id),
+            message_id: first_msg.map(|m| m.id),
+            error: None,
+        });
     }
     // Either http error or unrecognised success shape — try error shape.
     if let Ok(err) = serde_json::from_str::<ErrorBody>(body) {
@@ -157,13 +225,13 @@ pub(crate) async fn validate_token_at(
     access_token: &SecretString,
     phone_number_id: &str,
 ) -> Result<ValidateResult> {
-    if phone_number_id.is_empty() {
-        anyhow::bail!("whatsapp_phone_id is empty — set it in credentials.yaml");
-    }
-    let url = format!("{base_url}/{phone_number_id}?fields=display_phone_number,verified_name");
-    let client = http_client::build_client()?;
+    let endpoint = GraphEndpoint::parse(base_url)?;
+    let mut url = endpoint.phone_url(phone_number_id)?;
+    url.query_pairs_mut()
+        .append_pair("fields", "display_phone_number,verified_name");
+    let client = endpoint.client()?;
     let resp = client
-        .get(&url)
+        .get(url)
         .bearer_auth(access_token.expose())
         .send()
         .await
@@ -178,18 +246,16 @@ pub(crate) async fn validate_token_at(
 
 /// Pure parser for the phone-number-node response — unit-tested without network.
 pub(crate) fn parse_validate_response(http_ok: bool, body: &str) -> Result<ValidateResult> {
-    if http_ok {
-        if let Ok(node) = serde_json::from_str::<PhoneNode>(body) {
-            // A live node returns at least the display number; treat its
-            // presence (or a verified name) as proof the token + id are good.
-            if node.display_phone_number.is_some() || node.verified_name.is_some() {
-                return Ok(ValidateResult {
-                    ok: true,
-                    display_phone_number: node.display_phone_number,
-                    verified_name: node.verified_name,
-                    error: None,
-                });
-            }
+    if http_ok && let Ok(node) = serde_json::from_str::<PhoneNode>(body) {
+        // A live node returns at least the display number; treat its
+        // presence (or a verified name) as proof the token + id are good.
+        if node.display_phone_number.is_some() || node.verified_name.is_some() {
+            return Ok(ValidateResult {
+                ok: true,
+                display_phone_number: node.display_phone_number,
+                verified_name: node.verified_name,
+                error: None,
+            });
         }
     }
     if let Ok(err) = serde_json::from_str::<ErrorBody>(body) {
@@ -364,7 +430,39 @@ mod tests {
         let token = SecretString::from("dummy");
         let r = send_text_message(&token, "", "+15551234567", "hi").await;
         let err = r.unwrap_err();
-        assert!(err.to_string().contains("whatsapp_phone_id is empty"));
+        assert!(err.to_string().contains("whatsapp_phone_id"));
+    }
+
+    #[test]
+    fn graph_endpoint_policy_allows_https_and_loopback_http_only() {
+        assert!(GraphEndpoint::parse(GRAPH_API_BASE).is_ok());
+        assert!(GraphEndpoint::parse("http://127.0.0.1:8080/v18.0").is_ok());
+        assert!(GraphEndpoint::parse("http://[::1]:8080/v18.0").is_ok());
+        for rejected in [
+            "http://graph.facebook.com/v18.0",
+            "http://192.168.1.3/v18.0",
+            "http://localhost.evil.test/v18.0",
+            "https://token@graph.facebook.com/v18.0",
+            "https://graph.facebook.com/v18.0?token=x",
+            "https://graph.facebook.com/v18.0#fragment",
+        ] {
+            assert!(
+                GraphEndpoint::parse(rejected).is_err(),
+                "accepted unsafe Graph endpoint: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_path_builder_rejects_phone_id_injection() {
+        let endpoint = GraphEndpoint::parse(GRAPH_API_BASE).unwrap();
+        assert_eq!(
+            endpoint.messages_url("123456").unwrap().as_str(),
+            "https://graph.facebook.com/v18.0/123456/messages"
+        );
+        for rejected in ["", "../capture", "123/messages", "123?token=x", " 123"] {
+            assert!(endpoint.messages_url(rejected).is_err());
+        }
     }
 
     #[tokio::test]
@@ -408,5 +506,37 @@ mod tests {
             .unwrap();
         assert!(r.ok);
         assert_eq!(r.verified_name.as_deref(), Some("NEOTH"));
+    }
+
+    #[tokio::test]
+    async fn graph_credentials_and_message_do_not_follow_redirects() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let target = MockServer::start().await;
+        let source = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v18.0/123/messages"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("location", format!("{}/capture", target.uri())),
+            )
+            .mount(&source)
+            .await;
+        let base = format!("{}/v18.0", source.uri());
+        let result = send_text_message_at(
+            &base,
+            &SecretString::from("credential-must-not-leak"),
+            "123",
+            "+4915112345678",
+            "private message",
+        )
+        .await
+        .unwrap();
+        assert!(!result.ok);
+        assert!(
+            target.received_requests().await.unwrap().is_empty(),
+            "redirect target received the Graph token or message"
+        );
     }
 }

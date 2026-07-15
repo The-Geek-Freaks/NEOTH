@@ -343,18 +343,18 @@ pub fn safe_attachment_filename(raw: &str) -> (String, Vec<EmailFinding>) {
             // the outer one (not just anywhere in the string).
             let inner_pos = lower.rfind(inner);
             let outer_pos = lower.rfind(outer);
-            if let (Some(ip), Some(op)) = (inner_pos, outer_pos) {
-                if ip < op {
-                    findings.push(EmailFinding::FilenameSuspiciousDoubleExt {
-                        raw: raw.to_string(),
-                        inner: inner.to_string(),
-                        outer: outer.to_string(),
-                    });
-                    // Rewrite the outer extension to `.bin` so the
-                    // operator's mailer + OS don't auto-execute it.
-                    name = format!("{}.bin", &name[..name.len() - outer.len()]);
-                    break;
-                }
+            if let (Some(ip), Some(op)) = (inner_pos, outer_pos)
+                && ip < op
+            {
+                findings.push(EmailFinding::FilenameSuspiciousDoubleExt {
+                    raw: raw.to_string(),
+                    inner: inner.to_string(),
+                    outer: outer.to_string(),
+                });
+                // Rewrite the outer extension to `.bin` so the
+                // operator's mailer + OS don't auto-execute it.
+                name = format!("{}.bin", &name[..name.len() - outer.len()]);
+                break;
             }
         }
     }

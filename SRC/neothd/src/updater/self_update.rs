@@ -1068,14 +1068,14 @@ fn rollback_applied_bundle(applied: &[AppliedBundleMember]) -> Result<()> {
         );
         displaced.set_file_name(displaced_name);
 
-        if member.target_path.exists() {
-            if let Err(error) = std::fs::rename(&member.target_path, &displaced) {
-                failures.push(format!(
-                    "move new {} aside: {error}",
-                    member.target_path.display()
-                ));
-                continue;
-            }
+        if member.target_path.exists()
+            && let Err(error) = std::fs::rename(&member.target_path, &displaced)
+        {
+            failures.push(format!(
+                "move new {} aside: {error}",
+                member.target_path.display()
+            ));
+            continue;
         }
 
         let mut prior_state_restored = !member.had_original;

@@ -519,10 +519,10 @@ pub async fn run_one_pass(
     // this pass actually wrote dreams, emit a `0xF4 DREAM_COMPOSED` frame so
     // the nightly cron is auditable just like `neoth dream now`. One-shot
     // callers pass `writer = None` and audit via their own path.
-    if report.dreams_written > 0 {
-        if let Some(w) = writer {
-            emit_dream_composed_daemon(w, &report).await;
-        }
+    if report.dreams_written > 0
+        && let Some(w) = writer
+    {
+        emit_dream_composed_daemon(w, &report).await;
     }
 
     Ok(report)

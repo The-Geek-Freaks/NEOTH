@@ -240,10 +240,10 @@ impl LocalOuroAdapter {
     /// completion). Fallback: 2048 — matches `Ouro-1.4B-Thinking`'s
     /// hidden_size.
     pub fn embed_dim_hint(&self) -> usize {
-        if let Ok(slot) = self.loaded.lock() {
-            if let Some(loaded) = slot.as_ref() {
-                return loaded.model.hidden_size();
-            }
+        if let Ok(slot) = self.loaded.lock()
+            && let Some(loaded) = slot.as_ref()
+        {
+            return loaded.model.hidden_size();
         }
         std::fs::read_to_string(&self.config_path)
             .ok()
@@ -651,10 +651,10 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
     // at position `prompt_len`.
     let mut next_offset = prompt_ids.len();
     while new_tokens.len() < max_new as usize {
-        if let Some(eos) = loaded.eos_id {
-            if next == eos {
-                break;
-            }
+        if let Some(eos) = loaded.eos_id
+            && next == eos
+        {
+            break;
         }
         logits = if per_loop {
             let input = Tensor::new(&[next], &device)
@@ -810,10 +810,10 @@ fn run_ouro_stream(
             tracing::debug!("ouro stream: receiver closed, stopping early");
             return Ok(());
         }
-        if let Some(eos) = loaded.eos_id {
-            if next == eos {
-                break;
-            }
+        if let Some(eos) = loaded.eos_id
+            && next == eos
+        {
+            break;
         }
         let logits = if per_loop {
             let input = Tensor::new(&[next], &device)

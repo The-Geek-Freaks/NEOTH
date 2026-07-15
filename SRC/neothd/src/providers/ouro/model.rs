@@ -111,7 +111,7 @@ impl OuroConfig {
         if self.num_attention_heads == 0 {
             anyhow::bail!("Ouro config: num_attention_heads must be > 0");
         }
-        if self.hidden_size % self.num_attention_heads != 0 {
+        if !self.hidden_size.is_multiple_of(self.num_attention_heads) {
             anyhow::bail!(
                 "Ouro config: hidden_size ({}) must be divisible by num_attention_heads ({})",
                 self.hidden_size,
@@ -124,12 +124,12 @@ impl OuroConfig {
         if self.vocab_size == 0 {
             anyhow::bail!("Ouro config: vocab_size must be > 0");
         }
-        if let Some(model_type) = &self.model_type {
-            if !model_type.eq_ignore_ascii_case("ouro") {
-                anyhow::bail!(
-                    "Ouro config: model_type `{model_type}` is not `ouro` — operator pointed the Ouro provider at a non-Ouro checkpoint"
-                );
-            }
+        if let Some(model_type) = &self.model_type
+            && !model_type.eq_ignore_ascii_case("ouro")
+        {
+            anyhow::bail!(
+                "Ouro config: model_type `{model_type}` is not `ouro` — operator pointed the Ouro provider at a non-Ouro checkpoint"
+            );
         }
         let mut clamped = self.clone();
         if clamped.total_ut_steps == 0 {

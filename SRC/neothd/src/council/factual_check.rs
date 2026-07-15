@@ -327,8 +327,7 @@ mod tests {
     #[test]
     fn extract_returns_trimmed_inner_body() {
         let text = format!(
-            "preamble {}  body content  {} trailer",
-            GROUND_TRUTH_TAG_OPEN, GROUND_TRUTH_TAG_CLOSE,
+            "preamble {GROUND_TRUTH_TAG_OPEN}  body content  {GROUND_TRUTH_TAG_CLOSE} trailer",
         );
         let inner = extract_ground_truth_block(&text).unwrap();
         assert_eq!(inner, "body content");
@@ -341,7 +340,7 @@ mod tests {
 
     #[test]
     fn extract_none_when_only_open_tag() {
-        let text = format!("preamble {} body without close", GROUND_TRUTH_TAG_OPEN);
+        let text = format!("preamble {GROUND_TRUTH_TAG_OPEN} body without close");
         assert!(extract_ground_truth_block(&text).is_none());
     }
 

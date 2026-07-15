@@ -448,9 +448,7 @@ fn verify_config_matches_vit_b32(config_path: &Path) -> Result<()> {
     if hidden != Some(768) || patch != Some(32) {
         anyhow::bail!(
             "CLIP variant mismatch: only openai/clip-vit-base-patch32 is supported \
-             (vision_config.hidden_size=768, patch_size=32); got hidden={:?}, patch={:?}",
-            hidden,
-            patch
+             (vision_config.hidden_size=768, patch_size=32); got hidden={hidden:?}, patch={patch:?}"
         );
     }
     Ok(())

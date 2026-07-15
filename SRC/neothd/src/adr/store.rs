@@ -46,7 +46,7 @@ pub fn write_adr(dir: &Path, d: &Decision) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).with_context(|| format!("create adr dir {}", dir.display()))?;
     let n = next_number(dir);
     let slug = slugify(&d.title);
-    let path = dir.join(format!("{:04}-{}.md", n, slug));
+    let path = dir.join(format!("{n:04}-{slug}.md"));
     let body = render_adr_md(n, &d.title, &d.body);
     std::fs::write(&path, body).with_context(|| format!("write adr {}", path.display()))?;
     Ok(path)
@@ -105,7 +105,7 @@ fn slugify(s: &str) -> String {
 fn render_adr_md(number: u32, title: &str, body: &str) -> String {
     let now_iso = crate::time::utc_now().format("%Y-%m-%d").to_string();
     format!(
-        "# ADR-{:04}: {title}\n\n\
+        "# ADR-{number:04}: {title}\n\n\
          **Status:** Proposed  \n\
          **Date:** {now_iso}\n\n\
          ## Context\n\n\
@@ -115,7 +115,6 @@ fn render_adr_md(number: u32, title: &str, body: &str) -> String {
          {body}\n\n\
          ## Consequences\n\n\
          (To be filled in by the operator.)\n",
-        number,
     )
 }
 

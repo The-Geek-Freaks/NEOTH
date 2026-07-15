@@ -499,7 +499,7 @@ mod tests {
             SttProvider::AzureSpeech,
             SttProvider::FasterWhisperLocal,
         ] {
-            assert!(!p.description().is_empty(), "{:?}", p);
+            assert!(!p.description().is_empty(), "{p:?}");
         }
     }
 

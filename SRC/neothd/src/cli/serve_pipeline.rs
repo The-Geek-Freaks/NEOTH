@@ -19,7 +19,7 @@ use tracing::{info, warn};
 
 use crate::channels::{InboundMessage, OutboundMessage, PipelineHandler};
 use crate::cli::serve::emit_required_audit;
-use crate::config::FreedomConfig;
+use crate::config::{FreedomConfig, InstancePaths};
 use crate::memory::store;
 use crate::providers::{Provider, Request};
 use crate::wal::events::{
@@ -702,14 +702,24 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
     if handled_by_live_delivery {
         Ok(None)
     } else {
-        Ok(Some(OutboundMessage {
-            // Replies belong in the originating conversation/channel, not in
-            // a direct message to the sender (Slack group replies previously
-            // used sender_id here by mistake).
-            recipient_id: inbound.chat_id.clone(),
-            text: reply_text,
-        }))
+        Ok(Some(reply_to_inbound(inbound, reply_text)))
     }
+}
+
+fn reply_to_inbound(inbound: &InboundMessage, text: impl Into<String>) -> OutboundMessage {
+    OutboundMessage {
+        // Replies belong in the originating conversation/channel, not in a
+        // direct message to one member of a group.
+        recipient_id: inbound.chat_id.clone(),
+        text: text.into(),
+    }
+}
+
+fn instance_registry_error_reply(inbound: &InboundMessage) -> OutboundMessage {
+    reply_to_inbound(
+        inbound,
+        "[NEOTH] Instance configuration is invalid. Fix mcp_servers.yaml, tweaks.toml, or profile_extensions.toml on the host before retrying.",
+    )
 }
 
 /// Build the per-channel pipeline handler closure. Captured: provider trait
@@ -742,6 +752,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         });
     // Keep a second Arc into the bus for the UUID-reply fast-path (submit_response).
     let confirm_bus_for_reply = confirm_bus;
+    let instance_paths = InstancePaths::new(
+        neoth_home.clone(),
+        reload_controller.source_path().to_path_buf(),
+    );
 
     // GOLD-CCPARITY-ONCE: session-scoped fired set for the channel handler.
     // The PipelineHandler is a Fn (not FnMut), so we use Arc<Mutex<HashSet>>
@@ -760,6 +774,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         let rate_limiter = Arc::clone(&rate_limiter);
         let segment_path = segment_path.clone();
         let neoth_home = neoth_home.clone();
+        let instance_paths = instance_paths.clone();
         let profile_config = profile_config.clone();
         let reload_controller = Arc::clone(&reload_controller);
         // GOLD-ADAPT-GOOSE-03: clone the optional asker Arc into this message's closure.
@@ -787,25 +802,24 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // limiter, permission gate, identity resolve), never on disk.
             let sender_hash = sender_hash_of(&inbound.sender_id);
 
-            // One immutable, fail-loud MCP snapshot per inbound turn. Prompt
-            // catalogue, checkpoint metadata and dispatch all consume this
-            // exact value so a mid-turn registry edit cannot create split
-            // scope. Invalid YAML blocks tool-capable processing rather than
-            // silently fabricating an empty registry.
-            let channel_mcp_servers = match crate::mcp::McpServers::load() {
-                Ok(servers) => servers,
+            // One immutable, fail-loud instance snapshot per inbound turn.
+            // MCP, tweaks, and profile-extension policy all resolve from the
+            // selected serve home. Invalid existing state blocks the turn
+            // before provider dispatch instead of falling back or disappearing.
+            let crate::cli::chat::InstanceTurnState {
+                mcp_servers: channel_mcp_servers,
+                tweaks: channel_tweaks,
+                profile_extensions,
+            } = match crate::cli::chat::load_instance_turn_state(&instance_paths) {
+                Ok(state) => state,
                 Err(error) => {
                     warn!(
                         channel = inbound.channel.as_str(),
                         sender_hash = %sender_hash,
                         error = %error,
-                        "mcp_servers.yaml load failed on channel path; turn blocked fail-closed"
+                        "instance registry load failed on channel path; turn blocked fail-closed"
                     );
-                    return Ok(::std::option::Option::Some(OutboundMessage {
-                        recipient_id: inbound.sender_id.clone(),
-                        text: "[NEOTH] MCP configuration is invalid. Fix mcp_servers.yaml on the host before retrying."
-                            .to_string(),
-                    }));
+                    return Ok(Some(instance_registry_error_reply(&inbound)));
                 }
             };
             let channel_mcp_scope: Vec<String> = channel_mcp_servers
@@ -932,11 +946,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         dir = %hook_dir.display(),
                         "hook policy invalid at channel ingress; turn blocked fail-closed"
                     );
-                    return Ok(Some(OutboundMessage {
-                        recipient_id: inbound.sender_id.clone(),
-                        text: "[NEOTH] Hook policy is invalid. Fix the file in ~/.neoth/hooks before retrying."
-                            .to_string(),
-                    }));
+                    return Ok(Some(reply_to_inbound(
+                        &inbound,
+                        format!(
+                            "[NEOTH] Hook policy is invalid. Fix the file in {} before retrying.",
+                            hook_dir.display()
+                        ),
+                    )));
                 }
             };
             let ingress_ts_unix = crate::time::now_unix_secs();
@@ -1187,11 +1203,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     dir = %hook_dir.display(),
                                     "hook policy invalid for recall egress; turn blocked fail-closed"
                                 );
-                                return Ok(Some(OutboundMessage {
-                                    recipient_id: inbound.sender_id.clone(),
-                                    text: "[NEOTH] Hook policy is invalid. Fix the file in ~/.neoth/hooks before retrying."
-                                        .to_string(),
-                                }));
+                                return Ok(Some(reply_to_inbound(
+                                    &inbound,
+                                    format!(
+                                        "[NEOTH] Hook policy is invalid. Fix the file in {} before retrying.",
+                                        hook_dir.display()
+                                    ),
+                                )));
                             }
                         };
                         let provenance = ReplyProvenance {
@@ -1361,10 +1379,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                         );
                                     }
                                 }
-                                let outbound = OutboundMessage {
-                                    recipient_id: inbound.sender_id.clone(),
-                                    text: ack,
-                                };
+                                let outbound = reply_to_inbound(&inbound, ack);
                                 return Ok(Some(outbound));
                             }
                         }
@@ -1594,10 +1609,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .await
             };
 
-            let channel_tweaks_path = crate::tweaks::Tweaks::default_path();
-            let channel_persona = crate::tweaks::Tweaks::load_or_default(&channel_tweaks_path)
-                .ok()
-                .and_then(|t| t.persona_override.clone());
+            let channel_persona = channel_tweaks.persona_override.clone();
 
             // ── GOLD-ADAPT-LOWKEY-08 — MDS dynamic tone modifier (channel path) ──
             // Mirror of the cli/chat.rs augmentation. Channel inbound turns
@@ -1612,8 +1624,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     );
                     if let Some(aug) = augmented {
                         eprintln!(
-                            "[neoth:mds-tone] channel intensity={:?} modifier={:?}",
-                            intensity, aug
+                            "[neoth:mds-tone] channel intensity={intensity:?} modifier={aug:?}"
                         );
                         Some(aug)
                     } else {
@@ -1650,9 +1661,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let mut channel_repo_context = crate::cli::chat::maybe_repo_context_block(
                 config_for_handler.as_ref(),
                 &sanitized_text,
+                &instance_paths,
             );
             if let Some(findings) = crate::cli::chat::maybe_architecture_findings_for_skill(
                 used_skill_id.as_deref(),
+                &instance_paths,
                 &channel_cwd,
             ) {
                 info!(
@@ -1746,36 +1759,36 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // tamper: emit HOOK_BLOCKED (0x81) WAL frame and return Ok(None)
             // to drop the inbound message silently (same as PreChannelIngress
             // Block pattern — no error response sent to channel sender).
-            if let Some(ref expected_hash) = channel_plan_attest_hash {
-                if !crate::skills::plan_attestation::verify_plan_hash(&neoth_home, expected_hash) {
-                    let payload = match serde_json::to_vec(&serde_json::json!({
-                        "name": "plan-attest-guard",
-                        "stage": "pre_provider_call",
-                        "channel": channel_str,
-                        "reason": "[PLAN TAMPERED] task_plan.md hash mismatch (channel path)",
-                        "ts_unix": crate::time::now_unix_secs(),
-                    })) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "plan-attest: payload serialise failed");
-                            return Ok(::std::option::Option::None);
-                        }
-                    };
-                    emit_required_audit(
-                        &writer,
-                        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                        "HOOK_BLOCKED",
-                        payload,
-                    )
-                    .await;
-                    return Ok(::std::option::Option::None);
-                }
+            if let Some(ref expected_hash) = channel_plan_attest_hash
+                && !crate::skills::plan_attestation::verify_plan_hash(&neoth_home, expected_hash)
+            {
+                let payload = match serde_json::to_vec(&serde_json::json!({
+                    "name": "plan-attest-guard",
+                    "stage": "pre_provider_call",
+                    "channel": channel_str,
+                    "reason": "[PLAN TAMPERED] task_plan.md hash mismatch (channel path)",
+                    "ts_unix": crate::time::now_unix_secs(),
+                })) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "plan-attest: payload serialise failed");
+                        return Ok(::std::option::Option::None);
+                    }
+                };
+                emit_required_audit(
+                    &writer,
+                    crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                    "HOOK_BLOCKED",
+                    payload,
+                )
+                .await;
+                return Ok(::std::option::Option::None);
             }
 
             // ── Slash command dispatch (Phase 28 R-17 SC-2) ───────────────
             // If the operator opens with `/<name> args`, route through the
             // slash registry. Built-ins (`/help`, `/recall`, `/status`,
-            // `/jobs`) + `~/.neoth/commands/*.toml` overrides. The matched
+            // `/jobs`) + instance-local `commands/*.toml` overrides. The matched
             // command's prompt template REPLACES the enriched system
             // prompt (slash semantics preserved); non-matches fall back
             // to the layered enrichment from the helper above.
@@ -1851,10 +1864,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 }
                             }
                         };
-                        return Ok(::std::option::Option::Some(OutboundMessage {
-                            recipient_id: inbound.sender_id.clone(),
-                            text: reply_text,
-                        }));
+                        return Ok(::std::option::Option::Some(reply_to_inbound(
+                            &inbound, reply_text,
+                        )));
                     }
 
                     // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ──
@@ -1885,10 +1897,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 Err(e) => format!("/{name}: authorization failed: {e:#}"),
                             }
                         };
-                        return Ok(::std::option::Option::Some(OutboundMessage {
-                            recipient_id: inbound.sender_id.clone(),
-                            text: reply_text,
-                        }));
+                        return Ok(::std::option::Option::Some(reply_to_inbound(
+                            &inbound, reply_text,
+                        )));
                     }
 
                     let slash_dir = neoth_home.join("commands");
@@ -1900,11 +1911,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 dir = %slash_dir.display(),
                                 "slash-command registry invalid; turn blocked fail-closed"
                             );
-                            return Ok(Some(OutboundMessage {
-                                recipient_id: inbound.sender_id.clone(),
-                                text: "[NEOTH] Slash-command configuration is invalid. Fix ~/.neoth/commands before retrying."
-                                    .to_string(),
-                            }));
+                            return Ok(Some(reply_to_inbound(
+                                &inbound,
+                                format!(
+                                    "[NEOTH] Slash-command configuration is invalid. Fix {} before retrying.",
+                                    slash_dir.display()
+                                ),
+                            )));
                         }
                     };
                     if let Some(cmd) = commands.iter().find(|c| c.name == name) {
@@ -1960,10 +1973,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             } else {
                                 outcome.text().to_string()
                             };
-                            return Ok(::std::option::Option::Some(OutboundMessage {
-                                recipient_id: inbound.sender_id.clone(),
-                                text: reply_text,
-                            }));
+                            return Ok(::std::option::Option::Some(reply_to_inbound(
+                                &inbound, reply_text,
+                            )));
                         }
                         let rendered = cmd.render(&args, operator_id.as_deref());
                         info!(slash_command = %name, "slash dispatch");
@@ -1983,7 +1995,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 
             // ── Operator hooks at PreProviderCall (Phase 29 R-15 H-3
             //    + GOLD-CCPARITY-ONCE) ──────────────────────────────────────
-            // Loaded fresh per turn so operator edits to `~/.neoth/hooks/`
+            // Loaded fresh per turn so edits to this instance's `hooks/`
             // take effect without daemon restart. Block-action stops the
             // turn (no provider call, no reply); replace mutates the
             // outbound prompt. Empty hook set is the common case.
@@ -1996,11 +2008,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         dir = %hook_dir.display(),
                         "hook policy invalid before provider call; turn blocked fail-closed"
                     );
-                    return Ok(Some(OutboundMessage {
-                        recipient_id: inbound.sender_id.clone(),
-                        text: "[NEOTH] Hook policy is invalid. Fix the file in ~/.neoth/hooks before retrying."
-                            .to_string(),
-                    }));
+                    return Ok(Some(reply_to_inbound(
+                        &inbound,
+                        format!(
+                            "[NEOTH] Hook policy is invalid. Fix the file in {} before retrying.",
+                            hook_dir.display()
+                        ),
+                    )));
                 }
             };
             let provider_call_ts_unix = crate::time::now_unix_secs();
@@ -2248,22 +2262,20 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // home and fail closed when an existing policy file is unreadable
             // or invalid; falling back here could autonomously convene a
             // council that the operator explicitly disabled.
-            let config_path = neoth_home.join("freedom.yaml");
             let council_cfg = match crate::config::FreedomConfig::load_from_path_or_default(
-                &config_path,
+                &instance_paths.config,
             ) {
                 Ok(config) => config.council,
                 Err(error) => {
                     warn!(
                         error = %error,
-                        path = %config_path.display(),
+                        path = %instance_paths.config.display(),
                         "council policy reload failed; turn blocked fail-closed"
                     );
-                    return Ok(Some(OutboundMessage {
-                        recipient_id: inbound.sender_id.clone(),
-                        text: "[NEOTH] freedom.yaml is unreadable or invalid. Fix the operator policy before retrying."
-                            .to_string(),
-                    }));
+                    return Ok(Some(reply_to_inbound(
+                        &inbound,
+                        "[NEOTH] freedom.yaml is unreadable or invalid. Fix the operator policy before retrying.",
+                    )));
                 }
             };
             // GOLD-ADAPT-G-01: OR-in mode=single alongside disabled=true.
@@ -2348,10 +2360,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         error = %e,
                         "consent revoked mid-run; dropping inbound"
                     );
-                    return Ok(::std::option::Option::Some(OutboundMessage {
-                        recipient_id: inbound.sender_id.clone(),
-                        text: format!("[NEOTH] {e}"),
-                    }));
+                    return Ok(::std::option::Option::Some(reply_to_inbound(
+                        &inbound,
+                        format!("[NEOTH] {e}"),
+                    )));
                 }
             }
             let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
@@ -2533,7 +2545,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         crate::context::compress::CompressionRuntime::persistent(
                             config_for_handler.compression.gate(),
                             config_for_handler.compression.thresholds(),
-                            crate::context::compress::default_ccr_dir(),
+                            instance_paths.ccr.clone(),
                         ),
                         // HERMES-04 — judge provider for channel path. Same gate as
                         // chat.rs: opt-in only when judge_enabled AND a goal is set.
@@ -2921,9 +2933,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             {
                 let decisions = crate::adr::extract_decisions(&completion.text);
                 if !decisions.is_empty() {
-                    let adr_dir = crate::adr::default_adr_dir();
+                    let adr_dir = &instance_paths.adr;
                     for d in &decisions {
-                        match crate::adr::write_adr(&adr_dir, d) {
+                        match crate::adr::write_adr(adr_dir, d) {
                             Ok(path) => {
                                 info!(adr = %path.display(), title = %d.title, "ADR captured")
                             }
@@ -2949,7 +2961,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let session_id = format!("{}-{}", channel_str, inbound.sender_id);
                 let now = crate::time::utc_now();
                 let archive = crate::memory::archive::SessionArchive::new(
-                    crate::memory::archive::default_archive_root(),
+                    instance_paths.archive.clone(),
                     session_id,
                     now,
                 );
@@ -3082,6 +3094,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let channel_str_for_pipeline = channel_str.to_string();
                 let sender_id_for_pipeline = inbound.sender_id.clone();
                 let views_conn_for_pipeline = views_conn.clone();
+                let profile_home_for_pipeline = instance_paths.home.clone();
                 tokio::task::block_in_place(|| {
                     let handle = tokio::runtime::Handle::current();
                     handle.block_on(async move {
@@ -3107,17 +3120,6 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // DB mutex. The owned fallback (per-call open) is used only
                         // when startup couldn't open the shared connection.
                         let pipeline_fut = async {
-                            let extensions = match crate::profile::extension_registry::TypedExtensionRegistry::load() {
-                                Ok(extensions) => extensions,
-                                Err(error) => {
-                                    tracing::warn!(
-                                        path = %crate::profile::extension_registry::TypedExtensionRegistry::default_path().display(),
-                                        error = %error,
-                                        "profile extension registry unavailable — skipping channel profile pipeline"
-                                    );
-                                    return;
-                                }
-                            };
                             let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
                             let now_unix = crate::time::now_unix_secs();
                             let run = if let Some(shared) = &views_conn_for_pipeline {
@@ -3125,9 +3127,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 // just for it; run_pipeline re-locks per DB stage.
                                 {
                                     let mut g = shared.lock().await;
-                                    if let Err(e) = crate::memory::indexer::replay_once(
+                                    if let Err(e) = crate::memory::indexer::replay_once_audited_at_home(
+                                        &profile_home_for_pipeline,
                                         &mut g,
                                         &segment_path_for_pipeline,
+                                        None,
                                     )
                                     .await
                                     {
@@ -3145,7 +3149,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     ingress_event_id,
                                     2,
                                     &guard,
-                                    &extensions,
+                                    &profile_extensions,
                                     now_unix,
                                     None, // ADV-03 Phase 5: no daemon-mode gate yet
                                     derived_from_mirror_pipeline, // ADV-07
@@ -3163,9 +3167,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                         return;
                                     }
                                 };
-                                if let Err(e) = crate::memory::indexer::replay_once(
+                                if let Err(e) = crate::memory::indexer::replay_once_audited_at_home(
+                                    &profile_home_for_pipeline,
                                     &mut owned,
                                     &segment_path_for_pipeline,
+                                    None,
                                 )
                                 .await
                                 {
@@ -3182,7 +3188,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     ingress_event_id,
                                     2,
                                     &guard,
-                                    &extensions,
+                                    &profile_extensions,
                                     now_unix,
                                     None,
                                     derived_from_mirror_pipeline,
@@ -3595,6 +3601,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn instance_registry_error_early_return_targets_the_origin_group_chat() {
+        let mut message = inbound(Some("hello from a group"), None);
+        message.chat_id = "telegram-group-42".into();
+        message.sender_id = "telegram-member-7".into();
+
+        let reply = instance_registry_error_reply(&message);
+
+        assert_eq!(reply.recipient_id, message.chat_id);
+        assert_ne!(reply.recipient_id, message.sender_id);
+        assert_eq!(
+            reply.text,
+            "[NEOTH] Instance configuration is invalid. Fix mcp_servers.yaml, tweaks.toml, or profile_extensions.toml on the host before retrying."
+        );
+    }
+
+    #[test]
+    fn dynamic_early_return_also_targets_the_origin_group_chat() {
+        let mut message = inbound(Some("/status"), None);
+        message.chat_id = "slack-channel-C42".into();
+        message.sender_id = "slack-user-U7".into();
+
+        let reply = reply_to_inbound(&message, format!("[NEOTH] {}", "consent revoked"));
+
+        assert_eq!(reply.recipient_id, message.chat_id);
+        assert_ne!(reply.recipient_id, message.sender_id);
+        assert_eq!(reply.text, "[NEOTH] consent revoked");
+    }
+
     fn count_edit_frames(bytes: &[u8]) -> usize {
         let mut n = 0usize;
         let _ = crate::wal::scan::for_each_frame(bytes, |_, d| {
@@ -3793,10 +3828,10 @@ mod tests {
         let _ = crate::wal::scan::for_each_frame(bytes, |_, d| {
             if d.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS {
                 egress += 1;
-                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(d.payload) {
-                    if v.get("provider").and_then(|x| x.as_str()) == Some(want_provider) {
-                        saw = true;
-                    }
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(d.payload)
+                    && v.get("provider").and_then(|x| x.as_str()) == Some(want_provider)
+                {
+                    saw = true;
                 }
             }
             Ok(())

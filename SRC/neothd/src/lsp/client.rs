@@ -167,14 +167,12 @@ impl LspSession {
             }
             match self.read_one_frame_timeout(remaining) {
                 Ok(Some(body)) => {
-                    if let Ok(parsed) = serde_json::from_slice::<RawNotification>(&body) {
-                        if parsed.method.as_deref() == Some("textDocument/publishDiagnostics") {
-                            if let Some(p) = parsed.params {
-                                if collect_from_params(p, &mut diagnostics) {
-                                    return Ok(diagnostics);
-                                }
-                            }
-                        }
+                    if let Ok(parsed) = serde_json::from_slice::<RawNotification>(&body)
+                        && parsed.method.as_deref() == Some("textDocument/publishDiagnostics")
+                        && let Some(p) = parsed.params
+                        && collect_from_params(p, &mut diagnostics)
+                    {
+                        return Ok(diagnostics);
                     }
                     // Non-matching frames: skip.
                 }

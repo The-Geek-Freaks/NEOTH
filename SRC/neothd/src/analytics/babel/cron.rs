@@ -345,16 +345,15 @@ impl BabelCronState {
                 close_ts
             )
         })?;
-        if g == WindowGranularity::FifteenMin {
-            if let Some(b_mult) = window.scores.b_mult {
-                if b_mult >= self.threshold {
-                    out.push(CronEvent::ThresholdBreached {
-                        window_id: window.id.clone(),
-                        score: b_mult,
-                        threshold: self.threshold,
-                    });
-                }
-            }
+        if g == WindowGranularity::FifteenMin
+            && let Some(b_mult) = window.scores.b_mult
+            && b_mult >= self.threshold
+        {
+            out.push(CronEvent::ThresholdBreached {
+                window_id: window.id.clone(),
+                score: b_mult,
+                threshold: self.threshold,
+            });
         }
         out.push(CronEvent::WindowComputed(Box::new(window)));
         Ok(())

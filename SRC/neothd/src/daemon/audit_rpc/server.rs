@@ -288,7 +288,7 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
             .fullauto
             .mint(super::fullauto_token::FULLAUTO_TOKEN_TTL)
         {
-            Some(tok) => http_response_json(200, &format!("{{\"token\":{:?}}}", tok)),
+            Some(tok) => http_response_json(200, &format!("{{\"token\":{tok:?}}}")),
             None => http_response(500, "token mint failed (RNG unavailable)"),
         };
         let _ = stream.write_all(resp.as_bytes()).await;
@@ -410,7 +410,7 @@ async fn emit_reject(state: &AuditRpcState, reason: &str) {
 }
 
 fn http_response(status: u16, msg: &str) -> String {
-    http_response_json(status, &format!("{{\"error\":{:?}}}", msg))
+    http_response_json(status, &format!("{{\"error\":{msg:?}}}"))
 }
 
 fn http_response_json(status: u16, body: &str) -> String {

@@ -155,10 +155,10 @@ impl MapperState {
     fn prune(&mut self, now: i64) {
         self.recent_tool_calls
             .retain(|_, ts| now - *ts <= SYNTH_HORIZON_SECS);
-        if let Some((_, ts)) = &self.pending_fallback {
-            if now - *ts > SYNTH_HORIZON_SECS {
-                self.pending_fallback = None;
-            }
+        if let Some((_, ts)) = &self.pending_fallback
+            && now - *ts > SYNTH_HORIZON_SECS
+        {
+            self.pending_fallback = None;
         }
     }
 }
@@ -201,16 +201,16 @@ fn map_frame(
             }
             if let Some(hash) = v.get("arguments_hash").and_then(|s| s.as_str()) {
                 let key = (tool.clone(), hash.to_string());
-                if let Some(prev) = mapper.recent_tool_calls.get(&key) {
-                    if ts - prev <= SYNTH_HORIZON_SECS {
-                        out.push(WalEventRecord {
-                            ts_unix: ts,
-                            kind: WalEventKind::Retry {
-                                tool: Some(tool),
-                                agent_id: None,
-                            },
-                        });
-                    }
+                if let Some(prev) = mapper.recent_tool_calls.get(&key)
+                    && ts - prev <= SYNTH_HORIZON_SECS
+                {
+                    out.push(WalEventRecord {
+                        ts_unix: ts,
+                        kind: WalEventKind::Retry {
+                            tool: Some(tool),
+                            agent_id: None,
+                        },
+                    });
                 }
                 mapper.recent_tool_calls.insert(key, ts);
             }
@@ -236,16 +236,16 @@ fn map_frame(
                     context_used_ratio: None,
                 },
             });
-            if let Some((route, attempt_ts)) = mapper.pending_fallback.take() {
-                if ts - attempt_ts <= SYNTH_HORIZON_SECS {
-                    out.push(WalEventRecord {
-                        ts_unix: ts,
-                        kind: WalEventKind::FallbackResult {
-                            route,
-                            success: true,
-                        },
-                    });
-                }
+            if let Some((route, attempt_ts)) = mapper.pending_fallback.take()
+                && ts - attempt_ts <= SYNTH_HORIZON_SECS
+            {
+                out.push(WalEventRecord {
+                    ts_unix: ts,
+                    kind: WalEventKind::FallbackResult {
+                        route,
+                        success: true,
+                    },
+                });
             }
         }
         EVENT_TYPE_PROVIDER_ERROR => {

@@ -165,7 +165,7 @@ pub fn run_qa(bank: &QuestionBank, lang_primary: &str) -> Result<Vec<Answer>> {
             let hint = q
                 .placeholder
                 .as_deref()
-                .map(|p| format!(" ({})", p))
+                .map(|p| format!(" ({p})"))
                 .unwrap_or_default();
             let label = format!("{prompt}{hint}");
             let raw = if q.skip_ok {

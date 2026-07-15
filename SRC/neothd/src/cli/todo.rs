@@ -537,10 +537,10 @@ fn missing_caldav(field: &str, env: &str) -> anyhow::Error {
 /// Resolve the Todoist token: `--token` → `credentials.yaml::todoist_token`
 /// → `NEOTH_TODOIST_TOKEN`, else a clear error.
 fn resolve_todoist_token(arg: Option<&str>) -> Result<SecretString> {
-    if let Some(t) = arg {
-        if !t.is_empty() {
-            return Ok(SecretString::from(t));
-        }
+    if let Some(t) = arg
+        && !t.is_empty()
+    {
+        return Ok(SecretString::from(t));
     }
     // Propagate a corrupt-credentials parse error (load_or_default hard-errors
     // on bad YAML by contract) rather than `unwrap_or_default()`-swallowing it
@@ -552,10 +552,10 @@ fn resolve_todoist_token(arg: Option<&str>) -> Result<SecretString> {
     if let Some(tok) = creds.todoist_token {
         return Ok(tok);
     }
-    if let Ok(env) = std::env::var("NEOTH_TODOIST_TOKEN") {
-        if !env.is_empty() {
-            return Ok(SecretString::from(env));
-        }
+    if let Ok(env) = std::env::var("NEOTH_TODOIST_TOKEN")
+        && !env.is_empty()
+    {
+        return Ok(SecretString::from(env));
     }
     anyhow::bail!(
         "no Todoist token — pass --token <TOKEN>, add `todoist_token` to \

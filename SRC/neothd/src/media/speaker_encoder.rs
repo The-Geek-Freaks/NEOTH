@@ -294,7 +294,7 @@ fn decode(
     validate_sample_rate(sample_rate_hz)?;
     match format {
         AudioFormat::PcmS16leMono => {
-            if bytes.len() % 2 != 0 {
+            if !bytes.len().is_multiple_of(2) {
                 return Err(SpeakerAudioError::MisalignedPcm {
                     format: "s16le",
                     len: bytes.len(),
@@ -310,7 +310,7 @@ fn decode(
             })
         }
         AudioFormat::PcmF32leMono => {
-            if bytes.len() % 4 != 0 {
+            if !bytes.len().is_multiple_of(4) {
                 return Err(SpeakerAudioError::MisalignedPcm {
                     format: "f32le",
                     len: bytes.len(),

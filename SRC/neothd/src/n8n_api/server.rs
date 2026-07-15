@@ -415,10 +415,7 @@ fn body_read_error(error: &(dyn std::error::Error + Send + Sync + 'static)) -> H
     if error.downcast_ref::<LengthLimitError>().is_some() {
         HandlerOutcome::error(
             ApiErrorCode::BadRequest,
-            format!(
-                "request body exceeds cap {} bytes",
-                REQUEST_BODY_LIMIT_BYTES
-            ),
+            format!("request body exceeds cap {REQUEST_BODY_LIMIT_BYTES} bytes"),
             "shrink the payload — the workflow JSON likely embeds a huge field",
         )
     } else {
@@ -612,10 +609,7 @@ mod tests {
         match outcome {
             HandlerOutcome::Err { message, .. } => assert_eq!(
                 message,
-                format!(
-                    "request body exceeds cap {} bytes",
-                    REQUEST_BODY_LIMIT_BYTES
-                )
+                format!("request body exceeds cap {REQUEST_BODY_LIMIT_BYTES} bytes")
             ),
             HandlerOutcome::Ok { .. } => panic!("oversized body must be rejected"),
         }
@@ -643,8 +637,7 @@ mod tests {
         let limited = Limited::new(at_cap, REQUEST_BODY_LIMIT_BYTES);
         assert!(
             limited.collect().await.is_ok(),
-            "Limited must allow a body at exactly the {} byte cap",
-            REQUEST_BODY_LIMIT_BYTES
+            "Limited must allow a body at exactly the {REQUEST_BODY_LIMIT_BYTES} byte cap"
         );
     }
 }

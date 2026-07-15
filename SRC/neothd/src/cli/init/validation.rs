@@ -257,7 +257,7 @@ pub fn validate_operator_id(id: &str) -> Result<()> {
         anyhow::bail!("operator-id may only contain [a-zA-Z0-9_-]: {id}");
     }
     if RESERVED_IDS.contains(&id) {
-        anyhow::bail!("operator-id '{}' is reserved", id);
+        anyhow::bail!("operator-id '{id}' is reserved");
     }
     Ok(())
 }
@@ -288,10 +288,7 @@ pub fn validate_role(role: &str) -> Result<()> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        anyhow::bail!(
-            "invalid role '{}'. Must be known or [a-z0-9_-] max 32 chars",
-            role
-        );
+        anyhow::bail!("invalid role '{role}'. Must be known or [a-z0-9_-] max 32 chars");
     }
     Ok(())
 }

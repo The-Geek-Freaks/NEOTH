@@ -38,8 +38,6 @@
 //! plaintext and migrated to DPAPI on the next write (e.g. via
 //! `neoth keys rotate`).
 
-#![cfg(windows)]
-
 use anyhow::Result;
 
 /// 14-byte magic header that distinguishes a DPAPI-wrapped key file
@@ -231,8 +229,7 @@ mod tests {
         let r = unprotect(&wrapped);
         assert!(
             r.is_err(),
-            "corrupted DPAPI blob must fail unprotect, got: {:?}",
-            r
+            "corrupted DPAPI blob must fail unprotect, got: {r:?}"
         );
     }
 }

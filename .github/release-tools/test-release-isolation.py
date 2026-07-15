@@ -2,10 +2,23 @@ from __future__ import annotations
 
 import pathlib
 import re
+import tomllib
 
 
-WORKFLOW = pathlib.Path(__file__).parents[1] / "workflows" / "release.yml"
+REPOSITORY_ROOT = pathlib.Path(__file__).parents[2]
+WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
+WORKSPACE_MANIFEST = REPOSITORY_ROOT / "SRC" / "Cargo.toml"
+PRODUCT_LOCKFILE = REPOSITORY_ROOT / "SRC" / "Cargo.lock"
+PRODUCT_VERIFIER = REPOSITORY_ROOT / "SRC" / "neothd" / "src" / "updater" / "sig_verify.rs"
+SIGNER_ROOT = REPOSITORY_ROOT / ".github" / "release-tools" / "neoth-release-signer"
+SIGNER_MANIFEST_PATH = SIGNER_ROOT / "Cargo.toml"
+SIGNER_LOCKFILE = SIGNER_ROOT / "Cargo.lock"
 TEXT = WORKFLOW.read_text(encoding="utf-8")
+WORKSPACE = tomllib.loads(WORKSPACE_MANIFEST.read_text(encoding="utf-8"))
+PRODUCT_LOCK = tomllib.loads(PRODUCT_LOCKFILE.read_text(encoding="utf-8"))
+PRODUCT_VERIFIER_TEXT = PRODUCT_VERIFIER.read_text(encoding="utf-8")
+SIGNER_MANIFEST = tomllib.loads(SIGNER_MANIFEST_PATH.read_text(encoding="utf-8"))
+SIGNER_LOCK = tomllib.loads(SIGNER_LOCKFILE.read_text(encoding="utf-8"))
 JOB_PATTERN = re.compile(
     r"(?ms)^  ([A-Za-z0-9_-]+):\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)"
 )
@@ -13,7 +26,34 @@ JOBS = {name: body for name, body in JOB_PATTERN.findall(TEXT)}
 RUST_TOOLCHAIN_ACTION = (
     "uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30"
 )
-RUST_186_PIN = f"{RUST_TOOLCHAIN_ACTION} # stable\n        with:\n          toolchain: '1.86.0'"
+WORKSPACE_MSRV = (
+    WORKSPACE.get("workspace", {}).get("package", {}).get("rust-version")
+)
+RELEASE_RUST_VERSION = (
+    WORKSPACE_MSRV
+    if isinstance(WORKSPACE_MSRV, str) and WORKSPACE_MSRV.count(".") == 2
+    else f"{WORKSPACE_MSRV}.0"
+)
+RUST_MSRV_PIN = (
+    f"{RUST_TOOLCHAIN_ACTION} # stable\n"
+    "        with:\n"
+    f"          toolchain: '{RELEASE_RUST_VERSION}'"
+)
+DEPENDENCY_TABLES = {"dependencies", "dev-dependencies", "build-dependencies"}
+PATH_ATTRIBUTE = re.compile(r"#\s*\[[^\]]*\bpath\s*=", re.DOTALL)
+INCLUDE_MACRO = re.compile(
+    r"\binclude(?:_str|_bytes)?\s*!|\b(?:pub\s+)?use\s+[^;]*\binclude(?:_str|_bytes)?\b"
+)
+CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
+EXPECTED_SIGNER_DEPENDENCIES = {
+    "anyhow",
+    "base64",
+    "blake2",
+    "ed25519-dalek",
+    "minisign-verify",
+    "zeroize",
+}
+EXPECTED_SIGNER_DEV_DEPENDENCIES = {"tempfile"}
 
 
 def require(condition: bool, message: str) -> None:
@@ -26,9 +66,193 @@ def job(name: str) -> str:
     return JOBS[name]
 
 
+def is_within(path: pathlib.Path, root: pathlib.Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def dependency_specs(table: dict, prefix: tuple[str, ...] = ()):
+    for key, value in table.items():
+        current = (*prefix, key)
+        if key in DEPENDENCY_TABLES and isinstance(value, dict):
+            for name, spec in value.items():
+                yield ".".join(current), name, spec
+        elif isinstance(value, dict):
+            yield from dependency_specs(value, current)
+
+
+def locked_package_versions(lockfile: dict, package_name: str) -> set[tuple[str, str | None]]:
+    return {
+        (package["version"], package.get("source"))
+        for package in lockfile.get("package", [])
+        if package.get("name") == package_name
+    }
+
+
+def dependency_violation(name: str, spec: object) -> str | None:
+    if isinstance(spec, str):
+        if not spec.startswith("="):
+            return f"registry dependency {name} is not exactly version-pinned"
+        return None
+    if not isinstance(spec, dict):
+        return f"dependency {name} has an unsupported manifest shape"
+    if "git" in spec:
+        return f"dependency {name} uses a Git/network source"
+    if "registry" in spec:
+        return f"dependency {name} overrides the audited crates.io registry"
+    if "workspace" in spec:
+        return f"dependency {name} inherits from an external workspace"
+    if "path" in spec:
+        return f"dependency {name} uses a path source"
+    version = spec.get("version")
+    if not isinstance(version, str) or not version.startswith("="):
+        return f"registry dependency {name} is not exactly version-pinned"
+    return None
+
+
 require(
-    TEXT.count(RUST_TOOLCHAIN_ACTION) == TEXT.count(RUST_186_PIN),
-    "a SHA-pinned rust-toolchain action lacks explicit Rust 1.86.0 selection",
+    isinstance(WORKSPACE_MSRV, str)
+    and re.fullmatch(r"\d+\.\d+(?:\.\d+)?", WORKSPACE_MSRV) is not None,
+    "workspace.package.rust-version is missing or invalid",
+)
+require(
+    TEXT.count(RUST_TOOLCHAIN_ACTION) == TEXT.count(RUST_MSRV_PIN),
+    "a SHA-pinned rust-toolchain action does not select the workspace MSRV "
+    f"({RELEASE_RUST_VERSION})",
+)
+
+# Guard the guards against the concrete source-escape forms this contract
+# exists to reject, including cfg_attr-based path indirection.
+for sample in (
+    '#[path = "../../../../SRC/neothd/src/updater/sig_keygen.rs"] mod signer;',
+    '#[cfg_attr(unix, path = "../../../../SRC/product.rs")] mod product;',
+):
+    require(PATH_ATTRIBUTE.search(sample) is not None, "#[path] detector regressed")
+for sample in (
+    'include!("../../../../SRC/product.rs");',
+    'const DATA: &str = include_str!("../../../../SRC/data");',
+    'const DATA: &[u8] = include_bytes!("../../../../SRC/data");',
+    'use std::include_bytes as embed_product;',
+):
+    require(INCLUDE_MACRO.search(sample) is not None, "include-macro detector regressed")
+for name, spec in (
+    ("outside", {"path": "../../../../SRC/neothd"}),
+    ("local-path", {"path": "local-crate"}),
+    ("git", {"git": "https://example.invalid/repository"}),
+    ("registry", {"version": "=1.0.0", "registry": "external"}),
+    ("workspace", {"workspace": True}),
+):
+    require(
+        dependency_violation(name, spec) is not None,
+        f"dependency isolation detector accepted forbidden {name} source",
+    )
+require(
+    dependency_violation("pinned", "=1.0.0") is None,
+    "dependency isolation detector rejected an exact crates.io pin",
+)
+
+signer_sources = sorted(SIGNER_ROOT.rglob("*.rs"))
+require(bool(signer_sources), "isolated signer has no Rust sources")
+for signer_entry in SIGNER_ROOT.rglob("*"):
+    require(
+        not signer_entry.is_symlink(),
+        f"isolated signer tree contains a symlink: {signer_entry.relative_to(SIGNER_ROOT)}",
+    )
+for signer_source in signer_sources:
+    relative_source = signer_source.relative_to(SIGNER_ROOT)
+    require(
+        is_within(signer_source, SIGNER_ROOT),
+        f"isolated signer source escapes its tree: {relative_source}",
+    )
+    signer_text = signer_source.read_text(encoding="utf-8")
+    require(
+        PATH_ATTRIBUTE.search(signer_text) is None,
+        f"isolated signer source uses a #[path] attribute: {relative_source}",
+    )
+    require(
+        INCLUDE_MACRO.search(signer_text) is None,
+        f"isolated signer source uses a compile-time include macro: {relative_source}",
+    )
+
+signer_package = SIGNER_MANIFEST.get("package", {})
+require(
+    signer_package.get("build") in (None, False),
+    "isolated signer declares a custom build script",
+)
+require(not (SIGNER_ROOT / "build.rs").exists(), "isolated signer has an implicit build script")
+require("workspace" not in SIGNER_MANIFEST, "isolated signer must remain a standalone crate")
+require("patch" not in SIGNER_MANIFEST, "isolated signer manifest contains dependency patches")
+require("replace" not in SIGNER_MANIFEST, "isolated signer manifest contains replacements")
+require(
+    set(SIGNER_MANIFEST.get("dependencies", {})) == EXPECTED_SIGNER_DEPENDENCIES,
+    "isolated signer runtime dependency allowlist changed",
+)
+require(
+    set(SIGNER_MANIFEST.get("dev-dependencies", {})) == EXPECTED_SIGNER_DEV_DEPENDENCIES,
+    "isolated signer dev-dependency allowlist changed",
+)
+require(
+    not SIGNER_MANIFEST.get("build-dependencies"),
+    "isolated signer must not have build dependencies",
+)
+
+for target_kind in ("lib", "bin", "example", "test", "bench"):
+    configured_targets = SIGNER_MANIFEST.get(target_kind, [])
+    if isinstance(configured_targets, dict):
+        configured_targets = [configured_targets]
+    for target in configured_targets:
+        target_path = target.get("path")
+        if target_path is not None:
+            require(
+                isinstance(target_path, str)
+                and is_within(SIGNER_ROOT / target_path, SIGNER_ROOT),
+                f"isolated signer {target_kind} target escapes its tree",
+            )
+
+for table, dependency_name, dependency_spec in dependency_specs(SIGNER_MANIFEST):
+    require(
+        table in DEPENDENCY_TABLES,
+        f"isolated signer has a target-specific dependency table: {table}",
+    )
+    violation = dependency_violation(dependency_name, dependency_spec)
+    require(violation is None, f"{table}.{dependency_name}: {violation}")
+
+for package in SIGNER_LOCK.get("package", []):
+    source = package.get("source")
+    if source is None:
+        continue
+    require(
+        source == CRATES_IO_SOURCE,
+        f"isolated signer lock contains a non-crates.io network source: {package['name']}",
+    )
+    require(
+        isinstance(package.get("checksum"), str),
+        f"isolated signer lock lacks a checksum for {package['name']}",
+    )
+
+signer_verifier_versions = locked_package_versions(SIGNER_LOCK, "minisign-verify")
+product_verifier_versions = locked_package_versions(PRODUCT_LOCK, "minisign-verify")
+require(
+    len(signer_verifier_versions) == 1,
+    "isolated signer must lock exactly one minisign-verify version",
+)
+require(
+    signer_verifier_versions == product_verifier_versions,
+    "isolated signer and product verifier resolve different minisign-verify versions",
+)
+require(
+    "minisign_verify::PublicKey::from_base64" in PRODUCT_VERIFIER_TEXT
+    and "minisign_verify::Signature::decode" in PRODUCT_VERIFIER_TEXT
+    and re.search(
+        r"\.verify\(\s*data,\s*&sig,\s*false\s*\)",
+        PRODUCT_VERIFIER_TEXT,
+        re.DOTALL,
+    )
+    is not None,
+    "product verifier no longer uses the non-legacy minisign-verify contract",
 )
 
 

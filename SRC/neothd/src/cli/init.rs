@@ -234,29 +234,29 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         // freshly written freedom.yaml. Autonomy is stripped: the wizard's
         // explicit selection already wrote it into the config (the selection
         // IS the ceremony on a fresh install — no daemon, no WAL yet).
-        if let Some(name) = &chosen_preset {
-            if let Some(mut preset) = crate::config::preset_builtins::builtin_by_name(name) {
-                preset.autonomy = None;
-                match crate::config::presets::apply_preset_to_freedom_yaml(&neoth_dir, &preset) {
-                    Ok(report) => {
-                        println!(
-                            "  ⚡ preset `{name}` applied ({} feature toggles set).",
-                            report.fields_changed.len()
-                        );
-                        if !report.warn_changes.is_empty() {
-                            println!("     cost/privacy-relevant toggles included:");
-                            for (path, _, new) in &report.warn_changes {
-                                println!("       • {path} → {new}");
-                            }
+        if let Some(name) = &chosen_preset
+            && let Some(mut preset) = crate::config::preset_builtins::builtin_by_name(name)
+        {
+            preset.autonomy = None;
+            match crate::config::presets::apply_preset_to_freedom_yaml(&neoth_dir, &preset) {
+                Ok(report) => {
+                    println!(
+                        "  ⚡ preset `{name}` applied ({} feature toggles set).",
+                        report.fields_changed.len()
+                    );
+                    if !report.warn_changes.is_empty() {
+                        println!("     cost/privacy-relevant toggles included:");
+                        for (path, _, new) in &report.warn_changes {
+                            println!("       • {path} → {new}");
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, preset = %name, "preset overlay failed");
-                        println!(
-                            "  ⚠ preset `{name}` overlay failed ({e}) — base config written; \
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, preset = %name, "preset overlay failed");
+                    println!(
+                        "  ⚠ preset `{name}` overlay failed ({e}) — base config written; \
                              run `neoth preset apply {name}` to retry."
-                        );
-                    }
+                    );
                 }
             }
         }
@@ -272,10 +272,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         // R-05 (Session 24) — offer to auto-start the daemon + greet
         // with the first-tour message. Runs on TTY only; CI / pipe
         // skip so the wizard remains scriptable.
-        if interactive {
-            if let Err(e) = step9_offer_start_daemon(&neoth_dir) {
-                tracing::warn!(error = %e, "auto-start daemon offer failed (cosmetic)");
-            }
+        if interactive && let Err(e) = step9_offer_start_daemon(&neoth_dir) {
+            tracing::warn!(error = %e, "auto-start daemon offer failed (cosmetic)");
         }
         // Phase 28c R-24 GT-4: optional Q&A ground-truth seed. Runs only on
         // a TTY; non-interactive flow points operator at `neoth groundtruth
@@ -553,11 +551,9 @@ mod tests {
         );
         assert!(
             recommended_count >= prompt_count,
-            "NOOB-UX-4 drift: {} wizard prompts, {} 'recommended' markers — \
+            "NOOB-UX-4 drift: {prompt_count} wizard prompts, {recommended_count} 'recommended' markers — \
              every interactive prompt needs at least one recommended-default \
-             hint for non-developer operators",
-            prompt_count,
-            recommended_count
+             hint for non-developer operators"
         );
     }
 

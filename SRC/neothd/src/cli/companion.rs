@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use tokio::sync::Notify;
 
+use crate::cli::OutputFormat;
 use crate::daemon::companion::{
     CompanionInvite, CompanionState, render_pairing_qr, spawn_companion_p2p_listener,
 };
@@ -56,15 +57,21 @@ pub enum CompanionCommand {
     },
 }
 
-pub async fn run_companion(args: CompanionArgs) -> Result<()> {
+pub async fn run_companion(args: CompanionArgs, output: OutputFormat) -> Result<()> {
     match args.command {
         CompanionCommand::PairPhone {
             write_invite_for_serve,
-        } => run_pair_phone(write_invite_for_serve).await,
+        } => run_pair_phone(write_invite_for_serve, output).await,
     }
 }
 
-async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
+async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> Result<()> {
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) && !write_invite_for_serve {
+        anyhow::bail!(
+            "structured companion pairing requires `--write-invite-for-serve`; \
+             the standalone listener is an interactive terminal flow"
+        );
+    }
     // Validate the daemon-backed contract before minting or displaying a
     // secret invite. Otherwise the default `p2p_enabled: false` configuration
     // leaves a live-looking QR and an invite file that no process consumes.
@@ -89,19 +96,21 @@ async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
     let invite = CompanionInvite::generate()?;
     let url = invite.pairing_url(PAIR_INVITE_TTL_SECS);
 
-    // QR first when stdout is a TTY; render_pairing_qr returns "" on failure /
-    // non-TTY, so the URL fallback below is always printed regardless.
-    let qr = render_pairing_qr(&url);
-    if !qr.is_empty() {
-        println!("{qr}");
-    }
+    if matches!(output, OutputFormat::Table) {
+        // QR first when stdout is a TTY; render_pairing_qr returns "" on failure /
+        // non-TTY, so the URL fallback below is always printed regardless.
+        let qr = render_pairing_qr(&url);
+        if !qr.is_empty() {
+            println!("{qr}");
+        }
 
-    println!("Scan the QR above with the NEOTH companion app, or open this URL on your phone:");
-    println!();
-    println!("  {url}");
-    println!();
-    println!("This invite is single-use and expires in {PAIR_INVITE_TTL_SECS}s.");
-    println!();
+        println!("Scan the QR above with the NEOTH companion app, or open this URL on your phone:");
+        println!();
+        println!("  {url}");
+        println!();
+        println!("This invite is single-use and expires in {PAIR_INVITE_TTL_SECS}s.");
+        println!();
+    }
 
     // `--write-invite-for-serve`: hand the invite to a RUNNING daemon rather
     // than driving the pairing here. Write it to the well-known path the
@@ -131,13 +140,25 @@ async fn run_pair_phone(write_invite_for_serve: bool) -> Result<()> {
                 invite_path.display()
             )
         })?;
-        println!(
-            "Invite handed to daemon pid {} at {}.\n\
-             The serve-side coordinator (companion.p2p_enabled: true) picks it up \
-             within ~2s and completes the pairing into the daemon's token store.",
-            daemon_pid,
-            invite_path.display()
-        );
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({
+                    "ok": true,
+                    "action": "pair_phone",
+                    "pair_url": url,
+                    "expires_in_secs": PAIR_INVITE_TTL_SECS,
+                    "handed_to_daemon": true,
+                })
+            ),
+            OutputFormat::Table => println!(
+                "Invite handed to daemon pid {} at {}.\n\
+                 The serve-side coordinator (companion.p2p_enabled: true) picks it up \
+                 within ~2s and completes the pairing into the daemon's token store.",
+                daemon_pid,
+                invite_path.display()
+            ),
+        }
         return Ok(());
     }
 

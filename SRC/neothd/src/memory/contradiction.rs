@@ -130,34 +130,30 @@ fn token_set(s: &str) -> HashSet<String> {
 /// already compare correctly as opaque tokens.
 fn normalize_token(t: &str) -> String {
     // 12-hour clock: <digits>am / <digits>pm
-    if let Some(hour) = t.strip_suffix("am").or_else(|| t.strip_suffix("pm")) {
-        if !hour.is_empty() && hour.bytes().all(|b| b.is_ascii_digit()) {
-            if let Ok(h) = hour.parse::<u32>() {
-                if h <= 12 {
-                    let h24 = match (h, t.ends_with("pm")) {
-                        (12, false) => 0,    // 12am = midnight
-                        (12, true) => 12,    // 12pm = noon
-                        (h, false) => h,     // 1am..11am
-                        (h, true) => h + 12, // 1pm..11pm
-                    };
-                    return format!("{h24:02}:00");
-                }
-            }
-        }
+    if let Some(hour) = t.strip_suffix("am").or_else(|| t.strip_suffix("pm"))
+        && !hour.is_empty()
+        && hour.bytes().all(|b| b.is_ascii_digit())
+        && let Ok(h) = hour.parse::<u32>()
+        && h <= 12
+    {
+        let h24 = match (h, t.ends_with("pm")) {
+            (12, false) => 0,    // 12am = midnight
+            (12, true) => 12,    // 12pm = noon
+            (h, false) => h,     // 1am..11am
+            (h, true) => h + 12, // 1pm..11pm
+        };
+        return format!("{h24:02}:00");
     }
     // h:mm / hh:mm → zero-padded HH:MM
-    if let Some((hh, mm)) = t.split_once(':') {
-        if !hh.is_empty()
-            && hh.bytes().all(|b| b.is_ascii_digit())
-            && mm.len() == 2
-            && mm.bytes().all(|b| b.is_ascii_digit())
-        {
-            if let Ok(h) = hh.parse::<u32>() {
-                if h < 24 {
-                    return format!("{h:02}:{mm}");
-                }
-            }
-        }
+    if let Some((hh, mm)) = t.split_once(':')
+        && !hh.is_empty()
+        && hh.bytes().all(|b| b.is_ascii_digit())
+        && mm.len() == 2
+        && mm.bytes().all(|b| b.is_ascii_digit())
+        && let Ok(h) = hh.parse::<u32>()
+        && h < 24
+    {
+        return format!("{h:02}:{mm}");
     }
     t.to_string()
 }
@@ -529,15 +525,15 @@ pub fn detect_contradictions_for(
         if peer.id == new_fact.id {
             continue;
         }
-        if let Some(sig) = pair_confidence(&new_fact.statement, &peer.statement) {
-            if record_pair(conn, &new_fact, peer, sig, now_ns)? {
-                let (lo, hi) = if new_fact.id < peer.id {
-                    (new_fact.id, peer.id)
-                } else {
-                    (peer.id, new_fact.id)
-                };
-                detected.push((lo, hi));
-            }
+        if let Some(sig) = pair_confidence(&new_fact.statement, &peer.statement)
+            && record_pair(conn, &new_fact, peer, sig, now_ns)?
+        {
+            let (lo, hi) = if new_fact.id < peer.id {
+                (new_fact.id, peer.id)
+            } else {
+                (peer.id, new_fact.id)
+            };
+            detected.push((lo, hi));
         }
     }
     Ok(detected)
@@ -642,10 +638,10 @@ pub async fn scan_contradictions(
                 Some(p) => pair_confidence_semantic(&a.statement, &b.statement, p).await,
                 None => pair_confidence(&a.statement, &b.statement),
             };
-            if let Some(sig) = sig {
-                if record_pair(conn, a, b, sig, now_ns)? {
-                    new_rows += 1;
-                }
+            if let Some(sig) = sig
+                && record_pair(conn, a, b, sig, now_ns)?
+            {
+                new_rows += 1;
             }
         }
     }
@@ -966,8 +962,7 @@ pub fn forget_for_ids(conn: &Connection, revoked_ids: &[i64]) -> Result<i64> {
         .join(",");
     let sql = format!(
         "DELETE FROM idx_contradictions \
-         WHERE fact_a_id IN ({p}) OR fact_b_id IN ({p})",
-        p = placeholders
+         WHERE fact_a_id IN ({placeholders}) OR fact_b_id IN ({placeholders})"
     );
     // The id list is bound once per IN clause; double it for params_from_iter
     // (avoids the fragile twice-pushed &dyn ToSql pattern).

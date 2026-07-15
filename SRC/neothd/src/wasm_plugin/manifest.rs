@@ -261,10 +261,10 @@ pub fn validate_manifest(m: &PluginManifest) -> Result<(), ManifestError> {
     }
     // DES-12: cap ui_surface title so an attacker-controlled manifest
     // directory cannot inject an arbitrarily long string into the GUI.
-    if let Some(PluginUiSurface::WalFeed { title }) = &m.ui_surface {
-        if title.len() > MAX_UI_SURFACE_TITLE_LEN {
-            return Err(ManifestError::UiSurfaceTitleTooLong { got: title.len() });
-        }
+    if let Some(PluginUiSurface::WalFeed { title }) = &m.ui_surface
+        && title.len() > MAX_UI_SURFACE_TITLE_LEN
+    {
+        return Err(ManifestError::UiSurfaceTitleTooLong { got: title.len() });
     }
     Ok(())
 }

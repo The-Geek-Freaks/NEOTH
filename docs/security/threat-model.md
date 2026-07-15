@@ -552,11 +552,24 @@ contract is documented in [Durable mesh synchronization](../mesh-sync.md).
 ### 4.7 ViitorVoice endpoint trust boundary
 
 `media.tts.viitor_endpoint` is a trusted operator configuration value for a
-self-hosted voice-cloning sidecar. It intentionally permits loopback/private
-deployment and is not passed through the public-URL SSRF guard. Enabling it
-means the selected reference-audio file and spoken text are disclosed to that
-endpoint; keep it under operator control and use a protected transport when it
-is not loopback. The non-local TTS opt-in still applies.
+self-hosted voice-cloning sidecar. Plain HTTP is accepted only on an explicit
+loopback address. Private-LAN, mesh, and public endpoints must use HTTPS.
+Loopback calls bypass proxy configuration and no ViitorVoice request follows a
+redirect, so the selected reference-audio file and spoken text cannot be
+bounced to another origin. The non-local TTS opt-in still applies.
+
+### 4.8 Credential-bearing adapter transport
+
+Signal, WhatsApp Graph, and CalDAV parse endpoints before constructing a
+request. Remote endpoints require HTTPS. Signal and CalDAV accept HTTP only for
+an exact loopback service; WhatsApp's HTTP loopback seam is compiled only into
+unit tests and production Graph traffic is HTTPS-only. URL userinfo, base
+queries, fragments, and identifier path injection are rejected. Remote HTTPS
+uses the configured egress proxy without following redirects. Loopback traffic
+uses a direct no-proxy, no-redirect client. Signal binds the validated origin
+and that client in one typed value; WhatsApp and CalDAV construct the client
+only after the same validation. This keeps bearer tokens, Basic credentials,
+messages, calendar bodies, and task data off cleartext remote transports.
 
 ## 5. Reporting a vulnerability
 

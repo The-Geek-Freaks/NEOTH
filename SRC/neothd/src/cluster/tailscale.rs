@@ -319,8 +319,7 @@ mod tests {
         // Probe must not hang past its own timeout.
         assert!(
             elapsed < Duration::from_millis(PROBE_TIMEOUT_MS * 2),
-            "probe ran too long: {:?}",
-            elapsed
+            "probe ran too long: {elapsed:?}"
         );
     }
 

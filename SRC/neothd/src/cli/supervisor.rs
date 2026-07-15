@@ -120,10 +120,10 @@ fn render_install(kind: crate::config::SupervisorKind, output: &OutputFormat) {
 /// when set, else `~/.config`. Other OSes ignore it (launchd uses the
 /// home dir; Windows uses Task Scheduler, no path).
 fn config_home_dir() -> std::path::PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return std::path::PathBuf::from(xdg);
-        }
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+        && !xdg.is_empty()
+    {
+        return std::path::PathBuf::from(xdg);
     }
     dirs_home().join(".config")
 }

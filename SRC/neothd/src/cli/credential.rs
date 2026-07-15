@@ -89,10 +89,10 @@ fn set_key_names(creds: &Credentials) -> Result<Vec<String>> {
     let mut names = Vec::new();
     if let Some(map) = value.as_mapping() {
         for (k, v) in map {
-            if !v.is_null() {
-                if let Some(name) = k.as_str() {
-                    names.push(name.to_string());
-                }
+            if !v.is_null()
+                && let Some(name) = k.as_str()
+            {
+                names.push(name.to_string());
             }
         }
     }
@@ -722,9 +722,10 @@ mod tests {
         std::fs::write(root.join("blob.bin"), b"AKIAIOSFODNN7EXAMPLE\x00\x01").unwrap();
         // a .git dir whose contents must NOT be scanned.
         std::fs::create_dir(root.join(".git")).unwrap();
+        let skipped_token = format!("ghp_{}", "a".repeat(38));
         std::fs::write(
             root.join(".git").join("config"),
-            "token=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00\n",
+            format!("token={skipped_token}\n"),
         )
         .unwrap();
 

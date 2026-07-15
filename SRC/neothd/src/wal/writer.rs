@@ -670,18 +670,16 @@ async fn open_segment(path: &Path) -> Result<OpenedSegment, WalError> {
     // crash between file create and the next fsync, the directory entry may
     // be lost even though the segment bytes are durable — losing the whole
     // segment. Cheap on most filesystems, mandatory on ext4/xfs/btrfs.
-    if is_new {
-        if let Some(parent) = path.parent() {
-            #[cfg(unix)]
-            {
-                if let Ok(dir) = std::fs::File::open(parent) {
-                    let _ = dir.sync_all();
-                }
+    if is_new && let Some(parent) = path.parent() {
+        #[cfg(unix)]
+        {
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
             }
-            // Windows: rename+create are durable via NTFS metadata journal.
-            // No directory fsync equivalent.
-            let _ = parent;
         }
+        // Windows: rename+create are durable via NTFS metadata journal.
+        // No directory fsync equivalent.
+        let _ = parent;
     }
 
     // Windows: tokio::fs has no `mode()`. We restrict the file's DACL to the
@@ -777,7 +775,7 @@ fn next_segment_path(current: &Path, next_seq: u64) -> PathBuf {
     {
         return parent.join(format!("{namespace}-{next_seq:06}.wal"));
     }
-    parent.join(format!("{:06}.wal", next_seq))
+    parent.join(format!("{next_seq:06}.wal"))
 }
 
 /// Close the current segment durably and open the next one. Emits a
@@ -1248,10 +1246,8 @@ async fn run_writer(
     // lands durably before the daemon exits. Caller's `drop(writer)`
     // already closed the channel above; this is the last chance to
     // flush before the writer-task returns.
-    if pending_unsynced {
-        if let Err(e) = state.file.sync_data().await {
-            warn!(error = %e, "shutdown-drain sync_data for batchable frames failed");
-        }
+    if pending_unsynced && let Err(e) = state.file.sync_data().await {
+        warn!(error = %e, "shutdown-drain sync_data for batchable frames failed");
     }
 
     debug!("WAL writer task: channel closed, exiting");
@@ -1592,7 +1588,7 @@ mod tests {
 
         let mut offsets = vec![];
         for i in 1..=3u64 {
-            let payload = format!("event-{}", i).into_bytes();
+            let payload = format!("event-{i}").into_bytes();
             let h = header_for(payload.len() as u32, i);
             let off = handle.append(h, payload).await.expect("append");
             offsets.push(off);

@@ -37,14 +37,14 @@ pub fn scan_command(command: &str) -> Vec<EgressDestination> {
     let url_re = URL_RE.get_or_init(|| Regex::new(r#"(?i)(https?|ftp)://[^\s'"<>|;&)]+"#).unwrap());
     for cap in url_re.find_iter(command) {
         let url = cap.as_str().to_string();
-        if let Some(domain) = extract_domain_from_url(&url) {
-            if !domain.is_empty() {
-                out.push(EgressDestination {
-                    kind: "url".into(),
-                    destination: url,
-                    domain,
-                });
-            }
+        if let Some(domain) = extract_domain_from_url(&url)
+            && !domain.is_empty()
+        {
+            out.push(EgressDestination {
+                kind: "url".into(),
+                destination: url,
+                domain,
+            });
         }
     }
 

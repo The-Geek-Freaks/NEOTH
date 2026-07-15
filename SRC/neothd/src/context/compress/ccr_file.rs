@@ -179,12 +179,12 @@ pub fn read_savings(dir: &Path) -> Savings {
     let mut s = Savings::default();
     for line in text.lines() {
         let mut it = line.split_whitespace();
-        if let (Some(b), Some(a)) = (it.next(), it.next()) {
-            if let (Ok(b), Ok(a)) = (b.parse::<u64>(), a.parse::<u64>()) {
-                s.blocks += 1;
-                s.bytes_before += b;
-                s.bytes_after += a;
-            }
+        if let (Some(b), Some(a)) = (it.next(), it.next())
+            && let (Ok(b), Ok(a)) = (b.parse::<u64>(), a.parse::<u64>())
+        {
+            s.blocks += 1;
+            s.bytes_before += b;
+            s.bytes_after += a;
         }
     }
     s

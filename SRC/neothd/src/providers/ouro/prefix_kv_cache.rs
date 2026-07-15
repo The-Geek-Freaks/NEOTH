@@ -78,10 +78,11 @@ impl PrefixKvCache {
     pub fn insert(&mut self, key: u64, entry: PrefixKvEntry) {
         // Evict only when inserting a genuinely new key at capacity (a re-insert
         // of an existing key replaces in place and must not evict a sibling).
-        if !self.entries.contains_key(&key) && self.entries.len() >= self.cap {
-            if let Some(victim) = self.entries.keys().next().copied() {
-                self.entries.remove(&victim);
-            }
+        if !self.entries.contains_key(&key)
+            && self.entries.len() >= self.cap
+            && let Some(victim) = self.entries.keys().next().copied()
+        {
+            self.entries.remove(&victim);
         }
         self.entries.insert(key, entry);
     }

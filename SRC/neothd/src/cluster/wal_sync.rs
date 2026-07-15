@@ -586,7 +586,7 @@ pub fn spawn_gossip_tick(
                             sequence: prepared.frame.event_seq,
                             sent_unix_ms: now_unix_ms(),
                             peer_id: self_id.as_str().to_string(),
-                            body: FrameBody::Gossip(prepared.frame),
+                            body: FrameBody::Gossip(Box::new(prepared.frame)),
                         };
                         if peer_streams.send_to(&peer_pk, wf).is_ok() {
                             queued += 1;
@@ -727,12 +727,7 @@ pub fn ingest_foreign_event(
         ],
     )
     .map(|_| ())
-    .with_context(|| {
-        format!(
-            "ingest_foreign_event: insert {}/{} failed",
-            origin_peer_pk, origin_seq
-        )
-    })
+    .with_context(|| format!("ingest_foreign_event: insert {origin_peer_pk}/{origin_seq} failed"))
 }
 
 /// DES-13 — one accepted gossip frame queued for durable persistence.
@@ -1835,7 +1830,7 @@ pub fn local_node_pubkey(home: &std::path::Path) -> anyhow::Result<Option<String
         .key
         .0
         .iter()
-        .map(|b| format!("{:02x}", b))
+        .map(|b| format!("{b:02x}"))
         .collect::<String>();
     Ok(Some(hex))
 }

@@ -250,15 +250,15 @@ fn migrate_wal_to_v2(wal_dir: &std::path::Path, dry_run: bool, output: OutputFor
         let frames_raw = &raw[SEGMENT_HEADER_LEN..];
 
         // Validate that frames are parseable (sanity check, not full walk).
-        if !frames_raw.is_empty() {
-            if let Err(e) = decode_frame(frames_raw) {
-                eprintln!(
-                    "WARN: {} — first frame unparseable: {e}; skipping to avoid data loss",
-                    path.display()
-                );
-                errors += 1;
-                continue;
-            }
+        if !frames_raw.is_empty()
+            && let Err(e) = decode_frame(frames_raw)
+        {
+            eprintln!(
+                "WARN: {} — first frame unparseable: {e}; skipping to avoid data loss",
+                path.display()
+            );
+            errors += 1;
+            continue;
         }
 
         match output {
@@ -462,10 +462,6 @@ fn list(db_path: &std::path::Path, output: OutputFormat) -> Result<()> {
         OutputFormat::Table => {
             println!("# db at {}: schema v{}", db_path.display(), current);
             println!("# target version: v{}", store::SCHEMA_VERSION);
-            if migrations::MIGRATIONS.is_empty() {
-                println!("(no migrations registered)");
-                return Ok(());
-            }
             for m in migrations::MIGRATIONS {
                 let marker = if m.to <= current {
                     "[applied]"

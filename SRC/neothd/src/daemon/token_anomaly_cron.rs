@@ -124,19 +124,19 @@ fn scan_usage_by_day(wal_dir: &Path) -> BTreeMap<u64, DayUsage> {
             if total == 0 {
                 break;
             }
-            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE {
-                if let Ok(p) = serde_json::from_slice::<ProviderResponsePayload>(dec.payload) {
-                    let day = dec.header.hlc.physical_ns() / 1_000_000_000 / SECS_PER_DAY;
-                    let e = by_day.entry(day).or_default();
-                    e.tokens = e
-                        .tokens
-                        .saturating_add(p.input_tokens)
-                        .saturating_add(p.output_tokens);
-                    if let Some(m) = p.model {
-                        if !m.is_empty() {
-                            e.models.insert(m);
-                        }
-                    }
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+                && let Ok(p) = serde_json::from_slice::<ProviderResponsePayload>(dec.payload)
+            {
+                let day = dec.header.hlc.physical_ns() / 1_000_000_000 / SECS_PER_DAY;
+                let e = by_day.entry(day).or_default();
+                e.tokens = e
+                    .tokens
+                    .saturating_add(p.input_tokens)
+                    .saturating_add(p.output_tokens);
+                if let Some(m) = p.model
+                    && !m.is_empty()
+                {
+                    e.models.insert(m);
                 }
             }
             cursor = cursor.saturating_add(total);

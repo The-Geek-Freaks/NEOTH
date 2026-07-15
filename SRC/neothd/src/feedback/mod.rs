@@ -64,10 +64,10 @@ async fn emit_operator_feedback(home: &Path, score: &ToneScore, prompt_hash: u64
         return;
     }
     let segment = home.join("wal").join("000001.wal");
-    if let Some(parent) = segment.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
+    if let Some(parent) = segment.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return;
     }
     let payload = feedback_payload(score, prompt_hash);
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OPERATOR_FEEDBACK, &payload).build();

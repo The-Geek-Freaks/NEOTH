@@ -11,7 +11,7 @@
 //!
 //! A GCP **service-account JSON key** (path in `credentials.yaml::
 //! gchat_service_account_json`). Access tokens are minted on demand via the
-//! RS256 JWT-bearer grant (`jsonwebtoken`, ring-backed) with the combined
+//! RS256 JWT-bearer grant (`jsonwebtoken` 10.x with its RustCrypto RSA path) with the combined
 //! `pubsub` + `chat.bot` scopes and cached until ~60s before expiry. The
 //! private key never leaves this struct; error strings carry neither key nor
 //! token material (static messages + status codes only).

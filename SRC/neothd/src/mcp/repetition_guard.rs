@@ -92,21 +92,21 @@ impl ToolRepetitionGuard {
             self.last_identity = Some(identity);
         }
 
-        if let Some(max) = self.max_per_tool {
-            if total > max {
-                return GuardVerdict::BlockedCeiling {
-                    tool: tool_key,
-                    count: total,
-                };
-            }
+        if let Some(max) = self.max_per_tool
+            && total > max
+        {
+            return GuardVerdict::BlockedCeiling {
+                tool: tool_key,
+                count: total,
+            };
         }
-        if let Some(max) = self.max_consecutive {
-            if self.repeat_count > max {
-                return GuardVerdict::BlockedConsecutive {
-                    tool: tool_key,
-                    count: self.repeat_count,
-                };
-            }
+        if let Some(max) = self.max_consecutive
+            && self.repeat_count > max
+        {
+            return GuardVerdict::BlockedConsecutive {
+                tool: tool_key,
+                count: self.repeat_count,
+            };
         }
         GuardVerdict::Allow
     }

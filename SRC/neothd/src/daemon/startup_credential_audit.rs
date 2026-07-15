@@ -283,24 +283,19 @@ mod tests {
         assert!(!findings.is_empty(), "expected at least one finding");
         assert!(
             findings.iter().any(|f| f.secret_kind == "anthropic_key"),
-            "expected anthropic_key kind in {:?}",
-            findings,
+            "expected anthropic_key kind in {findings:?}",
         );
     }
 
     #[test]
     fn finds_github_pat_in_file() {
         let dir = TempDir::new().unwrap();
-        let p = write_file(
-            &dir,
-            ".env",
-            "GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
-        );
+        let token = format!("ghp_{}", "A".repeat(36));
+        let p = write_file(&dir, ".env", &format!("GITHUB_TOKEN={token}\n"));
         let findings = run_credential_scan(&[p], false).unwrap();
         assert!(
             findings.iter().any(|f| f.secret_kind == "github_pat"),
-            "expected github_pat in {:?}",
-            findings,
+            "expected github_pat in {findings:?}",
         );
     }
 
@@ -318,8 +313,7 @@ mod tests {
         // pattern-name rename trips this test deliberately.
         assert!(
             findings.iter().any(|f| f.secret_kind == "aws_key"),
-            "expected aws_key in {:?}",
-            findings,
+            "expected aws_key in {findings:?}",
         );
     }
 
@@ -330,10 +324,11 @@ mod tests {
         // the excerpt could land on the wrong token; with the
         // find_secret_kinds API it MUST land on the secret itself.
         let dir = TempDir::new().unwrap();
+        let token = format!("ghp_{}", "A".repeat(36));
         let p = write_file(
             &dir,
             "mixed.env",
-            "innocent_long_token_for_padding=ABCDEFGHIJKLMNOPQRST GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
+            &format!("innocent_long_token_for_padding=ABCDEFGHIJKLMNOPQRST GITHUB_TOKEN={token}\n"),
         );
         let findings = run_credential_scan(&[p], false).unwrap();
         let ghp = findings
@@ -359,35 +354,29 @@ mod tests {
     fn directory_scan_walks_one_level_only() {
         let dir = TempDir::new().unwrap();
         // Top-level dirty file → must be found.
-        write_file(
-            &dir,
-            "top.env",
-            "TOK=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        );
+        let top_token = format!("ghp_{}", "A".repeat(36));
+        write_file(&dir, "top.env", &format!("TOK={top_token}"));
         // Subdir dirty file → must NOT be found (we don't recurse).
         let sub = dir.path().join("subdir");
         std::fs::create_dir(&sub).unwrap();
-        std::fs::write(
-            sub.join("nested.env"),
-            "TOK2=ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-        )
-        .unwrap();
+        let nested_token = format!("ghp_{}", "B".repeat(36));
+        std::fs::write(sub.join("nested.env"), format!("TOK2={nested_token}")).unwrap();
         let findings = run_credential_scan(&[dir.path().to_path_buf()], false).unwrap();
         assert!(findings.iter().any(|f| f.path.ends_with("top.env")));
         assert!(
             !findings.iter().any(|f| f.path.ends_with("nested.env")),
-            "directory walk MUST be one level only; got nested hit in {:?}",
-            findings,
+            "directory walk MUST be one level only; got nested hit in {findings:?}",
         );
     }
 
     #[test]
     fn line_number_reported_one_based() {
         let dir = TempDir::new().unwrap();
+        let token = format!("ghp_{}", "A".repeat(36));
         let p = write_file(
             &dir,
             "multi.env",
-            "clean line\nsecond clean\nKEY=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
+            &format!("clean line\nsecond clean\nKEY={token}\n"),
         );
         let findings = run_credential_scan(&[p], false).unwrap();
         let ghp = findings

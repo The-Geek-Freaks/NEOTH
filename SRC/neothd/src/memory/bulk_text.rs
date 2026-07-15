@@ -296,10 +296,12 @@ fn strip_bullet(line: &str) -> &str {
         }
     }
     // Numbered list: "1. ", "2. ", ...
-    if let Some(idx) = trimmed.find(". ") {
-        if idx > 0 && idx <= 3 && trimmed[..idx].chars().all(|c| c.is_ascii_digit()) {
-            return &trimmed[idx + 2..];
-        }
+    if let Some(idx) = trimmed.find(". ")
+        && idx > 0
+        && idx <= 3
+        && trimmed[..idx].chars().all(|c| c.is_ascii_digit())
+    {
+        return &trimmed[idx + 2..];
     }
     trimmed
 }

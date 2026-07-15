@@ -93,8 +93,7 @@ pub async fn try_post_audit_frame_with_subtype(
         read_rpc_token(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
     let body = format!(
-        "{{\"event_type\":{event_type},\"event_subtype\":{event_subtype},\"payload_b64\":{:?}}}",
-        payload_b64,
+        "{{\"event_type\":{event_type},\"event_subtype\":{event_subtype},\"payload_b64\":{payload_b64:?}}}",
     );
     let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
     let mut stream = TcpStream::connect(addr)
@@ -205,7 +204,7 @@ pub async fn mint_fullauto_token(home: &Path) -> Option<String> {
 /// (HTTP 200, single-use). Any failure (unreachable / expired / wrong / already
 /// consumed) → `false`, and the FULL-AUTO bypass is then denied.
 pub async fn consume_fullauto_token(home: &Path, token: &str) -> bool {
-    let body = format!("{{\"token\":{:?}}}", token);
+    let body = format!("{{\"token\":{token:?}}}");
     matches!(
         post_rpc(home, "/fullauto-token/consume", &body).await,
         Ok((200, _))

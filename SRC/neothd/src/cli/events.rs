@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn registry_is_non_empty_and_unique() {
-        assert!(!REGISTRY.is_empty(), "registry should never be empty");
+        assert!(REGISTRY.iter().any(|entry| entry.name == "RAW_TEXT"));
         // Every code appears exactly once.
         let mut codes: Vec<u8> = REGISTRY.iter().map(|e| e.code).collect();
         codes.sort();
@@ -657,7 +657,7 @@ mod tests {
         };
         let r = run_events(args).await;
         assert!(r.is_err());
-        let msg = format!("{:?}", r);
+        let msg = format!("{r:?}");
         assert!(msg.contains("no event with code"));
     }
 

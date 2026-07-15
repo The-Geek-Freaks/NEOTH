@@ -171,41 +171,40 @@ fn jaccard(a: &[String], b: &[String]) -> f32 {
 fn score_candidate(fp: &ElementFingerprint, el: &ElementRef) -> u32 {
     let mut score = 0u32;
     // +2 same id
-    if let (Some(want), Some(have)) = (&fp.id, el.value().id()) {
-        if want == have {
-            score += 2;
-        }
+    if let (Some(want), Some(have)) = (&fp.id, el.value().id())
+        && want == have
+    {
+        score += 2;
     }
     // +3 class overlap (Jaccard ≥ 0.5)
     if !fp.class_tokens.is_empty() && jaccard(&fp.class_tokens, &sorted_classes(el)) >= 0.5 {
         score += 3;
     }
     // +2 same text prefix
-    if let (Some(want), Some(have)) = (&fp.text_prefix, text_prefix_of(el)) {
-        if want == &have {
-            score += 2;
-        }
+    if let (Some(want), Some(have)) = (&fp.text_prefix, text_prefix_of(el))
+        && want == &have
+    {
+        score += 2;
     }
     let parent = parent_element(el);
     // +1 same positional index among same-tag siblings
-    if let (Some(want), Some(p)) = (fp.nth_of_tag_in_parent, parent.as_ref()) {
-        if nth_of_tag(p, el) == Some(want) {
-            score += 1;
-        }
+    if let (Some(want), Some(p)) = (fp.nth_of_tag_in_parent, parent.as_ref())
+        && nth_of_tag(p, el) == Some(want)
+    {
+        score += 1;
     }
     // +1 same parent tag
-    if let (Some(want), Some(p)) = (&fp.parent_tag, parent.as_ref()) {
-        if want == p.value().name() {
-            score += 1;
-        }
+    if let (Some(want), Some(p)) = (&fp.parent_tag, parent.as_ref())
+        && want == p.value().name()
+    {
+        score += 1;
     }
     // +1 parent class overlap (Jaccard ≥ 0.5)
-    if !fp.parent_class_tokens.is_empty() {
-        if let Some(p) = parent.as_ref() {
-            if jaccard(&fp.parent_class_tokens, &sorted_classes(p)) >= 0.5 {
-                score += 1;
-            }
-        }
+    if !fp.parent_class_tokens.is_empty()
+        && let Some(p) = parent.as_ref()
+        && jaccard(&fp.parent_class_tokens, &sorted_classes(p)) >= 0.5
+    {
+        score += 1;
     }
     score
 }

@@ -206,9 +206,10 @@ pub fn propose_adjustments(
     // ── topic-driven extension learning ──────────────────────
     // Top topic accounting for substantial activity → propose
     // pulling in a related extension.
-    if let Some((top_topic, hits)) = profile.topic.top_topics.first() {
-        if *hits >= 30 {
-            out.push(SelfDevProposal {
+    if let Some((top_topic, hits)) = profile.topic.top_topics.first()
+        && *hits >= 30
+    {
+        out.push(SelfDevProposal {
                 id: stable_id("learn_extension", top_topic),
                 kind: ProposalKind::LearnExtension,
                 reason: format!(
@@ -217,7 +218,6 @@ pub fn propose_adjustments(
                 confidence: (*hits as f64 / 100.0).min(0.85),
                 target: top_topic.clone(),
             });
-        }
     }
 
     out.sort_by(|a, b| {
@@ -539,8 +539,7 @@ mod tests {
         for w in props.windows(2) {
             assert!(
                 w[0].confidence >= w[1].confidence,
-                "proposals not in descending order: {:?}",
-                props
+                "proposals not in descending order: {props:?}"
             );
         }
     }

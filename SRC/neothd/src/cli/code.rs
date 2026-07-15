@@ -477,10 +477,10 @@ fn enqueue_session_summary(
         }
     };
     let item = crate::coding::feed::build_session_summary_item(outcome, session_id.raw());
-    if queue.enqueue(item) {
-        if let Err(e) = queue.save_to(&queue_path) {
-            tracing::warn!(error = %e, "session-summary: proactive queue save failed");
-        }
+    if queue.enqueue(item)
+        && let Err(e) = queue.save_to(&queue_path)
+    {
+        tracing::warn!(error = %e, "session-summary: proactive queue save failed");
     }
 }
 

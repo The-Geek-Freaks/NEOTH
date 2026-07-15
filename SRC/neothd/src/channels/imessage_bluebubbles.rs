@@ -182,10 +182,10 @@ pub(crate) fn bb_message_to_inbound(
 
     // Chat GUID allowlist filter (optional operator-supplied, checked here
     // so the WAL gate only fires for configured chats).
-    if let Some(allowed) = chat_guid_allowlist {
-        if !allowed.iter().any(|a| a == &chat_id) {
-            return None;
-        }
+    if let Some(allowed) = chat_guid_allowlist
+        && !allowed.iter().any(|a| a == &chat_id)
+    {
+        return None;
     }
 
     let unix_ms = bb_date_to_unix_ms(msg.date_created);
@@ -636,17 +636,17 @@ impl Channel for BlueBubblesChannel {
             .and_then(|v| v.as_str())
             .unwrap_or("sent")
             .to_string();
-        if let Some(c) = caption {
-            if !c.trim().is_empty() {
-                // The attachment is already delivered — a caption failure must
-                // NOT surface as Err, or the proactive tick would mark the item
-                // Failed and a retry would deliver the attachment twice.
-                if let Err(e) = self.post_text(chat_id, c).await {
-                    tracing::warn!(
-                        error = %e,
-                        "bluebubbles caption send failed after attachment delivery (dropped)"
-                    );
-                }
+        if let Some(c) = caption
+            && !c.trim().is_empty()
+        {
+            // The attachment is already delivered — a caption failure must
+            // NOT surface as Err, or the proactive tick would mark the item
+            // Failed and a retry would deliver the attachment twice.
+            if let Err(e) = self.post_text(chat_id, c).await {
+                tracing::warn!(
+                    error = %e,
+                    "bluebubbles caption send failed after attachment delivery (dropped)"
+                );
             }
         }
         Ok(MessageId(guid))

@@ -596,10 +596,10 @@ fn evict_inflight_claimed(
                 }
             }
         }
-        if let Some(f) = f_opt.as_mut() {
-            if let Err(e) = writeln!(f, "{line}") {
-                warn!(error = %e, dedup_key = %item.dedup_key, "evict: sidecar write failed for crash_recovered");
-            }
+        if let Some(f) = f_opt.as_mut()
+            && let Err(e) = writeln!(f, "{line}")
+        {
+            warn!(error = %e, dedup_key = %item.dedup_key, "evict: sidecar write failed for crash_recovered");
         }
         // Delete the claim file — done regardless of sidecar write outcome.
         if let Err(e) = std::fs::remove_file(&claim_path) {

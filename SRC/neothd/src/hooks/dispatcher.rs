@@ -247,11 +247,11 @@ pub fn run_stage_with_config_returning_blocks(
             }
             HookAction::Replace { template } => {
                 hits.push(hook.name.clone());
-                if let Some(m) = &hook.matcher {
-                    if let Ok(re) = compile_cached(&m.pattern) {
-                        current = re.replace_all(&current, template.as_str()).into_owned();
-                        continue;
-                    }
+                if let Some(m) = &hook.matcher
+                    && let Ok(re) = compile_cached(&m.pattern)
+                {
+                    current = re.replace_all(&current, template.as_str()).into_owned();
+                    continue;
                 }
                 // No matcher → replace the entire body.
                 current = template.clone();

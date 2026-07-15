@@ -169,12 +169,11 @@ fn detect_title(text: &str) -> bool {
         }
         // Section label: one or two words followed by `:` at line end
         let words: Vec<&str> = trimmed.split_whitespace().collect();
-        if words.len() <= 3 {
-            if let Some(last) = words.last() {
-                if last.ends_with(':') {
-                    return true;
-                }
-            }
+        if words.len() <= 3
+            && let Some(last) = words.last()
+            && last.ends_with(':')
+        {
+            return true;
         }
     }
     false

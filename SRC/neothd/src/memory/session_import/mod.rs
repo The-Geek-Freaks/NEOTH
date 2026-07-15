@@ -206,10 +206,10 @@ fn short_id(id: &str) -> String {
 fn collect_models(session: &ForeignSession) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for m in &session.messages {
-        if let Some(model) = &m.model {
-            if !seen.iter().any(|s| s == model) {
-                seen.push(model.clone());
-            }
+        if let Some(model) = &m.model
+            && !seen.iter().any(|s| s == model)
+        {
+            seen.push(model.clone());
         }
     }
     seen

@@ -1481,7 +1481,7 @@ fn pcm_s16le_bytes_to_wav(pcm_s16le: &[u8], sample_rate: u32) -> Result<Vec<u8>,
     {
         return Err(PcmEncodingError::InvalidSampleRate(sample_rate));
     }
-    if pcm_s16le.len() % 2 != 0 {
+    if !pcm_s16le.len().is_multiple_of(2) {
         return Err(PcmEncodingError::MisalignedS16Bytes {
             len: pcm_s16le.len(),
         });
@@ -1540,7 +1540,7 @@ pub fn pcm_f32_to_wav(samples: &[f32]) -> Result<Vec<u8>, PcmEncodingError> {
 /// Kept for the low-level faster-whisper compatibility seam. New callers
 /// should pass typed samples to [`pcm_f32_to_wav`] or [`dispatch_pcm_f32`].
 pub fn pcm_bytes_to_wav(audio_bytes: &[u8]) -> Result<Vec<u8>, PcmEncodingError> {
-    if audio_bytes.len() % 4 != 0 {
+    if !audio_bytes.len().is_multiple_of(4) {
         return Err(PcmEncodingError::MisalignedF32Bytes {
             len: audio_bytes.len(),
         });

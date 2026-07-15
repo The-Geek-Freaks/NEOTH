@@ -116,7 +116,7 @@ pub fn coarsen_model(provider: &str, model_id: &str) -> String {
     } else {
         &family
     };
-    format!("{}/{}", provider, family)
+    format!("{provider}/{family}")
 }
 
 /// Deployment context for stratification metadata.

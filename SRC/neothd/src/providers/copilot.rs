@@ -102,11 +102,11 @@ impl CopilotAdapter {
 
         {
             let cache = self.token_cache.lock().await;
-            if let Some(ref cached) = *cache {
-                if Instant::now() + BUFFER < cached.expires_at {
-                    debug!("copilot_api: reusing cached session token");
-                    return Ok(SecretString::from(cached.token.clone()));
-                }
+            if let Some(ref cached) = *cache
+                && Instant::now() + BUFFER < cached.expires_at
+            {
+                debug!("copilot_api: reusing cached session token");
+                return Ok(SecretString::from(cached.token.clone()));
             }
         }
 

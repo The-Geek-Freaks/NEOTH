@@ -175,7 +175,7 @@ pub enum FrameBody {
     Goodbye(GoodbyeBody),
     TaskDelegate(TaskDelegateBody),
     TaskResult(TaskResultBody),
-    Gossip(super::gossip_wire::GossipFrame),
+    Gossip(Box<super::gossip_wire::GossipFrame>),
     GossipAck(super::gossip_wire::GossipAck),
 }
 
@@ -327,13 +327,13 @@ pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
             body.prompt.len()
         );
     }
-    if let Some(hint) = &body.model_hint {
-        if hint.len() > MAX_TASK_ID_BYTES {
-            anyhow::bail!(
-                "task_delegate: model_hint {} bytes exceeds cap {MAX_TASK_ID_BYTES}",
-                hint.len()
-            );
-        }
+    if let Some(hint) = &body.model_hint
+        && hint.len() > MAX_TASK_ID_BYTES
+    {
+        anyhow::bail!(
+            "task_delegate: model_hint {} bytes exceeds cap {MAX_TASK_ID_BYTES}",
+            hint.len()
+        );
     }
     Ok(())
 }
@@ -645,7 +645,7 @@ mod tests {
             sequence: 11,
             sent_unix_ms: 1_700_000_000_002,
             peer_id: "node-a".into(),
-            body: FrameBody::Gossip(GossipFrame {
+            body: FrameBody::Gossip(Box::new(GossipFrame {
                 protocol_version: SYNC_PROTOCOL_VERSION,
                 vector_clock: vc,
                 origin: PeerPubkey::new("node-a"),
@@ -655,7 +655,7 @@ mod tests {
                 tag: GossipTag::Replicate,
                 payload,
                 envelope,
-            }),
+            })),
         };
         let bytes = encode_frame(&frame).unwrap();
         match decode_frame(&bytes).unwrap().body {

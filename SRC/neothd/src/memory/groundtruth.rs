@@ -848,7 +848,7 @@ pub fn promote_restricted(
 ) -> Result<PromoteOutcome> {
     let chunk = get_restricted(conn, restricted_id)
         .context("promote_restricted: load chunk")?
-        .ok_or_else(|| anyhow::anyhow!("idx_restricted row {} not found", restricted_id))?;
+        .ok_or_else(|| anyhow::anyhow!("idx_restricted row {restricted_id} not found"))?;
 
     if chunk.promoted_at.is_some() {
         // Already promoted — find the groundtruth row if possible.
@@ -1880,7 +1880,7 @@ mod tests {
         let outcome = promote_restricted(&conn, rid, "operator-runtime", 2_000, false).unwrap();
         let gt_id = match outcome {
             PromoteOutcome::Promoted { groundtruth_id } => groundtruth_id,
-            other => panic!("expected Promoted, got {:?}", other),
+            other => panic!("expected Promoted, got {other:?}"),
         };
         assert!(gt_id > 0);
 
@@ -1908,8 +1908,7 @@ mod tests {
         let second = promote_restricted(&conn, rid, "op", 3_000, false).unwrap();
         assert!(
             matches!(second, PromoteOutcome::AlreadyPromoted { .. }),
-            "second promotion must return AlreadyPromoted, got {:?}",
-            second
+            "second promotion must return AlreadyPromoted, got {second:?}"
         );
 
         // Only one groundtruth row should exist.

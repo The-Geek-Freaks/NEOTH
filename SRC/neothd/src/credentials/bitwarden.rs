@@ -276,10 +276,10 @@ pub fn parse_export_str(body: &str) -> Result<DiscoveredCredentials, String> {
             .map(|u| u.uri)
             .unwrap_or_default();
         let mut tags = Vec::new();
-        if let Some(folder_id) = item.folder_id.as_ref() {
-            if let Some(name) = folder_tag.get(folder_id) {
-                tags.push(name.clone());
-            }
+        if let Some(folder_id) = item.folder_id.as_ref()
+            && let Some(name) = folder_tag.get(folder_id)
+        {
+            tags.push(name.clone());
         }
         entries.push(ImportedCredential::new(
             ImportSource::Bitwarden,

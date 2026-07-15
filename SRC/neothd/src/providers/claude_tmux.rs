@@ -651,11 +651,11 @@ pub fn strip_ansi_sequences(input: &str) -> String {
                     }
                     if p == ESC {
                         chars.next();
-                        if let Some(&q) = chars.peek() {
-                            if q == '\\' {
-                                chars.next();
-                                break;
-                            }
+                        if let Some(&q) = chars.peek()
+                            && q == '\\'
+                        {
+                            chars.next();
+                            break;
                         }
                         break;
                     }

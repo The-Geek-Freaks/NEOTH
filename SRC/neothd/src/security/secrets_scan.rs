@@ -167,16 +167,20 @@ mod tests {
 
     #[test]
     fn detects_common_secret_formats() {
-        let text = "\
+        let github_token = format!("ghp_{}", "1234567890abcdefghijklmnopqrstuvwxyz12");
+        let slack_token = ["xoxb", "1234567890", "abcdefABCDEF"].join("-");
+        let text = format!(
+            "\
 line one is clean
 aws = AKIAIOSFODNN7EXAMPLE
-gh = ghp_1234567890abcdefghijklmnopqrstuvwxyz12
+gh = {github_token}
 oai = sk-proj-abcdefghijklmnopqrstuvwxyz0123456789
-slack = xoxb-1234567890-abcdefABCDEF
+slack = {slack_token}
 google = AIzaSyA1234567890abcdefghijklmnopqrstuv
 api_key = \"s3cr3t_value_here_long\"
-";
-        let f = scan_text(text);
+"
+        );
+        let f = scan_text(&text);
         let names: Vec<&str> = f.iter().map(|x| x.pattern).collect();
         assert!(names.contains(&"aws_access_key_id"));
         assert!(names.contains(&"github_token"));

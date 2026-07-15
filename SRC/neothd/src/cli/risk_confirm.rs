@@ -184,10 +184,10 @@ async fn emit_risk_confirm_granted(
         return;
     }
     let segment = home.join("wal").join("000001.wal");
-    if let Some(parent) = segment.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
+    if let Some(parent) = segment.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return;
     }
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_RISK_CONFIRM_GRANTED, &payload).build();
     match crate::wal::spawn(segment) {

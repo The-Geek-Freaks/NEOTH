@@ -89,11 +89,11 @@ impl GoalTracker {
     ///    self-terminates while grind is active; `max_turns` is the ceiling).
     /// 3. Otherwise → return `None` (stop the loop).
     pub fn on_clean_exit(&mut self) -> Option<String> {
-        if let Some(ref goal) = self.goal {
-            if !self.goal_nudge_fired {
-                self.goal_nudge_fired = true;
-                return Some(goal_nudge(goal));
-            }
+        if let Some(ref goal) = self.goal
+            && !self.goal_nudge_fired
+        {
+            self.goal_nudge_fired = true;
+            return Some(goal_nudge(goal));
         }
         if let Some(ref grind) = self.grind {
             return Some(grind_nudge(grind));

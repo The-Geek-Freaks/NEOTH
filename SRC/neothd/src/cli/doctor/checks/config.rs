@@ -251,6 +251,46 @@ pub(crate) fn check_profile_extensions(home: &Path) -> CheckOutcome {
     }
 }
 
+fn load_validated_skill_count(home: &Path) -> anyhow::Result<usize> {
+    let skills_dir = home.join("skills");
+    let worker = std::thread::Builder::new()
+        .name("neoth-doctor-skills".into())
+        .spawn(move || -> anyhow::Result<usize> {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(anyhow::Error::from)?;
+            runtime.block_on(async move {
+                crate::skills::registry::load_validated_skills(&skills_dir)
+                    .await
+                    .map(|skills| skills.len())
+            })
+        })
+        .map_err(anyhow::Error::from)?;
+    worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("skill registry validation worker panicked"))?
+}
+
+pub(crate) fn check_skill_mode_registry(home: &Path) -> CheckOutcome {
+    let skills_dir = home.join("skills");
+    match load_validated_skill_count(home) {
+        Ok(count) => CheckOutcome {
+            name: "skill/mode registry",
+            status: CheckStatus::Pass,
+            detail: format!(
+                "{count} bundled + operator skill(s), all mode ids unique (user path {})",
+                skills_dir.display()
+            ),
+        },
+        Err(error) => CheckOutcome {
+            name: "skill/mode registry",
+            status: CheckStatus::Fail,
+            detail: format!("invalid registry at {}: {error:#}", skills_dir.display()),
+        },
+    }
+}
+
 pub(crate) fn check_tweaks_toml(home: &Path) -> CheckOutcome {
     let path = home.join("tweaks.toml");
     if !path.exists() {
@@ -609,6 +649,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_policy_yaml,
     check_tweaks_toml,
     check_profile_extensions,
+    check_skill_mode_registry,
     check_advisable_groundtruth_injection,
     check_advisable_consolidation_sweep,
     // ZF-08: remaining meaningful default-OFF groups.
@@ -698,6 +739,18 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                          TOML syntax error.",
         fix: "Missing → use defaults. Syntax error → diff against \
               `assets/profile_extensions.toml.example`.",
+    },
+    CheckDoc {
+        name: "skill/mode registry",
+        purpose: "Loads the complete bundled + operator skill registry from \
+                  `~/.neoth/skills`, validates every existing manifest and \
+                  adjacent skill policy, then proves every mode id is unique \
+                  before the daemon can publish the registry.",
+        common_failures: "Malformed or unreadable `skill.yaml`; directory/id \
+                         mismatch; malformed adjacent `freedom.yaml` skill \
+                         policy; two skills claiming the same mode id.",
+        fix: "Correct the reported file or rename one duplicate mode id. \
+              Missing `~/.neoth/skills` is valid and uses bundled skills.",
     },
     CheckDoc {
         name: "advisable: groundtruth injection",
@@ -871,6 +924,73 @@ mod tests {
         assert_eq!(outcome.status, CheckStatus::Fail);
         assert!(outcome.detail.contains("invalid configuration"));
         assert!(outcome.detail.contains("listen_port"));
+    }
+
+    fn write_mode_skill(home: &Path, id: &str, mode_id: &str) {
+        let skill_dir = home.join("skills").join(id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            format!(
+                r#"id: {id}
+description: doctor mode fixture
+system_prompt: test
+modes:
+  - id: {mode_id}
+    description: test mode
+    spectrum: balanced
+    oversight: low
+    output:
+      format: markdown
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn skill_mode_check_accepts_missing_optional_user_directory() {
+        let home = tempdir().unwrap();
+        let outcome = check_skill_mode_registry(home.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("mode ids unique"));
+    }
+
+    #[test]
+    fn skill_mode_check_reports_existing_malformed_manifest() {
+        let home = tempdir().unwrap();
+        let skill_dir = home.path().join("skills").join("broken");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("skill.yaml"), "id: [broken\n").unwrap();
+
+        let outcome = check_skill_mode_registry(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("invalid registry"));
+        assert!(outcome.detail.contains("parse YAML"));
+        assert!(outcome.detail.contains("broken"));
+    }
+
+    #[test]
+    fn skill_mode_check_reports_duplicate_mode_ids() {
+        let home = tempdir().unwrap();
+        write_mode_skill(home.path(), "doctor-owner-a", "doctor-duplicate-mode");
+        write_mode_skill(home.path(), "doctor-owner-b", "doctor-duplicate-mode");
+
+        let outcome = check_skill_mode_registry(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("doctor-duplicate-mode"));
+        assert!(outcome.detail.contains("doctor-owner-a"));
+        assert!(outcome.detail.contains("doctor-owner-b"));
+    }
+
+    #[test]
+    fn skill_mode_check_does_not_treat_existing_non_directory_as_missing() {
+        let home = tempdir().unwrap();
+        std::fs::write(home.path().join("skills"), "not a directory").unwrap();
+
+        let outcome = check_skill_mode_registry(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("read skills directory"));
     }
 
     #[test]

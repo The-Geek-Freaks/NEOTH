@@ -51,6 +51,7 @@ component ToggleRow inherits Rectangle {
     in property <string>  label;
     in property <string>  led-state: "off";   // "live" | "off"
     in property <bool>    enabled-state: false;
+    in property <bool>    controls-enabled: true;
     callback enable-clicked();
     callback disable-clicked();
 
@@ -76,14 +77,14 @@ component ToggleRow inherits Rectangle {
             label: "Enable";
             size: "sm";
             primary: !root.enabled-state;
-            enabled: !root.enabled-state;
+            enabled: root.controls-enabled && !root.enabled-state;
             clicked => { root.enable-clicked(); }
         }
         NeothButton {
             label: "Disable";
             size: "sm";
             danger: root.enabled-state;
-            enabled: root.enabled-state;
+            enabled: root.controls-enabled && root.enabled-state;
             clicked => { root.disable-clicked(); }
         }
     }
@@ -140,10 +141,20 @@ export component BuddyConfigView inherits Rectangle {
     /// Refresh timestamp — shown in footer of each card.
     in property <string> bc-refreshed-at: "";
 
+    /// True only after the most recent CLI status probe parsed completely.
+    in property <bool>   bc-status-valid: false;
+
+    /// Explicit probe/parse error. Existing values remain the last known-good
+    /// snapshot while this is non-empty; mutation controls stay disabled.
+    in property <string> bc-status-error: "";
+
     // ── Callbacks (fired by UI, mapped to daemon commands by integrator) ──────
 
-    /// Sovereign mode toggled — true = enable, false = disable.
-    callback bc-sovereign-toggle(bool);
+    /// Open the real TTY-only Sovereign activation ceremony.
+    callback bc-sovereign-enable-cli();
+
+    /// Disable Sovereign mode through the audited policy path.
+    callback bc-sovereign-disable();
 
     /// Self-activation toggled.
     callback bc-selfact-toggle(bool);
@@ -210,6 +221,33 @@ export component BuddyConfigView inherits Rectangle {
                 background: Theme.border-subtle;
             }
 
+            if root.bc-status-error != "": Card {
+                shimmer: false;
+                border-color: Theme.accent-pink;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 4px;
+                    Text {
+                        text: "Buddy status unavailable";
+                        color: Theme.accent-pink;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-sm;
+                        font-weight: Theme.weight-bold;
+                        accessible-role: text;
+                        accessible-label: self.text;
+                    }
+                    Text {
+                        text: root.bc-status-error + " Last known values are retained; changes are disabled until Refresh succeeds.";
+                        color: Theme.text-secondary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-xs;
+                        wrap: word-wrap;
+                        accessible-role: text;
+                        accessible-label: self.text;
+                    }
+                }
+            }
+
             // ── Scrollable card stack ────────────────────────────────────────
             ScrollView {
 
@@ -237,7 +275,9 @@ export component BuddyConfigView inherits Rectangle {
                                 Kicker { label: "SOVEREIGN"; }
                                 Rectangle { horizontal-stretch: 1; }
                                 Led {
-                                    state: root.bc-sovereign-buddy ? "live" : "off";
+                                    state: root.bc-status-error != "" ? "error"
+                                        : !root.bc-status-valid ? "connecting"
+                                        : root.bc-sovereign-buddy ? "live" : "off";
                                     dot-size: 7px;
                                 }
                             }
@@ -273,7 +313,7 @@ export component BuddyConfigView inherits Rectangle {
                             }
 
                             Note {
-                                body: "Sovereign mode: buddy acts without asking AND sends unsolicited messages. This is the highest-trust configuration — enable only when you want fully autonomous proactive behavior.";
+                                body: "Sovereign mode: buddy acts without asking AND sends unsolicited messages. Enable opens a secure terminal and still requires the exact phrase `sovereign`; Disable applies immediately through the audited policy path.";
                             }
 
                             Divider {}
@@ -283,18 +323,18 @@ export component BuddyConfigView inherits Rectangle {
                                 spacing: 8px;
                                 alignment: end;
                                 NeothButton {
-                                    label: "Enable";
+                                    label: "Enable in CLI";
                                     size: "sm";
                                     primary: !root.bc-sovereign-buddy;
-                                    enabled: !root.bc-sovereign-buddy;
-                                    clicked => { root.bc-sovereign-toggle(true); }
+                                    enabled: root.bc-status-valid && !root.bc-sovereign-buddy;
+                                    clicked => { root.bc-sovereign-enable-cli(); }
                                 }
                                 NeothButton {
                                     label: "Disable";
                                     size: "sm";
                                     danger: root.bc-sovereign-buddy;
-                                    enabled: root.bc-sovereign-buddy;
-                                    clicked => { root.bc-sovereign-toggle(false); }
+                                    enabled: root.bc-status-valid && root.bc-sovereign-buddy;
+                                    clicked => { root.bc-sovereign-disable(); }
                                 }
                             }
 
@@ -319,7 +359,9 @@ export component BuddyConfigView inherits Rectangle {
                                 Kicker { label: "SELF-ACTIVATION"; }
                                 Rectangle { horizontal-stretch: 1; }
                                 Led {
-                                    state: root.bc-self-activation-enabled ? "live" : "off";
+                                    state: root.bc-status-error != "" ? "error"
+                                        : !root.bc-status-valid ? "connecting"
+                                        : root.bc-self-activation-enabled ? "live" : "off";
                                     dot-size: 7px;
                                 }
                             }
@@ -333,8 +375,11 @@ export component BuddyConfigView inherits Rectangle {
                             // Toggle controls
                             ToggleRow {
                                 label: "Self-activation";
-                                led-state: root.bc-self-activation-enabled ? "live" : "off";
+                                led-state: root.bc-status-error != "" ? "error"
+                                    : !root.bc-status-valid ? "connecting"
+                                    : root.bc-self-activation-enabled ? "live" : "off";
                                 enabled-state: root.bc-self-activation-enabled;
+                                controls-enabled: root.bc-status-valid;
                                 enable-clicked => { root.bc-selfact-toggle(true); }
                                 disable-clicked => { root.bc-selfact-toggle(false); }
                             }
@@ -383,7 +428,9 @@ export component BuddyConfigView inherits Rectangle {
                                 Kicker { label: "SMART-APPROVE"; }
                                 Rectangle { horizontal-stretch: 1; }
                                 Led {
-                                    state: root.bc-smart-approve ? "live" : "off";
+                                    state: root.bc-status-error != "" ? "error"
+                                        : !root.bc-status-valid ? "connecting"
+                                        : root.bc-smart-approve ? "live" : "off";
                                     dot-size: 7px;
                                 }
                             }
@@ -396,8 +443,11 @@ export component BuddyConfigView inherits Rectangle {
 
                             ToggleRow {
                                 label: "Smart-approve";
-                                led-state: root.bc-smart-approve ? "live" : "off";
+                                led-state: root.bc-status-error != "" ? "error"
+                                    : !root.bc-status-valid ? "connecting"
+                                    : root.bc-smart-approve ? "live" : "off";
                                 enabled-state: root.bc-smart-approve;
+                                controls-enabled: root.bc-status-valid;
                                 enable-clicked => { root.bc-smart-approve-toggle(true); }
                                 disable-clicked => { root.bc-smart-approve-toggle(false); }
                             }
@@ -479,7 +529,9 @@ export component BuddyConfigView inherits Rectangle {
                                 Kicker { label: "PROACTIVE MESSAGING"; }
                                 Rectangle { horizontal-stretch: 1; }
                                 Led {
-                                    state: root.bc-proactive-enabled ? "live" : "off";
+                                    state: root.bc-status-error != "" ? "error"
+                                        : !root.bc-status-valid ? "connecting"
+                                        : root.bc-proactive-enabled ? "live" : "off";
                                     dot-size: 7px;
                                 }
                             }
@@ -492,8 +544,11 @@ export component BuddyConfigView inherits Rectangle {
 
                             ToggleRow {
                                 label: "Proactive messaging";
-                                led-state: root.bc-proactive-enabled ? "live" : "off";
+                                led-state: root.bc-status-error != "" ? "error"
+                                    : !root.bc-status-valid ? "connecting"
+                                    : root.bc-proactive-enabled ? "live" : "off";
                                 enabled-state: root.bc-proactive-enabled;
+                                controls-enabled: root.bc-status-valid;
                                 enable-clicked => { root.bc-proactive-toggle(true); }
                                 disable-clicked => { root.bc-proactive-toggle(false); }
                             }

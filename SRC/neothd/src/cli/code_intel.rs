@@ -144,10 +144,7 @@ pub async fn run_code_intel(args: CodeIntelArgs) -> Result<()> {
             Ok(pairs) => {
                 let show = pairs.len().min(20);
                 println!();
-                println!(
-                    "  Top {} hidden coupling pairs (co-changed ≥3 times, no call edge):",
-                    show
-                );
+                println!("  Top {show} hidden coupling pairs (co-changed ≥3 times, no call edge):");
                 println!();
                 println!("  {:<50}  {:<50}  {:>10}", "File A", "File B", "Co-changes");
                 println!("  {}", "-".repeat(115));

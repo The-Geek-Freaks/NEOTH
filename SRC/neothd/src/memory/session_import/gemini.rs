@@ -13,14 +13,11 @@ use super::{ForeignMessage, ForeignSession, Role, SessionUsage};
 
 pub fn parse(body: &str) -> Result<ForeignSession> {
     let trimmed = body.trim_start();
-    if trimmed.starts_with('{') {
-        if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-            if v.get("messages").map(Value::is_array).unwrap_or(false)
-                || v.get("sessionId").is_some()
-            {
-                return Ok(parse_document(&v));
-            }
-        }
+    if trimmed.starts_with('{')
+        && let Ok(v) = serde_json::from_str::<Value>(trimmed)
+        && (v.get("messages").map(Value::is_array).unwrap_or(false) || v.get("sessionId").is_some())
+    {
+        return Ok(parse_document(&v));
     }
     Ok(parse_jsonl(body))
 }
@@ -76,10 +73,10 @@ fn parse_jsonl(body: &str) -> ForeignSession {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if session_id.is_empty() {
-            if let Some(s) = v.get("sessionId").and_then(Value::as_str) {
-                session_id = s.to_string();
-            }
+        if session_id.is_empty()
+            && let Some(s) = v.get("sessionId").and_then(Value::as_str)
+        {
+            session_id = s.to_string();
         }
         if started_at.is_none() {
             started_at = v
@@ -105,11 +102,11 @@ fn parse_jsonl(body: &str) -> ForeignSession {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
-                if !id.is_empty() {
-                    if let Some(slot) = ordered.iter_mut().find(|(eid, _)| *eid == id) {
-                        slot.1 = msg;
-                        continue;
-                    }
+                if !id.is_empty()
+                    && let Some(slot) = ordered.iter_mut().find(|(eid, _)| *eid == id)
+                {
+                    slot.1 = msg;
+                    continue;
                 }
                 ordered.push((id, msg));
             }

@@ -20,8 +20,6 @@
 //   - Async callers use `restrict_to_owner_async` which runs on a
 //     `spawn_blocking` thread to avoid blocking a tokio worker.
 
-#![cfg(windows)]
-
 use std::io;
 use std::path::Path;
 

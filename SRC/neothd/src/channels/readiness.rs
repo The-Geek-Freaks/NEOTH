@@ -41,12 +41,7 @@ pub(crate) fn append_path(mut base: Url, suffix: &str) -> Url {
 /// Loopback probes bypass proxy state; remote probes still honour the daemon's
 /// configured egress proxy. Both variants reject redirects.
 pub(crate) fn probe_client(url: &Url) -> Result<reqwest::Client> {
-    let loopback = match url.host_str().unwrap_or_default() {
-        "localhost" => true,
-        host => host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback()),
-    };
+    let loopback = crate::providers::http_client::url_has_loopback_host(url);
     if loopback {
         crate::providers::http_client::build_direct_client_no_redirect()
     } else {

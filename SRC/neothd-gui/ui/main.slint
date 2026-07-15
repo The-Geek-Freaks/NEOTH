@@ -669,10 +669,17 @@ export component MainWindow inherits Window {
     callback wiki-refresh-clicked();
 
     // ── Wave 4b — Buddy Config panel ─────────────────────────────────────────
+    in property <bool>            bc-sovereign-buddy: false;
+    in property <bool>            bc-self-activation-enabled: false;
     in property <[SelfActSkill]>  bc-self-activation-skills: [];
+    in property <bool>            bc-smart-approve: false;
     in property <string>          bc-autonomy: "";
+    in property <bool>            bc-proactive-enabled: false;
     in property <string>          bc-refreshed-at: "";
-    callback bc-sovereign-toggle(bool);
+    in property <bool>            bc-status-valid: false;
+    in property <string>          bc-status-error: "";
+    callback bc-sovereign-enable-cli();
+    callback bc-sovereign-disable();
     callback bc-selfact-toggle(bool);
     callback bc-smart-approve-toggle(bool);
     callback bc-proactive-toggle(bool);
@@ -3393,10 +3400,17 @@ export component MainWindow inherits Window {
 
                 // Wave 4b — Buddy Configuration.
                 if root.nav-active == "buddyconfig": BuddyConfigView {
+                    bc-sovereign-buddy: root.bc-sovereign-buddy;
+                    bc-self-activation-enabled: root.bc-self-activation-enabled;
                     bc-self-activation-skills: root.bc-self-activation-skills;
+                    bc-smart-approve: root.bc-smart-approve;
                     bc-autonomy: root.bc-autonomy;
+                    bc-proactive-enabled: root.bc-proactive-enabled;
                     bc-refreshed-at: root.bc-refreshed-at;
-                    bc-sovereign-toggle(v) => { root.bc-sovereign-toggle(v); }
+                    bc-status-valid: root.bc-status-valid;
+                    bc-status-error: root.bc-status-error;
+                    bc-sovereign-enable-cli => { root.bc-sovereign-enable-cli(); }
+                    bc-sovereign-disable => { root.bc-sovereign-disable(); }
                     bc-selfact-toggle(v) => { root.bc-selfact-toggle(v); }
                     bc-smart-approve-toggle(v) => { root.bc-smart-approve-toggle(v); }
                     bc-proactive-toggle(v) => { root.bc-proactive-toggle(v); }

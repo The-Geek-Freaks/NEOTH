@@ -246,10 +246,10 @@ mod tests {
 
     fn commit_files(dir: &Path, files: &[(&str, &str)], msg: &str) {
         for (name, content) in files {
-            if let Some(parent) = std::path::Path::new(name).parent() {
-                if parent != std::path::Path::new("") {
-                    std::fs::create_dir_all(dir.join(parent)).unwrap();
-                }
+            if let Some(parent) = std::path::Path::new(name).parent()
+                && parent != std::path::Path::new("")
+            {
+                std::fs::create_dir_all(dir.join(parent)).unwrap();
             }
             std::fs::write(dir.join(name), content).unwrap();
             Command::new("git")

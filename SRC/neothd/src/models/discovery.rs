@@ -83,13 +83,13 @@ pub fn build_sources_from_config(config: &FreedomConfig) -> Vec<Box<dyn ModelSou
     // OpenAI-compat endpoints typically don't need keys (LM Studio,
     // Ollama, vLLM on localhost). The source itself tolerates an
     // empty key.
-    if uses_openai_compat(config) {
-        if let Some(endpoint) = config.provider_endpoint.as_ref() {
-            sources.push(Box::new(OpenAiSource::new_compat(
-                config.provider_key.clone(),
-                endpoint,
-            )));
-        }
+    if uses_openai_compat(config)
+        && let Some(endpoint) = config.provider_endpoint.as_ref()
+    {
+        sources.push(Box::new(OpenAiSource::new_compat(
+            config.provider_key.clone(),
+            endpoint,
+        )));
     }
 
     // Bedrock — uses its own closed-enum credential chain, not the

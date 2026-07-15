@@ -193,10 +193,10 @@ impl RecipeSpec {
                 if p.options.is_empty() {
                     return Err(RecipeError::SelectWithoutOptions(p.key.clone()));
                 }
-                if let Some(d) = &p.default {
-                    if !p.options.contains(d) {
-                        return Err(RecipeError::DefaultNotInOptions(p.key.clone(), d.clone()));
-                    }
+                if let Some(d) = &p.default
+                    && !p.options.contains(d)
+                {
+                    return Err(RecipeError::DefaultNotInOptions(p.key.clone(), d.clone()));
                 }
             }
         }

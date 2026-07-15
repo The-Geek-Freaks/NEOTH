@@ -51,17 +51,11 @@ pub struct UncoverResult {
 pub fn build_args(query: &str, engines: &[String], limit: u32) -> Result<Vec<String>> {
     super::validate_arg("query", query)?;
     if engines.is_empty() {
-        anyhow::bail!(
-            "recon uncover: at least one -engine required ({:?})",
-            KNOWN_ENGINES
-        );
+        anyhow::bail!("recon uncover: at least one -engine required ({KNOWN_ENGINES:?})");
     }
     for e in engines {
         if !KNOWN_ENGINES.contains(&e.as_str()) {
-            anyhow::bail!(
-                "recon uncover: unknown engine {e:?} (known: {:?})",
-                KNOWN_ENGINES
-            );
+            anyhow::bail!("recon uncover: unknown engine {e:?} (known: {KNOWN_ENGINES:?})");
         }
     }
     let limit = limit.clamp(1, 10_000);

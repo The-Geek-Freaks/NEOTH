@@ -400,45 +400,45 @@ impl KvOffloadCache {
         if self.cold.len() < self.cold.cap().get() {
             return;
         }
-        if let Some(ref dir) = self.disk_dir.clone() {
-            if let Some((evicted_key, cold_entry)) = self.cold.pop_lru() {
-                match Self::write_to_disk(dir, evicted_key, &cold_entry) {
-                    Err(e) => {
-                        tracing::warn!(
-                            key = evicted_key,
-                            err = %e,
-                            "KV-04: disk write failed on cold eviction — entry dropped"
-                        );
-                    }
-                    Ok(stats) => {
-                        self.disk_bytes = self
-                            .disk_bytes
-                            .saturating_sub(stats.previous_bytes)
-                            .saturating_add(stats.written_bytes);
-                        tracing::debug!(
-                            key = evicted_key,
-                            disk_bytes = self.disk_bytes,
-                            "KV-04: cold eviction → disk"
-                        );
-                        // The common below-cap path stays O(1). Only crossing
-                        // the quota requires an LRU directory scan and deletes.
-                        if self.disk_bytes > self.disk_cap_bytes {
-                            match Self::measure_and_prune_disk(dir, self.disk_cap_bytes) {
-                                Ok(bytes) => self.disk_bytes = bytes,
-                                Err(e) => tracing::warn!(
-                                    dir = %dir.display(),
-                                    err = %e,
-                                    "KV-04: disk quota rescan failed after write"
-                                ),
-                            }
+        if let Some(ref dir) = self.disk_dir.clone()
+            && let Some((evicted_key, cold_entry)) = self.cold.pop_lru()
+        {
+            match Self::write_to_disk(dir, evicted_key, &cold_entry) {
+                Err(e) => {
+                    tracing::warn!(
+                        key = evicted_key,
+                        err = %e,
+                        "KV-04: disk write failed on cold eviction — entry dropped"
+                    );
+                }
+                Ok(stats) => {
+                    self.disk_bytes = self
+                        .disk_bytes
+                        .saturating_sub(stats.previous_bytes)
+                        .saturating_add(stats.written_bytes);
+                    tracing::debug!(
+                        key = evicted_key,
+                        disk_bytes = self.disk_bytes,
+                        "KV-04: cold eviction → disk"
+                    );
+                    // The common below-cap path stays O(1). Only crossing
+                    // the quota requires an LRU directory scan and deletes.
+                    if self.disk_bytes > self.disk_cap_bytes {
+                        match Self::measure_and_prune_disk(dir, self.disk_cap_bytes) {
+                            Ok(bytes) => self.disk_bytes = bytes,
+                            Err(e) => tracing::warn!(
+                                dir = %dir.display(),
+                                err = %e,
+                                "KV-04: disk quota rescan failed after write"
+                            ),
                         }
                     }
                 }
-                // Re-insert so cold.put below finds room (we manually popped the LRU).
-                // Note: we DON'T re-insert the cold entry — it's been written to disk;
-                // keep it evicted so cold has one free slot for the hot eviction.
-                drop(cold_entry);
             }
+            // Re-insert so cold.put below finds room (we manually popped the LRU).
+            // Note: we DON'T re-insert the cold entry — it's been written to disk;
+            // keep it evicted so cold has one free slot for the hot eviction.
+            drop(cold_entry);
         }
         // If disk is not enabled, lru::LruCache::put will drop the LRU cold
         // entry automatically — no action needed here.
@@ -500,7 +500,7 @@ impl KvOffloadCache {
 
         // Account for replacement before the atomic write. An unexpected stat
         // error must not corrupt the running byte total.
-        let final_path = dir.join(format!("{:016x}.kv.bin", key));
+        let final_path = dir.join(format!("{key:016x}.kv.bin"));
         let previous_bytes = match std::fs::metadata(&final_path) {
             Ok(meta) => meta.len(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
@@ -523,7 +523,7 @@ impl KvOffloadCache {
     ///
     /// Uses `std::fs` (NOT `tokio::fs`) — called from a `spawn_blocking` thread.
     fn read_from_disk(dir: &Path, key: u64) -> Result<Option<ColdEntry>> {
-        let path = dir.join(format!("{:016x}.kv.bin", key));
+        let path = dir.join(format!("{key:016x}.kv.bin"));
         let buf = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -1168,7 +1168,7 @@ mod tests {
             .unwrap();
 
         // Verify disk file for A exists.
-        let disk_file = disk_dir.join(format!("{:016x}.kv.bin", ka));
+        let disk_file = disk_dir.join(format!("{ka:016x}.kv.bin"));
         assert!(
             disk_file.exists(),
             "A must be written to disk on cold eviction cascade"

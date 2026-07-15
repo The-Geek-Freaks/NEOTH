@@ -1052,10 +1052,10 @@ async fn commit_verified_part(
                 }
                 return Ok(());
             }
-            if let Some(quarantine) = quarantine {
-                if !destination.exists() {
-                    let _ = tokio::fs::rename(&quarantine, destination).await;
-                }
+            if let Some(quarantine) = quarantine
+                && !destination.exists()
+            {
+                let _ = tokio::fs::rename(&quarantine, destination).await;
             }
             Err(commit_error).with_context(|| {
                 format!(

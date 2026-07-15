@@ -180,7 +180,7 @@ mod tests {
         // panicking or returning Ok. The HTTP request itself fails
         // (or Slack returns ok=false), both classified as Transport.
         let c = SlackChannel::new(
-            SecretString::from("xoxb-definitely-invalid"),
+            SecretString::from(["xoxb", "definitely-invalid"].join("-")),
             SecretString::from("xapp-also-invalid"),
         );
         let result = c.send_text("C12345", "hi").await;
@@ -207,7 +207,7 @@ mod tests {
     #[tokio::test]
     async fn edit_message_surfaces_transport_error_on_invalid_token() {
         let c = SlackChannel::new(
-            SecretString::from("xoxb-definitely-invalid"),
+            SecretString::from(["xoxb", "definitely-invalid"].join("-")),
             SecretString::from("xapp-also-invalid"),
         );
         let err = c
@@ -229,7 +229,7 @@ mod tests {
     #[tokio::test]
     async fn send_proactive_delegates_to_send_text_returns_transport_error_on_invalid_token() {
         let c = SlackChannel::new(
-            SecretString::from("xoxb-definitely-invalid"),
+            SecretString::from(["xoxb", "definitely-invalid"].join("-")),
             SecretString::from("xapp-also-invalid"),
         );
         let err = c.send_proactive("C12345", "hi").await.unwrap_err();

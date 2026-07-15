@@ -4010,8 +4010,7 @@ mod tests {
         assert_eq!(EVENT_TYPE_COUNCIL_TRANSCRIPT, 0x66);
         assert!(
             (0x60..=0x6F).contains(&EVENT_TYPE_COUNCIL_TRANSCRIPT),
-            "0x{:02X} escaped council band 0x60..=0x6F",
-            EVENT_TYPE_COUNCIL_TRANSCRIPT
+            "0x{EVENT_TYPE_COUNCIL_TRANSCRIPT:02X} escaped council band 0x60..=0x6F"
         );
         assert!(needs_immediate_sync(EVENT_TYPE_COUNCIL_TRANSCRIPT));
     }
@@ -4116,8 +4115,7 @@ mod tests {
         assert_eq!(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT, 0xEA);
         assert!(
             (0xE0..=0xEF).contains(&EVENT_TYPE_CLUSTER_HEARTBEAT_SENT),
-            "CLUSTER_HEARTBEAT_SENT = 0x{:02X} escaped cluster band 0xE0..=0xEF",
-            EVENT_TYPE_CLUSTER_HEARTBEAT_SENT,
+            "CLUSTER_HEARTBEAT_SENT = 0x{EVENT_TYPE_CLUSTER_HEARTBEAT_SENT:02X} escaped cluster band 0xE0..=0xEF",
         );
         assert!(
             needs_immediate_sync(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT),
@@ -4225,8 +4223,7 @@ mod tests {
         assert_eq!(EVENT_TYPE_MODE_CHECKPOINT, 0x9A);
         assert!(
             (0x90..=0x9F).contains(&EVENT_TYPE_MODE_CHECKPOINT),
-            "MODE_CHECKPOINT = 0x{:02X} escaped memory-ops band 0x90..=0x9F",
-            EVENT_TYPE_MODE_CHECKPOINT,
+            "MODE_CHECKPOINT = 0x{EVENT_TYPE_MODE_CHECKPOINT:02X} escaped memory-ops band 0x90..=0x9F",
         );
         // A checkpoint that doesn't survive a crash is worthless for recovery.
         assert!(
@@ -4239,8 +4236,7 @@ mod tests {
     fn reinforce_is_in_memory_band() {
         assert!(
             (0x01..=0x0F).contains(&EVENT_TYPE_REINFORCE),
-            "REINFORCE = 0x{:02X} escaped memory band 0x01..=0x0F",
-            EVENT_TYPE_REINFORCE,
+            "REINFORCE = 0x{EVENT_TYPE_REINFORCE:02X} escaped memory band 0x01..=0x0F",
         );
     }
 
@@ -4261,8 +4257,7 @@ mod tests {
     fn profile_baseline_snapshot_lives_in_profile_band() {
         assert!(
             (0xB0..=0xBF).contains(&EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT),
-            "PROFILE_BASELINE_SNAPSHOT = 0x{:02X} escaped profile band 0xB0..=0xBF",
-            EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT,
+            "PROFILE_BASELINE_SNAPSHOT = 0x{EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT:02X} escaped profile band 0xB0..=0xBF",
         );
     }
 

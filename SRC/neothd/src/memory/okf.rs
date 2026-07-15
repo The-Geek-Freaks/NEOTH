@@ -47,10 +47,10 @@ impl OkfConcept {
         if !self.title.is_empty() {
             s.push_str(&format!("title: {}\n", yaml_scalar(&self.title)));
         }
-        if let Some(d) = &self.description {
-            if !d.is_empty() {
-                s.push_str(&format!("description: {}\n", yaml_scalar(d)));
-            }
+        if let Some(d) = &self.description
+            && !d.is_empty()
+        {
+            s.push_str(&format!("description: {}\n", yaml_scalar(d)));
         }
         if !self.tags.is_empty() {
             let tags = self

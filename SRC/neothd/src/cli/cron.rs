@@ -324,35 +324,46 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
             depends_on,
             timeout,
             file,
-        } => cron_add_full(
-            CronCreate {
-                id,
-                name,
-                schedule: build_schedule(cron, every, at, tz)?,
-                prompt,
-                delivery: build_delivery(
-                    delivery_mode,
-                    channel,
-                    recipient,
-                    account,
-                    thread,
-                    webhook_url,
-                    best_effort,
-                )?,
-                execution: build_execution(
-                    provider,
-                    model,
-                    profile,
-                    thinking_budget,
-                    fallback,
-                    capabilities,
-                    tools,
-                )?,
-                depends_on,
-                timeout_seconds: timeout.unwrap_or(600),
-            },
-            file,
-        ),
+        } => {
+            let path = jobs_path(file.clone());
+            let ack_id = id.clone();
+            cron_add_full(
+                CronCreate {
+                    id,
+                    name,
+                    schedule: build_schedule(cron, every, at, tz)?,
+                    prompt,
+                    delivery: build_delivery(
+                        delivery_mode,
+                        channel,
+                        recipient,
+                        account,
+                        thread,
+                        webhook_url,
+                        best_effort,
+                    )?,
+                    execution: build_execution(
+                        provider,
+                        model,
+                        profile,
+                        thinking_budget,
+                        fallback,
+                        capabilities,
+                        tools,
+                    )?,
+                    depends_on,
+                    timeout_seconds: timeout.unwrap_or(600),
+                },
+                file,
+            )?;
+            emit_cron_mutation(
+                output,
+                "add",
+                &ack_id,
+                &format!("added job `{ack_id}` to {}", path.display()),
+            );
+            Ok(())
+        }
         CronAction::Edit {
             id,
             name,
@@ -383,45 +394,98 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
             timeout,
             enabled,
             file,
-        } => cron_edit_full(
-            CronEditPatch {
-                id,
-                name,
-                cron,
-                every,
-                at,
-                prompt,
-                tz,
-                clear_timezone,
-                channel,
-                recipient,
-                account,
-                thread,
-                delivery_mode,
-                webhook_url,
-                best_effort,
-                clear_delivery,
-                provider,
-                model,
-                profile,
-                thinking_budget,
-                fallback,
-                capabilities,
-                tools,
-                clear_execution,
-                depends_on,
-                clear_dependencies,
-                timeout,
-                enabled,
-            },
-            file,
-        ),
-        CronAction::Remove { id, file } => cron_remove(id, file),
-        CronAction::Pause { id, file } => cron_set_enabled(id, false, file),
-        CronAction::Resume { id, file } => cron_set_enabled(id, true, file),
+        } => {
+            let path = jobs_path(file.clone());
+            let ack_id = id.clone();
+            cron_edit_full(
+                CronEditPatch {
+                    id,
+                    name,
+                    cron,
+                    every,
+                    at,
+                    prompt,
+                    tz,
+                    clear_timezone,
+                    channel,
+                    recipient,
+                    account,
+                    thread,
+                    delivery_mode,
+                    webhook_url,
+                    best_effort,
+                    clear_delivery,
+                    provider,
+                    model,
+                    profile,
+                    thinking_budget,
+                    fallback,
+                    capabilities,
+                    tools,
+                    clear_execution,
+                    depends_on,
+                    clear_dependencies,
+                    timeout,
+                    enabled,
+                },
+                file,
+            )?;
+            emit_cron_mutation(
+                output,
+                "edit",
+                &ack_id,
+                &format!("updated job `{ack_id}` in {}", path.display()),
+            );
+            Ok(())
+        }
+        CronAction::Remove { id, file } => {
+            let path = jobs_path(file.clone());
+            cron_remove(id.clone(), file)?;
+            emit_cron_mutation(
+                output,
+                "remove",
+                &id,
+                &format!("removed job `{id}` from {}", path.display()),
+            );
+            Ok(())
+        }
+        CronAction::Pause { id, file } => {
+            let path = jobs_path(file.clone());
+            cron_set_enabled(id.clone(), false, file)?;
+            emit_cron_mutation(
+                output,
+                "pause",
+                &id,
+                &format!("paused job `{id}` in {}", path.display()),
+            );
+            Ok(())
+        }
+        CronAction::Resume { id, file } => {
+            let path = jobs_path(file.clone());
+            cron_set_enabled(id.clone(), true, file)?;
+            emit_cron_mutation(
+                output,
+                "resume",
+                &id,
+                &format!("resumed job `{id}` in {}", path.display()),
+            );
+            Ok(())
+        }
         CronAction::Deliveries { job, home } => cron_deliveries(job, home, output),
         CronAction::List { file } => cron_list(file, output),
         CronAction::Status { by_role, file } => cron_status(by_role, file, output),
+    }
+}
+
+fn emit_cron_mutation(output: OutputFormat, action: &str, id: &str, human: &str) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({"ok": true, "action": action, "id": id})
+            );
+        }
+        OutputFormat::Table => println!("{human}"),
     }
 }
 
@@ -647,7 +711,6 @@ fn cron_add_full(create: CronCreate, file: Option<PathBuf>) -> Result<()> {
         Ok(())
     })
     .with_context(|| format!("update {}", path.display()))?;
-    println!("added job `{id}` to {}", path.display());
     Ok(())
 }
 
@@ -810,7 +873,6 @@ fn cron_edit_full(patch: CronEditPatch, file: Option<PathBuf>) -> Result<()> {
         Ok(())
     })
     .with_context(|| format!("update {}", path.display()))?;
-    println!("updated job `{id}` in {}", path.display());
     Ok(())
 }
 
@@ -826,7 +888,6 @@ fn cron_remove(id: String, file: Option<PathBuf>) -> Result<()> {
         Ok(())
     })
     .with_context(|| format!("update {}", path.display()))?;
-    println!("removed job `{id}` from {}", path.display());
     Ok(())
 }
 
@@ -843,11 +904,6 @@ fn cron_set_enabled(id: String, enabled: bool, file: Option<PathBuf>) -> Result<
         Ok(())
     })
     .with_context(|| format!("update {}", path.display()))?;
-    println!(
-        "{} job `{id}` in {}",
-        if enabled { "resumed" } else { "paused" },
-        path.display()
-    );
     Ok(())
 }
 
@@ -865,7 +921,7 @@ fn cron_deliveries(
         .filter(|record| {
             job_filter
                 .as_deref()
-                .map_or(true, |job_id| record.job_id == job_id)
+                .is_none_or(|job_id| record.job_id == job_id)
         })
         .collect();
 

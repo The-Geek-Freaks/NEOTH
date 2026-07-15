@@ -169,10 +169,8 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
     let (addr, task) = bind_and_serve(state).await.unwrap();
 
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(br#"{"program":"/bin/x"}"#);
-    let body = format!(
-        "{{\"event_type\":{},\"payload_b64\":{:?}}}",
-        EVENT_TYPE_OS_APP_LAUNCH, payload_b64
-    );
+    let body =
+        format!("{{\"event_type\":{EVENT_TYPE_OS_APP_LAUNCH},\"payload_b64\":{payload_b64:?}}}");
     let status = raw_post(addr, Some("tok-valid"), &body).await;
     assert_eq!(status, 200);
 

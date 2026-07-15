@@ -144,14 +144,12 @@ fn import(bundle: Option<PathBuf>, db: Option<PathBuf>, output: OutputFormat) ->
                     let empty = std::collections::BTreeMap::new();
                     if let Ok(dst_id) = crate::memory::entities::resolve_or_create_entity_with_attrs(
                         &conn, &dst_name, "entity", &empty, now_unix,
-                    ) {
-                        if crate::memory::entities::insert_relation(
-                            &conn, src_id, dst_id, &rel, 1.0,
-                        )
-                        .is_ok()
-                        {
-                            relations += 1;
-                        }
+                    ) && crate::memory::entities::insert_relation(
+                        &conn, src_id, dst_id, &rel, 1.0,
+                    )
+                    .is_ok()
+                    {
+                        relations += 1;
                     }
                 }
             }
