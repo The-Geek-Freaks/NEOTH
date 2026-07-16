@@ -122,6 +122,22 @@ pub enum WalAction {
         #[command(subcommand)]
         action: ProofKeyAction,
     },
+    /// Tail the WAL live: emit one JSON line per NEW frame appended to any
+    /// `~/.neoth/wal/*.wal` segment (`{"event_type":N,"subtype":N,"ts_ns":N}`).
+    /// Read-only file tailing — no daemon connection; segment rotation is
+    /// picked up automatically. Consumers: the GUI's Buddy activity follower.
+    Follow {
+        /// Emit only these event types — comma-separated names, hex (`0x40`)
+        /// or decimal. Default: every frame.
+        #[arg(long = "types", value_name = "LIST")]
+        types: Option<String>,
+        /// WAL directory override (tests / inspecting a backup).
+        #[arg(long, value_name = "DIR")]
+        wal_dir: Option<PathBuf>,
+        /// Poll interval in milliseconds (tests lower this).
+        #[arg(long, default_value_t = 500)]
+        interval_ms: u64,
+    },
 }
 
 /// PROOF-KEY-01 sub-actions.
@@ -166,6 +182,98 @@ pub enum ProofKeyAction {
     },
 }
 
+/// `neoth wal follow` — poll-tail every `wal/*.wal` segment and emit one
+/// JSON line per NEW frame: `{"event_type":N,"subtype":N,"name":"…"}`.
+/// Frames already on disk at startup are skipped (consumers want live
+/// activity, not history); a segment created after startup streams from
+/// its first frame. Compressed batch frames surface as their envelope
+/// event only — activity consumers care that something happened, not
+/// about the interior frames. Exits cleanly when the consumer hangs up.
+fn follow(types: Option<&str>, wal_dir: Option<PathBuf>, interval_ms: u64) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
+    use std::io::Write;
+
+    let dir = wal_dir.unwrap_or_else(|| FreedomConfig::default_neoth_home().join("wal"));
+    let filter: Option<HashSet<u8>> = match types {
+        None => None,
+        Some(list) => {
+            let mut set = HashSet::new();
+            for tok in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+                let code = event_code_from_filter(tok)
+                    .with_context(|| format!("unknown --types entry {tok:?}"))?;
+                set.insert(code);
+            }
+            Some(set)
+        }
+    };
+
+    // Seed cursors at EOF so only frames appended after startup stream.
+    let mut cursors: HashMap<PathBuf, usize> = HashMap::new();
+    for p in follow_segments(&dir) {
+        if let Ok(m) = std::fs::metadata(&p) {
+            cursors.insert(p, m.len() as usize);
+        }
+    }
+
+    let stdout = std::io::stdout();
+    loop {
+        for path in follow_segments(&dir) {
+            let start = cursors.get(&path).copied().unwrap_or(SEGMENT_HEADER_LEN);
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            // A shrunk file means rotation/compaction — restart at the
+            // header boundary (frames before the cursor may re-emit once;
+            // acceptable for an activity feed).
+            let mut cur = if bytes.len() < start || start < SEGMENT_HEADER_LEN {
+                SEGMENT_HEADER_LEN
+            } else {
+                start
+            };
+            while cur < bytes.len() {
+                let Ok(dec) = decode_frame(&bytes[cur..]) else {
+                    break; // torn tail — wait for the writer to finish
+                };
+                let total = dec.header.total_len as usize;
+                if total == 0 {
+                    break;
+                }
+                let et = dec.header.event_type;
+                if filter.as_ref().is_none_or(|f| f.contains(&et)) {
+                    let line = serde_json::json!({
+                        "event_type": et,
+                        "subtype": dec.header.event_subtype,
+                        "name": event_name_from_code(et),
+                    });
+                    // Piped stdout is block-buffered — flush per line or the
+                    // consumer sees nothing until the buffer fills.
+                    let mut out = stdout.lock();
+                    if writeln!(out, "{line}").and_then(|()| out.flush()).is_err() {
+                        return Ok(());
+                    }
+                }
+                cur = cur.saturating_add(total);
+            }
+            cursors.insert(path, cur);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms.max(50)));
+    }
+}
+
+/// Sorted `*.wal` segment paths in `dir`; empty when the dir is absent.
+fn follow_segments(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
 pub async fn run_wal(args: WalArgs) -> Result<()> {
     match args.action {
         WalAction::Stats { segment } => stats(&segment, args.output),
@@ -206,6 +314,11 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
             run_verify_proof(&proof, pubkey.as_deref(), args.output)
         }
         WalAction::ProofKey { action } => run_proof_key(action, args.output).await,
+        WalAction::Follow {
+            types,
+            wal_dir,
+            interval_ms,
+        } => follow(types.as_deref(), wal_dir, interval_ms),
     }
 }
 
