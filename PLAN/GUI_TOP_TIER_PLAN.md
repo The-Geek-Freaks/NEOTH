@@ -29,8 +29,7 @@
       WAL-Opcode (Space erschöpft) — Comments reiten existierendes Payload.
 - [x] A2 GUI: Note-Composer am Task-Detail — Author-Tag `operator-note` vs. Chat-Comment;
       dynamisch anhängbar, Anzeige als eigene Sektion auf der Karte.
-- [ ] A3 Kanban-Write-Ops komplettieren (GAP-03): move/status, archive, blocked-Toggle,
-      Session-Selector (Board zeigt bisher nur letzte Session).
+- [x] A3 Kanban-Write-Ops: move/status/block/finish/assign via Kontextmenü ✅; **Session-Selector** ✅ (Combo im Board-Header, Override-Pin, warm-Channel fällt auf cold zurück).
 - [x] A4 Rechtsklick-Kontextmenü auf Kanban-Karten (move to column, archive, block, copy id).
       Move, Finish, Block, Archive, Hemisphere-Assign und Copy-ID sind über
       typisierte Mutationsbelege verdrahtet; Erfolg und Refresh folgen erst
