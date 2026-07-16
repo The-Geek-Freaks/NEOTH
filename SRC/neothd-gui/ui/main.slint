@@ -207,6 +207,8 @@ export component MainWindow inherits Window {
     in property <string> daemon-state: "connecting";
     // Offline-banner retry — Rust re-runs the daemon/hardware probe.
     callback daemon-retry-clicked();
+    // Sidebar version line — Rust binds the real CARGO_PKG_VERSION.
+    in property <string> app-version-line: "v1.0 · sovereign";
     // GOLD-ADAPT-GUI-05 — TypedStatus footer ticker (Rust types it in).
     in property <string> status-message: "";
     // QM-9 Phase 2: last 24h usage rollup rendered for the dashboard.
@@ -2797,6 +2799,7 @@ export component MainWindow inherits Window {
                 channels-count: root.chat-channels.length;
                 operator-name: root.operator-id != "" ? root.operator-id : "operator";
                 project-domain: root.project-domain;
+                version-line: root.app-version-line;
                 nav(t) => {
                     root.nav-active = t;
                     root.step = (t == "chat") ? WizardStep.chat : WizardStep.settings;

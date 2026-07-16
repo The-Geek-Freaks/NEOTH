@@ -134,6 +134,9 @@ export component Sidebar inherits Rectangle {
     in property <bool> theme-dark: true;
     in property <string> operator-name: "operator";
     in property <int> channels-count: 0;
+    // Version line under the wordmark — Rust binds CARGO_PKG_VERSION so
+    // the sidebar never lies about the running build.
+    in property <string> version-line: "v1.0 · sovereign";
     callback nav(string);
     callback set-complexity(int);
     callback toggle-theme();
@@ -161,7 +164,7 @@ export component Sidebar inherits Rectangle {
                 Text {
                     // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
                     // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
-                    text: "v1.0 · sovereign"; color: Theme.text-tertiary;
+                    text: root.version-line; color: Theme.text-tertiary;
                     font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                     letter-spacing: Theme.letter-spacing-mono-caps;
                 }

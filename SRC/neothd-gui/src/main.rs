@@ -1115,6 +1115,10 @@ fn main() -> Result<()> {
     window.set_daemon_state("connecting".into());
     spawn_daemon_probe(window.as_weak());
 
+    // Sidebar version line — bind the real build version so the shell
+    // never lies about what is running.
+    window.set_app_version_line(concat!("v", env!("CARGO_PKG_VERSION"), " · sovereign").into());
+
     // Daemon-offline banner retry — reset to "connecting" (hides the
     // banner) and re-run the same probe the startup path uses.
     let weak_daemon_retry = window.as_weak();
