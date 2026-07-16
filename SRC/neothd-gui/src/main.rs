@@ -4648,6 +4648,32 @@ fn main() -> Result<()> {
             });
         });
 
+        // H14 — hemisphere assignment from the card menu.
+        let weak_as = window.as_weak();
+        window.on_kanban_assign_task(move |task_id, hemisphere| {
+            let id = task_id.trim_start_matches('#').to_string();
+            let weak = weak_as.clone();
+            std::thread::spawn(move || {
+                let out =
+                    run_neothd_probe(&["kanban", "assign", id.as_str(), hemisphere.as_str()]);
+                let summary: String = out.trim().chars().take(120).collect();
+                let body = if summary.is_empty() {
+                    format!("task {id} → {hemisphere}")
+                } else {
+                    summary
+                };
+                push_toast(&weak, "success", "Kanban assign", &body);
+                let _ = slint::invoke_from_event_loop({
+                    let weak2 = weak.clone();
+                    move || {
+                        if let Some(w) = weak2.upgrade() {
+                            w.invoke_kanban_refresh_clicked();
+                        }
+                    }
+                });
+            });
+        });
+
         window.on_kanban_copy_task_id(move |task_id| {
             if let Err(e) = arboard::Clipboard::new()
                 .and_then(|mut c| c.set_text(task_id.trim_start_matches('#').to_string()))

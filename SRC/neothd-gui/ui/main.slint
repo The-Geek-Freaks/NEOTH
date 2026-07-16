@@ -947,6 +947,8 @@ export component MainWindow inherits Window {
     in-out property <length> kanban-ctx-y: 0px;
     callback kanban-move-task(string, string);
     callback kanban-copy-task-id(string);
+    // H14 — assign a card to a hemisphere worker from the context menu.
+    callback kanban-assign-task(string, string);
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust populates these from `neothd kanban list/show --output json`
@@ -3816,6 +3818,11 @@ export component MainWindow inherits Window {
             { label: "Move to Review", glyph: "◎", danger: false },
             { label: "Finish (done)", glyph: "✓", danger: false },
             { label: "Block", glyph: "⛔", danger: true },
+            // H14 — the AI worker is a first-class assignee (Linear-agents
+            // grammar): route the card to a hemisphere from the menu.
+            { label: "Assign → Left (fast)", glyph: "◑", danger: false },
+            { label: "Assign → Right (deep)", glyph: "◐", danger: false },
+            { label: "Assign → Cerebellum", glyph: "⊕", danger: false },
             { label: "Copy task id", glyph: "⧉", danger: false },
         ];
         picked(i) => {
@@ -3825,7 +3832,10 @@ export component MainWindow inherits Window {
             if (i == 2) { root.kanban-move-task(root.kanban-ctx-task, "review"); }
             if (i == 3) { root.kanban-move-task(root.kanban-ctx-task, "done"); }
             if (i == 4) { root.kanban-move-task(root.kanban-ctx-task, "blocked"); }
-            if (i == 5) { root.kanban-copy-task-id(root.kanban-ctx-task); }
+            if (i == 5) { root.kanban-assign-task(root.kanban-ctx-task, "left"); }
+            if (i == 6) { root.kanban-assign-task(root.kanban-ctx-task, "right"); }
+            if (i == 7) { root.kanban-assign-task(root.kanban-ctx-task, "cerebellum"); }
+            if (i == 8) { root.kanban-copy-task-id(root.kanban-ctx-task); }
         }
         dismissed => { root.kanban-ctx-open = false; }
     }

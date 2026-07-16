@@ -110,7 +110,7 @@ Buddy (Companion-Research):
 
 Kanban (Linear/Height/GH-Projects):
 - [ ] H13 **Space-Peek-Panel** (Karte nicht-disruptiv previewen). (Killer)
-- [ ] H14 **AI-Agent als First-Class-Assignee** auf Karten (Linear-Agents-Modell — Hemisphere-Zuordnung sichtbar/steuerbar). (Killer)
+- [x] H14 **AI-Agent als First-Class-Assignee** auf Karten (Linear-Agents-Modell — Hemisphere-Zuordnung sichtbar/steuerbar). (Killer)
 - [ ] H15 Inline-Diffs in Karten (syntax-highlighted). (High)
 - [ ] H16 Batch-Select + Bulk-Actions, WIP-Limits, Saved-Filter-Views, Swimlanes. (High)
 
