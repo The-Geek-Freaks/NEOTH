@@ -19,7 +19,7 @@
 
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
@@ -45,7 +45,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -209,6 +209,13 @@ export component MainWindow inherits Window {
     callback daemon-retry-clicked();
     // Sidebar version line — Rust binds the real CARGO_PKG_VERSION.
     in property <string> app-version-line: "v1.0 · sovereign";
+    // Command palette (Ctrl+K). Rust filters palette-results on
+    // palette-query-edited; activation reuses the sidebar nav path.
+    in-out property <bool> palette-open: false;
+    in-out property <string> palette-query: "";
+    in-out property <int> palette-selected: 0;
+    in property <[PaletteItem]> palette-results: [];
+    callback palette-query-edited(string);
     // GOLD-ADAPT-GUI-05 — TypedStatus footer ticker (Rust types it in).
     in property <string> status-message: "";
     // QM-9 Phase 2: last 24h usage rollup rendered for the dashboard.
@@ -2791,7 +2798,35 @@ export component MainWindow inherits Window {
         // The design-system desktop layout. Shown for the main experience
         // (chat + settings-family + the net-new mockup tabs); the wizard steps
         // above keep their own full-screen flow for first-run.
-        if (root.step == WizardStep.chat || root.step == WizardStep.settings): HorizontalLayout {
+        // FocusScope wraps the shell so global shortcuts work from anywhere:
+        // a focused child (chat composer, settings fields) rejects Ctrl+K /
+        // palette keys and they bubble up here.
+        if (root.step == WizardStep.chat || root.step == WizardStep.settings): FocusScope {
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if (event.modifiers.control && (event.text == "k" || event.text == "K")) {
+                    root.palette-open = !root.palette-open;
+                    root.palette-query = "";
+                    root.palette-selected = 0;
+                    if (root.palette-open) { root.palette-query-edited(""); }
+                    return accept;
+                }
+                if (root.palette-open && event.text == Key.Escape) {
+                    root.palette-open = false;
+                    return accept;
+                }
+                if (root.palette-open && event.text == Key.DownArrow) {
+                    root.palette-selected = min(root.palette-selected + 1,
+                        max(root.palette-results.length - 1, 0));
+                    return accept;
+                }
+                if (root.palette-open && event.text == Key.UpArrow) {
+                    root.palette-selected = max(root.palette-selected - 1, 0);
+                    return accept;
+                }
+                reject
+            }
+            HorizontalLayout {
             if !Theme.sidebar-collapsed: Sidebar {
                 active-tab: root.nav-active;
                 complexity: root.nav-complexity;
@@ -3509,7 +3544,8 @@ export component MainWindow inherits Window {
                 open: root.activity-open;
                 toggle => { root.activity-toggle(); }
             }
-        }  // close shell HorizontalLayout
+            }  // close shell HorizontalLayout
+        }  // close shell FocusScope
     }
 
         // Wizard footer — the app-shell uses its own StatusFooter, so this only
@@ -3553,6 +3589,22 @@ export component MainWindow inherits Window {
         x: root.width - self.width - 12px;
         y: 78px;
         // height is driven by content; no explicit height needed.
+    }
+
+    // ── Command palette overlay (Ctrl+K) — above toasts, below the tour ─
+    if root.palette-open
+            && (root.step == WizardStep.chat || root.step == WizardStep.settings): CommandPalette {
+        width: 100%; height: 100%;
+        results: root.palette-results;
+        query <=> root.palette-query;
+        selected <=> root.palette-selected;
+        query-edited(q) => { root.palette-query-edited(q); }
+        activated(tab) => {
+            root.nav-active = tab;
+            root.step = (tab == "chat") ? WizardStep.chat : WizardStep.settings;
+            root.palette-open = false;
+        }
+        closed => { root.palette-open = false; }
     }
 
     // ── GOLD-ADAPT-OH-12 — first-run guided tour ───────────────────────

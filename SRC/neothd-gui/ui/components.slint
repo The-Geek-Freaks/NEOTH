@@ -1133,3 +1133,157 @@ export component FooterBar inherits Rectangle {
         height: parent.height;
     }
 }
+
+// ── Command Palette (Ctrl+K) ─────────────────────────────────────────
+// Linear/Raycast-grammar quick switcher: scrim + centered glass card,
+// filter-as-you-type input, arrow-key selection, Enter activates. Rust
+// owns filtering (palette-query-edited → palette-results); activation
+// routes through the same nav path as the sidebar.
+
+export struct PaletteItem {
+    label: string,
+    glyph: string,
+    tab: string,      // nav destination key ("chat", "memory", …)
+    hint: string,     // group eyebrow (CORE / WORK / SYSTEM)
+}
+
+export component CommandPalette inherits Rectangle {
+    in property <[PaletteItem]> results;
+    in-out property <string> query;
+    in-out property <int> selected: 0;
+    callback query-edited(string);
+    callback activated(string);
+    callback closed();
+
+    background: Theme.scrim;
+
+    // Scrim click closes; the card swallows its own clicks below.
+    TouchArea { clicked => { root.closed(); } }
+
+    Rectangle {
+        width: min(560px, root.width - 80px);
+        height: min(64px + 44px * min(root.results.length, 8) + 20px, root.height - 140px);
+        x: (root.width - self.width) / 2;
+        y: 96px;
+        border-radius: Theme.radius-lg;
+        background: Theme.surface-2;
+        border-width: 1px; border-color: Theme.border-strong;
+        drop-shadow-blur: 42px;
+        drop-shadow-color: Theme.bg-void.with-alpha(0.65);
+        clip: true;
+
+        // Entrance: sovereign-curve fade.
+        opacity: 0;
+        init => { self.opacity = 1; pal-input.focus(); }
+        animate opacity { duration: Theme.duration-fast; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+        TouchArea { }   // swallow card clicks
+
+        VerticalLayout {
+            padding: 10px; spacing: 6px;
+
+            // input row
+            Rectangle {
+                height: 44px;
+                border-radius: Theme.radius-md;
+                background: Theme.bg-base;
+                border-width: 1px; border-color: Theme.border-accent;
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; spacing: 10px;
+                    Text {
+                        text: "⌘";
+                        color: Theme.accent; font-family: Theme.font-mono;
+                        font-size: Theme.font-size-sm; vertical-alignment: center;
+                    }
+                    Rectangle {
+                        if root.query == "": Text {
+                            x: 0; width: parent.width;
+                            text: "Jump to… (type to filter)";
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-base;
+                            vertical-alignment: center; horizontal-alignment: left;
+                        }
+                        pal-input := TextInput {
+                            x: 0; width: parent.width;
+                            text <=> root.query;
+                            color: Theme.text-primary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-base;
+                            selection-background-color: Theme.accent.with-alpha(0.4);
+                            selection-foreground-color: Theme.text-primary;
+                            single-line: true;
+                            vertical-alignment: center;
+                            accessible-label: "command palette filter";
+                            edited => { root.selected = 0; root.query-edited(self.text); }
+                            accepted => {
+                                if (root.results.length > 0) {
+                                    root.activated(root.results[min(root.selected, root.results.length - 1)].tab);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // results list — Up/Down handled by the enclosing FocusScope in
+            // main.slint (single-line TextInput rejects them, so they bubble).
+            Flickable {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 2px;
+                    for item[i] in root.results: Rectangle {
+                        height: 42px;
+                        border-radius: Theme.radius-sm;
+                        background: i == root.selected ? Theme.surface-3
+                            : row-ta.has-hover ? Theme.surface-1 : transparent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        // active rail — same grammar as the sidebar NavBtn
+                        Rectangle {
+                            x: 0; width: 2px;
+                            height: i == root.selected ? parent.height - 14px : 0px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 2px;
+                            background: Theme.accent;
+                            animate height { duration: Theme.duration-fast; easing: ease-out; }
+                        }
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 12px; spacing: 11px;
+                            Rectangle {
+                                width: 18px;
+                                Text {
+                                    text: item.glyph;
+                                    color: i == root.selected ? Theme.accent : Theme.text-tertiary;
+                                    font-size: Theme.font-size-sm; font-family: Theme.font-mono;
+                                    vertical-alignment: center; horizontal-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: item.label;
+                                color: i == root.selected ? Theme.text-primary : Theme.text-secondary;
+                                font-size: Theme.font-size-sm; font-family: Theme.font-sans;
+                                vertical-alignment: center; horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: item.hint;
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                                letter-spacing: Theme.letter-spacing-wide;
+                                vertical-alignment: center;
+                            }
+                        }
+                        row-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.activated(item.tab); }
+                        }
+                    }
+                    if root.results.length == 0: Text {
+                        height: 42px;
+                        text: "No matches — Esc to close";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                        vertical-alignment: center; horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

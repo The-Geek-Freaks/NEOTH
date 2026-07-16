@@ -970,6 +970,30 @@ fn main() -> Result<()> {
         w.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model)));
     });
 
+    // Command palette (Ctrl+K) — Rust owns filtering over the static
+    // catalog; Slint owns open/close/selection and routes activation
+    // through the sidebar nav path.
+    let weak_palette = window.as_weak();
+    window.on_palette_query_edited(move |q| {
+        let Some(w) = weak_palette.upgrade() else {
+            return;
+        };
+        let items: Vec<PaletteItem> = panel_logic::filter_palette(&q)
+            .into_iter()
+            .map(|(label, glyph, tab, hint)| PaletteItem {
+                label: label.into(),
+                glyph: glyph.into(),
+                tab: tab.into(),
+                hint: hint.into(),
+            })
+            .collect();
+        w.set_palette_results(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
+            items,
+        ))));
+    });
+    // Seed the full catalog so the palette is populated on first open.
+    window.invoke_palette_query_edited("".into());
+
     // ODY-11 — density restore: read ~/.neoth/.gui-density and apply before
     // the first paint, mirroring the .gui-theme block above.
     {

@@ -2513,6 +2513,61 @@ pub fn next_toast_id(toasts: &[(i32, String, String, String)]) -> i32 {
     max + 1
 }
 
+// ── Command palette (Ctrl+K) ─────────────────────────────────────────────────
+// Pure catalog + filter; the Slint plumbing lives in main.rs.
+
+/// One palette entry: (label, glyph, tab-key, group-hint). Mirrors the
+/// sidebar nav in app_shell.slint — keep the two in sync when a tab is
+/// added or renamed.
+pub type PaletteEntry = (&'static str, &'static str, &'static str, &'static str);
+
+/// Every nav destination the palette can jump to. Complexity gating is
+/// deliberately NOT applied here: the palette is the power-user surface,
+/// so it always reaches everything (Raycast grammar).
+pub const PALETTE_CATALOG: &[PaletteEntry] = &[
+    ("Chat", "💬", "chat", "CORE"),
+    ("Overview", "◎", "overview", "CORE"),
+    ("Coding", "⌘", "coding", "WORK"),
+    ("Agents", "⚇", "agents", "WORK"),
+    ("Automation", "⟳", "automation", "WORK"),
+    ("Loops", "∞", "loops", "WORK"),
+    ("n8n", "⧉", "n8n", "WORK"),
+    ("Calendar", "▦", "calendar", "WORK"),
+    ("Evolve", "✦", "evolve", "WORK"),
+    ("Self-Dev", "⊞", "selfdev", "WORK"),
+    ("Dreaming", "☽", "dreaming", "WORK"),
+    ("Buddy Config", "⊙", "buddyconfig", "WORK"),
+    ("Memory", "◈", "memory", "SYSTEM"),
+    ("Hemispheres", "◐", "hemispheres", "SYSTEM"),
+    ("Channels", "⇄", "channels", "SYSTEM"),
+    ("Privacy", "⛨", "privacy", "SYSTEM"),
+    ("Plugins", "⧉", "plugins", "SYSTEM"),
+    ("Cluster", "⬡", "cluster", "SYSTEM"),
+    ("Resources", "▦", "resources", "SYSTEM"),
+    ("Babel", "◬", "babel", "SYSTEM"),
+    ("Obsidian", "◉", "obsidian", "SYSTEM"),
+    ("Wiki", "⌗", "wiki", "SYSTEM"),
+    ("Companion", "⊕", "companion", "SYSTEM"),
+    ("Mesh", "◇", "mesh", "SYSTEM"),
+    ("Doctor", "✚", "doctor", "SYSTEM"),
+    ("Config", "⚙", "config", "SYSTEM"),
+];
+
+/// Case-insensitive substring filter over the catalog. Empty query
+/// returns the full catalog (palette opens showing everything).
+/// Matches on label first, then tab key ("selfdev" finds Self-Dev).
+pub fn filter_palette(query: &str) -> Vec<PaletteEntry> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return PALETTE_CATALOG.to_vec();
+    }
+    PALETTE_CATALOG
+        .iter()
+        .filter(|(label, _, tab, _)| label.to_lowercase().contains(&q) || tab.contains(&q))
+        .copied()
+        .collect()
+}
+
 // ── Wave-2 activity helpers ──────────────────────────────────────────────────
 // Pure, Slint-free functions — the ActivitySidecar plumbing (push_activity,
 // settle_activity) lives in main.rs and calls these for id allocation + cap.
@@ -6536,5 +6591,43 @@ mod tests {
         assert_eq!(format_backup_bytes(512), "512 B");
         assert_eq!(format_backup_bytes(1536), "1.5 KB");
         assert_eq!(format_backup_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn filter_palette_empty_query_returns_full_catalog() {
+        assert_eq!(filter_palette("").len(), PALETTE_CATALOG.len());
+        assert_eq!(filter_palette("   ").len(), PALETTE_CATALOG.len());
+    }
+
+    #[test]
+    fn filter_palette_matches_label_case_insensitive() {
+        let hits = filter_palette("MEM");
+        assert!(hits.iter().any(|(l, _, _, _)| *l == "Memory"));
+        assert!(hits.iter().all(|(l, _, tab, _)| l
+            .to_lowercase()
+            .contains("mem")
+            || tab.contains("mem")));
+    }
+
+    #[test]
+    fn filter_palette_matches_tab_key() {
+        // "selfdev" only exists as the tab key (label is "Self-Dev").
+        let hits = filter_palette("selfdev");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].2, "selfdev");
+    }
+
+    #[test]
+    fn filter_palette_no_match_returns_empty() {
+        assert!(filter_palette("zzz-not-a-tab").is_empty());
+    }
+
+    #[test]
+    fn palette_catalog_tab_keys_are_unique() {
+        let mut keys: Vec<&str> = PALETTE_CATALOG.iter().map(|(_, _, t, _)| *t).collect();
+        keys.sort_unstable();
+        let before = keys.len();
+        keys.dedup();
+        assert_eq!(before, keys.len(), "duplicate tab key in PALETTE_CATALOG");
     }
 }
