@@ -1547,6 +1547,28 @@ fn main() -> Result<()> {
             let pm = read_nested_str_in_freedom(fp, "persona_mode", "");
             window.set_cfg_persona_mode_idx(if pm == "loyal_buddy" { 1 } else { 0 });
             window.set_cfg_user_tz(read_nested_str_in_freedom(fp, "user_tz", "").into());
+            // C6 — cluster transport preload.
+            window.set_cfg_cluster_enabled(read_nested_bool_in_freedom(
+                fp,
+                "cluster.enabled",
+                false,
+            ));
+            window
+                .set_cfg_cluster_name(read_nested_str_in_freedom(fp, "cluster.name", "").into());
+            {
+                let t = read_nested_str_in_freedom(fp, "cluster.transport", "peeroxide");
+                window.set_cfg_cluster_transport_idx(if t == "iroh" { 1 } else { 0 });
+            }
+            window.set_cfg_cluster_announce_untrusted(read_nested_bool_in_freedom(
+                fp,
+                "cluster.policy.announce_on_untrusted_wifi",
+                false,
+            ));
+            window.set_cfg_cluster_ssids(
+                read_nested_str_list_in_freedom(fp, "cluster", "policy", "trusted_ssids")
+                    .join(", ")
+                    .into(),
+            );
             // C3 — operator identity preload.
             window.set_cfg_operator_id(read_nested_str_in_freedom(fp, "operator_id", "").into());
             window.set_cfg_language_primary(
@@ -7288,6 +7310,53 @@ fn main() -> Result<()> {
             });
         }
         wire_nested_str!(on_cfg_user_tz_changed, "user_tz", "Timezone");
+        // C6 — cluster transport config.
+        wire_nested_bool!(on_cfg_cluster_enabled_changed, "cluster.enabled", "Cluster transport");
+        wire_nested_str!(on_cfg_cluster_name_changed, "cluster.name", "Cluster name");
+        wire_nested_int_combo!(
+            on_cfg_cluster_transport_changed,
+            "cluster.transport",
+            &["peeroxide", "iroh"],
+            "Cluster carrier"
+        );
+        wire_nested_bool!(
+            on_cfg_cluster_announce_untrusted_changed,
+            "cluster.policy.announce_on_untrusted_wifi",
+            "Announce on untrusted Wi-Fi"
+        );
+        // Trusted SSIDs: comma-separated field -> YAML string sequence.
+        {
+            let nd = neoth_dir.clone();
+            let weak = window.as_weak();
+            window.on_cfg_cluster_ssids_changed(move |raw| {
+                let ssids: Vec<serde_yaml::Value> = raw
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(serde_yaml::Value::from)
+                    .collect();
+                let value = serde_yaml::Value::Sequence(ssids);
+                let nd2 = nd.clone();
+                let weak2 = weak.clone();
+                std::thread::spawn(move || {
+                    let fp = nd2.join("freedom.yaml");
+                    let rd = nd2.join(".reload-requested");
+                    let result =
+                        set_nested_in_freedom(&fp, "cluster.policy.trusted_ssids", value)
+                            .and_then(|_| {
+                                std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                            });
+                    slint::invoke_from_event_loop(move || match result {
+                        Ok(_) => push_toast(&weak2, "success", "Trusted SSIDs", "saved"),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&weak2, "warn", "Trusted SSIDs write failed", &msg);
+                        }
+                    })
+                    .ok();
+                });
+            });
+        }
         // C3 — operator identity.
         wire_nested_str!(on_cfg_operator_id_changed, "operator_id", "Operator id");
         wire_nested_str!(
@@ -9764,6 +9833,27 @@ fn read_quiet_hours_in_freedom(path: &Path) -> Option<(u8, u8)> {
         [s, e] => Some((s.as_u64()? as u8, e.as_u64()? as u8)),
         _ => None,
     }
+}
+
+/// C6 — read a 3-level nested string sequence from freedom.yaml.
+/// Missing file / key / non-sequence yields an empty vec.
+fn read_nested_str_list_in_freedom(path: &Path, k1: &str, k2: &str, leaf: &str) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return Vec::new();
+    };
+    root.get(k1)
+        .and_then(|v| v.get(k2))
+        .and_then(|v| v.get(leaf))
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|s| s.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> bool {

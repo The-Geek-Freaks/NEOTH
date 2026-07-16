@@ -645,11 +645,23 @@ export component SettingsView inherits Rectangle {
     // toggle fires `cluster-mdns-enabled-changed(bool)` which
     // mutates freedom.yaml + drops the reload sentinel.
     in-out property <bool> cluster-mdns-enabled: true;
+    // C6 — cluster transport config.
+    in-out property <bool>   cfg-cluster-enabled: false;
+    in-out property <string> cfg-cluster-name: "";
+    in-out property <int>    cfg-cluster-transport-idx: 0;
+    in-out property <bool>   cfg-cluster-announce-untrusted: false;
+    in-out property <string> cfg-cluster-ssids: "";
     in-out property <int> cluster-listen-port: 49737;
     /// Operator-readable summary of `cluster.policy.trusted_ssids`.
     /// Empty string renders the "no trusted SSIDs set" placeholder.
     in-out property <string> cluster-trusted-ssids-summary: "";
     callback cluster-mdns-enabled-changed(bool);
+    // C6 — cluster transport config.
+    callback cfg-cluster-enabled-changed(bool);
+    callback cfg-cluster-name-changed(string);
+    callback cfg-cluster-transport-changed(int);
+    callback cfg-cluster-announce-untrusted-changed(bool);
+    callback cfg-cluster-ssids-changed(string);
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust side fetches `neothd kanban list/show --output json` on tab
@@ -3343,6 +3355,97 @@ export component SettingsView inherits Rectangle {
                     title: "Cluster";
                     subtitle: "Auto-discover other NEOTH instances on your network and connect them into one team — shared memory, shared chat, shared task board. Uses lightweight mDNS broadcasts (same tech as AirPlay and Chromecast).";
                     mirrors-slash: "/cluster enable   |   /cluster disable   |   neoth cluster discover";
+                }
+                // C6 — cluster transport config: master switch, identity,
+                // carrier, LAN announce policy. Writes freedom.yaml nested
+                // keys through the same coalescing/nested writers as Config.
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "TRANSPORT";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        NeothCheckBox {
+                            text: "Cluster transport enabled (DHT stays inert while off)";
+                            checked: root.cfg-cluster-enabled;
+                            toggled(v) => {
+                                root.cfg-cluster-enabled = v;
+                                root.cfg-cluster-enabled-changed(v);
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                text: "Cluster name"; color: Theme.text-secondary;
+                                font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                                vertical-alignment: center; width: 130px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "e.g. home-lab (empty = no identity)";
+                                text: root.cfg-cluster-name;
+                                horizontal-stretch: 1;
+                                edited(t) => {
+                                    root.cfg-cluster-name = t;
+                                    root.cfg-cluster-name-changed(t);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                text: "Carrier"; color: Theme.text-secondary;
+                                font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                                vertical-alignment: center; width: 130px;
+                            }
+                            NeothComboBox {
+                                model: ["peeroxide", "iroh"];
+                                current-index: root.cfg-cluster-transport-idx;
+                                width: 200px;
+                                selected(i) => {
+                                    root.cfg-cluster-transport-idx = i;
+                                    root.cfg-cluster-transport-changed(i);
+                                }
+                            }
+                            Text {
+                                text: "iroh needs the cluster-iroh build";
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                                vertical-alignment: center;
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Announce on untrusted Wi-Fi (mDNS privacy gate)";
+                            checked: root.cfg-cluster-announce-untrusted;
+                            toggled(v) => {
+                                root.cfg-cluster-announce-untrusted = v;
+                                root.cfg-cluster-announce-untrusted-changed(v);
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                text: "Trusted SSIDs"; color: Theme.text-secondary;
+                                font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                                vertical-alignment: center; width: 130px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "comma-separated, case-sensitive";
+                                text: root.cfg-cluster-ssids;
+                                horizontal-stretch: 1;
+                                accepted(t) => {
+                                    root.cfg-cluster-ssids = t;
+                                    root.cfg-cluster-ssids-changed(t);
+                                }
+                            }
+                        }
+                    }
                 }
                 // SL-03 — Local resources card: CPU / memory / accelerator /
                 // VRAM / disk + cached local models (`neoth hardware --output
