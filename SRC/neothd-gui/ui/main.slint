@@ -961,6 +961,10 @@ export component MainWindow inherits Window {
     in property <[KanbanTaskRow]> kanban-done: [];
     in property <[KanbanFeedRow]> kanban-feed: [];
     in property <string> kanban-session-summary: "";
+    // A3 — session selector.
+    in property <[string]> kanban-sessions: [];
+    in-out property <int> kanban-session-idx: 0;
+    callback kanban-session-selected(int);
     // GR-10 — Safety Rails (Privacy tab), forwarded to SettingsView. Rust sets
     // these on startup from `neoth security safe-mode --json`.
     in property <[SafeRailRow]> safety-rails: [];
@@ -3093,6 +3097,10 @@ export component MainWindow inherits Window {
             kanban-done: root.kanban-done;
             kanban-feed: root.kanban-feed;
             kanban-session-summary: root.kanban-session-summary;
+            // A3 — session selector.
+            kanban-sessions: root.kanban-sessions;
+            kanban-session-idx <=> root.kanban-session-idx;
+            kanban-session-selected(i) => { root.kanban-session-selected(i); }
             cerebellum-bound: root.cerebellum-bound;
             safety-rails: root.safety-rails;
             rails-engaged-count: root.rails-engaged-count;

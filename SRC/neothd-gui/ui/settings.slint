@@ -667,6 +667,10 @@ export component SettingsView inherits Rectangle {
     /// string means "no sessions yet — operator has not run `neoth
     /// code` on this machine".
     in property <string> kanban-session-summary: "";
+    // A3 — session selector.
+    in property <[string]> kanban-sessions: [];
+    in-out property <int> kanban-session-idx: 0;
+    callback kanban-session-selected(int);
     /// HO-02: whether a Cerebellum hemisphere is bound (wizard step 5d).
     /// `false` surfaces a warning banner in the Code Sessions tab —
     /// without a Cerebellum the decompose step can't run, so `neoth code`
@@ -3655,11 +3659,18 @@ export component SettingsView inherits Rectangle {
                     }
                 }
 
-                // Session summary + refresh button. Empty
+                // Session selector + summary + refresh. Empty
                 // `kanban-session-summary` means no `neoth code` run yet.
                 HorizontalLayout {
                     alignment: space-between;
                     spacing: Theme.space-base;
+                    // A3 — pick any session, not just the latest.
+                    if root.kanban-sessions.length > 1: NeothComboBox {
+                        width: 300px;
+                        model: root.kanban-sessions;
+                        current-index: root.kanban-session-idx;
+                        selected(i) => { root.kanban-session-selected(i); }
+                    }
                     Text {
                         text: root.kanban-session-summary != ""
                             ? root.kanban-session-summary
@@ -3668,6 +3679,8 @@ export component SettingsView inherits Rectangle {
                         font-size: Theme.font-size-caption;
                         color: root.kanban-session-summary != "" ? Theme.text-primary : Theme.text-muted;
                         vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
                     }
                     NeothButton {
                         label: "Refresh";

@@ -830,12 +830,21 @@ fn settle_activity_kind(window: &slint::Weak<MainWindow>, kind: &'static str) {
 // GUI crate stays light + decoupled from daemon internals. Wire-form
 // changes surface as JSON deserialise errors at runtime.
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct CodingSessionJson {
     session_id: i64,
     prompt: String,
     status: String,
 }
+
+/// A3 — session-selector override: -1 = latest, otherwise the session
+/// id the operator picked in the board's combo. Read by every
+/// fetch_kanban_board_snapshot call (click handler, refresh, poll).
+static KANBAN_SESSION_OVERRIDE: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(-1);
+
+/// A3 — ids parallel to the selector labels (set by apply_kanban_snapshot).
+static KANBAN_SESSION_IDS: std::sync::Mutex<Vec<i64>> = std::sync::Mutex::new(Vec::new());
 
 #[derive(Debug, Deserialize)]
 struct CodingTaskJson {
@@ -887,6 +896,11 @@ struct TaskDetailEnvelope {
 /// lookup runs lock-free.
 #[derive(Default, Clone, PartialEq)]
 struct KanbanBoardSnapshot {
+    /// A3 — selectable sessions (labels + parallel ids) and which one
+    /// the board currently shows.
+    sessions_labels: Vec<slint::SharedString>,
+    sessions_ids: Vec<i64>,
+    active_session_idx: i32,
     backlog: Vec<KanbanTaskRow>,
     todo: Vec<KanbanTaskRow>,
     in_progress: Vec<KanbanTaskRow>,
@@ -3207,6 +3221,23 @@ fn main() -> Result<()> {
                 }
             });
         });
+    });
+
+    // A3 — session selector: combo index → session id via the parallel
+    // ids static; pin the override and refresh (cold path honours it).
+    let weak_sess_sel = window.as_weak();
+    window.on_kanban_session_selected(move |idx| {
+        let id = KANBAN_SESSION_IDS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(idx as usize)
+            .copied();
+        if let Some(id) = id {
+            KANBAN_SESSION_OVERRIDE.store(id, std::sync::atomic::Ordering::Relaxed);
+            if let Some(w) = weak_sess_sel.upgrade() {
+                w.invoke_kanban_refresh_clicked();
+            }
+        }
     });
 
     let weak_kanban_refresh = window.as_weak();
@@ -11479,13 +11510,33 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
             };
         }
     };
-    let Some(latest) = sessions.into_iter().next() else {
+    // A3 — expose every session to the selector; honour the override.
+    let sessions_ids: Vec<i64> = sessions.iter().map(|s| s.session_id).collect();
+    let sessions_labels: Vec<slint::SharedString> = sessions
+        .iter()
+        .map(|s| {
+            let p: String = s.prompt.replace('\n', " ").chars().take(42).collect();
+            format!("#{} · {} [{}]", s.session_id, p, s.status).into()
+        })
+        .collect();
+    let want = KANBAN_SESSION_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+    let chosen = if want >= 0 {
+        sessions.iter().find(|s| s.session_id == want).cloned()
+    } else {
+        None
+    };
+    let Some(latest) = chosen.or_else(|| sessions.into_iter().next()) else {
         return KanbanBoardSnapshot {
             summary: "No active session. Run `neoth code \"...\"` in your terminal, then refresh."
                 .to_string(),
             ..Default::default()
         };
     };
+    let active_session_idx = sessions_ids
+        .iter()
+        .position(|id| *id == latest.session_id)
+        .map(|i| i as i32)
+        .unwrap_or(0);
 
     // Step 2: full session detail incl. tasks.
     let show_out = spawn_neothd_plain(&bin)
@@ -11530,6 +11581,9 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
             envelope.session.session_id, envelope.session.status, envelope.session.prompt,
         ),
         feed: fetch_kanban_feed(&bin),
+        sessions_labels,
+        sessions_ids,
+        active_session_idx,
         ..Default::default()
     };
     for task in envelope.tasks {
@@ -12012,6 +12066,11 @@ fn fetch_activity_warm(
 fn fetch_board_warm_or_cold(
     client: &std::sync::Mutex<Option<GuiStreamClient>>,
 ) -> KanbanBoardSnapshot {
+    // A3 — the warm channel always streams the LATEST session; when the
+    // operator pinned a different one, only the cold path honours it.
+    if KANBAN_SESSION_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) >= 0 {
+        return fetch_kanban_board_snapshot();
+    }
     let Some(bin) = which_neothd() else {
         return fetch_kanban_board_snapshot(); // surfaces the "install" hint
     };
@@ -12205,6 +12264,14 @@ fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
     window.set_kanban_done(ModelRc::new(VecModel::from(snap.done)));
     window.set_kanban_feed(ModelRc::new(VecModel::from(snap.feed)));
     window.set_kanban_session_summary(snap.summary.into());
+    // A3 — session selector model + active index (parallel ids ride a
+    // static so the selection handler can map index → session id). The
+    // warm-channel snapshot carries no session list — keep the combo.
+    if !snap.sessions_labels.is_empty() {
+        window.set_kanban_sessions(ModelRc::new(VecModel::from(snap.sessions_labels)));
+        window.set_kanban_session_idx(snap.active_session_idx);
+        *KANBAN_SESSION_IDS.lock().unwrap_or_else(|e| e.into_inner()) = snap.sessions_ids;
+    }
     // HO-02: None (degraded / un-probed path) → true, so the banner only
     // shows when we positively determined no Cerebellum is bound.
     window.set_cerebellum_bound(snap.cerebellum_bound.unwrap_or(true));
