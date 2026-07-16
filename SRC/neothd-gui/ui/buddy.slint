@@ -470,6 +470,22 @@ export component BuddyDock inherits Rectangle {
     accessible-label: "NEOTH buddy — \{root.mood}";
     accessible-action-default => { root.clicked(); }
 
+    // Caption cross-fade — the chip label fades out, swaps, and fades back in
+    // on a mood/caption change instead of hard-snapping (beloved-companion
+    // polish). At reduced-motion the swap is instant. duration-fast is 0ms at
+    // animation-mode 0, keeping it E7-consistent; the Timer performs the swap
+    // once the fade has reached its trough.
+    property <string> shown-caption: root.caption;
+    property <float> caption-alpha: 1.0;
+    animate caption-alpha { duration: Theme.duration-fast; easing: ease-in-out; }
+    changed caption => {
+        if (Theme.animation-mode == 0) {
+            root.shown-caption = root.caption;
+        } else {
+            root.caption-alpha = 0.0;
+        }
+    }
+
     // Entrance: fade + a gentle rise instead of an instant pop when the
     // dock first appears (design audit — no companion should just blink in).
     property <length> entrance-rise: 10px;
@@ -503,11 +519,21 @@ export component BuddyDock inherits Rectangle {
         border-width: 1px; border-color: Theme.border-subtle;
         lbl := Text {
             x: 8px; y: 3px;
+            opacity: root.caption-alpha;
             accessible-role: AccessibleRole.text;
-            accessible-label: root.caption;
-            text: root.caption; color: Theme.text-secondary;
+            accessible-label: root.shown-caption;
+            text: root.shown-caption; color: Theme.text-secondary;
             font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
             letter-spacing: Theme.letter-spacing-tight;
+        }
+    }
+    // Swap the caption text at the fade trough, then fade it back in.
+    Timer {
+        interval: 90ms;
+        running: root.caption-alpha < 0.05;
+        triggered => {
+            root.shown-caption = root.caption;
+            root.caption-alpha = 1.0;
         }
     }
 }
