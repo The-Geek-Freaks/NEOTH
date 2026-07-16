@@ -9,9 +9,9 @@
 > `fail_fast`, channel PostProviderCall/restoration plus atomic `once`, skill
 > directories created after watcher startup, and lost channel `delegate_to`.
 > A later seven-subsystem report added 17 findings; current-source triage leaves
-> **13 open / 3 closed / 1 mooted**, and folds its Cron `once`
+> **6 open / 10 closed / 1 mooted**, and folds its Cron `once`
 > item into the central hook-parity contract. The unique post-corpus actionable
-> count is therefore **16**, all explicit in `ROAD_TO_1_0_GOLD.md`. The durable
+> count is therefore **9**, all explicit in `ROAD_TO_1_0_GOLD.md`. The durable
 > cluster authority is now protocol v6 / Iroh ALPN `neoth/cluster/gossip/3`: a
 > node-global SQLite-backed 256-slot frontier ticks and stages in one immediate
 > transaction, retries exact frames, binds the full inbound frontier, never
@@ -27,12 +27,32 @@
 > MCP regressions **3/3**, release packaging **24/24**, generated CLI-doc drift
 > **1/1**, Rust 1.91 formatting, metadata and diff hygiene. The Wave-2 WAL v3
 > probe defect is also closed at `ce7d6542` with focused redaction **17/17**.
-> Claude's concurrent
-> GUI lane is integrated: provider model catalog/retry selection, one-shot model
+> Lease consumption now propagates a second-read/store failure and keeps the
+> lifted call blocked (**3/3** focused), while the Secret Scanner compiles its
+> curated regex set once and borrows it on hot inspection paths (**9/9**).
+> Migration JSON scan truth is closed (**4/4** focused): valid empty arrays and
+> objects remain successful zero-row sources while corrupt input retains a
+> bounded Serde diagnostic. Unix persistent update staging now creates,
+> corrects and verifies owner-only `0700` directories through a no-follow
+> directory handle; its permissive-umask/existing-`0755` regression is isolated
+> under `cfg(unix)`.
+> Preset application now covers the deterministic provider/model role union and
+> derives its complete report from real before/after values. Focused preset
+> configuration is **19/19** green, and the CLI regression proves that an
+> identical re-apply creates no reload sentinel. Canonical inference-provider
+> wire IDs now serialize exactly as their public IDs while legacy aliases remain
+> readable.
+> Fallback quota ownership now persists every candidate 429 through one locked
+> transaction before failover. Focused fallback is **12/12**, quota tracking is
+> **22/22**, wrapper
+> ownership propagation is covered, and authorized per-hop quota/fallback audit
+> uses the required authorizer-owned WAL writer without a duplicate outer-chat
+> record.
+> Claude's concurrent GUI lane is integrated: provider model catalog/retry selection, one-shot model
 > override, auto-update controls and read-only MCP/hooks/ground-truth/quota/
 > tweaks probes coexist with the fail-closed cluster transaction and hardened
 > chat subprocess boundary. Read-only probes are observability, not full GUI/CLI
-> mutation parity, so they close no broad R4 box. The 16 open post-corpus contracts,
+> mutation parity, so they close no broad R4 box. The 9 open post-corpus contracts,
 > remaining R4 acceptance boxes, native clean-machine proof and exact-head
 > CI/Security/CodeQL remain release blockers.
 >

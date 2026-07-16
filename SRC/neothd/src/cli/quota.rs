@@ -119,15 +119,17 @@ fn run_status(
 }
 
 fn run_reset(path: &std::path::Path, provider: &str, output: &OutputFormat) -> Result<()> {
-    let mut tracker = QuotaTracker::load_from(path).context("load quota state")?;
-    if tracker.get(provider).is_none() {
-        anyhow::bail!(
-            "no quota state recorded for `{provider}`. Use `neoth quota status` to see \
-             which providers have been called."
-        );
-    }
-    tracker.reset(provider, now_unix());
-    tracker.save().context("save quota.json after reset")?;
+    QuotaTracker::update_at(path, |tracker| {
+        if tracker.get(provider).is_none() {
+            anyhow::bail!(
+                "no quota state recorded for `{provider}`. Use `neoth quota status` to see \
+                 which providers have been called."
+            );
+        }
+        tracker.reset(provider, now_unix());
+        Ok(())
+    })
+    .context("save quota.json after reset")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
@@ -151,9 +153,11 @@ fn run_set_cap(
     cap: u32,
     output: &OutputFormat,
 ) -> Result<()> {
-    let mut tracker = QuotaTracker::load_from(path).context("load quota state")?;
-    tracker.set_cap(provider, cap, now_unix());
-    tracker.save().context("save quota.json after set-cap")?;
+    QuotaTracker::update_at(path, |tracker| {
+        tracker.set_cap(provider, cap, now_unix());
+        Ok(())
+    })
+    .context("save quota.json after set-cap")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(

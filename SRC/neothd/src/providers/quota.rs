@@ -21,10 +21,22 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+/// Serialises quota read-modify-write transactions inside one process. The
+/// sibling advisory lock in [`QuotaTracker::update_at`] covers other NEOTH
+/// processes using the same operator home.
+static QUOTA_UPDATE_LOCK: Mutex<()> = Mutex::new(());
+
+fn quota_lock_path(path: &Path) -> PathBuf {
+    let mut lock_name = path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    PathBuf::from(lock_name)
+}
 
 /// Typed error returned by provider adapters when the remote API responds
 /// with HTTP 429. Dispatchers downcast `anyhow::Error` to this struct via
@@ -134,6 +146,27 @@ impl QuotaTracker {
         };
         tracker.path = Some(path.to_path_buf());
         Ok(tracker)
+    }
+
+    /// Locked, fail-closed read-modify-write transaction for `quota.json`.
+    ///
+    /// The process mutex and sibling OS lock are held from the strict reload
+    /// through the private atomic replacement. This is the only production
+    /// mutation path: a provider success, a 429, and an operator reset must not
+    /// overwrite one another from stale snapshots.
+    pub fn update_at<T>(path: &Path, mutation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        let _process_guard = match QUOTA_UPDATE_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let lock_path = quota_lock_path(path);
+        let _file_guard =
+            crate::util::locked_file::lock_file_blocking(&lock_path, "provider quota state")?;
+
+        let mut tracker = Self::load_from(path)?;
+        let result = mutation(&mut tracker)?;
+        tracker.save()?;
+        Ok(result)
     }
 
     /// In-memory tracker for unit tests. Never touches disk.
@@ -380,6 +413,60 @@ mod tests {
         let state = reloaded.get("openai_api").unwrap();
         assert_eq!(state.requests_today, 1);
         assert_eq!(state.backoff_until_unix, Some(T0 + 600));
+    }
+
+    #[test]
+    fn update_at_serializes_concurrent_mutations_without_lost_state() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = tempdir().unwrap();
+        let path = Arc::new(dir.path().join("quota.json"));
+        let barrier = Arc::new(Barrier::new(8));
+        let workers = (0..8)
+            .map(|index| {
+                let path = Arc::clone(&path);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    QuotaTracker::update_at(&path, |tracker| {
+                        tracker.record_success(&format!("provider-{index}"), T0);
+                        Ok(())
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            worker.join().unwrap().unwrap();
+        }
+
+        let tracker = QuotaTracker::load_from(&path).unwrap();
+        assert_eq!(tracker.snapshot().len(), 8);
+        for index in 0..8 {
+            assert_eq!(
+                tracker
+                    .get(&format!("provider-{index}"))
+                    .map(|state| state.requests_today),
+                Some(1)
+            );
+        }
+    }
+
+    #[test]
+    fn update_at_preserves_malformed_state_on_load_failure() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("quota.json");
+        let malformed = b"{ definitely not quota json";
+        std::fs::write(&path, malformed).unwrap();
+
+        let error = QuotaTracker::update_at(&path, |tracker| {
+            tracker.record_success("openai_api", T0);
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("parse quota state"));
+        assert_eq!(std::fs::read(path).unwrap(), malformed);
     }
 
     #[test]

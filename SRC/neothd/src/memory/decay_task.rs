@@ -588,7 +588,7 @@ mod tests {
         let cloud_calls = Arc::new(AtomicUsize::new(0));
         let seg = dir.path().join("b22-warm-summary.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
-        let fallback = FallbackProvider::new(
+        let fallback = FallbackProvider::new_with_models_at(
             vec![
                 Box::new(QuotaLocalProvider {
                     calls: local_calls.clone(),
@@ -597,8 +597,10 @@ mod tests {
                     calls: cloud_calls.clone(),
                 }),
             ],
+            vec![None, None],
             1,
             Some(writer.clone()),
+            dir.path().join("quota.json"),
         );
 
         let days = vec![("2026-07-13".to_string(), Vec::new())];

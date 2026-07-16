@@ -18,6 +18,8 @@ use anyhow::Context;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 
+const MAX_JSON_SCAN_DIAGNOSTIC_CHARS: usize = 512;
+
 /// One operator-declared import source — a single row of the
 /// `import-manifest.yaml`. The operator points NEOTH at THEIR prior-AI
 /// memory; nothing is hardcoded to any one person's machine.
@@ -580,28 +582,33 @@ fn scan_json_dir(name: &str, dir: &Path, kind: ImportKind, exclusions: &[PathBuf
 
 fn scan_json_file(name: &str, file: &Path, kind: ImportKind) -> StoreScan {
     match std::fs::read_to_string(file) {
-        Ok(text) => {
-            let row_count = match serde_json::from_str::<serde_json::Value>(&text) {
-                Ok(serde_json::Value::Array(arr)) => arr.len(),
-                Ok(serde_json::Value::Object(obj)) => obj.len(),
-                Ok(_) => 1, // scalar value = 1 row
-                Err(_) => 0,
-            };
-            StoreScan {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(value) => StoreScan {
                 name: name.to_string(),
                 path: file.display().to_string(),
                 kind: kind.as_str().to_string(),
-                status: if row_count > 0 {
-                    ScanStatus::Ok
-                } else {
-                    ScanStatus::Error {
-                        detail: "JSON parse failed".into(),
-                    }
+                status: ScanStatus::Ok,
+                row_count: match value {
+                    serde_json::Value::Array(arr) => arr.len(),
+                    serde_json::Value::Object(obj) => obj.len(),
+                    _ => 1, // scalar value = 1 row
                 },
-                row_count,
                 sample: vec![],
-            }
-        }
+            },
+            Err(error) => StoreScan {
+                name: name.to_string(),
+                path: file.display().to_string(),
+                kind: kind.as_str().to_string(),
+                status: ScanStatus::Error {
+                    detail: format!("JSON parse failed: {error}")
+                        .chars()
+                        .take(MAX_JSON_SCAN_DIAGNOSTIC_CHARS)
+                        .collect(),
+                },
+                row_count: 0,
+                sample: vec![],
+            },
+        },
         Err(e) => StoreScan {
             name: name.to_string(),
             path: file.display().to_string(),
@@ -2023,12 +2030,32 @@ sources:
     }
 
     #[test]
-    fn scan_json_file_handles_malformed_input() {
+    fn scan_json_file_accepts_empty_array_and_object() {
+        let tmp = tempdir().unwrap();
+        for (name, body) in [("array.json", "[]"), ("object.json", "{}")] {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            let scan = scan_json_file("test", &path, ImportKind::JsonFile);
+            assert!(matches!(scan.status, ScanStatus::Ok), "{body}");
+            assert_eq!(scan.row_count, 0, "{body}");
+        }
+    }
+
+    #[test]
+    fn scan_json_file_preserves_bounded_malformed_input_diagnostic() {
         let tmp = tempdir().unwrap();
         let p = tmp.path().join("bad.json");
         std::fs::write(&p, "not valid json").unwrap();
         let scan = scan_json_file("test", &p, ImportKind::JsonFile);
-        assert!(matches!(scan.status, ScanStatus::Error { .. }));
+        let ScanStatus::Error { detail } = scan.status else {
+            panic!("malformed JSON must fail the scan");
+        };
+        assert!(detail.starts_with("JSON parse failed: "));
+        assert!(detail.contains("line 1 column"), "{detail}");
+        assert!(
+            detail.chars().count() <= MAX_JSON_SCAN_DIAGNOSTIC_CHARS,
+            "{detail}"
+        );
     }
 
     #[test]

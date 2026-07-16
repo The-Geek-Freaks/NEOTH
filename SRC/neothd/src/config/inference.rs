@@ -42,10 +42,13 @@ pub enum InferenceProvider {
     /// Direct Anthropic API (key required).
     AnthropicApi,
     /// Direct OpenAI API.
+    #[serde(rename = "openai_api", alias = "open_ai")]
     OpenAi,
     /// OpenAI-compatible endpoint (LM Studio, vLLM, Ollama, …).
+    #[serde(rename = "openai_compat", alias = "open_ai_compat")]
     OpenAiCompat,
     /// Direct Google Gemini API.
+    #[serde(rename = "gemini_api", alias = "gemini")]
     Gemini,
     /// Local Qwen3 forward pass via candle. Honours `accelerator_override`
     /// and the auto-detected accelerator.
@@ -63,6 +66,7 @@ pub enum InferenceProvider {
     /// Azure-issued API key (header `api-key`) NOT a `Bearer` token.
     /// The native adapter is wired end-to-end, including deployment, endpoint,
     /// API version, secret handling, consent, and paid-call authorization.
+    #[serde(rename = "azure_openai", alias = "azure_open_ai")]
     AzureOpenAi,
     /// Ouro O-2 (Session 22) — local Ouro thinking-models via the
     /// `LocalOuroAdapter` shipped in O-1b. Looped decoder-only transformer
@@ -74,12 +78,18 @@ pub enum InferenceProvider {
     /// (`api.cohere.com/v2`, Bearer key). A metered API (no subscription
     /// path). Hybrid wire format: OpenAI-like request (messages with a
     /// `system` role) + Anthropic-like response (`message.content[].text`).
+    #[serde(rename = "cohere_api", alias = "cohere")]
     Cohere,
     /// GOLD-ADAPT-ODY-15 — GitHub Copilot via OAuth PAT + short-lived session
     /// token. Billing varies by plan, model, allowance and overage state, so
     /// calls are cost-unbounded until the adapter has live billing context.
     /// Uses the OpenAI-compatible `api.githubcopilot.com` endpoint; session
     /// token is refreshed from `api.github.com/copilot_internal/v2/token`.
+    #[serde(
+        rename = "copilot_api",
+        alias = "git_hub_copilot",
+        alias = "github_copilot"
+    )]
     GitHubCopilot,
     /// GOLD-ADAPT-AWE-NANO-01 — native Ollama /api/chat NDJSON adapter.
     /// No API key needed. Defaults to http://localhost:11434. Treated as a
@@ -1183,6 +1193,48 @@ mod tests {
             InferenceProvider::LocalQwen,
         ] {
             assert_eq!(InferenceProvider::from_str(p.as_str()), Some(p));
+        }
+    }
+
+    #[test]
+    fn provider_serde_wire_matches_public_ids_and_accepts_legacy_names() {
+        let providers = [
+            InferenceProvider::ClaudeCli,
+            InferenceProvider::AnthropicApi,
+            InferenceProvider::OpenAi,
+            InferenceProvider::OpenAiCompat,
+            InferenceProvider::Gemini,
+            InferenceProvider::LocalQwen,
+            InferenceProvider::AwsBedrock,
+            InferenceProvider::AzureOpenAi,
+            InferenceProvider::LocalOuro,
+            InferenceProvider::Cohere,
+            InferenceProvider::GitHubCopilot,
+            InferenceProvider::LocalOllama,
+            InferenceProvider::RecursiveMas,
+        ];
+        for provider in providers {
+            let wire = serde_yaml::to_string(&provider).unwrap();
+            assert_eq!(wire.trim(), provider.as_str(), "{provider:?}");
+            assert_eq!(
+                serde_yaml::from_str::<InferenceProvider>(provider.as_str()).unwrap(),
+                provider
+            );
+        }
+
+        for (legacy, provider) in [
+            ("open_ai", InferenceProvider::OpenAi),
+            ("open_ai_compat", InferenceProvider::OpenAiCompat),
+            ("gemini", InferenceProvider::Gemini),
+            ("azure_open_ai", InferenceProvider::AzureOpenAi),
+            ("cohere", InferenceProvider::Cohere),
+            ("git_hub_copilot", InferenceProvider::GitHubCopilot),
+        ] {
+            assert_eq!(
+                serde_yaml::from_str::<InferenceProvider>(legacy).unwrap(),
+                provider,
+                "legacy freedom.yaml provider id `{legacy}` must remain readable"
+            );
         }
     }
 

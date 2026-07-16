@@ -514,6 +514,13 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Whether this decorator owns non-streaming quota preflight for every
+    /// candidate in a fallback chain. Callers must keep the ordinary primary
+    /// preflight for streaming, because streams intentionally never fail over.
+    fn handles_nonstream_quota_backoff(&self) -> bool {
+        false
+    }
+
     /// Authorization decorators return the identity stamped by their actual
     /// inner leaf. Concrete transports must keep the default so a raw adapter
     /// cannot forge a different provider/model than the request authorized at

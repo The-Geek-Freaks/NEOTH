@@ -1016,6 +1016,33 @@ impl ProviderCallAuthorizer {
         self
     }
 
+    /// Append an orchestration event that is part of an already-authorized
+    /// provider dispatch. Decorators use this for required per-leaf state
+    /// transitions (for example quota backoff and fallback hops) so the same
+    /// lifecycle writer remains the single audit source of truth.
+    pub(crate) async fn append_required_auxiliary_event(
+        &self,
+        event_type: u8,
+        payload: Vec<u8>,
+        context: &'static str,
+    ) -> Result<()> {
+        let writer = self.writer.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "{context}: no WAL writer is attached; provider dispatch is blocked"
+            )))
+        })?;
+        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+        writer
+            .append(header, payload)
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "{context}: required WAL audit append failed: {error}"
+                )))
+            })
+    }
+
     /// Authorize one actual provider leaf immediately before it runs. The
     /// caller has already resolved `req.model`; the payload and any finite
     /// estimate are derived from the exact system/prompt/model/streaming tuple
@@ -1338,6 +1365,10 @@ impl Provider for CostAuthorizingProvider<'_> {
         self.inner.streams_on_wire()
     }
 
+    fn handles_nonstream_quota_backoff(&self) -> bool {
+        self.inner.handles_nonstream_quota_backoff()
+    }
+
     fn preserves_inner_response_identity(&self) -> bool {
         true
     }
@@ -1501,6 +1532,10 @@ impl Provider for AuthorizedProvider {
 
     fn streams_on_wire(&self) -> bool {
         self.inner.streams_on_wire()
+    }
+
+    fn handles_nonstream_quota_backoff(&self) -> bool {
+        self.inner.handles_nonstream_quota_backoff()
     }
 
     fn preserves_inner_response_identity(&self) -> bool {

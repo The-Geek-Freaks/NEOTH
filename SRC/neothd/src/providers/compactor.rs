@@ -578,6 +578,10 @@ impl Provider for CompactingProvider {
         self.inner.streams_on_wire()
     }
 
+    fn handles_nonstream_quota_backoff(&self) -> bool {
+        self.inner.handles_nonstream_quota_backoff()
+    }
+
     async fn complete_raw(
         &self,
         req: Request,
@@ -658,6 +662,9 @@ pub fn arc_from_config(
         }
         fn streams_on_wire(&self) -> bool {
             self.0.streams_on_wire()
+        }
+        fn handles_nonstream_quota_backoff(&self) -> bool {
+            self.0.handles_nonstream_quota_backoff()
         }
         async fn complete_raw(
             &self,
@@ -754,6 +761,39 @@ mod tests {
         ) -> Result<ChunkStream> {
             unimplemented!()
         }
+    }
+
+    struct QuotaOwningProvider;
+
+    #[async_trait]
+    impl Provider for QuotaOwningProvider {
+        fn name(&self) -> &'static str {
+            "quota-owner"
+        }
+
+        fn handles_nonstream_quota_backoff(&self) -> bool {
+            true
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            unreachable!("quota ownership delegation test never dispatches")
+        }
+    }
+
+    #[test]
+    fn compactor_and_arc_adapter_preserve_quota_fallback_ownership() {
+        let direct =
+            CompactingProvider::new(Box::new(QuotaOwningProvider), None, 1_024, 0.8, 256, None);
+        assert!(direct.handles_nonstream_quota_backoff());
+
+        let wrapped = arc_from_config(
+            Arc::new(QuotaOwningProvider),
+            None,
+            None,
+            &TokensConfig::default(),
+            None,
+        );
+        assert!(wrapped.handles_nonstream_quota_backoff());
     }
 
     fn long_prompt(chars: usize) -> String {

@@ -8,10 +8,11 @@
 > production failure path. Four initial post-corpus P1 contracts were then
 > discovered during implementation. The later seven-subsystem Wave-2 report
 > appended below captured 17 more findings; reconciliation against the
-> integrated source yields **13 open / 3 closed / 1 mooted** after the v3 WAL
-> probe was fixed at `ce7d6542` with focused redaction **17/17**.
+> integrated source yields **6 open / 10 closed / 1 mooted** after the v3 WAL
+> probe and the current risk-lease, secret-scan, migration-JSON, preset-union,
+> preset-diff, fallback-quota and Unix-staging closure wave.
 > Its Cron `once` item is part of the existing hook-parity contract, producing
-> **16 unique open post-corpus contracts** in the Gold tracker. The
+> **9 unique open post-corpus contracts** in the Gold tracker. The
 > authoritative corrected scopes and acceptance tests live under `WS-BUG` in
 > `PLAN/ROAD_TO_1_0_GOLD.md`; all raw scenarios below remain verbatim for
 > provenance and must not be mistaken for current status.

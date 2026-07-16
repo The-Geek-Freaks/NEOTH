@@ -23,7 +23,7 @@
 //! exclusive with the Slint panel's "preset save" path that snaps
 //! the current freedom.yaml into a new preset entry.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -400,11 +400,17 @@ fn plan_apply_source(
     } else {
         serde_yaml::from_str(original).context("parse freedom.yaml while planning preset")?
     };
+    let before = root.clone();
     let mapping = match &mut root {
         serde_yaml::Value::Mapping(m) => m,
         _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
     };
     let mut report = ApplyReport::default();
+    // The apply report is derived after every mutation from the actual
+    // before/after values at these paths. Keeping attempted writes separate
+    // from observed changes prevents idempotent re-applies from inventing
+    // fields (and therefore unnecessary daemon reloads).
+    let mut touched_paths = BTreeSet::new();
     // ZF-01 — snapshot warn-path values BEFORE any mutation (typed fields
     // AND overrides) so the consent diff shows the operator's true
     // old→new. Review wave 2026-07-04: snapshotting after the typed
@@ -415,46 +421,36 @@ fn plan_apply_source(
         .collect();
     if let Some(cap) = preset.daily_usd_cap {
         ensure_council_block(mapping);
-        set_nested(mapping, "council", "daily_usd_cap", &mut report, |m, k| {
+        touched_paths.insert("council.daily_usd_cap".to_string());
+        set_nested(mapping, "council", "daily_usd_cap", |m, k| {
             insert_value(m, k, serde_yaml::Value::from(cap));
         });
     }
     if let Some(currency) = preset.usage_currency.as_ref() {
-        let was = mapping.insert(
+        touched_paths.insert("usage_currency".to_string());
+        mapping.insert(
             serde_yaml::Value::from("usage_currency"),
             serde_yaml::Value::from(currency.clone()),
         );
-        if was != Some(serde_yaml::Value::from(currency.clone())) {
-            report.fields_changed.push("usage_currency".into());
-        }
     }
     if let Some(depth) = preset.max_recursion_depth {
         ensure_council_block(mapping);
-        set_nested(
-            mapping,
-            "council",
-            "max_recursion_depth",
-            &mut report,
-            |m, k| {
-                insert_value(m, k, serde_yaml::Value::from(depth));
-            },
-        );
+        touched_paths.insert("council.max_recursion_depth".to_string());
+        set_nested(mapping, "council", "max_recursion_depth", |m, k| {
+            insert_value(m, k, serde_yaml::Value::from(depth));
+        });
     }
     if let Some(calls) = preset.max_calls_per_user_message {
         ensure_council_block(mapping);
-        set_nested(
-            mapping,
-            "council",
-            "max_calls_per_user_message",
-            &mut report,
-            |m, k| {
-                insert_value(m, k, serde_yaml::Value::from(calls));
-            },
-        );
+        touched_paths.insert("council.max_calls_per_user_message".to_string());
+        set_nested(mapping, "council", "max_calls_per_user_message", |m, k| {
+            insert_value(m, k, serde_yaml::Value::from(calls));
+        });
     }
     if let Some(mode) = preset.selection_mode.as_ref() {
         ensure_council_block(mapping);
-        set_nested(mapping, "council", "selection_mode", &mut report, |m, k| {
+        touched_paths.insert("council.selection_mode".to_string());
+        set_nested(mapping, "council", "selection_mode", |m, k| {
             insert_value(m, k, serde_yaml::Value::from(mode.clone()));
         });
     }
@@ -466,13 +462,11 @@ fn plan_apply_source(
             // `autonomy_requested` and runs the ceremony after commit.
             report.autonomy_requested = Some(level.clone());
         } else {
-            let was = mapping.insert(
+            touched_paths.insert("autonomy".to_string());
+            mapping.insert(
                 serde_yaml::Value::from("autonomy"),
                 serde_yaml::Value::from(level.clone()),
             );
-            if was != Some(serde_yaml::Value::from(level.clone())) {
-                report.fields_changed.push("autonomy".into());
-            }
         }
     }
     if !preset.hemispheres.is_empty() || !preset.models.is_empty() {
@@ -483,17 +477,27 @@ fn plan_apply_source(
             Some(m) => m.clone(),
             None => serde_yaml::Mapping::new(),
         };
-        for (role, provider) in &preset.hemispheres {
+        // A preset may override only a model while intentionally preserving
+        // the role's provider. Iterate the deterministic union so such roles
+        // are not silently skipped.
+        let roles: BTreeSet<&String> = preset
+            .hemispheres
+            .keys()
+            .chain(preset.models.keys())
+            .collect();
+        for role in roles {
             let role_key = serde_yaml::Value::from(role.clone());
             let mut role_mapping = inference_mapping
                 .get(&role_key)
                 .and_then(|v| v.as_mapping())
                 .cloned()
                 .unwrap_or_default();
-            role_mapping.insert(
-                serde_yaml::Value::from("provider"),
-                serde_yaml::Value::from(provider.clone()),
-            );
+            if let Some(provider) = preset.hemispheres.get(role) {
+                role_mapping.insert(
+                    serde_yaml::Value::from("provider"),
+                    serde_yaml::Value::from(provider.clone()),
+                );
+            }
             if let Some(model) = preset.models.get(role) {
                 role_mapping.insert(
                     serde_yaml::Value::from("model"),
@@ -501,14 +505,15 @@ fn plan_apply_source(
                 );
             }
             inference_mapping.insert(role_key, serde_yaml::Value::Mapping(role_mapping));
-            report.fields_changed.push(format!("inference.{role}"));
+            touched_paths.insert(format!("inference.{role}"));
         }
         mapping.insert(
             serde_yaml::Value::from("inference"),
             serde_yaml::Value::Mapping(inference_mapping),
         );
     }
-    merge_overrides(mapping, &preset.overrides, &mut report)?;
+    touched_paths.extend(preset.overrides.keys().cloned());
+    merge_overrides(mapping, &preset.overrides)?;
 
     if project_full_auto {
         anyhow::ensure!(
@@ -516,6 +521,11 @@ fn plan_apply_source(
             "FULL-AUTO projection requested for a preset that does not request autonomy: full"
         );
         project_full_auto_into_yaml(mapping)?;
+        touched_paths.extend([
+            "autonomy".to_string(),
+            "sovereign_buddy".to_string(),
+            "skills.enable_all_bundled".to_string(),
+        ]);
     }
 
     for (path, old) in PRESET_WARN_PATHS.iter().zip(warn_before) {
@@ -528,6 +538,14 @@ fn plan_apply_source(
             ));
         }
     }
+
+    let before_mapping = before
+        .as_mapping()
+        .context("freedom.yaml before preset apply is not a mapping")?;
+    report.fields_changed = touched_paths
+        .into_iter()
+        .filter(|path| lookup_dotted(before_mapping, path) != lookup_dotted(mapping, path))
+        .collect();
 
     let body = serde_yaml::to_string(&root)?;
     // ZF-01 — fail LOUD on typo'd override paths: FreedomConfig ignores
@@ -570,9 +588,8 @@ fn project_full_auto_into_yaml(mapping: &mut serde_yaml::Mapping) -> Result<()> 
 fn merge_overrides(
     mapping: &mut serde_yaml::Mapping,
     overrides: &BTreeMap<String, serde_yaml::Value>,
-    report: &mut ApplyReport,
 ) -> Result<()> {
-    for (path, value) in overrides {
+    'overrides: for (path, value) in overrides {
         let segments: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
         let Some((leaf, parents)) = segments.split_last() else {
             anyhow::bail!("override path `{path}` is empty");
@@ -581,6 +598,12 @@ fn merge_overrides(
         for seg in parents {
             let key = serde_yaml::Value::from(*seg);
             if !cur.contains_key(&key) {
+                // Removing an absent leaf is a true no-op. Do not leave empty
+                // parent mappings behind, because that would mutate config
+                // while the leaf-level apply report correctly says unchanged.
+                if value.is_null() {
+                    continue 'overrides;
+                }
                 cur.insert(
                     key.clone(),
                     serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
@@ -596,13 +619,10 @@ fn merge_overrides(
             };
         }
         let leaf_key = serde_yaml::Value::from(*leaf);
-        let changed = if value.is_null() {
-            cur.remove(&leaf_key).is_some()
+        if value.is_null() {
+            cur.remove(&leaf_key);
         } else {
-            cur.insert(leaf_key, value.clone()) != Some(value.clone())
-        };
-        if changed {
-            report.fields_changed.push(path.clone());
+            cur.insert(leaf_key, value.clone());
         }
     }
     Ok(())
@@ -688,8 +708,8 @@ pub struct ApplyReport {
 
 fn ensure_council_block(mapping: &mut serde_yaml::Mapping) {
     // ZF-01 — only create the block when ABSENT; an existing non-mapping
-    // value is left untouched (set_nested records the skip) instead of
-    // being silently clobbered by an empty mapping.
+    // value is left untouched instead of being silently clobbered by an
+    // empty mapping; complete target validation then fails it loudly.
     if !mapping.contains_key(serde_yaml::Value::from("council")) {
         mapping.insert(
             serde_yaml::Value::from("council"),
@@ -702,19 +722,16 @@ fn set_nested<F: FnOnce(&mut serde_yaml::Mapping, &str)>(
     mapping: &mut serde_yaml::Mapping,
     block: &str,
     key: &str,
-    report: &mut ApplyReport,
     mutate: F,
 ) {
     let block_key = serde_yaml::Value::from(block);
     // ZF-01 — a non-mapping value under `block` (malformed manual edit)
-    // must not be silently replaced: preserve it and record the skip so
-    // the operator sees WHY the field didn't change.
+    // must not be silently replaced. The complete target validation below
+    // turns malformed typed config into a hard error; the diff report remains
+    // reserved for values that actually changed.
     if let Some(existing) = mapping.get(&block_key)
         && !existing.is_mapping()
     {
-        report.fields_changed.push(format!(
-            "{block}.{key} (SKIPPED: `{block}` is not a mapping)"
-        ));
         return;
     }
     let mut inner = mapping
@@ -724,7 +741,6 @@ fn set_nested<F: FnOnce(&mut serde_yaml::Mapping, &str)>(
         .unwrap_or_default();
     mutate(&mut inner, key);
     mapping.insert(block_key, serde_yaml::Value::Mapping(inner));
-    report.fields_changed.push(format!("{block}.{key}"));
 }
 
 fn insert_value(mapping: &mut serde_yaml::Mapping, key: &str, value: serde_yaml::Value) {
@@ -992,6 +1008,76 @@ mod tests {
         assert!(body.contains("openai_api"));
         assert!(body.contains("claude_cli"));
         assert!(body.contains("gpt-5.5"));
+    }
+
+    #[test]
+    fn apply_model_only_role_preserves_provider_and_reports_change() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "inference:\n  right:\n    provider: anthropic_api\n",
+        )
+        .unwrap();
+        let mut models = BTreeMap::new();
+        models.insert("right".into(), "claude-opus-4-7".into());
+
+        let report = apply_preset_to_freedom_yaml(
+            dir.path(),
+            &Preset {
+                models,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(report.fields_changed, vec!["inference.right"]);
+        let body = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        let right = root
+            .get("inference")
+            .and_then(|value| value.get("right"))
+            .and_then(serde_yaml::Value::as_mapping)
+            .unwrap();
+        assert_eq!(
+            right.get("provider").and_then(serde_yaml::Value::as_str),
+            Some("anthropic_api")
+        );
+        assert_eq!(
+            right.get("model").and_then(serde_yaml::Value::as_str),
+            Some("claude-opus-4-7")
+        );
+    }
+
+    #[test]
+    fn identical_reapply_reports_no_fields_or_warn_changes() {
+        let dir = tempdir().unwrap();
+        let mut hemispheres = BTreeMap::new();
+        hemispheres.insert("left".into(), "openai_api".into());
+        let mut models = BTreeMap::new();
+        models.insert("left".into(), "gpt-5.5".into());
+        let mut overrides = BTreeMap::new();
+        overrides.insert("proactive.enabled".into(), serde_yaml::Value::Bool(true));
+        let preset = Preset {
+            hemispheres,
+            models,
+            daily_usd_cap: Some(2.5),
+            usage_currency: Some("EUR".into()),
+            max_recursion_depth: Some(3),
+            max_calls_per_user_message: Some(12),
+            selection_mode: Some("legacy_majority".into()),
+            autonomy: Some("standard".into()),
+            overrides,
+            ..Default::default()
+        };
+
+        let first = apply_preset_to_freedom_yaml(dir.path(), &preset).unwrap();
+        assert!(!first.fields_changed.is_empty());
+        let second = apply_preset_to_freedom_yaml(dir.path(), &preset).unwrap();
+
+        assert!(second.preset_applied);
+        assert_eq!(second.autonomy_requested, None);
+        assert!(second.fields_changed.is_empty(), "{second:?}");
+        assert!(second.warn_changes.is_empty(), "{second:?}");
     }
 
     #[test]

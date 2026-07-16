@@ -179,7 +179,7 @@ async fn run_apply(
     .context("preset was published, but its required committed audit failed")?;
 
     if report.fields_changed.is_empty() && report.autonomy_requested.is_none() {
-        println!("applied preset `{name}` (no changes — preset was empty)");
+        println!("applied preset `{name}` (no changes — config already matched)");
     } else {
         println!(
             "applied preset `{name}` ({} fields):",
@@ -190,9 +190,11 @@ async fn run_apply(
         }
     }
 
-    // ZF-01 — nudge the running daemon's reload poller (best-effort; the
-    // daemon may not be running).
-    if let Err(error) = crate::cli::reload::request_reload_at(home) {
+    // Only an effective config change needs a reload. In particular, an
+    // identical re-apply must not manufacture a reload sentinel.
+    if !report.fields_changed.is_empty()
+        && let Err(error) = crate::cli::reload::request_reload_at(home)
+    {
         tracing::warn!(%error, "preset applied but reload request could not be persisted");
     }
     let cron_flips = report
@@ -501,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_is_bound_to_the_explicit_home_for_config_audit_and_reload() {
+    fn apply_is_bound_to_the_explicit_home_and_idempotent_reload() {
         let _env = crate::test_env::lock();
         let root = tempdir().unwrap();
         let selected_home = root.path().join("selected-instance");
@@ -569,5 +571,22 @@ mod tests {
         );
         assert!(!decoy_default_home.join("wal").join("000001.wal").exists());
         assert!(!decoy_default_home.join("wal").join("hmac.key").exists());
+
+        let reload_sentinel = selected_home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
+        std::fs::remove_file(&reload_sentinel).unwrap();
+        runtime
+            .block_on(run_apply(
+                &selected_home,
+                "selected-only",
+                true,
+                false,
+                false,
+                None,
+            ))
+            .unwrap();
+        assert!(
+            !reload_sentinel.exists(),
+            "an identical preset re-apply must not request a daemon reload"
+        );
     }
 }

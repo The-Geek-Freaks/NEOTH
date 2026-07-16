@@ -1282,7 +1282,8 @@ async fn enforce_preflight(
             }
         };
         let now = crate::providers::quota::now_unix();
-        if let Some(state) = tracker.get(provider_name)
+        if !(provider.handles_nonstream_quota_backoff() && !args.stream)
+            && let Some(state) = tracker.get(provider_name)
             && !state.is_healthy(now)
         {
             let remaining = state.backoff_remaining_secs(now);
@@ -1842,7 +1843,7 @@ async fn dispatch_provider(
     writer: crate::wal::writer::WalWriterHandle,
     writer_join: tokio::task::JoinHandle<()>,
     quota_path: std::path::PathBuf,
-    mut quota_tracker: Option<crate::providers::quota::QuotaTracker>,
+    quota_tracker: Option<crate::providers::quota::QuotaTracker>,
     prompt: &str,
     predicted_cost: &crate::providers::cost::CostEstimate,
     mcp_servers: &crate::mcp::McpServers,
@@ -2097,7 +2098,7 @@ async fn dispatch_provider(
                         p.record_failure();
                     }
                     if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                        record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
+                        record_quota_exceeded(qe, &quota_path, &writer).await;
                     }
                     warn!(error = %e, "provider stream open failed");
                     drop(writer);
@@ -2649,11 +2650,11 @@ async fn dispatch_provider(
                             }
                         }
                         Err(e) => {
-                            if let Some(qe) =
-                                e.downcast_ref::<crate::providers::quota::QuotaError>()
+                            if !provider.handles_nonstream_quota_backoff()
+                                && let Some(qe) =
+                                    e.downcast_ref::<crate::providers::quota::QuotaError>()
                             {
-                                record_quota_exceeded(provider_name, qe, &quota_path, &writer)
-                                    .await;
+                                record_quota_exceeded(qe, &quota_path, &writer).await;
                             }
                             warn!(error = %e, "GOLD-LOOP-01: loop engine failed");
                             drop(writer);
@@ -2720,11 +2721,11 @@ async fn dispatch_provider(
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            if let Some(qe) =
-                                e.downcast_ref::<crate::providers::quota::QuotaError>()
+                            if !provider.handles_nonstream_quota_backoff()
+                                && let Some(qe) =
+                                    e.downcast_ref::<crate::providers::quota::QuotaError>()
                             {
-                                record_quota_exceeded(provider_name, qe, &quota_path, &writer)
-                                    .await;
+                                record_quota_exceeded(qe, &quota_path, &writer).await;
                             }
                             warn!(error = %e, "MCP dispatch loop failed");
                             drop(writer);
@@ -2877,8 +2878,11 @@ async fn dispatch_provider(
                         if let Some(p) = permit {
                             p.record_failure();
                         }
-                        if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                            record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
+                        if !provider.handles_nonstream_quota_backoff()
+                            && let Some(qe) =
+                                e.downcast_ref::<crate::providers::quota::QuotaError>()
+                        {
+                            record_quota_exceeded(qe, &quota_path, &writer).await;
                         }
                         warn!(error = %e, "provider call failed");
                         drop(writer);
@@ -2929,13 +2933,15 @@ async fn dispatch_provider(
     // quota tracker so `neoth quota status` reflects actual usage. Local
     // providers are not tracked.
     if !crate::providers::is_local_provider(&provider_used) {
-        let mut tracker = quota_tracker.take().ok_or_else(|| {
+        quota_tracker.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "remote provider `{provider_used}` completed without initialized quota state"
             )
         })?;
-        tracker.record_success(&provider_used, crate::providers::quota::now_unix());
-        if let Err(e) = tracker.save() {
+        if let Err(e) = crate::providers::quota::QuotaTracker::update_at(&quota_path, |tracker| {
+            tracker.record_success(&provider_used, crate::providers::quota::now_unix());
+            Ok(())
+        }) {
             tracing::warn!(error = %e, "quota.json save after success failed (best-effort)");
         }
     }
@@ -4938,14 +4944,19 @@ async fn emit_hook_frame(
 /// failures here never mask the original provider error. The caller
 /// continues to bail with `e`; this side effect is purely audit + UX.
 async fn record_quota_exceeded(
-    provider_name: &str,
     qe: &crate::providers::quota::QuotaError,
     quota_path: &std::path::Path,
     writer: &crate::wal::writer::WalWriterHandle,
 ) {
+    let provider_name = qe.provider;
     let now = crate::providers::quota::now_unix();
-    let mut tracker = match crate::providers::quota::QuotaTracker::load_from(quota_path) {
-        Ok(tracker) => tracker,
+    let update = crate::providers::quota::QuotaTracker::update_at(quota_path, |tracker| {
+        let effective = tracker.record_429(provider_name, qe.retry_after, now);
+        let state = tracker.get(provider_name).cloned();
+        Ok((effective, state))
+    });
+    let (effective, state) = match update {
+        Ok(update) => update,
         Err(error) => {
             tracing::warn!(
                 path = %quota_path.display(),
@@ -4955,11 +4966,6 @@ async fn record_quota_exceeded(
             return;
         }
     };
-    let effective = tracker.record_429(provider_name, qe.retry_after, now);
-    if let Err(e) = tracker.save() {
-        tracing::warn!(error = %e, "quota.json save after 429 failed (best-effort)");
-    }
-    let state = tracker.get(provider_name).cloned();
     let payload = match serde_json::to_vec(&serde_json::json!({
         "provider": provider_name,
         "retry_after_secs": effective.as_secs(),

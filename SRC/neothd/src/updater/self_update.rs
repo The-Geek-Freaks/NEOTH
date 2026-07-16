@@ -2684,6 +2684,56 @@ pub fn clear_staged(stage_dir: &Path, pending: &PendingUpdate) {
     let _ = std::fs::remove_file(pending_json_path(stage_dir));
 }
 
+fn ensure_private_stage_directory(stage_dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
+
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder
+            .create(stage_dir)
+            .with_context(|| format!("create private stage dir {}", stage_dir.display()))?;
+
+        let directory = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(stage_dir)
+            .with_context(|| format!("open private stage dir {}", stage_dir.display()))?;
+        directory
+            .set_permissions(std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("restrict stage dir {} to mode 0700", stage_dir.display()))?;
+        let mode = directory
+            .metadata()
+            .with_context(|| format!("verify private stage dir {}", stage_dir.display()))?
+            .permissions()
+            .mode()
+            & 0o777;
+        if mode != 0o700 {
+            anyhow::bail!(
+                "stage dir {} has mode {mode:04o}; expected 0700",
+                stage_dir.display()
+            );
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(stage_dir)
+            .with_context(|| format!("create stage dir {}", stage_dir.display()))?;
+        let metadata = std::fs::symlink_metadata(stage_dir)
+            .with_context(|| format!("verify stage dir {}", stage_dir.display()))?;
+        if metadata_is_link_like(&metadata) || !metadata.is_dir() {
+            anyhow::bail!(
+                "stage path is not a real directory: {}",
+                stage_dir.display()
+            );
+        }
+        Ok(())
+    }
+}
+
 /// MV-01b #5 — STAGE (do NOT swap) a newer release: fetch the archive +
 /// `.sha256` + `.minisig`, verify both (signature gated by
 /// `require_signature`), write the raw archive into `stage_dir`, and
@@ -2765,8 +2815,7 @@ pub async fn stage_update(
     )
     .context("staged self-update signature gate")?;
 
-    std::fs::create_dir_all(stage_dir)
-        .with_context(|| format!("create stage dir {}", stage_dir.display()))?;
+    ensure_private_stage_directory(stage_dir)?;
     let staged_archive = stage_dir.join(&assets.binary.name);
     crate::util::atomic_write::atomic_write_private(&staged_archive, &asset_bytes)
         .with_context(|| format!("write staged archive {}", staged_archive.display()))?;
@@ -3598,6 +3647,52 @@ mod tests {
     fn pending_json_path_is_under_stage_dir() {
         let p = pending_json_path(Path::new("/home/user/.neoth/staged"));
         assert!(p.ends_with("pending.json"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stage_directory_is_private_with_permissive_umask_and_repairs_existing_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        const CHILD_ROOT: &str = "NEOTH_STAGE_MODE_TEST_CHILD_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            // SAFETY: this branch runs in a dedicated child process, so changing
+            // its process-global umask cannot race any other test.
+            unsafe {
+                libc::umask(0);
+            }
+
+            let fresh = PathBuf::from(&root).join("fresh");
+            ensure_private_stage_directory(&fresh).unwrap();
+            assert_eq!(
+                std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+
+            let existing = PathBuf::from(root).join("existing");
+            std::fs::create_dir(&existing).unwrap();
+            std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
+            ensure_private_stage_directory(&existing).unwrap();
+            assert_eq!(
+                std::fs::metadata(existing).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            return;
+        }
+
+        let root = tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("stage_directory_is_private_with_permissive_umask_and_repairs_existing_mode")
+            .arg("--nocapture")
+            .env(CHILD_ROOT, root.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated umask regression failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

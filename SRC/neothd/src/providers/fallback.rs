@@ -149,6 +149,89 @@ impl FallbackProvider {
         crate::time::now_unix_secs()
     }
 
+    async fn append_audit_event(
+        &self,
+        authorizer: Option<&crate::providers::cost_authorization::ProviderCallAuthorizer>,
+        event_type: u8,
+        value: serde_json::Value,
+        context: &'static str,
+    ) -> Result<()> {
+        // Authorized dispatches must use the authorizer's lifecycle writer.
+        // The decorator-local writer is only the best-effort sink for raw
+        // dispatch, and the two are deliberately never written together.
+        if authorizer.is_none() && self.wal_writer.is_none() {
+            return Ok(());
+        }
+        let payload = match serde_json::to_vec(&value) {
+            Ok(payload) => payload,
+            Err(error) if authorizer.is_some() => {
+                return Err(error).with_context(|| context);
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, context, "fallback audit serialization failed");
+                return Ok(());
+            }
+        };
+        if let Some(authorizer) = authorizer {
+            return authorizer
+                .append_required_auxiliary_event(event_type, payload, context)
+                .await;
+        }
+        if let Some(writer) = &self.wal_writer {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            if let Err(error) = writer.append(header, payload).await {
+                tracing::warn!(
+                    error = %error,
+                    context,
+                    "fallback audit append failed; raw dispatch proceeds"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn persist_quota_error(
+        &self,
+        provider_name: &'static str,
+        retry_after: Option<std::time::Duration>,
+        now: u64,
+        audit_authorizer: Option<&crate::providers::cost_authorization::ProviderCallAuthorizer>,
+    ) -> Result<QuotaTracker> {
+        let (snapshot, effective, state) = QuotaTracker::update_at(&self.quota_path, |tracker| {
+            let effective = tracker.record_429(provider_name, retry_after, now);
+            let state = tracker.get(provider_name).cloned();
+            Ok((tracker.clone(), effective, state))
+        })
+        .with_context(|| {
+            format!(
+                "persist fallback quota state for `{provider_name}` at {}",
+                self.quota_path.display()
+            )
+        })?;
+
+        self.append_audit_event(
+            audit_authorizer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED,
+            serde_json::json!({
+                "provider": provider_name,
+                "retry_after_secs": effective.as_secs(),
+                "requests_today": state.as_ref().map(|value| value.requests_today),
+                "daily_cap": state.as_ref().and_then(|value| value.estimated_daily_cap),
+                "backoff_until_unix": state.as_ref().and_then(|value| value.backoff_until_unix),
+                "source": "fallback_candidate",
+                "ts_unix": now,
+            }),
+            "fallback quota state persisted but required WAL audit failed",
+        )
+        .await?;
+        tracing::warn!(
+            provider = provider_name,
+            retry_after_secs = effective.as_secs(),
+            "fallback candidate returned HTTP 429; durable backoff recorded"
+        );
+        Ok(snapshot)
+    }
+
     fn request_for_candidate(
         &self,
         index: usize,
@@ -187,23 +270,24 @@ impl FallbackProvider {
         )>,
         raw_permit: Option<&ProviderDispatchPermit>,
     ) -> Result<Completion> {
-        let now = Self::now_unix();
-        let mut tracker: Option<QuotaTracker> = None;
+        let mut tracker = QuotaTracker::load_from(&self.quota_path)
+            .with_context(|| format!("load fallback quota state {}", self.quota_path.display()))?;
         let mut last_err: Option<anyhow::Error> = None;
         let mut hops = 0u8;
 
         for (i, candidate) in self.chain.iter().enumerate() {
+            let preflight_now = Self::now_unix();
+            let in_backoff = tracker
+                .backoff_remaining_for(candidate.name(), preflight_now)
+                .is_some();
+            if i == 0 && in_backoff {
+                tracing::warn!(
+                    provider = candidate.name(),
+                    "primary provider skipped: durable quota backoff active"
+                );
+                continue;
+            }
             if i > 0 {
-                if tracker.is_none() {
-                    tracker =
-                        Some(QuotaTracker::load_from(&self.quota_path).with_context(|| {
-                            format!("load fallback quota state {}", self.quota_path.display())
-                        })?);
-                }
-                let tracker = tracker.as_ref().expect("quota tracker initialized");
-                let in_backoff = tracker
-                    .backoff_remaining_for(candidate.name(), now)
-                    .is_some();
                 match Self::decide_hop(in_backoff, hops, self.max_hops) {
                     HopAction::Skip => {
                         tracing::warn!(
@@ -227,46 +311,20 @@ impl FallbackProvider {
                             hop = hops,
                             "provider failover on 429"
                         );
-                        if let Some(w) = &self.wal_writer {
-                            let payload = serde_json::json!({
+                        self.append_audit_event(
+                            authorization.map(|(authorizer, _)| authorizer),
+                            crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
+                            serde_json::json!({
                                 "from_provider": self.chain[0].name(),
                                 "to_provider": candidate.name(),
                                 "reason": "quota_429",
                                 "hop": hops,
                                 "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
-                                "ts_unix": now,
-                            });
-                            match serde_json::to_vec(&payload) {
-                                Ok(bytes) => {
-                                    let header = crate::wal::make_header(
-                                        crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
-                                        &bytes,
-                                    );
-                                    if let Err(e) = w.append(header, bytes).await {
-                                        if authorization.is_some() {
-                                            return Err(e).context(
-                                                "fallback audit WAL append failed; candidate call blocked",
-                                            );
-                                        }
-                                        tracing::warn!(
-                                            error = %e,
-                                            "fallback audit frame (0x25) append failed; failover proceeds"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    if authorization.is_some() {
-                                        return Err(e).context(
-                                            "fallback audit WAL serialization failed; candidate call blocked",
-                                        );
-                                    }
-                                    tracing::warn!(
-                                        error = %e,
-                                        "fallback audit frame (0x25) serialize failed; failover proceeds"
-                                    );
-                                }
-                            }
-                        }
+                                "ts_unix": preflight_now,
+                            }),
+                            "fallback audit frame (0x25) failed; candidate call blocked",
+                        )
+                        .await?;
                     }
                 }
             }
@@ -290,6 +348,25 @@ impl FallbackProvider {
             match result {
                 Ok(completion) => return Ok(completion),
                 Err(error) if Self::is_quota_error(&error) => {
+                    let quota = error
+                        .downcast_ref::<QuotaError>()
+                        .expect("quota-error branch must contain QuotaError");
+                    if quota.provider != candidate.name() {
+                        anyhow::bail!(
+                            "fallback candidate `{}` returned quota state for mismatched provider `{}`",
+                            candidate.name(),
+                            quota.provider
+                        );
+                    }
+                    let observed_at = Self::now_unix();
+                    tracker = self
+                        .persist_quota_error(
+                            quota.provider,
+                            quota.retry_after,
+                            observed_at,
+                            authorization.map(|(authorizer, _)| authorizer),
+                        )
+                        .await?;
                     last_err = Some(error);
                 }
                 Err(error) => return Err(error),
@@ -319,6 +396,10 @@ impl Provider for FallbackProvider {
             .fold(first.request_controls(), |controls, provider| {
                 controls.intersection(provider.request_controls())
             })
+    }
+
+    fn handles_nonstream_quota_backoff(&self) -> bool {
+        true
     }
 
     fn validate_request_controls(&self, req: &Request) -> Result<()> {
@@ -452,9 +533,27 @@ mod tests {
         Box::new(MockProvider { name, behavior })
     }
 
+    fn fallback_at(
+        home: &std::path::Path,
+        chain: Vec<Box<dyn Provider>>,
+        max_hops: u8,
+        wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    ) -> FallbackProvider {
+        let configured_models = vec![None; chain.len()];
+        FallbackProvider::new_with_models_at(
+            chain,
+            configured_models,
+            max_hops,
+            wal_writer,
+            home.join("quota.json"),
+        )
+    }
+
     #[tokio::test]
     async fn primary_ok_returns_primary_no_fallback() {
-        let fp = FallbackProvider::new(
+        let dir = tempfile::tempdir().unwrap();
+        let fp = fallback_at(
+            dir.path(),
             vec![mock("primary", Behavior::Ok), mock("fb", Behavior::Ok)],
             2,
             None,
@@ -466,7 +565,9 @@ mod tests {
 
     #[tokio::test]
     async fn primary_429_falls_over_to_fallback() {
-        let fp = FallbackProvider::new(
+        let dir = tempfile::tempdir().unwrap();
+        let fp = fallback_at(
+            dir.path(),
             vec![mock("primary", Behavior::Quota), mock("fb", Behavior::Ok)],
             2,
             None,
@@ -495,14 +596,14 @@ mod tests {
         None
     }
 
-    fn cost_payloads(seg: &std::path::Path) -> Vec<serde_json::Value> {
+    fn event_payloads(seg: &std::path::Path, event_type: u8) -> Vec<serde_json::Value> {
         let bytes = std::fs::read(seg).unwrap();
         let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
         let mut cursor = hdr.header_len();
         let mut payloads = Vec::new();
         while cursor < bytes.len() {
             let dec = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
-            if dec.header.event_type == crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN {
+            if dec.header.event_type == event_type {
                 payloads.push(serde_json::from_slice(dec.payload).unwrap());
             }
             let total = dec.header.total_len as usize;
@@ -512,6 +613,10 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         payloads
+    }
+
+    fn cost_payloads(seg: &std::path::Path) -> Vec<serde_json::Value> {
+        event_payloads(seg, crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN)
     }
 
     fn lifecycle_frames(seg: &std::path::Path) -> Vec<(u8, serde_json::Value)> {
@@ -583,6 +688,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn quota_backoff_is_durable_and_next_request_skips_primary() {
+        let dir = tempfile::tempdir().unwrap();
+        let quota_path = dir.path().join("quota.json");
+        let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fallback_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let first = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "persist_primary",
+                    default_model: "primary-model",
+                    output_token_ceiling: 1024,
+                    behavior: Behavior::Quota,
+                    requests: primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "persist_fallback",
+                    default_model: "fallback-model",
+                    output_token_ceiling: 1024,
+                    behavior: Behavior::Ok,
+                    requests: fallback_requests.clone(),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            quota_path.clone(),
+        );
+        assert_eq!(
+            first.complete(Request::default()).await.unwrap().text,
+            "ok:persist_fallback"
+        );
+
+        let persisted = QuotaTracker::load_from(&quota_path).unwrap();
+        assert!(
+            persisted
+                .backoff_remaining_for("persist_primary", FallbackProvider::now_unix())
+                .is_some(),
+            "the primary 429 must be durable before the fallback succeeds"
+        );
+
+        let second = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "persist_primary",
+                    default_model: "primary-model",
+                    output_token_ceiling: 1024,
+                    behavior: Behavior::Ok,
+                    requests: primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "persist_fallback",
+                    default_model: "fallback-model",
+                    output_token_ceiling: 1024,
+                    behavior: Behavior::Ok,
+                    requests: fallback_requests.clone(),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            quota_path,
+        );
+        assert!(second.handles_nonstream_quota_backoff());
+        assert_eq!(
+            second.complete(Request::default()).await.unwrap().text,
+            "ok:persist_fallback"
+        );
+        assert_eq!(
+            primary_requests.lock().unwrap().len(),
+            1,
+            "the second request must not hit a primary in durable backoff"
+        );
+        assert_eq!(fallback_requests.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn every_quota_candidate_is_persisted_before_the_next_hop() {
+        let dir = tempfile::tempdir().unwrap();
+        let quota_path = dir.path().join("quota.json");
+        let fallback = fallback_at(
+            dir.path(),
+            vec![
+                mock("quota-primary", Behavior::Quota),
+                mock("quota-fallback", Behavior::Quota),
+                mock("healthy-fallback", Behavior::Ok),
+            ],
+            2,
+            None,
+        );
+
+        assert_eq!(
+            fallback.complete(Request::default()).await.unwrap().text,
+            "ok:healthy-fallback"
+        );
+        let persisted = QuotaTracker::load_from(&quota_path).unwrap();
+        let now = FallbackProvider::now_unix();
+        assert!(
+            persisted
+                .backoff_remaining_for("quota-primary", now)
+                .is_some()
+        );
+        assert!(
+            persisted
+                .backoff_remaining_for("quota-fallback", now)
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
     async fn authorized_fallback_persists_one_usage_event_per_leaf_attempt() {
         let dir = tempfile::tempdir().unwrap();
         let wal_dir = dir.path().join("wal");
@@ -592,7 +807,7 @@ mod tests {
             crate::wal::writer::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let fallback_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let fallback = FallbackProvider::new_with_models(
+        let fallback = FallbackProvider::new_with_models_at(
             vec![
                 Box::new(RecordingProvider {
                     name: "primary_cloud",
@@ -614,7 +829,8 @@ mod tests {
                 Some("fallback-config".into()),
             ],
             1,
-            Some(writer.clone()),
+            None,
+            dir.path().join("quota.json"),
         );
         let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
             Box::new(fallback),
@@ -660,6 +876,22 @@ mod tests {
         assert_eq!(payloads[1]["provider"], "fallback_cloud");
         assert_eq!(payloads[1]["model"], "fallback-config");
         assert_eq!(payloads[1]["output_tokens_est"], 10_000);
+
+        let quota_payloads =
+            event_payloads(&seg, crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED);
+        assert_eq!(
+            quota_payloads.len(),
+            1,
+            "the authorizer writer must receive one quota frame even when the fallback has no writer"
+        );
+        assert_eq!(quota_payloads[0]["provider"], "primary_cloud");
+        let hop_payloads = event_payloads(
+            &seg,
+            crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
+        );
+        assert_eq!(hop_payloads.len(), 1);
+        assert_eq!(hop_payloads[0]["from_provider"], "primary_cloud");
+        assert_eq!(hop_payloads[0]["to_provider"], "fallback_cloud");
 
         let lifecycle = lifecycle_frames(&seg);
         assert_eq!(
@@ -731,7 +963,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("fb.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
-        let fp = FallbackProvider::new(
+        let fp = fallback_at(
+            dir.path(),
             vec![mock("primary", Behavior::Quota), mock("fb", Behavior::Ok)],
             2,
             Some(writer.clone()),
@@ -765,7 +998,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("fb.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
-        let fp = FallbackProvider::new(
+        let fp = fallback_at(
+            dir.path(),
             vec![mock("primary", Behavior::Ok), mock("fb", Behavior::Ok)],
             2,
             Some(writer.clone()),
@@ -785,7 +1019,9 @@ mod tests {
     async fn non_quota_error_propagates_without_fallback() {
         // primary fails with a NON-429 error → must NOT fall over; the
         // fallback (which would succeed) is never tried.
-        let fp = FallbackProvider::new(
+        let dir = tempfile::tempdir().unwrap();
+        let fp = fallback_at(
+            dir.path(),
             vec![mock("primary", Behavior::Other), mock("fb", Behavior::Ok)],
             2,
             None,
@@ -796,7 +1032,9 @@ mod tests {
 
     #[tokio::test]
     async fn all_429_returns_exhausted_error() {
-        let fp = FallbackProvider::new(
+        let dir = tempfile::tempdir().unwrap();
+        let fp = fallback_at(
+            dir.path(),
             vec![
                 mock("primary", Behavior::Quota),
                 mock("fb1", Behavior::Quota),
@@ -814,7 +1052,9 @@ mod tests {
         // primary 429, fb1 429, fb2 Ok — but max_hops = 1 means only fb1
         // is tried (hop 1); fb2 (hop 2) is past the cap, so the Ok at
         // position 2 is NEVER reached → exhausted error.
-        let fp = FallbackProvider::new(
+        let dir = tempfile::tempdir().unwrap();
+        let fp = fallback_at(
+            dir.path(),
             vec![
                 mock("primary", Behavior::Quota),
                 mock("fb1", Behavior::Quota),
@@ -829,7 +1069,9 @@ mod tests {
         );
 
         // Same chain, max_hops = 2 → fb2 IS reached + answers.
-        let fp2 = FallbackProvider::new(
+        let dir2 = tempfile::tempdir().unwrap();
+        let fp2 = fallback_at(
+            dir2.path(),
             vec![
                 mock("primary", Behavior::Quota),
                 mock("fb1", Behavior::Quota),

@@ -1590,8 +1590,8 @@ fn check_risk_leases(
 /// lease(s) for the lifted dimension(s) from `leases.json` and persist, so the
 /// NEXT blocked call in the (still-unexpired) window re-blocks instead of
 /// silently proceeding. Returns one consumed lease id for the audit frame.
-/// Best-effort: a save failure is warned (the lease stays reusable until expiry)
-/// but never blocks the in-flight, already-authorised call.
+/// Fail-closed: a load or save failure leaves the in-flight call blocked. The
+/// lease must be durably consumed before the lifted gate can take effect.
 fn consume_risk_leases(
     consume_dangerous: bool,
     consume_egress: bool,
@@ -1614,9 +1614,8 @@ fn consume_risk_leases_at(
     use crate::security::risk_gate::RISK_LEASE_SUBJECT;
 
     let path = LeaseStore::default_path(home);
-    let Ok(mut store) = LeaseStore::load(&path) else {
-        return Ok(None);
-    };
+    let mut store = LeaseStore::load(&path)
+        .map_err(|e| anyhow::anyhow!("load single-use risk-lease store: {e}"))?;
     let now = crate::time::now_unix_i64();
 
     let mut consumed: Option<String> = None;
@@ -2797,6 +2796,26 @@ mod tests {
         assert!(
             result.is_err(),
             "M3: an un-persistable single-use consumption must fail-closed (Err), not warn-and-proceed"
+        );
+    }
+
+    #[test]
+    fn consume_risk_leases_fails_closed_when_store_load_fails() {
+        // The gate check and single-use consume are two separate reads. If the
+        // lease store becomes corrupt between them, consume must not translate
+        // that race into `Ok(None)` and let the previously lifted call run.
+        use crate::permissions::lease::LeaseStore;
+        let home = tempfile::tempdir().expect("tempdir");
+        let path = LeaseStore::default_path(home.path());
+        std::fs::write(&path, b"{ definitely not valid lease json").expect("write corrupt store");
+
+        let error = consume_risk_leases_at(home.path(), true, false)
+            .expect_err("a lease-store load error must keep the call blocked");
+        assert!(
+            error
+                .to_string()
+                .contains("load single-use risk-lease store"),
+            "load failure must remain distinguishable in the dispatch audit: {error:#}"
         );
     }
 

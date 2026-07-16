@@ -9,18 +9,21 @@
 //! [`scan_text`] is pure (regex over an in-memory string) and unit-tested; the
 //! CLI is the only thing that touches the filesystem.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
 
 /// A named secret signature.
+#[derive(Clone)]
 pub struct SecretPattern {
     pub name: &'static str,
     re: Regex,
 }
 
-/// Compile the curated pattern set. Built per call (a CLI scan is one-shot, so
-/// no need for a static); every pattern is a valid literal (asserted by the
-/// `patterns_all_compile` test).
-pub fn patterns() -> Vec<SecretPattern> {
+/// Curated signatures compiled exactly once for the process. Secret scanning
+/// also runs on hot MCP inspection paths, so rebuilding the same seven regex
+/// automata per call is both unnecessary and avoidable.
+static SECRET_PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
     let raw: &[(&'static str, &str)] = &[
         ("aws_access_key_id", r"AKIA[0-9A-Z]{16}"),
         ("github_token", r"gh[posru]_[A-Za-z0-9]{36,}"),
@@ -42,6 +45,13 @@ pub fn patterns() -> Vec<SecretPattern> {
             re: Regex::new(pat).expect("secret-scan pattern is a valid literal regex"),
         })
         .collect()
+});
+
+/// Return the curated pattern set. The owned-vector API is retained for
+/// callers; cloning a compiled [`Regex`] shares its immutable automaton and
+/// does not compile the pattern again.
+pub fn patterns() -> Vec<SecretPattern> {
+    SECRET_PATTERNS.as_slice().to_vec()
 }
 
 /// One flagged occurrence. `redacted` is the masked secret — safe to print.
@@ -70,10 +80,9 @@ pub fn redact_match(s: &str) -> String {
 
 /// Scan in-memory text; return every match across every pattern, line by line.
 pub fn scan_text(content: &str) -> Vec<Finding> {
-    let pats = patterns();
     let mut out = Vec::new();
     for (idx, line) in content.lines().enumerate() {
-        for p in &pats {
+        for p in SECRET_PATTERNS.iter() {
             for m in p.re.find_iter(line) {
                 out.push(Finding {
                     line: idx + 1,
