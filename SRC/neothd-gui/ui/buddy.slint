@@ -261,6 +261,8 @@ export component Buddy inherits Rectangle {
     // ══ MEMORY INFLOW — particles streaming into the core (mood=memory)
     if root.is-mood("memory") || root.is-mood("learning"): Rectangle {
         width: 100%; height: 100%;
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         for p[i] in [0deg, 90deg, 180deg, 270deg]: Rectangle {
             property <float> t: mod(animation-tick() / 1s + i * 0.3, 1.2) / 1.2;
             property <length> rr: (30 - 24 * self.t) * root.u;
@@ -325,6 +327,9 @@ export component Buddy inherits Rectangle {
 
     // thinking — three staggered dots with smoother cubic easing via cascaded sin
     if root.is-mood("thinking"): Rectangle {
+        // Entrance fade — the overlay eases in on mood-entry instead of popping.
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         for dx[i] in [44, 50, 56]: Rectangle {
             // Stagger offset: each dot 0.28 s behind the previous.
             // Use a sin²-like shape (sin * abs(sin)) for snappier attack, smooth decay.
@@ -359,8 +364,10 @@ export component Buddy inherits Rectangle {
         }
     }
 
-    // success — a check mark
+    // success — a check mark (eases in so the "done" beat lands, not blinks)
     if root.is-mood("success"): Path {
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
         width: 100%; height: 100%;
         stroke: Theme.text-on-accent; stroke-width: 3px;
@@ -381,7 +388,7 @@ export component Buddy inherits Rectangle {
             border-radius: self.width / 2;
             background: Theme.pink-500.with-alpha(0.18 * (1.0 - root.breathe));
         }
-        Text { text: "!"; color: Theme.ink-0; font-size: 9 * root.u; font-weight: 700;
+        Text { text: "!"; color: Theme.ink-0; font-size: 9 * root.u; font-weight: Theme.weight-bold;
                horizontal-alignment: center; vertical-alignment: center; }
     }
 
