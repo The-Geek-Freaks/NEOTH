@@ -384,22 +384,30 @@ export component Buddy inherits Rectangle {
     // (breathes + a spreading ghost ring for consent — macOS-permission feel).
     if root.is-mood("alert") || root.is-mood("consent") || root.is-mood("problem"): Rectangle {
         x: 62 * root.u; y: 26 * root.u; width: 12 * root.u; height: 12 * root.u;
-        border-radius: self.width / 2; background: Theme.pink-500;
-        opacity: 0.75 + 0.25 * root.breathe;
-        // spreading ghost ring — the "attention" pulse for consent gates.
+        // entrance fade wraps the throb so the badge eases in, not pops.
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         Rectangle {
-            width: parent.width * (1.6 + 0.6 * root.breathe);
-            height: self.width;
-            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-            border-radius: self.width / 2;
-            background: Theme.pink-500.with-alpha(0.18 * (1.0 - root.breathe));
+            width: 100%; height: 100%;
+            border-radius: self.width / 2; background: Theme.pink-500;
+            opacity: 0.75 + 0.25 * root.breathe;
+            // spreading ghost ring — the "attention" pulse for consent gates.
+            Rectangle {
+                width: parent.width * (1.6 + 0.6 * root.breathe);
+                height: self.width;
+                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                border-radius: self.width / 2;
+                background: Theme.pink-500.with-alpha(0.18 * (1.0 - root.breathe));
+            }
+            Text { text: "!"; color: Theme.ink-0; font-size: 9 * root.u; font-weight: Theme.weight-bold;
+                   horizontal-alignment: center; vertical-alignment: center; }
         }
-        Text { text: "!"; color: Theme.ink-0; font-size: 9 * root.u; font-weight: Theme.weight-bold;
-               horizontal-alignment: center; vertical-alignment: center; }
     }
 
     // secure — a small lock arc on the core
     if root.is-mood("secure") || root.is-mood("connected"): Path {
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
         width: 100%; height: 100%;
         stroke: Theme.ink-1000; stroke-width: 2px;
@@ -408,6 +416,8 @@ export component Buddy inherits Rectangle {
 
     // sleeping — z z z
     if root.is-mood("sleeping"): Text {
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         x: 64 * root.u; y: 22 * root.u; text: "z z z";
         color: root.hue.with-alpha(0.60 + 0.15 * root.breathe);
         font-size: 11 * root.u; font-italic: true;
@@ -415,6 +425,8 @@ export component Buddy inherits Rectangle {
 
     // error — an X over the core
     if root.is-mood("error") || root.is-mood("danger"): Path {
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
         width: 100%; height: 100%;
         stroke: Theme.ink-1000; stroke-width: 3px;
@@ -427,9 +439,15 @@ export component Buddy inherits Rectangle {
     if root.is-mood("notification"): Rectangle {
         x: 62 * root.u; y: 26 * root.u;
         width: 10 * root.u; height: 10 * root.u;
-        border-radius: self.width / 2;
-        background: Theme.amber-500;
-        opacity: 0.70 + 0.30 * root.breathe;
+        // entrance fade wraps the breathe so the beacon eases in, not pops.
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
+        Rectangle {
+            width: 100%; height: 100%;
+            border-radius: self.width / 2;
+            background: Theme.amber-500;
+            opacity: 0.70 + 0.30 * root.breathe;
+        }
     }
 }
 
@@ -443,6 +461,12 @@ export component BuddyDock inherits Rectangle {
     callback clicked();
     // H12 — right-click summons the command palette.
     callback right-clicked();
+
+    // Screen readers: announce the docked companion as a button carrying its
+    // live mood; Enter/Space activates the same open action as a click.
+    accessible-role: button;
+    accessible-label: "NEOTH buddy — \{root.mood}";
+    accessible-action-default => { root.clicked(); }
 
     // Entrance: fade + a gentle rise instead of an instant pop when the
     // dock first appears (design audit — no companion should just blink in).
@@ -477,6 +501,8 @@ export component BuddyDock inherits Rectangle {
         border-width: 1px; border-color: Theme.border-subtle;
         lbl := Text {
             x: 8px; y: 3px;
+            accessible-role: AccessibleRole.text;
+            accessible-label: root.caption;
             text: root.caption; color: Theme.text-secondary;
             font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
             letter-spacing: Theme.letter-spacing-tight;
