@@ -1997,6 +1997,12 @@ Raw report: **17 findings** (1×P0 · 3×P1 · 12×P2 · 1×P3). Current integra
 - [ ] **BUG-W2-P2-WAL-REDACT-CRASH-RECOVERY** — make live-segment redaction crash-consistent via coordinated rotation plus owner-private whole-segment rewrite, temp fsync, atomic replace and parent fsync (or an equivalent durable recovery journal). A flush after three in-place writes is insufficient.
 - [x] **BUG-W2-P3-UPDATE-STAGE-UNIX-MODE** — ✅ FIXED — persistent Unix staging is created at `0700`, reopened with `O_DIRECTORY|O_NOFOLLOW`, corrected through the bound directory handle, and verified fail-closed before any artifact write. A `cfg(unix)` regression isolates `umask(000)` in a child test process and also repairs an existing `0755` directory.
 
+### Wave 3 (2026-07-16b, deep feature-gap audit `wf_45aad5af-8e3`) — GUI
+
+- [ ] **BUG-W3-mesh-peer-expand** — Fleet-mesh peer "Details" is a silent no-op. `mesh.slint:371` declares `callback peer-expanded(string)`, `:685` fires `root.peer-expanded(peer.id)`, `:683` drives `expanded: root.expanded-peer == peer.id` — but `main.rs` has **no handler** for `peer-expanded` and never sets `expanded-peer`, so the inline detail never opens. **Fix (Codex-zone, main.rs):** add `ui.on_peer_expanded(move |id| …)` toggling `expanded-peer` (set to id, or "" when already == id), following the existing toggle-property pattern. Needs live-verify (detail-pane render).
+
+> **GUI Feature-Roadmap → `PLAN/RESEARCH_GUI_FEATURE_ROADMAP_2026_07_16.md`** — 57 code-grounded feature findings (kanban/cluster/right-click/best-in-class/CLI-parity) each with `current_state` + exact `build_approach`. Breakdown: **52 needs-rust + Codex-zone · 3 needs-live-verify · ~1 pure-slint.** This is the **Codex handoff** for the GUI major-feature lane (Claude finished the pure-slint polish; the features need main.rs/main.slint/settings.slint/panel_logic.rs glue). Highlights: right-click rollout (ContextMenu pattern already in main.slint — regen/kanban/buddy), kanban patch-diff viewer + multi-line notes + drag-drop + richer card face, chat model-picker + artifact-panel + image I/O + branch-nav, and 7 missing CLI panels (MCP inspector, moral-core editor, ADR browser, jobs monitor, mode registry, migration, council-weights).
+
 ## 5. Definition of GOLD (Release Gate)
 
 All of the following must be `[x]` before tagging `v1.0-gold`:
