@@ -19,7 +19,7 @@
 
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette } from "components.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
@@ -429,6 +429,8 @@ export component MainWindow inherits Window {
     in property <string> buddy-caption: "ready";
     in property <bool> buddy-visible: true;
     callback buddy-clicked();
+    // B4 — quick-action menu open state (pure view state).
+    in-out property <bool> buddy-menu-open: false;
 
     // ── App-shell navigation (design-system desktop layout) ───────────
     // The persistent sidebar's active tab. "chat" shows the ChatView; the
@@ -3686,7 +3688,34 @@ export component MainWindow inherits Window {
         orb-size: 88px;
         x: root.width - self.width - 24px;
         y: root.height - self.height - 24px;
-        clicked => { root.buddy-clicked(); }
+        // B4 — click opens the quick-action menu instead of instantly
+        // minimizing; "Minimize to companion" lives inside the menu.
+        clicked => { root.buddy-menu-open = !root.buddy-menu-open; }
+    }
+
+    // B4 — Buddy quick-action menu, anchored above the docked orb.
+    if root.buddy-menu-open: ContextMenu {
+        width: 100%; height: 100%;
+        menu-x: root.width - 250px;
+        menu-y: root.height - 290px;
+        items: [
+            { label: "Open chat", glyph: "💬", danger: false },
+            { label: "Minimize to companion", glyph: "⊟", danger: false },
+            { label: root.cfg-quiet-hours-enabled ? "Quiet hours: on — disable" : "Quiet hours: off — enable", glyph: "☾", danger: false },
+            { label: "Buddy settings", glyph: "⊙", danger: false },
+        ];
+        picked(i) => {
+            root.buddy-menu-open = false;
+            if (i == 0) { root.nav-active = "chat"; root.step = WizardStep.chat; }
+            if (i == 1) { root.minimize-to-companion(); }
+            if (i == 2) {
+                root.cfg-quiet-hours-enabled = !root.cfg-quiet-hours-enabled;
+                root.cfg-quiet-hours-changed(root.cfg-quiet-hours-enabled,
+                    root.cfg-quiet-hours-start, root.cfg-quiet-hours-end);
+            }
+            if (i == 3) { root.nav-active = "buddyconfig"; root.step = WizardStep.settings; }
+        }
+        dismissed => { root.buddy-menu-open = false; }
     }
 
     // ── Wave-1 toast overlay ───────────────────────────────────────────

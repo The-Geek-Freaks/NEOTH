@@ -24,28 +24,28 @@
 ## Wellen (Reihenfolge = Impact)
 
 ### Wave A — Kanban: LLM-lesbare Notizen (Operator-Wunsch, P0)
-- [ ] A1 Daemon: Task-Comments in den Worker-Prompt injizieren (Dispatcher liest
+- [x] A1 Daemon: Task-Comments in den Worker-Prompt injizieren (Dispatcher liest
       Comments beim Task-Start; Format: `## Operator notes` Block). KEIN neuer
       WAL-Opcode (Space erschöpft) — Comments reiten existierendes Payload.
-- [ ] A2 GUI: Note-Composer am Task-Detail — Author-Tag `operator-note` vs. Chat-Comment;
+- [x] A2 GUI: Note-Composer am Task-Detail — Author-Tag `operator-note` vs. Chat-Comment;
       dynamisch anhängbar, Anzeige als eigene Sektion auf der Karte.
 - [ ] A3 Kanban-Write-Ops komplettieren (GAP-03): move/status, archive, blocked-Toggle,
       Session-Selector (Board zeigt bisher nur letzte Session).
 - [ ] A4 Rechtsklick-Kontextmenü auf Kanban-Karten (move to column, archive, block, copy id).
 
 ### Wave B — Buddy lebendig (GOLD-R4-06)
-- [ ] B1 Daemon→GUI-Event-Bus: GuiActivity an WAL-Events verdrahten —
+- [x] B1 Daemon→GUI-Event-Bus: GuiActivity an WAL-Events verdrahten —
       Dreaming 0xF4, Council 0x60–0x64, Self-Improve 0xBE/0xBF + 0x1C–0x1E,
       Self-Reprog ExtendedSubtype 0x01/0x02/0x05, Channel-Ingress 0x32,
       Loops 0x7C–0x7F, Cron 0x40–0x46.
-- [ ] B2 Overlay: Drag + Position-Persist (Stub ersetzen), Click-through-Option.
-- [ ] B3 Human-Captions statt Mood-Keys ("thinking…" statt "thinking") +
+- [x] B2 Overlay: Drag + Position-Persist (Stub ersetzen), Click-through-Option.
+- [x] B3 Human-Captions statt Mood-Keys ("thinking…" statt "thinking") +
       Speech-Bubble/Callout für Kurztext.
 - [ ] B4 Click auf BuddyDock → Quick-Action-Menü (Chat öffnen, DND, letzte Aktivität).
-- [ ] B5 DND / Quiet-Hours GUI (verknüpft mit proactive.quiet_hours_utc, DES-09 G37).
+- [x] B5 DND / Quiet-Hours GUI (verknüpft mit proactive.quiet_hours_utc, DES-09 G37).
 
 ### Wave C — CLI↔GUI-Parity P0s (GOLD-R4-05)
-- [ ] C1 WAL-Inspector-Tab: Events pagen, Opcode-Filter, verify-Button (audit-cyan).
+- [x] C1 WAL-Inspector-Tab: Events pagen, Opcode-Filter, verify-Button (audit-cyan).
 - [ ] C2 Permissions-Matrix in Privacy (custom_autonomy.overrides, ~20 Action-Keys,
       aus `neoth permissions show --output json`).
 - [ ] C3 Operator-Identity in Config (operator_id, language_primary/code, role, role_custom).
@@ -56,7 +56,7 @@
 - [ ] C7 Usage/Cost-Analytics-View (`neoth cost/usage`) im Overview.
 
 ### Wave D — Interaction-Grammar (Best-in-Class-Transfer)
-- [ ] D1 Command-Palette Ctrl+K: Navigation + Aktionen (doctor, new task, theme,
+- [x] D1 Command-Palette Ctrl+K: Navigation + Aktionen (doctor, new task, theme,
       DND, session switch) — Raycast/Linear-Pattern.
 - [ ] D2 Rechtsklick-Kontextmenü-Primitive in components.slint; Rollout auf
       Listen (Sessions, Channels, Cron, Plugins, Memory).
@@ -66,33 +66,33 @@
       Shortcut-Cheatsheet (? oder Ctrl+/).
 
 ### Wave E — Homogenität & Polish (GOLD-R4-09)
-- [ ] E1 Glyph-Dedup + eine Icon-Familie (Sidebar-Kollisionen fixen).
+- [x] E1 Glyph-Dedup + eine Icon-Familie (Sidebar-Kollisionen fixen).
 - [ ] E2 Skeleton-States (shape-matched) statt Spinner/Leere; Empty-States mit Aktion.
 - [ ] E3 Optimistic UI auf allen Toggles/Mutationen (nie Spinner auf cron-toggle).
 - [ ] E4 About/Version/Copyright-Panel + In-App-Changelog ("What's new" nach Update).
-- [ ] E5 `agents`-ProbeView → strukturierte View (Cards statt Text-Dump).
+- [x] E5 `agents`-ProbeView → strukturierte View (Cards statt Text-Dump).
 - [ ] E6 Density-Mode-Rollout auf alle Tabs (bisher nur chat).
 
 ### Wave G — GUI-Inventar-P0/P1 (aus gui-inventory Agent)
-- [ ] G1 P0: ToastStack click-to-dismiss (`callback toast-dismissed(int)` + Rust-Drain).
-- [ ] G2 P0: Daemon-offline-Banner statt Blank-Screen (shared `daemon-reachable` bool,
+- [x] G1 P0: ToastStack click-to-dismiss (`callback toast-dismissed(int)` + Rust-Drain).
+- [x] G2 P0: Daemon-offline-Banner statt Blank-Screen (shared `daemon-reachable` bool,
       InlineErrorBanner + Retry auf Doctor/Resources/Cluster/Channels).
-- [ ] G3 P1: Chat-Bubble Hover-Action-Bar (Copy/Retry/Delete) — größte Chat-Lücke.
-- [ ] G4 P1: Tooltip-Primitive (400ms Delay) + NavBtn-Tooltips.
-- [ ] G5 P1: ConfirmDialog-Primitive (ersetzt one-off PopupWindows, gated destructive ops).
-- [ ] G6 P1: Version-Binding (`env!("CARGO_PKG_VERSION")` → StatusFooter) +
+- [x] G3 P1: Chat-Bubble Hover-Action-Bar (Copy/Retry/Delete) — größte Chat-Lücke.
+- [~] G4 P1: Tooltip-Primitive (Primitive ✅, NavBtn-Rollout offen) 
+- [~] G5 P1: ConfirmDialog-Primitive (Primitive ✅, Rollout offen) (ersetzt one-off PopupWindows, gated destructive ops).
+- [x] G6 P1: Version-Binding (`env!("CARGO_PKG_VERSION")` → StatusFooter) +
       update-available Badge.
 - [ ] G7 P1: Accessibility-Pass (accessible-label auf Icon-Elemente, ~25 → flächendeckend).
 
 ### Wave F — Cluster/Mesh-Dashboard
-- [ ] F1 Per-Peer-Ressourcen aus SwarmTable in Mesh-Tab (CPU/RAM/VRAM je Node).
+- [x] F1 Per-Peer-Ressourcen aus SwarmTable in Mesh-Tab (CPU/RAM/VRAM je Node).
 - [ ] F2 WAL-Sync-Status je Peer (Vector-Clock-Delta), Gossip-Event-Stream.
 - [ ] F3 Per-Node-Aktionen (request sync, kick peer), Node-Rollen.
 
 ## Wave H — 12/10 KILLER-BACKLOG (Research-Wave 2, `wf_c9f1360d-bda`, web-grounded)
 
 GUI-only Superpowers (Rangfolge nach wow×feasibility):
-- [ ] H1 **WAL-Timeline-Scrubber** — 255 Opcodes in semantischen Bändern = vor-gefärbte
+- [x] H1 **WAL-Timeline-Scrubber** — 255 Opcodes in semantischen Bändern = vor-gefärbte
       Timeline; scrubben durch die Audit-History statt grep-Dump. (Killer, eigener Tab/WAL-Inspector-Erweiterung)
 - [ ] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
 - [ ] H3 **System-Tray + Windows-Toasts + Jump-List** — App lebt im Tray, native Notifications. (Killer)
@@ -101,10 +101,10 @@ GUI-only Superpowers (Rangfolge nach wow×feasibility):
 - [ ] H6 Live-Theme-Editor mit Instant-Preview (tweaks.toml GUI). (High)
 
 Buddy (Companion-Research):
-- [ ] H7 **Speech-Bubble-Quick-Entry am Orb** (ChatGPT Option+Space-Pattern, am Buddy verankert). (Killer)
+- [x] H7 **Speech-Bubble-Quick-Entry am Orb** (ChatGPT Option+Space-Pattern, am Buddy verankert). (Killer)
 - [ ] H8 **Edge-Snapping mit Spring-Gravity** beim Drag. (Killer — Drag-Basis ✅ gebaut)
-- [ ] H9 **Daemon-Event-Mood-Reactions** (Event-Bus, Spec-Agent läuft). (Killer)
-- [ ] H10 State-Ring (listening/thinking/speaking-Visualisierung). (Killer)
+- [x] H9 **Daemon-Event-Mood-Reactions** (Event-Bus, Spec-Agent läuft). (Killer)
+- [x] H10 State-Ring (listening/thinking/speaking-Visualisierung). (Killer)
 - [ ] H11 Click-through default + hover-to-activate; Quiet-Hours/Attention-Budget. (High)
 - [ ] H12 Rechtsklick auf Orb → Quick-Command-Palette. (High)
 
@@ -121,7 +121,7 @@ Chat (Claude/ChatGPT/Perplexity-Research):
 - [ ] H20 Prompt-Library mit Template-Variablen; Multi-Model-Split-View (Council-Compare!); Volltext-Suche. (High)
 
 Mesh/Fleet (Grafana/Netdata/k9s):
-- [ ] H21 Netdata-Node-Cards mit Color-Ring-Health (Basis ✅ Build-Agent). (Killer)
+- [x] H21 Netdata-Node-Cards mit Color-Ring-Health (Basis ✅ Build-Agent). (Killer)
 - [ ] H22 Health-Heatmap (Zeit × Peer), Topology-Graph mit RTT, Composite-Cluster-Bar. (High)
 
 ## Gates (BSOD-Regeln beachten)
