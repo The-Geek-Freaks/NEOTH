@@ -45,6 +45,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use futures_util::FutureExt;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
@@ -148,26 +149,38 @@ where
         let sem = Arc::clone(&semaphore);
         let timeout = per_task_timeout;
         joinset.spawn(async move {
-            // Acquire permit for the task's lifetime. `acquire_owned`
-            // fails only when the semaphore is closed, which we
-            // never do here.
-            let _permit = match sem.acquire_owned().await {
-                Ok(p) => p,
-                Err(e) => {
-                    return (idx, Err(anyhow::anyhow!("semaphore closed: {e}")));
+            // Catch worker panics *inside* the indexed task. A JoinError has no
+            // request index, so letting the panic escape would make it
+            // impossible to attribute the failure to the correct result slot.
+            let caught = std::panic::AssertUnwindSafe(async move {
+                // Acquire permit for the task's lifetime. `acquire_owned`
+                // fails only when the semaphore is closed, which we never do.
+                let _permit = sem
+                    .acquire_owned()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("semaphore closed: {e}"))?;
+                let req_id = req.task_id.clone();
+                match timeout {
+                    Some(t) => match tokio::time::timeout(t, worker.run(req)).await {
+                        Ok(r) => r,
+                        Err(_) => Err(anyhow::anyhow!(
+                            "parallel worker timed out after {}s on task {}",
+                            t.as_secs(),
+                            req_id
+                        )),
+                    },
+                    None => worker.run(req).await,
                 }
-            };
-            let req_id = req.task_id.clone();
-            let result = match timeout {
-                Some(t) => match tokio::time::timeout(t, worker.run(req)).await {
-                    Ok(r) => r,
-                    Err(_) => Err(anyhow::anyhow!(
-                        "parallel worker timed out after {}s on task {}",
-                        t.as_secs(),
-                        req_id
-                    )),
-                },
-                None => worker.run(req).await,
+            })
+            .catch_unwind()
+            .await;
+            let result = match caught {
+                Ok(result) => result,
+                Err(payload) => {
+                    let reason = panic_payload_message(payload.as_ref());
+                    warn!(index = idx, reason, "parallel dispatch task panicked");
+                    Err(anyhow::anyhow!("parallel dispatch task panicked: {reason}"))
+                }
             };
             (idx, result)
         });
@@ -256,6 +269,14 @@ fn synth_blocked(task_id: &str, reason: &str) -> SubAgentResult {
         next_agent: None,
         ts_unix: now_unix(),
     }
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
 }
 
 fn now_unix() -> i64 {
@@ -377,6 +398,18 @@ mod tests {
     struct CountingWorker {
         seen: AtomicUsize,
     }
+
+    struct SelectivePanicWorker;
+    #[async_trait::async_trait]
+    impl SubAgentWorker for SelectivePanicWorker {
+        async fn run(&self, req: SubAgentRequest) -> Result<SubAgentResult> {
+            if req.task_id == "panic-slot" {
+                panic!("slot-specific panic");
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            PassingWorker.run(req).await
+        }
+    }
     #[async_trait::async_trait]
     impl SubAgentWorker for CountingWorker {
         async fn run(&self, req: SubAgentRequest) -> Result<SubAgentResult> {
@@ -447,6 +480,22 @@ mod tests {
         for (idx, result) in r.results.iter().enumerate() {
             assert_eq!(result.task_id, format!("t{idx}"));
         }
+    }
+
+    #[tokio::test]
+    async fn panic_is_attributed_to_its_original_request_slot() {
+        let w = Arc::new(SelectivePanicWorker);
+        let reqs = vec![make_request("slow-slot"), make_request("panic-slot")];
+        let r = dispatch_parallel(w, reqs, None, None).await.unwrap();
+
+        assert!(r.results[0].verdict.is_pass());
+        assert_eq!(r.results[0].task_id, "slow-slot");
+        assert_eq!(r.results[1].task_id, "panic-slot");
+        assert!(matches!(
+            &r.results[1].verdict,
+            QaVerdict::Blocked { reason } if reason.contains("slot-specific panic")
+        ));
+        assert_eq!(r.panicked_count, 1);
     }
 
     #[tokio::test]

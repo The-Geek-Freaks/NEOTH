@@ -200,6 +200,63 @@ dashboard's default prune window. Both must be greater than zero or config load
 fails. `neoth cluster swarm --stale-secs N` overrides the prune window for one
 invocation without changing the daemon cadence.
 
+### Cluster configuration and activation
+
+Use the GUI Cluster panel or `neoth cluster configure`; do not script a series
+of direct YAML edits. The command replaces the complete public `cluster:`
+snapshot in one locked update and, when `--passphrase-stdin` is present, commits
+the matching `credentials.yaml` secret in the same rollback-safe transaction.
+The secret is write-only in the GUI and is never returned in the receipt.
+Before either file is replaced, NEOTH durably writes an owner-only PREPARED
+journal containing checksummed before/after images. Every public config or
+credential load resolves that journal first: a known partial publication rolls
+back, an exact completed pair commits, and unexpected bytes stop fail-closed
+with the forensic journal retained.
+
+```bash
+# Safe disabled snapshot; no cluster identity is required yet.
+neoth cluster configure \
+  --enabled false \
+  --transport peeroxide \
+  --peers-json '[]' \
+  --mdns-enabled true \
+  --announce-on-untrusted-wifi false \
+  --trusted-ssids-json '["Home Wi-Fi"]' \
+  --replicate-raw-ingress false \
+  --replay-budget-days 30 \
+  --listen-port 49737
+```
+
+This is a full-snapshot interface, not an incremental update. Lists are JSON
+string arrays so a peer ID or SSID containing commas or intentional edge spaces
+round-trips exactly. `cluster.peers` seeds outbound Iroh Node IDs; leave it
+empty for Peeroxide discovery. Enabling additionally requires a non-empty
+`cluster.name` and a usable existing or stdin-supplied shared passphrase.
+
+Native desktop releases include both `peeroxide` and `iroh`. The static
+headless musl release and ordinary default source builds include Peeroxide but
+not Iroh; unsupported Iroh selection fails before any file is changed. Build
+from source with `--features release-desktop` or `--features cluster-iroh` when
+Iroh is required.
+
+The JSON/JSONL acknowledgement contains the exact persisted public snapshot,
+whether a passphrase exists, any reload-request error and
+`restart_required`. An enabled carrier change, or a change while a running
+daemon still owns the prior state, is saved with `restart_required: true`: the
+daemon rejects transport, mDNS and carrier-lifecycle changes before ArcSwap
+instead of partially applying them. `cluster.gossip.replicate_raw_ingress` and
+`cluster.gossip.replay_budget_days` are the deliberate live exception: every
+carrier resolves them from the current snapshot at each operation. A disabled cluster with no running daemon
+is already inert and returns `restart_required: false`. An identical retry
+cannot clear a real pending state. Restart the supervised daemon when the
+receipt requires it; only that daemon may acknowledge the exact public snapshot
+and its owner-private, non-reversible identity binding after the selected
+carrier starts. A `reload_requested: true` value means the request was queued,
+not that the new carrier became live. `neoth cluster status` reports
+`transport_active: true` only from that daemon-written carrier acknowledgement.
+Scripts request the strict receipt with
+`neoth --output json cluster configure …` (or `--output jsonl`).
+
 ## Autonomy
 
 | Level | Behavior |
@@ -480,6 +537,7 @@ Common environment variables:
 | Provider config | Daemon reload or restart depending on provider. |
 | Channels | The running daemon watches effective file/keychain credentials, validates the new generation, and stop-then-starts only the changed adapter. A malformed credential store stops the channel fleet fail-closed instead of retaining stale secrets. If a mutation reports that its reload request failed, run `neoth reload`; a full daemon restart is not the normal path. |
 | OMI | `neoth reload` validates effective file/keychain credentials and restarts only the OMI workers; an invalid reload preserves the last valid runtime. |
+| Cluster | `neoth cluster configure` saves one complete typed snapshot. Enabled lifecycle changes, and changes while a daemon owns the prior state, return `restart_required: true`; restart the supervised daemon to activate transport, mDNS or carrier changes. Gossip privacy/replay policy is hot-reloadable on Peeroxide and Iroh. Disabled plus stopped is already inert and returns `false`. |
 | Plugins | Restart after enabling/disabling code plugins. |
 | Policy | Reload where supported; restart for safest behavior. |
 

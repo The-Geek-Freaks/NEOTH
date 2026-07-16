@@ -64,8 +64,6 @@ use anyhow::Result;
 #[cfg(feature = "imap_fetch")]
 use tracing::{info, warn};
 
-use crate::config::FreedomConfig;
-use crate::config::automation::EmailIngestCronConfig;
 #[cfg(feature = "imap_fetch")]
 use crate::email::gmail::AuthMethod;
 #[cfg(feature = "imap_fetch")]
@@ -91,25 +89,20 @@ use crate::security::paperless_ingest::{OcrSource, ingest_ocr_text};
 async fn resolve_auth_for_cron(
     username: &str,
     credentials_path: &Path,
-    secrets_backend: crate::config::SecretsBackend,
+    creds: &crate::config::credentials::Credentials,
 ) -> Result<AuthMethod> {
     if let Ok(pw) = std::env::var("NEOTH_IMAP_PASSWORD") {
         if !pw.is_empty() {
             return Ok(AuthMethod::PasswordPlain { password: pw });
         }
     }
-    let creds =
-        crate::config::credentials::Credentials::load_effective(credentials_path, secrets_backend)
-            .with_context(|| {
-                format!(
-                    "load effective email_ingest_cron credentials from {}",
-                    credentials_path.display()
-                )
-            })?;
     let (Some(client_id), Some(client_secret), Some(refresh_token)) = (
-        creds.google_oauth_client_id.filter(|s| !s.is_empty()),
-        creds.google_oauth_client_secret,
-        creds.google_oauth_refresh_token,
+        creds
+            .google_oauth_client_id
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+        creds.google_oauth_client_secret.as_ref(),
+        creds.google_oauth_refresh_token.as_ref(),
     ) else {
         anyhow::bail!(
             "email_ingest_cron: no IMAP credentials for {username} — \
@@ -118,13 +111,10 @@ async fn resolve_auth_for_cron(
             credentials_path.display()
         );
     };
-    let access = crate::tools::google_tasks::refresh_access_token(
-        &client_id,
-        &client_secret,
-        &refresh_token,
-    )
-    .await
-    .context("email_ingest_cron: mint XOAUTH2 access token")?;
+    let access =
+        crate::tools::google_tasks::refresh_access_token(client_id, client_secret, refresh_token)
+            .await
+            .context("email_ingest_cron: mint XOAUTH2 access token")?;
     Ok(AuthMethod::OAuth2Xoauth2 {
         access_token: access.expose().to_string(),
     })
@@ -204,11 +194,21 @@ async fn upload_to_paperless(
 ///
 /// `neoth_home` — active NEOTH home derived from the selected config path.
 #[cfg(feature = "imap_fetch")]
-pub async fn run_email_ingest_tick(
-    neoth_home: &Path,
-    cfg: &EmailIngestCronConfig,
-    freedom_config: &FreedomConfig,
-) -> Result<()> {
+pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
+    let runtime =
+        crate::config::load_runtime_config_pair_from_path(&neoth_home.join("freedom.yaml"))
+            .with_context(|| {
+                format!(
+                    "email_ingest_cron: load coherent config and credentials under {}",
+                    neoth_home.display()
+                )
+            })?;
+    let freedom_config = &runtime.config;
+    let cfg = &runtime.config.email_ingest_cron;
+    if !cfg.enabled {
+        return Ok(());
+    }
+
     // 1. Resolve IMAP connection config.
     let username = match cfg.imap_username.as_deref().filter(|s| !s.is_empty()) {
         Some(u) => u.to_string(),
@@ -220,8 +220,7 @@ pub async fn run_email_ingest_tick(
     };
 
     let credentials_path = neoth_home.join("credentials.yaml");
-    let auth =
-        resolve_auth_for_cron(&username, &credentials_path, freedom_config.secrets_backend).await?;
+    let auth = resolve_auth_for_cron(&username, &credentials_path, &runtime.credentials).await?;
     let imap_cfg = ImapConnectionConfig {
         host: cfg
             .imap_host
@@ -263,27 +262,16 @@ pub async fn run_email_ingest_tick(
 
     // Resolve Paperless NGX credentials (optional).
     let paperless_creds: Option<(String, String)> = {
-        let creds = match crate::config::credentials::Credentials::load_effective(
-            &credentials_path,
-            freedom_config.secrets_backend,
-        ) {
-            Ok(creds) => Some(creds),
-            Err(error) => {
-                warn!(
-                    path = %credentials_path.display(),
-                    error = %error,
-                    "email_ingest_cron: Paperless credentials unavailable; upload skipped"
-                );
-                None
-            }
-        };
-        creds.and_then(|c| {
-            let url = c.paperless_url?;
-            let token = c.paperless_token.map(|s| s.expose().to_string())?;
+        runtime.credentials.paperless_url.as_ref().and_then(|url| {
+            let token = runtime
+                .credentials
+                .paperless_token
+                .as_ref()
+                .map(|secret| secret.expose().to_string())?;
             if url.is_empty() || token.is_empty() {
                 None
             } else {
-                Some((url, token))
+                Some((url.clone(), token))
             }
         })
     };
@@ -481,11 +469,7 @@ pub async fn run_email_ingest_tick(
 
 /// No-op stub when the `imap_fetch` feature is not compiled in.
 #[cfg(not(feature = "imap_fetch"))]
-pub async fn run_email_ingest_tick(
-    _neoth_home: &Path,
-    _cfg: &EmailIngestCronConfig,
-    _freedom_config: &FreedomConfig,
-) -> Result<()> {
+pub async fn run_email_ingest_tick(_neoth_home: &Path) -> Result<()> {
     tracing::debug!("email_ingest_cron: imap_fetch feature not compiled — tick is a no-op");
     Ok(())
 }

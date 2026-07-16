@@ -233,17 +233,18 @@ async fn load_skill_policy(skills_dir: &Path) -> Result<SkillPolicy> {
         return Ok(SkillPolicy::default());
     };
     let freedom_path = home.join("freedom.yaml");
-    let body = match fs::read_to_string(&freedom_path).await {
-        Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(SkillPolicy::default());
-        }
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("read skill policy from {}", freedom_path.display()));
-        }
+    // Recover any interrupted config/credential publication and capture the
+    // exact public-policy generation under the canonical transaction boundary.
+    // Parse only the skill section afterwards so this loader stays independent
+    // of provider credentials and unrelated runtime validation.
+    let snapshot = crate::config::snapshot_raw_config_pair(&freedom_path)
+        .with_context(|| format!("read skill policy from {}", freedom_path.display()))?;
+    let Some(body) = snapshot.freedom.as_deref() else {
+        return Ok(SkillPolicy::default());
     };
-    let mut policy = serde_yaml::from_str::<SkillPolicyFile>(&body)
+    let body = std::str::from_utf8(body)
+        .with_context(|| format!("skill policy is not UTF-8 at {}", freedom_path.display()))?;
+    let mut policy = serde_yaml::from_str::<SkillPolicyFile>(body)
         .with_context(|| format!("parse skill policy at {}", freedom_path.display()))?
         .skills;
     policy.enabled = policy

@@ -688,10 +688,10 @@ fn pending_path(root: &Path) -> PathBuf {
 }
 
 fn model_download_attempt_sha256(root: &Path, model_id: &str, attempt_id: &str) -> String {
-    let root = root.to_string_lossy();
+    let root = root.as_os_str().as_encoded_bytes();
     let mut hasher = Sha256::new();
     hasher.update(b"neoth-model-download-attempt-v1\0");
-    for value in [root.as_bytes(), model_id.as_bytes(), attempt_id.as_bytes()] {
+    for value in [root, model_id.as_bytes(), attempt_id.as_bytes()] {
         hasher.update((value.len() as u64).to_be_bytes());
         hasher.update(value);
     }
@@ -1160,6 +1160,30 @@ fn sync_parent_directory(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn attempt_binding_distinguishes_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+        let a = PathBuf::from(std::ffi::OsString::from_vec(vec![b'a', 0x80]));
+        let b = PathBuf::from(std::ffi::OsString::from_vec(vec![b'a', 0x81]));
+        assert_ne!(
+            model_download_attempt_sha256(&a, "model", "attempt"),
+            model_download_attempt_sha256(&b, "model", "attempt")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn attempt_binding_distinguishes_non_unicode_windows_path_units() {
+        use std::os::windows::ffi::OsStringExt;
+        let a = PathBuf::from(std::ffi::OsString::from_wide(&[b'a' as u16, 0xD800]));
+        let b = PathBuf::from(std::ffi::OsString::from_wide(&[b'a' as u16, 0xD801]));
+        assert_ne!(
+            model_download_attempt_sha256(&a, "model", "attempt"),
+            model_download_attempt_sha256(&b, "model", "attempt")
+        );
+    }
 
     #[derive(Default)]
     struct RecordingAuditSink {

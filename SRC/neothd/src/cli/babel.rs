@@ -117,15 +117,13 @@ fn open_views() -> Result<rusqlite::Connection> {
 
 fn set_enabled(enabled: bool, output: OutputFormat) -> Result<()> {
     let path = crate::config::FreedomConfig::default_path();
-    let mut fc = crate::config::FreedomConfig::load_from_path(&path)
-        .with_context(|| format!("load {}", path.display()))?;
-    if fc.babel.enabled == enabled {
-        render_enabled(enabled, output, true);
-        return Ok(());
-    }
-    fc.babel.enabled = enabled;
-    fc.save_public_to_default_path()?;
-    render_enabled(enabled, output, false);
+    let unchanged = crate::config::FreedomConfig::update_at(&path, |config| {
+        let unchanged = config.babel.enabled == enabled;
+        config.babel.enabled = enabled;
+        Ok(unchanged)
+    })
+    .with_context(|| format!("update {}", path.display()))?;
+    render_enabled(enabled, output, unchanged);
     Ok(())
 }
 
@@ -459,9 +457,9 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
         BabelAction::Disable => set_enabled(false, args.output)?,
         BabelAction::Federate { enable, disable } => {
             let path = crate::config::FreedomConfig::default_path();
-            let mut fc = crate::config::FreedomConfig::load_from_path(&path)
-                .with_context(|| format!("load {}", path.display()))?;
             if !enable && !disable {
+                let fc = crate::config::FreedomConfig::load_from_path(&path)
+                    .with_context(|| format!("load {}", path.display()))?;
                 println!(
                     "federation: {}",
                     if fc.babel.federate {
@@ -480,15 +478,19 @@ pub async fn run_babel(args: BabelArgs) -> Result<()> {
                 return Ok(());
             }
             let target = enable;
-            if fc.babel.federate == target {
+            let unchanged = crate::config::FreedomConfig::update_at(&path, |config| {
+                let unchanged = config.babel.federate == target;
+                config.babel.federate = target;
+                Ok(unchanged)
+            })
+            .with_context(|| format!("update {}", path.display()))?;
+            if unchanged {
                 println!(
                     "federation already {}",
                     if target { "enabled" } else { "disabled" }
                 );
                 return Ok(());
             }
-            fc.babel.federate = target;
-            fc.save_public_to_default_path()?;
             if target {
                 println!(
                     "federation ENABLED. Submissions additionally require AutonomyLevel >= \

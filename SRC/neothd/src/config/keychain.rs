@@ -101,6 +101,111 @@ pub const SECRET_FIELD_KEYS: &[&str] = &[
     "paperless_token",
 ];
 
+/// Typed view of every currently-set keychain-managed secret. Unlike a serde
+/// mapping round-trip, this never copies plaintext into ordinary heap strings.
+pub(crate) fn secret_fields(
+    credentials: &crate::config::credentials::Credentials,
+) -> impl Iterator<Item = (&'static str, &SecretString)> {
+    SECRET_FIELD_KEYS
+        .iter()
+        .filter_map(|&field| secret_field(credentials, field).map(|value| (field, value)))
+}
+
+fn secret_field<'a>(
+    credentials: &'a crate::config::credentials::Credentials,
+    field: &str,
+) -> Option<&'a SecretString> {
+    match field {
+        "provider_key" => credentials.provider_key.as_ref(),
+        "elevenlabs_tts_api_key" => credentials.elevenlabs_tts_api_key.as_ref(),
+        "azure_tts_api_key" => credentials.azure_tts_api_key.as_ref(),
+        "telegram_token" => credentials.telegram_token.as_ref(),
+        "omi_developer_api_key" => credentials.omi_developer_api_key.as_ref(),
+        "omi_ingest_token" => credentials.omi_ingest_token.as_ref(),
+        "inference_left_key" => credentials.inference_left_key.as_ref(),
+        "inference_right_key" => credentials.inference_right_key.as_ref(),
+        "inference_cerebellum_key" => credentials.inference_cerebellum_key.as_ref(),
+        "inference_default_slot_key" => credentials.inference_default_slot_key.as_ref(),
+        "whatsapp_token" => credentials.whatsapp_token.as_ref(),
+        "whatsapp_verify_token" => credentials.whatsapp_verify_token.as_ref(),
+        "whatsapp_app_secret" => credentials.whatsapp_app_secret.as_ref(),
+        "whatsapp_baileys_token" => credentials.whatsapp_baileys_token.as_ref(),
+        "slack_bot_token" => credentials.slack_bot_token.as_ref(),
+        "slack_app_token" => credentials.slack_app_token.as_ref(),
+        "discord_bot_token" => credentials.discord_bot_token.as_ref(),
+        "matrix_password" => credentials.matrix_password.as_ref(),
+        "matrix_access_token" => credentials.matrix_access_token.as_ref(),
+        "line_channel_access_token" => credentials.line_channel_access_token.as_ref(),
+        "line_channel_secret" => credentials.line_channel_secret.as_ref(),
+        "irc_password" => credentials.irc_password.as_ref(),
+        "mattermost_token" => credentials.mattermost_token.as_ref(),
+        "twitch_oauth_token" => credentials.twitch_oauth_token.as_ref(),
+        "nostr_secret_key" => credentials.nostr_secret_key.as_ref(),
+        "bluebubbles_password" => credentials.bluebubbles_password.as_ref(),
+        "keet_topic" => credentials.keet_topic.as_ref(),
+        "keet_seed_phrase" => credentials.keet_seed_phrase.as_ref(),
+        "keet_bridge_bearer_token" => credentials.keet_bridge_bearer_token.as_ref(),
+        "todoist_token" => credentials.todoist_token.as_ref(),
+        "google_oauth_client_secret" => credentials.google_oauth_client_secret.as_ref(),
+        "google_oauth_refresh_token" => credentials.google_oauth_refresh_token.as_ref(),
+        "caldav_password" => credentials.caldav_password.as_ref(),
+        "ms_todo_client_secret" => credentials.ms_todo_client_secret.as_ref(),
+        "ms_todo_refresh_token" => credentials.ms_todo_refresh_token.as_ref(),
+        "cluster_passphrase" => credentials.cluster_passphrase.as_ref(),
+        "tududi_api_token" => credentials.tududi_api_token.as_ref(),
+        "paperless_token" => credentials.paperless_token.as_ref(),
+        _ => panic!("SECRET_FIELD_KEYS contains unhandled field `{field}`"),
+    }
+}
+
+fn set_secret_field(
+    credentials: &mut crate::config::credentials::Credentials,
+    field: &str,
+    value: Option<SecretString>,
+) {
+    match field {
+        "provider_key" => credentials.provider_key = value,
+        "elevenlabs_tts_api_key" => credentials.elevenlabs_tts_api_key = value,
+        "azure_tts_api_key" => credentials.azure_tts_api_key = value,
+        "telegram_token" => credentials.telegram_token = value,
+        "omi_developer_api_key" => credentials.omi_developer_api_key = value,
+        "omi_ingest_token" => credentials.omi_ingest_token = value,
+        "inference_left_key" => credentials.inference_left_key = value,
+        "inference_right_key" => credentials.inference_right_key = value,
+        "inference_cerebellum_key" => credentials.inference_cerebellum_key = value,
+        "inference_default_slot_key" => credentials.inference_default_slot_key = value,
+        "whatsapp_token" => credentials.whatsapp_token = value,
+        "whatsapp_verify_token" => credentials.whatsapp_verify_token = value,
+        "whatsapp_app_secret" => credentials.whatsapp_app_secret = value,
+        "whatsapp_baileys_token" => credentials.whatsapp_baileys_token = value,
+        "slack_bot_token" => credentials.slack_bot_token = value,
+        "slack_app_token" => credentials.slack_app_token = value,
+        "discord_bot_token" => credentials.discord_bot_token = value,
+        "matrix_password" => credentials.matrix_password = value,
+        "matrix_access_token" => credentials.matrix_access_token = value,
+        "line_channel_access_token" => credentials.line_channel_access_token = value,
+        "line_channel_secret" => credentials.line_channel_secret = value,
+        "irc_password" => credentials.irc_password = value,
+        "mattermost_token" => credentials.mattermost_token = value,
+        "twitch_oauth_token" => credentials.twitch_oauth_token = value,
+        "nostr_secret_key" => credentials.nostr_secret_key = value,
+        "bluebubbles_password" => credentials.bluebubbles_password = value,
+        "keet_topic" => credentials.keet_topic = value,
+        "keet_seed_phrase" => credentials.keet_seed_phrase = value,
+        "keet_bridge_bearer_token" => credentials.keet_bridge_bearer_token = value,
+        "todoist_token" => credentials.todoist_token = value,
+        "google_oauth_client_secret" => credentials.google_oauth_client_secret = value,
+        "google_oauth_refresh_token" => credentials.google_oauth_refresh_token = value,
+        "caldav_password" => credentials.caldav_password = value,
+        "ms_todo_client_secret" => credentials.ms_todo_client_secret = value,
+        "ms_todo_refresh_token" => credentials.ms_todo_refresh_token = value,
+        "cluster_passphrase" => credentials.cluster_passphrase = value,
+        "tududi_api_token" => credentials.tududi_api_token = value,
+        "paperless_token" => credentials.paperless_token = value,
+        _ => panic!("SECRET_FIELD_KEYS contains unhandled field `{field}`"),
+    }
+}
+
 /// Canonical field -> legacy OS-store key. Serde aliases cover YAML, but OS
 /// credential managers are keyed independently and need an explicit read
 /// fallback so upgrading cannot strand an existing secret.
@@ -596,9 +701,10 @@ impl MigrationReport {
 /// On success the returned `Credentials` has those fields blanked (`None`).
 /// The caller is responsible for:
 /// 1. Writing the blanked `Credentials` back to `credentials.yaml` (via
-///    [`Credentials::write`]).
-/// 2. Persisting `secrets_backend: keychain` into `freedom.yaml` (via
-///    [`FreedomConfig::save_public_to_default_path`]).
+///    the credential renderer).
+/// 2. Publishing that image together with `secrets_backend: keychain` through
+///    the crash-recoverable freedom/credential pair transaction. Separate
+///    writes can expose a backend pointer whose secret image is not ready.
 ///
 /// When `dry_run` is `true`, no writes to `store` occur and the returned
 /// `Credentials` is a clone of the input (unmodified).
@@ -610,32 +716,31 @@ pub fn migrate_to_keychain(
     let mut moved = Vec::new();
     let mut skipped = Vec::new();
     let mut failed = Vec::new();
-
-    // Serialize to a YAML value so we can access fields by name without
-    // exhaustive pattern matching.  The transparent SecretString serialisation
-    // produces plain YAML strings — we re-wrap them as SecretString on write.
-    let mut yaml_val =
-        serde_yaml::to_value(creds).context("serialize Credentials for migration")?;
-
-    let mapping = yaml_val
-        .as_mapping_mut()
-        .context("Credentials serialised to a non-mapping value")?;
+    let mut previous_values = Vec::new();
+    let mut blanked = creds.clone();
 
     for &field in SECRET_FIELD_KEYS {
-        let yaml_key = serde_yaml::Value::String(field.to_string());
-        match mapping.get(&yaml_key).and_then(|v| v.as_str()) {
+        match secret_field(creds, field) {
             None => {
                 skipped.push(field.to_string());
             }
-            Some(raw) => {
-                let secret = SecretString::from(raw.to_string());
+            Some(secret) => {
                 if !dry_run {
-                    match store.set(field, &secret) {
+                    let previous = match store.get(field) {
+                        Ok(previous) => previous,
+                        Err(error) => {
+                            failed.push((
+                                field.to_string(),
+                                format!("snapshot existing keychain value: {error}"),
+                            ));
+                            continue;
+                        }
+                    };
+                    match store.set(field, secret) {
                         Ok(()) => {
-                            // Blank the field in the mapping so the returned
-                            // Credentials omits it from credentials.yaml.
-                            mapping.insert(yaml_key, serde_yaml::Value::Null);
+                            set_secret_field(&mut blanked, field, None);
                             moved.push(field.to_string());
+                            previous_values.push((field.to_string(), previous));
                         }
                         Err(e) => {
                             failed.push((field.to_string(), e.to_string()));
@@ -648,27 +753,39 @@ pub fn migrate_to_keychain(
         }
     }
 
-    // Rollback: if any field failed to set, undo the sets we DID make this run
-    // so the keychain returns to its pre-migration state. Without this a late
-    // failure leaves a partial keychain write while the caller (on
-    // !is_clean()) skips the credentials.yaml write — an inconsistent dual
-    // state where the secret sits in BOTH backends yet the CLI reports "nothing
-    // written". After rollback that message is truthful again.
-    if !dry_run && !failed.is_empty() && !moved.is_empty() {
-        for key in &moved {
-            let _ = store.delete(key); // best-effort; nothing better to do on a failed rollback
+    // Rollback: if any field failed to set, restore the exact values that were
+    // present before this attempt. Deleting every successfully-written key is
+    // not a rollback when migration overwrote an existing credential: it would
+    // destroy that previous value while claiming that nothing was written.
+    if !dry_run && !failed.is_empty() && !previous_values.is_empty() {
+        let mut rollback_failed = Vec::new();
+        for (key, previous) in previous_values.into_iter().rev() {
+            let result = match previous {
+                Some(previous) => store.set(&key, &previous),
+                None => store.delete(&key),
+            };
+            if let Err(error) = result {
+                rollback_failed.push(format!("{key}: {error}"));
+            }
         }
         moved.clear();
+        if !rollback_failed.is_empty() {
+            anyhow::bail!(
+                "keychain migration failed and rollback was incomplete for {} entr(y/ies): {}",
+                rollback_failed.len(),
+                rollback_failed.join("; ")
+            );
+        }
     }
 
     // On a clean dry_run the blanked struct is unused; on a clean real run it is
     // written by the caller. On a rolled-back failure the caller aborts and this
     // value is discarded — but recompute it from the (possibly mutated) yaml so
     // it never claims fields were blanked when we rolled their keychain sets back.
-    let blanked: crate::config::credentials::Credentials = if dry_run || !failed.is_empty() {
+    let blanked = if dry_run || !failed.is_empty() {
         creds.clone()
     } else {
-        serde_yaml::from_value(yaml_val).context("deserialize blanked Credentials")?
+        blanked
     };
 
     let report = MigrationReport {
@@ -706,11 +823,7 @@ pub fn migrate_to_file(
     let mut skipped = Vec::new();
     let mut failed = Vec::new();
 
-    let mut yaml_val =
-        serde_yaml::to_value(creds).context("serialize Credentials for reverse migration")?;
-    let mapping = yaml_val
-        .as_mapping_mut()
-        .context("Credentials serialised to a non-mapping value")?;
+    let mut populated = creds.clone();
 
     for &field in SECRET_FIELD_KEYS {
         match get_with_legacy_fallback(store, field) {
@@ -722,13 +835,9 @@ pub fn migrate_to_file(
             }
             Ok((Some(secret), source_key)) => {
                 if !dry_run {
-                    // Populate the field in the file result. NO delete here —
-                    // the keychain is purged later, only after the file lands.
-                    let yaml_key = serde_yaml::Value::String(field.to_string());
-                    mapping.insert(
-                        yaml_key,
-                        serde_yaml::Value::String(secret.expose().to_string()),
-                    );
+                    // Populate the typed file result. NO delete here — the
+                    // keychain is purged later, only after the file lands.
+                    set_secret_field(&mut populated, field, Some(secret));
                 }
                 // Purge the actual OS-store key after the file is durable. For
                 // upgraded installs this may be the legacy alias.
@@ -737,11 +846,7 @@ pub fn migrate_to_file(
         }
     }
 
-    let populated: crate::config::credentials::Credentials = if dry_run {
-        creds.clone()
-    } else {
-        serde_yaml::from_value(yaml_val).context("deserialize populated Credentials")?
-    };
+    let populated = if dry_run { creds.clone() } else { populated };
 
     let report = MigrationReport {
         direction: MigrationDirection::ToFile,
@@ -789,29 +894,14 @@ pub fn supplement_from_store(
     creds: &mut crate::config::credentials::Credentials,
     store: &dyn SecretStore,
 ) -> Result<()> {
-    let mut yaml_val =
-        serde_yaml::to_value(&*creds).context("serialize Credentials for keychain supplement")?;
-    let mapping = yaml_val
-        .as_mapping_mut()
-        .context("Credentials serialised to a non-mapping value")?;
-
     for &field in SECRET_FIELD_KEYS {
-        let yaml_key = serde_yaml::Value::String(field.to_string());
-        // Only fill fields that are absent or null in the YAML load.
-        let already_set = mapping
-            .get(&yaml_key)
-            .map(|v| !v.is_null())
-            .unwrap_or(false);
-        if already_set {
+        if secret_field(creds, field).is_some() {
             continue;
         }
         match get_with_legacy_fallback(store, field) {
             Ok((None, _)) => {} // not in store either — leave as None
             Ok((Some(secret), _)) => {
-                mapping.insert(
-                    yaml_key,
-                    serde_yaml::Value::String(secret.expose().to_string()),
-                );
+                set_secret_field(creds, field, Some(secret));
             }
             Err(e) => {
                 // Log the error per-field and continue so the remaining 31
@@ -825,9 +915,6 @@ pub fn supplement_from_store(
             }
         }
     }
-
-    *creds = serde_yaml::from_value(yaml_val)
-        .context("deserialize keychain-supplemented Credentials")?;
     Ok(())
 }
 
@@ -844,6 +931,32 @@ mod tests {
             provider_key: provider_key.map(|s| SecretString::from(s.to_string())),
             telegram_token: telegram_token.map(|s| SecretString::from(s.to_string())),
             ..Default::default()
+        }
+    }
+
+    struct FailOnSetStore {
+        inner: InMemorySecretStore,
+        fail_key: &'static str,
+    }
+
+    impl SecretStore for FailOnSetStore {
+        fn get(&self, key: &str) -> Result<Option<SecretString>> {
+            self.inner.get(key)
+        }
+
+        fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+            if key == self.fail_key {
+                anyhow::bail!("injected keychain write failure");
+            }
+            self.inner.set(key, value)
+        }
+
+        fn delete(&self, key: &str) -> Result<()> {
+            self.inner.delete(key)
+        }
+
+        fn backend_name(&self) -> &'static str {
+            "failing test store"
         }
     }
 
@@ -905,6 +1018,33 @@ mod tests {
             store.get("telegram_token").unwrap().unwrap().expose(),
             "bot-token"
         );
+    }
+
+    #[test]
+    fn migrate_to_keychain_failure_restores_preexisting_values() {
+        let store = FailOnSetStore {
+            inner: InMemorySecretStore::default(),
+            fail_key: "telegram_token",
+        };
+        store
+            .set("provider_key", &SecretString::from("previous-provider"))
+            .unwrap();
+
+        let creds = make_creds(Some("replacement-provider"), Some("bot-token"));
+        let (unchanged, report) = migrate_to_keychain(&creds, &store, false).unwrap();
+
+        assert!(!report.is_clean());
+        assert!(report.moved.is_empty());
+        assert_eq!(
+            unchanged.provider_key.as_ref().unwrap().expose(),
+            "replacement-provider"
+        );
+        assert_eq!(
+            store.get("provider_key").unwrap().unwrap().expose(),
+            "previous-provider",
+            "rollback must restore an overwritten key instead of deleting it"
+        );
+        assert!(store.get("telegram_token").unwrap().is_none());
     }
 
     #[test]
@@ -1147,6 +1287,13 @@ mod tests {
             SECRET_FIELD_KEYS.len(),
             "keychain field names must stay unique"
         );
+        let empty = Credentials::default();
+        for &field in SECRET_FIELD_KEYS {
+            assert!(
+                secret_field(&empty, field).is_none(),
+                "default credential field {field} must be empty"
+            );
+        }
 
         let store = InMemorySecretStore::default();
         let original = Credentials {

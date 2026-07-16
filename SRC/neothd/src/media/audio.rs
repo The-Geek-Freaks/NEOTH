@@ -105,7 +105,10 @@ fn extract_blocking_with_context(
         samples,
         original_sample_rate,
     } = match asset {
-        Asset::Bytes { data, mime, .. } => decode_from_bytes(data.clone(), mime)?,
+        Asset::Bytes { data, mime, .. } => {
+            enforce_audio_byte_ceiling(data.len() as u64)?;
+            decode_from_bytes(data.clone(), mime)?
+        }
         Asset::Path { path, .. } => decode_from_path(path)?,
     };
     let duration_secs = samples.len() as f64 / TARGET_SAMPLE_RATE as f64;
@@ -206,25 +209,30 @@ struct DecodedAudio {
 /// Hard cap on audio file size read into memory. A multi-GB file (e.g. a
 /// hostile or accidental email attachment) would otherwise OOM the daemon:
 /// `fs::read` allocates the whole file and `decode_from_bytes` may clone it.
-const MAX_AUDIO_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
+pub(crate) const MAX_AUDIO_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
 
 fn decode_from_path(path: &Path) -> Result<DecodedAudio, ExtractionError> {
     // Size-gate before reading the whole file into memory.
     let len = std::fs::metadata(path)
         .map_err(|e| ExtractionError::Io(format!("stat {}: {e}", path.display())))?
         .len();
-    if len > MAX_AUDIO_BYTES {
-        return Err(ExtractionError::Backend {
-            backend: "audio",
-            reason: format!("input {len} bytes exceeds {MAX_AUDIO_BYTES}-byte cap"),
-        });
-    }
+    enforce_audio_byte_ceiling(len)?;
     let bytes = std::fs::read(path)
         .map_err(|e| ExtractionError::Io(format!("read {}: {e}", path.display(),)))?;
     // Symphonia probes the format from the bytes; the MIME hint is just a
     // search hint, not required.
     let mime = mime_hint_from_path(path);
     decode_from_bytes(bytes, &mime)
+}
+
+fn enforce_audio_byte_ceiling(len: u64) -> Result<(), ExtractionError> {
+    if len > MAX_AUDIO_BYTES {
+        return Err(ExtractionError::Backend {
+            backend: "audio",
+            reason: format!("input {len} bytes exceeds {MAX_AUDIO_BYTES}-byte cap"),
+        });
+    }
+    Ok(())
 }
 
 fn mime_hint_from_path(path: &Path) -> String {
@@ -469,6 +477,13 @@ mod tests {
             (15_900..=16_100).contains(&count),
             "expected ~16000 samples, got {count}"
         );
+    }
+
+    #[test]
+    fn in_memory_audio_uses_the_same_byte_ceiling_as_files() {
+        assert!(enforce_audio_byte_ceiling(MAX_AUDIO_BYTES).is_ok());
+        let error = enforce_audio_byte_ceiling(MAX_AUDIO_BYTES + 1).unwrap_err();
+        assert!(error.to_string().contains("exceeds"));
     }
 
     #[test]

@@ -63,18 +63,19 @@ pub async fn run_goal(args: GoalArgs) -> Result<()> {
             yaml.display()
         );
     }
-    let mut cfg = FreedomConfig::load_from_path(&yaml).context("load freedom.yaml")?;
-    match &args.action {
-        GoalAction::Set { text } => cfg.goal.goal = Some(text.clone()),
-        GoalAction::Grind { text } => cfg.goal.grind = Some(text.clone()),
-        GoalAction::Off => {
-            cfg.goal.goal = None;
-            cfg.goal.grind = None;
+    let cfg = FreedomConfig::update_at(&yaml, |cfg| {
+        match &args.action {
+            GoalAction::Set { text } => cfg.goal.goal = Some(text.clone()),
+            GoalAction::Grind { text } => cfg.goal.grind = Some(text.clone()),
+            GoalAction::Off => {
+                cfg.goal.goal = None;
+                cfg.goal.grind = None;
+            }
+            GoalAction::Show => unreachable!("handled above"),
         }
-        GoalAction::Show => unreachable!("handled above"),
-    }
-    cfg.save_public_to_default_path()
-        .context("write freedom.yaml")?;
+        Ok(cfg.clone())
+    })
+    .context("write freedom.yaml")?;
     print_state(&cfg, &args.output)
 }
 

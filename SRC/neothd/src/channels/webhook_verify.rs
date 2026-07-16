@@ -32,7 +32,8 @@
 
 use base64::Engine;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq as _;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -284,14 +285,12 @@ pub fn sign_line(body: &[u8], channel_secret: &[u8]) -> String {
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    // Hash both arbitrary-length inputs to fixed-size arrays, then compare the
+    // arrays in constant time. This removes the observable fast path for a
+    // wrong-length Meta verify-token guess.
+    let a_digest = Sha256::digest(a);
+    let b_digest = Sha256::digest(b);
+    bool::from(a_digest.ct_eq(&b_digest))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

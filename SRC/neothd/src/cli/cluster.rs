@@ -5,12 +5,24 @@
 //! disabled or no peer transport is active. This CLI reports that live
 //! posture and exposes routing, restore, topology, and swarm operations.
 
+use std::path::Path;
+
 use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac as _};
+use sha2::Sha256;
+use subtle::ConstantTimeEq as _;
+use zeroize::Zeroize as _;
 
 use crate::cli::OutputFormat;
 use crate::cluster::{LeastLoaded, LocalOnly, OrchestratingPolicy, PeerLoad, RoutingDecision};
-use crate::config::FreedomConfig;
+use crate::config::credentials::Credentials;
+use crate::config::{
+    ClusterAnnouncePolicy, ClusterConfig, ClusterGossipPolicy, ClusterMdnsConfig, ClusterTransport,
+    FreedomConfig,
+};
+use crate::secret::SecretString;
 
 #[derive(Args, Debug, Clone)]
 pub struct ClusterArgs {
@@ -20,6 +32,18 @@ pub struct ClusterArgs {
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ClusterConflictAction {
+    /// Persist an operator decision for every currently unresolved row with
+    /// this stable content id. New digest pairs remain independently visible.
+    Resolve {
+        content_id: String,
+        /// Origin whose canonical materialized value the operator accepts.
+        #[arg(long, value_name = "PEER_PK")]
+        prefer: String,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -44,6 +68,28 @@ pub enum ClusterAction {
         /// Filter to one authenticated peer public key.
         #[arg(long, value_name = "PEER_PK")]
         peer: Option<String>,
+    },
+    /// Inspect the bounded, durable node-global causal frontier. Counters are
+    /// provenance/ordering evidence only; they never grant trust or resolve a
+    /// content conflict without an explicit operator decision.
+    Frontier {
+        /// Filter to one known node identity.
+        #[arg(long, value_name = "PEER_PK")]
+        peer: Option<String>,
+    },
+    /// Inspect or resolve typed same-origin/cross-origin content conflicts.
+    Conflicts {
+        #[command(subcommand)]
+        action: Option<ClusterConflictAction>,
+        /// Filter the list to one stable content id.
+        #[arg(long, value_name = "CONTENT_ID")]
+        content_id: Option<String>,
+        /// Include acknowledged conflicts in the forensic list.
+        #[arg(long)]
+        all: bool,
+        /// Maximum rows (newest first).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
     },
     /// DES-13 — export this node's backup-at-rest for a crashed peer:
     /// dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL
@@ -166,10 +212,62 @@ pub enum ClusterAction {
     },
     /// Remove a confirmed peer by pub_key OR unique prefix.
     Revoke { pub_key: String },
-    /// Enable cluster auto-discovery (writes
-    /// `freedom.yaml::cluster.mdns.enabled = true`).
+    /// Atomically replace the complete public cluster configuration and ask a
+    /// running daemon to reload it. Lists are JSON string arrays so commas and
+    /// leading/trailing whitespace survive the CLI/GUI boundary exactly.
+    Configure {
+        /// Transport master switch (`true` or `false`).
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        enabled: bool,
+        /// Public cluster rendezvous name. Omit (or pass an empty string) to
+        /// store no name; enabling without a name is rejected before commit.
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// Authenticated cluster transport.
+        #[arg(
+            long,
+            default_value = "peeroxide",
+            value_parser = ["peeroxide", "iroh"]
+        )]
+        transport: String,
+        /// Bootstrap peers as a JSON string array, for example
+        /// `["endpoint,with,commas"," endpoint with spaces "]`.
+        #[arg(long, value_name = "JSON_ARRAY", default_value = "[]")]
+        peers_json: String,
+        /// LAN discovery switch (`true` or `false`).
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        mdns_enabled: bool,
+        /// Permit LAN announcements on untrusted Wi-Fi (`true` or `false`).
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        announce_on_untrusted_wifi: bool,
+        /// Exact trusted SSIDs as a JSON string array.
+        #[arg(long, value_name = "JSON_ARRAY", default_value = "[]")]
+        trusted_ssids_json: String,
+        /// Replicate raw channel-ingress frames to authenticated peers. This is
+        /// privacy-sensitive and therefore defaults to false.
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        replicate_raw_ingress: bool,
+        /// Maximum age of WAL history offered to a catching-up peer.
+        #[arg(long, default_value_t = 30)]
+        replay_budget_days: u32,
+        /// Shared mDNS/Tailscale probe port.
+        #[arg(
+            long,
+            default_value_t = crate::config::DEFAULT_CLUSTER_LISTEN_PORT
+        )]
+        listen_port: u16,
+        /// Read a replacement shared passphrase from one stdin line. The
+        /// secret never enters argv, logs, or receipts. With a keychain
+        /// backend this intentionally writes the documented credentials.yaml
+        /// emergency override (file values win over the OS store).
+        #[arg(long, default_value_t = false)]
+        passphrase_stdin: bool,
+    },
+    /// Enable the cluster transport master switch using the same complete,
+    /// restart-evidenced transaction as `cluster configure`.
     Enable,
-    /// Disable cluster auto-discovery.
+    /// Disable the cluster transport master switch using the same complete,
+    /// restart-evidenced transaction as `cluster configure`.
     Disable,
     /// Restore same-origin peer-backup frames into local recall/memory.
     ///
@@ -219,6 +317,13 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             run_foreign_events(peer.as_deref(), limit, &args.output)
         }
         ClusterAction::SyncState { peer } => run_sync_state(peer.as_deref(), &args.output),
+        ClusterAction::Frontier { peer } => run_frontier(peer.as_deref(), &args.output),
+        ClusterAction::Conflicts {
+            action,
+            content_id,
+            all,
+            limit,
+        } => run_conflicts(action, content_id.as_deref(), all, limit, &args.output),
         ClusterAction::ExportForeign {
             peer,
             out,
@@ -258,8 +363,38 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             }
         }
         ClusterAction::Revoke { pub_key } => run_revoke(&pub_key),
-        ClusterAction::Enable => run_toggle(true),
-        ClusterAction::Disable => run_toggle(false),
+        ClusterAction::Configure {
+            enabled,
+            name,
+            transport,
+            peers_json,
+            mdns_enabled,
+            announce_on_untrusted_wifi,
+            trusted_ssids_json,
+            replicate_raw_ingress,
+            replay_budget_days,
+            listen_port,
+            passphrase_stdin,
+        } => {
+            let desired = build_cluster_config(
+                enabled,
+                name,
+                &transport,
+                &peers_json,
+                mdns_enabled,
+                announce_on_untrusted_wifi,
+                &trusted_ssids_json,
+                replicate_raw_ingress,
+                replay_budget_days,
+                listen_port,
+            )?;
+            let passphrase = passphrase_stdin
+                .then(read_cluster_passphrase_from_stdin)
+                .transpose()?;
+            run_configure(desired, passphrase, &args.output)
+        }
+        ClusterAction::Enable => run_toggle(true, &args.output),
+        ClusterAction::Disable => run_toggle(false, &args.output),
         ClusterAction::Restore {
             peer_export,
             peer,
@@ -903,19 +1038,900 @@ fn run_revoke(pub_key: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_toggle(enabled: bool) -> Result<()> {
-    let home = FreedomConfig::default_neoth_home();
-    let freedom_path = home.join("freedom.yaml");
-    FreedomConfig::update_at(&freedom_path, |config| {
-        config.cluster.mdns.enabled = enabled;
-        Ok(())
-    })?;
-    println!(
-        "cluster.mdns.enabled = {} (in {})",
-        enabled,
-        freedom_path.display()
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ClusterConfigureMdnsReceipt {
+    enabled: bool,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ClusterConfigurePolicyReceipt {
+    announce_on_untrusted_wifi: bool,
+    trusted_ssids: Vec<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ClusterConfigureGossipReceipt {
+    replicate_raw_ingress: bool,
+    replay_budget_days: u32,
+}
+
+impl Default for ClusterConfigureGossipReceipt {
+    fn default() -> Self {
+        let policy = ClusterGossipPolicy::default();
+        Self {
+            replicate_raw_ingress: policy.replicate_raw_ingress,
+            replay_budget_days: policy.replay_budget_days,
+        }
+    }
+}
+
+/// Secret-free, stable representation of the complete public cluster config.
+/// This deliberately does not serialize `ClusterConfig` directly: the
+/// deny-unknown contract lets CLI and GUI consumers reject accidental receipt
+/// drift instead of silently ignoring a newly added field.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ClusterConfigureSnapshot {
+    name: Option<String>,
+    enabled: bool,
+    transport: ClusterTransport,
+    peers: Vec<String>,
+    mdns: ClusterConfigureMdnsReceipt,
+    policy: ClusterConfigurePolicyReceipt,
+    #[serde(default)]
+    gossip: ClusterConfigureGossipReceipt,
+    listen_port: u16,
+}
+
+impl From<&ClusterConfig> for ClusterConfigureSnapshot {
+    fn from(config: &ClusterConfig) -> Self {
+        Self {
+            name: config.name.clone(),
+            enabled: config.enabled,
+            transport: config.transport,
+            peers: config.peers.clone(),
+            mdns: ClusterConfigureMdnsReceipt {
+                enabled: config.mdns.enabled,
+            },
+            policy: ClusterConfigurePolicyReceipt {
+                announce_on_untrusted_wifi: config.policy.announce_on_untrusted_wifi,
+                trusted_ssids: config.policy.trusted_ssids.clone(),
+            },
+            gossip: ClusterConfigureGossipReceipt {
+                replicate_raw_ingress: config.gossip.replicate_raw_ingress,
+                replay_budget_days: config.gossip.replay_budget_days,
+            },
+            listen_port: config.listen_port,
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ClusterConfigureReceipt {
+    operation: String,
+    path: String,
+    reload_requested: bool,
+    reload_error: Option<String>,
+    restart_required: bool,
+    cluster_passphrase_set: bool,
+    cluster: ClusterConfigureSnapshot,
+}
+
+const CLUSTER_RUNTIME_STATE_NAME: &str = ".cluster-runtime-state.json";
+const CLUSTER_RUNTIME_STATE_LOCK_NAME: &str = ".cluster-runtime-state.lock";
+const CLUSTER_RUNTIME_STATE_VERSION: u8 = 1;
+const CLUSTER_RUNTIME_BINDING_INFO: &[u8] = b"neoth-cluster-runtime-binding-v1";
+
+/// Owner-private, non-reversible binding between a runtime marker and the
+/// effective cluster key. The HMAC key is derived from NEOTH's separately
+/// protected master key, so the marker alone is not an offline passphrase
+/// verifier. Debug output is always fully redacted.
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+struct ClusterIdentityBinding([u8; 32]);
+
+impl std::fmt::Debug for ClusterIdentityBinding {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ClusterIdentityBinding(<redacted>)")
+    }
+}
+
+impl PartialEq for ClusterIdentityBinding {
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.0.ct_eq(&other.0))
+    }
+}
+
+impl Eq for ClusterIdentityBinding {}
+
+impl Drop for ClusterIdentityBinding {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+fn cluster_identity_binding_for_passphrase(
+    home: &Path,
+    passphrase: Option<&SecretString>,
+    ensure_master_key: bool,
+) -> Result<Option<ClusterIdentityBinding>> {
+    let Some(cluster_key) = passphrase
+        .and_then(|passphrase| crate::cluster::discovery::cluster_key(passphrase.expose()))
+    else {
+        return Ok(None);
+    };
+
+    let segment_key = if ensure_master_key {
+        crate::wal::master_key::writer_segment_key_at(home).ok_or_else(|| {
+            anyhow::anyhow!(
+                "create/load the protected NEOTH master key for cluster runtime binding"
+            )
+        })?
+    } else {
+        let Some(key) = crate::wal::master_key::segment_key_at(home) else {
+            return Ok(None);
+        };
+        key
+    };
+
+    // A second HKDF domain keeps this HMAC key separate from the WAL segment
+    // encryption use of `segment_key`. Both intermediate keys zeroize on drop.
+    let hkdf = Hkdf::<Sha256>::new(None, segment_key.expose());
+    let mut binding_key = zeroize::Zeroizing::new([0_u8; 32]);
+    hkdf.expand(CLUSTER_RUNTIME_BINDING_INFO, &mut *binding_key)
+        .map_err(|_| anyhow::anyhow!("derive cluster runtime binding key"))?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(&*binding_key)
+        .map_err(|_| anyhow::anyhow!("construct cluster runtime binding HMAC"))?;
+    mac.update(CLUSTER_RUNTIME_BINDING_INFO);
+    mac.update(&cluster_key.0);
+    let mut digest = mac.finalize().into_bytes();
+    let mut binding = [0_u8; 32];
+    binding.copy_from_slice(&digest);
+    digest.as_mut_slice().zeroize();
+    Ok(Some(ClusterIdentityBinding(binding)))
+}
+
+fn cluster_identity_binding(
+    home: &Path,
+    credentials: &Credentials,
+    ensure_master_key: bool,
+) -> Result<Option<ClusterIdentityBinding>> {
+    cluster_identity_binding_for_passphrase(
+        home,
+        credentials.cluster_passphrase.as_ref(),
+        ensure_master_key,
+    )
+}
+
+/// Durable evidence for the startup-only cluster runtime. It contains no
+/// passphrase or cluster key; the only secret-dependent value is the fully
+/// redacted, master-keyed binding above.
+///
+/// A config write first publishes `ready_for_confirmation = false`. Only after
+/// the complete public/credential transaction commits is the record finalized
+/// as ready for a daemon acknowledgement. Only the daemon, after constructing
+/// the selected carrier successfully, may attach its PID and carrier state.
+/// Comparing the desired snapshot with freedom.yaml or merely observing a new
+/// process is deliberately insufficient.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ClusterRuntimeState {
+    version: u8,
+    ready_for_confirmation: bool,
+    acknowledged_daemon_pid: Option<u32>,
+    carrier_active: bool,
+    mdns_active: bool,
+    cluster_passphrase_set: bool,
+    #[serde(default)]
+    cluster_identity_binding: Option<ClusterIdentityBinding>,
+    cluster: ClusterConfigureSnapshot,
+}
+
+impl ClusterRuntimeState {
+    fn blocked(
+        cluster: ClusterConfigureSnapshot,
+        cluster_passphrase_set: bool,
+        cluster_identity_binding: Option<ClusterIdentityBinding>,
+    ) -> Self {
+        Self {
+            version: CLUSTER_RUNTIME_STATE_VERSION,
+            ready_for_confirmation: false,
+            acknowledged_daemon_pid: None,
+            carrier_active: false,
+            mdns_active: false,
+            cluster_passphrase_set,
+            cluster_identity_binding,
+            cluster,
+        }
+    }
+
+    fn finalize(mut self) -> Self {
+        self.ready_for_confirmation = true;
+        self
+    }
+
+    fn matches(
+        &self,
+        cluster: &ClusterConfigureSnapshot,
+        cluster_passphrase_set: bool,
+        cluster_identity_binding: Option<&ClusterIdentityBinding>,
+    ) -> bool {
+        let binding_matches = if cluster_passphrase_set {
+            self.cluster_identity_binding
+                .as_ref()
+                .zip(cluster_identity_binding)
+                .is_some_and(|(stored, current)| stored == current)
+        } else {
+            self.cluster_identity_binding.is_none() && cluster_identity_binding.is_none()
+        };
+        self.version == CLUSTER_RUNTIME_STATE_VERSION
+            && self.cluster == *cluster
+            && self.cluster_passphrase_set == cluster_passphrase_set
+            && binding_matches
+    }
+}
+
+fn cluster_runtime_state_path(home: &Path) -> std::path::PathBuf {
+    home.join(CLUSTER_RUNTIME_STATE_NAME)
+}
+
+fn load_cluster_runtime_state(home: &Path) -> Result<Option<ClusterRuntimeState>> {
+    let path = cluster_runtime_state_path(home);
+    let body = match std::fs::read(&path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read cluster runtime state {}", path.display()));
+        }
+    };
+    let state: ClusterRuntimeState = serde_json::from_slice(&body)
+        .with_context(|| format!("parse cluster runtime state {}", path.display()))?;
+    anyhow::ensure!(
+        state.version == CLUSTER_RUNTIME_STATE_VERSION,
+        "unsupported cluster runtime state version {} at {}",
+        state.version,
+        path.display()
     );
+    Ok(Some(state))
+}
+
+fn write_cluster_runtime_state(home: &Path, state: &ClusterRuntimeState) -> Result<()> {
+    let path = cluster_runtime_state_path(home);
+    let body = serde_json::to_vec(state).context("serialize cluster runtime state")?;
+    crate::util::atomic_write::atomic_write_private(&path, &body)
+        .with_context(|| format!("atomically write cluster runtime state {}", path.display()))
+}
+
+fn capture_cluster_runtime_state(home: &Path) -> Result<Option<Vec<u8>>> {
+    let path = cluster_runtime_state_path(home);
+    match std::fs::read(&path) {
+        Ok(body) => Ok(Some(body)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("snapshot cluster runtime state {}", path.display()))
+        }
+    }
+}
+
+fn restore_cluster_runtime_state(home: &Path, prior: Option<&[u8]>) -> Result<()> {
+    let path = cluster_runtime_state_path(home);
+    match prior {
+        Some(body) => crate::util::atomic_write::atomic_write_private(&path, body)
+            .with_context(|| format!("restore cluster runtime state {}", path.display())),
+        None => crate::util::atomic_write::durable_remove_file(&path)
+            .with_context(|| format!("remove cluster runtime state {}", path.display())),
+    }
+}
+
+/// Return the PID only when a live process also owns the canonical daemon
+/// PID-file lock. A numeric PID belonging to an unrelated live process is not
+/// runtime evidence.
+fn live_daemon_owner_pid(home: &Path) -> Result<Option<u32>> {
+    let pidfile = home.join("neothd.pid");
+    let Some(pid) = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))?
+    else {
+        return Ok(None);
+    };
+    match crate::util::locked_file::try_lock_file_once(&pidfile, "daemon pidfile")? {
+        None => Ok(Some(pid)),
+        Some(lock) => {
+            drop(lock);
+            Ok(None)
+        }
+    }
+}
+
+fn cluster_runtime_applied(
+    state: Option<&ClusterRuntimeState>,
+    cluster: &ClusterConfigureSnapshot,
+    cluster_passphrase_set: bool,
+    cluster_identity_binding: Option<&ClusterIdentityBinding>,
+    live_daemon_pid: Option<u32>,
+) -> bool {
+    if !cluster.enabled && live_daemon_pid.is_none() {
+        // With no daemon process there is no carrier left to stop. This is the
+        // one safe state that needs no daemon acknowledgement.
+        return true;
+    }
+    let Some(state) = state else {
+        return false;
+    };
+    if !state.ready_for_confirmation
+        || !state.matches(cluster, cluster_passphrase_set, cluster_identity_binding)
+    {
+        return false;
+    }
+    live_daemon_pid.is_some() && state.acknowledged_daemon_pid == live_daemon_pid
+}
+
+fn cluster_runtime_carrier_active(
+    state: Option<&ClusterRuntimeState>,
+    cluster: &ClusterConfigureSnapshot,
+    cluster_passphrase_set: bool,
+    cluster_identity_binding: Option<&ClusterIdentityBinding>,
+    live_daemon_pid: Option<u32>,
+) -> bool {
+    cluster_runtime_applied(
+        state,
+        cluster,
+        cluster_passphrase_set,
+        cluster_identity_binding,
+        live_daemon_pid,
+    ) && state.is_some_and(|state| state.carrier_active)
+}
+
+/// Compare the effective secret generation that actually keys the cluster
+/// carrier. The derived keys exist only for this in-memory comparison and are
+/// zeroized on drop; no passphrase or reusable verifier is persisted in the
+/// runtime marker.
+#[cfg(any(feature = "cluster", test))]
+fn same_cluster_secret_generation(left: &Credentials, right: &Credentials) -> bool {
+    let derive = |credentials: &Credentials| {
+        credentials
+            .cluster_passphrase
+            .as_ref()
+            .and_then(|passphrase| crate::cluster::discovery::cluster_key(passphrase.expose()))
+    };
+    match (derive(left), derive(right)) {
+        (Some(left), Some(right)) => bool::from(left.0.ct_eq(&right.0)),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Daemon-only acknowledgement written after the configured carrier has
+/// actually started. This is the sole path that can make `cluster status`
+/// report `transport_active=true`.
+#[cfg(any(feature = "cluster", test))]
+pub(crate) fn acknowledge_cluster_runtime_at(
+    home: &Path,
+    config: &FreedomConfig,
+    credentials: &Credentials,
+    carrier_active: bool,
+    mdns_active: bool,
+) -> Result<()> {
+    let identity = crate::cluster::identity::cluster_identity_status(config, credentials);
+    anyhow::ensure!(
+        carrier_active == identity.transport_active,
+        "cluster runtime acknowledgement disagrees with the activation gate (expected carrier_active={}, actual={carrier_active})",
+        identity.transport_active
+    );
+    anyhow::ensure!(
+        live_daemon_owner_pid(home)? == Some(std::process::id()),
+        "refusing cluster runtime acknowledgement without ownership of {}",
+        home.join("neothd.pid").display()
+    );
+
+    let _runtime_state_lock = crate::util::locked_file::lock_file_blocking(
+        &home.join(CLUSTER_RUNTIME_STATE_LOCK_NAME),
+        "cluster runtime state",
+    )?;
+    let snapshot = ClusterConfigureSnapshot::from(&config.cluster);
+    let freedom_path = home.join("freedom.yaml");
+    let current = crate::config::load_runtime_config_pair_from_path(&freedom_path)?;
+    let current_identity =
+        crate::cluster::identity::cluster_identity_status(&current.config, &current.credentials);
+    let current_binding = cluster_identity_binding(home, &current.credentials, true)?;
+    if ClusterConfigureSnapshot::from(&current.config.cluster) != snapshot
+        || current_identity.has_passphrase != identity.has_passphrase
+        || !same_cluster_secret_generation(credentials, &current.credentials)
+    {
+        // Config/credential state advanced after this daemon loaded its startup
+        // snapshot. The newer pending marker belongs to that mutation and must
+        // remain untouched until a daemon actually starts from it.
+        return Ok(());
+    }
+
+    let mut state = match load_cluster_runtime_state(home)? {
+        Some(state)
+            if state.ready_for_confirmation
+                && state.matches(&snapshot, identity.has_passphrase, current_binding.as_ref()) =>
+        {
+            state
+        }
+        Some(state) if !state.ready_for_confirmation => {
+            // The writer cannot still be active because we own its state lock.
+            // If disk matches this startup snapshot, either its config commit
+            // landed (blocked snapshot also matches) or it crashed before the
+            // commit (blocked snapshot differs). In both cases the daemon's
+            // already-constructed, disk-verified runtime is authoritative.
+            ClusterRuntimeState::blocked(snapshot, identity.has_passphrase, current_binding.clone())
+                .finalize()
+        }
+        Some(state)
+            if state.cluster == snapshot
+                && state.cluster_passphrase_set == identity.has_passphrase =>
+        {
+            // An out-of-band credential import may rotate only the effective
+            // passphrase. Disk and this freshly-constructed carrier already
+            // match exactly, so replace the old binding without treating a
+            // different public snapshot as acknowledged.
+            ClusterRuntimeState::blocked(snapshot, identity.has_passphrase, current_binding.clone())
+                .finalize()
+        }
+        Some(_) => return Ok(()),
+        None => {
+            ClusterRuntimeState::blocked(snapshot, identity.has_passphrase, current_binding.clone())
+                .finalize()
+        }
+    };
+    state.acknowledged_daemon_pid = Some(std::process::id());
+    state.carrier_active = carrier_active;
+    state.mdns_active = mdns_active;
+    write_cluster_runtime_state(home, &state)
+}
+
+fn parse_json_string_array(raw: &str, flag: &str) -> Result<Vec<String>> {
+    serde_json::from_str::<Vec<String>>(raw).with_context(|| {
+        format!("parse --{flag} as a JSON string array (for example: [\"one\",\"two\"])")
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_cluster_config(
+    enabled: bool,
+    name: Option<String>,
+    transport: &str,
+    peers_json: &str,
+    mdns_enabled: bool,
+    announce_on_untrusted_wifi: bool,
+    trusted_ssids_json: &str,
+    replicate_raw_ingress: bool,
+    replay_budget_days: u32,
+    listen_port: u16,
+) -> Result<ClusterConfig> {
+    let transport = match transport {
+        "peeroxide" => ClusterTransport::Peeroxide,
+        "iroh" => ClusterTransport::Iroh,
+        other => anyhow::bail!("unsupported cluster transport `{other}`"),
+    };
+    let config = ClusterConfig {
+        name: name.and_then(|name| (!name.trim().is_empty()).then_some(name)),
+        enabled,
+        transport,
+        peers: parse_json_string_array(peers_json, "peers-json")?,
+        mdns: ClusterMdnsConfig {
+            enabled: mdns_enabled,
+        },
+        policy: ClusterAnnouncePolicy {
+            announce_on_untrusted_wifi,
+            trusted_ssids: parse_json_string_array(trusted_ssids_json, "trusted-ssids-json")?,
+        },
+        gossip: ClusterGossipPolicy {
+            replicate_raw_ingress,
+            replay_budget_days,
+        },
+        listen_port,
+    };
+    validate_configure_cluster(&config)?;
+    Ok(config)
+}
+
+fn validate_configure_cluster(config: &ClusterConfig) -> Result<()> {
+    // Configure is a complete-snapshot contract. Refuse an unavailable
+    // transport even while disabled so the stored snapshot is executable by
+    // this binary and cannot become a delayed activation trap.
+    if config.transport == ClusterTransport::Iroh && !cfg!(feature = "cluster-iroh") {
+        anyhow::bail!(
+            "cluster transport `iroh` requires a binary built with the `cluster-iroh` feature"
+        );
+    }
+    config
+        .validate()
+        .map_err(|error| anyhow::anyhow!("invalid cluster configuration: {error}"))
+}
+
+fn trim_one_line_ending(mut value: String) -> String {
+    if value.ends_with('\n') {
+        value.pop();
+        if value.ends_with('\r') {
+            value.pop();
+        }
+    }
+    value
+}
+
+fn cluster_passphrase_from_line(value: String) -> Result<SecretString> {
+    let passphrase = SecretString::new(trim_one_line_ending(value));
+    crate::cluster::discovery::cluster_key(passphrase.expose()).ok_or_else(|| {
+        anyhow::anyhow!("cluster passphrase must contain at least one non-whitespace character")
+    })?;
+    Ok(passphrase)
+}
+
+fn read_cluster_passphrase_from_stdin() -> Result<SecretString> {
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .context("read cluster passphrase from stdin")?;
+    cluster_passphrase_from_line(line)
+}
+
+fn has_usable_cluster_passphrase(credentials: &Credentials) -> bool {
+    credentials
+        .cluster_passphrase
+        .as_ref()
+        .and_then(|passphrase| crate::cluster::discovery::cluster_key(passphrase.expose()))
+        .is_some()
+}
+
+fn ensure_enabled_cluster_identity(
+    config: &FreedomConfig,
+    credentials: &Credentials,
+) -> Result<()> {
+    if config.cluster.enabled
+        && crate::cluster::identity::resolve_cluster_identity(config, credentials).is_none()
+    {
+        anyhow::bail!(
+            "cluster identity is incomplete: enabling requires a non-empty cluster name and shared passphrase"
+        );
+    }
     Ok(())
+}
+
+/// Overlay every schema-owned cluster value while retaining extension keys at
+/// any mapping depth. The configure contract replaces all known fields, but a
+/// newer/third-party field must survive an older binary's lossless update.
+fn overlay_known_cluster_yaml(target: &mut serde_yaml::Value, known: serde_yaml::Value) {
+    match known {
+        serde_yaml::Value::Mapping(known) => {
+            if let serde_yaml::Value::Mapping(target) = target {
+                for (key, value) in known {
+                    if let Some(existing) = target.get_mut(&key) {
+                        overlay_known_cluster_yaml(existing, value);
+                    } else {
+                        target.insert(key, value);
+                    }
+                }
+            } else {
+                *target = serde_yaml::Value::Mapping(known);
+            }
+        }
+        known => *target = known,
+    }
+}
+
+/// Path-injectable transaction core. A reload-request failure is deliberately
+/// data in the success receipt: the config commit remains durable. Cluster
+/// lifecycle changes stay `restart_required` until the daemon acknowledges the
+/// exact startup snapshot after constructing its carrier.
+fn configure_cluster_at_with_reload<R>(
+    home: &Path,
+    desired: ClusterConfig,
+    passphrase: Option<SecretString>,
+    request_reload: R,
+) -> Result<ClusterConfigureReceipt>
+where
+    R: FnOnce(&Path) -> Result<()>,
+{
+    configure_cluster_at_with_reload_and_public_validation_hook(
+        home,
+        desired,
+        passphrase,
+        request_reload,
+        || {},
+    )
+}
+
+fn configure_cluster_at_with_reload_and_public_validation_hook<R, H>(
+    home: &Path,
+    desired: ClusterConfig,
+    passphrase: Option<SecretString>,
+    request_reload: R,
+    after_public_validation: H,
+) -> Result<ClusterConfigureReceipt>
+where
+    R: FnOnce(&Path) -> Result<()>,
+    H: FnOnce(),
+{
+    validate_configure_cluster(&desired)?;
+    if let Some(passphrase) = passphrase.as_ref()
+        && crate::cluster::discovery::cluster_key(passphrase.expose()).is_none()
+    {
+        anyhow::bail!("cluster passphrase must contain at least one non-whitespace character");
+    }
+
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    let desired_snapshot = ClusterConfigureSnapshot::from(&desired);
+    let _runtime_state_lock = crate::util::locked_file::lock_file_blocking(
+        &home.join(CLUSTER_RUNTIME_STATE_LOCK_NAME),
+        "cluster runtime state",
+    )?;
+    let existing_runtime_state = load_cluster_runtime_state(home)?;
+    let runtime_state_before = capture_cluster_runtime_state(home)?;
+
+    let (cluster_passphrase_set, cluster_identity_binding, runtime_state) = if let Some(
+        passphrase,
+    ) = passphrase
+    {
+        // The restart marker is published in a deliberately unconfirmable
+        // state before either config file changes. If the dual-file mutation
+        // fails, restore the exact prior marker; if finalization fails after a
+        // successful commit, the blocked marker remains fail-closed.
+        let cluster_identity_binding =
+            cluster_identity_binding_for_passphrase(home, Some(&passphrase), true)?;
+        let blocked = ClusterRuntimeState::blocked(
+            desired_snapshot.clone(),
+            true,
+            cluster_identity_binding.clone(),
+        );
+        write_cluster_runtime_state(home, &blocked)?;
+        let desired_for_update = desired.clone();
+        let cluster_passphrase_set = match Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            move |config, credentials| {
+                config.cluster = desired_for_update;
+                credentials.cluster_passphrase = Some(passphrase);
+                ensure_enabled_cluster_identity(config, credentials)?;
+                Ok(has_usable_cluster_passphrase(credentials))
+            },
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                if let Err(restore_error) =
+                    restore_cluster_runtime_state(home, runtime_state_before.as_deref())
+                {
+                    anyhow::bail!(
+                        "cluster configuration failed ({error:#}); restoring its restart state also failed: {restore_error:#}"
+                    );
+                }
+                return Err(error).context("cluster configuration transaction failed");
+            }
+        };
+        let finalized = blocked.finalize();
+        write_cluster_runtime_state(home, &finalized)?;
+        (
+            cluster_passphrase_set,
+            cluster_identity_binding,
+            Some(finalized),
+        )
+    } else {
+        // Replace only the YAML `cluster` node. `FreedomConfig::update_at`
+        // intentionally strips inline legacy secrets, which makes it the wrong
+        // primitive for this public-only mutation: an operator changing cluster
+        // peers must not lose provider, Telegram, or inference credentials.
+        // The raw transaction retains every unrelated YAML value while one
+        // dual-file boundary holds from effective credential validation through
+        // the freedom.yaml rename. A concurrent passphrase rotation/removal
+        // cannot slip between those two operations.
+        let desired_for_plan = desired.clone();
+        let desired_snapshot_for_plan = desired_snapshot.clone();
+        let freedom_path_for_plan = freedom_path.clone();
+        let existing_runtime_state_for_plan = existing_runtime_state.clone();
+        let update = crate::config::update_raw_freedom_with_effective_credentials_at(
+            &freedom_path,
+            move |source, credentials| {
+                anyhow::ensure!(
+                    !source.trim().is_empty(),
+                    "freedom.yaml not found at {}. Run `neoth init` first to generate it.",
+                    freedom_path_for_plan.display()
+                );
+                let current: FreedomConfig = serde_yaml::from_str(source).with_context(|| {
+                    format!("parse YAML at {}", freedom_path_for_plan.display())
+                })?;
+                let public_config_changed =
+                    ClusterConfigureSnapshot::from(&current.cluster) != desired_snapshot_for_plan;
+
+                let mut persisted: serde_yaml::Value =
+                    serde_yaml::from_str(source).with_context(|| {
+                        format!(
+                            "parse {} for lossless cluster update",
+                            freedom_path_for_plan.display()
+                        )
+                    })?;
+                let root = persisted
+                    .as_mapping_mut()
+                    .ok_or_else(|| anyhow::anyhow!("freedom.yaml root must be a YAML mapping"))?;
+                let cluster_key = serde_yaml::Value::String("cluster".to_string());
+                let desired_cluster = serde_yaml::to_value(&desired_for_plan)
+                    .context("serialize complete cluster configuration")?;
+                if let Some(existing_cluster) = root.get_mut(&cluster_key) {
+                    overlay_known_cluster_yaml(existing_cluster, desired_cluster);
+                } else {
+                    root.insert(cluster_key, desired_cluster);
+                }
+                let body = serde_yaml::to_string(&persisted)
+                    .context("serialize losslessly merged cluster configuration")?;
+                let candidate: FreedomConfig =
+                    serde_yaml::from_str(&body).context("validate merged cluster configuration")?;
+                ensure_enabled_cluster_identity(&candidate, credentials)?;
+                let cluster_passphrase_set = has_usable_cluster_passphrase(credentials);
+                let cluster_identity_binding = cluster_identity_binding(home, credentials, true)?;
+                let runtime_state_matches =
+                    existing_runtime_state_for_plan
+                        .as_ref()
+                        .is_some_and(|state| {
+                            state.matches(
+                                &desired_snapshot_for_plan,
+                                cluster_passphrase_set,
+                                cluster_identity_binding.as_ref(),
+                            )
+                        });
+                let needs_new_runtime_state = public_config_changed
+                    || existing_runtime_state_for_plan.is_some() && !runtime_state_matches
+                    || existing_runtime_state_for_plan.is_none() && desired_for_plan.enabled;
+                let blocked = needs_new_runtime_state.then(|| {
+                    ClusterRuntimeState::blocked(
+                        desired_snapshot_for_plan.clone(),
+                        cluster_passphrase_set,
+                        cluster_identity_binding.clone(),
+                    )
+                });
+                if let Some(blocked) = blocked.as_ref() {
+                    write_cluster_runtime_state(home, blocked)?;
+                }
+                // Test-only barriers use this exact point to prove credential
+                // writers remain excluded until the raw freedom rename lands.
+                after_public_validation();
+                Ok((
+                    body,
+                    (cluster_passphrase_set, cluster_identity_binding, blocked),
+                ))
+            },
+        );
+        let (cluster_passphrase_set, cluster_identity_binding, blocked) = match update {
+            Ok(value) => value,
+            Err(error) => {
+                if let Err(restore_error) =
+                    restore_cluster_runtime_state(home, runtime_state_before.as_deref())
+                {
+                    anyhow::bail!(
+                        "cluster configuration failed ({error:#}); restoring its restart state also failed: {restore_error:#}"
+                    );
+                }
+                return Err(error).context("commit lossless cluster configuration");
+            }
+        };
+
+        let runtime_state = if let Some(blocked) = blocked {
+            let finalized = blocked.finalize();
+            write_cluster_runtime_state(home, &finalized)?;
+            Some(finalized)
+        } else {
+            existing_runtime_state
+        };
+        (
+            cluster_passphrase_set,
+            cluster_identity_binding,
+            runtime_state,
+        )
+    };
+
+    let live_daemon_pid = live_daemon_owner_pid(home)?;
+    let restart_required = !cluster_runtime_applied(
+        runtime_state.as_ref(),
+        &desired_snapshot,
+        cluster_passphrase_set,
+        cluster_identity_binding.as_ref(),
+        live_daemon_pid,
+    );
+
+    let (reload_requested, reload_error) = match request_reload(home) {
+        Ok(()) => (true, None),
+        Err(error) => (false, Some(format!("{error:#}"))),
+    };
+
+    Ok(ClusterConfigureReceipt {
+        operation: "cluster.configure".to_string(),
+        path: freedom_path.display().to_string(),
+        reload_requested,
+        reload_error,
+        restart_required,
+        cluster_passphrase_set,
+        cluster: desired_snapshot,
+    })
+}
+
+fn run_configure(
+    desired: ClusterConfig,
+    passphrase: Option<SecretString>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let receipt = configure_cluster_at_with_reload(&home, desired, passphrase, |home| {
+        crate::cli::reload::request_reload_at(home).map(|_| ())
+    })?;
+
+    match output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
+        }
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+        OutputFormat::Table => {
+            println!("cluster configuration committed: {}", receipt.path);
+            println!("  enabled                    : {}", receipt.cluster.enabled);
+            println!(
+                "  name                       : {}",
+                receipt.cluster.name.as_deref().unwrap_or("(unset)")
+            );
+            println!(
+                "  transport                  : {}",
+                match receipt.cluster.transport {
+                    ClusterTransport::Peeroxide => "peeroxide",
+                    ClusterTransport::Iroh => "iroh",
+                }
+            );
+            println!(
+                "  peers                      : {}",
+                serde_json::to_string(&receipt.cluster.peers)?
+            );
+            println!(
+                "  mdns.enabled               : {}",
+                receipt.cluster.mdns.enabled
+            );
+            println!(
+                "  announce on untrusted wifi : {}",
+                receipt.cluster.policy.announce_on_untrusted_wifi
+            );
+            println!(
+                "  trusted ssids              : {}",
+                serde_json::to_string(&receipt.cluster.policy.trusted_ssids)?
+            );
+            println!(
+                "  listen port                : {}",
+                receipt.cluster.listen_port
+            );
+            println!(
+                "  shared passphrase          : {}",
+                if receipt.cluster_passphrase_set {
+                    "set"
+                } else {
+                    "(unset)"
+                }
+            );
+            println!(
+                "  reload requested           : {}",
+                receipt.reload_requested
+            );
+            println!(
+                "  restart required           : {}",
+                receipt.restart_required
+            );
+            if let Some(error) = receipt.reload_error.as_deref() {
+                println!("  reload error               : {error}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_toggle(enabled: bool, output: &OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let desired = toggle_desired_cluster_at(&home, enabled)?;
+    run_configure(desired, None, output)
+}
+
+fn toggle_desired_cluster_at(home: &Path, enabled: bool) -> Result<ClusterConfig> {
+    let mut desired = FreedomConfig::load_from_path(&home.join("freedom.yaml"))?.cluster;
+    desired.enabled = enabled;
+    Ok(desired)
 }
 
 /// Confirmed-peer count for `neoth cluster status`, factored out of
@@ -954,30 +1970,69 @@ fn status_mode_policy(
 }
 
 fn run_status(output: &OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path_or_default()?;
+    let home = FreedomConfig::default_neoth_home();
+    let runtime_config = crate::config::load_runtime_config_pair_from_path_or_default(
+        &FreedomConfig::default_path(),
+    )?;
+    let cfg = runtime_config.config;
+    let creds = runtime_config.credentials;
     let operator = cfg
         .operator_id
         .clone()
         .unwrap_or_else(|| "(unset)".to_string());
+    let node_id =
+        crate::cluster::wal_sync::local_node_pubkey(&home)?.unwrap_or_else(|| operator.clone());
 
     // SL-00(1a): cluster identity status (public name + whether a shared
     // passphrase is set). Reads freedom.yaml::cluster.name + credentials
     // cluster_passphrase via the fail-closed resolver; never exposes the key.
-    let creds = crate::config::credentials::Credentials::load()?;
     let identity = crate::cluster::identity::cluster_identity_status(&cfg, &creds);
+    let cluster_identity_binding = cluster_identity_binding(&home, &creds, false)?;
 
-    // SL-00(1b): honest transport state derived from the activation gate.
-    let transport_state = if identity.transport_active {
+    let configured_snapshot = ClusterConfigureSnapshot::from(&cfg.cluster);
+    let runtime_state = load_cluster_runtime_state(&home)?;
+    let live_daemon_pid = live_daemon_owner_pid(&home)?;
+    let runtime_applied = cluster_runtime_applied(
+        runtime_state.as_ref(),
+        &configured_snapshot,
+        identity.has_passphrase,
+        cluster_identity_binding.as_ref(),
+        live_daemon_pid,
+    );
+    let transport_active = identity.transport_active
+        && cluster_runtime_carrier_active(
+            runtime_state.as_ref(),
+            &configured_snapshot,
+            identity.has_passphrase,
+            cluster_identity_binding.as_ref(),
+            live_daemon_pid,
+        );
+
+    // SL-00(1b): a complete on-disk identity is only the activation request.
+    // `active` additionally requires the daemon-written acknowledgement made
+    // after successful carrier construction. Disk equality and PID presence
+    // never become runtime proof.
+    let transport_state = if transport_active {
         match cfg.cluster.transport {
             crate::config::ClusterTransport::Peeroxide => {
-                "active (peeroxide Hyperswarm DHT — joined while the daemon runs)"
+                "active (peeroxide Hyperswarm DHT; daemon carrier-start acknowledged)"
             }
             crate::config::ClusterTransport::Iroh => {
-                "active (iroh QUIC — joined while the daemon runs)"
+                "active (iroh QUIC; daemon carrier-start acknowledged)"
             }
         }
+    } else if identity.enabled && !identity.configured {
+        "inactive (cluster enabled, but effective identity is incomplete)"
+    } else if identity.enabled && live_daemon_pid.is_none() {
+        "configured, not live (daemon is stopped; start NEOTH to apply)"
+    } else if identity.enabled && !runtime_applied {
+        "configured, not live (restart required; current daemon owns the prior cluster state)"
     } else if identity.configured && !identity.enabled {
-        "disabled (identity ready; set cluster.enabled: true to activate)"
+        if runtime_applied {
+            "disabled (identity ready; no live cluster transport requested)"
+        } else {
+            "disable pending (restart required; current daemon may still own the prior transport)"
+        }
     } else {
         "inactive (no cluster identity)"
     };
@@ -986,11 +2041,33 @@ fn run_status(output: &OutputFormat) -> Result<()> {
     // hardcoded `single-node` / `local-only` / `0` placeholder, which
     // lied about peers even after `neoth cluster confirm` had paired
     // them (A-13).
-    let home = FreedomConfig::default_neoth_home();
     // Confirmed-peer count from the on-disk registry. A malformed
     // `cluster.yaml` surfaces as a hard error (load() never silently
     // empties) rather than a false "0 peers".
-    let peer_count = status_peer_count(&home)?;
+    let registry = crate::cluster::registry::load(&home)?;
+    let peer_count = registry.peers.len();
+    let now = topology_now_unix();
+    let status_peers: Vec<_> = registry
+        .peers
+        .iter()
+        .map(|peer| {
+            let age =
+                (peer.last_seen_unix > 0).then(|| now.saturating_sub(peer.last_seen_unix).max(0));
+            serde_json::json!({
+                "id": peer.pub_key_hex,
+                "label": peer.instance_label,
+                "last_seen": fmt_last_seen(age),
+                "last_seen_unix": peer.last_seen_unix,
+                "reachable": topology_status(peer.last_seen_unix, now) == "recent",
+            })
+        })
+        .collect();
+    let views_db = home.join("views.db");
+    let conflict_count = if views_db.exists() {
+        crate::cluster::durable_sync::DurableMeshSync::new(views_db).unresolved_conflict_count()?
+    } else {
+        0
+    };
     let (mode, policy_name) = status_mode_policy(
         identity.enabled,
         cfg.cluster.mdns.enabled,
@@ -1003,13 +2080,24 @@ fn run_status(output: &OutputFormat) -> Result<()> {
                 "mode": mode,
                 "policy": policy_name,
                 "peer_count": peer_count,
+                "conflict_count": conflict_count,
                 "operator_id": operator,
+                "node_id": node_id,
                 "cluster_name": identity.name,
                 "cluster_passphrase_set": identity.has_passphrase,
                 "cluster_identity_configured": identity.configured,
                 "cluster_enabled": identity.enabled,
-                "transport_active": identity.transport_active,
+                "restart_required": !runtime_applied,
+                "transport_active": transport_active,
                 "transport": transport_state,
+                "listen_port": cfg.cluster.listen_port,
+                "mdns_enabled": cfg.cluster.mdns.enabled,
+                "trusted_ssids": cfg.cluster.policy.trusted_ssids,
+                "peers": status_peers,
+                "gossip": {
+                    "replicate_raw_ingress": cfg.cluster.gossip.replicate_raw_ingress,
+                    "replay_budget_days": cfg.cluster.gossip.replay_budget_days,
+                },
             });
             println!("{}", serde_json::to_string_pretty(&body)?);
         }
@@ -1018,6 +2106,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
             println!("  mode             : {mode}");
             println!("  policy           : {policy_name}");
             println!("  peer count       : {peer_count}");
+            println!("  open conflicts   : {conflict_count}");
             println!("  operator id      : {operator}");
             println!(
                 "  cluster name     : {}",
@@ -1047,7 +2136,29 @@ fn run_status(output: &OutputFormat) -> Result<()> {
                     "disabled (cluster.enabled: false)"
                 }
             );
+            println!(
+                "  restart required : {}",
+                if runtime_applied { "no" } else { "yes" }
+            );
+            println!(
+                "  raw ingress sync : {}",
+                if cfg.cluster.gossip.replicate_raw_ingress {
+                    "enabled"
+                } else {
+                    "disabled (privacy default)"
+                }
+            );
+            println!(
+                "  replay budget    : {} days",
+                cfg.cluster.gossip.replay_budget_days
+            );
             println!("  transport        : {transport_state}");
+            if conflict_count > 0 {
+                println!(
+                    "  action           : inspect with `neoth cluster conflicts`; resolve with \
+                     `neoth cluster conflicts resolve <content-id> --prefer <origin>`"
+                );
+            }
             println!();
             if !identity.configured {
                 println!(
@@ -1058,8 +2169,8 @@ fn run_status(output: &OutputFormat) -> Result<()> {
             } else if !identity.enabled {
                 println!(
                     "  Identity is ready but the transport master-switch is OFF. Set \
-                     `cluster.enabled: true` in freedom.yaml to let the daemon join the \
-                     Hyperswarm DHT on next start. (Default OFF — no DHT announce until you opt in.)"
+                     it with `neoth cluster enable`, then restart when its receipt says \
+                     `restart_required: true`. (Default OFF — no DHT announce until you opt in.)"
                 );
             }
         }
@@ -1727,9 +2838,1152 @@ fn run_sync_state(peer: Option<&str>, output: &crate::cli::OutputFormat) -> Resu
     Ok(())
 }
 
+fn run_frontier(peer: Option<&str>, output: &crate::cli::OutputFormat) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let sync = crate::cluster::durable_sync::DurableMeshSync::new(home.join("views.db"));
+    let mut rows = sync.list_vector_frontier()?;
+    if let Some(peer) = peer {
+        rows.retain(|row| row.peer_pk == peer);
+    }
+    match output {
+        crate::cli::OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        }
+        crate::cli::OutputFormat::Jsonl => {
+            for row in &rows {
+                println!("{}", serde_json::to_string(row)?);
+            }
+        }
+        crate::cli::OutputFormat::Table => {
+            if rows.is_empty() {
+                println!("(no durable causal-frontier state yet)");
+                return Ok(());
+            }
+            println!("{:<24} {:>20}", "NODE", "CAUSAL COUNTER");
+            for row in rows {
+                let short: String = row.peer_pk.chars().take(20).collect();
+                println!("{:<24} {:>20}", format!("{short}..."), row.counter);
+            }
+            println!();
+            println!(
+                "Causal counters record observed ordering only; they never grant trust or auto-resolve conflicts."
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_conflicts(
+    action: Option<ClusterConflictAction>,
+    content_id: Option<&str>,
+    include_resolved: bool,
+    limit: usize,
+    output: &crate::cli::OutputFormat,
+) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let sync = crate::cluster::durable_sync::DurableMeshSync::new(home.join("views.db"));
+    if let Some(ClusterConflictAction::Resolve {
+        content_id: resolved_content_id,
+        prefer,
+    }) = action
+    {
+        anyhow::ensure!(
+            content_id.is_none() && !include_resolved,
+            "--content-id and --all are list-only conflict flags"
+        );
+        let receipt = sync.resolve_conflicts(resolved_content_id.trim(), prefer.trim())?;
+        match output {
+            crate::cli::OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            }
+            crate::cli::OutputFormat::Jsonl => {
+                println!("{}", serde_json::to_string(&receipt)?);
+            }
+            crate::cli::OutputFormat::Table => {
+                println!("# Cluster conflict resolved");
+                println!("  content id       : {}", receipt.content_id);
+                println!("  preferred origin : {}", receipt.preferred_origin);
+                println!("  rows resolved    : {}", receipt.resolved_count);
+                println!("  unresolved remain: {}", receipt.unresolved_remaining);
+            }
+        }
+        return Ok(());
+    }
+
+    let rows = sync.list_conflicts(content_id, limit, include_resolved)?;
+    let unresolved_count = sync.unresolved_conflict_count()?;
+    match output {
+        crate::cli::OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "unresolved_count": unresolved_count,
+                    "include_resolved": include_resolved,
+                    "conflicts": rows,
+                }))?
+            );
+        }
+        crate::cli::OutputFormat::Jsonl => {
+            for row in &rows {
+                println!("{}", serde_json::to_string(row)?);
+            }
+        }
+        crate::cli::OutputFormat::Table => {
+            if rows.is_empty() {
+                println!(
+                    "(no {}mesh conflicts)",
+                    if include_resolved {
+                        "recorded "
+                    } else {
+                        "unresolved "
+                    }
+                );
+                return Ok(());
+            }
+            println!(
+                "{:<10} {:<34} {:<18} {:<18} {:<28} {:<11}",
+                "STATE", "CONTENT", "INCUMBENT", "INCOMING", "POLICY", "OBSERVED"
+            );
+            for row in rows {
+                let content: String = row.content_id.chars().take(32).collect();
+                let incumbent: String = row.incumbent_origin.chars().take(16).collect();
+                let incoming: String = row.incoming_origin.chars().take(16).collect();
+                println!(
+                    "{:<10} {:<34} {:<18} {:<18} {:<28} {:<11}",
+                    if row.resolved_at.is_some() {
+                        "resolved"
+                    } else {
+                        "OPEN"
+                    },
+                    content,
+                    incumbent,
+                    incoming,
+                    row.policy,
+                    row.observed_at,
+                );
+                if let Some(preferred) = row.preferred_origin {
+                    println!("           preferred origin: {preferred}");
+                }
+            }
+            println!("\nunresolved total: {unresolved_count}");
+            if unresolved_count > 0 {
+                println!("resolve: neoth cluster conflicts resolve <content-id> --prefer <origin>");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_test_freedom(home: &Path, config: &FreedomConfig) {
+        std::fs::create_dir_all(home).expect("create test home");
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(config).expect("serialize test freedom config"),
+        )
+        .expect("write test freedom config");
+    }
+
+    fn write_test_cluster_passphrase(home: &Path, passphrase: &str) {
+        let credentials = Credentials {
+            cluster_passphrase: Some(SecretString::new(passphrase.to_string())),
+            ..Credentials::default()
+        };
+        credentials
+            .write(&home.join("credentials.yaml"))
+            .expect("write test credentials");
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn configure_commits_complete_snapshot_and_reports_reload_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+        let freedom_path = home.join("freedom.yaml");
+        let mut extended: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).expect("read initial freedom"))
+                .expect("parse initial freedom");
+        extended["cluster"]["gossip"]["future_strategy"] =
+            serde_yaml::Value::String("preserve-through-secret-transaction".to_string());
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&extended).expect("serialize extended freedom"),
+        )
+        .expect("write extended freedom");
+
+        let desired = build_cluster_config(
+            true,
+            Some("operators".to_string()),
+            "peeroxide",
+            r#"["peer,one"," peer two "]"#,
+            false,
+            true,
+            r#"["Office, East","  Lab WiFi  "]"#,
+            true,
+            14,
+            51_234,
+        )
+        .expect("valid complete cluster config");
+        let passphrase = SecretString::new("do-not-print-this-secret".to_string());
+        let receipt = configure_cluster_at_with_reload(home, desired, Some(passphrase), |_| {
+            anyhow::bail!("sentinel path is read-only")
+        })
+        .expect("config commit remains successful when reload request fails");
+
+        assert_eq!(receipt.operation, "cluster.configure");
+        assert_eq!(
+            receipt.path,
+            home.join("freedom.yaml").display().to_string()
+        );
+        assert!(!receipt.reload_requested);
+        assert_eq!(
+            receipt.reload_error.as_deref(),
+            Some("sentinel path is read-only")
+        );
+        assert!(receipt.restart_required);
+        assert!(receipt.cluster_passphrase_set);
+
+        let stored = FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+            .expect("reload stored config");
+        assert!(stored.cluster.enabled);
+        assert_eq!(stored.cluster.name.as_deref(), Some("operators"));
+        assert_eq!(stored.cluster.transport, ClusterTransport::Peeroxide);
+        assert_eq!(stored.cluster.peers, ["peer,one", " peer two "]);
+        assert!(!stored.cluster.mdns.enabled);
+        assert!(stored.cluster.policy.announce_on_untrusted_wifi);
+        assert_eq!(
+            stored.cluster.policy.trusted_ssids,
+            ["Office, East", "  Lab WiFi  "]
+        );
+        assert!(stored.cluster.gossip.replicate_raw_ingress);
+        assert_eq!(stored.cluster.gossip.replay_budget_days, 14);
+        assert_eq!(stored.cluster.listen_port, 51_234);
+        let stored_raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).expect("read stored freedom"))
+                .expect("parse stored freedom");
+        assert_eq!(
+            stored_raw["cluster"]["gossip"]["future_strategy"].as_str(),
+            Some("preserve-through-secret-transaction")
+        );
+
+        let stored_credentials = Credentials::load_or_default(&home.join("credentials.yaml"))
+            .expect("reload stored credentials");
+        assert_eq!(
+            stored_credentials
+                .cluster_passphrase
+                .as_ref()
+                .expect("cluster passphrase")
+                .expose(),
+            "do-not-print-this-secret"
+        );
+
+        let json = serde_json::to_string(&receipt).expect("serialize receipt");
+        assert!(!json.contains("do-not-print-this-secret"));
+        let decoded: ClusterConfigureReceipt =
+            serde_json::from_str(&json).expect("receipt round trip");
+        assert_eq!(decoded, receipt);
+    }
+
+    #[test]
+    fn configure_invalid_enabled_identity_preserves_both_files_exactly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+        write_test_cluster_passphrase(home, "existing-passphrase");
+        let freedom_path = home.join("freedom.yaml");
+        let credentials_path = home.join("credentials.yaml");
+        let freedom_before = std::fs::read(&freedom_path).expect("read freedom before");
+        let credentials_before = std::fs::read(&credentials_path).expect("read credentials before");
+
+        let invalid = ClusterConfig {
+            enabled: true,
+            name: None,
+            ..ClusterConfig::default()
+        };
+        let error = configure_cluster_at_with_reload(
+            home,
+            invalid,
+            Some(SecretString::new("replacement-passphrase".to_string())),
+            |_| Ok(()),
+        )
+        .expect_err("enabled cluster without name must fail before commit");
+
+        assert!(error.to_string().contains("name is required"));
+        assert_eq!(
+            std::fs::read(&freedom_path).expect("read freedom after"),
+            freedom_before
+        );
+        assert_eq!(
+            std::fs::read(&credentials_path).expect("read credentials after"),
+            credentials_before
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn configure_without_new_passphrase_uses_existing_identity_without_rewriting_credentials() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+        write_test_cluster_passphrase(home, "existing-passphrase");
+        let credentials_path = home.join("credentials.yaml");
+        let credentials_before = std::fs::read(&credentials_path).expect("read credentials before");
+        let desired = ClusterConfig {
+            name: Some("existing-identity".to_string()),
+            enabled: true,
+            ..ClusterConfig::default()
+        };
+
+        let receipt = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect("existing secret completes enabled identity");
+
+        assert!(receipt.cluster.enabled);
+        assert!(receipt.restart_required);
+        assert!(receipt.cluster_passphrase_set);
+        assert_eq!(
+            std::fs::read(&credentials_path).expect("read credentials after"),
+            credentials_before,
+            "public-only configure must not rewrite credentials.yaml"
+        );
+    }
+
+    #[test]
+    fn configure_without_new_passphrase_preserves_every_legacy_inline_secret() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut config = FreedomConfig::default();
+        config.provider_key = Some(SecretString::from("legacy-provider"));
+        config.telegram_token = Some(SecretString::from("111111111:legacy-telegram"));
+        config.inference.left.key = Some(SecretString::from("legacy-left"));
+        config.inference.right.key = Some(SecretString::from("legacy-right"));
+        config.inference.cerebellum.key = Some(SecretString::from("legacy-cerebellum"));
+        config.inference.default_slot.key = Some(SecretString::from("legacy-default"));
+        write_test_freedom(home, &config);
+        let freedom_path = home.join("freedom.yaml");
+        let mut raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).expect("read initial freedom"))
+                .expect("parse initial freedom");
+        let root = raw.as_mapping_mut().expect("mapping");
+        root.insert(
+            serde_yaml::Value::String("future_extension".to_string()),
+            serde_yaml::Value::String("keep-me".to_string()),
+        );
+        let cluster = root
+            .get_mut(&serde_yaml::Value::String("cluster".to_string()))
+            .and_then(serde_yaml::Value::as_mapping_mut)
+            .expect("cluster mapping");
+        cluster.insert(
+            serde_yaml::Value::String("future_carrier_hint".to_string()),
+            serde_yaml::Value::String("keep-cluster-extension".to_string()),
+        );
+        let gossip = cluster
+            .get_mut(&serde_yaml::Value::String("gossip".to_string()))
+            .and_then(serde_yaml::Value::as_mapping_mut)
+            .expect("gossip mapping");
+        gossip.insert(
+            serde_yaml::Value::String("future_strategy".to_string()),
+            serde_yaml::Value::String("keep-nested-extension".to_string()),
+        );
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&raw).expect("serialize extended freedom"),
+        )
+        .expect("write extended freedom");
+
+        let desired = ClusterConfig {
+            peers: vec!["peer,with,commas".to_string()],
+            ..ClusterConfig::default()
+        };
+        configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect("public-only cluster update");
+
+        let persisted: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).expect("read updated freedom"))
+                .expect("parse updated freedom");
+        assert_eq!(persisted["provider_key"].as_str(), Some("legacy-provider"));
+        assert_eq!(
+            persisted["telegram_token"].as_str(),
+            Some("111111111:legacy-telegram")
+        );
+        assert_eq!(
+            persisted["inference"]["left"]["key"].as_str(),
+            Some("legacy-left")
+        );
+        assert_eq!(
+            persisted["inference"]["right"]["key"].as_str(),
+            Some("legacy-right")
+        );
+        assert_eq!(
+            persisted["inference"]["cerebellum"]["key"].as_str(),
+            Some("legacy-cerebellum")
+        );
+        assert_eq!(
+            persisted["inference"]["default_slot"]["key"].as_str(),
+            Some("legacy-default")
+        );
+        assert_eq!(persisted["future_extension"].as_str(), Some("keep-me"));
+        assert_eq!(
+            persisted["cluster"]["future_carrier_hint"].as_str(),
+            Some("keep-cluster-extension")
+        );
+        assert_eq!(
+            persisted["cluster"]["gossip"]["future_strategy"].as_str(),
+            Some("keep-nested-extension")
+        );
+        assert!(
+            !home.join("credentials.yaml").exists(),
+            "public-only cluster apply must not invent or rewrite credentials.yaml"
+        );
+    }
+
+    #[test]
+    fn enable_disable_alias_preserves_complete_cluster_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut config = FreedomConfig::default();
+        config.cluster = ClusterConfig {
+            name: Some("operators".to_string()),
+            enabled: false,
+            transport: ClusterTransport::Peeroxide,
+            peers: vec!["peer,one".to_string(), " peer two ".to_string()],
+            mdns: ClusterMdnsConfig { enabled: false },
+            policy: ClusterAnnouncePolicy {
+                announce_on_untrusted_wifi: true,
+                trusted_ssids: vec!["Office, East".to_string()],
+            },
+            gossip: crate::config::ClusterGossipPolicy::default(),
+            listen_port: 51_234,
+        };
+        write_test_freedom(home, &config);
+
+        let enabled = toggle_desired_cluster_at(home, true).expect("build enable snapshot");
+        assert!(enabled.enabled);
+        let mut expected = config.cluster.clone();
+        expected.enabled = true;
+        assert_eq!(
+            ClusterConfigureSnapshot::from(&enabled),
+            ClusterConfigureSnapshot::from(&expected)
+        );
+
+        let disabled = toggle_desired_cluster_at(home, false).expect("build disable snapshot");
+        assert_eq!(
+            ClusterConfigureSnapshot::from(&disabled),
+            ClusterConfigureSnapshot::from(&config.cluster)
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn configure_retry_keeps_restart_pending_until_daemon_carrier_acknowledgement() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+        write_test_cluster_passphrase(home, "existing-passphrase");
+        let desired = ClusterConfig {
+            name: Some("operators".to_string()),
+            enabled: true,
+            ..ClusterConfig::default()
+        };
+
+        let first = configure_cluster_at_with_reload(home, desired.clone(), None, |_| Ok(()))
+            .expect("first configure");
+        assert!(first.restart_required);
+        let retry = configure_cluster_at_with_reload(home, desired.clone(), None, |_| Ok(()))
+            .expect("retry before restart");
+        assert!(
+            retry.restart_required,
+            "disk equality must not clear a pending restart"
+        );
+
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+        let live_config =
+            FreedomConfig::load_from_path(&home.join("freedom.yaml")).expect("load live config");
+        let live_credentials = Credentials::load_or_default(&home.join("credentials.yaml"))
+            .expect("load live credentials");
+        acknowledge_cluster_runtime_at(home, &live_config, &live_credentials, true, false)
+            .expect("daemon acknowledges successful carrier startup");
+        let after_restart = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect("retry after a new daemon generation");
+        assert!(after_restart.reload_requested);
+        assert!(!after_restart.restart_required);
+    }
+
+    #[test]
+    fn daemon_pid_without_pidfile_lock_is_not_runtime_evidence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pidfile = dir.path().join("neothd.pid");
+        std::fs::write(&pidfile, format!("{}\n", std::process::id()))
+            .expect("write unlocked pidfile");
+        assert_eq!(live_daemon_owner_pid(dir.path()).unwrap(), None);
+
+        let _owner = crate::daemon::pidfile::acquire(&pidfile).expect("lock daemon pidfile");
+        assert_eq!(
+            live_daemon_owner_pid(dir.path()).unwrap(),
+            Some(std::process::id())
+        );
+    }
+
+    #[test]
+    fn runtime_state_requires_exact_snapshot_and_daemon_carrier_acknowledgement() {
+        let desired = ClusterConfigureSnapshot::from(&ClusterConfig {
+            enabled: true,
+            name: Some("operators".to_string()),
+            ..ClusterConfig::default()
+        });
+        let binding = ClusterIdentityBinding([7_u8; 32]);
+        let mut state =
+            ClusterRuntimeState::blocked(desired.clone(), true, Some(binding.clone())).finalize();
+        assert!(!cluster_runtime_applied(
+            Some(&state),
+            &desired,
+            true,
+            Some(&binding),
+            Some(41)
+        ));
+        state.acknowledged_daemon_pid = Some(42);
+        state.carrier_active = true;
+        assert!(cluster_runtime_applied(
+            Some(&state),
+            &desired,
+            true,
+            Some(&binding),
+            Some(42)
+        ));
+        assert!(cluster_runtime_carrier_active(
+            Some(&state),
+            &desired,
+            true,
+            Some(&binding),
+            Some(42)
+        ));
+        state.carrier_active = false;
+        assert!(cluster_runtime_applied(
+            Some(&state),
+            &desired,
+            true,
+            Some(&binding),
+            Some(42)
+        ));
+        assert!(!cluster_runtime_carrier_active(
+            Some(&state),
+            &desired,
+            true,
+            Some(&binding),
+            Some(42)
+        ));
+
+        let mut different = desired.clone();
+        different.listen_port += 1;
+        assert!(!cluster_runtime_applied(
+            Some(&state),
+            &different,
+            true,
+            Some(&binding),
+            Some(42)
+        ));
+        assert!(!cluster_runtime_applied(
+            Some(&state),
+            &desired,
+            false,
+            None,
+            Some(42)
+        ));
+
+        let disabled = ClusterConfigureSnapshot::from(&ClusterConfig::default());
+        let disabled_pending =
+            ClusterRuntimeState::blocked(disabled.clone(), false, None).finalize();
+        assert!(
+            cluster_runtime_applied(Some(&disabled_pending), &disabled, false, None, None),
+            "a stopped daemon already makes a disabled target inert"
+        );
+    }
+
+    #[test]
+    fn daemon_ack_does_not_overwrite_config_committed_between_load_and_ack() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let startup_config = FreedomConfig::default();
+        write_test_freedom(home, &startup_config);
+        let startup_credentials = Credentials::default();
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+
+        let desired = ClusterConfig {
+            peers: vec!["new-peer".to_string()],
+            ..ClusterConfig::default()
+        };
+        let receipt = configure_cluster_at_with_reload(home, desired.clone(), None, |_| Ok(()))
+            .expect("concurrent configure commits B");
+        assert!(receipt.restart_required);
+        let before = load_cluster_runtime_state(home)
+            .expect("load B marker")
+            .expect("B marker exists");
+        assert!(before.ready_for_confirmation);
+        assert_eq!(before.cluster, ClusterConfigureSnapshot::from(&desired));
+        assert_eq!(before.acknowledged_daemon_pid, None);
+
+        acknowledge_cluster_runtime_at(home, &startup_config, &startup_credentials, false, false)
+            .expect("stale daemon acknowledgement is ignored");
+        let after = load_cluster_runtime_state(home)
+            .expect("reload B marker")
+            .expect("B marker remains");
+        assert_eq!(after, before, "ACK A must not erase pending B");
+    }
+
+    #[test]
+    fn daemon_ack_rejects_passphrase_rotation_with_unchanged_public_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut startup_config = FreedomConfig::default();
+        startup_config.cluster = ClusterConfig {
+            enabled: true,
+            name: Some("operators".to_string()),
+            ..ClusterConfig::default()
+        };
+        write_test_freedom(home, &startup_config);
+        let startup_credentials = Credentials {
+            cluster_passphrase: Some(SecretString::new("generation-a".to_string())),
+            ..Credentials::default()
+        };
+        startup_credentials
+            .write(&home.join("credentials.yaml"))
+            .expect("write startup credentials A");
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+
+        // The public snapshot and has-passphrase bit stay identical while a
+        // concurrent configure rotates the carrier secret from A to B.
+        let credentials_b = Credentials {
+            cluster_passphrase: Some(SecretString::new("generation-b".to_string())),
+            ..Credentials::default()
+        };
+        credentials_b
+            .write(&home.join("credentials.yaml"))
+            .expect("write rotated credentials B");
+        let binding_b =
+            cluster_identity_binding(home, &credentials_b, true).expect("derive B runtime binding");
+        let pending_b = ClusterRuntimeState::blocked(
+            ClusterConfigureSnapshot::from(&startup_config.cluster),
+            true,
+            binding_b,
+        )
+        .finalize();
+        write_cluster_runtime_state(home, &pending_b).expect("write B pending marker");
+
+        acknowledge_cluster_runtime_at(home, &startup_config, &startup_credentials, true, false)
+            .expect("stale A acknowledgement is ignored");
+        assert_eq!(
+            load_cluster_runtime_state(home).unwrap(),
+            Some(pending_b),
+            "a carrier keyed with A must not acknowledge pending generation B"
+        );
+    }
+
+    #[test]
+    fn status_invalidates_ack_after_out_of_band_passphrase_rotation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut config = FreedomConfig::default();
+        config.cluster = ClusterConfig {
+            enabled: true,
+            name: Some("operators".to_string()),
+            ..ClusterConfig::default()
+        };
+        write_test_freedom(home, &config);
+        let credentials_a = Credentials {
+            cluster_passphrase: Some(SecretString::new("generation-a".to_string())),
+            ..Credentials::default()
+        };
+        credentials_a
+            .write(&home.join("credentials.yaml"))
+            .expect("write credentials A");
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+        acknowledge_cluster_runtime_at(home, &config, &credentials_a, true, false)
+            .expect("acknowledge carrier A");
+
+        let state = load_cluster_runtime_state(home).unwrap().unwrap();
+        let snapshot = ClusterConfigureSnapshot::from(&config.cluster);
+        let binding_a =
+            cluster_identity_binding(home, &credentials_a, false).expect("load A binding");
+        assert!(cluster_runtime_carrier_active(
+            Some(&state),
+            &snapshot,
+            true,
+            binding_a.as_ref(),
+            Some(std::process::id()),
+        ));
+
+        let credentials_b = Credentials {
+            cluster_passphrase: Some(SecretString::new("generation-b".to_string())),
+            ..Credentials::default()
+        };
+        credentials_b
+            .write(&home.join("credentials.yaml"))
+            .expect("out-of-band rotate credentials to B");
+        let current = crate::config::load_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+            .expect("load coherent B pair");
+        let binding_b =
+            cluster_identity_binding(home, &current.credentials, false).expect("load B binding");
+        let runtime_applied = cluster_runtime_applied(
+            Some(&state),
+            &snapshot,
+            true,
+            binding_b.as_ref(),
+            Some(std::process::id()),
+        );
+        assert!(!runtime_applied, "rotated credentials require a restart");
+        assert!(!cluster_runtime_carrier_active(
+            Some(&state),
+            &snapshot,
+            true,
+            binding_b.as_ref(),
+            Some(std::process::id()),
+        ));
+    }
+
+    #[test]
+    fn public_only_configure_holds_credential_generation_through_freedom_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut config = FreedomConfig::default();
+        config.cluster = ClusterConfig {
+            enabled: true,
+            name: Some("operators".to_string()),
+            ..ClusterConfig::default()
+        };
+        write_test_freedom(home, &config);
+        write_test_cluster_passphrase(home, "generation-a");
+
+        let (validated_tx, validated_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        let configure_home = home.to_path_buf();
+        let desired = config.cluster.clone();
+        let configure = std::thread::spawn(move || {
+            configure_cluster_at_with_reload_and_public_validation_hook(
+                &configure_home,
+                desired,
+                None,
+                |_| Ok(()),
+                move || {
+                    validated_tx.send(()).expect("signal validated pair");
+                    release_rx.recv().expect("release freedom commit");
+                },
+            )
+        });
+        validated_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("configure reached validation/commit barrier");
+
+        let credentials_path = home.join("credentials.yaml");
+        let (writer_started_tx, writer_started_rx) = std::sync::mpsc::sync_channel(0);
+        let (writer_entered_tx, writer_entered_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            writer_started_tx.send(()).expect("signal writer start");
+            Credentials::update_at(&credentials_path, |credentials| {
+                writer_entered_tx
+                    .send(())
+                    .expect("signal credential mutation entry");
+                credentials.cluster_passphrase =
+                    Some(SecretString::new("generation-b".to_string()));
+                Ok(())
+            })
+        });
+        writer_started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("writer reached update call");
+        let writer_entry_while_locked =
+            writer_entered_rx.recv_timeout(std::time::Duration::from_millis(250));
+
+        release_tx
+            .send(())
+            .expect("release coherent freedom commit");
+        configure
+            .join()
+            .expect("configure thread")
+            .expect("public-only configure succeeds");
+        writer
+            .join()
+            .expect("credential writer thread")
+            .expect("credential rotation succeeds after freedom commit");
+        assert!(
+            matches!(
+                writer_entry_while_locked,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ),
+            "credential writer entered before the coherent freedom commit released its transaction"
+        );
+    }
+
+    #[test]
+    fn public_only_configure_blocks_pre_journal_credential_writer_through_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut config = FreedomConfig::default();
+        config.cluster = ClusterConfig {
+            enabled: true,
+            name: Some("operators".to_string()),
+            ..ClusterConfig::default()
+        };
+        write_test_freedom(home, &config);
+        write_test_cluster_passphrase(home, "generation-a");
+
+        let (validated_tx, validated_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        let configure_home = home.to_path_buf();
+        let desired = config.cluster.clone();
+        let configure = std::thread::spawn(move || {
+            configure_cluster_at_with_reload_and_public_validation_hook(
+                &configure_home,
+                desired,
+                None,
+                |_| Ok(()),
+                move || {
+                    validated_tx.send(()).expect("signal validated pair");
+                    release_rx.recv().expect("release freedom commit");
+                },
+            )
+        });
+        validated_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("configure reached validation/commit barrier");
+
+        let credentials_path = home.join("credentials.yaml");
+        let credentials_lock_path = credentials_path.with_extension("lock");
+        let (writer_started_tx, writer_started_rx) = std::sync::mpsc::sync_channel(0);
+        let (writer_locked_tx, writer_locked_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            writer_started_tx
+                .send(())
+                .expect("signal legacy writer start");
+            // Simulate a pre-journal process: it knows only the legacy
+            // credentials OS lock and deliberately never takes the new shared
+            // transaction lock.
+            let _legacy_lock = crate::util::locked_file::lock_file_blocking(
+                &credentials_lock_path,
+                "legacy credentials",
+            )
+            .expect("acquire legacy credentials lock");
+            writer_locked_tx
+                .send(())
+                .expect("signal legacy writer lock acquisition");
+            let replacement = Credentials {
+                cluster_passphrase: Some(SecretString::new("generation-b".to_string())),
+                ..Default::default()
+            };
+            let body = zeroize::Zeroizing::new(
+                serde_yaml::to_string(&replacement).expect("serialize replacement credentials"),
+            );
+            crate::util::atomic_write::atomic_write_private(&credentials_path, body.as_bytes())
+                .expect("publish legacy credential rotation");
+        });
+        writer_started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("legacy writer reached lock call");
+        let writer_lock_while_configuring =
+            writer_locked_rx.recv_timeout(std::time::Duration::from_millis(250));
+
+        release_tx
+            .send(())
+            .expect("release coherent freedom commit");
+        configure
+            .join()
+            .expect("configure thread")
+            .expect("public-only configure succeeds");
+        writer.join().expect("legacy credential writer thread");
+        assert!(
+            matches!(
+                writer_lock_while_configuring,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ),
+            "pre-journal writer acquired the credential lock before the coherent freedom commit"
+        );
+        assert_eq!(
+            Credentials::load_or_default(&home.join("credentials.yaml"))
+                .expect("load rotated credentials")
+                .cluster_passphrase
+                .as_ref()
+                .map(SecretString::expose),
+            Some("generation-b")
+        );
+    }
+
+    #[test]
+    fn daemon_ack_recovers_orphan_blocked_marker_when_disk_stayed_at_startup_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let startup_config = FreedomConfig::default();
+        write_test_freedom(home, &startup_config);
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+        let orphan = ClusterRuntimeState::blocked(
+            ClusterConfigureSnapshot::from(&ClusterConfig {
+                peers: vec!["never-committed".to_string()],
+                ..ClusterConfig::default()
+            }),
+            false,
+            None,
+        );
+        write_cluster_runtime_state(home, &orphan).expect("write orphan blocked marker");
+
+        acknowledge_cluster_runtime_at(
+            home,
+            &startup_config,
+            &Credentials::default(),
+            false,
+            false,
+        )
+        .expect("recover orphan marker");
+        let state = load_cluster_runtime_state(home).unwrap().unwrap();
+        assert!(state.ready_for_confirmation);
+        assert_eq!(
+            state.cluster,
+            ClusterConfigureSnapshot::from(&startup_config.cluster)
+        );
+        assert_eq!(state.acknowledged_daemon_pid, Some(std::process::id()));
+    }
+
+    #[test]
+    fn daemon_ack_finalizes_blocked_marker_when_exact_commit_landed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut startup_config = FreedomConfig::default();
+        startup_config.cluster.peers = vec!["committed-peer".to_string()];
+        write_test_freedom(home, &startup_config);
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+        let blocked = ClusterRuntimeState::blocked(
+            ClusterConfigureSnapshot::from(&startup_config.cluster),
+            false,
+            None,
+        );
+        write_cluster_runtime_state(home, &blocked).expect("write matching blocked marker");
+
+        acknowledge_cluster_runtime_at(
+            home,
+            &startup_config,
+            &Credentials::default(),
+            false,
+            false,
+        )
+        .expect("ack exact landed config");
+        let state = load_cluster_runtime_state(home).unwrap().unwrap();
+        assert!(state.ready_for_confirmation);
+        assert_eq!(state.cluster, blocked.cluster);
+        assert_eq!(state.acknowledged_daemon_pid, Some(std::process::id()));
+    }
+
+    #[test]
+    fn daemon_ack_never_replaces_finalized_marker_for_another_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let startup_config = FreedomConfig::default();
+        write_test_freedom(home, &startup_config);
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+        let pending = ClusterRuntimeState::blocked(
+            ClusterConfigureSnapshot::from(&ClusterConfig {
+                peers: vec!["pending-peer".to_string()],
+                ..ClusterConfig::default()
+            }),
+            false,
+            None,
+        )
+        .finalize();
+        write_cluster_runtime_state(home, &pending).expect("write finalized pending marker");
+
+        acknowledge_cluster_runtime_at(
+            home,
+            &startup_config,
+            &Credentials::default(),
+            false,
+            false,
+        )
+        .expect("mismatched finalized marker is left pending");
+        assert_eq!(load_cluster_runtime_state(home).unwrap(), Some(pending));
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn configure_enabled_without_existing_or_new_passphrase_preserves_public_bytes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+        let freedom_path = home.join("freedom.yaml");
+        let before = std::fs::read(&freedom_path).expect("read freedom before");
+        let desired = ClusterConfig {
+            name: Some("missing-secret".to_string()),
+            enabled: true,
+            ..ClusterConfig::default()
+        };
+
+        let error = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect_err("enabled identity without a passphrase must fail closed");
+
+        assert!(error.to_string().contains("identity is incomplete"));
+        assert_eq!(
+            std::fs::read(&freedom_path).expect("read freedom after"),
+            before
+        );
+        assert!(!home.join("credentials.yaml").exists());
+    }
+
+    #[test]
+    fn configure_json_lists_round_trip_commas_and_whitespace_exactly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+
+        let desired = build_cluster_config(
+            false,
+            None,
+            "peeroxide",
+            r#"["peer,one","  peer two  "]"#,
+            true,
+            false,
+            r#"["SSID,with,commas","  exact spaces  "]"#,
+            false,
+            30,
+            49_737,
+        )
+        .expect("valid list config");
+        let receipt = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect("commit list config");
+
+        assert!(receipt.reload_requested);
+        assert_eq!(receipt.reload_error, None);
+        assert!(
+            !receipt.restart_required,
+            "a disabled cluster with no daemon is already inert"
+        );
+        assert_eq!(receipt.cluster.peers, ["peer,one", "  peer two  "]);
+        assert_eq!(
+            receipt.cluster.policy.trusted_ssids,
+            ["SSID,with,commas", "  exact spaces  "]
+        );
+        let stored = FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+            .expect("reload stored config");
+        assert_eq!(stored.cluster.peers, receipt.cluster.peers);
+        assert_eq!(
+            stored.cluster.policy.trusted_ssids,
+            receipt.cluster.policy.trusted_ssids
+        );
+    }
+
+    #[test]
+    fn configure_unchanged_snapshot_without_secret_mutation_needs_no_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+
+        let receipt =
+            configure_cluster_at_with_reload(home, ClusterConfig::default(), None, |_| Ok(()))
+                .expect("unchanged cluster snapshot");
+
+        assert!(receipt.reload_requested);
+        assert!(!receipt.restart_required);
+        assert!(!receipt.cluster_passphrase_set);
+    }
+
+    #[test]
+    fn configure_passphrase_while_cluster_and_daemon_are_stopped_needs_no_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+
+        let receipt = configure_cluster_at_with_reload(
+            home,
+            ClusterConfig::default(),
+            Some(SecretString::new("new-passphrase".to_string())),
+            |_| Ok(()),
+        )
+        .expect("secret-only cluster mutation");
+
+        assert!(!receipt.restart_required);
+        assert!(receipt.cluster_passphrase_set);
+    }
+
+    #[test]
+    fn configure_passphrase_while_daemon_is_live_keeps_restart_pending() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+
+        let receipt = configure_cluster_at_with_reload(
+            home,
+            ClusterConfig::default(),
+            Some(SecretString::new("new-passphrase".to_string())),
+            |_| Ok(()),
+        )
+        .expect("secret-only cluster mutation");
+
+        assert!(receipt.restart_required);
+        assert!(receipt.cluster_passphrase_set);
+    }
+
+    #[cfg(not(feature = "cluster-iroh"))]
+    #[test]
+    fn configure_iroh_without_feature_fails_closed_before_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        write_test_freedom(home, &FreedomConfig::default());
+        let freedom_path = home.join("freedom.yaml");
+        let before = std::fs::read(&freedom_path).expect("read freedom before");
+        let desired = ClusterConfig {
+            transport: ClusterTransport::Iroh,
+            ..ClusterConfig::default()
+        };
+
+        let error = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect_err("unavailable iroh transport must fail closed even while disabled");
+        assert!(error.to_string().contains("cluster-iroh"));
+        assert_eq!(
+            std::fs::read(&freedom_path).expect("read freedom after"),
+            before
+        );
+    }
+
+    #[test]
+    fn passphrase_stdin_trims_one_line_ending_and_preserves_everything_else() {
+        let passphrase = cluster_passphrase_from_line("  alpha beta  \r\n".to_string())
+            .expect("valid passphrase");
+        assert_eq!(passphrase.expose(), "  alpha beta  ");
+
+        let passphrase = cluster_passphrase_from_line("alpha\n\n".to_string())
+            .expect("valid passphrase with an intentional trailing newline");
+        assert_eq!(passphrase.expose(), "alpha\n");
+        assert!(cluster_passphrase_from_line(" \t\r\n".to_string()).is_err());
+    }
+
+    #[test]
+    fn configure_receipt_rejects_unknown_top_level_and_nested_fields() {
+        let receipt = ClusterConfigureReceipt {
+            operation: "cluster.configure".to_string(),
+            path: "freedom.yaml".to_string(),
+            reload_requested: true,
+            reload_error: None,
+            restart_required: false,
+            cluster_passphrase_set: false,
+            cluster: ClusterConfigureSnapshot::from(&ClusterConfig::default()),
+        };
+        let mut top_level = serde_json::to_value(&receipt).expect("receipt value");
+        top_level
+            .as_object_mut()
+            .expect("receipt object")
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        assert!(serde_json::from_value::<ClusterConfigureReceipt>(top_level).is_err());
+
+        let mut nested = serde_json::to_value(&receipt).expect("receipt value");
+        nested["cluster"]["mdns"]["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<ClusterConfigureReceipt>(nested).is_err());
+    }
 
     #[test]
     fn validate_pub_key_hex_accepts_64_lowercase_hex() {

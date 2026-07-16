@@ -211,14 +211,22 @@ neoth serve
 | Command | Purpose |
 | :-- | :-- |
 | `channel list` | Show every channel + whether it is configured. |
-| `channel add <name>` | Connect a supported channel (telegram/slack/whatsapp/keet/...). Telegram requires `--token --telegram-user-id` and commits secret + exact sender policy through a locked rollback-safe `credentials.yaml`/`freedom.yaml` update. Keet requires `--url --token --server --allowed-sender`. Interactive equivalents use secret-safe prompts. |
+| `channel add <name>` | Connect a supported channel (telegram/slack/whatsapp/keet/...). Every inbound adapter collects its sender policy in the same transaction: Telegram uses `--telegram-user-id`; Discord, Slack, WhatsApp Business, Signal and LINE use `--allowed-sender`; Keet uses `--url --token --server --allowed-sender`. Interactive equivalents use secret-safe prompts. |
 | `channel test <name>` | Protocol-specific read-only credential/reachability check. Sends no chat and consumes no inbound queue. Exit 0=`ok`, 1=`fail`, 2=`skipped`/`unavailable`; JSON always carries the typed verdict. |
 | `channel remove <name>` | Clear a channel's durable adoption state; Telegram removes both token and sender policy. |
 | `serve` | Run daemon/channel server. |
 
-Discord stores `discord_bot_token` in `credentials.yaml`; `channel test discord`
+Discord stores `discord_bot_token` and the mandatory immutable-user policy
+`discord_allowed_user_id` in `credentials.yaml`; `channel test discord`
 performs a read-only `GET /users/@me` identity probe and `serve` owns the live
-Gateway receive loop. Email IMAP ingest is a source-build `imap_fetch` opt-in,
+Gateway receive loop. Inbound stays disabled unless both fields are valid.
+Slack, WhatsApp Business, Signal and LINE likewise store mandatory exact
+inbound policies as `slack_allowed_user_id`, `whatsapp_allowed_sender`,
+`signal_allowed_sender`, and `line_allowed_sender`. Workspace membership or a
+valid webhook signature authenticates the transport, not the operator. The
+daemon keeps the adapter off when policy is missing and WAL-audits mismatches
+without message content.
+Email IMAP ingest is a source-build `imap_fetch` opt-in,
 configured through IMAP environment/OAuth credentials rather than
 `channel add`. Calendar reads its CalDAV URL and credentials from
 `freedom.yaml` / `credentials.yaml`.
@@ -323,9 +331,16 @@ the authenticated full-duplex companion before a Cron call can spend.
 ```bash
 neoth cluster discover
 neoth cluster confirm <peer>
+neoth cluster configure --enabled false --transport peeroxide \
+  --peers-json '[]' --mdns-enabled true \
+  --announce-on-untrusted-wifi false --trusted-ssids-json '[]' \
+  --replicate-raw-ingress false --replay-budget-days 30 \
+  --listen-port 49737
 neoth cluster status
 neoth cluster list
 neoth cluster sync-state
+neoth cluster conflicts
+neoth cluster conflicts resolve <content-id> --prefer <peer>
 neoth cluster export-foreign --peer <peer> --out backup.jsonl
 neoth cluster restore backup.jsonl
 neoth hardware
@@ -335,12 +350,49 @@ neoth hardware
 | :-- | :-- |
 | `cluster discover` | Find candidate nodes. |
 | `cluster confirm <peer>` | Approve a peer. |
-| `cluster status` | Show mesh health. |
+| `cluster configure` | Atomically replace the complete cluster configuration and return an exact receipt (`neoth --output json cluster configure …` for machine-readable output). |
+| `cluster status` | Show mesh health, live gossip posture and unresolved conflict count. |
 | `cluster topology` | Show connected surfaces/nodes. |
 | `cluster sync-state` | Inspect per-peer ACK cursors, pending replay, and contiguous inbound sequence. |
+| `cluster conflicts` | Inspect typed same-content divergence with both origins and digests. |
+| `cluster conflicts resolve` | Persist a preferred-origin decision while retaining forensic history. |
 | `cluster export-foreign` | Export original WAL frames plus canonical v5 content envelopes. |
 | `cluster restore` | Restore canonical memory/ground-truth through durable local-ID mapping. |
 | `local resources` | Show GPU/CPU/RAM/model usage. |
+
+`cluster configure` is a **complete-snapshot** command, not a field patch. Every
+invocation supplies the desired master switch, name, carrier, peer list, mDNS
+switch, announce policy, trusted SSIDs, raw-ingress privacy policy, replay
+window and listen port; omitted options take
+their documented defaults. Prefer the GUI Cluster panel for an interactive
+first setup. For CLI automation, pass peer and SSID lists as JSON arrays and
+pipe a new shared secret through `--passphrase-stdin`; never place the secret
+on the command line. Enabling is rejected unless the resulting snapshot has a
+non-empty cluster name and an existing or newly supplied shared passphrase.
+
+The success receipt distinguishes **saved** from **active**. Enabled lifecycle
+changes, and changes while a running daemon owns the prior state, return
+`restart_required: true`. Disabled plus stopped is already inert and returns
+`false`. The daemon deliberately rejects cluster lifecycle changes before its
+live configuration swap, so transport and mDNS do not hot-switch even if
+`reload_requested` is true. Gossip privacy/replay policy is resolved live by
+both carriers after reload. An identical retry stays pending; disk equality
+is not runtime proof. Restart the supervised daemon when the receipt requires
+it. Only the daemon may acknowledge the exact public snapshot and owner-private
+identity binding after successful carrier construction, and `cluster status`
+uses that acknowledgement before returning `transport_active: true`; the GUI
+reports the same state instead of inferring liveness from configuration.
+The Mesh panel and `cluster status` never silently flatten canonical-content
+divergence. Inspect the full ledger with `cluster conflicts`; resolve a stable
+content ID by choosing an origin. That choice is durable for the observed
+digest pairs, while a new pair reopens the operator-visible conflict.
+Use the global `--output json` or `--output jsonl` option before `cluster` when a
+script needs the strict receipt rather than the human-readable table.
+
+Signed native desktop releases for GNU Linux, macOS and Windows contain both
+Peeroxide and Iroh. The static headless musl server contains Peeroxide only and
+rejects `--transport iroh` before writing configuration. Source builds need
+`--features release-desktop` (or `cluster-iroh`) for Iroh.
 
 ## Maintenance
 

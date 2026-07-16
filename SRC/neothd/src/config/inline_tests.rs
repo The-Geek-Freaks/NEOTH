@@ -1224,6 +1224,20 @@ mod tests {
         assert!(cfg.proactive.enabled);
     }
 
+    #[test]
+    fn proactive_validation_bounds_hours_and_idle_nanoseconds() {
+        let mut cfg = ProactiveConfig::default();
+        cfg.quiet_hours_utc = Some([24, 7]);
+        assert!(cfg.validate().is_err());
+
+        cfg.quiet_hours_utc = Some([22, 7]);
+        cfg.idle_only_window_secs = ProactiveConfig::MAX_IDLE_WINDOW_SECS + 1;
+        assert!(cfg.validate().is_err());
+
+        cfg.idle_only_window_secs = ProactiveConfig::MAX_IDLE_WINDOW_SECS;
+        cfg.validate().unwrap();
+    }
+
     // ── SC-10 per-model download policy ───────────────────────────────
     #[test]
     fn sc10_model_download_allowed_falls_back_to_global_flag() {
@@ -1386,8 +1400,8 @@ mod tests {
         );
     }
 
-    /// OH-11 Test 3 — save_public_to_default_path round-trip for the flag.
-    /// Proves the persistence path: set flag true → save → reload → assert true.
+    /// OH-11 Test 3 — serialized public-config round-trip for the flag.
+    /// Proves the schema path: set flag true → serialize → reload → assert true.
     #[test]
     fn chat_onboarding_completed_flag_persists_via_save_reload() {
         use std::io::Write as _;
@@ -1398,8 +1412,8 @@ mod tests {
             chat_onboarding_completed: true,
             ..Default::default()
         };
-        // Write manually to the temp path (save_public_to_default_path uses
-        // the OS home path, so we replicate its logic here without HOME side-effects).
+        // Write manually to the injected temp path without process-global HOME
+        // side effects; update_at behaviour has dedicated lossless RMW tests.
         let path = dir.path().join("freedom.yaml");
         let body = serde_yaml::to_string(&cfg).expect("serialize");
         std::fs::File::create(&path)
@@ -1589,6 +1603,123 @@ mod locked_update_tests {
 
         assert!(err.to_string().contains("parse YAML"));
         assert_eq!(std::fs::read(&path).unwrap(), malformed);
+    }
+
+    #[test]
+    fn raw_update_paths_validate_target_before_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        write_default(&path);
+        let original = std::fs::read(&path).unwrap();
+
+        let direct_error = super::super::update_raw_freedom_at(&path, |_| {
+            Ok(("cluster:\n  listen_port: 0\n".to_string(), ()))
+        })
+        .unwrap_err();
+        assert!(direct_error.to_string().contains("validate transformed"));
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        let prepared_error = super::super::prepare_raw_freedom_update(&path, |_| {
+            Ok(("cluster:\n  listen_port: 0\n".to_string(), ()))
+        })
+        .err()
+        .expect("invalid prepared target must fail before a plan escapes");
+        assert!(prepared_error.to_string().contains("validate prepared"));
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn update_at_preserves_future_yaml_aliases_and_legacy_inline_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let credentials = b"provider_key: dedicated-secret\nfuture_secret: keep-me\n";
+        std::fs::write(
+            &path,
+            r#"operator_id: old
+provider_key: legacy-provider
+telegram_token: legacy-telegram
+inference:
+  left:
+    key: legacy-left
+    future_slot_field: keep-slot
+loop_config:
+  enabled: true
+  token_budget: 7
+  future_loop_field: keep-loop
+proactive:
+  enabled: false
+  future_proactive_field: keep-proactive
+future_extension:
+  nested: keep-root
+"#,
+        )
+        .unwrap();
+        std::fs::write(&credentials_path, credentials).unwrap();
+
+        FreedomConfig::update_at(&path, |config| {
+            config.operator_id = Some("new".to_string());
+            config.proactive.enabled = true;
+            Ok(())
+        })
+        .unwrap();
+
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw["operator_id"].as_str(), Some("new"));
+        assert_eq!(raw["proactive"]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            raw["future_extension"]["nested"].as_str(),
+            Some("keep-root")
+        );
+        assert_eq!(
+            raw["proactive"]["future_proactive_field"].as_str(),
+            Some("keep-proactive")
+        );
+        assert_eq!(
+            raw["loop_config"]["future_loop_field"].as_str(),
+            Some("keep-loop")
+        );
+        assert_eq!(
+            raw["inference"]["left"]["future_slot_field"].as_str(),
+            Some("keep-slot")
+        );
+        assert_eq!(raw["provider_key"].as_str(), Some("legacy-provider"));
+        assert_eq!(raw["telegram_token"].as_str(), Some("legacy-telegram"));
+        assert_eq!(
+            raw["inference"]["left"]["key"].as_str(),
+            Some("legacy-left")
+        );
+        assert!(raw["loop_config"].get("token_budget").is_none());
+        assert_eq!(raw["loop_config"]["tool_call_budget"].as_u64(), Some(7));
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), credentials);
+    }
+
+    #[test]
+    fn prepared_update_cas_rejects_a_newer_generation_without_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "operator_id: old\nfuture_extension: keep-me\n").unwrap();
+        let (prepared, ()) = FreedomConfig::prepare_update_at(&path, |config| {
+            config.operator_id = Some("stale-prepared".to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        FreedomConfig::update_at(&path, |config| {
+            config.language_primary = Some("de".to_string());
+            Ok(())
+        })
+        .unwrap();
+        let before_failed_commit = std::fs::read(&path).unwrap();
+
+        let error = prepared.commit().unwrap_err();
+        assert!(error.to_string().contains("changed after review"));
+        assert_eq!(std::fs::read(&path).unwrap(), before_failed_commit);
+        let raw: serde_yaml::Value = serde_yaml::from_slice(&before_failed_commit).unwrap();
+        assert_eq!(raw["operator_id"].as_str(), Some("old"));
+        assert_eq!(raw["language_primary"].as_str(), Some("de"));
+        assert_eq!(raw["future_extension"].as_str(), Some("keep-me"));
     }
 
     #[cfg(windows)]

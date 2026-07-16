@@ -6,9 +6,9 @@
 //! `neoth permissions show`; this command is the post-onboarding setter/getter
 //! so operators retune WITHOUT re-running the wizard or hand-editing YAML.
 //!
-//! `set` persists through [`crate::config::FreedomConfig::save_public_to_default_path`]
-//! — the same atomic, 0600, secrets-stripped write `neoth hemispheres set`
-//! already uses, so it never leaks keys into freedom.yaml.
+//! `set` persists through a lossless, generation-bound config update. The
+//! commit preserves future YAML fields and never leaks split credentials back
+//! into freedom.yaml.
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};

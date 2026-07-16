@@ -51,6 +51,7 @@ release-server = [
 ]
 release-desktop = [
     "release-server",
+    "cluster-iroh",
     "os-clipboard",
     "wasm-plugin-host",
 ]
@@ -144,8 +145,11 @@ cluster = ["dep:peeroxide"]
 
 # iroh QUIC cluster transport (dial-by-key NodeId, NAT-traversal, relay
 # fallback) — an alternative to the peeroxide Hyperswarm transport. Default-OFF
-# so the base build stays lean (iroh pulls QUIC + relay deps); opt in with
-# `--features cluster-iroh`. Implies `cluster` (it is a cluster transport).
+# for ordinary contributor and headless-server builds so they stay lean (iroh
+# pulls QUIC + relay deps). Native desktop releases include it through the
+# `release-desktop` bundle because the GUI exposes iroh as a transport choice;
+# source builds can opt in directly with `--features cluster-iroh`. Implies
+# `cluster` (it is a cluster transport).
 cluster-iroh = ["cluster", "dep:iroh"]
 
 # D14b Phase 2c — GPU acceleration for local_qwen. Pin per-platform
@@ -342,8 +346,8 @@ lzma-rs = "0.3"
 peeroxide = { version = "1.3", optional = true }
 
 # iroh 1.0 — QUIC transport with dial-by-NodeId, NAT-traversal + relay fallback.
-# Optional, pulled only by the `cluster-iroh` feature (default-off — keeps the
-# base build lean since iroh brings the full QUIC + relay stack).
+# Optional, pulled only by `cluster-iroh`: present in native desktop releases,
+# absent from the lean headless musl/server bundle and ordinary source builds.
 iroh = { version = "1", optional = true }
 
 # R-7 heartbeat wire format (Session 19) — per Chorus

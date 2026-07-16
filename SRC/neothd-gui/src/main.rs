@@ -25,6 +25,12 @@ use tracing_subscriber::EnvFilter;
 // interleave their read-modify-write cycles and lose an update.
 static FREEDOM_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+// A status probe started before a mutation must never overwrite the newer
+// receipt-backed state. Every accepted Apply attempt advances this revision;
+// asynchronous status callbacks only publish while their captured revision is
+// still current.
+static CLUSTER_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[cfg(windows)]
 mod win_private {
     use std::fs::File;
@@ -578,42 +584,34 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
 
         // 6-second expiry timer — fires once then removes the id.
         let weak2 = w.as_weak();
-        let expiry = slint::Timer::default();
-        expiry.start(
-            slint::TimerMode::SingleShot,
-            std::time::Duration::from_millis(6000),
-            move || {
-                let Some(w2) = weak2.upgrade() else { return };
-                let remaining: Vec<(i32, String, String, String)> = w2
-                    .get_toasts()
+        slint::Timer::single_shot(std::time::Duration::from_millis(6000), move || {
+            let Some(w2) = weak2.upgrade() else { return };
+            let remaining: Vec<(i32, String, String, String)> = w2
+                .get_toasts()
+                .iter()
+                .map(|t| {
+                    (
+                        t.id,
+                        t.kind.to_string(),
+                        t.title.to_string(),
+                        t.body.to_string(),
+                    )
+                })
+                .collect();
+            let pruned = panel_logic::prune_toast(remaining, id);
+            let model2: slint::VecModel<ToastData> = slint::VecModel::from(
+                pruned
                     .iter()
-                    .map(|t| {
-                        (
-                            t.id,
-                            t.kind.to_string(),
-                            t.title.to_string(),
-                            t.body.to_string(),
-                        )
+                    .map(|(i, k, ti, b)| ToastData {
+                        id: *i,
+                        kind: k.as_str().into(),
+                        title: ti.as_str().into(),
+                        body: b.as_str().into(),
                     })
-                    .collect();
-                let pruned = panel_logic::prune_toast(remaining, id);
-                let model2: slint::VecModel<ToastData> = slint::VecModel::from(
-                    pruned
-                        .iter()
-                        .map(|(i, k, ti, b)| ToastData {
-                            id: *i,
-                            kind: k.as_str().into(),
-                            title: ti.as_str().into(),
-                            body: b.as_str().into(),
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                w2.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model2)));
-            },
-        );
-        // Keep the timer alive — leak it into a thread-local so it survives
-        // the enclosing closure. Slint timers must be alive to fire.
-        std::mem::forget(expiry);
+                    .collect::<Vec<_>>(),
+            );
+            w2.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model2)));
+        });
     });
 }
 
@@ -1578,22 +1576,37 @@ fn main() -> Result<()> {
                 "cluster.enabled",
                 false,
             ));
-            window
-                .set_cfg_cluster_name(read_nested_str_in_freedom(fp, "cluster.name", "").into());
+            window.set_cfg_cluster_name(read_nested_str_in_freedom(fp, "cluster.name", "").into());
             {
                 let t = read_nested_str_in_freedom(fp, "cluster.transport", "peeroxide");
                 window.set_cfg_cluster_transport_idx(if t == "iroh" { 1 } else { 0 });
             }
+            window.set_cfg_cluster_peers(
+                read_nested_string_list_in_freedom(fp, "cluster.peers")
+                    .join("\n")
+                    .into(),
+            );
             window.set_cfg_cluster_announce_untrusted(read_nested_bool_in_freedom(
                 fp,
                 "cluster.policy.announce_on_untrusted_wifi",
                 false,
             ));
             window.set_cfg_cluster_ssids(
-                read_nested_str_list_in_freedom(fp, "cluster", "policy", "trusted_ssids")
-                    .join(", ")
+                read_nested_string_list_in_freedom(fp, "cluster.policy.trusted_ssids")
+                    .join("\n")
                     .into(),
             );
+            window.set_cfg_cluster_replicate_raw_ingress(read_nested_bool_in_freedom(
+                fp,
+                "cluster.gossip.replicate_raw_ingress",
+                false,
+            ));
+            window.set_cfg_cluster_replay_days_text(
+                read_nested_i64_in_freedom(fp, "cluster.gossip.replay_budget_days", 30)
+                    .to_string()
+                    .into(),
+            );
+            window.set_cfg_cluster_listen_port_text(cluster_state.listen_port.to_string().into());
             // C3 — operator identity preload.
             window.set_cfg_operator_id(read_nested_str_in_freedom(fp, "operator_id", "").into());
             window.set_cfg_language_primary(
@@ -1768,6 +1781,8 @@ fn main() -> Result<()> {
             .into(),
         );
     }
+
+    refresh_cluster_config_status(window.as_weak());
 
     // GOLD-R4-03 — both first-run choices cross the canonical CLI writer.
     // Advance/exit only after persistence (and for CLI, a real terminal)
@@ -2127,7 +2142,7 @@ fn main() -> Result<()> {
         w.set_chat_send_in_flight(true);
         // Wave-2 feed A: chat send start → plan row.
         {
-            let snippet = if body.len() > 80 { &body[..80] } else { &body };
+            let snippet = utf8_prefix(&body, 80);
             push_activity(&w.as_weak(), "plan", "Thinking…", snippet);
         }
         // ODY-04 — arm the stall watchdog; refill the auto-nudge budget on
@@ -2170,12 +2185,15 @@ fn main() -> Result<()> {
             > = (|| {
                 let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                 let mut cmd = spawn_neothd_plain(&bin);
+                let stream_control_token = new_stream_control_token()?;
                 cmd.arg("chat").arg("--stream");
+                cmd.env("NEOTH_STREAM_CONTROL_TOKEN", &stream_control_token);
                 // ODY-03 — attachments ride as repeatable --attach args.
                 for p in &attach_paths {
                     cmd.arg("--attach").arg(p);
                 }
                 let mut child = cmd
+                    .arg("--")
                     .arg(&body)
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null())
@@ -2206,8 +2224,10 @@ fn main() -> Result<()> {
                             last_chunk.store(now_epoch_ms(), std::sync::atomic::Ordering::Relaxed);
                             // Re-decode the whole buffer each chunk so a
                             // split multi-byte char never bakes a U+FFFD.
-                            let (live, _done) =
-                                strip_stream_sentinel(&String::from_utf8_lossy(&acc));
+                            let (live, _done, _) = parse_stream_sentinel_with_token(
+                                &String::from_utf8_lossy(&acc),
+                                &stream_control_token,
+                            );
                             let weak_live = weak_worker.clone();
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(w) = weak_live.upgrade() {
@@ -2238,7 +2258,8 @@ fn main() -> Result<()> {
                     .and_then(|mut slot| slot.take())
                     .and_then(|mut c| c.wait().ok());
                 let raw = String::from_utf8_lossy(&acc);
-                let (reply, done, stats) = parse_stream_sentinel(&raw);
+                let (reply, done, stats) =
+                    parse_stream_sentinel_with_token(&raw, &stream_control_token);
                 if reply.is_empty() {
                     return Err("Provider returned an empty reply. Check `neoth doctor` + \
                                 `~/.neoth/freedom.yaml` provider settings."
@@ -2254,7 +2275,7 @@ fn main() -> Result<()> {
                     ));
                 }
                 // ODY-12/14 — deep-link chips ride the same sentinel line.
-                let links = parse_stream_links(&raw);
+                let links = parse_stream_links_with_token(&raw, &stream_control_token);
                 Ok((reply, stats, links))
             })();
             // Stream over (either way) — disarm the watchdog clock.
@@ -2274,7 +2295,7 @@ fn main() -> Result<()> {
                             Ok((_, stats, _)) => {
                                 format!("{}t out · {}ms", stats.output_tokens, stats.elapsed_ms)
                             }
-                            Err(e) => format!("error: {}", &e[..e.len().min(60)]),
+                            Err(e) => format!("error: {}", utf8_prefix(e, 60)),
                         };
                         push_activity(&weak_settle, "metric", "Reply done", &metric_detail);
                     }
@@ -5393,6 +5414,45 @@ fn main() -> Result<()> {
                 push_toast(&weak, "info", "Peer sync state", &body);
             });
         });
+
+        let weak_conflict_resolve = window.as_weak();
+        window.on_mesh_conflict_resolve_clicked(move |content_id, preferred_origin| {
+            let weak = weak_conflict_resolve.clone();
+            let content_id = content_id.to_string();
+            let preferred_origin = preferred_origin.to_string();
+            std::thread::spawn(move || {
+                let result = run_neothd_json_action::<gui_action::ClusterConflictResolveAck>(
+                    &[
+                        "cluster",
+                        "conflicts",
+                        "resolve",
+                        content_id.as_str(),
+                        "--prefer",
+                        preferred_origin.as_str(),
+                    ],
+                    "Cluster conflict resolve",
+                )
+                .and_then(|ack| {
+                    ack.verify(&content_id, &preferred_origin)?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => {
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Mesh conflict resolved",
+                            &format!(
+                                "Accepted {} for {} ({} row(s)).",
+                                ack.preferred_origin, ack.content_id, ack.resolved_count
+                            ),
+                        );
+                        refresh_mesh(weak);
+                    }
+                    Err(error) => push_toast(&weak, "error", "Conflict resolution failed", &error),
+                }
+            });
+        });
     }
 
     // ── GOLD-LOOP-03 — Loop panel wiring (display-gated `gui-loop`) ────
@@ -5539,11 +5599,7 @@ fn main() -> Result<()> {
             let prompt = prompt.to_string();
             // Wave-2 feed D: loop started.
             {
-                let snippet = if prompt.len() > 80 {
-                    &prompt[..80]
-                } else {
-                    &prompt
-                };
+                let snippet = utf8_prefix(&prompt, 80);
                 push_activity(&w0.as_weak(), "loop", "Loop started", snippet);
             }
             let weak = weak_loop_run.clone();
@@ -5555,6 +5611,7 @@ fn main() -> Result<()> {
                     let mut child = spawn_neothd_plain(&bin)
                         .arg("loop")
                         .arg("run")
+                        .arg("--")
                         .arg(&prompt)
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
@@ -7049,43 +7106,6 @@ fn main() -> Result<()> {
         }
     });
 
-    // Bite #5 — operator flipped the cluster auto-discovery
-    // checkbox in Settings → Cluster. Mutate `cluster.mdns.enabled`
-    // in freedom.yaml losslessly (`serde_yaml::Value` round-trip
-    // preserves every other field) and drop the reload sentinel
-    // so the daemon picks the change up within ~2s — same dispatch
-    // path as `neoth cluster enable` / `disable`.
-    let weak_cluster = window.as_weak();
-    window.on_cluster_mdns_enabled_changed(move |enabled| {
-        let neoth_dir = default_neoth_home();
-        let freedom_path = neoth_dir.join("freedom.yaml");
-        let result = (|| -> anyhow::Result<()> {
-            set_cluster_mdns_enabled_in_freedom(&freedom_path, enabled)?;
-            std::fs::write(neoth_dir.join(".reload-requested"), b"reload\n")
-                .with_context(|| "write reload sentinel")?;
-            Ok(())
-        })();
-        if let Some(w) = weak_cluster.upgrade() {
-            match result {
-                Ok(_) => {
-                    info!(
-                        enabled,
-                        "cluster: mdns.enabled rewritten + reload sentinel dropped"
-                    );
-                    let verb = if enabled { "enabled" } else { "disabled" };
-                    w.set_status_line(
-                        format!("Cluster auto-discovery {verb}. Daemon reloading within 2s.")
-                            .into(),
-                    );
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "cluster: mdns toggle failed");
-                    w.set_status_line(format!("Cluster toggle failed: {e}").into());
-                }
-            }
-        }
-    });
-
     // GOLD-FEAT-01c — operator confirmed enabling full-auto (sudomode) via the
     // GUI's two-step confirm. The in-GUI confirm IS the consent → invoke the CLI
     // with --gui-confirmed so it skips the TTY y/N (the bare CLI path stays
@@ -7424,52 +7444,283 @@ fn main() -> Result<()> {
             });
         }
         wire_nested_str!(on_cfg_user_tz_changed, "user_tz", "Timezone");
-        // C6 — cluster transport config.
-        wire_nested_bool!(on_cfg_cluster_enabled_changed, "cluster.enabled", "Cluster transport");
-        wire_nested_str!(on_cfg_cluster_name_changed, "cluster.name", "Cluster name");
-        wire_nested_int_combo!(
-            on_cfg_cluster_transport_changed,
-            "cluster.transport",
-            &["peeroxide", "iroh"],
-            "Cluster carrier"
-        );
-        wire_nested_bool!(
-            on_cfg_cluster_announce_untrusted_changed,
-            "cluster.policy.announce_on_untrusted_wifi",
-            "Announce on untrusted Wi-Fi"
-        );
-        // Trusted SSIDs: comma-separated field -> YAML string sequence.
+        // C6 — complete cluster desired state crosses one typed CLI
+        // transaction. No field is written optimistically or independently.
         {
-            let nd = neoth_dir.clone();
             let weak = window.as_weak();
-            window.on_cfg_cluster_ssids_changed(move |raw| {
-                let ssids: Vec<serde_yaml::Value> = raw
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                    .map(serde_yaml::Value::from)
-                    .collect();
-                let value = serde_yaml::Value::Sequence(ssids);
-                let nd2 = nd.clone();
-                let weak2 = weak.clone();
-                std::thread::spawn(move || {
-                    let fp = nd2.join("freedom.yaml");
-                    let rd = nd2.join(".reload-requested");
-                    let result =
-                        set_nested_in_freedom(&fp, "cluster.policy.trusted_ssids", value)
-                            .and_then(|_| {
-                                std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
-                            });
-                    slint::invoke_from_event_loop(move || match result {
-                        Ok(_) => push_toast(&weak2, "success", "Trusted SSIDs", "saved"),
-                        Err(ref e) => {
-                            let msg = e.to_string();
-                            push_toast(&weak2, "warn", "Trusted SSIDs write failed", &msg);
-                        }
-                    })
-                    .ok();
-                });
-            });
+            let apply_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let apply_active_for_callback = std::sync::Arc::clone(&apply_active);
+            window.on_cfg_cluster_apply_clicked(
+                move |enabled,
+                      name,
+                      transport_index,
+                      peers_raw,
+                      mdns_enabled,
+                      announce_untrusted,
+                      ssids_raw,
+                      replicate_raw_ingress,
+                      replay_days_raw,
+                      listen_port_raw,
+                      passphrase_raw| {
+                    if apply_active_for_callback.swap(
+                        true,
+                        std::sync::atomic::Ordering::AcqRel,
+                    ) {
+                        push_toast(
+                            &weak,
+                            "warn",
+                            "Cluster apply already running",
+                            "Wait for the current transaction receipt.",
+                        );
+                        return;
+                    }
+                    CLUSTER_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    if let Some(window) = weak.upgrade() {
+                        window.set_cfg_cluster_apply_in_flight(true);
+                        window.set_cfg_cluster_apply_status(
+                            "Validating and committing one cluster snapshot…".into(),
+                        );
+                        // Secret values are write-only: remove the UI-owned copy
+                        // before the subprocess starts.
+                        window.set_cfg_cluster_passphrase("".into());
+                    }
+
+                    let weak_done = weak.clone();
+                    let apply_active_done = std::sync::Arc::clone(&apply_active_for_callback);
+                    let expected_path = default_neoth_home().join("freedom.yaml");
+                    let name = name.to_string();
+                    let peers_raw = peers_raw.to_string();
+                    let ssids_raw = ssids_raw.to_string();
+                    let replay_days_raw = replay_days_raw.to_string();
+                    let listen_port_raw = listen_port_raw.to_string();
+                    let passphrase = zeroize::Zeroizing::new(passphrase_raw.to_string());
+                    std::thread::spawn(move || {
+                        let result: std::result::Result<gui_action::ClusterConfigureAck, String> =
+                            (|| {
+                                let transport = match transport_index {
+                                    0 => "peeroxide",
+                                    1 => "iroh",
+                                    other => {
+                                        return Err(format!(
+                                            "unsupported cluster transport selection {other}"
+                                        ));
+                                    }
+                                };
+                                let listen_port = listen_port_raw
+                                    .parse::<u16>()
+                                    .map_err(|_| {
+                                        format!(
+                                            "listen port must be an integer from 1 to 65535 (got `{listen_port_raw}`)"
+                                        )
+                                    })
+                                    .and_then(|port| {
+                                        (port > 0)
+                                            .then_some(port)
+                                            .ok_or_else(|| "listen port must be greater than zero".to_string())
+                                    })?;
+                                let replay_budget_days = replay_days_raw
+                                    .parse::<u32>()
+                                    .map_err(|_| {
+                                        format!(
+                                            "replay window must be an integer from 1 to 90 days (got `{replay_days_raw}`)"
+                                        )
+                                    })
+                                    .and_then(|days| {
+                                        (1..=90).contains(&days).then_some(days).ok_or_else(|| {
+                                            "replay window must be between 1 and 90 days".to_string()
+                                        })
+                                    })?;
+                                let expected_name =
+                                    (!name.trim().is_empty()).then_some(name.clone());
+                                if enabled && expected_name.is_none() {
+                                    return Err(
+                                        "cluster name is required before enabling the transport"
+                                            .to_string(),
+                                    );
+                                }
+                                let peers = parse_exact_cluster_lines(&peers_raw);
+                                let trusted_ssids = parse_exact_cluster_lines(&ssids_raw);
+                                let peers_json = serde_json::to_string(&peers)
+                                    .map_err(|error| format!("encode cluster peers: {error}"))?;
+                                let ssids_json = serde_json::to_string(&trusted_ssids)
+                                    .map_err(|error| format!("encode trusted SSIDs: {error}"))?;
+                                let mut args = vec![
+                                    "cluster".to_string(),
+                                    "configure".to_string(),
+                                    "--enabled".to_string(),
+                                    enabled.to_string(),
+                                    "--transport".to_string(),
+                                    transport.to_string(),
+                                    "--peers-json".to_string(),
+                                    peers_json,
+                                    "--mdns-enabled".to_string(),
+                                    mdns_enabled.to_string(),
+                                    "--announce-on-untrusted-wifi".to_string(),
+                                    announce_untrusted.to_string(),
+                                    "--trusted-ssids-json".to_string(),
+                                    ssids_json,
+                                    "--replicate-raw-ingress".to_string(),
+                                    replicate_raw_ingress.to_string(),
+                                    "--replay-budget-days".to_string(),
+                                    replay_budget_days.to_string(),
+                                    "--listen-port".to_string(),
+                                    listen_port.to_string(),
+                                ];
+                                if let Some(name) = expected_name.as_deref() {
+                                    args.push("--name".to_string());
+                                    args.push(name.to_string());
+                                }
+                                let replaces_passphrase = !passphrase.is_empty();
+                                if replaces_passphrase {
+                                    args.push("--passphrase-stdin".to_string());
+                                }
+                                // Serialise the external, cross-process CLI
+                                // transaction with every legacy GUI
+                                // read/modify/write worker. The CLI takes the
+                                // canonical OS locks; this process-local guard
+                                // prevents an already-started GUI autosave from
+                                // publishing a stale pre-receipt snapshot after
+                                // the CLI returns.
+                                let _gui_write_guard = FREEDOM_WRITE_LOCK
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner());
+                                let mut command = neothd_json_command(&[])?;
+                                command.args(&args);
+                                let acknowledgement: gui_action::ClusterConfigureAck =
+                                    if replaces_passphrase {
+                                    let mut body = zeroize::Zeroizing::new(
+                                        passphrase.as_bytes().to_vec(),
+                                    );
+                                    body.push(b'\n');
+                                    gui_action::run_json_with_private_stdin(
+                                        &mut command,
+                                        "Cluster configure",
+                                        body.as_mut_slice(),
+                                    )?
+                                    } else {
+                                        gui_action::run_json(&mut command, "Cluster configure")?
+                                    };
+                                let expected = gui_action::ExpectedClusterConfig {
+                                    name: expected_name.as_deref(),
+                                    enabled,
+                                    transport,
+                                    peers: &peers,
+                                    mdns_enabled,
+                                    announce_on_untrusted_wifi: announce_untrusted,
+                                    trusted_ssids: &trusted_ssids,
+                                    replicate_raw_ingress,
+                                    replay_budget_days,
+                                    listen_port,
+                                    cluster_passphrase_set: (enabled || replaces_passphrase)
+                                        .then_some(true),
+                                };
+                                acknowledgement.verify(&expected, &expected_path)?;
+                                Ok(acknowledgement)
+                            })();
+
+                        let _ = slint::invoke_from_event_loop(move || {
+                            apply_active_done.store(
+                                false,
+                                std::sync::atomic::Ordering::Release,
+                            );
+                            let Some(window) = weak_done.upgrade() else {
+                                return;
+                            };
+                            window.set_cfg_cluster_apply_in_flight(false);
+                            match result {
+                                Ok(ack) => {
+                                    window.set_cfg_cluster_enabled(ack.cluster.enabled);
+                                    window.set_cfg_cluster_name(
+                                        ack.cluster.name.clone().unwrap_or_default().into(),
+                                    );
+                                    window.set_cfg_cluster_transport_idx(
+                                        if ack.cluster.transport == "iroh" { 1 } else { 0 },
+                                    );
+                                    window.set_cfg_cluster_peers(
+                                        ack.cluster.peers.join("\n").into(),
+                                    );
+                                    window.set_cluster_mdns_enabled(ack.cluster.mdns.enabled);
+                                    window.set_cfg_cluster_announce_untrusted(
+                                        ack.cluster.policy.announce_on_untrusted_wifi,
+                                    );
+                                    window.set_cfg_cluster_ssids(
+                                        ack.cluster.policy.trusted_ssids.join("\n").into(),
+                                    );
+                                    window.set_cluster_trusted_ssids_summary(
+                                        ack.cluster.policy.trusted_ssids.join(", ").into(),
+                                    );
+                                    window.set_cfg_cluster_replicate_raw_ingress(
+                                        ack.cluster.gossip.replicate_raw_ingress,
+                                    );
+                                    window.set_cfg_cluster_replay_days_text(
+                                        ack.cluster.gossip.replay_budget_days.to_string().into(),
+                                    );
+                                    window.set_cfg_cluster_listen_port_text(
+                                        ack.cluster.listen_port.to_string().into(),
+                                    );
+                                    window.set_cluster_listen_port(
+                                        i32::from(ack.cluster.listen_port),
+                                    );
+                                    window.set_cfg_cluster_passphrase_set(
+                                        ack.cluster_passphrase_set,
+                                    );
+
+                                    let reload_suffix = ack
+                                        .reload_error
+                                        .as_deref()
+                                        .map(|error| format!(" Reload request failed: {error}"))
+                                        .unwrap_or_default();
+                                    if ack.restart_required {
+                                        let message = format!(
+                                            "Saved with rollback protection. Restart NEOTH once to activate the new cluster lifecycle.{reload_suffix}"
+                                        );
+                                        window.set_cfg_cluster_apply_status(message.clone().into());
+                                        push_toast(
+                                            &weak_done,
+                                            "warn",
+                                            "Cluster saved — restart required",
+                                            &message,
+                                        );
+                                    } else if ack.reload_requested {
+                                        window.set_cfg_cluster_apply_status(
+                                            "Snapshot accepted; no restart is pending for this receipt.".into(),
+                                        );
+                                        push_toast(
+                                            &weak_done,
+                                            "success",
+                                            "Cluster settings verified",
+                                            "The typed receipt confirms the submitted snapshot; it does not claim a live transport probe.",
+                                        );
+                                    } else {
+                                        let message = format!(
+                                            "Snapshot is already current, but live verification was not queued.{reload_suffix}"
+                                        );
+                                        window.set_cfg_cluster_apply_status(message.clone().into());
+                                        push_toast(
+                                            &weak_done,
+                                            "warn",
+                                            "Cluster verification pending",
+                                            &message,
+                                        );
+                                    }
+                                }
+                                Err(error) => {
+                                    let message = format!(
+                                        "Cluster result was not accepted; no state is assumed. {error}"
+                                    );
+                                    window.set_cfg_cluster_apply_status(message.clone().into());
+                                    push_toast(
+                                        &weak_done,
+                                        "warn",
+                                        "Cluster apply failed",
+                                        &message,
+                                    );
+                                }
+                            }
+                        });
+                    });
+                },
+            );
         }
         // C3 — operator identity.
         wire_nested_str!(on_cfg_operator_id_changed, "operator_id", "Operator id");
@@ -8390,26 +8641,57 @@ fn main() -> Result<()> {
                 let result: std::result::Result<String, String> = (|| {
                     let bin = which_neothd().ok_or_else(|| "neothd not on PATH".to_string())?;
                     let mut cmd = spawn_neothd_plain(&bin);
-                    cmd.arg("chat").arg("--stream").arg(&body_clone);
+                    let stream_control_token = new_stream_control_token()?;
+                    cmd.arg("chat").arg("--stream").arg("--").arg(&body_clone);
+                    cmd.env("NEOTH_STREAM_CONTROL_TOKEN", &stream_control_token);
                     let mut child = cmd
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::null())
                         .spawn()
                         .map_err(|e| format!("spawn failed: {e}"))?;
-                    let mut stdout = child.stdout.take().ok_or_else(|| "no stdout".to_string())?;
+                    let Some(mut stdout) = child.stdout.take() else {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("no stdout".to_string());
+                    };
                     let mut acc: Vec<u8> = Vec::new();
                     let mut buf = [0u8; 512];
-                    loop {
+                    let read_error = loop {
                         match stdout.read(&mut buf) {
-                            Ok(0) => break,
+                            Ok(0) => break None,
                             Ok(n) => acc.extend_from_slice(&buf[..n]),
-                            Err(_) => break,
+                            Err(error) => break Some(error),
                         }
+                    };
+                    if read_error.is_some() {
+                        let _ = child.kill();
+                    }
+                    let status = child
+                        .wait()
+                        .map_err(|error| format!("Buddy chat subprocess wait failed: {error}"))?;
+                    if let Some(error) = read_error {
+                        return Err(format!("Buddy chat stream read failed: {error}"));
                     }
                     let raw = String::from_utf8_lossy(&acc).into_owned();
-                    // strip_stream_sentinel strips the JSON done-sentinel line.
-                    let (reply, _) = strip_stream_sentinel(&raw);
-                    Ok(reply.trim().to_string())
+                    let (reply, done, _) =
+                        parse_stream_sentinel_with_token(&raw, &stream_control_token);
+                    if !done {
+                        return Err(format!(
+                            "Buddy chat stream ended before completion (exit {}).",
+                            status.code().unwrap_or(-1)
+                        ));
+                    }
+                    if !status.success() {
+                        return Err(format!(
+                            "Buddy chat subprocess exited {} after its completion marker.",
+                            status.code().unwrap_or(-1)
+                        ));
+                    }
+                    let reply = reply.trim();
+                    if reply.is_empty() {
+                        return Err("Buddy chat provider returned an empty reply.".to_string());
+                    }
+                    Ok(reply.to_string())
                 })();
 
                 let _ = slint::invoke_from_event_loop(move || {
@@ -8418,8 +8700,9 @@ fn main() -> Result<()> {
                     let (mood, caption, snippet) = match result {
                         Ok(ref reply) if !reply.is_empty() => {
                             // Truncate to 120 chars for the compact scrollback.
-                            let snip = if reply.len() > 120 {
-                                format!("{}…", &reply[..120])
+                            let prefix = utf8_prefix(reply, 120);
+                            let snip = if prefix.len() < reply.len() {
+                                format!("{prefix}…")
                             } else {
                                 reply.clone()
                             };
@@ -9152,50 +9435,6 @@ fn load_cluster_settings(path: &Path) -> ClusterSettingsSnapshot {
         listen_port,
         trusted_ssids_summary,
     }
-}
-
-/// Bite #5 — flip `cluster.mdns.enabled` in freedom.yaml without
-/// disturbing other fields. Uses `serde_yaml::Value` round-trip so
-/// the rest of the operator's config (inference, hemispheres,
-/// council, ...) survives the rewrite unchanged. Atomic via
-/// `.tmp` + rename.
-fn set_cluster_mdns_enabled_in_freedom(path: &Path, enabled: bool) -> Result<()> {
-    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let body = if path.exists() {
-        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
-    } else {
-        String::new()
-    };
-    let mut root: serde_yaml::Value = if body.trim().is_empty() {
-        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
-    } else {
-        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?
-    };
-    let map = match &mut root {
-        serde_yaml::Value::Mapping(m) => m,
-        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
-    };
-    let cluster_key = serde_yaml::Value::from("cluster");
-    let mut cluster_map = map
-        .get(&cluster_key)
-        .and_then(|v| v.as_mapping())
-        .cloned()
-        .unwrap_or_default();
-    let mdns_key = serde_yaml::Value::from("mdns");
-    let mut mdns_map = cluster_map
-        .get(&mdns_key)
-        .and_then(|v| v.as_mapping())
-        .cloned()
-        .unwrap_or_default();
-    mdns_map.insert(
-        serde_yaml::Value::from("enabled"),
-        serde_yaml::Value::from(enabled),
-    );
-    cluster_map.insert(mdns_key, serde_yaml::Value::Mapping(mdns_map));
-    map.insert(cluster_key, serde_yaml::Value::Mapping(cluster_map));
-    let serialised =
-        serde_yaml::to_string(&root).context("serialise freedom.yaml after cluster mdns toggle")?;
-    write_mode_0600(path, serialised.as_bytes())
 }
 
 /// Lossless top-level-string set: read freedom.yaml as a `serde_yaml::Value`
@@ -9958,19 +10197,20 @@ fn read_quiet_hours_in_freedom(path: &Path) -> Option<(u8, u8)> {
     }
 }
 
-/// C6 — read a 3-level nested string sequence from freedom.yaml.
+/// C6 — read a dotted nested string sequence from freedom.yaml.
 /// Missing file / key / non-sequence yields an empty vec.
-fn read_nested_str_list_in_freedom(path: &Path, k1: &str, k2: &str, leaf: &str) -> Vec<String> {
+fn read_nested_string_list_in_freedom(path: &Path, dotted_key: &str) -> Vec<String> {
     let Ok(body) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
     let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
         return Vec::new();
     };
-    root.get(k1)
-        .and_then(|v| v.get(k2))
-        .and_then(|v| v.get(leaf))
-        .and_then(|v| v.as_sequence())
+    let value = dotted_key
+        .split('.')
+        .try_fold(&root, |value, segment| value.get(segment));
+    value
+        .and_then(serde_yaml::Value::as_sequence)
         .map(|seq| {
             seq.iter()
                 .filter_map(|s| s.as_str().map(str::to_string))
@@ -10678,6 +10918,73 @@ where
 {
     let mut command = neothd_json_command(args)?;
     gui_action::run_json_receipt(&mut command, action)
+}
+
+/// Convert the multiline cluster editors into exact string arrays. No trim is
+/// applied: commas, case and intentional leading/trailing spaces are data.
+/// Empty rows are ignored and exact duplicates collapse in first-seen order.
+fn parse_exact_cluster_lines(raw: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    raw.lines()
+        .filter(|line| !line.is_empty())
+        .filter(|line| seen.insert((*line).to_string()))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Refresh only non-secret cluster readiness/runtime fields. The CLI status
+/// contract never returns the shared passphrase itself.
+fn refresh_cluster_config_status(weak: slint::Weak<MainWindow>) {
+    let revision = CLUSTER_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
+    std::thread::spawn(move || {
+        let result = run_neothd_json_action::<gui_action::ClusterStatusAck>(
+            &["cluster", "status"],
+            "Cluster status",
+        );
+        let _ = slint::invoke_from_event_loop(move || {
+            if CLUSTER_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(status) => {
+                    window.set_cfg_cluster_passphrase_set(status.cluster_passphrase_set);
+                    window
+                        .set_cfg_cluster_replicate_raw_ingress(status.gossip.replicate_raw_ingress);
+                    window.set_cfg_cluster_replay_days_text(
+                        status.gossip.replay_budget_days.to_string().into(),
+                    );
+                    let readiness = if status.transport_active {
+                        format!(
+                            "Runtime verified: {} Raw sync: {}; replay: {} days.",
+                            status.transport,
+                            if status.gossip.replicate_raw_ingress {
+                                "on"
+                            } else {
+                                "off"
+                            },
+                            status.gossip.replay_budget_days
+                        )
+                    } else if status.restart_required {
+                        format!(
+                            "{} Restart required for carrier lifecycle; gossip policy reloads live.",
+                            status.transport
+                        )
+                    } else {
+                        status.transport
+                    };
+                    window.set_cfg_cluster_apply_status(readiness.into());
+                }
+                Err(error) => {
+                    window.set_cfg_cluster_apply_status(
+                        format!("Cluster readiness could not be verified: {error}").into(),
+                    );
+                }
+            }
+        });
+    });
 }
 
 fn neothd_json_command(args: &[&str]) -> std::result::Result<std::process::Command, String> {
@@ -12558,6 +12865,22 @@ fn is_visual_separator_only(s: &str) -> bool {
         && non_space.iter().all(|&c| c == non_space[0])
 }
 
+/// Borrow at most `max_chars` Unicode scalar values without ever slicing in
+/// the middle of a UTF-8 code point.
+fn utf8_prefix(value: &str, max_chars: usize) -> &str {
+    value
+        .char_indices()
+        .nth(max_chars)
+        .map_or(value, |(byte_index, _)| &value[..byte_index])
+}
+
+fn new_stream_control_token() -> std::result::Result<String, String> {
+    let mut control_nonce = [0_u8; 16];
+    getrandom::getrandom(&mut control_nonce)
+        .map_err(|error| format!("OS RNG unavailable for stream control token: {error}"))?;
+    Ok(hex::encode(control_nonce))
+}
+
 /// Chat-feel parity #3 (beat-openhuman): split the raw stdout of
 /// `neoth chat --stream` into `(reply_text, done)`. The CLI streams raw
 /// reply deltas incrementally, then emits a blank line + a final sentinel
@@ -12588,31 +12911,71 @@ pub struct StreamStats {
 /// Split the accumulated stream buffer into (reply-text, done, stats).
 /// Mid-stream (no sentinel yet): done=false, zero stats.
 pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
-    let Some(pos) = raw.rfind("{\"neoth_stream\":\"done\"") else {
+    parse_stream_sentinel_with_expected_token(raw, None)
+}
+
+fn parse_stream_sentinel_with_token(
+    raw: &str,
+    expected_control_token: &str,
+) -> (String, bool, StreamStats) {
+    parse_stream_sentinel_with_expected_token(raw, Some(expected_control_token))
+}
+
+fn parse_stream_sentinel_with_expected_token(
+    raw: &str,
+    expected_control_token: Option<&str>,
+) -> (String, bool, StreamStats) {
+    let Some((pos, sentinel)) = final_stream_sentinel(raw, expected_control_token) else {
         return (raw.trim_end().to_string(), false, StreamStats::default());
     };
-    // Parse ONLY the sentinel line — any stray byte after it would make
-    // serde reject the whole slice and silently zero the stats.
-    let sentinel_line = raw[pos..].lines().next().unwrap_or("");
-    let stats = serde_json::from_str::<serde_json::Value>(sentinel_line.trim())
-        .ok()
-        .map(|v| {
-            let g = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
-            StreamStats {
-                used_tokens: g("used_tokens"),
-                limit_tokens: g("limit_tokens"),
-                input_tokens: g("input_tokens"),
-                output_tokens: g("output_tokens"),
-                elapsed_ms: g("elapsed_ms"),
-                model: v
-                    .get("model")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            }
-        })
-        .unwrap_or_default();
+    let g = |key: &str| {
+        sentinel
+            .get(key)
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0)
+    };
+    let stats = StreamStats {
+        used_tokens: g("used_tokens"),
+        limit_tokens: g("limit_tokens"),
+        input_tokens: g("input_tokens"),
+        output_tokens: g("output_tokens"),
+        elapsed_ms: g("elapsed_ms"),
+        model: sentinel
+            .get("model")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+    };
     (raw[..pos].trim_end().to_string(), true, stats)
+}
+
+/// Accept a completion marker only when it is valid JSON on the final
+/// non-empty line. GUI-owned subprocesses additionally bind that marker to a
+/// fresh per-turn nonce, so model-generated text cannot forge a clean EOF.
+fn final_stream_sentinel(
+    raw: &str,
+    expected_control_token: Option<&str>,
+) -> Option<(usize, serde_json::Value)> {
+    let trimmed = raw.trim_end();
+    let pos = trimmed.rfind('\n').map_or(0, |index| index + 1);
+    let line = trimmed[pos..].trim();
+    let sentinel: serde_json::Value = serde_json::from_str(line).ok()?;
+    if sentinel
+        .get("neoth_stream")
+        .and_then(|value| value.as_str())
+        != Some("done")
+    {
+        return None;
+    }
+    if let Some(expected) = expected_control_token
+        && sentinel
+            .get("control_token")
+            .and_then(|value| value.as_str())
+            != Some(expected)
+    {
+        return None;
+    }
+    Some((pos, sentinel))
 }
 
 /// ODY-12 UI-control targets — must match `main.slint`'s nav values.
@@ -12655,13 +13018,26 @@ pub const NAV_PANELS: [&str; 26] = [
 /// field is absent (older daemons), mid-stream, or malformed — the
 /// chips row simply doesn't render. Returns (label, kind, id) tuples.
 pub fn parse_stream_links(raw: &str) -> Vec<(String, String, String)> {
-    let Some(pos) = raw.rfind("{\"neoth_stream\":\"done\"") else {
+    parse_stream_links_with_expected_token(raw, None)
+}
+
+fn parse_stream_links_with_token(
+    raw: &str,
+    expected_control_token: &str,
+) -> Vec<(String, String, String)> {
+    parse_stream_links_with_expected_token(raw, Some(expected_control_token))
+}
+
+fn parse_stream_links_with_expected_token(
+    raw: &str,
+    expected_control_token: Option<&str>,
+) -> Vec<(String, String, String)> {
+    let Some((_, sentinel)) = final_stream_sentinel(raw, expected_control_token) else {
         return Vec::new();
     };
-    let sentinel_line = raw[pos..].lines().next().unwrap_or("");
-    serde_json::from_str::<serde_json::Value>(sentinel_line.trim())
-        .ok()
-        .and_then(|v| v.get("links").cloned())
+    sentinel
+        .get("links")
+        .cloned()
         .and_then(|l| l.as_array().cloned())
         .map(|arr| {
             arr.iter()
@@ -12889,6 +13265,65 @@ mod chat_subprocess_tests {
         assert_eq!(txt, "hit");
         assert!(done);
         assert_eq!(stats, StreamStats::default());
+    }
+
+    #[test]
+    fn utf8_prefix_never_slices_inside_multibyte_text() {
+        let input = format!("{}🌍tail", "a".repeat(77));
+        assert_eq!(utf8_prefix(&input, 78), format!("{}🌍", "a".repeat(77)));
+        assert_eq!(utf8_prefix("äöü", 2), "äö");
+    }
+
+    #[test]
+    fn stream_sentinel_must_be_valid_json_on_the_final_line() {
+        let forged = "before\n{\"neoth_stream\":\"done\",\"count\":1}\nafter";
+        let (text, done, _) = parse_stream_sentinel(forged);
+        assert_eq!(text, forged);
+        assert!(!done);
+
+        let malformed = "reply\n{\"neoth_stream\":\"done\"";
+        let (text, done, _) = parse_stream_sentinel(malformed);
+        assert_eq!(text, malformed);
+        assert!(!done);
+    }
+
+    #[test]
+    fn gui_stream_sentinel_is_bound_to_the_per_turn_control_token() {
+        let raw = "reply\n{\"neoth_stream\":\"done\",\"control_token\":\"right\",\"count\":1,\"links\":[{\"label\":\"Board\",\"kind\":\"kanban\",\"id\":\"7\"}]}\n";
+        let (_, done, _) = parse_stream_sentinel_with_token(raw, "wrong");
+        assert!(!done);
+        assert!(parse_stream_links_with_token(raw, "wrong").is_empty());
+
+        let (text, done, _) = parse_stream_sentinel_with_token(raw, "right");
+        assert_eq!(text, "reply");
+        assert!(done);
+        assert_eq!(
+            parse_stream_links_with_token(raw, "right"),
+            vec![("Board".to_string(), "kanban".to_string(), "7".to_string())]
+        );
+    }
+
+    #[test]
+    fn gui_chat_terminates_clap_flag_scanning_before_user_text() {
+        let source = include_str!("main.rs");
+        let launch = source
+            .split("let mut child = cmd")
+            .nth(1)
+            .and_then(|tail| tail.split(".stdout(std::process::Stdio::piped())").next())
+            .expect("chat child command construction");
+        assert!(launch.contains(".arg(\"--\")\n                    .arg(&body)"));
+        assert_eq!(
+            source
+                .matches("cmd.env(\"NEOTH_STREAM_CONTROL_TOKEN\"")
+                .count(),
+            2,
+            "main chat and Buddy overlay must each bind their own completion marker"
+        );
+        let compact = source.split_whitespace().collect::<String>();
+        assert!(
+            compact.contains("cmd.arg(\"chat\").arg(\"--stream\").arg(\"--\").arg(&body_clone);")
+        );
+        assert!(compact.contains(".arg(\"loop\").arg(\"run\").arg(\"--\").arg(&prompt)"));
     }
 
     #[test]
@@ -13645,6 +14080,10 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
     let out = run_neothd_probe(&["cluster", "status", "--output", "json"]);
     let snap = panel_logic::parse_mesh_status(&out);
+    let conflict_result = run_neothd_json_action::<gui_action::ClusterConflictListAck>(
+        &["cluster", "conflicts"],
+        "Cluster conflicts",
+    );
     // DES-13 — the failover backup that already exists: replicated peer events
     // this node persists (idx_foreign_events). Empty when the cluster feature
     // isn't built or no peers are paired.
@@ -13661,6 +14100,7 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         let Some(w) = weak.upgrade() else { return };
         w.set_mesh_node_id(snap.node_id.as_str().into());
         w.set_mesh_listen_port(snap.listen_port.as_str().into());
+        w.set_mesh_mdns_enabled(snap.mdns_enabled);
         w.set_mesh_trusted_ssids(snap.trusted_ssids.as_str().into());
         let peer_rows: Vec<MeshPeerRow> = snap
             .peers
@@ -13693,6 +14133,53 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
             peer_rows,
         ))));
         w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
+        match conflict_result {
+            Ok(conflicts) if !conflicts.include_resolved => {
+                let conflict_rows: Vec<MeshConflictRow> = conflicts
+                    .conflicts
+                    .into_iter()
+                    .map(|conflict| MeshConflictRow {
+                        content_id: conflict.content_id.into(),
+                        incumbent_origin: conflict.incumbent_origin.into(),
+                        incoming_origin: conflict.incoming_origin.into(),
+                        incumbent_digest: conflict
+                            .incumbent_sha256
+                            .chars()
+                            .take(12)
+                            .collect::<String>()
+                            .into(),
+                        incoming_digest: conflict
+                            .incoming_sha256
+                            .chars()
+                            .take(12)
+                            .collect::<String>()
+                            .into(),
+                        policy: conflict.policy.into(),
+                        observed_at: panel_logic::format_epoch_utc(conflict.observed_at).into(),
+                    })
+                    .collect();
+                w.set_mesh_conflicts(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+                    conflict_rows,
+                ))));
+                w.set_mesh_conflict_count(conflicts.unresolved_count as i32);
+                w.set_mesh_conflicts_valid(true);
+                w.set_mesh_conflicts_error("".into());
+            }
+            Ok(_) => {
+                w.set_mesh_conflicts_valid(false);
+                w.set_mesh_conflict_count(snap.conflict_count as i32);
+                w.set_mesh_conflicts_error(
+                    "Cluster returned a forensic history instead of the unresolved view.".into(),
+                );
+            }
+            Err(error) => {
+                // Keep the status count visible, but never render an empty list
+                // as proof that no conflicts exist when the detail probe failed.
+                w.set_mesh_conflicts_valid(false);
+                w.set_mesh_conflict_count(snap.conflict_count as i32);
+                w.set_mesh_conflicts_error(error.into());
+            }
+        }
         // DES-13 — backup-at-rest per-peer rows + totals.
         let foreign_rows: Vec<MeshForeignRow> = backup
             .peers
@@ -16124,6 +16611,14 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn cluster_multiline_lists_preserve_exact_values_and_dedupe_stably() {
+        assert_eq!(
+            parse_exact_cluster_lines("home,lab\r\n  padded  \npeer-a\npeer-a\n\n"),
+            ["home,lab", "  padded  ", "peer-a"]
+        );
+    }
+
+    #[test]
     fn channel_add_saved_parser_accepts_pretty_json_true() {
         assert_eq!(
             parse_channel_saved(
@@ -16949,19 +17444,6 @@ mod tests {
     }
 
     #[test]
-    fn set_cluster_mdns_writes_enabled_field_atomically() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("freedom.yaml");
-        set_cluster_mdns_enabled_in_freedom(&path, false).unwrap();
-        assert!(path.exists());
-        let body = std::fs::read_to_string(&path).unwrap();
-        // YAML normalises bool to the unquoted token.
-        assert!(body.contains("enabled: false"), "got: {body}");
-        // .tmp left behind would mean the rename didn't happen.
-        assert!(!dir.path().join("freedom.yaml.tmp").exists());
-    }
-
-    #[test]
     fn set_top_level_string_preserves_every_other_field() {
         // MV-01c bug-fix regression guard: the GUI provider/model selectors
         // must NOT drop the operator's other config. Seed a freedom.yaml
@@ -17021,51 +17503,6 @@ mod tests {
         set_top_level_string_in_freedom(&path, "provider_kind", "gemini_api").unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("provider_kind: gemini_api"), "got: {body}");
-    }
-
-    #[test]
-    fn set_cluster_mdns_round_trip_via_load_cluster_settings() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("freedom.yaml");
-        // Start ENABLED → toggle OFF → load sees false → toggle ON →
-        // load sees true. Pins the wire shape across the read+write
-        // pair so the settings panel can't drift away from the
-        // on-disk format.
-        set_cluster_mdns_enabled_in_freedom(&path, true).unwrap();
-        assert!(load_cluster_settings(&path).mdns_enabled);
-        set_cluster_mdns_enabled_in_freedom(&path, false).unwrap();
-        assert!(!load_cluster_settings(&path).mdns_enabled);
-        set_cluster_mdns_enabled_in_freedom(&path, true).unwrap();
-        assert!(load_cluster_settings(&path).mdns_enabled);
-    }
-
-    #[test]
-    fn set_cluster_mdns_preserves_other_fields() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("freedom.yaml");
-        // Pre-seed freedom.yaml with fields the GUI's MinimalFreedomYaml
-        // doesn't know about. The toggle MUST NOT drop them — that's
-        // the whole point of using the lossless serde_yaml::Value
-        // round-trip instead of typed read-merge-write.
-        let original = "operator_id: alice\n\
-                        provider_kind: openai_api\n\
-                        inference:\n  topology: triplet\n  left:\n    provider: openai_api\n\
-                        cluster:\n  \
-                        mdns:\n    enabled: true\n  \
-                        listen_port: 50000\n  \
-                        policy:\n    \
-                        trusted_ssids:\n      - home-wifi\n";
-        std::fs::write(&path, original).unwrap();
-        set_cluster_mdns_enabled_in_freedom(&path, false).unwrap();
-        let body = std::fs::read_to_string(&path).unwrap();
-        // Toggle landed.
-        assert!(body.contains("enabled: false"));
-        // Untyped neighbours survived.
-        assert!(body.contains("operator_id: alice"));
-        assert!(body.contains("provider_kind: openai_api"));
-        assert!(body.contains("topology: triplet"));
-        assert!(body.contains("listen_port: 50000"));
-        assert!(body.contains("home-wifi"));
     }
 
     // ── PF-01-GUI: skills.always_embed_route toggle ──────────────────────────

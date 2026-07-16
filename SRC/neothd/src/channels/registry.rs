@@ -221,12 +221,14 @@ const TELEGRAM_SETUP: &[ChannelSetupField] = &[
 const SLACK_SETUP: &[ChannelSetupField] = &[
     required("slack_bot_token", true),
     required("slack_app_token", true),
+    required("slack_allowed_user_id", false),
 ];
 const WHATSAPP_BUSINESS_SETUP: &[ChannelSetupField] = &[
     required("whatsapp_token", true),
     required("whatsapp_phone_id", false),
     required("whatsapp_verify_token", true),
     required("whatsapp_app_secret", true),
+    required("whatsapp_allowed_sender", false),
 ];
 const WHATSAPP_BAILEYS_SETUP: &[ChannelSetupField] = &[
     required("whatsapp_baileys_url", false),
@@ -240,10 +242,14 @@ const KEET_SETUP: &[ChannelSetupField] = &[
     required("keet_topic", true),
     required("keet_allowed_senders", false),
 ];
-const DISCORD_SETUP: &[ChannelSetupField] = &[required("discord_bot_token", true)];
+const DISCORD_SETUP: &[ChannelSetupField] = &[
+    required("discord_bot_token", true),
+    required("discord_allowed_user_id", false),
+];
 const SIGNAL_SETUP: &[ChannelSetupField] = &[
     required("signal_cli_url", false),
     required("signal_phone_number", false),
+    required("signal_allowed_sender", false),
 ];
 const BLUEBUBBLES_SETUP: &[ChannelSetupField] = &[
     required("bluebubbles_url", false),
@@ -263,6 +269,7 @@ const MATRIX_SETUP: &[ChannelSetupField] = &[
 const LINE_SETUP: &[ChannelSetupField] = &[
     required("line_channel_access_token", true),
     optional("line_channel_secret", true),
+    required("line_allowed_sender", false),
 ];
 const IRC_SETUP: &[ChannelSetupField] = &[
     required("irc_server", false),

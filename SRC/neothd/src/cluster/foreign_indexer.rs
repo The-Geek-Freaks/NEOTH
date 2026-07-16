@@ -5,7 +5,7 @@
 //! keeps that contract: it records local processing state in
 //! `idx_foreign_indexed_events` and never deletes or mutates foreign rows.
 //!
-//! Protocol-v5 rows are already canonicalized transactionally by
+//! Canonical protocol rows are already materialized transactionally by
 //! `cluster::durable_sync` into `mesh_sync_materialized`; this background
 //! indexer only marks those rows observed and never replays peer-local ids.
 //! Legacy effects are deliberately narrow:

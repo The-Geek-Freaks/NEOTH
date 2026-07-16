@@ -71,7 +71,10 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 /// v5 (GOLD-R3-09): gossip carries canonical content plus a durable monotonic
 /// origin sequence, and `GossipAck` binds the exact committed content digest.
 /// v4 peers are rejected during Hello; no best-effort downgrade exists.
-pub const PROTOCOL_VERSION: u16 = 5;
+///
+/// v6 (GOLD-WIRE-09): vector time is node-global and durable, independent from
+/// each destination's contiguous delivery sequence. v5 peers are rejected.
+pub const PROTOCOL_VERSION: u16 = 6;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
@@ -994,7 +997,7 @@ mod tests {
         // values is intentional + needs a Chorus re-review.
         assert_eq!(PROTOCOL_NAME, "neoth-r7-heartbeat");
         // v2: SL-00(1b) added the mandatory cluster_key_proof to the Hello.
-        assert_eq!(PROTOCOL_VERSION, 5);
+        assert_eq!(PROTOCOL_VERSION, 6);
         assert_eq!(MAX_FRAME_BYTES, 4 * 1024 * 1024);
         assert_eq!(HEARTBEAT_INTERVAL_MS, 5_000);
         assert_eq!(HEARTBEAT_JITTER_PCT, 20);

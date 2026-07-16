@@ -2680,6 +2680,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         Some(inbound.sender_id.clone()),
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config_for_handler.tools.harness,
+                        // Channel turns are bounded by max_turns; no outer
+                        // multi-round full-autonomy budget wraps this call.
+                        None,
                     )
                     .await
                     {

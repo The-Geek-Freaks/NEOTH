@@ -34,19 +34,21 @@ pub struct StatusArgs {
 pub async fn run_status(args: StatusArgs) -> Result<()> {
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
 
-    // An arbitrary diagnostic home may genuinely have no config; preserve
-    // that as `None`. Existing unreadable or malformed policy must remain an
-    // operator-visible status failure rather than a healthy-looking empty
-    // snapshot.
+    // One recovery/transaction boundary classifies both files and yields an
+    // exact config/credential generation. An arbitrary diagnostic home may
+    // genuinely have no config; preserve that as `None`. Existing unreadable
+    // or malformed policy remains an operator-visible status failure rather
+    // than a healthy-looking empty snapshot.
     let config_path = home.join("freedom.yaml");
-    let cfg = if config_path
-        .try_exists()
-        .with_context(|| format!("inspect {}", config_path.display()))?
-    {
-        Some(FreedomConfig::load_from_path(&config_path)?)
-    } else {
-        None
-    };
+    let diagnostic = crate::config::load_runtime_config_diagnostic_snapshot(&config_path)
+        .with_context(|| format!("load status snapshot from {}", config_path.display()))?;
+    if let Some(error) = diagnostic.config_error.as_deref() {
+        anyhow::bail!(
+            "freedom.yaml at {} is invalid: {error}",
+            config_path.display()
+        );
+    }
+    let cfg = diagnostic.config;
     let snap = snapshot(&home, cfg.as_ref())?;
 
     // GOLD-ADOPT-27 — channel health probe (which channels are live /
@@ -56,28 +58,16 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
     // exactly WHY channels appear unconfigured (corrupt file vs. missing file
     // vs. encrypted-but-no-key) rather than silently defaulting to empty.
     let cred_path = home.join("credentials.yaml");
-    let mut cred_status =
-        crate::config::credentials::Credentials::credential_store_status(&cred_path);
-    let (creds, channel_health) = match cred_status {
-        crate::config::credentials::CredentialStoreStatus::Ok
-        | crate::config::credentials::CredentialStoreStatus::Missing => {
-            // B17: re-read result, not `.unwrap_or_default()` — if the file
-            // corrupts BETWEEN the status probe and this load, downgrade the
-            // status to Invalid so the operator still sees a truthful warning
-            // instead of a healthy-looking `Ok` with an empty channel list.
-            let creds = match crate::config::credentials::Credentials::load_or_default(&cred_path) {
-                Ok(c) => c,
-                Err(_) => {
-                    cred_status = crate::config::credentials::CredentialStoreStatus::Invalid;
-                    crate::config::credentials::Credentials::default()
-                }
-            };
+    let cred_status = diagnostic.credential_status;
+    let has_credentials = diagnostic.credentials.is_some();
+    let (creds, channel_health) = match diagnostic.credentials {
+        Some(creds) => {
             let health = crate::channels::probe::probe_all(
                 &crate::channels::probe::ChannelCredsView::from_config(cfg.as_ref(), &creds),
             );
             (creds, health)
         }
-        _ => {
+        None => {
             // Credential store is invalid/unreadable/key_unavailable — do NOT
             // derive channel health from fabricated-empty creds; that would make
             // every channel appear "not_configured" with no hint about the real
@@ -97,6 +87,14 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
             )
         }
     };
+    debug_assert_eq!(
+        matches!(
+            cred_status,
+            crate::config::credentials::CredentialStoreStatus::Ok
+                | crate::config::credentials::CredentialStoreStatus::Missing
+        ),
+        has_credentials
+    );
 
     if args.prometheus {
         // Channel health is config state, not a time-series metric — keep the

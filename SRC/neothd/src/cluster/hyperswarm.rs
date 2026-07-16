@@ -22,6 +22,7 @@
 //!     registry,
 //!     Some(Arc::new(wal_writer)),
 //!     peer_streams,
+//!     Arc::new(Mutex::new(crate::cluster::wal_sync::GossipState::new())),
 //!     Arc::clone(&reload_controller),
 //!     neoth_home,
 //!     Some(dispatch_tx),
@@ -57,7 +58,6 @@ use tracing::{debug, error, info, warn};
 
 use super::discovery::ClusterKey;
 use super::executor::ClusterTaskJob;
-use super::gossip::GossipPolicy;
 use super::gossip_wire::GossipAcceptance;
 use super::heartbeat::{
     self, FrameBody, FrameKind, HeartbeatBody, HelloBody, PROTOCOL_NAME, PROTOCOL_VERSION,
@@ -186,6 +186,7 @@ pub async fn spawn_discovery_with_wal(
     // SL-00(1c): shared registry of per-peer outbound channels. The daemon
     // holds a clone so SL-01/SL-01b can send directed frames to a peer.
     peer_streams: Arc<PeerStreamRegistry>,
+    gossip_state: super::wal_sync::SharedGossipState,
     // SL-01 accept-gate policy source threaded into every peer session. Each
     // inbound task obtains a fresh immutable snapshot at the side-effect leaf.
     reload_controller: Arc<crate::config::reload::ReloadController>,
@@ -239,6 +240,7 @@ pub async fn spawn_discovery_with_wal(
             let wal = wal_writer.clone();
             let ckey = cluster_key.clone();
             let streams = Arc::clone(&peer_streams);
+            let state = Arc::clone(&gossip_state);
             let home = neoth_home.clone();
             let dtx = dispatch_tx.clone();
             let reload = Arc::clone(&reload_controller);
@@ -255,6 +257,7 @@ pub async fn spawn_discovery_with_wal(
                     ckey,
                     own_noise_pk,
                     streams,
+                    state,
                     reload,
                     home,
                     dtx,
@@ -331,6 +334,7 @@ async fn handle_peeroxide_connection(
     // SL-00(1c): registry of outbound channels so other subsystems can send
     // directed frames to this peer; the session loop drains its receiver.
     peer_streams: Arc<PeerStreamRegistry>,
+    gossip_state: super::wal_sync::SharedGossipState,
     // SL-01: the 3-checkpoint accept-gate inputs. `reload_controller` supplies
     // the active immutable policy; `neoth_home` locates cluster.yaml + leases;
     // `dispatch_tx` hands an accepted task to the executor (None ⇒ no executor,
@@ -568,7 +572,6 @@ async fn handle_peeroxide_connection(
 
     // GOLD-R3-09: both inbound commits and outbound ACK application use the
     // authoritative instance DB. No per-connection dedup/cursor state exists.
-    let gossip_policy = GossipPolicy::default();
     let durable_mesh = super::durable_sync::DurableMeshSync::new(neoth_home.join("views.db"));
 
     // SL-00(1c): register this peer's outbound channel; the Drop guard removes
@@ -765,15 +768,30 @@ async fn handle_peeroxide_connection(
                 let durable = durable_mesh.clone();
                 let authenticated_peer = PeerPubkey::new(remote_pk_hex.clone());
                 let frame_for_commit = gframe.clone();
-                let policy = gossip_policy.clone();
+                let policy = reload_controller.gossip_policy();
                 let committed = tokio::task::spawn_blocking(move || {
                     durable.persist_inbound(&authenticated_peer, &frame_for_commit, &policy)
                 })
                 .await
                 .context("durable inbound mesh task panicked")?;
                 match committed {
-                    Ok(super::durable_sync::InboundCommit::Committed(ack))
-                    | Ok(super::durable_sync::InboundCommit::Duplicate(ack)) => {
+                    Ok(commit @ super::durable_sync::InboundCommit::Committed(_))
+                    | Ok(commit @ super::durable_sync::InboundCommit::Duplicate(_))
+                    | Ok(commit @ super::durable_sync::InboundCommit::DuplicateUnbound(_)) => {
+                        let frontier_merged =
+                            super::durable_sync::merge_frontier_after_durable_commit(
+                                &gossip_state,
+                                &gframe,
+                                &commit,
+                            );
+                        if !frontier_merged {
+                            warn!(origin = %gframe.origin.as_str(), seq = gframe.event_seq,
+                                "legacy mesh duplicate ACKed without causal-frontier merge");
+                        }
+                        let ack = commit
+                            .ack()
+                            .expect("committed/duplicate inbound has an ACK")
+                            .clone();
                         emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
                         let ack_frame = WireFrame {
                             kind: FrameKind::GossipAck,

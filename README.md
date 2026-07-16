@@ -205,7 +205,7 @@ operator.
 | **Loops** | `neoth loop run "<goal>" --until "<criterion>"` — bounded autonomous iteration with L1-L3 budget ladders, full history in `neoth loop history`. |
 | **Recon** | Authorized-engagement recon through gated `uncover` (exposed-host discovery) and `tlsx` (TLS/cert intel) shims — refused under Strict autonomy and audit-logged. |
 | **Automation** | Runs small local cron jobs and larger n8n workflows through a default-off, scoped localhost API with endpoint-specific consent and WAL auditing. |
-| **Channels** | One canonical GUI/CLI registry for Telegram, Slack, WhatsApp Business, repository-owned WhatsApp Web/Baileys, Discord, Signal, LINE, IRC, iMessage through BlueBubbles, Mattermost, Google Chat, Matrix, Twitch, Nostr, and the full-duplex Keet-identity Pear/Hyperswarm companion. Read-only live probes are shared by both surfaces, and hot credential rotation restarts only the affected adapter. The Keet companion creates private NEOTH topics; it does not claim access to existing Keet app rooms because no supported room/message API exists. |
+| **Channels** | One canonical GUI/CLI registry for Telegram, Slack, WhatsApp Business, repository-owned WhatsApp Web/Baileys, Discord, Signal, LINE, IRC, iMessage through BlueBubbles, Mattermost, Google Chat, Matrix, Twitch, Nostr, and the full-duplex Keet-identity Pear/Hyperswarm companion. Private/work inbound adapters require an exact operator identity in addition to transport authentication; missing policies keep them off and mismatches are WAL-audited before the pipeline. Read-only live probes are shared by both surfaces, and hot credential/policy rotation restarts only the affected adapter. The Keet companion creates private NEOTH topics; it does not claim access to existing Keet app rooms because no supported room/message API exists. |
 | **Private mesh** | Pairs nodes over LAN/mDNS, Tailscale, Hysteria, and consent-gated cluster discovery. |
 | **Plugins** | Loads skills and WASM plugins behind capability gates, signature checks, revocation, and hostcall audit. |
 | **Doctor** | Explains broken setup, missing keys, model cache problems, channel wiring, disk issues, plugin state, provider flapping, and cluster discovery. |
@@ -472,6 +472,18 @@ DAUs and pros** is the explicit design **goal**, not a finished claim — it is 
 NEOTH is making, and the single thing most worth holding it accountable to. Everything
 marked **Yes** is implemented and exercised by tests; the live status of every line item is
 in [PLAN/PROGRESS_v1_0.md](PLAN/PROGRESS_v1_0.md).
+
+Native GNU Linux, macOS and Windows desktop releases include both Peeroxide and
+Iroh; the static headless musl server includes Peeroxide only. Cluster settings
+are submitted as one exact GUI/CLI transaction, including optional stdin-only
+passphrase handling. Enabled carrier changes are not hot-switched today: the
+receipt reports `restart_required: true`, and the supervised daemon must be
+restarted before transport, mDNS or gossip behavior is considered active. A
+disabled cluster with no running daemon is already inert and correctly reports
+`restart_required: false`. A retry cannot erase a real pending state; `cluster
+status` reports an active carrier only after the daemon acknowledges successful
+startup for both the exact public snapshot and its owner-private identity
+binding.
 
 Read the detailed migration pages:
 

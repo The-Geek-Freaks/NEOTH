@@ -15,7 +15,7 @@
 //! The credential split (two tokens) is honoured at construction time so
 //! the wizard collects them correctly before the socket loop runs.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use super::{Channel, ChannelError, MessageId, PipelineHandler};
@@ -29,6 +29,12 @@ pub struct SlackChannel {
     /// `xapp-...` app-level token for socket mode. The socket-mode
     /// loop dials Slack's WSS endpoint with this token.
     app_token: SecretString,
+    inbound_gate: Option<SlackInboundGate>,
+}
+
+struct SlackInboundGate {
+    allowed_user_id: String,
+    writer: crate::wal::writer::WalWriterHandle,
 }
 
 impl SlackChannel {
@@ -36,7 +42,22 @@ impl SlackChannel {
         Self {
             bot_token,
             app_token,
+            inbound_gate: None,
         }
+    }
+
+    pub fn new_inbound(
+        bot_token: SecretString,
+        app_token: SecretString,
+        allowed_user_id: &str,
+        writer: crate::wal::writer::WalWriterHandle,
+    ) -> Result<Self> {
+        let mut channel = Self::new(bot_token, app_token);
+        channel.inbound_gate = Some(SlackInboundGate {
+            allowed_user_id: normalize_allowed_user_id(allowed_user_id)?,
+            writer,
+        });
+        Ok(channel)
     }
 
     /// Operator-visible hint surfaced by the wizard + `neoth doctor`.
@@ -61,7 +82,17 @@ impl Channel for SlackChannel {
         // receive→reply closed end-to-end. The bot_token is now
         // threaded through so every pipeline `Ok(Some(out))` lands
         // back on Slack via `chat.postMessage`.
-        super::slack_socket::run_socket_loop(&self.app_token, self.bot_token.clone(), handler).await
+        let gate = self.inbound_gate.as_ref().context(
+            "Slack inbound is fail-closed: construct with an allowed user id and WAL writer",
+        )?;
+        super::slack_socket::run_socket_loop(
+            &self.app_token,
+            self.bot_token.clone(),
+            gate.allowed_user_id.clone(),
+            gate.writer.clone(),
+            handler,
+        )
+        .await
     }
 
     /// Send a plain-text message to a Slack channel via `chat.postMessage`.
@@ -135,9 +166,31 @@ impl Channel for SlackChannel {
     }
 }
 
+/// Canonicalize Slack's immutable member id. Display names and emails are
+/// mutable and therefore never accepted as authorization identities.
+pub fn normalize_allowed_user_id(raw: &str) -> Result<String> {
+    let value = raw.trim();
+    if value.len() < 2
+        || !matches!(value.as_bytes().first(), Some(b'U' | b'W'))
+        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        anyhow::bail!("Slack allowed user id must be an immutable `U…` or `W…` member id");
+    }
+    Ok(value.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allowed_user_id_is_trimmed_and_rejects_mutable_names() {
+        assert_eq!(normalize_allowed_user_id(" U123ABC ").unwrap(), "U123ABC");
+        assert_eq!(normalize_allowed_user_id("W123ABC").unwrap(), "W123ABC");
+        for invalid in ["", "alex", "U 123", "C123"] {
+            assert!(normalize_allowed_user_id(invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn channel_reports_slack_name() {

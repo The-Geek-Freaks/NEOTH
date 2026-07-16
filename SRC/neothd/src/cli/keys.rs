@@ -228,11 +228,7 @@ fn api_token_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
                 } else {
                     "active"
                 };
-                let label = if r.label.len() > 24 {
-                    format!("{}…", &r.label[..23])
-                } else {
-                    r.label.clone()
-                };
+                let label = compact_token_label(&r.label);
                 println!(
                     "{:<38}  {:<24}  {:<10}  {}",
                     r.id,
@@ -244,6 +240,14 @@ fn api_token_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn compact_token_label(label: &str) -> String {
+    if label.chars().count() > 24 {
+        format!("{}…", label.chars().take(23).collect::<String>())
+    } else {
+        label.to_string()
+    }
 }
 
 fn api_token_revoke(id: &str, home: &std::path::Path, output: OutputFormat) -> Result<()> {
@@ -489,6 +493,15 @@ fn format_mode(_path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_token_label_is_unicode_boundary_safe() {
+        let label = format!("{}🌍tail", "a".repeat(22));
+        assert_eq!(
+            compact_token_label(&label),
+            format!("{}🌍…", "a".repeat(22))
+        );
+    }
     use tempfile::tempdir;
 
     #[tokio::test]

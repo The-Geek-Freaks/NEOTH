@@ -223,6 +223,23 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   D1 actions, Ctrl+6..9, Memory-target drag/drop and permission-gated code-run
   remain explicitly open in `GUI_TOP_TIER_PLAN.md`; this slice does not claim
   broad GUI/CLI parity.
+  The follow-up C6 correction replaces five independent raw YAML writes with
+  one complete `cluster configure` transaction and an exact typed receipt.
+  Bootstrap peers, mDNS, policy, port and the write-only shared passphrase are
+  now represented in both GUI and CLI; lists cross as JSON arrays so commas and
+  intentional edge spaces survive. Native desktop releases now compile both
+  Peeroxide and Iroh, with a target/feature/license contract proving that exact
+  capability graph. Cluster lifecycle changes remain deliberately rejected
+  before the live ArcSwap. A private runtime-state marker prevents an identical
+  retry from clearing `restart_required`; only the PID-lock-owning daemon can
+  ACK the exact Snapshot and effective secret state after successful Carrier
+  construction. The dual config/credential writer is now crash-recoverable via
+  an owner-only PREPARED journal, and the GUI holds a local writer barrier plus
+  a status generation so neither an older autosave nor an older probe can erase
+  accepted receipt truth. Typed reload reasons put reason codes and the correct
+  restart boolean in WAL. This closes the prior correctness and packaging
+  mismatch, but not R4-05 or R4-13: live transport/mDNS/gossip teardown and
+  carrier switching still require one shared runtime supervisor.
 - [ ] **GOLD-R4-06 Buddy product-grade utility:** evolve Buddy into an always-available desktop companion with useful quick actions, current task/session context, notifications, approvals, channel/automation status, drag/drop or share ingestion, voice/media entry where supported, safe interruption/cancel, and direct handoff into the full GUI/CLI. Every action must traverse the same permission, cost, audit and Custom-Home boundaries as the primary surfaces.
 - [ ] **GOLD-R4-07 Channel parity and onboarding quality:** compare the current channel registry against OpenClaw and the relevant adopted sources, implement every high-value channel/behavior still missing, and fully wire add/edit/probe/remove, credentials, allowlists, media/reply/streaming behavior, health/error status and GUI/CLI onboarding. Unsupported channels require an explicit evidence-based skip, not silent absence.
 - [ ] **GOLD-R4-08 Clean-machine release qualification:** automate install/first-run/switch/update/repair/uninstall smoke tests on supported Windows, macOS and Linux runners/VMs, including paths with spaces/non-ASCII, standard-user permissions, offline/local-only setup and failed network/provider states. Validate exact artifact contents, signatures, launchers, desktop/start-menu integration and CLI PATH behavior.
@@ -2130,6 +2147,7 @@ Recommended waves:
 - **Tests:** hostile absolute-path write; HOME read; renamed-network-tool/Python process spawn; timeout with child process; `DISAPPROVE` and mixed BLOCK/APPROVE; direct pending accept rejection; read failure preserves file/status; untracked content drift rejects; approved evidence digest round-trip; legacy verifier default-deny.
 - **Done:** no source comment claims isolation that the OS boundary does not enforce; no proposal-controlled shell reaches the host by default; only matching, persisted green evidence can authorize verified accept.
 - **STOP:** if a real cross-platform sandbox is not available, ship default-deny/typed trusted profiles. Do not weaken the gate to keep legacy convenience.
+- **Current release contract (2026-07-16):** the opt-in shell path has ephemeral-filesystem, scrubbed-environment, timeout, output and child-tree containment, plus a named-client denylist; it does **not** claim OS-level network isolation. `neoth self-improve status` exposes `shell_verify_enabled` and `shell_verify_network_isolated=false`, and the operator threat model carries the same warning. The default remains off and Full autonomy never turns it on. Earlier “network isolation” / “refuses network egress” language in this historical audit block is superseded by this contract.
 
 ### B02 — MCP-TRUST-METADATA (P0)
 

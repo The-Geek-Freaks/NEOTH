@@ -2,13 +2,12 @@
 // the 12 slash-action commands (memory rule
 // `neoth-slash-commands-and-settings-parity`).
 //
-// Layout: left sidebar with 8 tab buttons, right content panel that
-// swaps based on the active tab. Auto-save semantics — every edit
-// fires the `~/.neoth/.reload-requested` sentinel via the Rust side
-// so the daemon picks up changes within 2s without an explicit
-// "Apply" button.
+// Layout: left sidebar with tab buttons, right content panel that swaps
+// based on the active tab. Most simple fields auto-save. Cross-field and
+// secret-bearing surfaces (notably Cluster) use one explicit typed Apply
+// transaction so invalid intermediate states are never published.
 
-import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, ScrollView, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, SegBar, Expander, Led } from "components.slint";
 
@@ -645,23 +644,28 @@ export component SettingsView inherits Rectangle {
     // toggle fires `cluster-mdns-enabled-changed(bool)` which
     // mutates freedom.yaml + drops the reload sentinel.
     in-out property <bool> cluster-mdns-enabled: true;
-    // C6 — cluster transport config.
+    // C6 — complete cluster desired-state draft. Persistence happens only
+    // through the single typed Apply callback below.
     in-out property <bool>   cfg-cluster-enabled: false;
     in-out property <string> cfg-cluster-name: "";
     in-out property <int>    cfg-cluster-transport-idx: 0;
+    in-out property <string> cfg-cluster-peers: "";
     in-out property <bool>   cfg-cluster-announce-untrusted: false;
     in-out property <string> cfg-cluster-ssids: "";
+    in-out property <bool> cfg-cluster-replicate-raw-ingress: false;
+    in-out property <string> cfg-cluster-replay-days-text: "30";
+    in-out property <string> cfg-cluster-listen-port-text: "49737";
+    in-out property <string> cfg-cluster-passphrase: "";
+    in-out property <bool> cfg-cluster-passphrase-set: false;
+    in-out property <bool> cfg-cluster-apply-in-flight: false;
+    in-out property <string> cfg-cluster-apply-status: "";
     in-out property <int> cluster-listen-port: 49737;
     /// Operator-readable summary of `cluster.policy.trusted_ssids`.
     /// Empty string renders the "no trusted SSIDs set" placeholder.
     in-out property <string> cluster-trusted-ssids-summary: "";
-    callback cluster-mdns-enabled-changed(bool);
-    // C6 — cluster transport config.
-    callback cfg-cluster-enabled-changed(bool);
-    callback cfg-cluster-name-changed(string);
-    callback cfg-cluster-transport-changed(int);
-    callback cfg-cluster-announce-untrusted-changed(bool);
-    callback cfg-cluster-ssids-changed(string);
+    // One complete transaction. Lists are newline-delimited in the UI and
+    // encoded as JSON string arrays by Rust, so commas remain lossless.
+    callback cfg-cluster-apply-clicked(bool, string, int, string, bool, bool, string, bool, string, string, string);
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust side fetches `neothd kanban list/show --output json` on tab
@@ -3353,12 +3357,11 @@ export component SettingsView inherits Rectangle {
                 spacing: Theme.space-base;
                 PanelHeader {
                     title: "Cluster";
-                    subtitle: "Auto-discover other NEOTH instances on your network and connect them into one team — shared memory, shared chat, shared task board. Uses lightweight mDNS broadcasts (same tech as AirPlay and Chromecast).";
-                    mirrors-slash: "/cluster enable   |   /cluster disable   |   neoth cluster discover";
+                    subtitle: "Pair NEOTH nodes through authenticated discovery and replicated cluster state. Transport, bootstrap peers and LAN privacy policy are applied as one validated configuration.";
+                    mirrors-slash: "neoth cluster configure   |   neoth cluster status   |   neoth cluster discover";
                 }
-                // C6 — cluster transport config: master switch, identity,
-                // carrier, LAN announce policy. Writes freedom.yaml nested
-                // keys through the same coalescing/nested writers as Config.
+                // C6 — one complete desired-state transaction. Controls edit
+                // local drafts; only Apply crosses the typed CLI boundary.
                 Card {
                     shimmer: false;
                     VerticalBox {
@@ -3377,7 +3380,6 @@ export component SettingsView inherits Rectangle {
                             checked: root.cfg-cluster-enabled;
                             toggled(v) => {
                                 root.cfg-cluster-enabled = v;
-                                root.cfg-cluster-enabled-changed(v);
                             }
                         }
                         HorizontalLayout {
@@ -3393,7 +3395,6 @@ export component SettingsView inherits Rectangle {
                                 horizontal-stretch: 1;
                                 edited(t) => {
                                     root.cfg-cluster-name = t;
-                                    root.cfg-cluster-name-changed(t);
                                 }
                             }
                         }
@@ -3410,11 +3411,10 @@ export component SettingsView inherits Rectangle {
                                 width: 200px;
                                 selected(i) => {
                                     root.cfg-cluster-transport-idx = i;
-                                    root.cfg-cluster-transport-changed(i);
                                 }
                             }
                             Text {
-                                text: "iroh needs the cluster-iroh build";
+                                text: "Both carriers ship in the desktop release";
                                 color: Theme.text-disabled;
                                 font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                                 vertical-alignment: center;
@@ -3425,24 +3425,141 @@ export component SettingsView inherits Rectangle {
                             checked: root.cfg-cluster-announce-untrusted;
                             toggled(v) => {
                                 root.cfg-cluster-announce-untrusted = v;
-                                root.cfg-cluster-announce-untrusted-changed(v);
+                            }
+                        }
+                        NeothCheckBox {
+                            text: "Replicate raw channel messages (privacy-sensitive)";
+                            checked: root.cfg-cluster-replicate-raw-ingress;
+                            toggled(v) => {
+                                root.cfg-cluster-replicate-raw-ingress = v;
                             }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-tight;
                             Text {
-                                text: "Trusted SSIDs"; color: Theme.text-secondary;
-                                font-family: Theme.font-sans; font-size: Theme.font-size-sm;
-                                vertical-alignment: center; width: 130px;
+                                text: "Replay window";
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                width: 130px;
                             }
                             NeothLineEdit {
-                                placeholder-text: "comma-separated, case-sensitive";
-                                text: root.cfg-cluster-ssids;
+                                placeholder-text: "30";
+                                text <=> root.cfg-cluster-replay-days-text;
+                                width: 100px;
+                            }
+                            Text {
+                                text: "days (live-reloadable; raw sync stays off by default)";
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                vertical-alignment: center;
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "BOOTSTRAP PEERS — one endpoint id per line; commas and spaces are preserved.";
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-sm;
+                            }
+                            TextEdit {
+                                text <=> root.cfg-cluster-peers;
+                                height: 72px;
                                 horizontal-stretch: 1;
-                                accepted(t) => {
-                                    root.cfg-cluster-ssids = t;
-                                    root.cfg-cluster-ssids-changed(t);
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "TRUSTED SSIDS — one exact wifi name per line; case and spaces are preserved.";
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-sm;
+                            }
+                            TextEdit {
+                                text <=> root.cfg-cluster-ssids;
+                                height: 72px;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                text: "Listen port";
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                width: 130px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: "49737";
+                                text <=> root.cfg-cluster-listen-port-text;
+                                width: 180px;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                text: "Shared secret";
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-sm;
+                                vertical-alignment: center;
+                                width: 130px;
+                            }
+                            NeothLineEdit {
+                                placeholder-text: root.cfg-cluster-passphrase-set
+                                    ? "Already set — leave blank to keep it"
+                                    : "Required before enabling the cluster";
+                                password: true;
+                                text <=> root.cfg-cluster-passphrase;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        Text {
+                            text: root.cfg-cluster-passphrase-set
+                                ? "Secret status: configured. Existing secret values are never read back into the GUI."
+                                : "Secret status: not configured. Enter one above before enabling.";
+                            color: root.cfg-cluster-passphrase-set ? Theme.accent-green : Theme.accent-amber;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            NeothButton {
+                                label: "Apply cluster settings";
+                                primary: true;
+                                loading: root.cfg-cluster-apply-in-flight;
+                                enabled: !root.cfg-cluster-apply-in-flight;
+                                clicked => {
+                                    root.cfg-cluster-apply-clicked(
+                                        root.cfg-cluster-enabled,
+                                        root.cfg-cluster-name,
+                                        root.cfg-cluster-transport-idx,
+                                        root.cfg-cluster-peers,
+                                        root.cluster-mdns-enabled,
+                                        root.cfg-cluster-announce-untrusted,
+                                        root.cfg-cluster-ssids,
+                                        root.cfg-cluster-replicate-raw-ingress,
+                                        root.cfg-cluster-replay-days-text,
+                                        root.cfg-cluster-listen-port-text,
+                                        root.cfg-cluster-passphrase,
+                                    );
                                 }
+                            }
+                            Text {
+                                text: root.cfg-cluster-apply-status;
+                                color: Theme.text-muted;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
                             }
                         }
                     }
@@ -3609,11 +3726,8 @@ export component SettingsView inherits Rectangle {
                         NeothCheckBox {
                             text: "Auto-discover other NEOTH instances on this network";
                             checked: root.cluster-mdns-enabled;
-                            // GU-02: NeothCheckBox passes the new state as a callback arg
-                            // (toggled(bool)), unlike std-widgets CheckBox (toggled()).
                             toggled(checked) => {
                                 root.cluster-mdns-enabled = checked;
-                                root.cluster-mdns-enabled-changed(checked);
                             }
                         }
                         Text {
@@ -3645,7 +3759,7 @@ export component SettingsView inherits Rectangle {
                             color: Theme.text-primary;
                         }
                         Text {
-                            text: "Edit `cluster.listen_port` in ~/.neoth/freedom.yaml to change. The mDNS announcer + Tailscale TCP probe both use this port — operator must keep them aligned.";
+                            text: "Change the shared port in the Transport card above, then Apply once. The mDNS announcer and Tailscale TCP probe use the same value.";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -3678,7 +3792,7 @@ export component SettingsView inherits Rectangle {
                             wrap: word-wrap;
                         }
                         Text {
-                            text: "Edit `cluster.policy.trusted_ssids` in freedom.yaml (YAML list of wifi names). Or set `cluster.policy.announce_on_untrusted_wifi: true` to broadcast on every network. `neoth cluster discover` surfaces the current verdict before scanning.";
+                            text: "Edit the exact-name list in the Transport card above, then Apply. The discover command surfaces the active policy verdict before scanning.";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;

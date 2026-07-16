@@ -740,12 +740,12 @@ pub fn spawn_babel_cron_loop(
                             );
                             let persist = tokio::task::spawn_blocking(move || {
                                 let path = crate::config::FreedomConfig::default_path();
-                                let mut fc = crate::config::FreedomConfig::load_from_path(&path)?;
-                                if fc.babel.epsilon_calibrated.is_none() {
-                                    fc.babel.epsilon_calibrated = Some(eps);
-                                    fc.save_public_to_default_path()?;
-                                }
-                                anyhow::Ok(())
+                                crate::config::FreedomConfig::update_at(&path, |config| {
+                                    if config.babel.epsilon_calibrated.is_none() {
+                                        config.babel.epsilon_calibrated = Some(eps);
+                                    }
+                                    anyhow::Ok(())
+                                })
                             })
                             .await;
                             match persist {

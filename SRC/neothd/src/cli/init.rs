@@ -1267,6 +1267,67 @@ security:
     }
 
     #[test]
+    fn init_snapshot_cas_rejects_a_concurrent_config_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let freedom = dir.path().join("freedom.yaml");
+        let credentials = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom, "operator_id: snapshotted\nfuture: old\n").unwrap();
+        std::fs::write(&credentials, "provider_key: keep\n").unwrap();
+        let snapshot = std::fs::read(&freedom).unwrap();
+
+        std::fs::write(&freedom, "operator_id: concurrent\nfuture: new\n").unwrap();
+        let credential_before = std::fs::read(&credentials).unwrap();
+        let error =
+            crate::config::credentials::Credentials::update_raw_freedom_with_credentials_at(
+                &freedom,
+                &credentials,
+                |source, current| {
+                    ensure_snapshot_matches_source(source, &snapshot)?;
+                    current.telegram_token =
+                        Some(crate::secret::SecretString::from("must-not-land"));
+                    Ok((Some("operator_id: wizard\n".to_string()), ()))
+                },
+            )
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("changed after its rollback snapshot"));
+        assert_eq!(
+            std::fs::read_to_string(&freedom).unwrap(),
+            "operator_id: concurrent\nfuture: new\n"
+        );
+        assert_eq!(std::fs::read(&credentials).unwrap(), credential_before);
+    }
+
+    #[test]
+    fn keychain_init_stages_omi_as_authoritative_file_override_first() {
+        let mut credentials = crate::config::credentials::Credentials {
+            provider_key: Some(crate::secret::SecretString::from("unrelated")),
+            ..Default::default()
+        };
+        let update = crate::cli::omi::OmiCredentialUpdate {
+            developer_api_key: Some(crate::secret::SecretString::from("omi_dev_staged")),
+            native_ingest_token: Some(crate::secret::SecretString::from(
+                "0123456789abcdef0123456789abcdef",
+            )),
+        };
+
+        stage_omi_file_override(&mut credentials, &update);
+
+        assert_eq!(
+            credentials.provider_key.as_ref().unwrap().expose(),
+            "unrelated"
+        );
+        assert_eq!(
+            credentials.omi_developer_api_key.as_ref().unwrap().expose(),
+            "omi_dev_staged"
+        );
+        assert_eq!(
+            credentials.omi_ingest_token.as_ref().unwrap().expose(),
+            "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[test]
     fn force_hydration_preserves_advanced_owned_values_without_importing_secrets() {
         let dir = tempfile::tempdir().unwrap();
         let neoth_dir = dir.path().join(".neoth");
@@ -1780,6 +1841,25 @@ audit_rpc:
         .unwrap();
         assert!(initialized_home_is_ready(&neoth_dir).unwrap());
         assert!(!transaction.pending_path.exists());
+    }
+
+    #[test]
+    fn valid_nonbaseline_marker_supersedes_stale_gui_pending_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let pending = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        let pending_bytes = std::fs::read(&pending.pending_path).unwrap();
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: alice\n").unwrap();
+
+        let mut state = fixture_state();
+        state.operator_id = Some("alice".into());
+        write_initialized_marker(&neoth_dir, &state).unwrap();
+        ensure_dir_secure(&neoth_dir.join(".gui-init")).unwrap();
+        crate::util::atomic_write::atomic_write_private(&pending.pending_path, &pending_bytes)
+            .unwrap();
+
+        assert!(initialized_home_is_ready(&neoth_dir).unwrap());
+        assert!(!pending.pending_path.exists());
     }
 
     #[test]

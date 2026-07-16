@@ -105,6 +105,12 @@ normal users do not install Python or Graphify. The static musl server archive
 deliberately omits `neothd-gui` plus the glibc-linked Keet companion; use the CLI
 wizard there with `neoth init`.
 
+The native desktop `neoth` binaries also include both cluster carriers:
+Peeroxide and Iroh. The static headless musl server intentionally includes
+Peeroxide only. It rejects an Iroh configuration before writing it, rather than
+storing a choice that cannot run. A source install needs
+`--features release-desktop` (as shown below) to match the desktop carrier set.
+
 ## Path C: Linux/macOS installer
 
 > Available only after the first compatible signed release archive exists.
@@ -306,6 +312,13 @@ neoth status
 neoth privacy audit --last 24h
 neoth verify
 ```
+
+If you configure a multi-node mesh during or after onboarding, use the GUI
+Cluster panel or `neoth cluster configure`. It applies the full snapshot and
+optional stdin-only passphrase atomically. An enabled lifecycle change reports
+`restart_required: true`; restart the supervised daemon before treating the new
+transport, mDNS or gossip settings as active. Disabled plus stopped is already
+inert and returns `false`.
 
 Expected result:
 

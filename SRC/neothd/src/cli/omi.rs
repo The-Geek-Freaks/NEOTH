@@ -117,20 +117,17 @@ impl OmiContext {
     fn load(home: Option<PathBuf>) -> Result<Self> {
         let home = home.unwrap_or_else(FreedomConfig::default_neoth_home);
         let config_path = home.join("freedom.yaml");
-        let config = FreedomConfig::load_from_path(&config_path)
-            .with_context(|| format!("load OMI config from {}", config_path.display()))?;
-        let credentials_path = home.join("credentials.yaml");
-        let credentials = Credentials::load_effective(&credentials_path, config.secrets_backend)
-            .with_context(|| {
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&config_path).with_context(|| {
                 format!(
-                    "load effective OMI credentials from {}",
-                    credentials_path.display()
+                    "load coherent OMI config and effective credentials from {}",
+                    config_path.display()
                 )
             })?;
         Ok(Self {
             home,
-            config,
-            credentials,
+            config: pair.config,
+            credentials: pair.credentials,
         })
     }
 
@@ -408,7 +405,7 @@ fn read_omi_credential_update() -> Result<OmiCredentialUpdate> {
     Ok(update)
 }
 
-fn rollback_omi_keychain_updates(
+pub(crate) fn rollback_omi_keychain_updates(
     store: &dyn crate::config::keychain::SecretStore,
     applied: &[(&'static str, Option<SecretString>)],
 ) -> Vec<String> {
@@ -425,11 +422,10 @@ fn rollback_omi_keychain_updates(
     failures
 }
 
-fn persist_omi_keychain_update(
-    credentials_path: &Path,
+pub(crate) fn stage_omi_keychain_update(
     store: &dyn crate::config::keychain::SecretStore,
     update: &OmiCredentialUpdate,
-) -> Result<()> {
+) -> Result<Vec<(&'static str, Option<SecretString>)>> {
     let mut requested = Vec::with_capacity(2);
     if let Some(value) = update.developer_api_key.as_ref() {
         requested.push(("omi_developer_api_key", value.clone()));
@@ -461,6 +457,15 @@ fn persist_omi_keychain_update(
         }
         applied.push((*key, previous));
     }
+    Ok(applied)
+}
+
+pub(crate) fn persist_omi_keychain_update(
+    credentials_path: &Path,
+    store: &dyn crate::config::keychain::SecretStore,
+    update: &OmiCredentialUpdate,
+) -> Result<()> {
+    let applied = stage_omi_keychain_update(store, update)?;
 
     // File values intentionally override keychain values. Clear only the two
     // updated OMI fields after the store writes succeed, otherwise an old
@@ -482,6 +487,54 @@ fn persist_omi_keychain_update(
         }
         bail!(
             "clear OMI emergency-file overrides failed ({error:#}); keychain rollback also failed: {}",
+            rollback.join("; ")
+        );
+    }
+    Ok(())
+}
+
+/// Finalize OMI values that were already committed as file overrides by the
+/// init pair transaction. The file values are a compare-and-swap receipt: a
+/// concurrent OMI writer wins and causes exact keychain rollback instead of
+/// having its newer file value silently cleared.
+pub(crate) fn finalize_staged_omi_keychain_update(
+    credentials_path: &Path,
+    store: &dyn crate::config::keychain::SecretStore,
+    update: &OmiCredentialUpdate,
+) -> Result<()> {
+    let applied = stage_omi_keychain_update(store, update)?;
+    let committed = Credentials::update_at(credentials_path, |credentials| {
+        if let Some(expected) = update.developer_api_key.as_ref() {
+            anyhow::ensure!(
+                credentials
+                    .omi_developer_api_key
+                    .as_ref()
+                    .is_some_and(|current| current.expose() == expected.expose()),
+                "staged OMI developer API key changed before keychain finalization"
+            );
+            credentials.omi_developer_api_key = None;
+        }
+        if let Some(expected) = update.native_ingest_token.as_ref() {
+            anyhow::ensure!(
+                credentials
+                    .omi_ingest_token
+                    .as_ref()
+                    .is_some_and(|current| current.expose() == expected.expose()),
+                "staged OMI ingest token changed before keychain finalization"
+            );
+            credentials.omi_ingest_token = None;
+        }
+        Ok(())
+    });
+    if let Err(error) = committed {
+        let rollback = rollback_omi_keychain_updates(store, &applied);
+        if rollback.is_empty() {
+            return Err(error).context(
+                "finalize staged OMI keychain values; exact prior keychain values restored",
+            );
+        }
+        bail!(
+            "finalize staged OMI keychain values failed ({error:#}); keychain rollback also failed: {}",
             rollback.join("; ")
         );
     }
@@ -1215,6 +1268,52 @@ mod tests {
         assert_eq!(
             store.get("omi_ingest_token").unwrap().unwrap().expose(),
             "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn staged_keychain_finalization_rolls_back_if_file_receipt_changed() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("credentials.yaml");
+        let staged = credential_update(Some("omi_dev_staged"), None);
+        Credentials {
+            omi_developer_api_key: staged.developer_api_key.clone(),
+            ..Default::default()
+        }
+        .write(&path)
+        .unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        store
+            .set(
+                "omi_developer_api_key",
+                &SecretString::from("preexisting-keychain"),
+            )
+            .unwrap();
+
+        Credentials::update_at(&path, |credentials| {
+            credentials.omi_developer_api_key = Some(SecretString::from("concurrent-file-writer"));
+            Ok(())
+        })
+        .unwrap();
+
+        let error = finalize_staged_omi_keychain_update(&path, &store, &staged).unwrap_err();
+        assert!(format!("{error:#}").contains("exact prior keychain values restored"));
+        assert_eq!(
+            store
+                .get("omi_developer_api_key")
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "preexisting-keychain"
+        );
+        assert_eq!(
+            Credentials::load_or_default(&path)
+                .unwrap()
+                .omi_developer_api_key
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "concurrent-file-writer"
         );
     }
 

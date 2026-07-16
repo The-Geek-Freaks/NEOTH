@@ -48,17 +48,12 @@
 //!   - `tracing::*!` macros NEVER receive the raw token —
 //!     diagnostic logs receive only the op code + sequence
 //!     number + close code.
+//!   - Every non-bot `MESSAGE_CREATE` is matched against one exact immutable
+//!     Discord user snowflake before the shared pipeline sees it. Rejections
+//!     emit the shared `CHANNEL_GATE_REJECTED` WAL event without message text.
 //!
 //! ## What this module does NOT do
 //!
-//!   - Send a reply back to Discord. The handler returns an
-//!     `OutboundMessage` but routing that back to a Discord
-//!     channel needs the REST `chat.create-message` path
-//!     that already exists in `channels::discord::send_text`.
-//!     Wiring that in requires the upstream daemon to give
-//!     this loop a `DiscordChannel` reference. Today the
-//!     handler's reply is logged + dropped — same shape
-//!     `discord::run` had during Phase 1.
 //!   - Voice / presence updates / typing indicators. Out of
 //!     scope for chat receive.
 
@@ -130,6 +125,8 @@ pub struct ParsedMessageCreate {
 pub async fn run_gateway_loop(
     bot_token: SecretString,
     intents: u32,
+    allowed_sender_id: String,
+    gate_writer: crate::wal::writer::WalWriterHandle,
     handler: PipelineHandler,
     sender: Option<OutboundSender>,
 ) -> Result<()> {
@@ -139,6 +136,8 @@ pub async fn run_gateway_loop(
         match run_one_session(
             &bot_token,
             intents,
+            &allowed_sender_id,
+            &gate_writer,
             Arc::clone(&handler),
             sender.as_ref().map(Arc::clone),
         )
@@ -184,6 +183,8 @@ enum SessionEnd {
 async fn run_one_session(
     bot_token: &SecretString,
     intents: u32,
+    allowed_sender_id: &str,
+    gate_writer: &crate::wal::writer::WalWriterHandle,
     handler: Arc<PipelineHandler>,
     sender: Option<OutboundSender>,
 ) -> Result<SessionEnd> {
@@ -293,6 +294,8 @@ async fn run_one_session(
                         if let Some(parsed_msg) = parse_message_create(&d) {
                             forward_message(
                                 &parsed_msg,
+                                allowed_sender_id,
+                                Some(gate_writer),
                                 Arc::clone(&handler),
                                 sender.as_ref().map(Arc::clone),
                             )
@@ -392,11 +395,23 @@ fn parsed_d_from_frame(frame: &str) -> Value {
 
 async fn forward_message(
     msg: &ParsedMessageCreate,
+    allowed_sender_id: &str,
+    gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
     handler: Arc<PipelineHandler>,
     sender: Option<OutboundSender>,
 ) {
     if msg.author_is_bot {
         // Don't echo bot messages back into the pipeline.
+        return;
+    }
+    if crate::channels::sender_blocked_by_allowlist(
+        Some(allowed_sender_id),
+        &msg.author_id,
+        gate_writer,
+        "discord",
+    )
+    .await
+    {
         return;
     }
     let inbound = crate::channels::InboundMessage {
@@ -556,9 +571,59 @@ pub const fn default_intents() -> u32 {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn token() -> SecretString {
         SecretString::new("bot-token-secret-do-not-log".to_string())
+    }
+
+    fn message_from(author_id: &str) -> ParsedMessageCreate {
+        ParsedMessageCreate {
+            channel_id: "channel-1".into(),
+            author_id: author_id.into(),
+            author_username: "alice".into(),
+            author_is_bot: false,
+            content: "hello".into(),
+            message_id: "message-1".into(),
+        }
+    }
+
+    fn counting_handler(calls: Arc<AtomicUsize>) -> Arc<PipelineHandler> {
+        Arc::new(Box::new(move |_inbound| {
+            let calls = Arc::clone(&calls);
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            })
+        }))
+    }
+
+    #[tokio::test]
+    async fn non_allowlisted_sender_is_blocked_before_pipeline() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        forward_message(
+            &message_from("111111111111111111"),
+            "222222222222222222",
+            None,
+            counting_handler(Arc::clone(&calls)),
+            None,
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn exact_allowlisted_sender_reaches_pipeline() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        forward_message(
+            &message_from("111111111111111111"),
+            "111111111111111111",
+            None,
+            counting_handler(Arc::clone(&calls)),
+            None,
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

@@ -163,7 +163,19 @@ documents paths whose audit is best-effort or log-only.
   materialization, and explicit conflict records. Credentials, permissions, consent,
   operator profiles, and provider secrets are not part of canonical snapshots; raw/private
   event replication stays opt-in. Inspect progress with `neoth cluster sync-state` and see
-  the full [durable mesh contract](mesh-sync.md).
+  the full [durable mesh contract](mesh-sync.md). Typed content divergence is shown in
+  `neoth cluster status`, `neoth doctor`, and the GUI Mesh panel. Use `neoth cluster
+  conflicts` to inspect both digests and explicitly choose the preferred materialized
+  origin; NEOTH retains the resolved rows as forensic history.
+- **Cluster setup.** The GUI Cluster panel and `neoth cluster configure` submit one
+  complete typed snapshot instead of editing individual YAML fields. A first enabled
+  setup needs a cluster name and a write-only shared passphrase. Native desktop releases
+  offer Peeroxide and Iroh; headless musl offers Peeroxide only. After Apply, obey
+  `restart_required`: when true, the configuration is durable but the current
+  transport/mDNS lifecycle does not hot-switch and must be activated by
+  restarting the supervised daemon. Gossip privacy/replay policy is the live
+  exception and applies to Peeroxide and Iroh after reload. Disabled plus stopped is already inert and
+  returns false.
 - **Transport.** Optional Hysteria2 / Tailscale tunnels keep cluster + channel traffic
   private (`neoth hysteria`, the wizard's VPN step).
 

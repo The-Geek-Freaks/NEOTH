@@ -253,8 +253,15 @@ fn git_blame_matches(text: &str) -> bool {
     // git blame lines: `^SHA (Author  Date  Line#) code`
     count_lines(text, |l| {
         let t = l.trim_start();
-        t.len() > 10 && t[..8].chars().all(|c| c.is_ascii_hexdigit()) && t.contains('(')
+        t.len() > 10 && starts_with_ascii_hex8(t) && t.contains('(')
     }) >= 5
+}
+
+fn starts_with_ascii_hex8(value: &str) -> bool {
+    value
+        .as_bytes()
+        .get(..8)
+        .is_some_and(|prefix| prefix.iter().all(u8::is_ascii_hexdigit))
 }
 
 fn git_blame_compress(text: &str) -> String {
@@ -262,13 +269,13 @@ fn git_blame_compress(text: &str) -> String {
         .lines()
         .filter(|l| {
             let t = l.trim_start();
-            t.len() > 10 && t[..8].chars().all(|c| c.is_ascii_hexdigit())
+            t.len() > 10 && starts_with_ascii_hex8(t)
         })
         .take(5)
         .collect();
     let total = count_lines(text, |l| {
         let t = l.trim_start();
-        t.len() > 10 && t[..8].chars().all(|c| c.is_ascii_hexdigit())
+        t.len() > 10 && starts_with_ascii_hex8(t)
     });
     let mut out = lines.join("\n");
     if total > 5 {
@@ -1061,6 +1068,12 @@ pub fn compress(tool_output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_hash_prefix_check_rejects_unicode_without_slicing_it() {
+        assert!(!starts_with_ascii_hex8("日本語🌍abcdef012345"));
+        assert!(starts_with_ascii_hex8("deadbeef (Author 2026) line"));
+    }
 
     // ── registry ──────────────────────────────────────────────────────────
 

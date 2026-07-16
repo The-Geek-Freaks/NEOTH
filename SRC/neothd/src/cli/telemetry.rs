@@ -11,7 +11,7 @@
 //! running `neoth telemetry` lands on the safe, no-side-effect view.
 //!
 //! `on` + `off` mutate `freedom.yaml` via
-//! [`crate::config::FreedomConfig::save_public_to_default_path`].
+//! [`crate::config::FreedomConfig::update_at`].
 //! `send-now` honours the current `telemetry.enabled` flag UNLESS
 //! `--force` is passed (operators use `--force` to dry-run a send
 //! before flipping `enabled` on).
@@ -105,13 +105,13 @@ async fn run_preview() -> Result<()> {
 }
 
 async fn run_flip(enabled: bool) -> Result<()> {
-    let mut config = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml — run `neoth init` first if missing")?;
-    let was = config.telemetry.enabled;
-    config.telemetry.enabled = enabled;
-    config
-        .save_public_to_default_path()
-        .context("persist freedom.yaml::telemetry")?;
+    let path = FreedomConfig::default_path();
+    let was = FreedomConfig::update_at(&path, |config| {
+        let was = config.telemetry.enabled;
+        config.telemetry.enabled = enabled;
+        Ok(was)
+    })
+    .context("persist freedom.yaml::telemetry")?;
     println!(
         "telemetry.enabled : {was} → {enabled} (saved to {})",
         FreedomConfig::default_path().display()

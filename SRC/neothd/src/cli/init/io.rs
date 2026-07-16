@@ -480,18 +480,14 @@ fn initialized_home_is_ready_locked(home: &std::path::Path) -> Result<bool> {
             return Ok(false);
         }
 
-        let same_gui_transaction =
-            marker.marker.gui_transaction_id.as_deref() == Some(pending.transaction_id.as_str());
         validate_marker_config_pair(&marker.marker, &config, home, &config_path)?;
-        let newer_valid_marker = !same_gui_transaction;
-        if same_gui_transaction || newer_valid_marker {
-            cleanup_gui_init_pending_best_effort(home);
-            return Ok(true);
-        }
-
-        // The marker is exactly the baseline generation captured by begin.
-        // It must not make an in-progress reconfiguration look complete.
-        return Ok(false);
+        // The baseline generation returned false above. Therefore any marker
+        // reaching this point is a different, fully validated commit: either
+        // this GUI transaction's irreversible marker (crash before cleanup) or
+        // a later completion that superseded the pending transaction. Both are
+        // monotonically ready; only the stale pending record remains to clean.
+        cleanup_gui_init_pending_best_effort(home);
+        return Ok(true);
     }
 
     let (marker, config) = match (marker, config) {
@@ -1233,18 +1229,25 @@ pub(crate) fn write_atomically(target: &std::path::Path, contents: &[u8]) -> Res
 /// falls back to defaults if the prior file is corrupt (still snapshot
 /// it — corrupt bytes are exactly what an operator might want to roll
 /// forward FROM during recovery).
-pub(crate) async fn snapshot_existing_config(freedom_yaml: &std::path::Path) -> Result<()> {
-    let prior_bytes = std::fs::read(freedom_yaml)
+pub(crate) async fn snapshot_existing_config(freedom_yaml: &std::path::Path) -> Result<Vec<u8>> {
+    let pair = crate::config::snapshot_raw_config_pair(freedom_yaml)
         .with_context(|| format!("read prior {} for snapshot", freedom_yaml.display()))?;
-    let rollback_policy = match crate::config::FreedomConfig::load_from_path(freedom_yaml) {
-        Ok(cfg) => cfg.rollback,
-        Err(_) => crate::config::RollbackConfig::default(),
-    };
+    let prior_bytes = pair
+        .freedom
+        .ok_or_else(|| anyhow::anyhow!("{} disappeared before snapshot", freedom_yaml.display()))?;
+    let rollback_policy = serde_yaml::from_slice::<crate::config::FreedomConfig>(&prior_bytes)
+        .map(|config| config.rollback)
+        .unwrap_or_default();
     let now_unix = crate::time::now_unix_i64();
-    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+    let home = freedom_yaml
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for init snapshot")?;
     let segment = wal_dir.join(format!("init-snapshot-{now_unix}.wal"));
-    let (writer, join) = crate::wal::writer::spawn(segment).context("spawn WAL snapshot writer")?;
+    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
+        .context("spawn WAL snapshot writer")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
         &writer,
         &rollback_policy,
@@ -1258,7 +1261,30 @@ pub(crate) async fn snapshot_existing_config(freedom_yaml: &std::path::Path) -> 
     .context("emit pre-mutation snapshot for init rewrite")?;
     drop(writer);
     let _ = join.await;
+    // The public config snapshot API keeps its read buffer zeroizing. This
+    // function's existing contract returns owned bytes to the caller, so copy
+    // out while retaining automatic cleanup of the original allocation.
+    Ok(prior_bytes.as_slice().to_vec())
+}
+
+pub(crate) fn ensure_snapshot_matches_source(source: Option<&str>, snapshot: &[u8]) -> Result<()> {
+    anyhow::ensure!(
+        source.is_some_and(|current| current.as_bytes() == snapshot),
+        "freedom.yaml changed after its rollback snapshot was written; refusing to attach a stale snapshot to a different mutation — retry init"
+    );
     Ok(())
+}
+
+pub(crate) fn stage_omi_file_override(
+    credentials: &mut crate::config::credentials::Credentials,
+    update: &crate::cli::omi::OmiCredentialUpdate,
+) {
+    if let Some(value) = update.developer_api_key.as_ref() {
+        credentials.omi_developer_api_key = Some(value.clone());
+    }
+    if let Some(value) = update.native_ingest_token.as_ref() {
+        credentials.omi_ingest_token = Some(value.clone());
+    }
 }
 
 /// The init wizard owns these public keys. Everything else in freedom.yaml is
@@ -1396,22 +1422,6 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     }
 
     let freedom_yaml = neoth_dir.join("freedom.yaml");
-    // Parse and merge before touching credentials. A malformed existing file
-    // must fail closed without leaving a half-applied cross-file update.
-    let existing_value = if freedom_yaml.exists() {
-        let raw = std::fs::read(&freedom_yaml)
-            .with_context(|| format!("read existing {} for merge", freedom_yaml.display()))?;
-        Some(
-            serde_yaml::from_slice(&raw)
-                .with_context(|| format!("parse existing {} for merge", freedom_yaml.display()))?,
-        )
-    } else {
-        None
-    };
-    let public_value = merge_wizard_owned_config(existing_value, &wizard_value)?;
-    let serialized = serde_yaml::to_string(&public_value)
-        .context("serialize losslessly merged init config for freedom.yaml")?;
-
     let cred_path = neoth_dir.join("credentials.yaml");
     let omi_update = crate::cli::omi::OmiCredentialUpdate {
         developer_api_key: omi_developer_api_key,
@@ -1421,103 +1431,141 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
         omi_update.validate()?;
     }
 
-    // Validate the exact effective cross-file state before either file changes.
-    // This prevents an enabled OMI config from ever being published without
-    // the dedicated credential for every active network surface.
-    if public_state.omi.enabled
-        || omi_update.developer_api_key.is_some()
-        || omi_update.native_ingest_token.is_some()
-    {
-        let mut candidate = crate::config::credentials::Credentials::load_effective(
-            &cred_path,
-            public_state.secrets_backend,
-        )
-        .with_context(|| format!("load effective credentials from {}", cred_path.display()))?;
-        if let Some(value) = omi_update.developer_api_key.as_ref() {
-            candidate.omi_developer_api_key = Some(value.clone());
-        }
-        if let Some(value) = omi_update.native_ingest_token.as_ref() {
-            candidate.omi_ingest_token = Some(value.clone());
-        }
-        public_state
-            .omi
-            .validate_with_credentials(&candidate)
-            .map_err(anyhow::Error::msg)
-            .context("validate OMI config and credentials before init write")?;
-    } else {
-        public_state
-            .omi
-            .validate()
-            .map_err(anyhow::Error::msg)
-            .context("validate disabled OMI config before init write")?;
-    }
-
-    // Credentials land first. A later config-write failure leaves only dormant
-    // secrets; the inverse ordering briefly exposed an enabled but unauthenticated
-    // OMI surface. Locked read-modify-write preserves imported and unrelated
-    // credentials instead of rebuilding credentials.yaml from two fields.
-    let mut credentials_updated = false;
-    if provider_key.is_some()
+    let credentials_updated = provider_key.is_some()
         || telegram_token.is_some()
         || inference_left_key.is_some()
         || inference_right_key.is_some()
         || inference_cerebellum_key.is_some()
         || inference_default_slot_key.is_some()
-    {
-        crate::config::credentials::Credentials::update_at(&cred_path, |credentials| {
-            if let Some(value) = provider_key.as_ref() {
-                credentials.provider_key = Some(value.clone());
-            }
-            if let Some(value) = telegram_token.as_ref() {
-                credentials.telegram_token = Some(value.clone());
-            }
-            if let Some(value) = inference_left_key.as_ref() {
-                credentials.inference_left_key = Some(value.clone());
-            }
-            if let Some(value) = inference_right_key.as_ref() {
-                credentials.inference_right_key = Some(value.clone());
-            }
-            if let Some(value) = inference_cerebellum_key.as_ref() {
-                credentials.inference_cerebellum_key = Some(value.clone());
-            }
-            if let Some(value) = inference_default_slot_key.as_ref() {
-                credentials.inference_default_slot_key = Some(value.clone());
-            }
-            Ok(())
-        })
-        .context("merge provider/channel credentials during init")?;
-        credentials_updated = true;
-    }
-    if omi_update.developer_api_key.is_some() || omi_update.native_ingest_token.is_some() {
-        crate::cli::omi::persist_omi_credential_update(
-            neoth_dir,
-            public_state.secrets_backend,
-            &omi_update,
-        )
-        .context("persist OMI credentials during init")?;
-        credentials_updated = true;
-    }
-    if credentials_updated {
-        info!(path = %cred_path.display(), "credential store updated without replacing unrelated fields");
-    }
+        || omi_update.developer_api_key.is_some()
+        || omi_update.native_ingest_token.is_some();
 
     // A3-tail mutation-site wiring: when freedom.yaml ALREADY exists
     // (reconfigure flow, not first-run), capture its prior bytes
     // before overwriting so `neoth rollback list --kind config_write`
     // surfaces this rewrite. First-run wizard has no prior bytes →
     // skip (would produce a useless empty-restore snapshot).
-    if freedom_yaml.exists()
-        && let Err(e) = snapshot_existing_config(&freedom_yaml).await
+    let rollback_snapshot = if freedom_yaml.exists() {
+        match snapshot_existing_config(&freedom_yaml).await {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    path = %freedom_yaml.display(),
+                    "could not capture pre-overwrite snapshot for freedom.yaml — proceeding without rollback coverage for this write"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Open the configured store before the transaction. New OMI values are
+    // first committed as file overrides in the config/credential journal; only
+    // after that durable pair exists are they copied to the keychain and the
+    // overrides cleared. A crash at every boundary therefore leaves the new
+    // secret reachable through the active generation.
+    let keychain_store = if public_state.secrets_backend == crate::config::SecretsBackend::Keychain
     {
-        tracing::warn!(
-            error = %e,
-            path = %freedom_yaml.display(),
-            "could not capture pre-overwrite snapshot for freedom.yaml — proceeding without rollback coverage for this write"
+        Some(
+            crate::config::keychain::open_store()
+                .context("open configured OS keychain during init")?,
+        )
+    } else {
+        None
+    };
+    let transaction =
+        crate::config::credentials::Credentials::update_raw_freedom_with_credentials_at(
+            &freedom_yaml,
+            &cred_path,
+            |source, credentials| {
+                if let Some(snapshot) = rollback_snapshot.as_deref() {
+                    ensure_snapshot_matches_source(source, snapshot)?;
+                }
+                let existing = source
+                    .map(|body| {
+                        serde_yaml::from_str(body).with_context(|| {
+                            format!("parse existing {} for merge", freedom_yaml.display())
+                        })
+                    })
+                    .transpose()?;
+                let public_value = merge_wizard_owned_config(existing, &wizard_value)?;
+                let serialized = serde_yaml::to_string(&public_value)
+                    .context("serialize losslessly merged init config for freedom.yaml")?;
+
+                let apply_common = |target: &mut crate::config::credentials::Credentials| {
+                    if let Some(value) = provider_key.as_ref() {
+                        target.provider_key = Some(value.clone());
+                    }
+                    if let Some(value) = telegram_token.as_ref() {
+                        target.telegram_token = Some(value.clone());
+                    }
+                    if let Some(value) = inference_left_key.as_ref() {
+                        target.inference_left_key = Some(value.clone());
+                    }
+                    if let Some(value) = inference_right_key.as_ref() {
+                        target.inference_right_key = Some(value.clone());
+                    }
+                    if let Some(value) = inference_cerebellum_key.as_ref() {
+                        target.inference_cerebellum_key = Some(value.clone());
+                    }
+                    if let Some(value) = inference_default_slot_key.as_ref() {
+                        target.inference_default_slot_key = Some(value.clone());
+                    }
+                };
+                apply_common(credentials);
+
+                // File values override keychain values, so this is also the safe
+                // staging location when the target backend is Keychain.
+                stage_omi_file_override(credentials, &omi_update);
+
+                let mut candidate = credentials.clone();
+                if let Some(store) = keychain_store.as_deref() {
+                    crate::config::keychain::supplement_from_store(&mut candidate, store)
+                        .context("supplement init candidate from configured OS keychain")?;
+                }
+                apply_common(&mut candidate);
+                if let Some(value) = omi_update.developer_api_key.as_ref() {
+                    candidate.omi_developer_api_key = Some(value.clone());
+                }
+                if let Some(value) = omi_update.native_ingest_token.as_ref() {
+                    candidate.omi_ingest_token = Some(value.clone());
+                }
+                if public_state.omi.enabled
+                    || omi_update.developer_api_key.is_some()
+                    || omi_update.native_ingest_token.is_some()
+                {
+                    public_state
+                        .omi
+                        .validate_with_credentials(&candidate)
+                        .map_err(anyhow::Error::msg)
+                        .context("validate OMI config and credentials before init commit")?;
+                } else {
+                    public_state
+                        .omi
+                        .validate()
+                        .map_err(anyhow::Error::msg)
+                        .context("validate disabled OMI config before init commit")?;
+                }
+
+                Ok((Some(serialized), ()))
+            },
         );
+    transaction.context("commit init freedom/credential transaction")?;
+
+    if let Some(store) = keychain_store.as_deref()
+        && (omi_update.developer_api_key.is_some() || omi_update.native_ingest_token.is_some())
+    {
+        crate::cli::omi::finalize_staged_omi_keychain_update(&cred_path, store, &omi_update).context(
+            "init config committed with safe OMI file overrides, but keychain finalization failed; the file overrides remain authoritative",
+        )?;
     }
 
-    write_atomically(&freedom_yaml, serialized.as_bytes())?;
-    info!(path = %freedom_yaml.display(), "freedom.yaml written (mode 0600 on unix)");
+    if credentials_updated {
+        info!(path = %cred_path.display(), "credential store updated without replacing unrelated fields");
+    }
+    info!(path = %freedom_yaml.display(), "freedom.yaml and credentials committed atomically");
     Ok(())
 }
 

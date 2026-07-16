@@ -8,6 +8,8 @@
 //! versions can layer a request/response multiplexer on top if
 //! parallel tool calls become a hotspot.
 
+use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsString;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -22,6 +24,28 @@ use crate::mcp::config::McpServerConfig;
 use crate::mcp::transport::{
     JsonRpcRequest, JsonRpcResponse, MAX_MCP_FRAME_BYTES, frame, parse_frame,
 };
+
+// Environment variables needed for ordinary process startup and the supported
+// exact-pinned `npx` launcher. Everything else is absent unless the operator
+// explicitly lists it in `mcp_servers.yaml::env` (including `from_env`). In
+// particular, provider API keys and HTTP proxy variables are not ambient MCP
+// authority.
+const UNIX_CHILD_ENV_BASELINE: &[&str] = &[
+    "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE",
+];
+const WINDOWS_CHILD_ENV_BASELINE: &[&str] = &[
+    "PATH",
+    "SystemRoot",
+    "WINDIR",
+    "SystemDrive",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+];
 
 /// Default timeout for any single MCP request. 30s is generous for
 /// `tools/list` (which servers cache) but tight enough to surface
@@ -149,6 +173,76 @@ struct ClientInfo<'a> {
     version: &'a str,
 }
 
+/// Build the complete child environment from a small startup baseline plus the
+/// operator's resolved config. Windows environment names are case-insensitive,
+/// so case aliases collapse to one key and ambiguous duplicate explicit keys
+/// fail closed. The injected lookup keeps this pure enough to exercise Windows
+/// semantics on every CI platform.
+fn build_child_environment<F>(
+    explicit: &HashMap<String, String>,
+    windows: bool,
+    mut ambient: F,
+) -> std::result::Result<Vec<(OsString, OsString)>, String>
+where
+    F: FnMut(&str) -> Option<OsString>,
+{
+    let normalize = |key: &str| {
+        if windows {
+            key.to_ascii_uppercase()
+        } else {
+            key.to_string()
+        }
+    };
+
+    let mut explicit_by_key: BTreeMap<String, (String, OsString)> = BTreeMap::new();
+    for (key, value) in explicit {
+        let normalized = normalize(key);
+        if let Some((existing, _)) = explicit_by_key.get(&normalized) {
+            return Err(format!(
+                "ambiguous MCP environment keys `{existing}` and `{key}` differ only by case"
+            ));
+        }
+        explicit_by_key.insert(normalized, (key.clone(), OsString::from(value)));
+    }
+
+    let baseline = if windows {
+        WINDOWS_CHILD_ENV_BASELINE
+    } else {
+        UNIX_CHILD_ENV_BASELINE
+    };
+    let mut merged: BTreeMap<String, (OsString, OsString)> = BTreeMap::new();
+    for key in baseline {
+        if let Some(value) = ambient(key) {
+            merged.insert(normalize(key), (OsString::from(*key), value));
+        }
+    }
+    // Explicit config always wins over a baseline key, including `Path` vs
+    // `PATH` on Windows. No other ambient variable is ever inserted.
+    for (normalized, (key, value)) in explicit_by_key {
+        merged.insert(normalized, (OsString::from(key), value));
+    }
+    Ok(merged.into_values().collect())
+}
+
+/// Apply the MCP subprocess policy in one place so every spawn gets identical
+/// environment, stdio, and drop semantics.
+///
+/// stderr is deliberately discarded instead of piped: server diagnostics may
+/// contain secrets, and an undrained pipe can deadlock a verbose child. stdout
+/// remains the bounded MCP protocol transport. `env_clear` is an authority
+/// boundary, not a filesystem sandbox: the child still inherits the current
+/// directory and the NEOTH user's ordinary filesystem permissions.
+fn configure_child_process(cmd: &mut tokio::process::Command, child_env: &[(OsString, OsString)]) {
+    cmd.env_clear();
+    for (key, value) in child_env {
+        cmd.env(key, value);
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+}
+
 impl McpClient {
     /// Spawn the configured MCP server + complete the `initialize`
     /// handshake. Returns once the server has acknowledged.
@@ -163,21 +257,21 @@ impl McpClient {
         request_timeout: Duration,
     ) -> Result<Self, McpError> {
         // Every production MCP caller converges here. Validate before env
-        // resolution or process creation so unpinned runtime fetches, opaque
-        // wrappers, and inherited Node/npm overrides fail closed uniformly.
+        // resolution or process creation so unpinned runtime fetches and
+        // opaque wrappers fail closed uniformly. Ambient Node/npm overrides
+        // are scrubbed below; explicitly configured overrides are rejected by
+        // validate_launcher().
         config
-            .validate_spawn_context()
+            .validate_launcher()
             .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;
         let env = config
             .resolve_env()
             .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;
+        let child_env = build_child_environment(&env, cfg!(windows), |key| std::env::var_os(key))
+            .map_err(|e| McpError::Spawn(config.id.clone(), e))?;
         let mut cmd = tokio::process::Command::new(&config.command);
-        cmd.args(&config.args)
-            .envs(&env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+        cmd.args(&config.args);
+        configure_child_process(&mut cmd, &child_env);
         let mut child = cmd
             .spawn()
             .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;
@@ -431,6 +525,111 @@ fn classify_frame(body: &[u8], id: u64, server_id: &str) -> Result<FrameMatch, M
 mod tests {
     use super::*;
     use crate::mcp::config::McpServerConfig;
+
+    /// Subprocess fixture for the environment/stderr policy regression below.
+    /// In an ordinary test run the marker is absent and this is a no-op. The
+    /// parent test re-runs only this test in the current test executable with
+    /// the marker explicitly injected into the scrubbed child environment.
+    #[test]
+    fn environment_probe_child() {
+        if std::env::var("NEOTH_MCP_ENV_PROBE").as_deref() != Ok("neoth-fixture-v1") {
+            return;
+        }
+        use std::io::Write as _;
+
+        // Larger than ordinary OS pipe buffers. The parent completes because
+        // the production policy sends MCP stderr to null instead of leaving an
+        // unread pipe that can fill and deadlock.
+        let chunk = [b'x'; 4096];
+        let mut stderr = std::io::stderr().lock();
+        for _ in 0..256 {
+            stderr.write_all(&chunk).expect("write stderr fixture");
+        }
+        stderr.flush().expect("flush stderr fixture");
+
+        let result_path = std::env::var("NEOTH_MCP_ENV_RESULT").expect("result path injected");
+        let report = serde_json::json!({
+            "ambient_api_key": std::env::var("OPENAI_API_KEY").ok(),
+            "ambient_proxy": std::env::var("HTTPS_PROXY").ok(),
+            "explicit_token": std::env::var("MCP_EXPLICIT_TOKEN").ok(),
+        });
+        std::fs::write(result_path, serde_json::to_vec(&report).unwrap())
+            .expect("write environment report");
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn child_scrubs_ambient_secrets_keeps_explicit_env_and_cannot_stderr_deadlock() {
+        let _env = crate::test_env::lock();
+        let old_api_key = std::env::var_os("OPENAI_API_KEY");
+        let old_proxy = std::env::var_os("HTTPS_PROXY");
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "ambient-api-key-must-not-leak");
+            std::env::set_var("HTTPS_PROXY", "http://ambient-proxy.invalid");
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let result_path = dir.path().join("environment.json");
+        let mut explicit = HashMap::new();
+        explicit.insert("NEOTH_MCP_ENV_PROBE".into(), "neoth-fixture-v1".into());
+        explicit.insert(
+            "NEOTH_MCP_ENV_RESULT".into(),
+            result_path.to_string_lossy().into_owned(),
+        );
+        explicit.insert("MCP_EXPLICIT_TOKEN".into(), "configured-token".into());
+        let child_env =
+            build_child_environment(&explicit, cfg!(windows), |key| std::env::var_os(key)).unwrap();
+
+        let mut cmd = tokio::process::Command::new(std::env::current_exe().unwrap());
+        cmd.arg("environment_probe_child").arg("--nocapture");
+        configure_child_process(&mut cmd, &child_env);
+        // stdout is irrelevant to this fixture; production keeps it piped for
+        // MCP frames, but overriding it here avoids retaining libtest chatter.
+        cmd.stdout(Stdio::null());
+        let run: anyhow::Result<std::process::ExitStatus> = async {
+            let mut child = cmd.spawn()?;
+            Ok(tokio::time::timeout(Duration::from_secs(10), child.wait()).await??)
+        }
+        .await;
+
+        match old_api_key {
+            Some(value) => unsafe { std::env::set_var("OPENAI_API_KEY", value) },
+            None => unsafe { std::env::remove_var("OPENAI_API_KEY") },
+        }
+        match old_proxy {
+            Some(value) => unsafe { std::env::set_var("HTTPS_PROXY", value) },
+            None => unsafe { std::env::remove_var("HTTPS_PROXY") },
+        }
+
+        let status = run.expect("environment probe child must start and finish");
+        assert!(status.success(), "environment probe child failed: {status}");
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(result_path).unwrap()).unwrap();
+        assert_eq!(report["ambient_api_key"], serde_json::Value::Null);
+        assert_eq!(report["ambient_proxy"], serde_json::Value::Null);
+        assert_eq!(report["explicit_token"], "configured-token");
+    }
+
+    #[test]
+    fn windows_environment_keys_are_case_insensitive_and_explicit_wins() {
+        let mut explicit = HashMap::new();
+        explicit.insert("Path".into(), "explicit-path".into());
+        let merged = build_child_environment(&explicit, true, |key| {
+            key.eq_ignore_ascii_case("PATH")
+                .then(|| OsString::from("ambient-path"))
+        })
+        .unwrap();
+        let paths: Vec<_> = merged
+            .iter()
+            .filter(|(key, _)| key.to_string_lossy().eq_ignore_ascii_case("PATH"))
+            .collect();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].1, OsString::from("explicit-path"));
+
+        explicit.insert("PATH".into(), "ambiguous-second-value".into());
+        let error = build_child_environment(&explicit, true, |_| None).unwrap_err();
+        assert!(error.contains("differ only by case"));
+    }
 
     #[tokio::test]
     async fn spawn_reports_actionable_error_on_bad_command() {

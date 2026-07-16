@@ -214,10 +214,10 @@ fn status(
     // silently resetting to default and masking data corruption.
     let stored_opt =
         si::SelfImproveConfig::load_strict(home).context("self_improve.yaml is corrupt")?;
-    let (stored_enabled, stored_auto) = stored_opt
+    let (stored_enabled, stored_auto, shell_verify_enabled) = stored_opt
         .as_ref()
-        .map(|s| (s.enabled, s.auto))
-        .unwrap_or((false, false));
+        .map(|s| (s.enabled, s.auto, s.allow_shell_verify))
+        .unwrap_or((false, false, false));
     let cfg = si::effective_from_option(stored_opt, autonomy);
     // Full-auto turned it on implicitly (operator never set it explicitly).
     let implied = cfg.enabled && !stored_enabled;
@@ -230,6 +230,8 @@ fn status(
                 "enabled": cfg.enabled, "auto": cfg.auto, "asked": cfg.asked,
                 "stored_enabled": stored_enabled, "stored_auto": stored_auto,
                 "implied_by_full_auto": implied, "autonomy": autonomy.as_str(),
+                "shell_verify_enabled": shell_verify_enabled,
+                "shell_verify_network_isolated": false,
                 "skillopt_installed": installed, "last": last,
             })
         );
@@ -259,6 +261,14 @@ fn status(
             "installed"
         } else {
             "NOT installed — `pip install skillopt`"
+        }
+    );
+    println!(
+        "  shell verify: {}",
+        if shell_verify_enabled {
+            "OPTED IN — temp-filesystem + process-tree containment; NO OS-level network isolation"
+        } else {
+            "off (default-deny)"
         }
     );
     match last {

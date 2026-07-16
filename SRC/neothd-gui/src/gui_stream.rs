@@ -129,6 +129,11 @@ pub fn spawn_wal_follower(window: slint::Weak<crate::MainWindow>) {
                     });
                 }
             }
+            // stdout EOF does not prove the child exited. On Windows a
+            // descendant may keep the pipe alive or the follower may suppress
+            // a broken-pipe error and continue. Terminate before waiting so
+            // this retry thread cannot stall permanently.
+            let _ = child.kill();
             let _ = child.wait();
             std::thread::sleep(Duration::from_secs(5));
         }

@@ -280,7 +280,7 @@ Add a channel non-interactively (pass --token etc.) or interactively (stdin prom
 - `--nick <NICK>` — IRC bot nick / Matrix bot user id (`@user:server`)
 - `--password <PASSWORD>` — Password / secret: IRC NickServ password, BlueBubbles server password, or LINE channel secret
 - `--channels-csv <CHANNELS_CSV>` — IRC/Twitch rooms to join, or Nostr relay URLs, comma-separated
-- `--allowed-sender <ALLOWED_SENDER>` — Matrix inviter/inbound sender allowlist (`@user:server`), Baileys sender allowlist (E.164/JID), or exact Keet companion sender IDs. Multiple values are comma-separated
+- `--allowed-sender <ALLOWED_SENDER>` — Exact inbound sender allowlist: Discord/Slack/LINE user ID, WhatsApp/Signal E.164 number, Matrix user ID (`@user:server`), Baileys E.164/JID, or Keet companion sender IDs. Channels that support multiple identities accept comma-separated values
 - `--allowed-rooms-csv <ALLOWED_ROOMS_CSV>` — Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV
 - `--allow-plaintext` — Matrix only: explicitly permit plaintext rooms. Encrypted rooms are required when this flag is absent
 
@@ -366,6 +366,22 @@ Run one sync pass right now. Idempotent; re-runs skip unchanged files
 
 Cluster status + routing-plan rehearsal (R-7)
 
+### `neoth cluster configure`
+
+Atomically replace the complete public cluster configuration and ask a running daemon to reload it. Lists are JSON string arrays so commas and leading/trailing whitespace survive the CLI/GUI boundary exactly
+
+- `--enabled <ENABLED>` — Transport master switch (`true` or `false`)
+- `--name <NAME>` — Public cluster rendezvous name. Omit (or pass an empty string) to store no name; enabling without a name is rejected before commit
+- `--transport <TRANSPORT>` — Authenticated cluster transport
+- `--peers-json <JSON_ARRAY>` — Bootstrap peers as a JSON string array, for example `["endpoint,with,commas"," endpoint with spaces "]`
+- `--mdns-enabled <MDNS_ENABLED>` — LAN discovery switch (`true` or `false`)
+- `--announce-on-untrusted-wifi <ANNOUNCE_ON_UNTRUSTED_WIFI>` — Permit LAN announcements on untrusted Wi-Fi (`true` or `false`)
+- `--trusted-ssids-json <JSON_ARRAY>` — Exact trusted SSIDs as a JSON string array
+- `--replicate-raw-ingress <REPLICATE_RAW_INGRESS>` — Replicate raw channel-ingress frames to authenticated peers. This is privacy-sensitive and therefore defaults to false
+- `--replay-budget-days <REPLAY_BUDGET_DAYS>` — Maximum age of WAL history offered to a catching-up peer
+- `--listen-port <LISTEN_PORT>` — Shared mDNS/Tailscale probe port
+- `--passphrase-stdin` — Read a replacement shared passphrase from one stdin line. The secret never enters argv, logs, or receipts. With a keychain backend this intentionally writes the documented credentials.yaml emergency override (file values win over the OS store)
+
 ### `neoth cluster confirm`
 
 Confirm a discovered peer + add to the registry. Phase 4 of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface candidates; this command writes them in atomically
@@ -378,9 +394,24 @@ Confirm a discovered peer + add to the registry. Phase 4 of the SPEC — Phase 2
 - `--interactive` — Interactive picker: run a mDNS scan first, render a numbered list of discovered peers, prompt operator for a selection, then confirm the pick. Skips the positional pub_key + --label + --addr requirement (values come from the selected announce). Tailscale candidates are excluded from the picker — they don't carry a pub_key
 - `--interactive-timeout <INTERACTIVE_TIMEOUT>` — Scan timeout for `--interactive`. Default 10s
 
+### `neoth cluster conflicts`
+
+Inspect or resolve typed same-origin/cross-origin content conflicts
+
+- `--content-id <CONTENT_ID>` — Filter the list to one stable content id
+- `--all` — Include acknowledged conflicts in the forensic list
+- `--limit <LIMIT>` — Maximum rows (newest first)
+
+#### `neoth cluster conflicts resolve`
+
+Persist an operator decision for every currently unresolved row with this stable content id. New digest pairs remain independently visible
+
+- `<CONTENT_ID>`
+- `--prefer <PEER_PK>` — Origin whose canonical materialized value the operator accepts
+
 ### `neoth cluster disable`
 
-Disable cluster auto-discovery
+Disable the cluster transport master switch using the same complete, restart-evidenced transaction as `cluster configure`
 
 ### `neoth cluster discover`
 
@@ -391,7 +422,7 @@ SPEC Phase 2 mDNS scan — spawn the `mdns-sd` daemon for `--timeout` seconds, p
 
 ### `neoth cluster enable`
 
-Enable cluster auto-discovery (writes `freedom.yaml::cluster.mdns.enabled = true`)
+Enable the cluster transport master switch using the same complete, restart-evidenced transaction as `cluster configure`
 
 ### `neoth cluster events`
 
@@ -409,6 +440,12 @@ DES-13 — export this node's backup-at-rest for a crashed peer: dump the raw fo
 - `--limit <LIMIT>` — Max rows exported (newest first). Ignored when `--all` is set
 - `--all` — Export the full table (lift the `--limit` bound)
 - `--force` — Overwrite `--out` if it already exists (default: refuse)
+
+### `neoth cluster frontier`
+
+Inspect the bounded, durable node-global causal frontier. Counters are provenance/ordering evidence only; they never grant trust or resolve a content conflict without an explicit operator decision
+
+- `--peer <PEER_PK>` — Filter to one known node identity
 
 ### `neoth cluster list`
 
@@ -1755,6 +1792,8 @@ Inspect the assembled NEOTH.md operator context
 - `--unpin <EVENT_ID>` — NN-MEM-01: unpin a previously-pinned hot-tier episode by `event_id` (re-subjects it to the normal importance decay)
 - `--dimension` — Compute the fractal-dimension D_mem across the four memory tiers (EXP-FD-0 from `PLAN/FRACTAL_DIMENSION.md`). Pure read, no behaviour change. Prints the per-tier byte counts + the regressed log-log slope + an honest verdict on whether D_mem is meaningful for this operator's data
 - `--people` — GOLD-ADAPT-OH-10 — print the per-person relationship ranking (recency × frequency × reciprocity × depth, clamped). Pure read of `~/.neoth/people.json`, no behaviour change. Honours `--limit` (default 20; `--limit 0` returns the full ranking)
+- `--graph` — H2 — export the Hebbian association graph (idx_memory_links) as JSON for the GUI memory-graph view: episode nodes (label, tier, degree, louvain community) + weighted links. Read-only
+- `--graph-limit <GRAPH_LIMIT>` — Cap the strongest links exported by `--graph` (default 400)
 - `--rebuild-index` — V10-08 — rebuild the HNSW embedding index from scratch by scanning all rows in `idx_embedding`. Writes the snapshot to `<neoth_home>/embeddings.hnsw`. Use after a database restore or when the snapshot is missing or corrupted. Safe to interrupt: the snapshot is written atomically (temp-file + rename)
 - `--embed-backfill` — GOLD-ADAPT-MEMGRAPH-01 — backfill episode embeddings into idx_embedding for every hot-tier episode that has no embedding row yet. Runs outside the hot ingest path (which is sync-in-tx and cannot call async embed). Honours `--limit` (default 20; `--limit 0` = unbounded) and `--db`. No-ops cleanly when no embed provider is configured
 - `--pipeline-scorecard` — GOLD-ADAPT-MEM-11 — print the 15-point per-subsystem memory pipeline scorecard. Reads `~/.neoth/views.db` live; honours `--db` and `--output`. Exit 0 when overall grade is C or above; exit 1 when below healthy threshold so scripts can gate on memory health
@@ -1763,7 +1802,7 @@ Inspect the assembled NEOTH.md operator context
 
 ### `neoth memory erase-communication-profile`
 
-Preview or confirm erasure of one complete typed communication profile. This is intentionally separate from topic forget because typed presentation evidence is not topic-addressable. Omission preserves the operator default
+Preview or confirm erasure of one complete typed communication profile. This is intentionally separate from topic forget because typed presentation evidence is not topic-addressable
 
 - `--subject <SUBJECT>` — Exact, case-sensitive pseudonymous handle from `neoth export --list-subjects`. Defaults to `operator`
 - `--confirm` — Required to erase. Without this flag the command is a dry-run
@@ -3472,6 +3511,14 @@ KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in
 - `--verify-chain` — Re-verify each included compaction marker's HMAC against the local key at export time (sets `chain_verified`). Off by default so an operator without the key can still export the metadata bundle
 - `--wal-dir <DIR>` — WAL directory override (tests / inspecting a backup)
 - `--sign` — KF-03 — ed25519-sign the bundle with the operator's auto-managed signing key (`~/.neoth/wal/signing.key`, generated on first use, no prompt). Embeds the signature + public key so a third party can run `neoth wal verify-proof`. Off by default (an unsigned metadata bundle still carries the SHA-256 self-integrity digest)
+
+### `neoth wal follow`
+
+Tail the WAL live: emit one JSON line per NEW frame appended to any `~/.neoth/wal/*.wal` segment (`{"event_type":N,"subtype":N,"ts_ns":N}`). Read-only file tailing — no daemon connection; segment rotation is picked up automatically. Consumers: the GUI's Buddy activity follower
+
+- `--types <LIST>` — Emit only these event types — comma-separated names, hex (`0x40`) or decimal. Default: every frame
+- `--wal-dir <DIR>` — WAL directory override (tests / inspecting a backup)
+- `--interval-ms <INTERVAL_MS>` — Poll interval in milliseconds (tests lower this)
 
 ### `neoth wal proof-key`
 

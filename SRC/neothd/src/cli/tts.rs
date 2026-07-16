@@ -11,7 +11,9 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
-use crate::config::{FreedomConfig, credentials::Credentials};
+use crate::config::FreedomConfig;
+#[cfg(test)]
+use crate::config::credentials::Credentials;
 use crate::media::tts_cloud::{TtsConfirmMode, TtsRunOverrides, synthesize_to_file_at};
 use crate::media::tts_dispatch::{TtsFormat, TtsProvider, pick_voice_for_locale};
 use crate::secret::SecretString;
@@ -63,9 +65,18 @@ pub struct TtsSpeakArgs {
 
 pub async fn run_tts(args: TtsArgs) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    let config = load_config(&home)?;
     match args.action {
         TtsAction::Speak(speak) => {
+            let config_path = home.join("freedom.yaml");
+            let (config, credentials) =
+                crate::config::load_optional_runtime_config_pair_from_path(&config_path)
+                    .with_context(|| {
+                        format!(
+                            "load coherent TTS config and credentials under {}",
+                            home.display()
+                        )
+                    })?;
+            let config = config.unwrap_or_default();
             let TtsSpeakArgs {
                 text,
                 out,
@@ -79,9 +90,6 @@ pub async fn run_tts(args: TtsArgs) -> Result<()> {
             let text = resolve_text(&text).await?;
             let provider = provider.as_deref().map(parse_provider).transpose()?;
             let format = format_from_output_path(&out)?;
-            let credentials =
-                Credentials::load_effective(&home.join("credentials.yaml"), config.secrets_backend)
-                    .with_context(|| format!("load TTS credentials under {}", home.display()))?;
             let result = synthesize_to_file_at(
                 &home,
                 &config,
@@ -113,7 +121,10 @@ pub async fn run_tts(args: TtsArgs) -> Result<()> {
                 }
             }
         }
-        TtsAction::Status => print_status(&home, &config, args.output)?,
+        TtsAction::Status => {
+            let config = load_config(&home)?;
+            print_status(&home, &config, args.output)?;
+        }
     }
     Ok(())
 }

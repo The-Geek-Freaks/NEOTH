@@ -99,6 +99,27 @@ impl Default for ProactiveConfig {
     }
 }
 
+impl ProactiveConfig {
+    /// Largest inactivity window that can be converted to nanoseconds in the
+    /// signed timestamps stored by the memory index without overflow.
+    pub const MAX_IDLE_WINDOW_SECS: u64 = i64::MAX as u64 / 1_000_000_000;
+
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some([start, end]) = self.quiet_hours_utc
+            && (start > 23 || end > 23)
+        {
+            return Err("quiet_hours_utc hours must be between 0 and 23".to_string());
+        }
+        if self.idle_only_window_secs > Self::MAX_IDLE_WINDOW_SECS {
+            return Err(format!(
+                "idle_only_window_secs must be <= {}",
+                Self::MAX_IDLE_WINDOW_SECS
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// GOLD-FEAT-11 — LLM-generated check-in body cron config.
 ///
 /// When `enabled`, the daemon runs `checkin_cron` every `interval_secs`,

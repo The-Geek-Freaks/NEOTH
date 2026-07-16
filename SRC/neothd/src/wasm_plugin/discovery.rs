@@ -22,6 +22,17 @@ use std::path::{Path, PathBuf};
 
 use super::manifest::{ManifestError, PluginManifest, RequestedPermission, parse_manifest};
 
+/// `plugin.toml` is declarative metadata, not a payload. 256 KiB leaves ample
+/// room for descriptions, hook declarations, and future fields while bounding
+/// attacker-controlled startup allocation.
+pub(crate) const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
+
+/// Maximum on-disk `plugin.wasm` artifact accepted during discovery. Artifact
+/// size and guest linear memory are separate limits; 128 MiB is deliberately
+/// generous relative to the documented 64 MiB default / 256 MiB maximum guest
+/// memory budget while still bounding the per-plugin startup read.
+pub(crate) const MAX_WASM_BYTES: u64 = 128 * 1024 * 1024;
+
 /// SC-03 — a minisign detached signature is tiny (~300 bytes); cap the
 /// read so a HOSTILE multi-GB `plugin.wasm.minisig` can't OOM the daemon
 /// at discovery (the plugin dir is attacker-controlled — that IS SC-03's
@@ -84,13 +95,40 @@ fn open_no_follow(path: &Path) -> std::io::Result<fs::File> {
     }
 }
 
-/// Read a whole file via [`open_no_follow`] (GR-089) — the symlink-safe
-/// replacement for `fs::read` on the plugin-discovery path.
-fn read_no_follow(path: &Path) -> std::io::Result<Vec<u8>> {
+#[derive(Debug)]
+enum ReadNoFollowError {
+    Io(std::io::Error),
+    NotRegular,
+    TooLarge { observed_bytes: u64 },
+}
+
+/// Read a regular file via [`open_no_follow`] (GR-089), bounded at
+/// `max_bytes`. Metadata comes from the same open handle used for the read, so
+/// a path swap cannot substitute a special file between stat and read. The
+/// `max + 1` read limit also catches a regular file that grows after metadata.
+fn read_no_follow(path: &Path, max_bytes: u64) -> Result<Vec<u8>, ReadNoFollowError> {
     use std::io::Read;
-    let mut f = open_no_follow(path)?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
+
+    let file = open_no_follow(path).map_err(ReadNoFollowError::Io)?;
+    let metadata = file.metadata().map_err(ReadNoFollowError::Io)?;
+    if !metadata.file_type().is_file() {
+        return Err(ReadNoFollowError::NotRegular);
+    }
+    if metadata.len() > max_bytes {
+        return Err(ReadNoFollowError::TooLarge {
+            observed_bytes: metadata.len(),
+        });
+    }
+
+    let mut buf = Vec::with_capacity(metadata.len() as usize);
+    file.take(max_bytes + 1)
+        .read_to_end(&mut buf)
+        .map_err(ReadNoFollowError::Io)?;
+    if buf.len() as u64 > max_bytes {
+        return Err(ReadNoFollowError::TooLarge {
+            observed_bytes: buf.len() as u64,
+        });
+    }
     Ok(buf)
 }
 
@@ -318,6 +356,24 @@ pub enum DiscoveryError {
         dir: PathBuf,
         kind: std::io::ErrorKind,
     },
+    #[error(
+        "plugin {dir:?}: plugin.toml is at least {observed_bytes} bytes, exceeds the {max_bytes}-byte discovery limit"
+    )]
+    ManifestTooLarge {
+        dir: PathBuf,
+        observed_bytes: u64,
+        max_bytes: u64,
+    },
+    #[error(
+        "plugin {dir:?}: plugin.wasm is at least {observed_bytes} bytes, exceeds the {max_bytes}-byte discovery limit"
+    )]
+    WasmTooLarge {
+        dir: PathBuf,
+        observed_bytes: u64,
+        max_bytes: u64,
+    },
+    #[error("plugin {dir:?}: {file} is not a regular file — refusing")]
+    PathNotRegular { dir: PathBuf, file: &'static str },
     /// A-56 / GOLD-SEC-20 — a plugin file is a symlink. The plugin dir is
     /// attacker-controlled (SC-03 threat model); following a symlink would
     /// let `plugin.wasm` point at an arbitrary file so the hash/signature
@@ -478,10 +534,28 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
     // GR-089 — read via O_NOFOLLOW (open_no_follow) so even a post-check symlink
     // swap can't redirect the read: the check above + the open here are no longer
     // a check-then-read TOCTOU on Unix (the open itself refuses a symlink).
-    let toml_bytes = read_no_follow(&toml_path).map_err(|e| DiscoveryError::TomlIo {
-        dir: dir.to_path_buf(),
-        kind: e.kind(),
-    })?;
+    let toml_bytes = match read_no_follow(&toml_path, MAX_MANIFEST_BYTES) {
+        Ok(bytes) => bytes,
+        Err(ReadNoFollowError::Io(e)) => {
+            return Err(DiscoveryError::TomlIo {
+                dir: dir.to_path_buf(),
+                kind: e.kind(),
+            });
+        }
+        Err(ReadNoFollowError::NotRegular) => {
+            return Err(DiscoveryError::PathNotRegular {
+                dir: dir.to_path_buf(),
+                file: "plugin.toml",
+            });
+        }
+        Err(ReadNoFollowError::TooLarge { observed_bytes }) => {
+            return Err(DiscoveryError::ManifestTooLarge {
+                dir: dir.to_path_buf(),
+                observed_bytes,
+                max_bytes: MAX_MANIFEST_BYTES,
+            });
+        }
+    };
     let manifest = parse_manifest(&toml_bytes).map_err(|e| DiscoveryError::ManifestInvalid {
         dir: dir.to_path_buf(),
         source: e,
@@ -503,10 +577,28 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
             expected: dir_name,
         });
     }
-    let wasm_bytes = read_no_follow(&wasm_path).map_err(|e| DiscoveryError::WasmIo {
-        dir: dir.to_path_buf(),
-        kind: e.kind(),
-    })?;
+    let wasm_bytes = match read_no_follow(&wasm_path, MAX_WASM_BYTES) {
+        Ok(bytes) => bytes,
+        Err(ReadNoFollowError::Io(e)) => {
+            return Err(DiscoveryError::WasmIo {
+                dir: dir.to_path_buf(),
+                kind: e.kind(),
+            });
+        }
+        Err(ReadNoFollowError::NotRegular) => {
+            return Err(DiscoveryError::PathNotRegular {
+                dir: dir.to_path_buf(),
+                file: "plugin.wasm",
+            });
+        }
+        Err(ReadNoFollowError::TooLarge { observed_bytes }) => {
+            return Err(DiscoveryError::WasmTooLarge {
+                dir: dir.to_path_buf(),
+                observed_bytes,
+                max_bytes: MAX_WASM_BYTES,
+            });
+        }
+    };
     let content_hash = sha256_hex(&wasm_bytes);
     // SC-03 — optional minisign detached signature. minisign's `-Sm
     // plugin.wasm` writes `plugin.wasm.minisig`; absence is fine (the
@@ -783,6 +875,10 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("plugin.toml"), toml).unwrap();
         fs::write(dir.join("plugin.wasm"), wasm).unwrap();
+    }
+
+    fn create_sparse_file(path: &Path, len: u64) {
+        fs::File::create(path).unwrap().set_len(len).unwrap();
     }
 
     #[test]
@@ -1211,16 +1307,69 @@ mod tests {
     }
 
     #[test]
-    fn read_no_follow_reads_a_regular_file_and_errors_on_missing() {
-        // GR-089 — the symlink-safe reader returns a regular file's bytes and
-        // errors (no panic) on a missing path. The O_NOFOLLOW symlink-refusal
-        // itself is Unix-only (CI-verified) + mirrors the existing
-        // symlink_metadata loop pattern.
+    fn read_no_follow_accepts_exact_boundary_and_rejects_limit_plus_one() {
+        // GR-089 — the symlink-safe reader accepts exactly the cap and rejects
+        // cap+1. The same helper protects both manifest and WASM reads.
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("f.bin");
+        const TEST_LIMIT: u64 = 11;
         std::fs::write(&p, b"hello-bytes").unwrap();
-        assert_eq!(read_no_follow(&p).unwrap(), b"hello-bytes");
-        assert!(read_no_follow(&dir.path().join("absent")).is_err());
+        assert_eq!(read_no_follow(&p, TEST_LIMIT).unwrap(), b"hello-bytes");
+
+        std::fs::write(&p, b"hello-bytes!").unwrap();
+        assert!(matches!(
+            read_no_follow(&p, TEST_LIMIT),
+            Err(ReadNoFollowError::TooLarge { observed_bytes: 12 })
+        ));
+        assert!(matches!(
+            read_no_follow(&dir.path().join("absent"), TEST_LIMIT),
+            Err(ReadNoFollowError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn discovery_reports_sparse_oversize_manifest() {
+        let root = tempdir().unwrap();
+        let plugin_dir = root.path().join("oversize_manifest");
+        fs::create_dir(&plugin_dir).unwrap();
+        create_sparse_file(&plugin_dir.join("plugin.toml"), MAX_MANIFEST_BYTES + 1);
+        fs::write(plugin_dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
+
+        let report = discover(root.path());
+        assert!(report.loaded.is_empty());
+        assert!(matches!(
+            report.rejected.as_slice(),
+            [DiscoveryError::ManifestTooLarge {
+                observed_bytes,
+                max_bytes,
+                ..
+            }] if *observed_bytes == MAX_MANIFEST_BYTES + 1
+                && *max_bytes == MAX_MANIFEST_BYTES
+        ));
+    }
+
+    #[test]
+    fn discovery_reports_sparse_oversize_wasm() {
+        let root = tempdir().unwrap();
+        let plugin_dir = root.path().join("oversize_wasm");
+        fs::create_dir(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            "id = \"oversize_wasm\"\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        create_sparse_file(&plugin_dir.join("plugin.wasm"), MAX_WASM_BYTES + 1);
+
+        let report = discover(root.path());
+        assert!(report.loaded.is_empty());
+        assert!(matches!(
+            report.rejected.as_slice(),
+            [DiscoveryError::WasmTooLarge {
+                observed_bytes,
+                max_bytes,
+                ..
+            }] if *observed_bytes == MAX_WASM_BYTES + 1 && *max_bytes == MAX_WASM_BYTES
+        ));
     }
 
     #[test]

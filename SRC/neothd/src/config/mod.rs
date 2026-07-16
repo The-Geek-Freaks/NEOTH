@@ -54,6 +54,7 @@ use std::sync::{Mutex, MutexGuard};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use zeroize::Zeroize as _;
 
 pub mod credentials;
 // D003-KEYCHAIN-01 — OS keychain backend, migration helpers, SecretStore trait.
@@ -70,13 +71,17 @@ fn lock_freedom_update() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn with_freedom_update_lock<T>(path: &Path, action: impl FnOnce() -> Result<T>) -> Result<T> {
-    let _process_guard = lock_freedom_update();
-    let _file_guard = crate::util::locked_file::lock_file_blocking(
-        &path.with_extension("lock"),
-        "freedom config",
-    )?;
-    action()
+/// Public-config writer boundary that remains compatible with a pre-journal
+/// NEOTH process. The transaction lock and both legacy file/process locks are
+/// held before the source generation is read and until its atomic replacement
+/// is visible. Nested writers fail before attempting a non-reentrant mutex.
+fn with_coherent_freedom_update_lock<T>(
+    path: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        credentials::with_config_writer_guard(path, action)
+    })
 }
 
 fn read_optional_config_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -87,14 +92,239 @@ fn read_optional_config_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
     }
 }
 
+/// Freedom policy and effective secret state from one coherent on-disk
+/// generation. `credentials` includes the selected file/keychain backend, and
+/// `config` has that exact same credential snapshot merged into its legacy
+/// secret fields for existing runtime consumers.
+pub(crate) struct RuntimeConfigPair {
+    pub config: FreedomConfig,
+    /// Exact file-backed credential generation before optional keychain fill.
+    pub raw_credentials: credentials::Credentials,
+    /// Effective credentials after applying this generation's backend policy.
+    pub credentials: credentials::Credentials,
+}
+
+fn merge_effective_credentials(config: &mut FreedomConfig, credentials: &credentials::Credentials) {
+    if let Some(value) = credentials.provider_key.as_ref() {
+        config.provider_key = Some(value.clone());
+    }
+    if let Some(value) = credentials.telegram_token.as_ref() {
+        config.telegram_token = Some(value.clone());
+    }
+    if let Some(value) = credentials.inference_left_key.as_ref() {
+        config.inference.left.key = Some(value.clone());
+    }
+    if let Some(value) = credentials.inference_right_key.as_ref() {
+        config.inference.right.key = Some(value.clone());
+    }
+    if let Some(value) = credentials.inference_cerebellum_key.as_ref() {
+        config.inference.cerebellum.key = Some(value.clone());
+    }
+    if let Some(value) = credentials.inference_default_slot_key.as_ref() {
+        config.inference.default_slot.key = Some(value.clone());
+    }
+}
+
+/// Serialize a complete file/keychain backend migration with journal-aware
+/// readers and rolling-upgrade writers. Nested dual-file publication is
+/// lock-reentrant for this exact home; unrelated callers should use the
+/// narrower read/update APIs below.
+pub(crate) fn with_config_credential_migration_lock<T>(
+    freedom_path: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    credentials::with_coherent_pair_transaction_lock(freedom_path, action)
+}
+
+pub(crate) fn load_runtime_config_pair_from_path(path: &Path) -> Result<RuntimeConfigPair> {
+    load_runtime_config_pair_from_path_with_hook(path, || {})
+}
+
+/// First-run counterpart to [`load_runtime_config_pair_from_path`]. Compiled
+/// defaults are returned only when freedom.yaml is genuinely absent; every
+/// existence, read, recovery, parse, validation, and credential-file error from
+/// an existing installation remains fail-closed. Keychain supplementation keeps
+/// its existing explicit emergency-file fallback semantics.
+pub(crate) fn load_runtime_config_pair_from_path_or_default(
+    path: &Path,
+) -> Result<RuntimeConfigPair> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        if path
+            .try_exists()
+            .with_context(|| format!("check freedom.yaml path {}", path.display()))?
+        {
+            let (config, raw_credentials, credentials) =
+                FreedomConfig::load_runtime_pair_unlocked(path, || {})?;
+            Ok(RuntimeConfigPair {
+                config,
+                raw_credentials,
+                credentials,
+            })
+        } else {
+            let credentials_path = credentials::sibling_credentials_path(path);
+            let raw_credentials =
+                credentials::Credentials::load_or_default_unlocked(&credentials_path)
+                    .with_context(|| {
+                        format!("load credentials at {}", credentials_path.display())
+                    })?;
+            let credentials = credentials::Credentials::supplement_effective_unlocked(
+                raw_credentials.clone(),
+                SecretsBackend::File,
+            );
+            let mut config = FreedomConfig::default();
+            merge_effective_credentials(&mut config, &credentials);
+            Ok(RuntimeConfigPair {
+                config,
+                raw_credentials,
+                credentials,
+            })
+        }
+    })
+}
+
+fn load_runtime_config_pair_from_path_with_hook(
+    path: &Path,
+    after_freedom_load: impl FnOnce(),
+) -> Result<RuntimeConfigPair> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        let (config, raw_credentials, credentials) =
+            FreedomConfig::load_runtime_pair_unlocked(path, after_freedom_load)?;
+        Ok(RuntimeConfigPair {
+            config,
+            raw_credentials,
+            credentials,
+        })
+    })
+}
+
+/// Optional-config diagnostic view. A missing freedom.yaml stays `None`, while
+/// sibling file credentials are still loaded under the same recovery boundary
+/// using the compiled default (`file`) backend.
+pub(crate) fn load_optional_runtime_config_pair_from_path(
+    path: &Path,
+) -> Result<(Option<FreedomConfig>, credentials::Credentials)> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        if path
+            .try_exists()
+            .with_context(|| format!("check freedom.yaml path {}", path.display()))?
+        {
+            let (config, _, credentials) = FreedomConfig::load_runtime_pair_unlocked(path, || {})?;
+            Ok((Some(config), credentials))
+        } else {
+            let credentials_path = credentials::sibling_credentials_path(path);
+            let raw = credentials::Credentials::load_or_default_unlocked(&credentials_path)?;
+            let effective =
+                credentials::Credentials::supplement_effective_unlocked(raw, SecretsBackend::File);
+            Ok((None, effective))
+        }
+    })
+}
+
+pub(crate) struct RuntimeConfigDiagnosticSnapshot {
+    pub config: Option<FreedomConfig>,
+    pub config_error: Option<String>,
+    pub credential_status: credentials::CredentialStoreStatus,
+    pub credentials: Option<credentials::Credentials>,
+}
+
+/// Diagnostic-only coherent snapshot. Unlike the strict runtime pair loader,
+/// malformed config/credential state is classified instead of short-circuiting
+/// the whole status report; journal/lock/I/O errors outside those classified
+/// files still propagate.
+pub(crate) fn load_runtime_config_diagnostic_snapshot(
+    path: &Path,
+) -> Result<RuntimeConfigDiagnosticSnapshot> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        let (mut config, config_error) = if path
+            .try_exists()
+            .with_context(|| format!("check freedom.yaml path {}", path.display()))?
+        {
+            match FreedomConfig::load_public_from_path_unlocked(path) {
+                Ok(config) => (Some(config), None),
+                Err(error) => (None, Some(format!("{error:#}"))),
+            }
+        } else {
+            (None, None)
+        };
+        let backend = config
+            .as_ref()
+            .map(|config| config.secrets_backend)
+            .unwrap_or(SecretsBackend::File);
+        let credentials_path = credentials::sibling_credentials_path(path);
+        let credential_status =
+            credentials::Credentials::credential_store_status_unlocked(&credentials_path);
+        let credentials = match credential_status {
+            credentials::CredentialStoreStatus::Missing
+            | credentials::CredentialStoreStatus::Ok => Some(
+                credentials::Credentials::load_effective_unlocked(&credentials_path, backend)?,
+            ),
+            credentials::CredentialStoreStatus::Invalid
+            | credentials::CredentialStoreStatus::Unreadable
+            | credentials::CredentialStoreStatus::KeyUnavailable => None,
+        };
+        if let (Some(config), Some(credentials)) = (&mut config, &credentials) {
+            merge_effective_credentials(config, credentials);
+        }
+        Ok(RuntimeConfigDiagnosticSnapshot {
+            config,
+            config_error,
+            credential_status,
+            credentials,
+        })
+    })
+}
+
+pub(crate) struct RawConfigPairSnapshot {
+    pub freedom: Option<zeroize::Zeroizing<Vec<u8>>>,
+    pub credentials: Option<zeroize::Zeroizing<Vec<u8>>>,
+    pub credentials_encrypted: bool,
+}
+
+/// Exact raw config pair for backup/export callers. Both reads occur after
+/// journal recovery and while both the journal boundary and rolling-upgrade
+/// legacy pair locks are held; secret-bearing buffers zeroize automatically
+/// when the archive caller releases them.
+pub(crate) fn snapshot_raw_config_pair(path: &Path) -> Result<RawConfigPairSnapshot> {
+    snapshot_raw_config_pair_using(path, || {})
+}
+
+#[cfg(test)]
+pub(crate) fn snapshot_raw_config_pair_with_hook(
+    path: &Path,
+    after_freedom_read: impl FnOnce(),
+) -> Result<RawConfigPairSnapshot> {
+    snapshot_raw_config_pair_using(path, after_freedom_read)
+}
+
+fn snapshot_raw_config_pair_using(
+    path: &Path,
+    after_freedom_read: impl FnOnce(),
+) -> Result<RawConfigPairSnapshot> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        let credentials_path = credentials::sibling_credentials_path(path);
+        let freedom = read_optional_config_bytes(path)?.map(zeroize::Zeroizing::new);
+        after_freedom_read();
+        let credentials =
+            read_optional_config_bytes(&credentials_path)?.map(zeroize::Zeroizing::new);
+        let credentials_encrypted = credentials
+            .as_ref()
+            .is_some_and(|bytes| credentials::credentials_blob_is_encrypted(bytes.as_slice()));
+        Ok(RawConfigPairSnapshot {
+            freedom,
+            credentials,
+            credentials_encrypted,
+        })
+    })
+}
+
 /// A reviewed freedom.yaml publication bound to the exact source bytes from
 /// which it was planned. The final compare-and-swap takes the same process and
 /// OS locks as every other config mutation, so a concurrent operator edit is a
 /// loud retry instead of being overwritten by a stale consent/audit plan.
 pub(crate) struct PreparedFreedomUpdate {
     path: PathBuf,
-    expected_source: Option<Vec<u8>>,
-    target: Vec<u8>,
+    expected_source: Option<zeroize::Zeroizing<Vec<u8>>>,
+    target: zeroize::Zeroizing<Vec<u8>>,
 }
 
 impl PreparedFreedomUpdate {
@@ -103,7 +333,18 @@ impl PreparedFreedomUpdate {
     }
 
     pub(crate) fn source_sha256(&self) -> String {
-        sha256_bytes(self.expected_source.as_deref().unwrap_or_default())
+        sha256_bytes(
+            self.expected_source
+                .as_ref()
+                .map(|bytes| bytes.as_slice())
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Exact reviewed source generation. Callers that emit a rollback frame
+    /// before publication must snapshot these bytes, not re-read the path.
+    pub(crate) fn source_bytes(&self) -> Option<&[u8]> {
+        self.expected_source.as_ref().map(|bytes| bytes.as_slice())
     }
 
     pub(crate) fn target_sha256(&self) -> String {
@@ -114,10 +355,10 @@ impl PreparedFreedomUpdate {
     /// previously observed source untouched; a changed source is never
     /// overwritten.
     pub(crate) fn commit(self) -> Result<()> {
-        with_freedom_update_lock(&self.path, || {
-            let current = read_optional_config_bytes(&self.path)?;
+        with_coherent_freedom_update_lock(&self.path, || {
+            let current = read_optional_config_bytes(&self.path)?.map(zeroize::Zeroizing::new);
             anyhow::ensure!(
-                current == self.expected_source,
+                current.as_deref() == self.expected_source.as_deref(),
                 "freedom.yaml changed after review; refusing a stale config publication — retry the command"
             );
             crate::util::atomic_write::atomic_write_private(&self.path, &self.target)
@@ -138,21 +379,101 @@ pub(crate) fn prepare_raw_freedom_update<T>(
     path: &Path,
     planner: impl FnOnce(&str) -> Result<(String, T)>,
 ) -> Result<(PreparedFreedomUpdate, T)> {
-    with_freedom_update_lock(path, || {
-        let expected_source = read_optional_config_bytes(path)?;
-        let source = std::str::from_utf8(expected_source.as_deref().unwrap_or_default())
-            .with_context(|| format!("freedom.yaml is not valid UTF-8 at {}", path.display()))?;
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        let expected_source = read_optional_config_bytes(path)?.map(zeroize::Zeroizing::new);
+        let source = std::str::from_utf8(
+            expected_source
+                .as_ref()
+                .map(|bytes| bytes.as_slice())
+                .unwrap_or_default(),
+        )
+        .with_context(|| format!("freedom.yaml is not valid UTF-8 at {}", path.display()))?;
         let (target, value) = planner(source)?;
+        let _ = parse_public_freedom_yaml(path, target.as_bytes())
+            .context("validate prepared freedom.yaml target")?;
         Ok((
             PreparedFreedomUpdate {
                 path: path.to_path_buf(),
                 expected_source,
-                target: target.into_bytes(),
+                target: zeroize::Zeroizing::new(target.into_bytes()),
             },
             value,
         ))
     })
 }
+
+/// Apply one lossless raw freedom.yaml transformation while holding the full
+/// recovery boundary and canonical Freedom locks from source read through the
+/// atomic rename. This lighter primitive is only for transformations whose
+/// decision does not inspect sibling credentials; use
+/// [`update_raw_freedom_with_effective_credentials_at`] when it does.
+pub(crate) fn update_raw_freedom_at<T>(
+    path: &Path,
+    mutation: impl FnOnce(&str) -> Result<(String, T)>,
+) -> Result<T> {
+    with_coherent_freedom_update_lock(path, || {
+        let source = zeroize::Zeroizing::new(
+            std::fs::read(path)
+                .with_context(|| format!("read freedom.yaml at {}", path.display()))?,
+        );
+        let source = std::str::from_utf8(&source)
+            .with_context(|| format!("freedom.yaml is not valid UTF-8 at {}", path.display()))?;
+        let (target, value) = mutation(source)?;
+        let target = zeroize::Zeroizing::new(target);
+        let _ = parse_public_freedom_yaml(path, target.as_bytes())
+            .context("validate transformed freedom.yaml target")?;
+        crate::util::atomic_write::atomic_write_private(path, target.as_bytes())
+            .with_context(|| format!("atomically write {}", path.display()))?;
+        Ok(value)
+    })
+}
+
+/// Lossless public-only freedom.yaml transformation bound to one coherent
+/// effective credential generation. The transaction boundary and all four
+/// rolling-upgrade legacy locks are held before either file is read and until
+/// the atomic Freedom rename completes. credentials.yaml is never rewritten.
+///
+/// Changing `secrets_backend` is intentionally rejected: the supplied
+/// effective credentials were resolved under the source generation's backend,
+/// so authorizing a target with another backend would be stale by definition.
+pub(crate) fn update_raw_freedom_with_effective_credentials_at<T>(
+    path: &Path,
+    mutation: impl FnOnce(&str, &credentials::Credentials) -> Result<(String, T)>,
+) -> Result<T> {
+    with_coherent_freedom_update_lock(path, || {
+        let source = zeroize::Zeroizing::new(
+            std::fs::read(path)
+                .with_context(|| format!("read freedom.yaml at {}", path.display()))?,
+        );
+        let source = std::str::from_utf8(&source)
+            .with_context(|| format!("freedom.yaml is not valid UTF-8 at {}", path.display()))?;
+        let source_config = FreedomConfig::load_public_from_path_unlocked(path)?;
+        let credentials_path = credentials::sibling_credentials_path(path);
+        let effective_credentials = credentials::Credentials::load_effective_unlocked(
+            &credentials_path,
+            source_config.secrets_backend,
+        )
+        .with_context(|| {
+            format!(
+                "load coherent effective credentials at {}",
+                credentials_path.display()
+            )
+        })?;
+        let (target, value) = mutation(source, &effective_credentials)?;
+        let target = zeroize::Zeroizing::new(target);
+        let target_config: FreedomConfig = serde_yaml::from_str(&target)
+            .with_context(|| format!("validate transformed freedom.yaml at {}", path.display()))?;
+        anyhow::ensure!(
+            target_config.secrets_backend == source_config.secrets_backend,
+            "raw public update cannot change secrets_backend while authorizing against the source credential generation"
+        );
+        let _ = target_config.public_yaml()?;
+        crate::util::atomic_write::atomic_write_private(path, target.as_bytes())
+            .with_context(|| format!("atomically write {}", path.display()))?;
+        Ok(value)
+    })
+}
+
 // GOLD-ADAPT-DOC-01 (2026-06-23) — Python pip-gate helpers (ppt_master → python-pptx).
 pub mod installer;
 pub mod preset_builtins;
@@ -1194,6 +1515,34 @@ pub struct ClusterAnnouncePolicy {
     pub trusted_ssids: Vec<String>,
 }
 
+/// Live cluster gossip policy. Unlike carrier/discovery fields, these values
+/// are read at each inbound/outbound anti-entropy operation and can therefore
+/// be hot-reloaded without rebuilding the transport.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ClusterGossipPolicy {
+    /// Replicate raw channel-ingress frames to authenticated peers. Privacy-
+    /// first default: semantic/derived events only.
+    pub replicate_raw_ingress: bool,
+    /// Maximum replay age for a catching-up peer. The gossip layer clamps
+    /// pathological values to its reviewed operational ceiling.
+    #[serde(default = "default_cluster_replay_budget_days")]
+    pub replay_budget_days: u32,
+}
+
+impl Default for ClusterGossipPolicy {
+    fn default() -> Self {
+        Self {
+            replicate_raw_ingress: false,
+            replay_budget_days: default_cluster_replay_budget_days(),
+        }
+    }
+}
+
+pub(crate) const fn default_cluster_replay_budget_days() -> u32 {
+    30
+}
+
 /// SL-00 cluster identity and transport config. Default: inert cluster,
 /// peeroxide selected, no peers, and privacy-gated mDNS discovery.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -1216,6 +1565,8 @@ pub struct ClusterConfig {
     pub mdns: ClusterMdnsConfig,
     /// LAN privacy policy used by daemon, CLI and doctor alike.
     pub policy: ClusterAnnouncePolicy,
+    /// Hot-reloadable WAL gossip/privacy policy.
+    pub gossip: ClusterGossipPolicy,
     /// Shared mDNS/Tailscale probe port. Zero is invalid.
     pub listen_port: u16,
 }
@@ -1229,6 +1580,7 @@ impl Default for ClusterConfig {
             peers: Vec::new(),
             mdns: ClusterMdnsConfig::default(),
             policy: ClusterAnnouncePolicy::default(),
+            gossip: ClusterGossipPolicy::default(),
             listen_port: DEFAULT_CLUSTER_LISTEN_PORT,
         }
     }
@@ -1241,6 +1593,9 @@ impl ClusterConfig {
         }
         if self.peers.iter().any(|peer| peer.trim().is_empty()) {
             return Err("peers must not contain empty endpoint ids".to_string());
+        }
+        if !(1..=90).contains(&self.gossip.replay_budget_days) {
+            return Err("gossip.replay_budget_days must be between 1 and 90 days".to_string());
         }
         if self.enabled
             && self
@@ -1336,6 +1691,171 @@ pub struct DeepResearchConfig {
 
 #[cfg(test)]
 mod inline_tests;
+
+/// A parsed freedom.yaml may still carry pre-split inline credentials and
+/// extension-owned secrets. `serde_yaml::Value` does not zeroize strings on
+/// drop, so the lossless merge owns an explicit recursive wipe.
+struct SensitivePublicYaml(serde_yaml::Value);
+
+impl Drop for SensitivePublicYaml {
+    fn drop(&mut self) {
+        zeroize_public_yaml_value(&mut self.0);
+    }
+}
+
+fn zeroize_public_yaml_value(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::String(value) => value.zeroize(),
+        serde_yaml::Value::Sequence(values) => {
+            for value in values {
+                zeroize_public_yaml_value(value);
+            }
+        }
+        serde_yaml::Value::Mapping(values) => {
+            for (mut key, mut value) in std::mem::take(values) {
+                zeroize_public_yaml_value(&mut key);
+                zeroize_public_yaml_value(&mut value);
+            }
+        }
+        serde_yaml::Value::Tagged(value) => zeroize_public_yaml_value(&mut value.value),
+        _ => {}
+    }
+}
+
+fn overlay_public_known_yaml(target: &mut serde_yaml::Value, source: serde_yaml::Value) {
+    match source {
+        serde_yaml::Value::Mapping(source) => {
+            if let serde_yaml::Value::Mapping(target) = target {
+                for (key, value) in source {
+                    match target.get_mut(&key) {
+                        Some(existing) => overlay_public_known_yaml(existing, value),
+                        None => {
+                            target.insert(key, value);
+                        }
+                    }
+                }
+            } else {
+                *target = serde_yaml::Value::Mapping(source);
+            }
+        }
+        serde_yaml::Value::Sequence(source) => {
+            if let serde_yaml::Value::Sequence(target) = target {
+                if target.len() == source.len() {
+                    for (existing, value) in target.iter_mut().zip(source) {
+                        overlay_public_known_yaml(existing, value);
+                    }
+                } else {
+                    *target = source;
+                }
+            } else {
+                *target = serde_yaml::Value::Sequence(source);
+            }
+        }
+        source => *target = source,
+    }
+}
+
+fn remove_public_yaml_key(mapping: &mut serde_yaml::Mapping, name: &str) {
+    if let Some(mut removed) = mapping.remove(&serde_yaml::Value::String(name.to_string())) {
+        zeroize_public_yaml_value(&mut removed);
+    }
+}
+
+/// Known split-secret fields are deliberately absent from the overlay. This
+/// preserves a legacy inline value byte-for-value at the structural level
+/// until a dedicated credential migration can move it transactionally; a
+/// public-only toggle must never silently erase the operator's provider key.
+fn remove_split_secret_fields(value: &mut serde_yaml::Value) {
+    let Some(root) = value.as_mapping_mut() else {
+        return;
+    };
+    remove_public_yaml_key(root, "provider_key");
+    remove_public_yaml_key(root, "telegram_token");
+
+    let inference_key = serde_yaml::Value::String("inference".to_string());
+    let Some(inference) = root
+        .get_mut(&inference_key)
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    else {
+        return;
+    };
+    for slot_name in ["left", "right", "cerebellum", "default_slot"] {
+        let slot_key = serde_yaml::Value::String(slot_name.to_string());
+        if let Some(slot) = inference
+            .get_mut(&slot_key)
+            .and_then(serde_yaml::Value::as_mapping_mut)
+        {
+            remove_public_yaml_key(slot, "key");
+        }
+    }
+}
+
+fn canonicalize_public_yaml_aliases(value: &mut serde_yaml::Value) {
+    let Some(root) = value.as_mapping_mut() else {
+        return;
+    };
+    let loop_key = serde_yaml::Value::String("loop_config".to_string());
+    let Some(loop_config) = root
+        .get_mut(&loop_key)
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    else {
+        return;
+    };
+    // `token_budget` is a read-only compatibility alias. Leaving it beside
+    // the canonical key emitted below makes the next Serde load reject a
+    // duplicate field.
+    remove_public_yaml_key(loop_config, "token_budget");
+}
+
+fn parse_public_freedom_yaml(path: &Path, source: &[u8]) -> Result<FreedomConfig> {
+    let config: FreedomConfig = serde_yaml::from_slice(source)
+        .with_context(|| format!("parse YAML at {}", path.display()))?;
+    config.validate_public_sections()?;
+    Ok(config)
+}
+
+fn render_public_freedom_preserving_unknown(
+    path: &Path,
+    source: &[u8],
+    config: &FreedomConfig,
+) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+    let mut merged = SensitivePublicYaml(
+        serde_yaml::from_slice(source)
+            .with_context(|| format!("parse YAML at {} for lossless update", path.display()))?,
+    );
+    canonicalize_public_yaml_aliases(&mut merged.0);
+
+    let public = zeroize::Zeroizing::new(config.public_yaml()?);
+    let mut known: serde_yaml::Value =
+        serde_yaml::from_str(&public).context("parse canonical public FreedomConfig rendering")?;
+    remove_split_secret_fields(&mut known);
+    overlay_public_known_yaml(&mut merged.0, known);
+
+    let target = zeroize::Zeroizing::new(
+        serde_yaml::to_string(&merged.0)
+            .context("serialize freedom.yaml while preserving unknown fields")?
+            .into_bytes(),
+    );
+    let _ = parse_public_freedom_yaml(path, &target)
+        .context("validate losslessly merged freedom.yaml")?;
+    Ok(target)
+}
+
+fn mutate_public_freedom_source<T>(
+    path: &Path,
+    source: &[u8],
+    mutation: impl FnOnce(&mut FreedomConfig) -> Result<T>,
+) -> Result<(Option<zeroize::Zeroizing<Vec<u8>>>, T)> {
+    let mut config = parse_public_freedom_yaml(path, source)?;
+    let before = zeroize::Zeroizing::new(config.public_yaml()?.into_bytes());
+    let value = mutation(&mut config)?;
+    let after = zeroize::Zeroizing::new(config.public_yaml()?.into_bytes());
+    if before == after {
+        return Ok((None, value));
+    }
+    let target = render_public_freedom_preserving_unknown(path, source, &config)?;
+    Ok((Some(target), value))
+}
 
 impl FreedomConfig {
     /// Immutable point-in-time autonomy policy for one permission decision.
@@ -1452,13 +1972,15 @@ impl FreedomConfig {
     /// The `try_exists` error is significant: an unreadable path must not be
     /// mistaken for first-run absence and silently relax policy to defaults.
     pub fn load_from_path_or_default(path: &Path) -> Result<Self> {
-        match path
-            .try_exists()
-            .with_context(|| format!("check freedom.yaml path {}", path.display()))?
-        {
-            true => Self::load_from_path(path),
-            false => Ok(Self::default()),
-        }
+        credentials::with_coherent_pair_transaction_lock(path, || {
+            match path
+                .try_exists()
+                .with_context(|| format!("check freedom.yaml path {}", path.display()))?
+            {
+                true => Self::load_from_path_unlocked(path),
+                false => Ok(Self::default()),
+            }
+        })
     }
 
     /// Write the public (secret-free) portion of this config to the
@@ -1467,25 +1989,49 @@ impl FreedomConfig {
     /// — secret-split (Codex audit #7) requires API keys / tokens to
     /// live in `credentials.yaml`, not `freedom.yaml`.
     ///
-    /// Used by CLI paths that already hold a complete config value. New
-    /// read-modify-write callers should prefer [`Self::update_at`]; provider
-    /// keys are persisted separately through `Credentials::update_at`.
+    /// Compatibility-only full replacement for callers that intentionally
+    /// own the complete known schema. Runtime/CLI read-modify-write paths must
+    /// use [`Self::update_at`] so a stale typed snapshot cannot replace newer
+    /// known fields; provider keys belong in `Credentials::update_at`.
+    #[deprecated(
+        note = "full-config replacement can overwrite a stale known field; use FreedomConfig::update_at"
+    )]
     pub fn save_public_to_default_path(&self) -> Result<()> {
         let path = Self::default_path();
-        with_freedom_update_lock(&path, || self.write_public_to_path(&path))
+        with_coherent_freedom_update_lock(&path, || {
+            let source = zeroize::Zeroizing::new(std::fs::read(&path).with_context(|| {
+                format!(
+                    "read freedom.yaml at {} for explicit replacement",
+                    path.display()
+                )
+            })?);
+            let target = render_public_freedom_preserving_unknown(&path, &source, self)?;
+            crate::util::atomic_write::atomic_write_private(&path, &target)
+                .with_context(|| format!("atomically write {}", path.display()))
+        })
     }
 
     /// Concurrency-safe read-modify-write for `freedom.yaml`.
     ///
     /// The config is reloaded only after both the process-local mutex and the
-    /// sibling OS lock are held. A malformed existing file therefore returns
-    /// an error before `mutation` runs and before any bytes are replaced. The
-    /// resulting public config is secret-stripped and atomically renamed.
+    /// complete config/credential pair lock set are held. A malformed existing
+    /// file therefore returns an error before `mutation` runs and before any
+    /// bytes are replaced. The lossless structural overlay preserves unknown
+    /// root/nested fields and legacy inline secrets while publishing only the
+    /// freshly loaded generation's requested typed mutation.
     pub fn update_at<T>(path: &Path, mutation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        with_freedom_update_lock(path, || {
-            let mut config = Self::load_from_path(path)?;
-            let value = mutation(&mut config)?;
-            config.write_public_to_path(path)?;
+        with_coherent_freedom_update_lock(path, || {
+            let source = zeroize::Zeroizing::new(std::fs::read(path).with_context(|| {
+                format!(
+                    "read freedom.yaml at {} for lossless update",
+                    path.display()
+                )
+            })?);
+            let (target, value) = mutate_public_freedom_source(path, &source, mutation)?;
+            if let Some(target) = target {
+                crate::util::atomic_write::atomic_write_private(path, &target)
+                    .with_context(|| format!("atomically write {}", path.display()))?;
+            }
             Ok(value)
         })
     }
@@ -1498,10 +2044,24 @@ impl FreedomConfig {
         path: &Path,
         mutation: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<(PreparedFreedomUpdate, T)> {
-        prepare_raw_freedom_update(path, |_| {
-            let mut config = Self::load_from_path(path)?;
-            let value = mutation(&mut config)?;
-            Ok((config.public_yaml()?, value))
+        credentials::with_coherent_pair_transaction_lock(path, || {
+            let source = zeroize::Zeroizing::new(std::fs::read(path).with_context(|| {
+                format!(
+                    "read freedom.yaml at {} for reviewed update",
+                    path.display()
+                )
+            })?);
+            let (target, value) = mutate_public_freedom_source(path, &source, mutation)?;
+            let target =
+                target.unwrap_or_else(|| zeroize::Zeroizing::new(source.as_slice().to_vec()));
+            Ok((
+                PreparedFreedomUpdate {
+                    path: path.to_path_buf(),
+                    expected_source: Some(source),
+                    target,
+                },
+                value,
+            ))
         })
     }
 
@@ -1518,106 +2078,86 @@ impl FreedomConfig {
         public.inference.cerebellum.key = None;
         public.inference.default_slot.key = None;
 
-        public
-            .companion
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
-        public
-            .swarm
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid swarm config: {error}"))?;
-        public
-            .cluster
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
-        public
-            .profile
-            .communication
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid profile.communication config: {error}"))?;
+        public.validate_public_sections()?;
         serde_yaml::to_string(&public).context("serialize FreedomConfig as YAML for freedom.yaml")
     }
 
-    fn write_public_to_path(&self, path: &Path) -> Result<()> {
-        let body = self.public_yaml()?;
-        crate::util::atomic_write::atomic_write_private(path, body.as_bytes())
-            .with_context(|| format!("atomically write {}", path.display()))?;
+    fn validate_public_sections(&self) -> Result<()> {
+        self.proactive
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid proactive config: {error}"))?;
+        self.companion
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
+        self.swarm
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid swarm config: {error}"))?;
+        self.cluster
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
+        self.profile
+            .communication
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid profile.communication config: {error}"))?;
         Ok(())
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            anyhow::bail!(
-                "freedom.yaml not found at {}. Run `neoth init` first to generate it.",
-                path.display()
-            );
-        }
+        credentials::with_coherent_pair_transaction_lock(path, || {
+            Self::load_from_path_unlocked(path)
+        })
+    }
 
-        #[cfg(unix)]
-        warn_if_world_readable(path);
+    fn load_from_path_unlocked(path: &Path) -> Result<Self> {
+        let (config, _, _) = Self::load_runtime_pair_unlocked(path, || {})?;
+        Ok(config)
+    }
 
-        let body = std::fs::read_to_string(path)
-            .with_context(|| format!("read freedom.yaml at {}", path.display()))?;
-        let mut config: FreedomConfig = serde_yaml::from_str(&body)
-            .with_context(|| format!("parse YAML at {}", path.display()))?;
-        config
-            .companion
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
-        config
-            .swarm
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid swarm config: {error}"))?;
-        config
-            .cluster
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
-        config
-            .profile
-            .communication
-            .validate()
-            .map_err(|error| anyhow::anyhow!("invalid profile.communication config: {error}"))?;
+    fn load_runtime_pair_unlocked(
+        path: &Path,
+        after_freedom_load: impl FnOnce(),
+    ) -> Result<(Self, credentials::Credentials, credentials::Credentials)> {
+        let mut config = Self::load_public_from_path_unlocked(path)?;
+        after_freedom_load();
 
         // Merge `~/.neoth/credentials.yaml` if present. credentials.yaml
         // is the dedicated home for plaintext secrets — the values there
         // win over anything embedded in `freedom.yaml` because the
         // operator-editable surface is the dedicated file. Legacy
         // installs that still keep secrets inline keep working.
-        let cred_path = match path.parent() {
-            Some(parent) => parent.join("credentials.yaml"),
-            None => credentials::default_path(),
-        };
+        let cred_path = credentials::sibling_credentials_path(path);
         #[cfg(unix)]
         warn_if_world_readable(&cred_path);
-        let creds = credentials::Credentials::load_effective(&cred_path, config.secrets_backend)
+        let raw_credentials = credentials::Credentials::load_or_default_unlocked(&cred_path)
             .with_context(|| format!("load credentials at {}", cred_path.display()))?;
+        let creds = credentials::Credentials::supplement_effective_unlocked(
+            raw_credentials.clone(),
+            config.secrets_backend,
+        );
 
-        if let Some(k) = creds.provider_key {
-            config.provider_key = Some(k);
-        }
-        if let Some(t) = creds.telegram_token {
-            config.telegram_token = Some(t);
-        }
-        // GR-041: per-slot inference keys. `save_public_to_default_path` strips
-        // `inference.{left,right,cerebellum,default_slot}.key` from freedom.yaml
-        // and the doc tells operators to set them in credentials.yaml — but the
-        // Credentials struct had no field for them, so a per-slot key was
-        // silently DROPPED on the next save (and unconfigurable via the
-        // documented file). Merge them back here, matching provider_key's
-        // "credentials.yaml wins" posture.
-        if let Some(k) = creds.inference_left_key {
-            config.inference.left.key = Some(k);
-        }
-        if let Some(k) = creds.inference_right_key {
-            config.inference.right.key = Some(k);
-        }
-        if let Some(k) = creds.inference_cerebellum_key {
-            config.inference.cerebellum.key = Some(k);
-        }
-        if let Some(k) = creds.inference_default_slot_key {
-            config.inference.default_slot.key = Some(k);
-        }
-        Ok(config)
+        // GR-041: dedicated credentials win over legacy inline values, and the
+        // same effective generation is returned alongside the merged config.
+        merge_effective_credentials(&mut config, &creds);
+        Ok((config, raw_credentials, creds))
+    }
+
+    fn load_public_from_path_unlocked(path: &Path) -> Result<Self> {
+        #[cfg(unix)]
+        warn_if_world_readable(path);
+        let body = match std::fs::read(path) {
+            Ok(body) => zeroize::Zeroizing::new(body),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                anyhow::bail!(
+                    "freedom.yaml not found at {}. Run `neoth init` first to generate it.",
+                    path.display()
+                );
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("read freedom.yaml at {}", path.display()));
+            }
+        };
+        parse_public_freedom_yaml(path, &body)
     }
 }
 

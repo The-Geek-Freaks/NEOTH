@@ -59,9 +59,10 @@ impl TurnJournal {
             || turn_id.contains('/')
             || turn_id.contains('\\')
             || turn_id.contains("..")
+            || turn_id.chars().any(char::is_control)
         {
             anyhow::bail!(
-                "turn_id `{turn_id}` is not a safe filename component (rejected: empty / slash / parent-traversal)"
+                "turn_id is not a safe filename component (rejected: empty / slash / parent-traversal / control character)"
             );
         }
         let journal_dir = neoth_dir.join(JOURNAL_DIR);
@@ -240,7 +241,15 @@ mod tests {
     #[test]
     fn open_rejects_unsafe_turn_ids() {
         let dir = tempdir().unwrap();
-        for bad in &["", "../etc/passwd", "x/y", "a\\b", "with..dots"] {
+        for bad in &[
+            "",
+            "../etc/passwd",
+            "x/y",
+            "a\\b",
+            "with..dots",
+            "nul\0suffix",
+            "line\nbreak",
+        ] {
             let r = TurnJournal::open(dir.path(), *bad);
             assert!(r.is_err(), "must reject `{bad}`");
         }

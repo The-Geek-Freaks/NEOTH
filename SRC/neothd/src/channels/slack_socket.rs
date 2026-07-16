@@ -67,6 +67,8 @@ const ACK_TIMEOUT_SECS: u64 = 2;
 pub async fn run_socket_loop(
     app_token: &SecretString,
     bot_token: SecretString,
+    allowed_user_id: String,
+    gate_writer: crate::wal::writer::WalWriterHandle,
     handler: PipelineHandler,
 ) -> Result<()> {
     let handler = Arc::new(handler);
@@ -95,7 +97,15 @@ pub async fn run_socket_loop(
     };
     let mut backoff_secs: u64 = 1;
     loop {
-        match run_one_session(app_token, Arc::clone(&handler), Arc::clone(&sender)).await {
+        match run_one_session(
+            app_token,
+            &allowed_user_id,
+            &gate_writer,
+            Arc::clone(&handler),
+            Arc::clone(&sender),
+        )
+        .await
+        {
             Ok(()) => {
                 info!("slack socket-mode session ended cleanly — reconnecting");
                 backoff_secs = 1;
@@ -118,6 +128,8 @@ pub async fn run_socket_loop(
 /// the transport breaks or credentials are rejected.
 async fn run_one_session(
     app_token: &SecretString,
+    allowed_user_id: &str,
+    gate_writer: &crate::wal::writer::WalWriterHandle,
     handler: Arc<PipelineHandler>,
     sender: OutboundSender,
 ) -> Result<()> {
@@ -183,7 +195,14 @@ async fn run_one_session(
                 inbound,
             } => {
                 ack(&mut sink, &envelope_id).await?;
-                dispatch_inbound(*inbound, Arc::clone(&handler), Arc::clone(&sender)).await;
+                dispatch_inbound(
+                    *inbound,
+                    allowed_user_id,
+                    Some(gate_writer),
+                    Arc::clone(&handler),
+                    Arc::clone(&sender),
+                )
+                .await;
             }
             DecodedFrame::NonMessage { envelope_id } => {
                 ack(&mut sink, &envelope_id).await?;
@@ -241,9 +260,21 @@ async fn ack(
 /// closed end-to-end.
 pub(crate) async fn dispatch_inbound(
     msg: InboundMessage,
+    allowed_user_id: &str,
+    gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
     handler: Arc<PipelineHandler>,
     sender: OutboundSender,
 ) {
+    if crate::channels::sender_blocked_by_allowlist(
+        Some(allowed_user_id),
+        &msg.sender_id,
+        gate_writer,
+        "slack",
+    )
+    .await
+    {
+        return;
+    }
     let chat_id = msg.chat_id.clone();
     match handler(msg).await {
         Ok(Some(outbound)) => {
@@ -420,7 +451,7 @@ mod tests {
             })
         });
         let handler = Arc::new(handler);
-        dispatch_inbound(build_inbound("hi neoth"), handler, sender).await;
+        dispatch_inbound(build_inbound("hi neoth"), "U999", None, handler, sender).await;
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 1, "exactly one outbound must be sent");
         assert_eq!(calls[0].recipient_id, "C123");
@@ -433,7 +464,7 @@ mod tests {
         let handler: PipelineHandler =
             Box::new(|_: InboundMessage| Box::pin(async move { Ok(None) }));
         let handler = Arc::new(handler);
-        dispatch_inbound(build_inbound("ignored"), handler, sender).await;
+        dispatch_inbound(build_inbound("ignored"), "U999", None, handler, sender).await;
         assert!(
             calls.lock().unwrap().is_empty(),
             "None must NOT trigger a post"
@@ -447,7 +478,14 @@ mod tests {
             Box::pin(async move { Err(anyhow::anyhow!("pipeline blew up")) })
         });
         let handler = Arc::new(handler);
-        dispatch_inbound(build_inbound("trigger error"), handler, sender).await;
+        dispatch_inbound(
+            build_inbound("trigger error"),
+            "U999",
+            None,
+            handler,
+            sender,
+        )
+        .await;
         // Handler error → no outbound; receive loop continues.
         assert!(calls.lock().unwrap().is_empty());
     }
@@ -469,6 +507,30 @@ mod tests {
         });
         let handler = Arc::new(handler);
         // No panic, no propagation — the function returns ().
-        dispatch_inbound(build_inbound("ping"), handler, failing).await;
+        dispatch_inbound(build_inbound("ping"), "U999", None, handler, failing).await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_inbound_blocks_non_allowlisted_user_before_pipeline() {
+        let (sender, sends) = recording_sender();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls_for_handler = Arc::clone(&calls);
+        let handler: PipelineHandler = Box::new(move |_: InboundMessage| {
+            let calls = Arc::clone(&calls_for_handler);
+            Box::pin(async move {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(None)
+            })
+        });
+        dispatch_inbound(
+            build_inbound("blocked"),
+            "U111",
+            None,
+            Arc::new(handler),
+            sender,
+        )
+        .await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(sends.lock().unwrap().is_empty());
     }
 }

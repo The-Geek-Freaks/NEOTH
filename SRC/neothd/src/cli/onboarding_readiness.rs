@@ -47,13 +47,10 @@ impl OnboardingReadiness {
 
 pub(crate) fn load(home: &Path) -> Result<(FreedomConfig, OnboardingReadiness)> {
     let freedom_path = home.join("freedom.yaml");
-    let cfg = FreedomConfig::load_from_path(&freedom_path)
-        .with_context(|| format!("load {}", freedom_path.display()))?;
-    let credentials_path = home.join("credentials.yaml");
-    let credentials = Credentials::load_effective(&credentials_path, cfg.secrets_backend)
-        .with_context(|| format!("load {}", credentials_path.display()))?;
-    let readiness = evaluate(&cfg, &credentials);
-    Ok((cfg, readiness))
+    let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path)
+        .with_context(|| format!("load coherent runtime config at {}", freedom_path.display()))?;
+    let readiness = evaluate(&pair.config, &pair.credentials);
+    Ok((pair.config, readiness))
 }
 
 pub(crate) fn evaluate(cfg: &FreedomConfig, credentials: &Credentials) -> OnboardingReadiness {
@@ -149,7 +146,17 @@ fn configured_channels(credentials: &Credentials) -> Vec<&'static str> {
     if credentials.telegram_token.is_some() {
         channels.push("Telegram");
     }
-    if credentials.whatsapp_token.is_some() && credentials.whatsapp_phone_id.is_some() {
+    if credentials.whatsapp_token.is_some()
+        && credentials.whatsapp_phone_id.is_some()
+        && credentials.whatsapp_verify_token.is_some()
+        && credentials.whatsapp_app_secret.is_some()
+        && credentials
+            .whatsapp_allowed_sender
+            .as_deref()
+            .is_some_and(|value| {
+                crate::channels::whatsapp_webhook::normalize_allowed_sender(value).is_ok()
+            })
+    {
         channels.push("WhatsApp Cloud");
     }
     if credentials.whatsapp_baileys_url.is_some()
@@ -158,13 +165,30 @@ fn configured_channels(credentials: &Credentials) -> Vec<&'static str> {
     {
         channels.push("WhatsApp Baileys");
     }
-    if credentials.slack_bot_token.is_some() {
+    if credentials.slack_bot_token.is_some()
+        && credentials.slack_app_token.is_some()
+        && credentials
+            .slack_allowed_user_id
+            .as_deref()
+            .is_some_and(|value| crate::channels::slack::normalize_allowed_user_id(value).is_ok())
+    {
         channels.push("Slack");
     }
-    if credentials.discord_bot_token.is_some() {
+    if credentials.discord_bot_token.is_some()
+        && credentials
+            .discord_allowed_user_id
+            .as_deref()
+            .is_some_and(|id| crate::channels::discord::normalize_allowed_sender_id(id).is_ok())
+    {
         channels.push("Discord");
     }
-    if credentials.signal_cli_url.is_some() && credentials.signal_phone_number.is_some() {
+    if credentials.signal_cli_url.is_some()
+        && credentials.signal_phone_number.is_some()
+        && credentials
+            .signal_allowed_sender
+            .as_deref()
+            .is_some_and(|value| crate::channels::signal_api::validate_signal_number(value).is_ok())
+    {
         channels.push("Signal");
     }
     if credentials.matrix_homeserver.is_some()
@@ -173,7 +197,12 @@ fn configured_channels(credentials: &Credentials) -> Vec<&'static str> {
     {
         channels.push("Matrix");
     }
-    if credentials.line_channel_access_token.is_some() && credentials.line_channel_secret.is_some()
+    if credentials.line_channel_access_token.is_some()
+        && credentials.line_channel_secret.is_some()
+        && credentials
+            .line_allowed_sender
+            .as_deref()
+            .is_some_and(|value| crate::channels::line_api::normalize_allowed_sender(value).is_ok())
     {
         channels.push("LINE");
     }
@@ -262,5 +291,20 @@ mod tests {
             ..Credentials::default()
         };
         assert_eq!(configured_channels(&credentials), vec!["Matrix"]);
+    }
+
+    #[test]
+    fn discord_is_visible_only_with_exact_sender_policy() {
+        let token_only = Credentials {
+            discord_bot_token: Some(SecretString::from("discord-token")),
+            ..Credentials::default()
+        };
+        assert!(!configured_channels(&token_only).contains(&"Discord"));
+
+        let complete = Credentials {
+            discord_allowed_user_id: Some("123456789012345678".into()),
+            ..token_only
+        };
+        assert!(configured_channels(&complete).contains(&"Discord"));
     }
 }

@@ -16,11 +16,15 @@
 //! enforced via the same path as `freedom.yaml` (OpenOptions::mode pre-
 //! open on unix; icacls grant:r owner on Windows).
 
-use std::path::{Path, PathBuf};
+use std::cell::RefCell;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use zeroize::Zeroize;
 
 use crate::secret::SecretString;
 
@@ -65,6 +69,35 @@ impl CredentialStoreStatus {
 // consistent thanks to atomic rename, so recovering and proceeding is safe.
 static CRED_LOCK: Mutex<()> = Mutex::new(());
 
+// A dual-file transaction must exclude runtime readers for its complete
+// PREPARED -> two renames -> journal removal window. This process mutex plus
+// the sibling OS lock provides that boundary across threads and processes.
+// The thread-local marker makes same-home nested loads re-entrant (for example
+// a FreedomConfig mutation validating effective credentials) without relying
+// on platform-specific advisory-lock re-entrancy.
+static DUAL_FILE_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
+thread_local! {
+    static ACTIVE_DUAL_FILE_TRANSACTION_DIR: RefCell<Option<PathBuf>> = const {
+        RefCell::new(None)
+    };
+    static ACTIVE_LEGACY_PAIR_LOCK_DIR: RefCell<Option<PathBuf>> = const {
+        RefCell::new(None)
+    };
+    static ACTIVE_CONFIG_WRITER_DIR: RefCell<Option<PathBuf>> = const {
+        RefCell::new(None)
+    };
+    static ACTIVE_RESTORE_PUBLICATION_DIR: RefCell<Option<PathBuf>> = const {
+        RefCell::new(None)
+    };
+}
+
+const DUAL_FILE_JOURNAL_NAME: &str = ".freedom-credentials.prepared.yaml";
+const DUAL_FILE_LOCK_NAME: &str = ".freedom-credentials.transaction.lock";
+const DUAL_FILE_JOURNAL_VERSION: u8 = 1;
+const DUAL_FILE_JOURNAL_STATE: &str = "PREPARED";
+const MAX_DUAL_FILE_JOURNAL_BYTES: u64 = 64 * 1024 * 1024;
+const RESTORE_IN_PROGRESS_NAME: &str = ".restore-in-progress.yaml";
+
 fn lock_cred() -> MutexGuard<'static, ()> {
     CRED_LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
@@ -78,6 +111,274 @@ fn lock_cred_file(path: &Path) -> Result<std::fs::File> {
     crate::util::locked_file::lock_file_blocking(&lock_path, "credentials")
 }
 
+fn transaction_directory(path: &Path) -> PathBuf {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
+pub(super) fn sibling_credentials_path(freedom_path: &Path) -> PathBuf {
+    transaction_directory(freedom_path).join("credentials.yaml")
+}
+
+struct ActiveDualFileTransaction;
+
+impl Drop for ActiveDualFileTransaction {
+    fn drop(&mut self) {
+        ACTIVE_DUAL_FILE_TRANSACTION_DIR.with(|active| {
+            *active.borrow_mut() = None;
+        });
+    }
+}
+
+struct ActiveLegacyPairLocks;
+
+impl ActiveLegacyPairLocks {
+    fn enter(directory: &Path) -> Result<Self> {
+        ACTIVE_LEGACY_PAIR_LOCK_DIR.with(|active| {
+            let mut active = active.borrow_mut();
+            anyhow::ensure!(
+                active.is_none(),
+                "legacy freedom/credentials pair locks are already marked active"
+            );
+            *active = Some(directory.to_path_buf());
+            Ok(Self)
+        })
+    }
+}
+
+impl Drop for ActiveLegacyPairLocks {
+    fn drop(&mut self) {
+        ACTIVE_LEGACY_PAIR_LOCK_DIR.with(|active| {
+            *active.borrow_mut() = None;
+        });
+    }
+}
+
+struct ActiveConfigWriter;
+
+impl Drop for ActiveConfigWriter {
+    fn drop(&mut self) {
+        ACTIVE_CONFIG_WRITER_DIR.with(|active| {
+            *active.borrow_mut() = None;
+        });
+    }
+}
+
+struct ActiveRestorePublication;
+
+impl ActiveRestorePublication {
+    fn enter(directory: &Path) -> Result<Self> {
+        ACTIVE_RESTORE_PUBLICATION_DIR.with(|active| {
+            let mut active = active.borrow_mut();
+            anyhow::ensure!(active.is_none(), "restore publication is already active");
+            *active = Some(directory.to_path_buf());
+            Ok(Self)
+        })
+    }
+}
+
+impl Drop for ActiveRestorePublication {
+    fn drop(&mut self) {
+        ACTIVE_RESTORE_PUBLICATION_DIR.with(|active| {
+            *active.borrow_mut() = None;
+        });
+    }
+}
+
+pub(super) fn with_config_writer_guard<T>(
+    anchor: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let directory = transaction_directory(anchor);
+    ACTIVE_CONFIG_WRITER_DIR.with(|active| {
+        let mut active = active.borrow_mut();
+        if let Some(active_directory) = active.as_ref() {
+            anyhow::bail!(
+                "refusing nested config writer ({} -> {}); compose both mutations in one transaction",
+                active_directory.display(),
+                directory.display()
+            );
+        }
+        *active = Some(directory);
+        Ok(())
+    })?;
+    let _active_writer = ActiveConfigWriter;
+    action()
+}
+
+/// Hold every config/credential lock across an already-validated staged
+/// restore. A private durable marker blocks all normal config loads if the
+/// process dies after ancillary files become visible but before the pair commit
+/// and cleanup. Re-running restore resumes under the explicit bypass and clears
+/// the marker only after the whole publication succeeds.
+pub(crate) fn with_restore_publication_at<T>(
+    freedom_path: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let directory = transaction_directory(freedom_path);
+    let _restore = ActiveRestorePublication::enter(&directory)?;
+    with_coherent_pair_transaction_lock(freedom_path, || {
+        let marker_path = directory.join(RESTORE_IN_PROGRESS_NAME);
+        validate_exact_pair_target(&marker_path, "restore marker")?;
+        crate::util::atomic_write::atomic_write_private(
+            &marker_path,
+            b"version: 1\nstate: RESTORE_PREPARED\n",
+        )
+        .with_context(|| format!("write private restore marker {}", marker_path.display()))?;
+        sync_transaction_directory(&directory)?;
+
+        let value = action().with_context(|| {
+            format!(
+                "restore publication interrupted; {} retained and runtime activation is blocked until restore is rerun",
+                marker_path.display()
+            )
+        })?;
+        crate::util::atomic_write::durable_remove_file(&marker_path)
+            .with_context(|| format!("clear completed restore marker {}", marker_path.display()))?;
+        Ok(value)
+    })
+}
+
+fn with_legacy_pair_locks<T>(
+    freedom_path: &Path,
+    credentials_path: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let directory = transaction_directory(freedom_path);
+    anyhow::ensure!(
+        directory == transaction_directory(credentials_path),
+        "freedom.yaml and credentials.yaml must be siblings for canonical pair locking"
+    );
+    let active_pair = ACTIVE_LEGACY_PAIR_LOCK_DIR.with(|active| active.borrow().clone());
+    if let Some(active_directory) = active_pair {
+        anyhow::ensure!(
+            active_directory == directory,
+            "refusing nested legacy pair locks across instance homes ({} -> {})",
+            active_directory.display(),
+            directory.display()
+        );
+        return action();
+    }
+
+    let _freedom_mutex = super::lock_freedom_update();
+    let _credentials_mutex = lock_cred();
+    let _freedom_file_lock = crate::util::locked_file::lock_file_blocking(
+        &freedom_path.with_extension("lock"),
+        "freedom config",
+    )
+    .with_context(|| format!("acquire freedom config lock for {}", freedom_path.display()))?;
+    let _credentials_file_lock = lock_cred_file(credentials_path).with_context(|| {
+        format!(
+            "acquire credentials lock for {}",
+            credentials_path.display()
+        )
+    })?;
+    let _active_pair = ActiveLegacyPairLocks::enter(&directory)?;
+    action()
+}
+
+/// Coherent two-file reader compatible with both journal-aware writers and a
+/// still-running pre-journal NEOTH during rolling upgrades. The legacy writer
+/// holds these four locks across both renames, so all four must be acquired
+/// before the reader touches either file.
+pub(super) fn with_coherent_pair_transaction_lock<T>(
+    freedom_path: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let directory = transaction_directory(freedom_path);
+    let active_transaction =
+        ACTIVE_DUAL_FILE_TRANSACTION_DIR.with(|active| active.borrow().clone());
+    if let Some(active_directory) = active_transaction {
+        anyhow::ensure!(
+            active_directory == directory,
+            "refusing nested coherent config read across instance homes ({} -> {})",
+            active_directory.display(),
+            directory.display()
+        );
+        let pair_locks_held = ACTIVE_LEGACY_PAIR_LOCK_DIR.with(|active| {
+            active
+                .borrow()
+                .as_ref()
+                .is_some_and(|active_directory| active_directory == &directory)
+        });
+        anyhow::ensure!(
+            pair_locks_held,
+            "refusing a coherent config/credential read nested inside a single-file mutation"
+        );
+        return action();
+    }
+
+    with_dual_file_transaction_lock(freedom_path, || {
+        let credentials_path = sibling_credentials_path(freedom_path);
+        with_legacy_pair_locks(freedom_path, &credentials_path, action)
+    })
+}
+
+/// Run a config/credential operation behind the crash-recovery boundary.
+///
+/// Dual-file writer lock order is: this transaction lock, then the existing
+/// freedom/credential process and file locks. Single-file readers take this
+/// boundary alone; coherent pair readers additionally take all four legacy
+/// locks so they remain safe beside a pre-journal process during rolling
+/// upgrades. Nested reads for the same instance are explicitly re-entrant;
+/// nested writers are rejected by [`with_config_writer_guard`] before they can
+/// reacquire a mutex or overwrite an inner generation. Cross-instance nesting
+/// fails closed rather than acquiring two transaction locks in an order that
+/// could deadlock another process.
+pub(super) fn with_dual_file_transaction_lock<T>(
+    anchor: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let directory = transaction_directory(anchor);
+    let nested = ACTIVE_DUAL_FILE_TRANSACTION_DIR.with(|active| {
+        let active = active.borrow();
+        match active.as_ref() {
+            Some(current) if current == &directory => Ok(true),
+            Some(current) => anyhow::bail!(
+                "refusing nested config transaction across instance homes ({} -> {})",
+                current.display(),
+                directory.display()
+            ),
+            None => Ok(false),
+        }
+    })?;
+    if nested {
+        return action();
+    }
+
+    let _process_guard = DUAL_FILE_TRANSACTION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _file_guard = crate::util::locked_file::lock_file_blocking(
+        &directory.join(DUAL_FILE_LOCK_NAME),
+        "freedom/credentials transaction",
+    )?;
+    recover_prepared_transaction_in(&directory)?;
+
+    let restore_publication_active = ACTIVE_RESTORE_PUBLICATION_DIR.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .is_some_and(|active_directory| active_directory == &directory)
+    });
+    if !restore_publication_active
+        && read_private_journal(&directory.join(RESTORE_IN_PROGRESS_NAME))?.is_some()
+    {
+        anyhow::bail!(
+            "incomplete backup restore in {}; runtime activation is blocked. Rerun the same `neoth restore <archive> --force` command to complete it",
+            directory.display()
+        );
+    }
+
+    ACTIVE_DUAL_FILE_TRANSACTION_DIR.with(|active| {
+        *active.borrow_mut() = Some(directory);
+    });
+    let _active = ActiveDualFileTransaction;
+    action()
+}
+
 /// Default file: `<neoth_home>/credentials.yaml`.
 pub fn default_path() -> PathBuf {
     super::FreedomConfig::default_neoth_home().join("credentials.yaml")
@@ -87,6 +388,10 @@ pub fn default_path() -> PathBuf {
 /// credentials.yaml. Distinct from the WAL `ENC_MAGIC` so the two at-rest
 /// formats can never be confused. Layout: `CONF_MAGIC ‖ nonce(12) ‖ ciphertext`.
 const CONF_MAGIC: &[u8] = b"NEOTH_CONF_ENCv1\n";
+
+pub(crate) fn credentials_blob_is_encrypted(raw: &[u8]) -> bool {
+    raw.starts_with(CONF_MAGIC)
+}
 
 /// Encrypt a serialized credentials YAML string with the config subkey
 /// (AES-256-GCM-SIV, the magic as AAD). Fresh random nonce per write.
@@ -120,6 +425,45 @@ fn decrypt_credentials_body(key: &crate::wal::crypto::WalSegmentKey, raw: &[u8])
     String::from_utf8(pt).context("decrypted credentials are not UTF-8")
 }
 
+fn decode_credentials_yaml(path: &Path, raw: &[u8]) -> Result<zeroize::Zeroizing<String>> {
+    let body = if raw.starts_with(CONF_MAGIC) {
+        let home = transaction_directory(path);
+        let key = crate::wal::master_key::config_subkey_at(&home).ok_or_else(|| {
+            anyhow::anyhow!(
+                "credentials at {} are encrypted but the master key is unavailable \
+                 (restore it: neoth security restore-master-key)",
+                path.display()
+            )
+        })?;
+        decrypt_credentials_body(&key, raw)
+            .with_context(|| format!("decrypt credentials at {}", path.display()))?
+    } else {
+        String::from_utf8(raw.to_vec())
+            .with_context(|| format!("credentials at {} are not valid UTF-8", path.display()))?
+    };
+    Ok(zeroize::Zeroizing::new(body))
+}
+
+fn encode_credentials_yaml(path: &Path, body: &str) -> Result<FileSnapshot> {
+    let home = transaction_directory(path);
+    let persisted = if crate::wal::master_key::wal_encryption_enabled_at(&home)
+        .context("resolve WAL/config at-rest encryption policy")?
+    {
+        match crate::wal::master_key::config_subkey_ensure_at(&home) {
+            Some(key) => encrypt_credentials_body(&key, body)?,
+            None => {
+                anyhow::bail!(
+                    "at-rest encryption enabled but master key unavailable — \
+                     refusing to write plaintext credentials"
+                );
+            }
+        }
+    } else {
+        body.as_bytes().to_vec()
+    };
+    Ok(FileSnapshot::Present(zeroize::Zeroizing::new(persisted)))
+}
+
 /// Shape of `credentials.yaml`. All fields optional so an operator who
 /// hasn't configured a provider key (e.g. claude-cli OAuth only) doesn't
 /// need to keep an empty key around.
@@ -149,9 +493,9 @@ pub struct Credentials {
     pub omi_ingest_token: Option<SecretString>,
     /// GR-041 — per-hemisphere inference key overrides, companions to the
     /// `inference.{left,right,cerebellum,default_slot}.key` slots in
-    /// `freedom.yaml`. `save_public_to_default_path` strips those slot keys
-    /// from `freedom.yaml`, so credentials.yaml is the only place they can be
-    /// configured; on load they are merged back onto the matching slot.
+    /// `freedom.yaml`. Canonical public rendering strips those slot keys, so
+    /// credentials.yaml is the only supported durable home; on load they are
+    /// merged back onto the matching slot.
     #[serde(default)]
     pub inference_left_key: Option<SecretString>,
     #[serde(default)]
@@ -174,6 +518,10 @@ pub struct Credentials {
     /// WhatsApp webhooks. Required to start the Meta webhook listener;
     /// `send_text` still works without it.
     pub whatsapp_app_secret: Option<SecretString>,
+    /// Exact WhatsApp Business sender allowed to drive inbound chat. Stored in
+    /// canonical international digits (no leading `+`). Missing/blank keeps the
+    /// signed Meta webhook listener fail-closed.
+    pub whatsapp_allowed_sender: Option<String>,
     /// Operator-hosted repository Baileys sidecar URL. This is deliberately
     /// separate from the official Meta Cloud API fields above. Plain HTTP is
     /// accepted only for loopback; remote sidecars require HTTPS.
@@ -195,11 +543,17 @@ pub struct Credentials {
     /// pick socket mode; the app token lets the daemon open the
     /// WebSocket to Slack's edge directly.
     pub slack_app_token: Option<SecretString>,
+    /// Exact immutable Slack member id (`U…`/`W…`) allowed to drive inbound
+    /// Socket Mode messages. Missing/blank prevents the receive loop starting.
+    pub slack_allowed_user_id: Option<String>,
     /// GOLD-PROG-16 — Discord bot token (sent as `Bot <token>`). When present
-    /// alongside a provider, the daemon spawns the Discord gateway receive loop
-    /// (`DiscordChannel::run`). The inbound adapter needs only the bot token —
-    /// the gateway surfaces the channels itself.
+    /// alongside an exact allowed sender id and a provider, the daemon spawns
+    /// the Discord gateway receive loop (`DiscordChannel::run`).
     pub discord_bot_token: Option<SecretString>,
+    /// Exact immutable Discord user snowflake allowed to drive inbound chat.
+    /// This is public authorization policy rather than a secret. A missing or
+    /// blank value keeps the Discord receive loop fail-closed.
+    pub discord_allowed_user_id: Option<String>,
     /// GOLD-FEAT-10 — base URL of the operator's local `signal-cli` HTTP
     /// daemon (e.g. `http://127.0.0.1:8080`). When present alongside
     /// `signal_phone_number`, the daemon spawns the Signal receive loop
@@ -209,6 +563,9 @@ pub struct Credentials {
     /// GOLD-FEAT-10 — our registered Signal number (`+E.164`). Used as the
     /// `number` on every signal-cli send + the `/v1/receive/{number}` path.
     pub signal_phone_number: Option<String>,
+    /// Exact Signal sender number allowed to drive inbound chat (`+E.164`).
+    /// Missing/blank prevents the receive poll loop starting.
+    pub signal_allowed_sender: Option<String>,
     /// GOLD-FEAT-10 — Matrix homeserver URL (e.g. `https://matrix.org`). Not a
     /// secret; the entry point for the `matrix-channel` adapter.
     pub matrix_homeserver: Option<String>,
@@ -251,6 +608,9 @@ pub struct Credentials {
     /// HTTPS reverse proxy. Not a secret; kept here with the other channel
     /// config (and out of the `config/mod.rs` hot zone). `None` ⇒ default port.
     pub line_webhook_port: Option<u16>,
+    /// Exact LINE member user id allowed to drive inbound chat. Conversation
+    /// membership alone is not authorization; missing/blank disables inbound.
+    pub line_allowed_sender: Option<String>,
     /// GOLD-FEAT-10 — IRC server host (e.g. `irc.libera.chat`). NEOTH dials out,
     /// so no public URL is needed. Not a secret.
     pub irc_server: Option<String>,
@@ -430,36 +790,27 @@ impl Credentials {
     /// silent fallback would mask a typo that disables an operator's
     /// configured provider.
     pub fn load_or_default(path: &Path) -> Result<Self> {
+        with_dual_file_transaction_lock(path, || Self::load_or_default_unlocked(path))
+    }
+
+    /// Strict credential load for callers that already hold the dual-file
+    /// transaction boundary. Keeping this private to config code prevents a
+    /// runtime caller from observing a PREPARED mixed state.
+    pub(super) fn load_or_default_unlocked(path: &Path) -> Result<Self> {
         // B17 TOCTOU fix: single syscall, no TOCTOU window between exists() and
         // read(). Only ErrorKind::NotFound returns the default empty store; every
         // other error (permissions, I/O, keychain, corrupt YAML) propagates with
         // full path context so the caller can fail-closed.
-        let raw = match std::fs::read(path) {
+        let raw = zeroize::Zeroizing::new(match std::fs::read(path) {
             Ok(r) => r,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => {
                 return Err(e).with_context(|| format!("read credentials at {}", path.display()));
             }
-        };
+        });
         // CRYPTO-04 #5 — decrypt when at-rest-encrypted; else legacy plaintext.
-        let body: String = if raw.starts_with(CONF_MAGIC) {
-            let home = path
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            let key = crate::wal::master_key::config_subkey_at(home).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "credentials at {} are encrypted but the master key is unavailable \
-                     (restore it: neoth security restore-master-key)",
-                    path.display()
-                )
-            })?;
-            decrypt_credentials_body(&key, &raw)
-                .with_context(|| format!("decrypt credentials at {}", path.display()))?
-        } else {
-            String::from_utf8(raw)
-                .with_context(|| format!("credentials at {} are not valid UTF-8", path.display()))?
-        };
+        // The transient plaintext buffer is zeroized on every return path.
+        let body = decode_credentials_yaml(path, &raw)?;
         let c: Self = serde_yaml::from_str(&body)
             .with_context(|| format!("parse credentials YAML at {}", path.display()))?;
         Ok(c)
@@ -470,7 +821,21 @@ impl Credentials {
     /// Store failures preserve the documented emergency-file fallback and are
     /// surfaced by downstream feature-specific credential validation.
     pub fn load_effective(path: &Path, backend: crate::config::SecretsBackend) -> Result<Self> {
-        let mut credentials = Self::load_or_default(path)?;
+        with_dual_file_transaction_lock(path, || Self::load_effective_unlocked(path, backend))
+    }
+
+    pub(super) fn load_effective_unlocked(
+        path: &Path,
+        backend: crate::config::SecretsBackend,
+    ) -> Result<Self> {
+        let credentials = Self::load_or_default_unlocked(path)?;
+        Ok(Self::supplement_effective_unlocked(credentials, backend))
+    }
+
+    pub(super) fn supplement_effective_unlocked(
+        mut credentials: Self,
+        backend: crate::config::SecretsBackend,
+    ) -> Self {
         if backend == crate::config::SecretsBackend::Keychain {
             match crate::config::keychain::open_store() {
                 Ok(store) => {
@@ -490,7 +855,7 @@ impl Credentials {
                 ),
             }
         }
-        Ok(credentials)
+        credentials
     }
 
     /// Convenience: read from the default `~/.neoth/credentials.yaml`.
@@ -502,18 +867,35 @@ impl Credentials {
     /// Skips entirely when both fields are `None` so a credentials-free
     /// install doesn't leave an empty placeholder file behind.
     pub fn write(&self, path: &Path) -> Result<()> {
+        with_dual_file_transaction_lock(path, || {
+            with_config_writer_guard(path, || {
+                let _mutex = lock_cred();
+                let _file_lock = lock_cred_file(path)
+                    .with_context(|| format!("acquire credentials lock for {}", path.display()))?;
+                self.write_unlocked(path)
+            })
+        })
+    }
+
+    fn write_unlocked(&self, path: &Path) -> Result<()> {
+        let before = FileSnapshot::capture(path).map_err(|error| {
+            if self.is_empty() {
+                error.context(format!("remove empty credential store {}", path.display()))
+            } else {
+                error
+            }
+        })?;
+        self.rendered_file_snapshot_preserving_unknown(path, &before)?
+            .restore(path)
+    }
+
+    /// Render the exact bytes that a later atomic publication must install.
+    /// The transaction journal and the actual rename use this same snapshot,
+    /// including the one-time AEAD nonce, so recovery can distinguish an exact
+    /// committed image from an unexpected/tampered file.
+    fn rendered_file_snapshot(&self, path: &Path) -> Result<FileSnapshot> {
         if self.is_empty() {
-            // Nothing to write. Remove any existing stub to keep the
-            // directory honest. Revocation is a real mutation: a failed
-            // removal must never be reported as success while old secrets
-            // remain active.
-            crate::util::atomic_write::durable_remove_file(path)
-                .with_context(|| format!("remove empty credential store {}", path.display()))?;
-            return Ok(());
-        }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create credentials dir {}", parent.display()))?;
+            return Ok(FileSnapshot::Missing);
         }
         // YAML round-trip is intentional (we DO want the plaintext in
         // the file on disk — that's the whole point of credentials.yaml).
@@ -522,34 +904,61 @@ impl Credentials {
         // zeroized automatically. Wipe it before drop so a memory
         // disclosure bug elsewhere can't pull recently-written secrets
         // off the heap.
-        use zeroize::Zeroize;
-        let mut body = serde_yaml::to_string(self).context("serialise credentials")?;
-        // CRYPTO-04 #5 — encrypt at rest when the operator enabled at-rest
-        // encryption. FAIL-CLOSED: enabled-but-no-key refuses to write plaintext
-        // secrets (more sensitive than WAL frames).
-        let home = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let result = if crate::wal::master_key::wal_encryption_enabled_at(home)
-            .context("resolve WAL/config at-rest encryption policy")?
-        {
-            match crate::wal::master_key::config_subkey_ensure_at(home) {
-                Some(key) => match encrypt_credentials_body(&key, &body) {
-                    Ok(blob) => write_mode_0600(path, &blob),
-                    Err(e) => Err(e),
-                },
-                None => Err(anyhow::anyhow!(
-                    "at-rest encryption enabled but master key unavailable — \
-                     refusing to write plaintext credentials"
-                )),
-            }
-        } else {
-            write_mode_0600(path, body.as_bytes())
+        let body =
+            zeroize::Zeroizing::new(serde_yaml::to_string(self).context("serialise credentials")?);
+        encode_credentials_yaml(path, &body)
+    }
+
+    /// Render an RMW target without deleting fields introduced by a newer
+    /// NEOTH version. Known fields come from the typed mutation; unknown YAML
+    /// values remain byte-secret but structurally intact. Encrypted sources are
+    /// decrypted only in zeroizing memory and re-encrypted with the active
+    /// config subkey before the PREPARED journal is written.
+    fn rendered_file_snapshot_preserving_unknown(
+        &self,
+        path: &Path,
+        before: &FileSnapshot,
+    ) -> Result<FileSnapshot> {
+        let FileSnapshot::Present(raw) = before else {
+            return self.rendered_file_snapshot(path);
         };
-        body.zeroize();
-        result?;
-        Ok(())
+        let original_body = decode_credentials_yaml(path, raw)?;
+        let mut merged = SensitiveYamlValue(
+            serde_yaml::from_str(&original_body)
+                .with_context(|| format!("parse credentials YAML at {}", path.display()))?,
+        );
+        // `pears_bearer_token` is a read-only legacy alias for the canonical
+        // `keet_bridge_bearer_token` field. Keeping both keys after the known
+        // field overlay would make Serde reject the target as a duplicate
+        // field and strand upgraded installations on every later RMW.
+        if let serde_yaml::Value::Mapping(existing) = &mut merged.0 {
+            let legacy_key = serde_yaml::Value::String("pears_bearer_token".to_string());
+            if let Some(mut legacy_value) = existing.remove(&legacy_key) {
+                zeroize_yaml_value(&mut legacy_value);
+            }
+        }
+        let schema = serde_yaml::to_value(Self::default())
+            .context("serialize credential schema for lossless update")?;
+        let has_unknown = match (&merged.0, &schema) {
+            (serde_yaml::Value::Mapping(existing), serde_yaml::Value::Mapping(known)) => {
+                existing.keys().any(|key| !known.contains_key(key))
+            }
+            _ => false,
+        };
+        if self.is_empty() && !has_unknown {
+            return Ok(FileSnapshot::Missing);
+        }
+
+        let known = serde_yaml::to_value(self)
+            .context("serialize known credentials for lossless update")?;
+        overlay_known_yaml(&mut merged.0, known);
+        let body = zeroize::Zeroizing::new(
+            serde_yaml::to_string(&merged.0)
+                .context("serialize credentials while preserving unknown fields")?,
+        );
+        let _: Self = serde_yaml::from_str(&body)
+            .context("validate merged credentials after lossless update")?;
+        encode_credentials_yaml(path, &body)
     }
 
     /// True when there are no secrets to persist.
@@ -573,15 +982,19 @@ impl Credentials {
             whatsapp_phone_id,
             whatsapp_verify_token,
             whatsapp_app_secret,
+            whatsapp_allowed_sender,
             whatsapp_baileys_url,
             whatsapp_baileys_token,
             whatsapp_baileys_allowed_senders,
             whatsapp_baileys_allowed_groups,
             slack_bot_token,
             slack_app_token,
+            slack_allowed_user_id,
             discord_bot_token,
+            discord_allowed_user_id,
             signal_cli_url,
             signal_phone_number,
+            signal_allowed_sender,
             matrix_homeserver,
             matrix_user_id,
             matrix_password,
@@ -593,6 +1006,7 @@ impl Credentials {
             line_channel_access_token,
             line_channel_secret,
             line_webhook_port,
+            line_allowed_sender,
             irc_server,
             irc_port,
             irc_nick,
@@ -652,15 +1066,19 @@ impl Credentials {
             && whatsapp_phone_id.is_none()
             && whatsapp_verify_token.is_none()
             && whatsapp_app_secret.is_none()
+            && whatsapp_allowed_sender.is_none()
             && whatsapp_baileys_url.is_none()
             && whatsapp_baileys_token.is_none()
             && whatsapp_baileys_allowed_senders.is_none()
             && whatsapp_baileys_allowed_groups.is_none()
             && slack_bot_token.is_none()
             && slack_app_token.is_none()
+            && slack_allowed_user_id.is_none()
             && discord_bot_token.is_none()
+            && discord_allowed_user_id.is_none()
             && signal_cli_url.is_none()
             && signal_phone_number.is_none()
+            && signal_allowed_sender.is_none()
             && matrix_homeserver.is_none()
             && matrix_user_id.is_none()
             && matrix_password.is_none()
@@ -672,6 +1090,7 @@ impl Credentials {
             && line_channel_access_token.is_none()
             && line_channel_secret.is_none()
             && line_webhook_port.is_none()
+            && line_allowed_sender.is_none()
             && irc_server.is_none()
             && irc_port.is_none()
             && irc_nick.is_none()
@@ -729,6 +1148,11 @@ impl Credentials {
     /// switch to this + a conditional load so they can distinguish a bad file
     /// from a genuinely missing one.
     pub fn credential_store_status(path: &Path) -> CredentialStoreStatus {
+        with_dual_file_transaction_lock(path, || Ok(Self::credential_store_status_unlocked(path)))
+            .unwrap_or(CredentialStoreStatus::Unreadable)
+    }
+
+    pub(super) fn credential_store_status_unlocked(path: &Path) -> CredentialStoreStatus {
         let raw = match std::fs::read(path) {
             Ok(r) => r,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -761,10 +1185,10 @@ impl Credentials {
 
     /// B17 — cross-process-safe read-modify-write on `credentials.yaml`.
     ///
-    /// Acquires the intra-process `CRED_LOCK` (mutex-first) then the OS
-    /// advisory lock on `<path>.lock`, reloads strictly under both locks,
-    /// calls `mutation`, and atomically writes the result. Returns the
-    /// mutation's return value.
+    /// Acquires the shared recovery boundary first, then the intra-process
+    /// `CRED_LOCK` and OS advisory lock on `<path>.lock`, reloads strictly
+    /// under those locks, calls `mutation`, and atomically writes the result.
+    /// Returns the mutation's return value.
     ///
     /// STOP invariants:
     /// - If `load_or_default` returns `Err`, returns immediately WITHOUT
@@ -776,18 +1200,27 @@ impl Credentials {
     where
         F: FnOnce(&mut Self) -> Result<R>,
     {
-        let _mutex = lock_cred();
-        let _file_lock = lock_cred_file(path)
-            .with_context(|| format!("acquire credentials lock for {}", path.display()))?;
-        // Load strictly under both locks. Only NotFound returns Ok(default);
-        // any other error propagates — NEVER writes into a failed-load.
-        let mut creds = Self::load_or_default(path)
-            .with_context(|| format!("load credentials at {} for update", path.display()))?;
-        let result = mutation(&mut creds)?;
-        creds
-            .write(path)
-            .with_context(|| format!("write credentials at {} after update", path.display()))?;
-        Ok(result)
+        with_dual_file_transaction_lock(path, || {
+            with_config_writer_guard(path, || {
+                let _mutex = lock_cred();
+                let _file_lock = lock_cred_file(path)
+                    .with_context(|| format!("acquire credentials lock for {}", path.display()))?;
+                // Load strictly under both locks. Only NotFound returns Ok(default);
+                // any other error propagates — NEVER writes into a failed-load.
+                let before = FileSnapshot::capture(path)?;
+                let mut creds = Self::load_or_default_unlocked(path).with_context(|| {
+                    format!("load credentials at {} for update", path.display())
+                })?;
+                let result = mutation(&mut creds)?;
+                creds
+                    .rendered_file_snapshot_preserving_unknown(path, &before)?
+                    .restore(path)
+                    .with_context(|| {
+                        format!("write credentials at {} after update", path.display())
+                    })?;
+                Ok(result)
+            })
+        })
     }
 
     /// Cross-process-safe two-file mutation for configuration that spans
@@ -795,10 +1228,10 @@ impl Credentials {
     /// sender allowlist plus its secret bot token).
     ///
     /// Both files are loaded strictly while their canonical process + OS locks
-    /// are held. The credential file is committed first, so a crash between the
-    /// two atomic renames leaves the old allowlist in force and the Telegram
-    /// runtime remains fail-closed. A normal second-write failure restores the
-    /// exact pre-transaction bytes of both files before returning an error.
+    /// are held. Before either rename, a private durable PREPARED journal binds
+    /// the exact before/after bytes. Every later runtime load recovers that
+    /// journal first, so a process or machine crash can never activate a mixed
+    /// public-policy/secret pair.
     pub(crate) fn update_with_freedom_at<F, R>(
         freedom_path: &Path,
         credentials_path: &Path,
@@ -815,7 +1248,248 @@ impl Credentials {
                 crate::util::atomic_write::atomic_write_private(path, body)
                     .with_context(|| format!("atomically write {}", path.display()))
             }),
+            InlineTelegramTokenPolicy::Preserve,
+            None,
         )
+    }
+
+    /// Reviewed dual-file mutation bound to the exact freedom.yaml generation
+    /// previously snapshotted for audit/rollback. Credentials are still
+    /// reloaded under the commit locks; any intervening public config edit is
+    /// a loud retry instead of being overwritten by stale approved intent.
+    pub(crate) fn update_with_freedom_at_if_source<F, R>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        expected_freedom_source: &[u8],
+        mutation: F,
+    ) -> Result<R>
+    where
+        F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
+    {
+        Self::update_with_freedom_at_using(
+            freedom_path,
+            credentials_path,
+            mutation,
+            Some(|path: &Path, body: &[u8]| {
+                crate::util::atomic_write::atomic_write_private(path, body)
+                    .with_context(|| format!("atomically write {}", path.display()))
+            }),
+            InlineTelegramTokenPolicy::Preserve,
+            Some(expected_freedom_source),
+        )
+    }
+
+    /// Telegram-specific dual-file mutation. Unlike the generic primitive,
+    /// this deliberately removes a legacy inline Telegram token after the
+    /// replacement token is durably staged in credentials.yaml.
+    pub(crate) fn update_telegram_with_freedom_at<F, R>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+    ) -> Result<R>
+    where
+        F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
+    {
+        Self::update_with_freedom_at_using(
+            freedom_path,
+            credentials_path,
+            mutation,
+            Some(|path: &Path, body: &[u8]| {
+                crate::util::atomic_write::atomic_write_private(path, body)
+                    .with_context(|| format!("atomically write {}", path.display()))
+            }),
+            InlineTelegramTokenPolicy::Remove,
+            None,
+        )
+    }
+
+    /// Lossless raw-freedom counterpart for first-run/reconfigure workflows
+    /// whose public schema is broader than [`super::FreedomConfig`]. The
+    /// closure sees the exact optional UTF-8 source and the typed file-backed
+    /// credentials, then returns an optional complete freedom target. `None`
+    /// target preserves the current freedom bytes while still allowing a
+    /// credential-only mutation. Both targets use the same PREPARED journal.
+    pub(crate) fn update_raw_freedom_with_credentials_at<F, R>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+    ) -> Result<R>
+    where
+        F: FnOnce(Option<&str>, &mut Self) -> Result<(Option<String>, R)>,
+    {
+        Self::update_raw_freedom_with_credentials_at_using_fault(
+            freedom_path,
+            credentials_path,
+            mutation,
+            |_| Ok(()),
+        )
+    }
+
+    /// Publish exact already-staged backup bytes as one crash-recoverable pair.
+    /// `None` preserves that member's current exact bytes; encrypted credential
+    /// frames are never decrypted, reserialized, or re-encrypted. Both target
+    /// paths must be regular files or absent, never symlinks/directories.
+    pub(crate) fn publish_exact_raw_pair_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        freedom_target: Option<&[u8]>,
+        credentials_target: Option<&[u8]>,
+    ) -> Result<()> {
+        Self::publish_exact_raw_pair_at_using_fault(
+            freedom_path,
+            credentials_path,
+            freedom_target,
+            credentials_target,
+            |_| Ok(()),
+        )
+    }
+
+    pub(crate) fn validate_exact_raw_pair(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        freedom_target: Option<&[u8]>,
+        credentials_target: Option<&[u8]>,
+    ) -> Result<()> {
+        validate_raw_freedom_target(freedom_path, freedom_target)?;
+        validate_raw_credentials_target(credentials_path, credentials_target)
+    }
+
+    fn publish_exact_raw_pair_at_using_fault<H>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        freedom_target: Option<&[u8]>,
+        credentials_target: Option<&[u8]>,
+        fault: H,
+    ) -> Result<()>
+    where
+        H: FnMut(DualFileFaultPoint) -> Result<()>,
+    {
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a durable transaction"
+        );
+        validate_exact_pair_target(freedom_path, "freedom config")?;
+        validate_exact_pair_target(credentials_path, "credentials")?;
+        Self::validate_exact_raw_pair(
+            freedom_path,
+            credentials_path,
+            freedom_target,
+            credentials_target,
+        )?;
+
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    // Recheck after acquiring every lock so a path swap cannot
+                    // turn validation into a symlink overwrite.
+                    validate_exact_pair_target(freedom_path, "freedom config")?;
+                    validate_exact_pair_target(credentials_path, "credentials")?;
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let freedom_after = freedom_target.map_or_else(
+                        || freedom_before.duplicate(),
+                        |target| FileSnapshot::Present(zeroize::Zeroizing::new(target.to_vec())),
+                    );
+                    let credentials_after = credentials_target.map_or_else(
+                        || credentials_before.duplicate(),
+                        |target| FileSnapshot::Present(zeroize::Zeroizing::new(target.to_vec())),
+                    );
+                    let write_freedom = freedom_target.map(|_| {
+                        |path: &Path, body: &[u8]| {
+                            crate::util::atomic_write::atomic_write_private(path, body)
+                                .with_context(|| format!("atomically write {}", path.display()))
+                        }
+                    });
+                    publish_prepared_file_pair(
+                        freedom_path,
+                        credentials_path,
+                        &freedom_dir,
+                        &freedom_before,
+                        &freedom_after,
+                        &credentials_before,
+                        &credentials_after,
+                        (),
+                        write_freedom,
+                        fault,
+                    )
+                })
+            })
+        })
+    }
+
+    fn update_raw_freedom_with_credentials_at_using_fault<F, R, H>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+        fault: H,
+    ) -> Result<R>
+    where
+        F: FnOnce(Option<&str>, &mut Self) -> Result<(Option<String>, R)>,
+        H: FnMut(DualFileFaultPoint) -> Result<()>,
+    {
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a durable transaction"
+        );
+
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let source = freedom_before
+                        .present_bytes()
+                        .map(std::str::from_utf8)
+                        .transpose()
+                        .with_context(|| {
+                            format!("{} is not valid UTF-8", freedom_path.display())
+                        })?;
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| {
+                            format!("load {} for raw update", credentials_path.display())
+                        })?;
+                    let (freedom_target, value) = mutation(source, &mut credentials)?;
+                    let freedom_target = freedom_target.map(zeroize::Zeroizing::new);
+                    if let Some(target) = freedom_target.as_ref() {
+                        let candidate: super::FreedomConfig = serde_yaml::from_str(target)
+                            .with_context(|| {
+                                format!("validate raw target for {}", freedom_path.display())
+                            })?;
+                        let _ = candidate.public_yaml()?;
+                    }
+                    let freedom_after = match freedom_target.as_ref() {
+                        Some(target) => FileSnapshot::Present(zeroize::Zeroizing::new(
+                            target.as_bytes().to_vec(),
+                        )),
+                        None => freedom_before.duplicate(),
+                    };
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
+                        credentials_path,
+                        &credentials_before,
+                    )?;
+                    let write_freedom = freedom_target.as_ref().map(|_| {
+                        |path: &Path, body: &[u8]| {
+                            crate::util::atomic_write::atomic_write_private(path, body)
+                                .with_context(|| format!("atomically write {}", path.display()))
+                        }
+                    });
+                    publish_prepared_file_pair(
+                        freedom_path,
+                        credentials_path,
+                        &freedom_dir,
+                        &freedom_before,
+                        &freedom_after,
+                        &credentials_before,
+                        &credentials_after,
+                        value,
+                        write_freedom,
+                        fault,
+                    )
+                })
+            })
+        })
     }
 
     /// Lock and strictly load both stores, but commit only credentials.yaml.
@@ -835,6 +1509,8 @@ impl Credentials {
             credentials_path,
             |freedom, credentials| mutation(freedom, credentials),
             None::<fn(&Path, &[u8]) -> Result<()>>,
+            InlineTelegramTokenPolicy::Preserve,
+            None,
         )
     }
 
@@ -843,84 +1519,240 @@ impl Credentials {
         credentials_path: &Path,
         mutation: F,
         write_freedom: Option<W>,
+        inline_telegram_token: InlineTelegramTokenPolicy,
+        expected_freedom_source: Option<&[u8]>,
     ) -> Result<R>
     where
         F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
         W: FnOnce(&Path, &[u8]) -> Result<()>,
     {
-        // Global order for dual-file writers: freedom process lock, credential
-        // process lock, freedom file lock, credential file lock. Existing
-        // single-file writers take a strict prefix/subset of this order.
-        let _freedom_mutex = super::lock_freedom_update();
-        let _credentials_mutex = lock_cred();
-        let _freedom_file_lock = crate::util::locked_file::lock_file_blocking(
-            &freedom_path.with_extension("lock"),
-            "freedom config",
+        Self::update_with_freedom_at_using_and_fault(
+            freedom_path,
+            credentials_path,
+            mutation,
+            write_freedom,
+            inline_telegram_token,
+            expected_freedom_source,
+            |_| Ok(()),
         )
-        .with_context(|| format!("acquire freedom config lock for {}", freedom_path.display()))?;
-        let _credentials_file_lock = lock_cred_file(credentials_path).with_context(|| {
-            format!(
-                "acquire credentials lock for {}",
-                credentials_path.display()
-            )
-        })?;
-
-        let freedom_before = FileSnapshot::capture(freedom_path)?;
-        let credentials_before = FileSnapshot::capture(credentials_path)?;
-
-        // Strict loads happen before mutation. In particular, malformed
-        // freedom.yaml or credentials.yaml is preserved byte-for-byte.
-        let mut freedom = super::FreedomConfig::load_from_path(freedom_path)
-            .with_context(|| format!("load {} for dual-file update", freedom_path.display()))?;
-        let mut credentials = Self::load_or_default(credentials_path)
-            .with_context(|| format!("load {} for dual-file update", credentials_path.display()))?;
-        let value = mutation(&mut freedom, &mut credentials)?;
-
-        // Validate and render before either commit. Telegram intentionally
-        // removes its legacy inline token, but unrelated legacy inline
-        // provider/inference secrets must survive with their exact string
-        // values. Capture those values from the raw file, never from the
-        // effective config (which may contain keychain-only material).
-        let freedom_body = write_freedom
-            .as_ref()
-            .map(|_| render_freedom_preserving_unrelated_inline_secrets(&freedom, &freedom_before))
-            .transpose()?;
-
-        if let Err(write_error) = credentials.write(credentials_path) {
-            let rollback = rollback_file_pair(
-                freedom_path,
-                &freedom_before,
-                credentials_path,
-                &credentials_before,
-            );
-            if let Err(rollback_error) = rollback {
-                anyhow::bail!(
-                    "credential phase failed ({write_error:#}); restoring the dual-file transaction also failed: {rollback_error:#}"
-                );
-            }
-            return Err(write_error).context("credential phase failed; prior bytes restored");
-        }
-
-        if let (Some(write_freedom), Some(freedom_body)) = (write_freedom, freedom_body)
-            && let Err(write_error) = write_freedom(freedom_path, freedom_body.as_bytes())
-        {
-            let rollback = rollback_file_pair(
-                freedom_path,
-                &freedom_before,
-                credentials_path,
-                &credentials_before,
-            );
-            if let Err(rollback_error) = rollback {
-                anyhow::bail!(
-                    "freedom config phase failed ({write_error:#}); restoring the dual-file transaction also failed: {rollback_error:#}"
-                );
-            }
-            return Err(write_error)
-                .context("freedom config phase failed; credential and config bytes restored");
-        }
-
-        Ok(value)
     }
+
+    fn update_with_freedom_at_using_and_fault<F, R, W, H>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+        write_freedom: Option<W>,
+        inline_telegram_token: InlineTelegramTokenPolicy,
+        expected_freedom_source: Option<&[u8]>,
+        fault: H,
+    ) -> Result<R>
+    where
+        F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
+        W: FnOnce(&Path, &[u8]) -> Result<()>,
+        H: FnMut(DualFileFaultPoint) -> Result<()>,
+    {
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a durable transaction"
+        );
+
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    if let Some(expected) = expected_freedom_source {
+                        anyhow::ensure!(
+                            freedom_before.present_bytes() == Some(expected),
+                            "freedom.yaml changed after its reviewed snapshot; retry the command"
+                        );
+                    }
+
+                    // Strict raw loads use the already-held boundary and avoid
+                    // redundant effective/keychain supplementation.
+                    let mut freedom = super::FreedomConfig::load_from_path_unlocked(freedom_path)
+                        .with_context(|| {
+                        format!("load {} for dual-file update", freedom_path.display())
+                    })?;
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| {
+                            format!("load {} for dual-file update", credentials_path.display())
+                        })?;
+                    let value = mutation(&mut freedom, &mut credentials)?;
+
+                    // Render and validate both exact target images before PREPARED is
+                    // durable. No journal can therefore describe an unpublishable pair.
+                    let freedom_body = write_freedom
+                        .as_ref()
+                        .map(|_| {
+                            render_freedom_preserving_unknown_yaml(
+                                &freedom,
+                                &freedom_before,
+                                inline_telegram_token,
+                            )
+                        })
+                        .transpose()?;
+                    let freedom_after = match freedom_body.as_ref() {
+                        Some(body) => {
+                            FileSnapshot::Present(zeroize::Zeroizing::new(body.as_bytes().to_vec()))
+                        }
+                        None => freedom_before.duplicate(),
+                    };
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
+                        credentials_path,
+                        &credentials_before,
+                    )?;
+
+                    publish_prepared_file_pair(
+                        freedom_path,
+                        credentials_path,
+                        &freedom_dir,
+                        &freedom_before,
+                        &freedom_after,
+                        &credentials_before,
+                        &credentials_after,
+                        value,
+                        write_freedom,
+                        fault,
+                    )
+                })
+            })
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DualFileFaultPoint {
+    AfterJournal,
+    AfterCredentials,
+    AfterFreedom,
+}
+
+fn validate_exact_pair_target(path: &Path, label: &str) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+                "{label} restore target {} must be a regular file, never a symlink or directory",
+                path.display()
+            );
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect {label} target {}", path.display()))
+        }
+    }
+}
+
+fn validate_raw_freedom_target(path: &Path, target: Option<&[u8]>) -> Result<()> {
+    let Some(target) = target else {
+        return Ok(());
+    };
+    let body = std::str::from_utf8(target)
+        .with_context(|| format!("restored freedom config {} is not UTF-8", path.display()))?;
+    let candidate: super::FreedomConfig = serde_yaml::from_str(body)
+        .with_context(|| format!("parse restored freedom config {}", path.display()))?;
+    let _ = candidate.public_yaml()?;
+    Ok(())
+}
+
+fn validate_raw_credentials_target(path: &Path, target: Option<&[u8]>) -> Result<()> {
+    let Some(target) = target else {
+        return Ok(());
+    };
+    if credentials_blob_is_encrypted(target) {
+        anyhow::ensure!(
+            target.len() >= CONF_MAGIC.len() + 12 + 16,
+            "restored encrypted credentials {} are truncated",
+            path.display()
+        );
+        return Ok(());
+    }
+    let body = std::str::from_utf8(target)
+        .with_context(|| format!("restored credentials {} are not UTF-8", path.display()))?;
+    let _: Credentials = serde_yaml::from_str(body)
+        .with_context(|| format!("parse restored credentials {}", path.display()))?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_prepared_file_pair<R, W, H>(
+    freedom_path: &Path,
+    credentials_path: &Path,
+    freedom_dir: &Path,
+    freedom_before: &FileSnapshot,
+    freedom_after: &FileSnapshot,
+    credentials_before: &FileSnapshot,
+    credentials_after: &FileSnapshot,
+    value: R,
+    write_freedom: Option<W>,
+    mut fault: H,
+) -> Result<R>
+where
+    W: FnOnce(&Path, &[u8]) -> Result<()>,
+    H: FnMut(DualFileFaultPoint) -> Result<()>,
+{
+    let journal = DualFileJournal::prepared(
+        freedom_path,
+        credentials_path,
+        freedom_before,
+        freedom_after,
+        credentials_before,
+        credentials_after,
+    )?;
+    let journal_path = freedom_dir.join(DUAL_FILE_JOURNAL_NAME);
+    journal.persist(&journal_path)?;
+    fault(DualFileFaultPoint::AfterJournal)?;
+
+    if let Err(write_error) = credentials_after.restore(credentials_path) {
+        return Err(transaction_write_error(
+            freedom_dir,
+            "credential phase failed",
+            write_error,
+        ));
+    }
+    fault(DualFileFaultPoint::AfterCredentials)?;
+
+    if let Some(write_freedom) = write_freedom {
+        let target = freedom_after
+            .present_bytes()
+            .context("freedom target unexpectedly missing for requested publication")?;
+        if let Err(write_error) = write_freedom(freedom_path, target) {
+            return Err(transaction_write_error(
+                freedom_dir,
+                "freedom config phase failed",
+                write_error,
+            ));
+        }
+    }
+    fault(DualFileFaultPoint::AfterFreedom)?;
+
+    let actual_freedom = FileSnapshot::capture(freedom_path)?;
+    let actual_credentials = FileSnapshot::capture(credentials_path)?;
+    if !actual_freedom.same_as(freedom_after) || !actual_credentials.same_as(credentials_after) {
+        return Err(transaction_write_error(
+            freedom_dir,
+            "dual-file publication verification failed",
+            anyhow::anyhow!("published bytes do not match the PREPARED target"),
+        ));
+    }
+
+    sync_transaction_directory(freedom_dir)?;
+    crate::util::atomic_write::durable_remove_file(&journal_path).with_context(|| {
+        format!(
+            "durably remove committed journal {}",
+            journal_path.display()
+        )
+    })?;
+    Ok(value)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InlineTelegramTokenPolicy {
+    Preserve,
+    Remove,
 }
 
 enum FileSnapshot {
@@ -928,10 +1760,39 @@ enum FileSnapshot {
     Present(zeroize::Zeroizing<Vec<u8>>),
 }
 
+struct SensitiveYamlValue(serde_yaml::Value);
+
+impl Drop for SensitiveYamlValue {
+    fn drop(&mut self) {
+        zeroize_yaml_value(&mut self.0);
+    }
+}
+
+fn zeroize_yaml_value(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::String(value) => value.zeroize(),
+        serde_yaml::Value::Sequence(values) => {
+            for value in values {
+                zeroize_yaml_value(value);
+            }
+        }
+        serde_yaml::Value::Mapping(values) => {
+            for (mut key, mut value) in std::mem::take(values) {
+                zeroize_yaml_value(&mut key);
+                zeroize_yaml_value(&mut value);
+            }
+        }
+        serde_yaml::Value::Tagged(value) => zeroize_yaml_value(&mut value.value),
+        _ => {}
+    }
+}
+
 #[derive(Default, Deserialize)]
 struct LegacyInlineSecrets {
     #[serde(default)]
     provider_key: Option<SecretString>,
+    #[serde(default)]
+    telegram_token: Option<SecretString>,
     #[serde(default)]
     inference: LegacyInlineInferenceSecrets,
 }
@@ -954,31 +1815,98 @@ struct LegacyInlineSlotSecret {
     key: Option<SecretString>,
 }
 
-fn render_freedom_preserving_unrelated_inline_secrets(
+fn overlay_known_yaml(target: &mut serde_yaml::Value, source: serde_yaml::Value) {
+    match source {
+        serde_yaml::Value::Mapping(source) => {
+            if let serde_yaml::Value::Mapping(target) = target {
+                for (key, value) in source {
+                    match target.get_mut(&key) {
+                        Some(existing) => overlay_known_yaml(existing, value),
+                        None => {
+                            target.insert(key, value);
+                        }
+                    }
+                }
+            } else {
+                *target = serde_yaml::Value::Mapping(source);
+            }
+        }
+        serde_yaml::Value::Sequence(source) => {
+            if let serde_yaml::Value::Sequence(target) = target {
+                if target.len() == source.len() {
+                    for (existing, value) in target.iter_mut().zip(source) {
+                        overlay_known_yaml(existing, value);
+                    }
+                } else {
+                    *target = source;
+                }
+            } else {
+                *target = serde_yaml::Value::Sequence(source);
+            }
+        }
+        source => *target = source,
+    }
+}
+
+fn render_freedom_preserving_unknown_yaml(
     freedom: &super::FreedomConfig,
     before: &FileSnapshot,
+    inline_telegram_token: InlineTelegramTokenPolicy,
 ) -> Result<zeroize::Zeroizing<String>> {
-    let legacy = match before {
-        FileSnapshot::Present(bytes) => serde_yaml::from_slice::<LegacyInlineSecrets>(bytes)
-            .context("parse legacy inline secrets before dual-file update")?,
-        FileSnapshot::Missing => LegacyInlineSecrets::default(),
+    let FileSnapshot::Present(before) = before else {
+        anyhow::bail!("freedom.yaml disappeared before dual-file serialization");
     };
+    let legacy = serde_yaml::from_slice::<LegacyInlineSecrets>(before)
+        .context("parse legacy inline secrets before dual-file update")?;
+    let mut merged = SensitiveYamlValue(
+        serde_yaml::from_slice(before)
+            .context("parse original freedom.yaml before dual-file update")?,
+    );
+
+    // `loop_config.token_budget` is the read-only legacy alias for
+    // `tool_call_budget`. Remove the alias before overlaying the canonical
+    // typed value; retaining both makes Serde report a duplicate field and
+    // would strand upgraded configs on every later dual-file mutation.
+    if let serde_yaml::Value::Mapping(root) = &mut merged.0 {
+        let loop_key = serde_yaml::Value::String("loop_config".to_string());
+        if let Some(serde_yaml::Value::Mapping(loop_config)) = root.get_mut(&loop_key) {
+            let legacy_key = serde_yaml::Value::String("token_budget".to_string());
+            if let Some(mut legacy_value) = loop_config.remove(&legacy_key) {
+                zeroize_yaml_value(&mut legacy_value);
+            }
+        }
+    }
 
     // Run the canonical public renderer first for all validation gates. The
-    // resulting body is secret-free; the persisted clone below receives only
-    // values proven to have existed inline in the pre-transaction file.
+    // persisted clone below then receives only secrets proven to have existed
+    // inline in the pre-transaction file. Generic callers preserve every
+    // unrelated secret; the Telegram adoption path alone migrates its token.
     let _ = freedom.public_yaml()?;
     let mut persisted = freedom.clone();
-    persisted.telegram_token = None;
+    persisted.telegram_token = match inline_telegram_token {
+        InlineTelegramTokenPolicy::Preserve => legacy.telegram_token,
+        InlineTelegramTokenPolicy::Remove => None,
+    };
     persisted.provider_key = legacy.provider_key;
     persisted.inference.left.key = legacy.inference.left.key;
     persisted.inference.right.key = legacy.inference.right.key;
     persisted.inference.cerebellum.key = legacy.inference.cerebellum.key;
     persisted.inference.default_slot.key = legacy.inference.default_slot.key;
-    Ok(zeroize::Zeroizing::new(
-        serde_yaml::to_string(&persisted)
-            .context("serialize freedom.yaml while preserving legacy inline secrets")?,
-    ))
+    let known = serde_yaml::to_value(&persisted)
+        .context("serialize known freedom.yaml fields for dual-file update")?;
+    overlay_known_yaml(&mut merged.0, known);
+    let body = zeroize::Zeroizing::new(
+        serde_yaml::to_string(&merged.0)
+            .context("serialize freedom.yaml while preserving unknown fields")?,
+    );
+
+    // The structural merge must remain a valid, policy-compliant config. This
+    // also catches a future schema collision where an old extension changes
+    // the type expected by a newly adopted field.
+    let merged_config: super::FreedomConfig = serde_yaml::from_str(&body)
+        .context("validate merged freedom.yaml after dual-file update")?;
+    let _ = merged_config.public_yaml()?;
+    Ok(body)
 }
 
 impl FileSnapshot {
@@ -996,32 +1924,388 @@ impl FileSnapshot {
                 crate::util::atomic_write::atomic_write_private(path, bytes)
                     .with_context(|| format!("restore {}", path.display()))?;
             }
-            Self::Missing => match std::fs::remove_file(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error).with_context(|| format!("remove {}", path.display()));
-                }
-            },
+            Self::Missing => crate::util::atomic_write::durable_remove_file(path)
+                .with_context(|| format!("durably remove {}", path.display()))?,
         }
+        Ok(())
+    }
+
+    fn duplicate(&self) -> Self {
+        match self {
+            Self::Missing => Self::Missing,
+            Self::Present(bytes) => {
+                Self::Present(zeroize::Zeroizing::new(bytes.as_slice().to_vec()))
+            }
+        }
+    }
+
+    fn present_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Missing => None,
+            Self::Present(bytes) => Some(bytes.as_slice()),
+        }
+    }
+
+    fn same_as(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Missing, Self::Missing) => true,
+            (Self::Present(left), Self::Present(right)) => left.as_slice() == right.as_slice(),
+            _ => false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JournalFileSnapshot {
+    present: bool,
+    body_base64: String,
+    sha256: String,
+}
+
+impl JournalFileSnapshot {
+    fn from_file_snapshot(snapshot: &FileSnapshot) -> Self {
+        let bytes = snapshot.present_bytes().unwrap_or_default();
+        Self {
+            present: snapshot.present_bytes().is_some(),
+            body_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        }
+    }
+
+    fn decode(&self, label: &str) -> Result<FileSnapshot> {
+        let decoded = zeroize::Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(&self.body_base64)
+                .with_context(|| format!("decode {label} from dual-file journal"))?,
+        );
+        anyhow::ensure!(
+            format!("{:x}", Sha256::digest(decoded.as_slice())) == self.sha256,
+            "{label} checksum mismatch in dual-file journal"
+        );
+        if self.present {
+            Ok(FileSnapshot::Present(decoded))
+        } else {
+            anyhow::ensure!(
+                decoded.is_empty(),
+                "missing {label} snapshot carries unexpected bytes"
+            );
+            Ok(FileSnapshot::Missing)
+        }
+    }
+}
+
+impl Drop for JournalFileSnapshot {
+    fn drop(&mut self) {
+        self.body_base64.zeroize();
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DualFileJournal {
+    version: u8,
+    state: String,
+    freedom_file: String,
+    credentials_file: String,
+    freedom_before: JournalFileSnapshot,
+    freedom_after: JournalFileSnapshot,
+    credentials_before: JournalFileSnapshot,
+    credentials_after: JournalFileSnapshot,
+}
+
+impl DualFileJournal {
+    fn prepared(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        freedom_before: &FileSnapshot,
+        freedom_after: &FileSnapshot,
+        credentials_before: &FileSnapshot,
+        credentials_after: &FileSnapshot,
+    ) -> Result<Self> {
+        let freedom_file = transaction_file_name(freedom_path, "freedom config")?;
+        let credentials_file = transaction_file_name(credentials_path, "credentials")?;
+        anyhow::ensure!(
+            freedom_file != credentials_file,
+            "freedom and credential transaction paths must be distinct"
+        );
+        Ok(Self {
+            version: DUAL_FILE_JOURNAL_VERSION,
+            state: DUAL_FILE_JOURNAL_STATE.to_string(),
+            freedom_file,
+            credentials_file,
+            freedom_before: JournalFileSnapshot::from_file_snapshot(freedom_before),
+            freedom_after: JournalFileSnapshot::from_file_snapshot(freedom_after),
+            credentials_before: JournalFileSnapshot::from_file_snapshot(credentials_before),
+            credentials_after: JournalFileSnapshot::from_file_snapshot(credentials_after),
+        })
+    }
+
+    fn persist(&self, path: &Path) -> Result<()> {
+        let mut body =
+            serde_yaml::to_string(self).context("serialize dual-file PREPARED journal")?;
+        if body.len() as u64 > MAX_DUAL_FILE_JOURNAL_BYTES {
+            body.zeroize();
+            anyhow::bail!(
+                "dual-file PREPARED journal exceeds the {}-byte recovery limit",
+                MAX_DUAL_FILE_JOURNAL_BYTES
+            );
+        }
+        let result = crate::util::atomic_write::atomic_write_private(path, body.as_bytes())
+            .with_context(|| format!("durably write private journal {}", path.display()));
+        body.zeroize();
+        result?;
+
+        // PREPARED must be durable before the first target rename. The shared
+        // atomic helper fsyncs file data; make namespace durability mandatory
+        // here instead of accepting its best-effort parent sync.
+        #[cfg(unix)]
+        sync_transaction_directory(
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new(".")),
+        )?;
+        #[cfg(windows)]
+        {
+            let journal = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .with_context(|| format!("reopen PREPARED journal {}", path.display()))?;
+            crate::wal::win_native::verify_private_file_handle(&journal)
+                .with_context(|| format!("verify PREPARED journal DACL {}", path.display()))?;
+            journal
+                .sync_all()
+                .with_context(|| format!("flush PREPARED journal {}", path.display()))?;
+        }
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.version == DUAL_FILE_JOURNAL_VERSION,
+            "unsupported dual-file journal version {}",
+            self.version
+        );
+        anyhow::ensure!(
+            self.state == DUAL_FILE_JOURNAL_STATE,
+            "unsupported dual-file journal state"
+        );
+        validate_transaction_file_name(&self.freedom_file, "freedom config")?;
+        validate_transaction_file_name(&self.credentials_file, "credentials")?;
+        anyhow::ensure!(
+            self.freedom_file != self.credentials_file,
+            "dual-file journal targets the same file twice"
+        );
         Ok(())
     }
 }
 
-fn rollback_file_pair(
-    freedom_path: &Path,
-    freedom_before: &FileSnapshot,
-    credentials_path: &Path,
-    credentials_before: &FileSnapshot,
+fn transaction_file_name(path: &Path, label: &str) -> Result<String> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("{label} path needs a UTF-8 file name"))?
+        .to_string();
+    validate_transaction_file_name(&name, label)?;
+    Ok(name)
+}
+
+fn validate_transaction_file_name(name: &str, label: &str) -> Result<()> {
+    let mut components = Path::new(name).components();
+    anyhow::ensure!(
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+        "{label} journal target must be one plain file name"
+    );
+    anyhow::ensure!(
+        name != DUAL_FILE_JOURNAL_NAME && name != DUAL_FILE_LOCK_NAME,
+        "{label} journal target collides with transaction metadata"
+    );
+    Ok(())
+}
+
+fn read_private_journal(path: &Path) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+    use std::io::Read as _;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("open private journal {}", path.display()));
+        }
+    };
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect private journal {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.len() <= MAX_DUAL_FILE_JOURNAL_BYTES,
+        "dual-file journal {} must be a regular file no larger than {} bytes",
+        path.display(),
+        MAX_DUAL_FILE_JOURNAL_BYTES
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = metadata.permissions().mode() & 0o777;
+        anyhow::ensure!(
+            mode & 0o077 == 0,
+            "dual-file journal {} is readable outside its owner (mode {:o}); refusing to expose secret snapshots",
+            path.display(),
+            mode
+        );
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::verify_private_file_handle(&file)
+        .with_context(|| format!("verify private journal DACL {}", path.display()))?;
+
+    let mut raw = zeroize::Zeroizing::new(Vec::new());
+    file.read_to_end(&mut raw)
+        .with_context(|| format!("read private journal {}", path.display()))?;
+    Ok(Some(raw))
+}
+
+fn sync_transaction_directory(directory: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(directory)
+            .and_then(|handle| handle.sync_all())
+            .with_context(|| format!("fsync transaction directory {}", directory.display()))?;
+    }
+    // Windows target files are FlushFileBuffers'd before their handle-bound
+    // NTFS rename. Windows has no portable directory-fsync through std; the
+    // rename/delete namespace changes are protected by the filesystem journal.
+    #[cfg(not(unix))]
+    let _ = directory;
+    Ok(())
+}
+
+fn read_prepared_transaction(directory: &Path) -> Result<Option<(PathBuf, DualFileJournal)>> {
+    let journal_path = directory.join(DUAL_FILE_JOURNAL_NAME);
+    let Some(raw) = read_private_journal(&journal_path)? else {
+        return Ok(None);
+    };
+    let journal: DualFileJournal = serde_yaml::from_slice(&raw)
+        .with_context(|| format!("parse PREPARED journal {}", journal_path.display()))?;
+    journal.validate()?;
+    Ok(Some((journal_path, journal)))
+}
+
+fn recover_prepared_transaction_in(directory: &Path) -> Result<()> {
+    let Some((journal_path, journal)) = read_prepared_transaction(directory)? else {
+        return Ok(());
+    };
+
+    let freedom_path = directory.join(&journal.freedom_file);
+    let credentials_path = directory.join(&journal.credentials_file);
+
+    // The transaction process + OS locks are already held by the caller.
+    // Take the canonical legacy locks as well so a pre-journal NEOTH process
+    // cannot publish either target while recovery captures/restores the pair.
+    let _freedom_mutex = super::lock_freedom_update();
+    let _credentials_mutex = lock_cred();
+    let _freedom_file_lock = crate::util::locked_file::lock_file_blocking(
+        &freedom_path.with_extension("lock"),
+        "freedom config recovery",
+    )
+    .with_context(|| {
+        format!(
+            "acquire freedom config recovery lock for {}",
+            freedom_path.display()
+        )
+    })?;
+    let _credentials_file_lock = lock_cred_file(&credentials_path).with_context(|| {
+        format!(
+            "acquire credentials recovery lock for {}",
+            credentials_path.display()
+        )
+    })?;
+
+    recover_prepared_journal_locked(directory, journal_path, journal)
+}
+
+/// Recover while the caller already holds both canonical process and file
+/// locks. This is exclusively the returned-write-error path inside the normal
+/// transaction and must not attempt to reacquire non-reentrant file locks.
+fn recover_prepared_transaction_in_locked(directory: &Path) -> Result<()> {
+    let Some((journal_path, journal)) = read_prepared_transaction(directory)? else {
+        return Ok(());
+    };
+    recover_prepared_journal_locked(directory, journal_path, journal)
+}
+
+fn recover_prepared_journal_locked(
+    directory: &Path,
+    journal_path: PathBuf,
+    journal: DualFileJournal,
 ) -> Result<()> {
-    let freedom_result = freedom_before.restore(freedom_path);
-    let credentials_result = credentials_before.restore(credentials_path);
+    let freedom_path = directory.join(&journal.freedom_file);
+    let credentials_path = directory.join(&journal.credentials_file);
+    let freedom_before = journal.freedom_before.decode("freedom_before")?;
+    let freedom_after = journal.freedom_after.decode("freedom_after")?;
+    let credentials_before = journal.credentials_before.decode("credentials_before")?;
+    let credentials_after = journal.credentials_after.decode("credentials_after")?;
+    let current_freedom = FileSnapshot::capture(&freedom_path)?;
+    let current_credentials = FileSnapshot::capture(&credentials_path)?;
+
+    let freedom_known =
+        current_freedom.same_as(&freedom_before) || current_freedom.same_as(&freedom_after);
+    let credentials_known = current_credentials.same_as(&credentials_before)
+        || current_credentials.same_as(&credentials_after);
+    anyhow::ensure!(
+        freedom_known && credentials_known,
+        "PREPARED dual-file journal does not match current config bytes; refusing automatic recovery"
+    );
+
+    if current_freedom.same_as(&freedom_after) && current_credentials.same_as(&credentials_after) {
+        sync_transaction_directory(directory)?;
+        crate::util::atomic_write::durable_remove_file(&journal_path).with_context(|| {
+            format!("durably clear committed journal {}", journal_path.display())
+        })?;
+        return Ok(());
+    }
+
+    let freedom_result = freedom_before.restore(&freedom_path);
+    let credentials_result = credentials_before.restore(&credentials_path);
     match (freedom_result, credentials_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(freedom), Ok(())) => Err(freedom).context("restore freedom config"),
-        (Ok(()), Err(credentials)) => Err(credentials).context("restore credentials"),
+        (Ok(()), Ok(())) => {}
+        (Err(freedom), Ok(())) => return Err(freedom).context("restore freedom config"),
+        (Ok(()), Err(credentials)) => return Err(credentials).context("restore credentials"),
         (Err(freedom), Err(credentials)) => anyhow::bail!(
             "restore freedom config failed: {freedom:#}; restore credentials failed: {credentials:#}"
+        ),
+    }
+
+    anyhow::ensure!(
+        FileSnapshot::capture(&freedom_path)?.same_as(&freedom_before)
+            && FileSnapshot::capture(&credentials_path)?.same_as(&credentials_before),
+        "dual-file rollback verification failed; PREPARED journal retained"
+    );
+    sync_transaction_directory(directory)?;
+    crate::util::atomic_write::durable_remove_file(&journal_path).with_context(|| {
+        format!(
+            "durably clear rolled-back journal {}",
+            journal_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn transaction_write_error(
+    directory: &Path,
+    phase: &str,
+    write_error: anyhow::Error,
+) -> anyhow::Error {
+    match recover_prepared_transaction_in_locked(directory) {
+        Ok(()) => write_error.context(format!("{phase}; prior bytes restored")),
+        Err(recovery_error) => anyhow::anyhow!(
+            "{phase} ({write_error:#}); PREPARED transaction recovery failed and the journal was retained: {recovery_error:#}"
         ),
     }
 }
@@ -1266,6 +2550,71 @@ mod tests {
     }
 
     #[test]
+    fn direct_write_and_migration_blank_preserve_future_credential_fields() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &path,
+            "provider_key: old-provider\nfuture_secret: future-keep-me\n",
+        )
+        .unwrap();
+
+        Credentials {
+            provider_key: Some(SecretString::from("new-provider")),
+            ..Default::default()
+        }
+        .write(&path)
+        .unwrap();
+        let updated: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(updated["provider_key"].as_str(), Some("new-provider"));
+        assert_eq!(updated["future_secret"].as_str(), Some("future-keep-me"));
+
+        Credentials::default().write(&path).unwrap();
+        let blanked: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(blanked["provider_key"].is_null());
+        assert_eq!(blanked["future_secret"].as_str(), Some("future-keep-me"));
+    }
+
+    #[test]
+    fn direct_write_waits_for_legacy_credentials_file_lock() {
+        use std::sync::{Arc, Barrier, mpsc};
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        let legacy_lock = lock_cred_file(&path).unwrap();
+        let started = Arc::new(Barrier::new(2));
+        let (done, completion) = mpsc::channel();
+        let writer = {
+            let started = Arc::clone(&started);
+            let path = path.clone();
+            std::thread::spawn(move || {
+                started.wait();
+                Credentials {
+                    provider_key: Some(SecretString::from("new-provider")),
+                    ..Default::default()
+                }
+                .write(&path)
+                .unwrap();
+                done.send(()).unwrap();
+            })
+        };
+        started.wait();
+        let finished_early = completion.recv_timeout(Duration::from_millis(100)).is_ok();
+        drop(legacy_lock);
+        if !finished_early {
+            completion.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        writer.join().unwrap();
+        assert!(
+            !finished_early,
+            "direct writes must honor the canonical credentials file lock"
+        );
+    }
+
+    #[test]
     fn omi_tokens_round_trip_without_public_or_diagnostic_leaks() {
         const API_KEY: &str = "omi_dev_secret_api_key";
         const INGEST_TOKEN: &str = "omi-secret-ingest-token";
@@ -1335,6 +2684,38 @@ mod tests {
     }
 
     #[test]
+    fn legacy_pears_bearer_alias_is_canonicalized_during_lossless_rmw() {
+        const TOPIC: &str = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        const BEARER: &str = "0123456789abcdef0123456789abcdef";
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &path,
+            format!("keet_topic: {TOPIC}\npears_bearer_token: {BEARER}\nfuture_secret: keep-me\n"),
+        )
+        .unwrap();
+
+        Credentials::update_at(&path, |credentials| {
+            credentials.telegram_token = Some(SecretString::from("telegram-secret"));
+            Ok(())
+        })
+        .unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("keet_bridge_bearer_token:"));
+        assert!(!raw.contains("pears_bearer_token:"));
+        assert!(raw.contains("future_secret: keep-me"));
+        let loaded = Credentials::load_or_default(&path).unwrap();
+        assert_eq!(
+            loaded
+                .keet_bridge_bearer_token
+                .as_ref()
+                .map(SecretString::expose),
+            Some(BEARER)
+        );
+    }
+
+    #[test]
     fn tts_keys_round_trip_only_in_credentials_store() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("credentials.yaml");
@@ -1360,15 +2741,47 @@ mod tests {
     }
 
     #[test]
-    fn parses_discord_bot_token() {
-        // GOLD-PROG-16: a discord_bot_token in credentials.yaml deserialises to
-        // Some(SecretString) and marks the credentials non-empty.
+    fn inbound_sender_policies_round_trip_with_channel_credentials() {
+        // Every transport credential and exact sender policy must survive the
+        // real lossless credentials store path as one startability contract.
         let dir = tempdir().unwrap();
         let path = dir.path().join("c.yaml");
-        std::fs::write(&path, "discord_bot_token: bot-abc123\n").unwrap();
-        let c = Credentials::load_or_default(&path).unwrap();
-        assert_eq!(c.discord_bot_token.as_ref().unwrap().expose(), "bot-abc123");
-        assert!(c.has_any());
+        let original = Credentials {
+            discord_bot_token: Some(SecretString::from("bot-abc123")),
+            discord_allowed_user_id: Some("123456789012345678".into()),
+            slack_bot_token: Some(SecretString::from("xoxb-token")),
+            slack_app_token: Some(SecretString::from("xapp-token")),
+            slack_allowed_user_id: Some("U123456789".into()),
+            whatsapp_token: Some(SecretString::from("meta-token")),
+            whatsapp_allowed_sender: Some("491701234567".into()),
+            signal_cli_url: Some("http://127.0.0.1:8080".into()),
+            signal_phone_number: Some("+491701111111".into()),
+            signal_allowed_sender: Some("+491702222222".into()),
+            line_channel_access_token: Some(SecretString::from("line-token")),
+            line_allowed_sender: Some("Uabcdef123456".into()),
+            ..Default::default()
+        };
+        original.write(&path).unwrap();
+        let loaded = Credentials::load_or_default(&path).unwrap();
+        assert_eq!(
+            loaded.discord_bot_token.as_ref().unwrap().expose(),
+            "bot-abc123"
+        );
+        assert_eq!(
+            loaded.discord_allowed_user_id.as_deref(),
+            Some("123456789012345678")
+        );
+        assert_eq!(loaded.slack_allowed_user_id.as_deref(), Some("U123456789"));
+        assert_eq!(
+            loaded.whatsapp_allowed_sender.as_deref(),
+            Some("491701234567")
+        );
+        assert_eq!(
+            loaded.signal_allowed_sender.as_deref(),
+            Some("+491702222222")
+        );
+        assert_eq!(loaded.line_allowed_sender.as_deref(), Some("Uabcdef123456"));
+        assert!(loaded.has_any());
     }
 
     #[test]
@@ -1422,7 +2835,7 @@ mod tests {
     fn write_empty_credentials_removes_existing_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("c.yaml");
-        std::fs::write(&path, "stale").unwrap();
+        std::fs::write(&path, "provider_key: stale\n").unwrap();
         let c = Credentials::default();
         c.write(&path).unwrap();
         assert!(
@@ -1581,6 +2994,8 @@ mod tests {
                 Ok(())
             },
             Some(|_: &Path, _: &[u8]| anyhow::bail!("injected second-file failure")),
+            InlineTelegramTokenPolicy::Preserve,
+            None,
         )
         .unwrap_err();
 
@@ -1589,6 +3004,671 @@ mod tests {
         assert_eq!(
             std::fs::read(&credentials_path).unwrap(),
             credentials_before
+        );
+        assert!(
+            !dir.path().join(DUAL_FILE_JOURNAL_NAME).exists(),
+            "returned write errors must finish rollback and durably clear PREPARED"
+        );
+    }
+
+    fn assert_dual_file_crash_recovery(
+        point: DualFileFaultPoint,
+        committed: bool,
+        recover_via_credentials: bool,
+        recover_via_wal: bool,
+    ) {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut original_freedom = crate::config::FreedomConfig::default();
+        original_freedom.telegram_user_id = Some(111_111_111);
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&original_freedom).unwrap(),
+        )
+        .unwrap();
+        Credentials {
+            telegram_token: Some(SecretString::from("111111111:old-token")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        let error = Credentials::update_with_freedom_at_using_and_fault(
+            &freedom_path,
+            &credentials_path,
+            |freedom, credentials| {
+                freedom.telegram_user_id = Some(222_222_222);
+                credentials.telegram_token = Some(SecretString::from("222222222:new-token"));
+                Ok(())
+            },
+            Some(|path: &Path, body: &[u8]| {
+                crate::util::atomic_write::atomic_write_private(path, body)
+                    .map_err(anyhow::Error::from)
+            }),
+            InlineTelegramTokenPolicy::Preserve,
+            None,
+            |current| {
+                if current == point {
+                    anyhow::bail!("injected process crash at {current:?}");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("injected process crash"));
+
+        let journal_path = dir.path().join(DUAL_FILE_JOURNAL_NAME);
+        assert!(
+            journal_path.exists(),
+            "simulated crash must retain PREPARED"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&journal_path)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o077,
+                0,
+                "journal carries secret snapshots and must never be group/world-readable"
+            );
+        }
+
+        let expected_id = if committed { 222_222_222 } else { 111_111_111 };
+        let expected_token = if committed {
+            "222222222:new-token"
+        } else {
+            "111111111:old-token"
+        };
+        // Either public runtime entrypoint MUST recover the pair before it
+        // parses its requested file.
+        if recover_via_credentials {
+            let recovered = Credentials::load_or_default(&credentials_path).unwrap();
+            assert_eq!(
+                recovered.telegram_token.as_ref().unwrap().expose(),
+                expected_token
+            );
+        }
+        if recover_via_wal {
+            assert_eq!(
+                crate::config::load_wal_config(&freedom_path).unwrap(),
+                crate::config::WalConfig::default()
+            );
+        }
+        let loaded = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert_eq!(loaded.telegram_user_id, Some(expected_id));
+        assert_eq!(
+            loaded.telegram_token.as_ref().unwrap().expose(),
+            expected_token
+        );
+        assert!(
+            !journal_path.exists(),
+            "successful commit-or-rollback recovery must durably clear PREPARED"
+        );
+
+        // Recovery is idempotent: a second independent credential/config load
+        // observes exactly the already-decided pair and performs no mutation.
+        let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        assert_eq!(
+            credentials.telegram_token.as_ref().unwrap().expose(),
+            expected_token
+        );
+        let loaded_again = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert_eq!(loaded_again.telegram_user_id, Some(expected_id));
+    }
+
+    #[test]
+    fn crash_after_prepared_journal_rolls_back_before_runtime_load() {
+        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterJournal, false, false, false);
+    }
+
+    #[test]
+    fn crash_after_credentials_rename_rolls_back_before_runtime_load() {
+        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterCredentials, false, true, false);
+    }
+
+    #[test]
+    fn crash_after_freedom_rename_commits_before_runtime_load() {
+        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterFreedom, true, false, false);
+    }
+
+    #[test]
+    fn wal_loader_recovers_prepared_pair_before_partial_read() {
+        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterCredentials, false, false, true);
+    }
+
+    #[test]
+    fn raw_first_run_transaction_recovers_missing_pair_after_crash() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+
+        let error = Credentials::update_raw_freedom_with_credentials_at_using_fault(
+            &freedom_path,
+            &credentials_path,
+            |source, credentials| {
+                assert!(source.is_none());
+                credentials.provider_key = Some(SecretString::from("first-run-provider"));
+                Ok((
+                    Some("operator_id: first-run\nfuture_extension: keep-me\n".to_string()),
+                    (),
+                ))
+            },
+            |point| {
+                if point == DualFileFaultPoint::AfterCredentials {
+                    anyhow::bail!("injected first-run crash");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("injected first-run crash"));
+        assert!(dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+
+        let pair =
+            crate::config::load_runtime_config_pair_from_path_or_default(&freedom_path).unwrap();
+        assert!(pair.raw_credentials.is_empty());
+        assert!(!freedom_path.exists());
+        assert!(!credentials_path.exists());
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+
+        Credentials::update_raw_freedom_with_credentials_at(
+            &freedom_path,
+            &credentials_path,
+            |source, credentials| {
+                assert!(source.is_none());
+                credentials.provider_key = Some(SecretString::from("committed-provider"));
+                Ok((
+                    Some("operator_id: committed\nfuture_extension: keep-me\n".to_string()),
+                    (),
+                ))
+            },
+        )
+        .unwrap();
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path).unwrap();
+        assert_eq!(pair.config.operator_id.as_deref(), Some("committed"));
+        assert_eq!(
+            pair.credentials.provider_key.as_ref().unwrap().expose(),
+            "committed-provider"
+        );
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).unwrap()).unwrap();
+        assert_eq!(raw["future_extension"].as_str(), Some("keep-me"));
+    }
+
+    #[test]
+    fn exact_encrypted_pair_restore_recovers_crashes_without_reencoding() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut old_config = crate::config::FreedomConfig::default();
+        old_config.operator_id = Some("old".to_string());
+        let old_freedom = serde_yaml::to_string(&old_config).unwrap().into_bytes();
+        let old_credentials = b"provider_key: old-provider\n".to_vec();
+        std::fs::write(&freedom_path, &old_freedom).unwrap();
+        std::fs::write(&credentials_path, &old_credentials).unwrap();
+
+        let mut new_config = crate::config::FreedomConfig::default();
+        new_config.operator_id = Some("restored".to_string());
+        let new_freedom = serde_yaml::to_string(&new_config).unwrap().into_bytes();
+        let mut encrypted = CONF_MAGIC.to_vec();
+        encrypted.extend_from_slice(&[7_u8; 12]);
+        encrypted.extend_from_slice(&[9_u8; 32]);
+
+        let interrupted = Credentials::publish_exact_raw_pair_at_using_fault(
+            &freedom_path,
+            &credentials_path,
+            Some(&new_freedom),
+            Some(&encrypted),
+            |point| {
+                if point == DualFileFaultPoint::AfterCredentials {
+                    anyhow::bail!("injected exact restore crash");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(
+            interrupted
+                .to_string()
+                .contains("injected exact restore crash")
+        );
+        let rolled_back = crate::config::snapshot_raw_config_pair(&freedom_path).unwrap();
+        assert_eq!(
+            rolled_back.freedom.as_ref().map(|bytes| bytes.as_slice()),
+            Some(old_freedom.as_slice())
+        );
+        assert_eq!(
+            rolled_back
+                .credentials
+                .as_ref()
+                .map(|bytes| bytes.as_slice()),
+            Some(old_credentials.as_slice())
+        );
+
+        let interrupted = Credentials::publish_exact_raw_pair_at_using_fault(
+            &freedom_path,
+            &credentials_path,
+            Some(&new_freedom),
+            Some(&encrypted),
+            |point| {
+                if point == DualFileFaultPoint::AfterFreedom {
+                    anyhow::bail!("injected post-pair crash");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(interrupted.to_string().contains("injected post-pair crash"));
+        let committed = crate::config::snapshot_raw_config_pair(&freedom_path).unwrap();
+        assert_eq!(
+            committed.freedom.as_ref().map(|bytes| bytes.as_slice()),
+            Some(new_freedom.as_slice())
+        );
+        assert_eq!(
+            committed.credentials.as_ref().map(|bytes| bytes.as_slice()),
+            Some(encrypted.as_slice())
+        );
+        assert!(committed.credentials_encrypted);
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_pair_restore_rejects_existing_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let outside = dir.path().join("outside.yaml");
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&outside, "outside: untouched\n").unwrap();
+        symlink(&outside, &freedom_path).unwrap();
+        let body = serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap();
+
+        let error = Credentials::publish_exact_raw_pair_at(
+            &freedom_path,
+            &credentials_path,
+            Some(body.as_bytes()),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("never a symlink"));
+        assert_eq!(
+            std::fs::read_to_string(&outside).unwrap(),
+            "outside: untouched\n"
+        );
+    }
+
+    #[test]
+    fn coherent_pair_reader_blocks_writer_between_freedom_and_credentials() {
+        use std::sync::{Arc, Barrier, mpsc};
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut original_freedom = crate::config::FreedomConfig::default();
+        original_freedom.telegram_user_id = Some(111_111_111);
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&original_freedom).unwrap(),
+        )
+        .unwrap();
+        Credentials {
+            telegram_token: Some(SecretString::from("111111111:old-token")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        let freedom_for_reader = freedom_path.clone();
+        let freedom_loaded = Arc::new(Barrier::new(2));
+        let release_reader = Arc::new(Barrier::new(2));
+        let reader = {
+            let freedom_loaded = Arc::clone(&freedom_loaded);
+            let release_reader = Arc::clone(&release_reader);
+            std::thread::spawn(move || {
+                crate::config::load_runtime_config_pair_from_path_with_hook(
+                    &freedom_for_reader,
+                    move || {
+                        freedom_loaded.wait();
+                        release_reader.wait();
+                    },
+                )
+                .unwrap()
+            })
+        };
+
+        freedom_loaded.wait();
+        let writer_started = Arc::new(Barrier::new(2));
+        let (writer_done, writer_result) = mpsc::channel();
+        let writer = {
+            let writer_started = Arc::clone(&writer_started);
+            let freedom_path = freedom_path.clone();
+            let credentials_path = credentials_path.clone();
+            std::thread::spawn(move || {
+                writer_started.wait();
+                Credentials::update_telegram_with_freedom_at(
+                    &freedom_path,
+                    &credentials_path,
+                    |config, credentials| {
+                        config.telegram_user_id = Some(222_222_222);
+                        credentials.telegram_token =
+                            Some(SecretString::from("222222222:new-token"));
+                        Ok(())
+                    },
+                )
+                .unwrap();
+                writer_done.send(()).unwrap();
+            })
+        };
+        writer_started.wait();
+        let writer_finished_early = writer_result
+            .recv_timeout(Duration::from_millis(100))
+            .is_ok();
+
+        release_reader.wait();
+        let pair = reader.join().unwrap();
+        assert_eq!(pair.config.telegram_user_id, Some(111_111_111));
+        assert_eq!(
+            pair.config.telegram_token.as_ref().unwrap().expose(),
+            "111111111:old-token"
+        );
+        assert_eq!(
+            pair.credentials.telegram_token.as_ref().unwrap().expose(),
+            "111111111:old-token"
+        );
+        if !writer_finished_early {
+            writer_result.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        writer.join().unwrap();
+        assert!(
+            !writer_finished_early,
+            "writer must remain blocked while the pair loader holds its shared boundary"
+        );
+
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path).unwrap();
+        assert_eq!(pair.config.telegram_user_id, Some(222_222_222));
+        assert_eq!(
+            pair.credentials.telegram_token.as_ref().unwrap().expose(),
+            "222222222:new-token"
+        );
+    }
+
+    #[test]
+    fn coherent_pair_reader_waits_for_pre_journal_legacy_writer() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut old_freedom = crate::config::FreedomConfig::default();
+        old_freedom.operator_id = Some("old-generation".to_string());
+        std::fs::write(&freedom_path, serde_yaml::to_string(&old_freedom).unwrap()).unwrap();
+        Credentials {
+            provider_key: Some(SecretString::from("old-provider")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        let (credentials_published_tx, credentials_published_rx) = mpsc::channel();
+        let (finish_writer_tx, finish_writer_rx) = mpsc::channel();
+        let writer_freedom = freedom_path.clone();
+        let writer_credentials = credentials_path.clone();
+        let writer = std::thread::spawn(move || {
+            // Baseline/pre-journal NEOTH lock order and publication order:
+            // both legacy locks stay held while credentials lands first and
+            // freedom.yaml lands second.
+            let _freedom_mutex = crate::config::lock_freedom_update();
+            let _credentials_mutex = lock_cred();
+            let _freedom_file_lock = crate::util::locked_file::lock_file_blocking(
+                &writer_freedom.with_extension("lock"),
+                "legacy freedom config",
+            )
+            .unwrap();
+            let _credentials_file_lock = lock_cred_file(&writer_credentials).unwrap();
+
+            let new_credentials = Credentials {
+                provider_key: Some(SecretString::from("new-provider")),
+                ..Default::default()
+            };
+            let credentials_body =
+                zeroize::Zeroizing::new(serde_yaml::to_string(&new_credentials).unwrap());
+            crate::util::atomic_write::atomic_write_private(
+                &writer_credentials,
+                credentials_body.as_bytes(),
+            )
+            .unwrap();
+            credentials_published_tx.send(()).unwrap();
+            finish_writer_rx.recv().unwrap();
+
+            let mut new_freedom = crate::config::FreedomConfig::default();
+            new_freedom.operator_id = Some("new-generation".to_string());
+            let freedom_body = new_freedom.public_yaml().unwrap();
+            crate::util::atomic_write::atomic_write_private(
+                &writer_freedom,
+                freedom_body.as_bytes(),
+            )
+            .unwrap();
+        });
+
+        credentials_published_rx.recv().unwrap();
+        let (reader_tx, reader_rx) = mpsc::channel();
+        let reader_path = freedom_path.clone();
+        let reader = std::thread::spawn(move || {
+            reader_tx.send(crate::config::load_runtime_config_pair_from_path(
+                &reader_path,
+            ))
+        });
+        assert!(
+            reader_rx.recv_timeout(Duration::from_millis(150)).is_err(),
+            "coherent reader must wait while the legacy writer exposes its intermediate pair"
+        );
+
+        finish_writer_tx.send(()).unwrap();
+        writer.join().unwrap();
+        let pair = reader_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        reader.join().unwrap().unwrap();
+        assert_eq!(pair.config.operator_id.as_deref(), Some("new-generation"));
+        assert_eq!(
+            pair.raw_credentials
+                .provider_key
+                .as_ref()
+                .map(SecretString::expose),
+            Some("new-provider")
+        );
+        assert_eq!(
+            pair.credentials
+                .provider_key
+                .as_ref()
+                .map(SecretString::expose),
+            Some("new-provider")
+        );
+    }
+
+    #[test]
+    fn nested_dual_writer_is_rejected_without_losing_outer_update() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        Credentials::default().write(&credentials_path).unwrap();
+        let nested_mutation_called = std::cell::Cell::new(false);
+
+        Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            |config, credentials| {
+                let nested = Credentials::update_with_freedom_at(
+                    &freedom_path,
+                    &credentials_path,
+                    |nested_config, nested_credentials| {
+                        nested_mutation_called.set(true);
+                        nested_config.operator_id = Some("inner".to_string());
+                        nested_credentials.telegram_token = Some(SecretString::from("inner-token"));
+                        Ok(())
+                    },
+                )
+                .unwrap_err();
+                assert!(nested.to_string().contains("refusing nested config writer"));
+                assert!(!nested_mutation_called.get());
+
+                config.operator_id = Some("outer".to_string());
+                credentials.provider_key = Some(SecretString::from("outer-provider"));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path).unwrap();
+        assert_eq!(pair.config.operator_id.as_deref(), Some("outer"));
+        assert_eq!(
+            pair.credentials
+                .provider_key
+                .as_ref()
+                .map(SecretString::expose),
+            Some("outer-provider")
+        );
+        assert!(pair.credentials.telegram_token.is_none());
+    }
+
+    #[test]
+    fn coherent_pair_or_default_keeps_existing_credentials_without_freedom() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&credentials_path, "provider_key: repair-provider\n").unwrap();
+
+        let pair =
+            crate::config::load_runtime_config_pair_from_path_or_default(&freedom_path).unwrap();
+        assert_eq!(
+            pair.raw_credentials.provider_key.as_ref().unwrap().expose(),
+            "repair-provider"
+        );
+        assert_eq!(
+            pair.credentials.provider_key.as_ref().unwrap().expose(),
+            "repair-provider"
+        );
+        assert_eq!(
+            pair.config.provider_key.as_ref().unwrap().expose(),
+            "repair-provider"
+        );
+    }
+
+    #[test]
+    fn reviewed_dual_update_rejects_newer_freedom_generation_before_mutation() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            "operator_id: reviewed\nfuture_extension: keep-me\n",
+        )
+        .unwrap();
+        std::fs::write(&credentials_path, "provider_key: original-secret\n").unwrap();
+        let reviewed_source = std::fs::read(&freedom_path).unwrap();
+
+        crate::config::FreedomConfig::update_at(&freedom_path, |config| {
+            config.language_primary = Some("de".to_string());
+            Ok(())
+        })
+        .unwrap();
+        let current_freedom = std::fs::read(&freedom_path).unwrap();
+        let current_credentials = std::fs::read(&credentials_path).unwrap();
+        let mut mutation_ran = false;
+
+        let error = Credentials::update_with_freedom_at_if_source(
+            &freedom_path,
+            &credentials_path,
+            &reviewed_source,
+            |_config, credentials| {
+                mutation_ran = true;
+                credentials.provider_key = Some(SecretString::from("stale-secret"));
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("changed after its reviewed snapshot")
+        );
+        assert!(!mutation_ran);
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), current_freedom);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            current_credentials
+        );
+    }
+
+    #[test]
+    fn recovery_rejects_unknown_bytes_and_retains_prepared_journal() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        Credentials {
+            telegram_token: Some(SecretString::from("111111111:old-token")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        Credentials::update_with_freedom_at_using_and_fault(
+            &freedom_path,
+            &credentials_path,
+            |freedom, credentials| {
+                freedom.telegram_user_id = Some(222_222_222);
+                credentials.telegram_token = Some(SecretString::from("222222222:new-token"));
+                Ok(())
+            },
+            Some(|path: &Path, body: &[u8]| {
+                crate::util::atomic_write::atomic_write_private(path, body)
+                    .map_err(anyhow::Error::from)
+            }),
+            InlineTelegramTokenPolicy::Preserve,
+            None,
+            |point| {
+                if point == DualFileFaultPoint::AfterCredentials {
+                    anyhow::bail!("injected crash");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        crate::util::atomic_write::atomic_write_private(
+            &credentials_path,
+            b"telegram_token: 333333333:unexpected\n",
+        )
+        .unwrap();
+        let error = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not match current config bytes")
+        );
+        assert!(
+            dir.path().join(DUAL_FILE_JOURNAL_NAME).exists(),
+            "ambiguous recovery must fail closed and retain forensic state"
         );
     }
 
@@ -1606,7 +3686,7 @@ mod tests {
         freedom.inference.default_slot.key = Some(SecretString::from("legacy-default"));
         std::fs::write(&freedom_path, serde_yaml::to_string(&freedom).unwrap()).unwrap();
 
-        Credentials::update_with_freedom_at(
+        Credentials::update_telegram_with_freedom_at(
             &freedom_path,
             &credentials_path,
             |config, credentials| {
@@ -1637,6 +3717,202 @@ mod tests {
             Some("legacy-default")
         );
         assert!(persisted["telegram_token"].is_null());
+    }
+
+    #[test]
+    fn cluster_secret_update_preserves_all_inline_secrets_and_unknown_yaml() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut freedom = crate::config::FreedomConfig::default();
+        freedom.provider_key = Some(SecretString::from("legacy-provider"));
+        freedom.telegram_token = Some(SecretString::from("111111111:legacy-telegram"));
+        freedom.inference.left.key = Some(SecretString::from("legacy-left"));
+        freedom.inference.right.key = Some(SecretString::from("legacy-right"));
+        freedom.inference.cerebellum.key = Some(SecretString::from("legacy-cerebellum"));
+        freedom.inference.default_slot.key = Some(SecretString::from("legacy-default"));
+
+        let mut raw = serde_yaml::to_value(&freedom).unwrap();
+        raw.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String("future_extension".to_string()),
+            serde_yaml::Value::String("keep-me".to_string()),
+        );
+        raw["cluster"].as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String("future_transport_option".to_string()),
+            serde_yaml::Value::String("nested-keep".to_string()),
+        );
+        std::fs::write(&freedom_path, serde_yaml::to_string(&raw).unwrap()).unwrap();
+        std::fs::write(
+            &credentials_path,
+            "future_secret: future-credential-keep-me\n",
+        )
+        .unwrap();
+
+        Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            |config, credentials| {
+                config.cluster.name = Some("gold-cluster".to_string());
+                credentials.cluster_passphrase = Some(SecretString::from("cluster-secret"));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let persisted: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).unwrap()).unwrap();
+        assert_eq!(persisted["provider_key"].as_str(), Some("legacy-provider"));
+        assert_eq!(
+            persisted["telegram_token"].as_str(),
+            Some("111111111:legacy-telegram")
+        );
+        assert_eq!(
+            persisted["inference"]["left"]["key"].as_str(),
+            Some("legacy-left")
+        );
+        assert_eq!(
+            persisted["inference"]["right"]["key"].as_str(),
+            Some("legacy-right")
+        );
+        assert_eq!(
+            persisted["inference"]["cerebellum"]["key"].as_str(),
+            Some("legacy-cerebellum")
+        );
+        assert_eq!(
+            persisted["inference"]["default_slot"]["key"].as_str(),
+            Some("legacy-default")
+        );
+        assert_eq!(persisted["future_extension"].as_str(), Some("keep-me"));
+        assert_eq!(
+            persisted["cluster"]["future_transport_option"].as_str(),
+            Some("nested-keep")
+        );
+        assert_eq!(persisted["cluster"]["name"].as_str(), Some("gold-cluster"));
+        let persisted_credentials: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&credentials_path).unwrap()).unwrap();
+        assert_eq!(
+            persisted_credentials["future_secret"].as_str(),
+            Some("future-credential-keep-me")
+        );
+        assert_eq!(
+            Credentials::load_or_default(&credentials_path)
+                .unwrap()
+                .cluster_passphrase
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "cluster-secret"
+        );
+    }
+
+    #[test]
+    fn dual_file_update_canonicalizes_loop_budget_alias_and_preserves_unknowns() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut raw = serde_yaml::to_value(crate::config::FreedomConfig::default()).unwrap();
+        raw.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String("future_extension".to_string()),
+            serde_yaml::Value::String("top-level-keep".to_string()),
+        );
+        let loop_config = raw["loop_config"].as_mapping_mut().unwrap();
+        loop_config.remove(&serde_yaml::Value::String("tool_call_budget".to_string()));
+        loop_config.insert(
+            serde_yaml::Value::String("token_budget".to_string()),
+            serde_yaml::Value::Number(17_u64.into()),
+        );
+        loop_config.insert(
+            serde_yaml::Value::String("future_loop_option".to_string()),
+            serde_yaml::Value::String("nested-keep".to_string()),
+        );
+        std::fs::write(&freedom_path, serde_yaml::to_string(&raw).unwrap()).unwrap();
+
+        Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            |config, credentials| {
+                config.cluster.name = Some("alias-upgrade".to_string());
+                credentials.cluster_passphrase = Some(SecretString::from("alias-secret"));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let persisted: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).unwrap()).unwrap();
+        assert_eq!(
+            persisted["loop_config"]["tool_call_budget"].as_u64(),
+            Some(17)
+        );
+        assert!(
+            persisted["loop_config"].get("token_budget").is_none(),
+            "the read-only alias must not survive beside its canonical field"
+        );
+        assert_eq!(
+            persisted["loop_config"]["future_loop_option"].as_str(),
+            Some("nested-keep")
+        );
+        assert_eq!(
+            persisted["future_extension"].as_str(),
+            Some("top-level-keep")
+        );
+        crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+    }
+
+    #[test]
+    fn encrypted_credentials_update_preserves_unknown_secret() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut freedom = serde_yaml::to_value(crate::config::FreedomConfig::default()).unwrap();
+        freedom.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String("wal".to_string()),
+            serde_yaml::from_str("encryption: aes256_gcm_siv\n").unwrap(),
+        );
+        std::fs::write(&freedom_path, serde_yaml::to_string(&freedom).unwrap()).unwrap();
+
+        let key_path = crate::wal::master_key::master_key_path(dir.path());
+        crate::wal::master_key::load_or_init_master_key(&key_path).unwrap();
+        let key = crate::wal::master_key::config_subkey_at(dir.path()).unwrap();
+        let original =
+            "telegram_token: 111111111:old-token\nfuture_secret: encrypted-future-keep-me\n";
+        crate::util::atomic_write::atomic_write_private(
+            &credentials_path,
+            &encrypt_credentials_body(&key, original).unwrap(),
+        )
+        .unwrap();
+
+        Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            |config, credentials| {
+                config.cluster.name = Some("encrypted-cluster".to_string());
+                credentials.cluster_passphrase =
+                    Some(SecretString::from("encrypted-cluster-secret"));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let encrypted = std::fs::read(&credentials_path).unwrap();
+        assert!(encrypted.starts_with(CONF_MAGIC));
+        assert!(
+            !encrypted
+                .windows("encrypted-future-keep-me".len())
+                .any(|window| window == b"encrypted-future-keep-me")
+        );
+        let plaintext = zeroize::Zeroizing::new(
+            decrypt_credentials_body(&key, &encrypted).expect("decrypt updated credentials"),
+        );
+        let persisted: serde_yaml::Value = serde_yaml::from_str(&plaintext).unwrap();
+        assert_eq!(
+            persisted["future_secret"].as_str(),
+            Some("encrypted-future-keep-me")
+        );
+        assert_eq!(
+            persisted["cluster_passphrase"].as_str(),
+            Some("encrypted-cluster-secret")
+        );
     }
 
     #[test]

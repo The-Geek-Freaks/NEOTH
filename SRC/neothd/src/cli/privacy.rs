@@ -54,28 +54,29 @@ pub struct PrivacyFinding {
 }
 
 pub async fn run_privacy(args: PrivacyArgs) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml — run `neoth init` first")?;
+    let config_path = FreedomConfig::default_path();
+    let diagnostic = crate::config::load_runtime_config_diagnostic_snapshot(&config_path)
+        .context("load coherent privacy config/credential snapshot")?;
+    let crate::config::RuntimeConfigDiagnosticSnapshot {
+        config,
+        config_error,
+        credential_status: cred_status,
+        credentials,
+    } = diagnostic;
+    let cfg = config.ok_or_else(|| {
+        anyhow::anyhow!(
+            "load freedom.yaml — run `neoth init` first{}",
+            config_error
+                .as_deref()
+                .map(|error| format!(": {error}"))
+                .unwrap_or_default()
+        )
+    })?;
     let cred_path = crate::config::credentials::default_path();
     // B17: classify the credential store. An invalid/unreadable store is a
     // critical privacy finding — audit_posture must not derive posture from
     // fabricated-empty creds, and the operator needs to know the file is bad.
-    let mut cred_status = Credentials::credential_store_status(&cred_path);
-    let creds = match cred_status {
-        crate::config::credentials::CredentialStoreStatus::Ok
-        | crate::config::credentials::CredentialStoreStatus::Missing => {
-            // B17: a mid-command corruption race downgrades to Invalid so the
-            // critical privacy finding below still fires (never a healthy view).
-            match Credentials::load_or_default(&cred_path) {
-                Ok(c) => c,
-                Err(_) => {
-                    cred_status = crate::config::credentials::CredentialStoreStatus::Invalid;
-                    Credentials::default()
-                }
-            }
-        }
-        _ => Credentials::default(),
-    };
+    let creds = credentials.unwrap_or_default();
     let mut findings = audit_posture(&cfg, &creds);
     // Inject a critical finding when the credential store is in a bad state.
     if !matches!(

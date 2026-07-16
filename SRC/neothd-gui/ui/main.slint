@@ -48,7 +48,7 @@ import { DreamingView, DreamDayRow, DreamEntryRow } from "dreaming.slint";
 import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
-import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
+import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow } from "mesh.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow }
 export { Theme }
 
@@ -65,7 +65,7 @@ export { HemiCard, CalEvent, ConsentEntry }
 export { DreamDayRow, DreamEntryRow }
 export { WikiRow }
 export { SelfActSkill }
-export { MeshPeerRow, MeshForeignRow }
+export { MeshPeerRow, MeshForeignRow, MeshConflictRow }
 // DES-12 — plugin WAL-feed detail pane event row.
 export { PluginEventRow }
 // DES-10 — channel activity feed row (traffic metadata, no message bodies).
@@ -407,25 +407,27 @@ export component MainWindow inherits Window {
     /// → Config. Rust persists the change.
     callback provider-changed(string);
 
-    /// Bite #5 — cluster auto-discovery state surfaced in
-    /// Settings → Cluster. Rust populates these on window
-    /// startup from freedom.yaml; toggle fires the callback
-    /// which mutates freedom.yaml + drops the reload sentinel.
+    /// Cluster auto-discovery draft surfaced in Settings → Cluster.
+    /// It is persisted together with the complete C6 snapshot on Apply.
     in-out property <bool> cluster-mdns-enabled: true;
-    // C6 — cluster transport config.
+    // C6 — cluster transport config. These are drafts until the operator
+    // submits one complete, typed Apply transaction.
     in-out property <bool>   cfg-cluster-enabled: false;
     in-out property <string> cfg-cluster-name: "";
     in-out property <int>    cfg-cluster-transport-idx: 0;
+    in-out property <string> cfg-cluster-peers: "";
     in-out property <bool>   cfg-cluster-announce-untrusted: false;
     in-out property <string> cfg-cluster-ssids: "";
-    callback cfg-cluster-enabled-changed(bool);
-    callback cfg-cluster-name-changed(string);
-    callback cfg-cluster-transport-changed(int);
-    callback cfg-cluster-announce-untrusted-changed(bool);
-    callback cfg-cluster-ssids-changed(string);
+    in-out property <bool> cfg-cluster-replicate-raw-ingress: false;
+    in-out property <string> cfg-cluster-replay-days-text: "30";
+    in-out property <string> cfg-cluster-listen-port-text: "49737";
+    in-out property <string> cfg-cluster-passphrase: "";
+    in-out property <bool> cfg-cluster-passphrase-set: false;
+    in-out property <bool> cfg-cluster-apply-in-flight: false;
+    in-out property <string> cfg-cluster-apply-status: "";
+    callback cfg-cluster-apply-clicked(bool, string, int, string, bool, bool, string, bool, string, string, string);
     in-out property <int> cluster-listen-port: 49737;
     in-out property <string> cluster-trusted-ssids-summary: "";
-    callback cluster-mdns-enabled-changed(bool);
     // GOLD-FEAT-01c — full-auto (sudomode) toggle, forwarded to SettingsView.
     in-out property <bool> full-auto-active: false;
     callback full-auto-confirmed();
@@ -786,6 +788,7 @@ export component MainWindow inherits Window {
     // ── Wave 4b — Mesh & Cluster panel ───────────────────────────────────────
     in property <string>          mesh-node-id: "";
     in property <string>          mesh-listen-port: "";
+    in property <bool>            mesh-mdns-enabled: false;
     in property <string>          mesh-trusted-ssids: "";
     in property <[MeshPeerRow]>   mesh-peers: [];
     in property <string>          mesh-gossip-note: "";
@@ -794,12 +797,17 @@ export component MainWindow inherits Window {
     in property <int>             mesh-foreign-total: 0;
     in property <string>          mesh-foreign-bytes: "";
     in property <int>             mesh-foreign-peers: 0;
+    in property <[MeshConflictRow]> mesh-conflicts: [];
+    in property <int>             mesh-conflict-count: 0;
+    in property <bool>            mesh-conflicts-valid: true;
+    in property <string>          mesh-conflicts-error: "";
     in property <string>          mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
     // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
     in property <[string]>        mesh-gossip-events: [];
     in-out property <string>      mesh-expanded-peer: "";
     callback mesh-peer-sync-clicked(string);
+    callback mesh-conflict-resolve-clicked(string, string);
 
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
@@ -3281,18 +3289,21 @@ export component MainWindow inherits Window {
             cfg-cluster-enabled <=> root.cfg-cluster-enabled;
             cfg-cluster-name <=> root.cfg-cluster-name;
             cfg-cluster-transport-idx <=> root.cfg-cluster-transport-idx;
+            cfg-cluster-peers <=> root.cfg-cluster-peers;
             cfg-cluster-announce-untrusted <=> root.cfg-cluster-announce-untrusted;
             cfg-cluster-ssids <=> root.cfg-cluster-ssids;
-            cfg-cluster-enabled-changed(v) => { root.cfg-cluster-enabled-changed(v); }
-            cfg-cluster-name-changed(v) => { root.cfg-cluster-name-changed(v); }
-            cfg-cluster-transport-changed(i) => { root.cfg-cluster-transport-changed(i); }
-            cfg-cluster-announce-untrusted-changed(v) => { root.cfg-cluster-announce-untrusted-changed(v); }
-            cfg-cluster-ssids-changed(v) => { root.cfg-cluster-ssids-changed(v); }
+            cfg-cluster-replicate-raw-ingress <=> root.cfg-cluster-replicate-raw-ingress;
+            cfg-cluster-replay-days-text <=> root.cfg-cluster-replay-days-text;
+            cfg-cluster-listen-port-text <=> root.cfg-cluster-listen-port-text;
+            cfg-cluster-passphrase <=> root.cfg-cluster-passphrase;
+            cfg-cluster-passphrase-set <=> root.cfg-cluster-passphrase-set;
+            cfg-cluster-apply-in-flight <=> root.cfg-cluster-apply-in-flight;
+            cfg-cluster-apply-status <=> root.cfg-cluster-apply-status;
+            cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase) => {
+                root.cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase);
+            }
             cluster-listen-port: root.cluster-listen-port;
             cluster-trusted-ssids-summary: root.cluster-trusted-ssids-summary;
-            cluster-mdns-enabled-changed(enabled) => {
-                root.cluster-mdns-enabled-changed(enabled);
-            }
             full-auto-active <=> root.full-auto-active;
             full-auto-confirmed => {
                 root.full-auto-confirmed();
@@ -3755,6 +3766,7 @@ export component MainWindow inherits Window {
                 if root.nav-active == "mesh": MeshView {
                     mesh-node-id: root.mesh-node-id;
                     mesh-listen-port: root.mesh-listen-port;
+                    mesh-mdns-enabled: root.mesh-mdns-enabled;
                     mesh-trusted-ssids: root.mesh-trusted-ssids;
                     mesh-peers: root.mesh-peers;
                     mesh-peer-count: root.mesh-peers.length;
@@ -3763,12 +3775,19 @@ export component MainWindow inherits Window {
                     mesh-foreign-total: root.mesh-foreign-total;
                     mesh-foreign-bytes: root.mesh-foreign-bytes;
                     mesh-foreign-peers: root.mesh-foreign-peers;
+                    mesh-conflicts: root.mesh-conflicts;
+                    mesh-conflict-count: root.mesh-conflict-count;
+                    mesh-conflicts-valid: root.mesh-conflicts-valid;
+                    mesh-conflicts-error: root.mesh-conflicts-error;
                     mesh-refreshed-at: root.mesh-refreshed-at;
                     // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
                     gossip-events: root.mesh-gossip-events;
                     expanded-peer: root.mesh-expanded-peer;
                     mesh-refresh-clicked => { root.mesh-refresh-clicked(); }
                     peer-sync-clicked(id) => { root.mesh-peer-sync-clicked(id); }
+                    conflict-resolve-clicked(content-id, origin) => {
+                        root.mesh-conflict-resolve-clicked(content-id, origin);
+                    }
                     // Expand-toggle is pure view state — no Rust round-trip.
                     peer-expanded(id) => {
                         root.mesh-expanded-peer = (root.mesh-expanded-peer == id) ? "" : id;

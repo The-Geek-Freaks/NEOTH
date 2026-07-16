@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::config::{FreedomConfig, credentials::Credentials};
+use crate::config::FreedomConfig;
 use crate::media::tts_cloud::{TtsConfirmMode, TtsRunOverrides, synthesize_to_file_at};
 use crate::media::tts_dispatch::{TtsFormat, TtsProvider};
 use crate::secret::SecretString;
@@ -53,14 +53,16 @@ pub async fn synthesise(
 ) -> Result<TtsResult> {
     let home = FreedomConfig::default_neoth_home();
     let config_path = home.join("freedom.yaml");
-    let config = if config_path.exists() {
-        FreedomConfig::load_from_path(&config_path)
-            .with_context(|| format!("load TTS configuration {}", config_path.display()))?
-    } else {
-        FreedomConfig::default()
-    };
-    let credentials =
-        Credentials::load_effective(&home.join("credentials.yaml"), config.secrets_backend)?;
+    let (config, credentials) = crate::config::load_optional_runtime_config_pair_from_path(
+        &config_path,
+    )
+    .with_context(|| {
+        format!(
+            "load coherent TTS configuration and credentials {}",
+            config_path.display()
+        )
+    })?;
+    let config = config.unwrap_or_default();
     let format = match out_path
         .extension()
         .and_then(|value| value.to_str())

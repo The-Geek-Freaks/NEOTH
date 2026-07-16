@@ -551,8 +551,8 @@ fn render_channel_before_state(before: &[u8]) -> String {
     match std::str::from_utf8(before) {
         Ok(s) => {
             let single_line: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
-            if single_line.len() > 240 {
-                format!("{}...", &single_line[..240])
+            if single_line.chars().count() > 240 {
+                format!("{}...", single_line.chars().take(240).collect::<String>())
             } else {
                 single_line
             }
@@ -1027,6 +1027,13 @@ fn format_iso8601(unix_secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_rollback_preview_truncates_unicode_on_character_boundary() {
+        let input = format!("{}🌍tail", "a".repeat(239));
+        let rendered = render_channel_before_state(input.as_bytes());
+        assert_eq!(rendered, format!("{}🌍...", "a".repeat(239)));
+    }
     use crate::wal::snapshot::{MutationKind, emit_snapshot};
     use crate::wal::writer::spawn;
     use tempfile::tempdir;

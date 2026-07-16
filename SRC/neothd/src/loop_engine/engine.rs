@@ -368,10 +368,10 @@ pub async fn run_loop(
         };
 
     for round_num in 1..=config.max_rounds {
-        // Token budget check before each round (except the first — we need
-        // at least one round to produce any output).
-        if round_num > 1
-            && let Some(budget) = config.tool_call_budget
+        // Tool-call budget check before every round. The first round is allowed
+        // only while positive budget remains; its inner dispatch receives the
+        // exact remainder and enforces it before each individual call.
+        if let Some(budget) = config.tool_call_budget
             && state.accumulated_tool_calls >= budget
         {
             info!(
@@ -420,6 +420,9 @@ pub async fn run_loop(
             None,
             // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
             &freedom.tools.harness,
+            config
+                .tool_call_budget
+                .map(|budget| budget.saturating_sub(state.accumulated_tool_calls)),
         )
         .await?;
 
@@ -429,6 +432,9 @@ pub async fn run_loop(
         // misled into thinking `tool_call_budget` counts LLM tokens.
         let round_calls = outcome.successful_calls as u64 + outcome.failed_calls as u64;
         state.accumulated_tool_calls = state.accumulated_tool_calls.saturating_add(round_calls);
+        let tool_budget_reached = config
+            .tool_call_budget
+            .is_some_and(|budget| state.accumulated_tool_calls >= budget);
 
         // --- Self-reflect refine pass (L2+ autonomy + refine_enabled) ---
         let mut refine_fired = false;
@@ -523,6 +529,18 @@ pub async fn run_loop(
         });
 
         final_text = round_text;
+
+        if tool_budget_reached {
+            info!(
+                loop_id = %loop_id,
+                round = round_num,
+                accumulated_tool_calls = state.accumulated_tool_calls,
+                budget = config.tool_call_budget,
+                "loop-engine: tool-call budget reached — stopping before another round"
+            );
+            stop_reason = StopReason::BudgetExceeded;
+            break;
+        }
 
         // P2 — feed this round's output into the NEXT round's request so the
         // loop iterates on its own work (refine/extend/correct) rather than

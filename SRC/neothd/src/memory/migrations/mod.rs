@@ -235,11 +235,118 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-R3-09: durable per-peer mesh ACK/cursor state, ordered origin sequences, canonical foreign content and typed conflict ledger",
         run: migration_v28_to_v29,
     },
+    Migration {
+        from: 29,
+        to: 30,
+        description: "GOLD-R4-13: persist operator resolution for typed mesh conflicts",
+        run: migration_v29_to_v30,
+    },
+    Migration {
+        from: 30,
+        to: 31,
+        description: "GOLD-WIRE-09: bind durable mesh receipts to the canonical full frame",
+        run: migration_v30_to_v31,
+    },
+    Migration {
+        from: 31,
+        to: 32,
+        description: "GOLD-WIRE-09: persist the bounded node-global mesh vector frontier",
+        run: migration_v31_to_v32,
+    },
 ];
+
+/// v31 -> v32: persist causal time independently from destination ACK streams.
+/// Protocol-v5 pending frames are discarded without advancing their cursors;
+/// the next tick restages the same WAL event under v6 with node-global time.
+fn migration_v31_to_v32(conn: &Connection) -> Result<()> {
+    let historical_origins: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mesh_sync_inbound WHERE next_expected_seq > 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if historical_origins > 256 {
+        return Err(anyhow!(
+            "migration_v31_to_v32: {historical_origins} historical mesh origins exceed the 256-peer vector frontier cap"
+        ));
+    }
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mesh_sync_vector_frontier (
+            peer_pk TEXT PRIMARY KEY CHECK (length(peer_pk) > 0),
+            counter INTEGER NOT NULL CHECK (counter > 0)
+        );
+        CREATE TRIGGER mesh_sync_vector_frontier_cap
+        BEFORE INSERT ON mesh_sync_vector_frontier
+        WHEN NOT EXISTS (
+                SELECT 1 FROM mesh_sync_vector_frontier WHERE peer_pk = NEW.peer_pk
+             )
+             AND (SELECT COUNT(*) FROM mesh_sync_vector_frontier) >= 256
+        BEGIN
+            SELECT RAISE(ABORT, 'mesh vector frontier exceeds 256 peers');
+        END;
+        DELETE FROM mesh_sync_outbound_pending;
+        UPDATE mesh_sync_inbound_receipts SET frame_sha256 = NULL;
+        INSERT INTO mesh_sync_vector_frontier (peer_pk,counter)
+        SELECT origin_peer_pk, next_expected_seq - 1
+        FROM mesh_sync_inbound
+        WHERE next_expected_seq > 1
+        ORDER BY origin_peer_pk ASC;
+        "#,
+    )
+    .context("migration_v31_to_v32: add durable mesh vector frontier")
+}
+
+/// v30 -> v31: bind a durable inbound receipt to the full canonical frame.
+/// Existing rows remain NULL and are explicitly treated as unbound legacy
+/// duplicates: delivery may be ACKed, but their vector clock is never merged.
+fn migration_v30_to_v31(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE mesh_sync_inbound_receipts ADD COLUMN frame_sha256 BLOB \
+         CHECK (frame_sha256 IS NULL OR (typeof(frame_sha256) = 'blob' AND length(frame_sha256) = 32));",
+    )
+    .context("migration_v30_to_v31: bind durable inbound receipts to canonical frames")
+}
+
+/// v29 -> v30: make conflict acknowledgement durable and auditable.
+///
+/// Rebuilding the table lets SQLite enforce the two-column invariant on
+/// upgraded databases as strongly as on fresh databases: a row is either
+/// unresolved, or it has both a resolution timestamp and a preferred origin.
+fn migration_v29_to_v30(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE mesh_sync_conflicts RENAME TO mesh_sync_conflicts_v29;
+        CREATE TABLE mesh_sync_conflicts (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id        TEXT NOT NULL,
+            incumbent_origin  TEXT NOT NULL,
+            incoming_origin   TEXT NOT NULL,
+            incumbent_sha256  BLOB NOT NULL CHECK (length(incumbent_sha256) = 32),
+            incoming_sha256   BLOB NOT NULL CHECK (length(incoming_sha256) = 32),
+            policy            TEXT NOT NULL CHECK (policy IN ('ordered_origin_lww', 'cross_origin_typed_conflict')),
+            observed_at       INTEGER NOT NULL,
+            resolved_at       INTEGER CHECK (resolved_at IS NULL OR resolved_at > 0),
+            preferred_origin  TEXT,
+            CHECK ((resolved_at IS NULL AND preferred_origin IS NULL) OR
+                   (resolved_at IS NOT NULL AND preferred_origin IS NOT NULL AND
+                    length(preferred_origin) > 0)),
+            UNIQUE (content_id, incumbent_origin, incoming_origin, incumbent_sha256, incoming_sha256)
+        );
+        INSERT INTO mesh_sync_conflicts
+            (id, content_id, incumbent_origin, incoming_origin, incumbent_sha256,
+             incoming_sha256, policy, observed_at)
+        SELECT id, content_id, incumbent_origin, incoming_origin, incumbent_sha256,
+               incoming_sha256, policy, observed_at
+        FROM mesh_sync_conflicts_v29;
+        DROP TABLE mesh_sync_conflicts_v29;
+        "#,
+    )
+    .context("migration_v29_to_v30: add durable mesh conflict resolutions")
+}
 
 /// v28 -> v29: durable mesh synchronization state shared by peeroxide + iroh.
 ///
-/// Existing foreign rows remain valid archival v0 rows. New protocol-v5 rows
+/// Existing foreign rows remain valid archival v0 rows. New canonical rows
 /// carry a 32-byte content digest and canonical materialized content. All ACK
 /// and cursor tables use constraints so corrupt state fails on read/write
 /// instead of silently resetting to an empty cursor.
@@ -1483,6 +1590,242 @@ mod tests {
             corrupt_update.is_err(),
             "legacy rows cannot be partially upgraded into canonical rows"
         );
+    }
+
+    #[test]
+    fn migration_v29_to_v30_preserves_conflicts_and_enforces_resolution_pair() {
+        let mut conn = open_with_meta(29);
+        conn.execute_batch(
+            r#"
+            CREATE TABLE mesh_sync_conflicts (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_id        TEXT NOT NULL,
+                incumbent_origin  TEXT NOT NULL,
+                incoming_origin   TEXT NOT NULL,
+                incumbent_sha256  BLOB NOT NULL CHECK (length(incumbent_sha256) = 32),
+                incoming_sha256   BLOB NOT NULL CHECK (length(incoming_sha256) = 32),
+                policy            TEXT NOT NULL CHECK (policy IN ('ordered_origin_lww', 'cross_origin_typed_conflict')),
+                observed_at       INTEGER NOT NULL,
+                UNIQUE (content_id, incumbent_origin, incoming_origin, incumbent_sha256, incoming_sha256)
+            );
+            INSERT INTO mesh_sync_conflicts
+                (content_id, incumbent_origin, incoming_origin, incumbent_sha256,
+                 incoming_sha256, policy, observed_at)
+            VALUES ('memory:test', 'peer-a', 'peer-b', zeroblob(32),
+                    X'0101010101010101010101010101010101010101010101010101010101010101',
+                    'cross_origin_typed_conflict', 10);
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn, 29, 30).unwrap(), 30);
+        let row: (i64, Option<i64>, Option<String>) = conn
+            .query_row(
+                "SELECT count(*), resolved_at, preferred_origin \
+                 FROM mesh_sync_conflicts",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (1, None, None));
+        assert!(
+            conn.execute(
+                "UPDATE mesh_sync_conflicts SET preferred_origin = 'peer-a'",
+                [],
+            )
+            .is_err(),
+            "partial resolution must fail the table invariant"
+        );
+        assert!(
+            conn.execute("UPDATE mesh_sync_conflicts SET resolved_at = 20", [])
+                .is_err(),
+            "a timestamp without a preferred origin must fail"
+        );
+        conn.execute(
+            "UPDATE mesh_sync_conflicts \
+             SET resolved_at = 20, preferred_origin = 'peer-a'",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn migration_v30_to_v31_keeps_legacy_receipts_explicitly_unbound() {
+        let mut conn = open_with_meta(30);
+        conn.execute_batch(
+            r#"
+            CREATE TABLE mesh_sync_inbound_receipts (
+                origin_peer_pk TEXT NOT NULL,
+                origin_seq     INTEGER NOT NULL CHECK (origin_seq > 0),
+                content_sha256 BLOB NOT NULL CHECK (length(content_sha256) = 32),
+                content_stored INTEGER NOT NULL CHECK (content_stored IN (0, 1)),
+                committed_at   INTEGER NOT NULL,
+                PRIMARY KEY (origin_peer_pk, origin_seq)
+            );
+            INSERT INTO mesh_sync_inbound_receipts
+                (origin_peer_pk, origin_seq, content_sha256, content_stored, committed_at)
+            VALUES ('peer-a', 1, zeroblob(32), 1, 10);
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn, 30, 31).unwrap(), 31);
+        let binding: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT frame_sha256 FROM mesh_sync_inbound_receipts WHERE origin_peer_pk='peer-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            binding.is_none(),
+            "legacy receipt must not gain invented proof"
+        );
+        assert!(
+            conn.execute(
+                "UPDATE mesh_sync_inbound_receipts SET frame_sha256 = X'01'",
+                [],
+            )
+            .is_err(),
+            "frame binding must be exactly 32 bytes when present"
+        );
+    }
+
+    #[test]
+    fn migration_v31_to_v32_adds_constrained_vector_frontier() {
+        let mut conn = open_with_meta(31);
+        conn.execute_batch(
+            r#"
+            CREATE TABLE mesh_sync_inbound (
+                origin_peer_pk TEXT PRIMARY KEY,
+                next_expected_seq INTEGER NOT NULL,
+                last_content_sha256 BLOB,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE mesh_sync_outbound_pending (
+                peer_pk TEXT PRIMARY KEY,
+                wire_frame BLOB NOT NULL
+            );
+            CREATE TABLE mesh_sync_inbound_receipts (
+                origin_peer_pk TEXT NOT NULL,
+                origin_seq INTEGER NOT NULL,
+                content_sha256 BLOB NOT NULL,
+                frame_sha256 BLOB,
+                content_stored INTEGER NOT NULL,
+                committed_at INTEGER NOT NULL,
+                PRIMARY KEY (origin_peer_pk,origin_seq)
+            );
+            INSERT INTO mesh_sync_inbound
+                (origin_peer_pk,next_expected_seq,last_content_sha256,updated_at)
+            VALUES ('historic-remote',5,zeroblob(32),10);
+            INSERT INTO mesh_sync_outbound_pending (peer_pk,wire_frame)
+            VALUES ('peer-with-v5-pending',X'01');
+            INSERT INTO mesh_sync_inbound_receipts
+                (origin_peer_pk,origin_seq,content_sha256,frame_sha256,content_stored,committed_at)
+            VALUES ('historic-remote',4,zeroblob(32),zeroblob(32),1,10);
+            "#,
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn, 31, 32).unwrap(), 32);
+        let historic: i64 = conn
+            .query_row(
+                "SELECT counter FROM mesh_sync_vector_frontier WHERE peer_pk='historic-remote'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(historic, 4, "migration must preserve known remote progress");
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mesh_sync_outbound_pending",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 0, "v5 pending must be safely restaged as v6");
+        let old_binding: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT frame_sha256 FROM mesh_sync_inbound_receipts WHERE origin_peer_pk='historic-remote'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            old_binding.is_none(),
+            "v5 frame bindings must not authenticate v6 causal semantics"
+        );
+        conn.execute(
+            "INSERT INTO mesh_sync_vector_frontier (peer_pk,counter) VALUES ('peer-a',7)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO mesh_sync_vector_frontier (peer_pk,counter) VALUES ('peer-b',0)",
+                [],
+            )
+            .is_err(),
+            "frontier counters must remain positive"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO mesh_sync_vector_frontier (peer_pk,counter) VALUES ('',1)",
+                [],
+            )
+            .is_err(),
+            "frontier peer ids must remain non-empty"
+        );
+        let current: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mesh_sync_vector_frontier",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        for index in current..256 {
+            conn.execute(
+                "INSERT INTO mesh_sync_vector_frontier (peer_pk,counter) VALUES (?1,1)",
+                [format!("peer-{index:03}")],
+            )
+            .unwrap();
+        }
+        assert!(
+            conn.execute(
+                "INSERT INTO mesh_sync_vector_frontier (peer_pk,counter) VALUES ('peer-over-cap',1)",
+                [],
+            )
+            .is_err(),
+            "durable frontier must enforce the same 256-peer cap as VectorClock"
+        );
+    }
+
+    #[test]
+    fn migration_v31_to_v32_fails_closed_above_historical_origin_cap() {
+        let mut conn = open_with_meta(31);
+        conn.execute_batch(
+            "CREATE TABLE mesh_sync_inbound (\
+                 origin_peer_pk TEXT PRIMARY KEY,\
+                 next_expected_seq INTEGER NOT NULL\
+             );",
+        )
+        .unwrap();
+        for index in 0..257 {
+            conn.execute(
+                "INSERT INTO mesh_sync_inbound (origin_peer_pk,next_expected_seq) VALUES (?1,2)",
+                [format!("historic-{index:04}")],
+            )
+            .unwrap();
+        }
+        let error = migrate(&mut conn, 31, 32).unwrap_err();
+        assert!(error.to_string().contains("exceed the 256-peer"));
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mesh_sync_vector_frontier'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0, "failed migration must not leave partial schema");
     }
 
     #[test]

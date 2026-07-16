@@ -41,6 +41,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use futures_util::StreamExt as _;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming as IncomingBody};
 use hyper::server::conn::http1;
@@ -77,6 +78,142 @@ pub const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 64;
 /// the remaining connections drop; the operator's reverse proxy
 /// retries via its own client logic.
 pub const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Hard cap on directory entries inspected during one recovery batch.
+/// Every `ReadDir` item counts, including non-JSON junk and unreadable entries,
+/// so an attacker-filled spool cannot monopolise the async runtime. Recovery
+/// starts only after the listener has bound, yields between batches, and keeps
+/// the same directory cursor until every entry in the pass was inspected.
+const MAX_SPOOL_DRAIN_FILES: usize = 1024;
+const MAX_CONCURRENT_SPOOL_DRAINS: usize = 8;
+const MAX_SPOOL_ENTRY_BYTES: u64 = (MAX_BODY_BYTES as u64) * 8;
+const WEBHOOK_OUTBOX_VERSION: u8 = 1;
+const MAX_OUTBOX_ENTRY_BYTES: u64 = 512 * 1024;
+const WEBHOOK_RETRY_BASE_SECS: u64 = 5;
+const WEBHOOK_RETRY_MAX_SECS: u64 = 15 * 60;
+/// Complete/quarantined source-key receipts suppress provider redelivery across daemon
+/// restarts without retaining the reply body indefinitely. The cap and TTL keep
+/// the private outbox bounded; after either window expires a very late provider
+/// redelivery is deliberately treated as a new delivery.
+const MAX_TERMINAL_OUTBOX_RECEIPTS_PER_CHANNEL: usize = 4096;
+const TERMINAL_OUTBOX_RECEIPT_RETENTION: std::time::Duration =
+    std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum OutboxChannel {
+    Meta,
+    Line,
+}
+
+impl OutboxChannel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Meta => "whatsapp",
+            Self::Line => "line",
+        }
+    }
+
+    fn decoder(self) -> &'static str {
+        match self {
+            Self::Meta => "meta",
+            Self::Line => "line",
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum OutboxState {
+    PendingSend,
+    WaitingForConfiguration {
+        reason: String,
+    },
+    DeliveredPendingAudit {
+        provider_message_id: Option<String>,
+        confirm_degraded: bool,
+    },
+    /// The provider conclusively rejected this payload. It remains a distinct,
+    /// operator-visible receipt (rather than masquerading as `Complete`) and
+    /// suppresses both transport and pipeline replay for the retention window.
+    Quarantined {
+        reason: String,
+        quarantined_at: u64,
+    },
+    Complete,
+}
+
+/// Private durable hand-off between a completed pipeline turn and the provider
+/// transport. Tokens are deliberately absent: recovery resolves credentials
+/// from the live config. Recipient/body are required to retry and therefore
+/// live only in a current-user-only file, never in logs or WAL payloads.
+/// Meta/LINE push APIs do not expose a caller idempotency key here, so an
+/// ambiguous connection loss after provider acceptance is explicitly
+/// at-least-once for transport delivery. A scrubbed, bounded completion receipt
+/// suppresses model/tools replay for the same durable source key across restarts
+/// for the retention window above; this is not an unbounded exactly-once claim.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebhookOutboxRecord {
+    version: u8,
+    channel: OutboxChannel,
+    source_key: String,
+    recipient_id: String,
+    body: String,
+    body_sha256: String,
+    #[serde(default)]
+    attempts: u32,
+    #[serde(default)]
+    audit_attempts: u32,
+    /// Transport and required-audit retries are deliberately independent: a
+    /// delivered message must never be sent again while only its audit is due.
+    #[serde(default)]
+    transport_next_attempt_at: Option<u64>,
+    #[serde(default)]
+    audit_next_attempt_at: Option<u64>,
+    #[serde(default)]
+    last_failure: Option<String>,
+    state: OutboxState,
+    inbound_spool_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryOutcome {
+    Sent,
+    Denied,
+    DryRun,
+    AlreadyComplete,
+    RefusedNoAudit,
+    MissingCredentials,
+    BackoffWait,
+    Quarantined,
+    TransportRetry,
+    AuditRetry,
+    PersistenceRetry,
+}
+
+#[derive(Debug)]
+enum TransportDisposition {
+    Delivered(Option<String>),
+    Retry {
+        reason: &'static str,
+        retry_after_secs: Option<u64>,
+    },
+    Permanent {
+        reason: &'static str,
+    },
+    ConfigurationWait {
+        reason: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageLifecycle {
+    /// The pipeline did not complete, so only the inbound spool can retry it.
+    RetryPipeline,
+    /// The turn completed and is either terminal or durably owned by outbox.
+    Adopted(DeliveryOutcome),
+}
 
 /// P0 — governance inputs for the outbound channel send. The daemon resolves
 /// the active policy at each send leaf + threads its WAL writer
@@ -140,6 +277,11 @@ pub struct WebhookListenerConfig {
     /// reserved for non-WhatsApp listeners that mount the same
     /// handler shape.
     pub pipeline: PipelineHandler,
+    /// Exact sender identity authorized for the active inbound webhook adapter.
+    /// WhatsApp stores canonical international digits; LINE stores an immutable
+    /// `U…` member id. Empty is deliberately deny-all for tests/handshakes and
+    /// prevents a future composition bug from creating open inbound.
+    pub inbound_allowed_sender: String,
     /// GR-01 Pick B: WhatsApp Graph API credentials (access token +
     /// phone-number-id). When `Some`, `dispatch_messages` routes
     /// pipeline-produced replies back through `whatsapp_api::
@@ -198,28 +340,72 @@ pub struct LineConfig {
 /// so the set never grows unbounded (GR-010).
 pub struct InboundDedup {
     ring: std::collections::VecDeque<String>,
+    seen: std::collections::HashSet<String>,
+    in_flight: std::collections::HashSet<String>,
     cap: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DedupReservation {
+    New,
+    CommittedDuplicate,
+    InFlight,
 }
 
 impl InboundDedup {
     pub fn new(cap: usize) -> Self {
+        let cap = cap.clamp(1, 4096);
         Self {
-            ring: std::collections::VecDeque::with_capacity(cap.min(4096)),
-            cap: cap.max(1),
+            ring: std::collections::VecDeque::with_capacity(cap),
+            seen: std::collections::HashSet::with_capacity(cap),
+            in_flight: std::collections::HashSet::with_capacity(cap.min(64)),
+            cap,
         }
+    }
+
+    /// Reserve a message while its pipeline result is not durable yet. A
+    /// concurrent redelivery sees the reservation as a duplicate; a retryable
+    /// failure rolls it back instead of poisoning the committed seen-set.
+    fn reserve(&mut self, id: &str) -> DedupReservation {
+        if self.seen.contains(id) {
+            return DedupReservation::CommittedDuplicate;
+        }
+        if self.in_flight.contains(id) {
+            return DedupReservation::InFlight;
+        }
+        self.in_flight.insert(id.to_owned());
+        DedupReservation::New
+    }
+
+    fn commit(&mut self, id: &str) {
+        self.in_flight.remove(id);
+        if self.seen.contains(id) {
+            return;
+        }
+        if self.ring.len() >= self.cap
+            && let Some(evicted) = self.ring.pop_front()
+        {
+            self.seen.remove(&evicted);
+        }
+        let id = id.to_owned();
+        self.seen.insert(id.clone());
+        self.ring.push_back(id);
+    }
+
+    fn rollback(&mut self, id: &str) {
+        self.in_flight.remove(id);
     }
 
     /// `true` if `id` was already seen (duplicate); otherwise inserts it and
     /// returns `false`.
     pub fn check_and_insert(&mut self, id: &str) -> bool {
-        if self.ring.iter().any(|s| s == id) {
-            return true;
+        match self.reserve(id) {
+            DedupReservation::New => {
+                self.commit(id);
+                false
+            }
+            DedupReservation::CommittedDuplicate | DedupReservation::InFlight => true,
         }
-        if self.ring.len() >= self.cap {
-            self.ring.pop_front();
-        }
-        self.ring.push_back(id.to_owned());
-        false
     }
 }
 
@@ -250,6 +436,26 @@ pub async fn serve(
     config: WebhookListenerConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<u16> {
+    serve_inner(addr, config, shutdown, false).await
+}
+
+/// Production listener entry point. Binding/acceptance comes first; durable
+/// crash survivors are then replayed concurrently in bounded batches so a
+/// large or junk-filled spool cannot delay readiness.
+pub(crate) async fn serve_with_spool_recovery(
+    addr: SocketAddr,
+    config: WebhookListenerConfig,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> Result<u16> {
+    serve_inner(addr, config, shutdown, true).await
+}
+
+async fn serve_inner(
+    addr: SocketAddr,
+    config: WebhookListenerConfig,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+    recover_spool: bool,
+) -> Result<u16> {
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("bind webhook listener to {addr}"))?;
@@ -264,6 +470,32 @@ pub async fn serve(
         "webhook listener bound — 127.0.0.1 only, terminate TLS at your reverse proxy"
     );
     let config = Arc::new(config);
+    let mut spool_recovery = recover_spool.then(|| {
+        let recovery_config = Arc::clone(&config);
+        tokio::spawn(async move {
+            let channel = if recovery_config.line.is_some() {
+                OutboxChannel::Line
+            } else {
+                OutboxChannel::Meta
+            };
+            // Inbound recovery also adopts any matching existing outbox record.
+            // Run it first so one daemon start never attempts the same pending
+            // send twice back-to-back (once from each directory scan).
+            drain_inbound_spool(&recovery_config).await;
+            let mut retry = tokio::time::interval(std::time::Duration::from_secs(30));
+            retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            retry.tick().await;
+            loop {
+                retry.tick().await;
+                // A pipeline failure intentionally leaves only the inbound
+                // spool behind. Retry it during normal uptime as well as at
+                // startup; otherwise the survivor would wait for a restart.
+                drain_inbound_spool(&recovery_config).await;
+                let outbox_dir = webhook_outbox_dir_at(&active_neoth_home(&recovery_config));
+                drain_webhook_outbox_at(&recovery_config, &outbox_dir, channel).await;
+            }
+        })
+    });
     // R2-P1-1: semaphore caps concurrent connections + in-flight
     // AtomicUsize counter feeds the `/metrics` doctor surface (the
     // operator's runtime visibility into how close the listener is
@@ -279,6 +511,13 @@ pub async fn serve(
             biased;
             _ = &mut shutdown => {
                 info!("webhook listener received shutdown — draining in-flight connections");
+                if let Some(task) = spool_recovery.take() {
+                    // Cancellation leaves the current survivor on disk; the
+                    // next daemon start resumes it. Never hold shutdown open
+                    // on an LLM-backed recovery dispatch.
+                    task.abort();
+                    let _ = task.await;
+                }
                 // R2-P1-1 bounded drain: wait up to SHUTDOWN_DRAIN_TIMEOUT
                 // for tasks to finish their final response. Anything
                 // still in flight after that is dropped — operator's
@@ -518,19 +757,37 @@ async fn handle_meta(
                         .unwrap_or_else(|| {
                             format!("{:016x}", xxhash_rust::xxh3::xxh3_64(raw_body.as_bytes()))
                         });
-                    let spool_path = spool_inbound_body(&spool_key, raw_body, "meta");
+                    let spool_path = match spool_inbound_body(&cfg, &spool_key, raw_body, "meta") {
+                        Ok(path) => path,
+                        Err(error) => {
+                            error!(error = %error, "inbound spool unavailable; refusing Meta ACK so provider retries");
+                            return Ok(plain_response(
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                "durable inbound queue unavailable; retry",
+                            ));
+                        }
+                    };
                     let cfg2 = Arc::clone(&cfg);
                     let dispatch = async move {
                         match DISPATCH_GATE.acquire().await {
-                            Ok(_permit) => dispatch_messages(&cfg2, msgs).await,
-                            Err(_) => {
-                                warn!("webhook dispatch gate closed — dropping fan-out")
+                            Ok(_permit) => {
+                                let outbox_dir = outbox_dir_for_spool(
+                                    spool_path
+                                        .parent()
+                                        .unwrap_or_else(|| std::path::Path::new(".")),
+                                );
+                                let _ = dispatch_messages_durable(
+                                    &cfg2,
+                                    msgs,
+                                    OutboxChannel::Meta,
+                                    &outbox_dir,
+                                    Some(&spool_path),
+                                )
+                                .await;
                             }
-                        }
-                        // GR-012b — processed (or gate-dropped): the message is no
-                        // longer at risk → delete its spool entry.
-                        if let Some(p) = spool_path {
-                            let _ = std::fs::remove_file(&p);
+                            Err(_) => {
+                                warn!("webhook dispatch gate closed — retaining durable fan-out")
+                            }
                         }
                     };
                     // COR-34: when the daemon wired a shared JoinSet, track the
@@ -632,17 +889,37 @@ async fn handle_line(
                     .unwrap_or_else(|| {
                         format!("{:016x}", xxhash_rust::xxh3::xxh3_64(raw_body.as_bytes()))
                     });
-                let spool_path = spool_inbound_body(&spool_key, raw_body, "line");
+                let spool_path = match spool_inbound_body(&cfg, &spool_key, raw_body, "line") {
+                    Ok(path) => path,
+                    Err(error) => {
+                        error!(error = %error, "inbound spool unavailable; refusing LINE ACK so provider retries");
+                        return Ok(plain_response(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "durable inbound queue unavailable; retry",
+                        ));
+                    }
+                };
                 let cfg2 = Arc::clone(&cfg);
                 let dispatch = async move {
                     match DISPATCH_GATE.acquire().await {
-                        Ok(_permit) => dispatch_line_messages(&cfg2, msgs).await,
-                        Err(_) => {
-                            warn!("webhook dispatch gate closed — dropping LINE fan-out")
+                        Ok(_permit) => {
+                            let outbox_dir = outbox_dir_for_spool(
+                                spool_path
+                                    .parent()
+                                    .unwrap_or_else(|| std::path::Path::new(".")),
+                            );
+                            let _ = dispatch_messages_durable(
+                                &cfg2,
+                                msgs,
+                                OutboxChannel::Line,
+                                &outbox_dir,
+                                Some(&spool_path),
+                            )
+                            .await;
                         }
-                    }
-                    if let Some(p) = spool_path {
-                        let _ = std::fs::remove_file(&p);
+                        Err(_) => {
+                            warn!("webhook dispatch gate closed — retaining durable LINE fan-out")
+                        }
                     }
                 };
                 match cfg.dispatch_join.as_ref() {
@@ -679,13 +956,745 @@ async fn append_audit(
     payload: Vec<u8>,
     critical: bool,
     fail_msg: &str,
-) {
+) -> bool {
     let h = crate::wal::make_header(event_type, &payload);
     if let Err(e) = w.append(h, payload).await {
         if critical {
             error!(error = %e, "{fail_msg}");
         } else {
             warn!(error = %e, "{fail_msg}");
+        }
+        false
+    } else {
+        true
+    }
+}
+
+fn active_neoth_home(cfg: &WebhookListenerConfig) -> std::path::PathBuf {
+    cfg.send_governance
+        .reload_controller
+        .as_ref()
+        .and_then(|controller| controller.source_path().parent())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home)
+}
+
+fn webhook_outbox_dir_at(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("webhook_outbox")
+}
+
+fn outbox_dir_for_spool(spool_dir: &std::path::Path) -> std::path::PathBuf {
+    spool_dir
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("webhook_outbox")
+}
+
+fn prepare_private_state_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(windows)]
+    {
+        crate::wal::win_native::set_private_current_user_directory_dacl(dir)?;
+        crate::wal::win_native::verify_private_directory_dacl(dir)?;
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn terminal_outbox_state(state: &OutboxState) -> bool {
+    matches!(
+        state,
+        OutboxState::Complete | OutboxState::Quarantined { .. }
+    )
+}
+
+fn retry_is_due(next_attempt_at: Option<u64>, now: u64) -> bool {
+    next_attempt_at.is_none_or(|due| due <= now)
+}
+
+/// Exponential retry with deterministic, source-bound jitter. Determinism
+/// keeps restart behaviour stable; the source hash still distributes a burst
+/// across the full 0..25% jitter window. Provider hints are lower bounds but
+/// are capped with the local maximum so a malicious response cannot park work
+/// forever.
+fn retry_delay_secs(
+    record: &WebhookOutboxRecord,
+    attempts: u32,
+    provider_hint: Option<u64>,
+) -> u64 {
+    let shift = attempts.saturating_sub(1).min(16);
+    let exponential = WEBHOOK_RETRY_BASE_SECS
+        .saturating_mul(1u64 << shift)
+        .min(WEBHOOK_RETRY_MAX_SECS);
+    let jitter_window = (exponential / 4).max(1);
+    let seed = u64::from_str_radix(&record.source_key[..16], 16).unwrap_or_default()
+        ^ u64::from(attempts).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let jitter = seed % (jitter_window + 1);
+    exponential
+        .saturating_add(jitter)
+        .max(
+            provider_hint
+                .unwrap_or_default()
+                .min(WEBHOOK_RETRY_MAX_SECS),
+        )
+        .min(WEBHOOK_RETRY_MAX_SECS)
+}
+
+fn meta_disposition(
+    result: anyhow::Result<crate::channels::whatsapp_api::SendMessageResult>,
+) -> TransportDisposition {
+    match result {
+        Ok(response) if response.ok => TransportDisposition::Delivered(response.message_id),
+        Ok(response) => match response.http_status {
+            Some(429) => TransportDisposition::Retry {
+                reason: "meta_rate_limited",
+                retry_after_secs: response.retry_after_secs,
+            },
+            Some(401 | 403) => TransportDisposition::Permanent {
+                reason: "meta_auth_rejected",
+            },
+            Some(400..=499) => TransportDisposition::Permanent {
+                reason: "meta_request_rejected",
+            },
+            Some(500..=599) => TransportDisposition::Retry {
+                reason: "meta_server_error",
+                retry_after_secs: None,
+            },
+            Some(_) => TransportDisposition::Retry {
+                reason: "meta_api_transient",
+                retry_after_secs: None,
+            },
+            // Pure-parser and pre-metadata callers have no transport status.
+            // Keep the old body-derived behaviour only for that compatibility
+            // surface; real HTTP calls are classified exclusively above.
+            None => {
+                let error = response.error.unwrap_or_default().to_ascii_lowercase();
+                if error.contains("rate limit")
+                    || error.contains("too many request")
+                    || error.contains("throttl")
+                {
+                    TransportDisposition::Retry {
+                        reason: "meta_rate_limited",
+                        retry_after_secs: None,
+                    }
+                } else if error.contains("oauthexception")
+                    || error.contains("access token")
+                    || error.contains("invalid oauth")
+                    || error.contains("token has expired")
+                {
+                    TransportDisposition::Permanent {
+                        reason: "meta_auth_rejected",
+                    }
+                } else if error.contains("invalid parameter")
+                    || error.contains("unsupported post")
+                    || error.contains("message too long")
+                    || error.contains("recipient is not")
+                {
+                    TransportDisposition::Permanent {
+                        reason: "meta_request_rejected",
+                    }
+                } else {
+                    TransportDisposition::Retry {
+                        reason: "meta_api_transient",
+                        retry_after_secs: None,
+                    }
+                }
+            }
+        },
+        Err(error) => {
+            if error.downcast_ref::<reqwest::Error>().is_some() {
+                TransportDisposition::Retry {
+                    reason: "meta_transport_error",
+                    retry_after_secs: None,
+                }
+            } else {
+                TransportDisposition::ConfigurationWait {
+                    reason: "meta_configuration_invalid",
+                }
+            }
+        }
+    }
+}
+
+fn line_disposition(
+    result: std::result::Result<crate::channels::MessageId, crate::channels::ChannelError>,
+) -> TransportDisposition {
+    match result {
+        Ok(message_id) => TransportDisposition::Delivered(Some(message_id.0)),
+        Err(crate::channels::ChannelError::RateLimited { retry_after_secs }) => {
+            TransportDisposition::Retry {
+                reason: "line_rate_limited",
+                retry_after_secs: Some(retry_after_secs),
+            }
+        }
+        Err(crate::channels::ChannelError::Auth(_)) => TransportDisposition::Permanent {
+            reason: "line_auth_rejected",
+        },
+        Err(crate::channels::ChannelError::NotSupported { .. }) => {
+            TransportDisposition::Permanent {
+                reason: "line_send_unsupported",
+            }
+        }
+        Err(crate::channels::ChannelError::Transport(error)) => {
+            let status = error
+                .split_ascii_whitespace()
+                .find_map(|part| part.parse::<u16>().ok());
+            if error.contains("exceeds the")
+                || status.is_some_and(|status| (400..500).contains(&status))
+            {
+                TransportDisposition::Permanent {
+                    reason: "line_request_rejected",
+                }
+            } else {
+                TransportDisposition::Retry {
+                    reason: "line_transport_error",
+                    retry_after_secs: None,
+                }
+            }
+        }
+    }
+}
+
+fn source_key(channel: OutboxChannel, message: &InboundMessage) -> String {
+    let identity = if let Some(message_id) = message.message_id.as_deref() {
+        format!("{}\0id\0{message_id}", channel.decoder())
+    } else {
+        // Hash-only fallback: no sender/chat/text is written to the file name.
+        format!(
+            "{}\0fallback\0{}\0{}\0{}\0{}",
+            channel.decoder(),
+            message.sender_id,
+            message.chat_id,
+            message.raw_ts_ms.unwrap_or_default(),
+            message.text.as_deref().unwrap_or_default()
+        )
+    };
+    sha256_hex(identity.as_bytes())
+}
+
+fn outbox_path(
+    dir: &std::path::Path,
+    channel: OutboxChannel,
+    source_key: &str,
+) -> std::path::PathBuf {
+    dir.join(format!("{}-{source_key}.json", channel.decoder()))
+}
+
+fn validate_outbox_record(record: &WebhookOutboxRecord) -> Result<()> {
+    if record.version != WEBHOOK_OUTBOX_VERSION
+        || record.source_key.len() != 64
+        || !record
+            .source_key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || record.body_sha256 != sha256_hex(record.body.as_bytes())
+        || record.recipient_id.len() > 4096
+        || record.body.len() > MAX_OUTBOX_ENTRY_BYTES as usize
+        || record
+            .last_failure
+            .as_ref()
+            .is_some_and(|reason| reason.len() > 128)
+    {
+        anyhow::bail!("invalid webhook outbox record");
+    }
+    if let Some(name) = record.inbound_spool_name.as_deref()
+        && (name.is_empty()
+            || std::path::Path::new(name)
+                .file_name()
+                .and_then(|v| v.to_str())
+                != Some(name))
+    {
+        anyhow::bail!("invalid webhook outbox inbound spool name");
+    }
+    Ok(())
+}
+
+fn encode_outbox_record(record: &WebhookOutboxRecord) -> Result<Vec<u8>> {
+    validate_outbox_record(record)?;
+    let bytes = serde_json::to_vec(record)?;
+    if bytes.len() as u64 > MAX_OUTBOX_ENTRY_BYTES {
+        anyhow::bail!("webhook outbox record exceeds the hard size cap");
+    }
+    Ok(bytes)
+}
+
+fn load_outbox_record(path: &std::path::Path) -> Result<WebhookOutboxRecord> {
+    let metadata =
+        std::fs::metadata(path).with_context(|| format!("inspect {}", path.display()))?;
+    if metadata.len() > MAX_OUTBOX_ENTRY_BYTES {
+        anyhow::bail!("oversized webhook outbox record");
+    }
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let record: WebhookOutboxRecord =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+    validate_outbox_record(&record)?;
+    Ok(record)
+}
+
+fn persist_outbox_record(path: &std::path::Path, record: &WebhookOutboxRecord) -> Result<()> {
+    let bytes = encode_outbox_record(record)?;
+    crate::util::atomic_write::atomic_write_private(path, &bytes)
+        .with_context(|| format!("persist webhook outbox record at {}", path.display()))
+}
+
+fn stage_outbox_record(
+    dir: &std::path::Path,
+    record: &WebhookOutboxRecord,
+) -> Result<(std::path::PathBuf, WebhookOutboxRecord)> {
+    prepare_private_state_dir(dir).context("prepare private webhook outbox")?;
+    let path = outbox_path(dir, record.channel, &record.source_key);
+    let bytes = encode_outbox_record(record)?;
+    match crate::util::atomic_write::write_private_create_new(&path, &bytes) {
+        Ok(()) => Ok((path, record.clone())),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing = load_outbox_record(&path)?;
+            if existing.channel != record.channel || existing.source_key != record.source_key {
+                anyhow::bail!("webhook outbox identity collision");
+            }
+            Ok((path, existing))
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("stage webhook outbox record at {}", path.display()))
+        }
+    }
+}
+
+fn inbound_spool_name(path: Option<&std::path::Path>) -> Option<String> {
+    path.and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_owned)
+}
+
+fn matching_inbound_spool_exists(
+    record: &WebhookOutboxRecord,
+    outbox_dir: &std::path::Path,
+) -> bool {
+    let Some(name) = record.inbound_spool_name.as_deref() else {
+        return false;
+    };
+    outbox_dir
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("inbound_spool")
+        .join(name)
+        .is_file()
+}
+
+async fn audit_delivered(
+    cfg: &WebhookListenerConfig,
+    record: &WebhookOutboxRecord,
+    provider_message_id: Option<&str>,
+    confirm_degraded: bool,
+) -> bool {
+    let Some(writer) = cfg.send_governance.wal_writer.as_ref() else {
+        return !cfg.send_governance.required_audit;
+    };
+    let payload = crate::channels::send_gate::channel_egress_payload(
+        record.channel.as_str(),
+        &record.recipient_id,
+        &record.body,
+        provider_message_id,
+        false,
+        confirm_degraded,
+        crate::time::now_unix_secs(),
+    );
+    append_audit(
+        writer,
+        crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+        payload,
+        true,
+        "required-audit WAL write failed after webhook send; durable outbox will retry audit only",
+    )
+    .await
+}
+
+fn complete_outbox(
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+    outcome: DeliveryOutcome,
+) -> DeliveryOutcome {
+    record.state = OutboxState::Complete;
+    record.transport_next_attempt_at = None;
+    record.audit_next_attempt_at = None;
+    record.last_failure = None;
+    match persist_outbox_record(path, record) {
+        Ok(()) => outcome,
+        Err(error) => {
+            warn!(error = %error, "webhook outbox: could not persist terminal state");
+            DeliveryOutcome::PersistenceRetry
+        }
+    }
+}
+
+fn scrub_terminal_outbox_receipt(
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+) -> Result<()> {
+    if !terminal_outbox_state(&record.state)
+        || (record.recipient_id.is_empty()
+            && record.body.is_empty()
+            && record.inbound_spool_name.is_none()
+            && record.attempts == 0
+            && record.audit_attempts == 0)
+    {
+        return Ok(());
+    }
+    record.recipient_id.clear();
+    record.body.clear();
+    record.body_sha256 = sha256_hex(b"");
+    record.attempts = 0;
+    record.audit_attempts = 0;
+    record.transport_next_attempt_at = None;
+    record.audit_next_attempt_at = None;
+    record.inbound_spool_name = None;
+    persist_outbox_record(path, record).context("scrub terminal webhook outbox receipt")
+}
+
+fn remove_terminal_outbox_receipt(path: &std::path::Path, reason: &'static str) {
+    if let Err(error) = crate::util::atomic_write::durable_remove_file(path) {
+        warn!(
+            error = %error,
+            path = %path.display(),
+            reason,
+            "webhook outbox: terminal receipt prune failed"
+        );
+    }
+}
+
+async fn finish_delivered_outbox(
+    cfg: &WebhookListenerConfig,
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+    provider_message_id: Option<String>,
+    confirm_degraded: bool,
+) -> DeliveryOutcome {
+    let now = crate::time::now_unix_secs();
+    if !retry_is_due(record.audit_next_attempt_at, now) {
+        return DeliveryOutcome::BackoffWait;
+    }
+    record.audit_attempts = record.audit_attempts.saturating_add(1);
+    if let Err(error) = persist_outbox_record(path, record) {
+        warn!(error = %error, "webhook outbox: refusing audit before durable attempt state");
+        return DeliveryOutcome::PersistenceRetry;
+    }
+    if !audit_delivered(
+        cfg,
+        record,
+        provider_message_id.as_deref(),
+        confirm_degraded,
+    )
+    .await
+    {
+        let delay = retry_delay_secs(record, record.audit_attempts, None);
+        record.audit_next_attempt_at = Some(now.saturating_add(delay));
+        record.last_failure = Some("required_audit_unavailable".to_owned());
+        if let Err(error) = persist_outbox_record(path, record) {
+            warn!(error = %error, "webhook outbox: could not persist audit retry schedule");
+            return DeliveryOutcome::PersistenceRetry;
+        }
+        return DeliveryOutcome::AuditRetry;
+    }
+    record.audit_next_attempt_at = None;
+    record.last_failure = None;
+    complete_outbox(path, record, DeliveryOutcome::Sent)
+}
+
+async fn deliver_outbox_record(
+    cfg: &WebhookListenerConfig,
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+) -> DeliveryOutcome {
+    match record.state.clone() {
+        OutboxState::Complete => return DeliveryOutcome::AlreadyComplete,
+        OutboxState::Quarantined { .. } => return DeliveryOutcome::Quarantined,
+        OutboxState::DeliveredPendingAudit {
+            provider_message_id,
+            confirm_degraded,
+        } => {
+            return finish_delivered_outbox(
+                cfg,
+                path,
+                record,
+                provider_message_id,
+                confirm_degraded,
+            )
+            .await;
+        }
+        OutboxState::WaitingForConfiguration { .. } => {
+            let configured = match record.channel {
+                OutboxChannel::Meta => cfg.whatsapp_send_creds.is_some(),
+                OutboxChannel::Line => cfg.line.is_some(),
+            };
+            if !configured {
+                return DeliveryOutcome::MissingCredentials;
+            }
+            record.state = OutboxState::PendingSend;
+            record.transport_next_attempt_at = None;
+            record.last_failure = None;
+            if let Err(error) = persist_outbox_record(path, record) {
+                warn!(error = %error, "webhook outbox: could not leave configuration-wait state");
+                return DeliveryOutcome::PersistenceRetry;
+            }
+        }
+        OutboxState::PendingSend => {}
+    }
+
+    let now = crate::time::now_unix_secs();
+    if !retry_is_due(record.transport_next_attempt_at, now) {
+        return DeliveryOutcome::BackoffWait;
+    }
+
+    use crate::channels::send_gate::{self, ChannelSendVerdict};
+    let governance = &cfg.send_governance;
+    let decision = governance.current_decision();
+    let verdict = send_gate::decide_channel_send(
+        &decision,
+        governance.dry_run,
+        governance
+            .wal_writer
+            .as_ref()
+            .is_some_and(|writer| writer.is_alive()),
+        governance.required_audit,
+    );
+
+    match verdict {
+        ChannelSendVerdict::Denied(reason) => {
+            if let Some(writer) = governance.wal_writer.as_ref() {
+                let payload = send_gate::channel_send_denied_payload(
+                    record.channel.as_str(),
+                    &record.recipient_id,
+                    &reason,
+                    now,
+                );
+                let _ = append_audit(
+                    writer,
+                    crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED,
+                    payload,
+                    false,
+                    "WAL write failed for webhook channel-send denial audit frame",
+                )
+                .await;
+            }
+            complete_outbox(path, record, DeliveryOutcome::Denied)
+        }
+        ChannelSendVerdict::RefusedNoAudit => DeliveryOutcome::RefusedNoAudit,
+        ChannelSendVerdict::DryRun => {
+            if let Some(writer) = governance.wal_writer.as_ref() {
+                let payload = send_gate::channel_egress_payload(
+                    record.channel.as_str(),
+                    &record.recipient_id,
+                    &record.body,
+                    None,
+                    true,
+                    false,
+                    now,
+                );
+                let _ = append_audit(
+                    writer,
+                    crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                    payload,
+                    false,
+                    "WAL write failed for dry-run webhook channel-send audit frame",
+                )
+                .await;
+            }
+            complete_outbox(path, record, DeliveryOutcome::DryRun)
+        }
+        ChannelSendVerdict::Send => {
+            let missing_reason = match record.channel {
+                OutboxChannel::Meta if cfg.whatsapp_send_creds.is_none() => {
+                    Some("whatsapp_credentials_missing")
+                }
+                OutboxChannel::Line if cfg.line.is_none() => Some("line_credentials_missing"),
+                _ => None,
+            };
+            if let Some(reason) = missing_reason {
+                record.state = OutboxState::WaitingForConfiguration {
+                    reason: reason.to_owned(),
+                };
+                record.transport_next_attempt_at = None;
+                record.last_failure = Some(reason.to_owned());
+                if let Err(error) = persist_outbox_record(path, record) {
+                    warn!(error = %error, "webhook outbox: could not persist configuration-wait state");
+                    return DeliveryOutcome::PersistenceRetry;
+                }
+                info!(
+                    channel = record.channel.as_str(),
+                    source_hash = %record.source_key,
+                    reason,
+                    "webhook outbox waiting for channel configuration"
+                );
+                return DeliveryOutcome::MissingCredentials;
+            }
+
+            record.attempts = record.attempts.saturating_add(1);
+            record.transport_next_attempt_at = None;
+            if let Err(error) = persist_outbox_record(path, record) {
+                warn!(error = %error, "webhook outbox: refusing send before durable attempt state");
+                return DeliveryOutcome::PersistenceRetry;
+            }
+
+            let disposition = match record.channel {
+                OutboxChannel::Meta => {
+                    let credentials = cfg
+                        .whatsapp_send_creds
+                        .as_ref()
+                        .expect("credentials checked above");
+                    meta_disposition(
+                        crate::channels::whatsapp_api::send_text_message_at(
+                            credentials
+                                .base_url
+                                .as_deref()
+                                .unwrap_or(crate::channels::whatsapp_api::GRAPH_API_BASE),
+                            &credentials.access_token,
+                            &credentials.phone_number_id,
+                            &record.recipient_id,
+                            &record.body,
+                        )
+                        .await,
+                    )
+                }
+                OutboxChannel::Line => {
+                    let line = cfg.line.as_ref().expect("credentials checked above");
+                    match crate::providers::http_client::build_client() {
+                        Ok(client) => line_disposition(
+                            crate::channels::line_api::send_line_push(
+                                &client,
+                                line.base_url
+                                    .as_deref()
+                                    .unwrap_or(crate::channels::line_api::LINE_API_BASE),
+                                &line.access_token,
+                                &record.recipient_id,
+                                &record.body,
+                            )
+                            .await,
+                        ),
+                        Err(_) => TransportDisposition::Retry {
+                            reason: "line_http_client_unavailable",
+                            retry_after_secs: None,
+                        },
+                    }
+                }
+            };
+
+            match disposition {
+                TransportDisposition::Delivered(provider_message_id) => {
+                    let confirm_degraded =
+                        matches!(decision, crate::permissions::Decision::Confirm(_));
+                    record.state = OutboxState::DeliveredPendingAudit {
+                        provider_message_id: provider_message_id.clone(),
+                        confirm_degraded,
+                    };
+                    record.transport_next_attempt_at = None;
+                    record.last_failure = None;
+                    if let Err(error) = persist_outbox_record(path, record) {
+                        error!(error = %error, "webhook outbox: delivered response could not be persisted");
+                        return DeliveryOutcome::PersistenceRetry;
+                    }
+                    finish_delivered_outbox(
+                        cfg,
+                        path,
+                        record,
+                        provider_message_id,
+                        confirm_degraded,
+                    )
+                    .await
+                }
+                TransportDisposition::Retry {
+                    reason,
+                    retry_after_secs,
+                } => {
+                    let delay = retry_delay_secs(record, record.attempts, retry_after_secs);
+                    record.transport_next_attempt_at = Some(now.saturating_add(delay));
+                    record.last_failure = Some(reason.to_owned());
+                    if let Err(error) = persist_outbox_record(path, record) {
+                        warn!(error = %error, "webhook outbox: could not persist transport retry schedule");
+                        return DeliveryOutcome::PersistenceRetry;
+                    }
+                    if let Some(writer) = governance.wal_writer.as_ref() {
+                        let payload = send_gate::channel_egress_failed_payload(
+                            record.channel.as_str(),
+                            &record.recipient_id,
+                            reason,
+                            now,
+                        );
+                        let _ = append_audit(
+                            writer,
+                            crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                            payload,
+                            false,
+                            "WAL write failed for webhook transport-error audit frame",
+                        )
+                        .await;
+                    }
+                    DeliveryOutcome::TransportRetry
+                }
+                TransportDisposition::Permanent { reason } => {
+                    record.state = OutboxState::Quarantined {
+                        reason: reason.to_owned(),
+                        quarantined_at: now,
+                    };
+                    record.transport_next_attempt_at = None;
+                    record.last_failure = Some(reason.to_owned());
+                    if let Err(error) = persist_outbox_record(path, record) {
+                        warn!(error = %error, "webhook outbox: could not persist quarantine state");
+                        return DeliveryOutcome::PersistenceRetry;
+                    }
+                    if let Some(writer) = governance.wal_writer.as_ref() {
+                        let payload = send_gate::channel_egress_failed_payload(
+                            record.channel.as_str(),
+                            &record.recipient_id,
+                            reason,
+                            now,
+                        );
+                        let _ = append_audit(
+                            writer,
+                            crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                            payload,
+                            false,
+                            "WAL write failed for quarantined webhook send audit frame",
+                        )
+                        .await;
+                    }
+                    warn!(
+                        channel = record.channel.as_str(),
+                        source_hash = %record.source_key,
+                        reason,
+                        "webhook outbox send quarantined after permanent provider rejection"
+                    );
+                    DeliveryOutcome::Quarantined
+                }
+                TransportDisposition::ConfigurationWait { reason } => {
+                    record.state = OutboxState::WaitingForConfiguration {
+                        reason: reason.to_owned(),
+                    };
+                    record.transport_next_attempt_at = None;
+                    record.last_failure = Some(reason.to_owned());
+                    if let Err(error) = persist_outbox_record(path, record) {
+                        warn!(error = %error, "webhook outbox: could not persist configuration-wait state");
+                        return DeliveryOutcome::PersistenceRetry;
+                    }
+                    warn!(
+                        channel = record.channel.as_str(),
+                        source_hash = %record.source_key,
+                        reason,
+                        "webhook outbox paused for corrected channel configuration"
+                    );
+                    DeliveryOutcome::MissingCredentials
+                }
+            }
         }
     }
 }
@@ -695,11 +1704,8 @@ async fn append_audit(
 /// between the ACK and the dispatch's first WAL write would LOSE the message
 /// (Meta won't redeliver an ACKed webhook). Each verified body is spooled here
 /// BEFORE the detached dispatch, deleted on successful completion, and any
-/// survivor is re-dispatched on the next daemon start ([`drain_inbound_spool`]).
-fn inbound_spool_dir() -> std::path::PathBuf {
-    inbound_spool_dir_at(&crate::config::FreedomConfig::default_neoth_home())
-}
-
+/// survivor is re-dispatched by the live recovery pump and on the next daemon
+/// start ([`drain_inbound_spool`]).
 fn inbound_spool_dir_at(home: &std::path::Path) -> std::path::PathBuf {
     home.join("inbound_spool")
 }
@@ -707,10 +1713,16 @@ fn inbound_spool_dir_at(home: &std::path::Path) -> std::path::PathBuf {
 /// Spool the verified webhook body BEFORE its detached dispatch. `key` is the
 /// message id (wamid) when available — idempotent across Meta retries — else a
 /// content hash. Returns the spool path so the dispatch can delete it on
-/// success. Best-effort: a spool error logs + returns `None` (the dispatch still
-/// runs; durability is simply off for that one message).
-fn spool_inbound_body(key: &str, raw_body: &str, decoder: &str) -> Option<std::path::PathBuf> {
-    let dir = inbound_spool_dir();
+/// success. Persistence failure is returned to the request handler so verified
+/// provider traffic is answered 503 and can be redelivered; dispatch never runs
+/// without first establishing this durable ownership boundary.
+fn spool_inbound_body(
+    cfg: &WebhookListenerConfig,
+    key: &str,
+    raw_body: &str,
+    decoder: &str,
+) -> Result<std::path::PathBuf> {
+    let dir = inbound_spool_dir_at(&active_neoth_home(cfg));
     spool_inbound_body_at(&dir, key, raw_body, decoder)
 }
 
@@ -719,11 +1731,8 @@ fn spool_inbound_body_at(
     key: &str,
     raw_body: &str,
     decoder: &str,
-) -> Option<std::path::PathBuf> {
-    if let Err(e) = std::fs::create_dir_all(dir) {
-        warn!(error = %e, "inbound spool: mkdir failed (durability off for this message)");
-        return None;
-    }
+) -> Result<std::path::PathBuf> {
+    prepare_private_state_dir(dir).context("prepare private inbound webhook spool")?;
     // Prefix the on-disk name with the decoder so two providers can't collide on
     // the same id-derived key.
     let safe: String = format!("{decoder}-{key}")
@@ -742,97 +1751,478 @@ fn spool_inbound_body_at(
     } else {
         safe
     };
-    let path = dir.join(format!("{safe}.json"));
     let body = serde_json::json!({
         "raw_body": raw_body,
         "decoder": decoder,
         "ts_unix": crate::time::now_unix_i64(),
     })
     .to_string();
-    match crate::util::atomic_write::atomic_write(&path, body.as_bytes()) {
-        Ok(()) => Some(path),
-        Err(e) => {
-            warn!(error = %e, "inbound spool: write failed (durability off for this message)");
-            None
+    // The sanitized/truncated key is only an operator hint. The suffix binds
+    // the full unsanitized id, so `+`, `/`, `=` and long common prefixes cannot
+    // collide. create_new makes a duplicate retry idempotent without replacing
+    // the first durable body.
+    let key_hash = xxhash_rust::xxh3::xxh3_64(key.as_bytes());
+    let path = dir.join(format!("{safe}-{key_hash:016x}.json"));
+    match crate::util::atomic_write::write_private_create_new(&path, body.as_bytes()) {
+        Ok(()) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            debug!(path = %path.display(), "inbound spool: duplicate id already durable");
+            Ok(path)
         }
+        Err(error) => Err(error)
+            .with_context(|| format!("persist inbound webhook spool at {}", path.display())),
     }
 }
 
-/// GR-012b — drain leftover spooled inbound webhooks on daemon startup. Each
+/// GR-012b — drain leftover spooled inbound webhooks after the daemon listener
+/// is bound. Each
 /// survivor is a webhook that Meta saw ACKed but whose dispatch did not provably
 /// complete before a crash. Re-decode + re-dispatch + delete (the in-memory
 /// GR-010 dedup ring is empty after a restart, so this is recovery, not a
 /// duplicate). Best-effort throughout — a bad spool file is dropped, never fatal.
 pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
-    let dir = inbound_spool_dir();
+    let dir = inbound_spool_dir_at(&active_neoth_home(cfg));
     drain_inbound_spool_at(cfg, &dir).await;
 }
 
 async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Path) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-        Err(e) => {
-            warn!(error = %e, "inbound spool: read_dir failed on startup drain");
+    // WhatsApp and LINE listeners share the spool directory but own distinct
+    // policies/pipelines. Each startup drains only its own decoder so a LINE
+    // survivor can never run through WhatsApp's sender policy (or vice versa).
+    let expected_decoder = if cfg.line.is_some() { "line" } else { "meta" };
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            warn!(error = %error, "inbound spool: read_dir failed during recovery");
             return;
         }
     };
-    let mut drained = 0usize;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(body) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let parsed = serde_json::from_str::<serde_json::Value>(&body).ok();
-        let raw = parsed.as_ref().and_then(|v| {
-            v.get("raw_body")
-                .and_then(|x| x.as_str())
-                .map(str::to_string)
-        });
-        // Decoder tag picks the re-decode path; default "meta" (back-compat with
-        // any pre-tag spool file).
-        let decoder = parsed
-            .as_ref()
-            .and_then(|v| v.get("decoder").and_then(|x| x.as_str()))
-            .unwrap_or("meta")
-            .to_string();
-        match raw {
-            Some(raw) => {
-                match decoder.as_str() {
-                    "line" => {
-                        if let DecodedLineWebhook::Messages(msgs) = decode_line_payload(&raw) {
-                            dispatch_line_messages(cfg, msgs).await;
-                            drained += 1;
-                        }
-                    }
-                    _ => {
-                        if let DecodedWebhook::Messages(msgs) = decode_payload(&raw) {
-                            dispatch_messages(cfg, msgs).await;
-                            drained += 1;
-                        }
+    let mut drained_total = 0usize;
+    loop {
+        let mut paths = Vec::with_capacity(MAX_SPOOL_DRAIN_FILES);
+        let mut inspected = 0usize;
+        let mut exhausted = false;
+        while inspected < MAX_SPOOL_DRAIN_FILES {
+            match entries.next_entry().await {
+                Ok(Some(entry)) => {
+                    inspected += 1;
+                    let path = entry.path();
+                    if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+                        paths.push(path);
                     }
                 }
-                let _ = std::fs::remove_file(&path);
-            }
-            // Corrupt / unexpected shape → drop it so it can't wedge every boot.
-            None => {
-                let _ = std::fs::remove_file(&path);
+                Ok(None) => {
+                    exhausted = true;
+                    break;
+                }
+                Err(error) => {
+                    warn!(error = %error, "inbound spool: directory iteration failed during recovery");
+                    return;
+                }
             }
         }
-    }
-    if drained > 0 {
-        info!(
-            count = drained,
-            "inbound spool: re-dispatched survivors on startup"
+
+        let mut drains = futures_util::stream::iter(paths.into_iter().map(|path| async move {
+            match DISPATCH_GATE.acquire().await {
+                Ok(_permit) => drain_one_spool_entry(cfg, path, expected_decoder).await,
+                Err(_) => false,
+            }
+        }))
+        .buffer_unordered(MAX_CONCURRENT_SPOOL_DRAINS);
+        while let Some(was_drained) = drains.next().await {
+            drained_total += usize::from(was_drained);
+        }
+        if exhausted {
+            break;
+        }
+        debug!(
+            inspected,
+            cap = MAX_SPOOL_DRAIN_FILES,
+            "inbound spool: recovery batch complete; yielding before continuation"
         );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    if drained_total > 0 {
+        info!(
+            count = drained_total,
+            "inbound spool: re-dispatched durable survivors"
+        );
+    }
+}
+
+#[cfg(test)]
+struct SpoolCandidates {
+    paths: Vec<std::path::PathBuf>,
+    inspected: usize,
+    inspection_cap_reached: bool,
+}
+
+#[cfg(test)]
+fn select_spool_candidates(
+    entries: impl IntoIterator<Item = std::io::Result<std::path::PathBuf>>,
+) -> SpoolCandidates {
+    let mut paths = Vec::with_capacity(MAX_SPOOL_DRAIN_FILES);
+    let mut inspected = 0usize;
+    for entry in entries.into_iter().take(MAX_SPOOL_DRAIN_FILES) {
+        inspected += 1;
+        let Ok(path) = entry else {
+            continue;
+        };
+        if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    SpoolCandidates {
+        paths,
+        inspected,
+        // Conservatively report a reached cap at exactly the limit. Detecting
+        // whether another entry exists would itself exceed the hard scan bound.
+        inspection_cap_reached: inspected == MAX_SPOOL_DRAIN_FILES,
+    }
+}
+
+async fn finish_dedup_reservation(
+    cfg: &WebhookListenerConfig,
+    message_id: Option<&str>,
+    commit: bool,
+) {
+    let (Some(dedup), Some(message_id)) = (cfg.inbound_dedup.as_ref(), message_id) else {
+        return;
+    };
+    let mut dedup = dedup.lock().await;
+    if commit {
+        dedup.commit(message_id);
+    } else {
+        dedup.rollback(message_id);
+    }
+}
+
+async fn dispatch_messages_durable(
+    cfg: &WebhookListenerConfig,
+    messages: Vec<InboundMessage>,
+    channel: OutboxChannel,
+    outbox_dir: &std::path::Path,
+    inbound_path: Option<&std::path::Path>,
+) -> bool {
+    let mut all_adopted = true;
+    let mut owned_records = Vec::new();
+
+    for message in messages {
+        if crate::channels::sender_blocked_by_allowlist(
+            Some(cfg.inbound_allowed_sender.trim()),
+            &message.sender_id,
+            cfg.send_governance.wal_writer.as_ref(),
+            channel.as_str(),
+        )
+        .await
+        {
+            continue;
+        }
+        let dedup_id = message.message_id.clone();
+        if let (Some(dedup), Some(message_id)) = (cfg.inbound_dedup.as_ref(), dedup_id.as_deref()) {
+            match dedup.lock().await.reserve(message_id) {
+                DedupReservation::New => {}
+                DedupReservation::CommittedDuplicate => continue,
+                DedupReservation::InFlight => {
+                    all_adopted = false;
+                    continue;
+                }
+            }
+        }
+
+        let key = source_key(channel, &message);
+        let candidate = outbox_path(outbox_dir, channel, &key);
+        let existing = if candidate.is_file() {
+            match load_outbox_record(&candidate) {
+                Ok(record) if record.channel == channel && record.source_key == key => Some(record),
+                Ok(_) | Err(_) => {
+                    warn!(source_hash = %key, "webhook outbox: invalid existing record; retaining inbound spool");
+                    all_adopted = false;
+                    finish_dedup_reservation(cfg, dedup_id.as_deref(), false).await;
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+
+        let (path, mut record) = if let Some(record) = existing {
+            (candidate, record)
+        } else {
+            let pipeline_result = match (cfg.pipeline)(message).await {
+                Ok(outbound) => outbound,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        source_hash = %key,
+                        outcome = ?MessageLifecycle::RetryPipeline,
+                        "webhook pipeline failed; retaining inbound spool"
+                    );
+                    all_adopted = false;
+                    finish_dedup_reservation(cfg, dedup_id.as_deref(), false).await;
+                    continue;
+                }
+            };
+            let (recipient_id, body, state) = match pipeline_result {
+                Some(outbound) => (
+                    outbound.recipient_id,
+                    outbound.text,
+                    OutboxState::PendingSend,
+                ),
+                None => (String::new(), String::new(), OutboxState::Complete),
+            };
+            let record = WebhookOutboxRecord {
+                version: WEBHOOK_OUTBOX_VERSION,
+                channel,
+                source_key: key.clone(),
+                body_sha256: sha256_hex(body.as_bytes()),
+                recipient_id,
+                body,
+                attempts: 0,
+                audit_attempts: 0,
+                transport_next_attempt_at: None,
+                audit_next_attempt_at: None,
+                last_failure: None,
+                state,
+                inbound_spool_name: inbound_spool_name(inbound_path),
+            };
+            match stage_outbox_record(outbox_dir, &record) {
+                Ok(staged) => staged,
+                Err(error) => {
+                    warn!(error = %error, source_hash = %key, "webhook pipeline result could not be handed to durable outbox");
+                    all_adopted = false;
+                    finish_dedup_reservation(cfg, dedup_id.as_deref(), false).await;
+                    continue;
+                }
+            }
+        };
+
+        let lifecycle = if matches!(record.state, OutboxState::Complete) {
+            MessageLifecycle::Adopted(DeliveryOutcome::AlreadyComplete)
+        } else {
+            MessageLifecycle::Adopted(deliver_outbox_record(cfg, &path, &mut record).await)
+        };
+        debug!(
+            channel = channel.as_str(),
+            source_hash = %key,
+            outcome = ?lifecycle,
+            "webhook durable delivery lifecycle"
+        );
+        finish_dedup_reservation(cfg, dedup_id.as_deref(), true).await;
+        owned_records.push(path);
+    }
+
+    if !all_adopted {
+        return false;
+    }
+
+    if let Some(path) = inbound_path
+        && let Err(error) = crate::util::atomic_write::durable_remove_file(path)
+    {
+        warn!(error = %error, "webhook inbound spool: terminal hand-off could not be committed");
+        return false;
+    }
+
+    // Keep scrubbed completion receipts after the inbound deletion. They bind a
+    // provider source key across process restarts and suppress pipeline replay;
+    // the recovery pump prunes them by a documented TTL + count bound.
+    for path in owned_records {
+        if let Ok(mut record) = load_outbox_record(&path)
+            && let Err(error) = scrub_terminal_outbox_receipt(&path, &mut record)
+        {
+            warn!(error = %error, path = %path.display(), "webhook outbox: terminal receipt scrub failed; recovery will retry");
+        }
+    }
+    true
+}
+
+async fn drain_webhook_outbox_at(
+    cfg: &WebhookListenerConfig,
+    dir: &std::path::Path,
+    expected_channel: OutboxChannel,
+) {
+    use std::cmp::Reverse;
+
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            warn!(error = %error, "webhook outbox: recovery scan failed");
+            return;
+        }
+    };
+    let mut inspected_in_batch = 0usize;
+    let now = std::time::SystemTime::now();
+    let mut terminal_receipts =
+        std::collections::BinaryHeap::<Reverse<(std::time::SystemTime, std::path::PathBuf)>>::new();
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                warn!(error = %error, "webhook outbox: recovery iteration failed");
+                break;
+            }
+        };
+        inspected_in_batch += 1;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let mut record = match load_outbox_record(&path) {
+            Ok(record) => record,
+            Err(error) => {
+                warn!(error = %error, "webhook outbox: invalid recovery record retained fail-closed");
+                continue;
+            }
+        };
+        if record.channel != expected_channel {
+            continue;
+        }
+        if !terminal_outbox_state(&record.state) {
+            let outcome = deliver_outbox_record(cfg, &path, &mut record).await;
+            debug!(
+                channel = expected_channel.as_str(),
+                source_hash = %record.source_key,
+                outcome = ?outcome,
+                "webhook outbox recovery attempt"
+            );
+        }
+        if terminal_outbox_state(&record.state) && !matching_inbound_spool_exists(&record, dir) {
+            if let Err(error) = scrub_terminal_outbox_receipt(&path, &mut record) {
+                warn!(error = %error, path = %path.display(), "webhook outbox: terminal receipt scrub failed");
+                continue;
+            }
+            let modified = std::fs::metadata(&path)
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let expired = now
+                .duration_since(modified)
+                .is_ok_and(|age| age > TERMINAL_OUTBOX_RECEIPT_RETENTION);
+            if expired {
+                remove_terminal_outbox_receipt(&path, "retention_expired");
+            } else {
+                let candidate = (modified, path.clone());
+                if terminal_receipts.len() < MAX_TERMINAL_OUTBOX_RECEIPTS_PER_CHANNEL {
+                    terminal_receipts.push(Reverse(candidate));
+                } else {
+                    let replaces_oldest = terminal_receipts
+                        .peek()
+                        .is_some_and(|Reverse(oldest)| &candidate > oldest);
+                    if replaces_oldest {
+                        if let Some(Reverse((_, oldest_path))) = terminal_receipts.pop() {
+                            remove_terminal_outbox_receipt(&oldest_path, "retention_count_cap");
+                        }
+                        terminal_receipts.push(Reverse(candidate));
+                    } else {
+                        remove_terminal_outbox_receipt(&path, "retention_count_cap");
+                    }
+                }
+            }
+        }
+        if inspected_in_batch >= MAX_SPOOL_DRAIN_FILES {
+            inspected_in_batch = 0;
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+async fn drain_one_spool_entry(
+    cfg: &WebhookListenerConfig,
+    path: std::path::PathBuf,
+    expected_decoder: &'static str,
+) -> bool {
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+    if metadata.len() > MAX_SPOOL_ENTRY_BYTES {
+        warn!(path = %path.display(), bytes = metadata.len(), "inbound spool: oversized entry dropped");
+        let _ = tokio::fs::remove_file(&path).await;
+        return false;
+    }
+    let body = match tokio::fs::read_to_string(&path).await {
+        Ok(body) => body,
+        Err(_) => {
+            let _ = tokio::fs::remove_file(&path).await;
+            return false;
+        }
+    };
+    let Some(parsed) = serde_json::from_str::<serde_json::Value>(&body).ok() else {
+        let _ = tokio::fs::remove_file(&path).await;
+        return false;
+    };
+    // Missing decoder means a pre-tag Meta spool. Unknown tags are corrupt and
+    // removed instead of being silently dispatched through the Meta policy.
+    let decoder = parsed
+        .get("decoder")
+        .and_then(|value| value.as_str())
+        .unwrap_or("meta");
+    if !matches!(decoder, "meta" | "line") {
+        let _ = tokio::fs::remove_file(&path).await;
+        return false;
+    }
+    if decoder != expected_decoder {
+        return false;
+    }
+    let Some(raw) = parsed.get("raw_body").and_then(|value| value.as_str()) else {
+        let _ = tokio::fs::remove_file(&path).await;
+        return false;
+    };
+
+    let spool_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let outbox_dir = outbox_dir_for_spool(spool_dir);
+    match decoder {
+        "line" => match decode_line_payload(raw) {
+            DecodedLineWebhook::Messages(messages) => {
+                dispatch_messages_durable(
+                    cfg,
+                    messages,
+                    OutboxChannel::Line,
+                    &outbox_dir,
+                    Some(&path),
+                )
+                .await
+            }
+            _ => {
+                let _ = crate::util::atomic_write::durable_remove_file(&path);
+                false
+            }
+        },
+        "meta" => match decode_payload(raw) {
+            DecodedWebhook::Messages(messages) => {
+                dispatch_messages_durable(
+                    cfg,
+                    messages,
+                    OutboxChannel::Meta,
+                    &outbox_dir,
+                    Some(&path),
+                )
+                .await
+            }
+            _ => {
+                let _ = crate::util::atomic_write::durable_remove_file(&path);
+                false
+            }
+        },
+        _ => unreachable!("decoder validated above"),
     }
 }
 
 async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage>) {
     for msg in msgs {
+        if crate::channels::sender_blocked_by_allowlist(
+            Some(cfg.inbound_allowed_sender.trim()),
+            &msg.sender_id,
+            cfg.send_governance.wal_writer.as_ref(),
+            "whatsapp",
+        )
+        .await
+        {
+            continue;
+        }
         // GR-010: skip duplicate wamids — a Meta reconnect-storm re-delivers the
         // same message_id, and without this every re-delivery would re-run the
         // whole pipeline (and re-send the reply when send creds are wired).
@@ -1080,6 +2470,16 @@ async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMe
         }
     };
     for msg in msgs {
+        if crate::channels::sender_blocked_by_allowlist(
+            Some(cfg.inbound_allowed_sender.trim()),
+            &msg.sender_id,
+            cfg.send_governance.wal_writer.as_ref(),
+            "line",
+        )
+        .await
+        {
+            continue;
+        }
         // LINE re-delivers the SAME webhookEventId (carried as message_id); skip
         // a duplicate before it re-runs the pipeline (+ re-sends the reply).
         if let (Some(dedup), Some(mid)) = (cfg.inbound_dedup.as_ref(), msg.message_id.as_deref())
@@ -1337,6 +2737,86 @@ mod tests {
         assert!(!d.check_and_insert("wamid.A"));
     }
 
+    #[test]
+    fn inbound_dedup_reservation_rolls_back_retryable_work() {
+        let mut dedup = InboundDedup::new(4);
+        assert_eq!(dedup.reserve("wamid.retry"), DedupReservation::New);
+        assert_eq!(dedup.reserve("wamid.retry"), DedupReservation::InFlight);
+        dedup.rollback("wamid.retry");
+        assert_eq!(dedup.reserve("wamid.retry"), DedupReservation::New);
+        dedup.commit("wamid.retry");
+        assert_eq!(
+            dedup.reserve("wamid.retry"),
+            DedupReservation::CommittedDuplicate
+        );
+    }
+
+    #[test]
+    fn inbound_spool_names_are_unique_and_never_overwrite() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = inbound_spool_dir_at(home.path());
+        let shared_prefix = "x".repeat(200);
+        let first_key = format!("{shared_prefix}+A");
+        let second_key = format!("{shared_prefix}/A");
+        let first = spool_inbound_body_at(&dir, &first_key, "first", "meta").unwrap();
+        let second = spool_inbound_body_at(&dir, &second_key, "second", "meta").unwrap();
+        assert_ne!(first, second, "truncated key prefixes must not collide");
+        assert!(first.exists() && second.exists());
+        assert!(std::fs::read_to_string(&first).unwrap().contains("first"));
+        assert!(std::fs::read_to_string(second).unwrap().contains("second"));
+
+        let duplicate = spool_inbound_body_at(&dir, &first_key, "replacement", "meta").unwrap();
+        assert_eq!(duplicate, first);
+        let durable = std::fs::read_to_string(first).unwrap();
+        assert!(durable.contains("first"));
+        assert!(
+            !durable.contains("replacement"),
+            "duplicate must not overwrite"
+        );
+    }
+
+    #[test]
+    fn inbound_spool_persist_failure_is_not_best_effort() {
+        let home = tempfile::tempdir().unwrap();
+        let blocker = home.path().join("not-a-directory");
+        std::fs::write(&blocker, b"x").unwrap();
+        let result = spool_inbound_body_at(&blocker.join("spool"), "wamid.fail", "{}", "meta");
+        assert!(
+            result.is_err(),
+            "the HTTP handler maps this durability failure to 503"
+        );
+    }
+
+    #[test]
+    fn startup_spool_drain_limits_are_pinned() {
+        assert_eq!(MAX_SPOOL_DRAIN_FILES, 1024);
+        assert_eq!(MAX_CONCURRENT_SPOOL_DRAINS, 8);
+        assert!(MAX_SPOOL_ENTRY_BYTES >= MAX_BODY_BYTES as u64);
+    }
+
+    #[test]
+    fn startup_spool_scan_counts_junk_and_leaves_entries_behind_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let survivor = dir.path().join("valid-behind-junk.json");
+        std::fs::write(&survivor, b"durable survivor").unwrap();
+
+        let ordered_entries = (0..MAX_SPOOL_DRAIN_FILES)
+            .map(|index| Ok(dir.path().join(format!("junk-{index}.tmp"))))
+            .chain(std::iter::once(Ok(survivor.clone())));
+        let candidates = select_spool_candidates(ordered_entries);
+
+        assert_eq!(candidates.inspected, MAX_SPOOL_DRAIN_FILES);
+        assert!(candidates.inspection_cap_reached);
+        assert!(
+            candidates.paths.is_empty(),
+            "junk must count against the scan cap"
+        );
+        assert!(
+            survivor.exists(),
+            "a valid entry behind the hard cap must remain durable for a later pass"
+        );
+    }
+
     fn fake_pipeline() -> PipelineHandler {
         Box::new(|_msg| {
             Box::pin(
@@ -1380,6 +2860,111 @@ mod tests {
         }
     }
 
+    fn counting_listener_cfg(
+        allowed_sender: &str,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        send_governance: SendGovernance,
+    ) -> WebhookListenerConfig {
+        let pipeline: PipelineHandler = Box::new(move |_inbound| {
+            let calls = std::sync::Arc::clone(&calls);
+            Box::pin(async move {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(None)
+            })
+        });
+        WebhookListenerConfig {
+            inbound_dedup: None,
+            line: None,
+            meta_app_secret: b"m".to_vec(),
+            meta_verify_token: "v".to_string(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline,
+            inbound_allowed_sender: allowed_sender.to_string(),
+            whatsapp_send_creds: None,
+            send_governance,
+            max_concurrent_connections: None,
+            dispatch_join: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn whatsapp_sender_gate_blocks_mismatch_audits_and_passes_exact_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cfg = counting_listener_cfg(
+            "491709999999",
+            std::sync::Arc::clone(&calls),
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                ..Default::default()
+            },
+        );
+        dispatch_messages(&cfg, vec![inbound_fixture()]).await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        drop(cfg);
+        drop(writer);
+        let _ = join.await;
+        assert_eq!(
+            read_first_frame(&seg).0,
+            crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED
+        );
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cfg = counting_listener_cfg(
+            "+4912345",
+            std::sync::Arc::clone(&calls),
+            SendGovernance::default(),
+        );
+        dispatch_messages(&cfg, vec![inbound_fixture()]).await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn line_sender_gate_blocks_mismatch_audits_and_passes_exact_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut cfg = counting_listener_cfg(
+            "Uother",
+            std::sync::Arc::clone(&calls),
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                ..Default::default()
+            },
+        );
+        cfg.line = Some(LineConfig {
+            channel_secret: b"line-secret".to_vec(),
+            access_token: crate::secret::SecretString::from("line-token"),
+            base_url: None,
+        });
+        dispatch_line_messages(&cfg, vec![inbound_fixture()]).await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        drop(cfg);
+        drop(writer);
+        let _ = join.await;
+        assert_eq!(
+            read_first_frame(&seg).0,
+            crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED
+        );
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut cfg = counting_listener_cfg(
+            "+4912345",
+            std::sync::Arc::clone(&calls),
+            SendGovernance::default(),
+        );
+        cfg.line = Some(LineConfig {
+            channel_secret: b"line-secret".to_vec(),
+            access_token: crate::secret::SecretString::from("line-token"),
+            base_url: None,
+        });
+        dispatch_line_messages(&cfg, vec![inbound_fixture()]).await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn dispatch_drops_outbound_when_no_send_creds_present() {
         // GR-01 backward-compat: a listener without whatsapp_send_creds
@@ -1392,6 +2977,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: pipeline_with_outbound(),
+            inbound_allowed_sender: "+4912345".to_string(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
@@ -1411,6 +2997,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: pipeline_with_outbound(),
+            inbound_allowed_sender: "+4912345".to_string(),
             whatsapp_send_creds: Some(WhatsAppSendCreds {
                 access_token: crate::secret::SecretString::from("fake-token"),
                 phone_number_id: "123".to_string(),
@@ -1419,6 +3006,20 @@ mod tests {
             send_governance: gov,
             max_concurrent_connections: None,
             dispatch_join: None,
+        }
+    }
+
+    /// Keep listener integration tests out of the operator's real ~/.neoth.
+    /// Production always wires a reload controller rooted at the active home;
+    /// server-level tests must model that boundary as well so durable receipt
+    /// ids cannot collide across tests or repeated runs.
+    fn isolated_test_governance(home: &std::path::Path) -> SendGovernance {
+        SendGovernance {
+            reload_controller: Some(Arc::new(crate::config::reload::ReloadController::new(
+                crate::config::FreedomConfig::default(),
+                home.join("freedom.yaml"),
+            ))),
+            ..Default::default()
         }
     }
 
@@ -1581,10 +3182,33 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: pipeline_with_outbound(),
+            inbound_allowed_sender: "+4912345".to_string(),
             whatsapp_send_creds: None,
             send_governance: gov,
             max_concurrent_connections: None,
             dispatch_join: None,
+        }
+    }
+
+    fn pending_outbox_fixture(channel: OutboxChannel, identity: &str) -> WebhookOutboxRecord {
+        let body = "durable reply".to_owned();
+        WebhookOutboxRecord {
+            version: WEBHOOK_OUTBOX_VERSION,
+            channel,
+            source_key: sha256_hex(identity.as_bytes()),
+            recipient_id: match channel {
+                OutboxChannel::Meta => "+4900000".to_owned(),
+                OutboxChannel::Line => "Urecipient".to_owned(),
+            },
+            body_sha256: sha256_hex(body.as_bytes()),
+            body,
+            attempts: 0,
+            audit_attempts: 0,
+            transport_next_attempt_at: None,
+            audit_next_attempt_at: None,
+            last_failure: None,
+            state: OutboxState::PendingSend,
+            inbound_spool_name: None,
         }
     }
 
@@ -1715,6 +3339,7 @@ mod tests {
             meta_verify_token: "verify123".to_string(),
             slack_signing_secret: b"slack-sig".to_vec(),
             pipeline: fake_pipeline(),
+            inbound_allowed_sender: String::new(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
@@ -1762,6 +3387,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            inbound_allowed_sender: String::new(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
@@ -1825,6 +3451,7 @@ mod tests {
             })
         });
 
+        let home = tempfile::tempdir().unwrap();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
@@ -1833,8 +3460,9 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline,
+            inbound_allowed_sender: "49".to_string(),
             whatsapp_send_creds: None,
-            send_governance: SendGovernance::default(),
+            send_governance: isolated_test_governance(home.path()),
             max_concurrent_connections: None,
             dispatch_join: None,
         };
@@ -1911,6 +3539,7 @@ mod tests {
             meta_verify_token: "v".into(),
             slack_signing_secret: b"s".to_vec(),
             pipeline,
+            inbound_allowed_sender: "49".to_string(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
@@ -1935,6 +3564,495 @@ mod tests {
             1,
             "corrupt entry must NOT trigger a dispatch"
         );
+    }
+
+    #[tokio::test]
+    async fn pipeline_error_retains_inbound_spool_for_recovery() {
+        let home = tempfile::tempdir().unwrap();
+        let spool_dir = inbound_spool_dir_at(home.path());
+        let raw = r#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.PIPELINE-ERR","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
+        let path = spool_inbound_body_at(&spool_dir, "wamid.PIPELINE-ERR", raw, "meta").unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls_for_pipeline = Arc::clone(&calls);
+        let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
+            line: None,
+            meta_app_secret: Vec::new(),
+            meta_verify_token: String::new(),
+            slack_signing_secret: Vec::new(),
+            pipeline: Box::new(move |_| {
+                let calls = Arc::clone(&calls_for_pipeline);
+                Box::pin(async move {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    anyhow::bail!("retryable pipeline failure")
+                })
+            }),
+            inbound_allowed_sender: "49".into(),
+            whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
+            max_concurrent_connections: None,
+            dispatch_join: None,
+        };
+
+        drain_inbound_spool_at(&cfg, &spool_dir).await;
+
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(
+            path.exists(),
+            "retryable pipeline failure must retain inbound"
+        );
+        assert!(!webhook_outbox_dir_at(home.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn failed_send_retries_from_outbox_without_rerunning_pipeline() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let failing = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/123/messages"))
+            .respond_with(ResponseTemplate::new(500).set_body_string(
+                r#"{"error":{"message":"temporary","type":"ApiException","code":2}}"#,
+            ))
+            .expect(1)
+            .mount(&failing)
+            .await;
+        let home = tempfile::tempdir().unwrap();
+        let spool_dir = inbound_spool_dir_at(home.path());
+        let outbox_dir = webhook_outbox_dir_at(home.path());
+        let raw = r#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.OUTBOX","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
+        let inbound = spool_inbound_body_at(&spool_dir, "wamid.OUTBOX", raw, "meta").unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls_for_pipeline = Arc::clone(&calls);
+        let pipeline: PipelineHandler = Box::new(move |_| {
+            let calls = Arc::clone(&calls_for_pipeline);
+            Box::pin(async move {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(Some(crate::channels::OutboundMessage {
+                    recipient_id: "+4900000".into(),
+                    text: "durable reply".into(),
+                }))
+            })
+        });
+        let first_cfg = WebhookListenerConfig {
+            inbound_dedup: None,
+            line: None,
+            meta_app_secret: Vec::new(),
+            meta_verify_token: String::new(),
+            slack_signing_secret: Vec::new(),
+            pipeline,
+            inbound_allowed_sender: "49".into(),
+            whatsapp_send_creds: Some(WhatsAppSendCreds {
+                access_token: crate::secret::SecretString::from("token"),
+                phone_number_id: "123".into(),
+                base_url: Some(failing.uri()),
+            }),
+            send_governance: SendGovernance::default(),
+            max_concurrent_connections: None,
+            dispatch_join: None,
+        };
+        drain_inbound_spool_at(&first_cfg, &spool_dir).await;
+        assert!(
+            !inbound.exists(),
+            "durable outbox owns the completed pipeline turn"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read_dir(&outbox_dir).unwrap().count(), 1);
+
+        // A restart must honor the persisted due time. Force it due without a
+        // wall-clock sleep so this regression remains fast and deterministic.
+        let pending_path = std::fs::read_dir(&outbox_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut pending = load_outbox_record(&pending_path).unwrap();
+        assert_eq!(pending.attempts, 1);
+        assert!(pending.transport_next_attempt_at.is_some());
+        assert_eq!(pending.last_failure.as_deref(), Some("meta_server_error"));
+        pending.transport_next_attempt_at = Some(0);
+        persist_outbox_record(&pending_path, &pending).unwrap();
+
+        let succeeding = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/123/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"contacts":[{"wa_id":"49000"}],"messages":[{"id":"wamid.RETRY-OK"}]}"#,
+            ))
+            .expect(1)
+            .mount(&succeeding)
+            .await;
+        let second_cfg = WebhookListenerConfig {
+            inbound_dedup: None,
+            line: None,
+            meta_app_secret: Vec::new(),
+            meta_verify_token: String::new(),
+            slack_signing_secret: Vec::new(),
+            pipeline: Box::new(|_| Box::pin(async { anyhow::bail!("pipeline must not rerun") })),
+            inbound_allowed_sender: "49".into(),
+            whatsapp_send_creds: Some(WhatsAppSendCreds {
+                access_token: crate::secret::SecretString::from("token"),
+                phone_number_id: "123".into(),
+                base_url: Some(succeeding.uri()),
+            }),
+            send_governance: SendGovernance::default(),
+            max_concurrent_connections: None,
+            dispatch_join: None,
+        };
+        drain_webhook_outbox_at(&second_cfg, &outbox_dir, OutboxChannel::Meta).await;
+
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read_dir(&outbox_dir).unwrap().count(), 1);
+        let receipt_path = std::fs::read_dir(&outbox_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let receipt = load_outbox_record(&receipt_path).unwrap();
+        assert!(matches!(receipt.state, OutboxState::Complete));
+        assert!(receipt.recipient_id.is_empty());
+        assert!(receipt.body.is_empty());
+        assert!(receipt.inbound_spool_name.is_none());
+
+        // Simulate provider redelivery after restart. The durable source-key
+        // receipt must consume the new inbound spool without rerunning either
+        // the model/tools pipeline or the provider transport.
+        let duplicate = spool_inbound_body_at(&spool_dir, "wamid.OUTBOX", raw, "meta").unwrap();
+        drain_inbound_spool_at(&second_cfg, &spool_dir).await;
+        assert!(!duplicate.exists());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(succeeding.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn meta_auth_rejection_is_quarantined_not_completed_or_retried() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/123/messages"))
+            .respond_with(ResponseTemplate::new(401).set_body_string(
+                r#"{"error":{"message":"temporary-looking text","type":"ApiException","code":2}}"#,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let home = tempfile::tempdir().unwrap();
+        let outbox = webhook_outbox_dir_at(home.path());
+        let record = pending_outbox_fixture(OutboxChannel::Meta, "meta-auth-permanent");
+        let (path, mut record) = stage_outbox_record(&outbox, &record).unwrap();
+        let cfg = gated_cfg(SendGovernance::default(), Some(server.uri()));
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::Quarantined
+        );
+        let persisted = load_outbox_record(&path).unwrap();
+        assert!(matches!(
+            persisted.state,
+            OutboxState::Quarantined {
+                ref reason,
+                quarantined_at: _
+            } if reason == "meta_auth_rejected"
+        ));
+        assert!(!matches!(persisted.state, OutboxState::Complete));
+        assert_eq!(persisted.attempts, 1);
+        assert_eq!(persisted.transport_next_attempt_at, None);
+
+        let mut restarted = load_outbox_record(&path).unwrap();
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut restarted).await,
+            DeliveryOutcome::Quarantined
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn meta_rate_limit_persists_retry_after_across_restart() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/123/messages"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "120")
+                    .set_body_string(
+                        r#"{"error":{"message":"generic","type":"ApiException","code":4}}"#,
+                    ),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let home = tempfile::tempdir().unwrap();
+        let outbox = webhook_outbox_dir_at(home.path());
+        let record = pending_outbox_fixture(OutboxChannel::Meta, "meta-rate-limited");
+        let (path, mut record) = stage_outbox_record(&outbox, &record).unwrap();
+        let cfg = gated_cfg(SendGovernance::default(), Some(server.uri()));
+        let before = crate::time::now_unix_secs();
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::TransportRetry
+        );
+        let mut restarted = load_outbox_record(&path).unwrap();
+        let due = restarted.transport_next_attempt_at.unwrap();
+        assert!(due >= before + 120);
+        assert!(due <= crate::time::now_unix_secs() + WEBHOOK_RETRY_MAX_SECS);
+        assert_eq!(restarted.last_failure.as_deref(), Some("meta_rate_limited"));
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut restarted).await,
+            DeliveryOutcome::BackoffWait
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn line_rate_limit_persists_capped_retry_after_across_restart() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "120"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let home = tempfile::tempdir().unwrap();
+        let outbox = webhook_outbox_dir_at(home.path());
+        let record = pending_outbox_fixture(OutboxChannel::Line, "line-rate-limited");
+        let (path, mut record) = stage_outbox_record(&outbox, &record).unwrap();
+        let cfg = gated_line_cfg(SendGovernance::default(), Some(server.uri()));
+        let before = crate::time::now_unix_secs();
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::TransportRetry
+        );
+        let mut restarted = load_outbox_record(&path).unwrap();
+        let due = restarted.transport_next_attempt_at.unwrap();
+        assert!(due >= before + 120);
+        assert!(due <= crate::time::now_unix_secs() + WEBHOOK_RETRY_MAX_SECS);
+        assert_eq!(restarted.attempts, 1);
+        assert_eq!(restarted.last_failure.as_deref(), Some("line_rate_limited"));
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut restarted).await,
+            DeliveryOutcome::BackoffWait
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_credentials_waits_without_attempt_or_audit_spam() {
+        let home = tempfile::tempdir().unwrap();
+        let outbox = webhook_outbox_dir_at(home.path());
+        let record = pending_outbox_fixture(OutboxChannel::Meta, "meta-config-wait");
+        let (path, mut record) = stage_outbox_record(&outbox, &record).unwrap();
+        let mut cfg = gated_cfg(SendGovernance::default(), None);
+        cfg.whatsapp_send_creds = None;
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::MissingCredentials
+        );
+        let mut restarted = load_outbox_record(&path).unwrap();
+        assert!(matches!(
+            restarted.state,
+            OutboxState::WaitingForConfiguration { .. }
+        ));
+        assert_eq!(restarted.attempts, 0);
+        assert_eq!(restarted.audit_attempts, 0);
+        assert_eq!(restarted.transport_next_attempt_at, None);
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut restarted).await,
+            DeliveryOutcome::MissingCredentials
+        );
+        let persisted = load_outbox_record(&path).unwrap();
+        assert_eq!(persisted.attempts, 0);
+        assert_eq!(persisted.audit_attempts, 0);
+    }
+
+    #[test]
+    fn outbox_v1_without_retry_metadata_remains_readable() {
+        let record = pending_outbox_fixture(OutboxChannel::Meta, "legacy-v1-outbox");
+        let mut value = serde_json::to_value(record).unwrap();
+        let object = value.as_object_mut().unwrap();
+        for field in [
+            "audit_attempts",
+            "transport_next_attempt_at",
+            "audit_next_attempt_at",
+            "last_failure",
+        ] {
+            object.remove(field);
+        }
+        let decoded: WebhookOutboxRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.attempts, 0);
+        assert_eq!(decoded.audit_attempts, 0);
+        assert_eq!(decoded.transport_next_attempt_at, None);
+        assert_eq!(decoded.audit_next_attempt_at, None);
+        assert_eq!(decoded.last_failure, None);
+    }
+
+    #[tokio::test]
+    async fn terminal_deny_cleans_inbound_and_retains_scrubbed_receipt() {
+        use wiremock::MockServer;
+        let server = MockServer::start().await;
+        let home = tempfile::tempdir().unwrap();
+        let spool_dir = inbound_spool_dir_at(home.path());
+        let raw = r#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.DENY","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
+        let inbound = spool_inbound_body_at(&spool_dir, "wamid.DENY", raw, "meta").unwrap();
+        let mut cfg = gated_cfg(
+            SendGovernance {
+                decision: crate::permissions::Decision::Deny("operator policy".into()),
+                ..Default::default()
+            },
+            Some(server.uri()),
+        );
+        cfg.inbound_allowed_sender = "49".into();
+
+        assert!(drain_one_spool_entry(&cfg, inbound.clone(), "meta").await);
+        assert!(!inbound.exists());
+        let outbox = webhook_outbox_dir_at(home.path());
+        assert_eq!(std::fs::read_dir(&outbox).unwrap().count(), 1);
+        let receipt_path = std::fs::read_dir(&outbox)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let receipt = load_outbox_record(&receipt_path).unwrap();
+        assert!(matches!(receipt.state, OutboxState::Complete));
+        assert!(receipt.recipient_id.is_empty());
+        assert!(receipt.body.is_empty());
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn outbox_recovery_drains_multiple_line_records() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"sentMessages":[{"id":"line-recovered"}]}"#),
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+        let home = tempfile::tempdir().unwrap();
+        let outbox_dir = webhook_outbox_dir_at(home.path());
+        for index in 0..2 {
+            let body = format!("reply {index}");
+            let record = WebhookOutboxRecord {
+                version: WEBHOOK_OUTBOX_VERSION,
+                channel: OutboxChannel::Line,
+                source_key: sha256_hex(format!("line-{index}").as_bytes()),
+                recipient_id: "Urecipient".into(),
+                body_sha256: sha256_hex(body.as_bytes()),
+                body,
+                attempts: 0,
+                audit_attempts: 0,
+                transport_next_attempt_at: None,
+                audit_next_attempt_at: None,
+                last_failure: None,
+                state: OutboxState::PendingSend,
+                inbound_spool_name: None,
+            };
+            stage_outbox_record(&outbox_dir, &record).unwrap();
+        }
+        let cfg = gated_line_cfg(SendGovernance::default(), Some(server.uri()));
+
+        drain_webhook_outbox_at(&cfg, &outbox_dir, OutboxChannel::Line).await;
+
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        assert_eq!(std::fs::read_dir(outbox_dir).unwrap().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn spool_recovery_continues_past_the_first_bounded_batch() {
+        let home = tempfile::tempdir().unwrap();
+        let spool_dir = inbound_spool_dir_at(home.path());
+        for index in 0..=MAX_SPOOL_DRAIN_FILES {
+            let message_id = format!("wamid.BATCH.{index:05}");
+            let raw = format!(
+                r#"{{"object":"whatsapp_business_account","entry":[{{"id":"W","changes":[{{"field":"messages","value":{{"metadata":{{"phone_number_id":"PN","display_phone_number":"+49"}},"contacts":[{{"profile":{{"name":"S"}},"wa_id":"49"}}],"messages":[{{"from":"49","id":"{message_id}","timestamp":"1700000000","type":"text","text":{{"body":"hi"}}}}]}}}}]}}]}}"#
+            );
+            spool_inbound_body_at(&spool_dir, &message_id, &raw, "meta").unwrap();
+        }
+
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let c = Arc::clone(&count);
+        let pipeline: PipelineHandler = Box::new(move |_inbound| {
+            let c = Arc::clone(&c);
+            Box::pin(async move {
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(None)
+            })
+        });
+        let cfg = WebhookListenerConfig {
+            inbound_dedup: None,
+            line: None,
+            meta_app_secret: b"x".to_vec(),
+            meta_verify_token: "v".into(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline,
+            inbound_allowed_sender: "49".to_string(),
+            whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
+            max_concurrent_connections: None,
+            dispatch_join: None,
+        };
+
+        drain_inbound_spool_at(&cfg, &spool_dir).await;
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            MAX_SPOOL_DRAIN_FILES + 1,
+            "every survivor must be replayed even when recovery needs multiple batches"
+        );
+        assert_eq!(std::fs::read_dir(&spool_dir).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn spool_recovery_never_crosses_meta_and_line_policy_boundaries() {
+        let home = tempfile::tempdir().unwrap();
+        let spool_dir = inbound_spool_dir_at(home.path());
+        let raw = r#"{"destination":"Ubot","events":[{"type":"message","mode":"active","timestamp":1625665242211,"source":{"type":"user","userId":"Ualice"},"replyToken":"rt","webhookEventId":"01FZ","deliveryContext":{"isRedelivery":false},"message":{"id":"m1","type":"text","text":"hello"}}]}"#;
+        let path = spool_inbound_body_at(&spool_dir, "01FZ", raw, "line").unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let meta_cfg = counting_listener_cfg(
+            "Ualice",
+            std::sync::Arc::clone(&calls),
+            SendGovernance::default(),
+        );
+        drain_inbound_spool_at(&meta_cfg, &spool_dir).await;
+        assert!(
+            path.exists(),
+            "Meta startup must leave LINE survivors alone"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let mut line_cfg = counting_listener_cfg(
+            "Ualice",
+            std::sync::Arc::clone(&calls),
+            SendGovernance::default(),
+        );
+        line_cfg.line = Some(LineConfig {
+            channel_secret: b"line-secret".to_vec(),
+            access_token: crate::secret::SecretString::from("line-token"),
+            base_url: None,
+        });
+        drain_inbound_spool_at(&line_cfg, &spool_dir).await;
+        assert!(!path.exists(), "LINE startup must consume its own survivor");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1968,6 +4086,7 @@ mod tests {
         let dispatch_join: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>> =
             Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
 
+        let home = tempfile::tempdir().unwrap();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
             inbound_dedup: None,
@@ -1976,8 +4095,9 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline,
+            inbound_allowed_sender: "49".to_string(),
             whatsapp_send_creds: None,
-            send_governance: SendGovernance::default(),
+            send_governance: isolated_test_governance(home.path()),
             max_concurrent_connections: None,
             dispatch_join: Some(Arc::clone(&dispatch_join)),
         };
@@ -2040,6 +4160,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"slackkey".to_vec(),
             pipeline: fake_pipeline(),
+            inbound_allowed_sender: String::new(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
@@ -2091,6 +4212,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            inbound_allowed_sender: String::new(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
@@ -2131,6 +4253,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            inbound_allowed_sender: String::new(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
@@ -2189,6 +4312,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            inbound_allowed_sender: String::new(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: Some(1),
@@ -2266,6 +4390,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            inbound_allowed_sender: String::new(),
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,

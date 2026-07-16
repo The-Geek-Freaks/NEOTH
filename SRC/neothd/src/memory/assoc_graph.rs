@@ -30,7 +30,7 @@
 //! that repeatedly proved useful surface above ones that never did.
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// Hard cap on the co-access set size, bounding the O(n²) pair fan-out
 /// (`C(50,2)=1225`). The recall hook already passes only the top-K results, but
@@ -123,9 +123,9 @@ pub fn reinforce_co_access(conn: &Connection, event_ids: &[i64], now_unix: i64) 
 /// The 1-hop association neighbourhood of `event_id`: the other endpoint of each
 /// link touching it, ordered by **feedback-adjusted effective weight** DESC,
 /// capped at `limit`. A **dangling-endpoint guard** skips any partner id that no
-/// longer exists in a live tier (`idx_episode` hot or `idx_longterm` cold) —
-/// defence-in-depth against a missed forget cascade so a forgotten memory never
-/// resurfaces here.
+/// longer exists in a live tier (`idx_episode` hot, `idx_consolidated` warm, or
+/// `idx_longterm` cold) — defence-in-depth against a missed forget cascade so a
+/// forgotten memory never resurfaces here.
 ///
 /// The effective weight is computed via [`link_effective_weight`] using the
 /// `feedback_success` / `feedback_failure` counters on each edge row
@@ -140,6 +140,7 @@ pub fn associated(conn: &Connection, event_id: i64, limit: usize) -> Result<Vec<
                 FROM idx_memory_links WHERE lo_id = ?1 OR hi_id = ?1 \
              ) \
              WHERE EXISTS (SELECT 1 FROM idx_episode WHERE event_id = other_id) \
+                OR EXISTS (SELECT 1 FROM idx_consolidated WHERE event_id = other_id) \
                 OR EXISTS (SELECT 1 FROM idx_longterm WHERE event_id = other_id)",
         )
         .context("prepare associated query")?;
@@ -192,8 +193,12 @@ pub fn associated(conn: &Connection, event_id: i64, limit: usize) -> Result<Vec<
 /// `now_unix` is the current time as Unix seconds (i64), obtained from
 /// `crate::time::now_unix_i64()` at the call site.
 pub fn decay_links(conn: &Connection, floor: f64, now_unix: i64) -> Result<usize> {
-    // Load all rows that still have positive weight.
-    let mut stmt = conn
+    // Acquire the writer reservation before reading. Otherwise a concurrent
+    // reinforcement can land after this snapshot and then be overwritten by a
+    // decay calculated from stale weight/last_co_access/stability values.
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
+        .context("begin immediate decay tx")?;
+    let mut stmt = tx
         .prepare(
             "SELECT rowid, weight, last_co_access, stability \
              FROM idx_memory_links WHERE weight > 0.0",
@@ -204,8 +209,8 @@ pub fn decay_links(conn: &Connection, floor: f64, now_unix: i64) -> Result<usize
         .context("read decay rows")?
         .collect::<rusqlite::Result<_>>()
         .context("collect decay rows")?;
+    drop(stmt);
 
-    let tx = conn.unchecked_transaction().context("begin decay tx")?;
     let mut pruned = 0usize;
     for (rowid, weight, last_co_access, stability) in rows {
         let days_since = (now_unix - last_co_access).max(0) as f64 / 86400.0;
@@ -772,6 +777,24 @@ mod tests {
             assoc.is_empty(),
             "a link to a non-existent endpoint must not surface: {assoc:?}"
         );
+    }
+
+    #[test]
+    fn associated_keeps_warm_tier_endpoint_live() {
+        let (_d, c) = conn();
+        seed_episode(&c, 1);
+        c.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('retained', '2026-07-16', 2, 'warm', 'warm-hash', 0.8, 1, 1)",
+            [],
+        )
+        .unwrap();
+        reinforce_co_access(&c, &[1, 2], 1).unwrap();
+
+        let assoc = associated(&c, 1, 10).unwrap();
+        assert_eq!(assoc.len(), 1, "warm endpoint must not look dangling");
+        assert_eq!(assoc[0].0, 2);
     }
 
     #[test]

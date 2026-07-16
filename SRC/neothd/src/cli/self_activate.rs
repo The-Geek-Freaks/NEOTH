@@ -137,7 +137,7 @@ pub fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result
                 anyhow::bail!("specify --enable or --disable");
             }
             let turn_on = enable;
-            run_skill_toggle(cfg, &id, turn_on, output)
+            run_skill_toggle(&yaml, &id, turn_on, output)
         }
         SelfActivateAction::Cron {
             job_id,
@@ -158,95 +158,103 @@ pub fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result
 // ── Skill toggle ──────────────────────────────────────────────────────────────
 
 fn run_skill_toggle(
-    mut cfg: FreedomConfig,
+    config_path: &std::path::Path,
     id: &str,
     turn_on: bool,
     output: OutputFormat,
 ) -> Result<()> {
     let id_lc = id.trim().to_lowercase();
 
-    // Gate 2 — preflight firewall: `skills.disabled` always wins, so if the
-    // skill is already in the disabled list and the agent asks to enable it,
-    // the toggle would write `skills.enabled` but the loader would still see
-    // it as disabled.  Bail loudly so the agent knows it must use the operator
-    // `neoth skills --enable` path after explicit operator consent.
-    if cfg
-        .skills
-        .disabled
-        .iter()
-        .any(|s| s.trim().to_lowercase() == id_lc)
-    {
-        anyhow::bail!(
-            "skill '{id_lc}' is in `skills.disabled` — the disabled list \
-             always wins and cannot be overridden by self-activate. \
-             Operator must run `neoth skills --enable {id_lc}` explicitly."
-        );
-    }
+    FreedomConfig::update_at(config_path, |cfg| {
+        // Re-check the kill-switch inside the exact generation that will be
+        // published. The entry-point snapshot may have changed while the
+        // command was being dispatched.
+        if !cfg.self_activation.enabled {
+            anyhow::bail!(
+                "self-activation is disabled. Set `self_activation.enabled: true` \
+                 in freedom.yaml to allow NEOTH to toggle its own skills/crons."
+            );
+        }
 
-    // Gate 3 — sovereign mode required for auto-allow at Full level.
-    // Below Full or without sovereign_buddy, `evaluate` returns Deny/Confirm.
-    let action = Action::SelfSkillToggle {
-        skill_id: id_lc.clone(),
-        enable: turn_on,
-    };
+        // Gate 2 — preflight firewall: `skills.disabled` always wins, so if the
+        // skill is already in the disabled list and the agent asks to enable it,
+        // the toggle would write `skills.enabled` but the loader would still see
+        // it as disabled.  Bail loudly so the agent knows it must use the operator
+        // `neoth skills --enable` path after explicit operator consent.
+        if cfg
+            .skills
+            .disabled
+            .iter()
+            .any(|s| s.trim().to_lowercase() == id_lc)
+        {
+            anyhow::bail!(
+                "skill '{id_lc}' is in `skills.disabled` — the disabled list \
+                 always wins and cannot be overridden by self-activate. \
+                 Operator must run `neoth skills --enable {id_lc}` explicitly."
+            );
+        }
 
-    if !cfg.sovereign_active() {
-        // Sovereign mode (sovereign_buddy AND Full autonomy) is the only
-        // auto-allow path.  At Full-without-sovereign_buddy evaluate returns
-        // Allow, but the sovereign gate is the outer firewall.
-        let decision = evaluate(&action, &cfg.autonomy_policy());
-        match decision {
-            Decision::Allow => {
-                // Full autonomy but sovereign_buddy = false.
+        // Gate 3 — sovereign mode required for auto-allow at Full level.
+        // Below Full or without sovereign_buddy, `evaluate` returns Deny/Confirm.
+        let action = Action::SelfSkillToggle {
+            skill_id: id_lc.clone(),
+            enable: turn_on,
+        };
+
+        if !cfg.sovereign_active() {
+            // Sovereign mode (sovereign_buddy AND Full autonomy) is the only
+            // auto-allow path. At Full without sovereign_buddy, evaluate
+            // returns Allow, but the sovereign gate is the outer firewall.
+            let decision = evaluate(&action, &cfg.autonomy_policy());
+            match decision {
+                Decision::Allow => {
+                    anyhow::bail!(
+                        "self-activate requires sovereign mode (sovereign_buddy: true AND \
+                         autonomy: full). Enable sovereign mode via `neoth mode sovereign-buddy enable`."
+                    );
+                }
+                Decision::Confirm(msg) => anyhow::bail!("confirm required: {msg}"),
+                Decision::Deny(msg) => anyhow::bail!("denied: {msg}"),
+            }
+        }
+
+        // Gate 4 — allowlist check (sovereign_active = true from here).
+        if !cfg.self_activation.skill_allowed(&id_lc) {
+            if cfg.self_activation.skill_allowlist.is_empty() {
                 anyhow::bail!(
-                    "self-activate requires sovereign mode (sovereign_buddy: true AND \
-                     autonomy: full). Enable sovereign mode via `neoth mode sovereign-buddy enable`."
+                    "self-activation skill allowlist is empty — add '{id_lc}' to \
+                     `self_activation.skill_allowlist` in freedom.yaml."
                 );
             }
+            anyhow::bail!(
+                "skill '{id_lc}' not in `self_activation.skill_allowlist`. \
+                 Add it to freedom.yaml or use `neoth skills --enable {id_lc}` as operator."
+            );
+        }
+
+        // Gate 5 — permission system (Full+sovereign → Allow).
+        let decision = evaluate(&action, &cfg.autonomy_policy());
+        match decision {
+            Decision::Allow => {}
             Decision::Confirm(msg) => anyhow::bail!("confirm required: {msg}"),
             Decision::Deny(msg) => anyhow::bail!("denied: {msg}"),
         }
-    }
 
-    // Gate 4 — allowlist check (sovereign_active = true from here).
-    if !cfg.self_activation.skill_allowed(&id_lc) {
-        if cfg.self_activation.skill_allowlist.is_empty() {
-            anyhow::bail!(
-                "self-activation skill allowlist is empty — add '{id_lc}' to \
-                 `self_activation.skill_allowlist` in freedom.yaml."
-            );
+        // Apply toggle — same mutation as `neoth skills --enable/--disable`.
+        cfg.skills
+            .enabled
+            .retain(|s| s.trim().to_lowercase() != id_lc);
+        cfg.skills
+            .disabled
+            .retain(|s| s.trim().to_lowercase() != id_lc);
+        if turn_on {
+            cfg.skills.enabled.push(id_lc.clone());
+        } else {
+            cfg.skills.disabled.push(id_lc.clone());
         }
-        anyhow::bail!(
-            "skill '{id_lc}' not in `self_activation.skill_allowlist`. \
-             Add it to freedom.yaml or use `neoth skills --enable {id_lc}` as operator."
-        );
-    }
-
-    // Gate 5 — permission system (Full+sovereign → Allow).
-    let decision = evaluate(&action, &cfg.autonomy_policy());
-    match decision {
-        Decision::Allow => {}
-        Decision::Confirm(msg) => anyhow::bail!("confirm required: {msg}"),
-        Decision::Deny(msg) => anyhow::bail!("denied: {msg}"),
-    }
-
-    // Apply toggle — same mutation as `neoth skills --enable/--disable`.
-    // ponytail: reuse apply_skill_toggle from skills.rs private fn via the
-    // same mutation logic inline (private fn; duplication is 3 lines).
-    cfg.skills
-        .enabled
-        .retain(|s| s.trim().to_lowercase() != id_lc);
-    cfg.skills
-        .disabled
-        .retain(|s| s.trim().to_lowercase() != id_lc);
-    if turn_on {
-        cfg.skills.enabled.push(id_lc.clone());
-    } else {
-        cfg.skills.disabled.push(id_lc.clone());
-    }
-
-    cfg.save_public_to_default_path()
-        .map_err(|e| anyhow::anyhow!("write freedom.yaml: {e}"))?;
+        Ok(())
+    })
+    .map_err(|e| anyhow::anyhow!("write freedom.yaml: {e}"))?;
 
     // WAL audit note: 0xD0 CONFIG_RELOADED fires automatically when the daemon
     // hot-reloads freedom.yaml and sees "skills" in changed_fields.
@@ -512,8 +520,8 @@ mod tests {
             .disabled
             .retain(|s| s.trim().to_lowercase() != id_lc);
         loaded.skills.disabled.push(id_lc.to_string());
-        // save_public_to_default_path writes to ~/.neoth/freedom.yaml.
-        // We test the in-memory mutation only (path-save needs home setup).
+        // This legacy unit isolates the list mutation. Path-injected update_at
+        // and unknown-field preservation are covered by config RMW tests.
         assert!(
             loaded
                 .skills

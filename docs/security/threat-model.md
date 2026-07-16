@@ -45,8 +45,9 @@ commands, under their documented command-specific gates.
 | 8 | arXiv search | `tools/arxiv.rs`, `cli/arxiv.rs` | `export.arxiv.org/api/query` | Explicit anonymous read-only command; current constant starts with HTTP and follows the service redirect to HTTPS; no dedicated autonomy action or typed WAL event |
 | 9 | Text-to-speech | `media/tts_dispatch.rs`, `media/tts_cloud.rs`, `media/tts_provider.rs`, `cli/tts.rs` | Offline system/Piper engines; Microsoft Edge speech, ElevenLabs, Azure Speech, or an operator-configured ViitorVoice sidecar | Local by default; every non-local provider requires `media.cloud_tts_enabled`; credential requirements are provider-specific; metadata-only `0xCD` audit when a WAL sink is available |
 | 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | Bounded download/extraction + SHA-256 + **minisign signature and signed asset-name binding** (`updater/sig_verify.rs`, compile-time pinned pubkey) + stage-path confinement + release-bound closed-set self-knowledge verification + primary-last transactional bundle/directory rollback; explicit manual `--allow-unsigned` recovery only |
-| 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | REST send and read-only bot-identity probe; Gateway receive is a separate inbound path; operator bot token; CHANNEL_EGRESS audit on sends |
+| 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | REST send and read-only bot-identity probe; Gateway receive requires an exact immutable sender snowflake; rejected senders get a metadata-only WAL gate event; CHANNEL_EGRESS audit on sends |
 | 12 | Email / Gmail IMAP ingest | `email/imap_fetch.rs`, `cli/email.rs`, `daemon/email_ingest_cron.rs` | Configured IMAP/TLS server (Gmail default); `oauth2.googleapis.com` only when refreshing XOAUTH2 credentials | Network-live only in builds with `imap_fetch`; daemon poll default OFF; non-destructive fetch, local triage, fail-closed quarantine; no SMTP |
+| 13 | Slack, WhatsApp Business, Signal and LINE inbound | `channels/slack_socket.rs`, `channels/webhook_listener.rs`, `channels/signal.rs` | Slack Socket Mode, signed Meta/LINE webhooks, local signal-cli | Transport authentication is followed by an exact immutable sender gate before pipeline dispatch. Missing policy prevents inbound startup; mismatches are dropped without reply and append metadata-only `CHANNEL_GATE_REJECTED` evidence. |
 
 ### 1.1 `web_fetch` (SX-01 guarded)
 
@@ -357,15 +358,22 @@ the configured bot identity without sending a message. Inbound delivery is
 Gateway-WebSocket-driven and is therefore not an outbound REST surface. Every
 send is audited via `CHANNEL_EGRESS` (`0x33`).
 
-The current bot token authenticates NEOTH to Discord; it does not authenticate
-an inbound human to NEOTH. The Gateway parser currently dispatches a
-transport-valid message without a mandatory operator/guild/channel/role/mention
-policy. Slack, WhatsApp Business, Signal, LINE and Twitch have the same
-transport-authenticated-but-not-operator-authenticated gap. They are v1.0 Gold
-blockers, not safe open-inbound defaults. The planned common ingress gate keeps
-stable sender and conversation identities through parsing, represents missing
-policy separately from explicit Open, and refuses adapter startup when a
-required policy is absent or an allowlist is empty.
+The bot token authenticates NEOTH to Discord. Separately,
+`discord_allowed_user_id` authorizes exactly one immutable numeric Discord
+user identity for inbound chat. The daemon refuses to start Discord inbound
+when that policy is absent or blank. The Gateway drops a mismatching sender
+before building an `InboundMessage` or calling the shared pipeline and appends
+the metadata-only `CHANNEL_GATE_REJECTED` (`0x3B`) WAL event.
+
+Slack, WhatsApp Business, Signal and LINE now use the same authorization
+boundary with their channel-native immutable identities:
+`slack_allowed_user_id`, `whatsapp_allowed_sender`,
+`signal_allowed_sender`, and `line_allowed_sender`. Slack/Signal bind the policy
+and WAL writer into the adapter constructor. The webhook listeners receive a
+mandatory policy value from the daemon and gate after signature decoding but
+before deduplication or pipeline work. Token-only or blank-policy startup is
+refused. Twitch remains the explicit transport-authenticated audience-policy
+gap.
 
 ### 1.12 Email / Gmail IMAP ingest
 
@@ -595,6 +603,22 @@ uses a direct no-proxy, no-redirect client. Signal binds the validated origin
 and that client in one typed value; WhatsApp and CalDAV construct the client
 only after the same validation. This keeps bearer tokens, Basic credentials,
 messages, calendar bodies, and task data off cleartext remote transports.
+
+### 4.9 Opt-in self-improve shell verifier
+
+Proposal-supplied shell verification is disabled by default. Enabling
+`allow_shell_verify: true` in `self_improve.yaml` is an explicit operator
+opt-in. The verifier runs in an ephemeral working directory with a scrubbed
+environment, a wall-clock limit, output draining, and whole-process-tree
+termination (a Windows Job Object or a Unix process group). A token guard also
+rejects common network clients and remote-execution tools.
+
+That boundary does **not** provide OS-level network isolation. An allowed
+interpreter or build tool can still open a socket through its own libraries.
+`neoth self-improve status` reports both the opt-in state and
+`shell_verify_network_isolated: false`; do not enable the shell verifier for
+untrusted proposals on a network-connected host. Persisted verified evidence
+and the separate operator accept step remain mandatory even when it is enabled.
 
 ## 5. Reporting a vulnerability
 

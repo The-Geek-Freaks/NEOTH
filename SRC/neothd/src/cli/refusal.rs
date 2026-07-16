@@ -572,49 +572,41 @@ fn validate_reframing_id(id: &str) -> Result<()> {
 /// already-disabled id is a no-op (operator sees a "no change" message).
 fn run_disable(id: &str, output: &OutputFormat) -> Result<()> {
     validate_reframing_id(id)?;
-    let mut cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml — run `neoth init` first")?;
-    let already = cfg
-        .refusal_recovery
-        .disabled_reframings
-        .iter()
-        .any(|d| d == id);
-    if !already {
-        cfg.refusal_recovery
+    let path = FreedomConfig::default_path();
+    let (already, disabled_after) = FreedomConfig::update_at(&path, |cfg| {
+        let already = cfg
+            .refusal_recovery
             .disabled_reframings
-            .push(id.to_string());
-        cfg.save_public_to_default_path()
-            .with_context(|| format!("write freedom.yaml after disabling `{id}`"))?;
-    }
-    report_change(
-        "disable",
-        id,
-        !already,
-        output,
-        &cfg.refusal_recovery.disabled_reframings,
-    )
+            .iter()
+            .any(|disabled| disabled == id);
+        if !already {
+            cfg.refusal_recovery
+                .disabled_reframings
+                .push(id.to_string());
+        }
+        Ok((already, cfg.refusal_recovery.disabled_reframings.clone()))
+    })
+    .with_context(|| format!("write freedom.yaml after disabling `{id}`"))?;
+    report_change("disable", id, !already, output, &disabled_after)
 }
 
 /// R-06: inverse of `run_disable`. Removes `id` from
 /// `refusal_recovery.disabled_reframings`. Idempotent.
 fn run_enable(id: &str, output: &OutputFormat) -> Result<()> {
     validate_reframing_id(id)?;
-    let mut cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml — run `neoth init` first")?;
-    let before_len = cfg.refusal_recovery.disabled_reframings.len();
-    cfg.refusal_recovery.disabled_reframings.retain(|d| d != id);
-    let changed = cfg.refusal_recovery.disabled_reframings.len() != before_len;
-    if changed {
-        cfg.save_public_to_default_path()
-            .with_context(|| format!("write freedom.yaml after enabling `{id}`"))?;
-    }
-    report_change(
-        "enable",
-        id,
-        changed,
-        output,
-        &cfg.refusal_recovery.disabled_reframings,
-    )
+    let path = FreedomConfig::default_path();
+    let (changed, disabled_after) = FreedomConfig::update_at(&path, |cfg| {
+        let before_len = cfg.refusal_recovery.disabled_reframings.len();
+        cfg.refusal_recovery
+            .disabled_reframings
+            .retain(|disabled| disabled != id);
+        Ok((
+            cfg.refusal_recovery.disabled_reframings.len() != before_len,
+            cfg.refusal_recovery.disabled_reframings.clone(),
+        ))
+    })
+    .with_context(|| format!("write freedom.yaml after enabling `{id}`"))?;
+    report_change("enable", id, changed, output, &disabled_after)
 }
 
 /// Render the disable/enable command's result. JSON branch suitable

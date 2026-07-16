@@ -100,13 +100,13 @@ pub fn run_pass(conn: &mut Connection, now_ns: i64, ttl_ns: i64) -> Result<GcRep
     for id in &victim_ids {
         chunks_dropped += tx
             .execute("DELETE FROM chunks WHERE source_id = ?1", params![id])
-            .unwrap_or(0);
+            .with_context(|| format!("delete chunks for source {id}"))?;
         chunks_trigram_dropped += tx
             .execute(
                 "DELETE FROM chunks_trigram WHERE source_id = ?1",
                 params![id],
             )
-            .unwrap_or(0);
+            .with_context(|| format!("delete trigram chunks for source {id}"))?;
     }
     let sources_dropped = if victim_ids.is_empty() {
         0
@@ -349,6 +349,42 @@ mod tests {
         assert_eq!(r.sources_dropped, 1);
         assert!(r.chunks_dropped >= 1);
         assert!(r.chunks_trigram_dropped >= 1);
+    }
+
+    #[test]
+    fn cascade_error_is_reported_and_rolls_back_every_delete() {
+        let (_dir, mut conn) = fresh_db();
+        let now = 1_700_000_000_000_000_000i64;
+        let old_ts = now - 91 * 86_400 * 1_000_000_000;
+        let id = insert_source(&conn, "doc", "transient", old_ts);
+        conn.execute(
+            "INSERT INTO chunks \
+             (title, content, source_id, content_type, source_category, event_id, file_path, ts_ns) \
+             VALUES ('t', 'c', ?1, 'text/plain', 'transient', 0, NULL, ?2)",
+            params![id, old_ts],
+        )
+        .unwrap();
+        conn.execute("DROP TABLE chunks_trigram", []).unwrap();
+
+        let error = run_pass(&mut conn, now, DEFAULT_TTL_NS).unwrap_err();
+        assert!(
+            error.to_string().contains("delete trigram chunks"),
+            "unexpected error: {error:#}"
+        );
+        let sources: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sources WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let chunks: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE source_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sources, 1, "source deletion must roll back");
+        assert_eq!(chunks, 1, "earlier chunk deletion must roll back");
     }
 
     #[test]

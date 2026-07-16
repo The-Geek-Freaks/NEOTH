@@ -14,9 +14,9 @@
 //!
 //! Activation state lives in `freedom.yaml::plugins.wasm.activations`
 //! keyed by plugin manifest id. Mutations go through
-//! [`FreedomConfig::save_public_to_default_path`] so the on-disk
-//! representation is the authoritative source for the next daemon
-//! boot.
+//! [`FreedomConfig::update_at`] so future fields and concurrent operator edits
+//! survive while the on-disk representation remains authoritative for the
+//! next daemon boot.
 
 use std::collections::BTreeMap;
 
@@ -1481,12 +1481,13 @@ fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
     // Best-effort: remove the activation entry from freedom.yaml. If the
     // config can't be loaded/saved the removal already succeeded; log nothing
     // (the directory is gone — discovery is the authoritative source).
-    if let Ok(mut cfg) = FreedomConfig::load_from_default_path()
-        && cfg.plugins.wasm.activations.remove(id).is_some()
-    {
-        // Ignore a save failure — non-fatal, stranded key is harmless.
-        let _ = cfg.save_public_to_default_path();
-    }
+    // Ignore a config failure — non-fatal, a stranded key is harmless and
+    // discovery remains authoritative. The locked RMW cannot overwrite a
+    // concurrent operator edit while performing this best-effort cleanup.
+    let _ = FreedomConfig::update_at(&home.join("freedom.yaml"), |config| {
+        config.plugins.wasm.activations.remove(id);
+        Ok(())
+    });
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {

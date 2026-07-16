@@ -71,10 +71,12 @@ pub struct ChannelCredsView {
     pub telegram_user_id: bool,
     pub slack_bot: bool,
     pub slack_app: bool,
+    pub slack_allowed_user: bool,
     pub whatsapp_token: bool,
     pub whatsapp_phone_id: bool,
     pub whatsapp_verify_token: bool,
     pub whatsapp_app_secret: bool,
+    pub whatsapp_allowed_sender: bool,
     pub whatsapp_baileys_url: bool,
     pub whatsapp_baileys_token: bool,
     pub whatsapp_baileys_allowed_senders: bool,
@@ -86,7 +88,9 @@ pub struct ChannelCredsView {
     /// A legacy native-transport seed is present. It is never consumed.
     pub keet_seed: bool,
     pub discord_bot: bool,
+    pub discord_allowed_sender: bool,
     pub signal_cli_url: bool,
+    pub signal_allowed_sender: bool,
     /// GOLD-FEAT-10b — BlueBubbles iMessage relay.
     pub bluebubbles_url: bool,
     pub bluebubbles_password: bool,
@@ -108,6 +112,7 @@ pub struct ChannelCredsView {
     pub line_access_token: bool,
     /// GOLD-FEAT-10 — LINE channel secret (inbound signature verify) present.
     pub line_channel_secret: bool,
+    pub line_allowed_sender: bool,
     /// GOLD-FEAT-10 — IRC server host present.
     pub irc_server: bool,
     /// GOLD-FEAT-10 — IRC bot nick present.
@@ -171,10 +176,12 @@ impl ChannelCredsView {
             telegram_user_id: cfg.is_some_and(|c| c.telegram_user_id.is_some()),
             slack_bot: secret_present(creds.slack_bot_token.as_ref()),
             slack_app: secret_present(creds.slack_app_token.as_ref()),
+            slack_allowed_user: text_present(creds.slack_allowed_user_id.as_deref()),
             whatsapp_token: secret_present(creds.whatsapp_token.as_ref()),
             whatsapp_phone_id: text_present(creds.whatsapp_phone_id.as_deref()),
             whatsapp_verify_token: secret_present(creds.whatsapp_verify_token.as_ref()),
             whatsapp_app_secret: secret_present(creds.whatsapp_app_secret.as_ref()),
+            whatsapp_allowed_sender: text_present(creds.whatsapp_allowed_sender.as_deref()),
             whatsapp_baileys_url: text_present(creds.whatsapp_baileys_url.as_deref()),
             whatsapp_baileys_token: secret_present(creds.whatsapp_baileys_token.as_ref()),
             whatsapp_baileys_allowed_senders: text_present(
@@ -188,11 +195,10 @@ impl ChannelCredsView {
             keet_allowed_senders: text_present(creds.keet_allowed_senders.as_deref()),
             keet_bearer: secret_present(creds.keet_bridge_bearer_token.as_ref()),
             keet_seed: secret_present(creds.keet_seed_phrase.as_ref()),
-            // GOLD-PROG-16 wired `credentials.discord_bot_token`; serve_tasks
-            // now builds `DiscordChannel::new(creds.discord_bot_token)` + spawns
-            // the gateway receive loop, so presence == configured.
             discord_bot: secret_present(creds.discord_bot_token.as_ref()),
+            discord_allowed_sender: text_present(creds.discord_allowed_user_id.as_deref()),
             signal_cli_url: text_present(creds.signal_cli_url.as_deref()),
+            signal_allowed_sender: text_present(creds.signal_allowed_sender.as_deref()),
             bluebubbles_url: text_present(creds.bluebubbles_url.as_deref()),
             bluebubbles_password: secret_present(creds.bluebubbles_password.as_ref()),
             bluebubbles_allowed_sender: text_present(creds.imessage_allowed_sender.as_deref()),
@@ -205,6 +211,7 @@ impl ChannelCredsView {
             matrix_encryption_required: creds.matrix_requires_encryption(),
             line_access_token: secret_present(creds.line_channel_access_token.as_ref()),
             line_channel_secret: secret_present(creds.line_channel_secret.as_ref()),
+            line_allowed_sender: text_present(creds.line_allowed_sender.as_deref()),
             irc_server: text_present(creds.irc_server.as_deref()),
             irc_nick: text_present(creds.irc_nick.as_deref()),
             irc_allowed_account: text_present(creds.irc_allowed_account.as_deref()),
@@ -246,22 +253,23 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
                 )
             }
         }
-        ChannelKind::Slack => match (v.slack_bot, v.slack_app) {
-            (true, true) => (
+        ChannelKind::Slack => match (v.slack_bot, v.slack_app, v.slack_allowed_user) {
+            (true, true, true) => (
                 ProbeStatus::Ok,
-                "bot + app tokens configured; socket-mode runtime can start",
+                "bot + app tokens + exact sender allowlist configured; socket-mode runtime can start",
             ),
-            (false, false) => (ProbeStatus::NotConfigured, "no slack tokens"),
+            (false, false, false) => (ProbeStatus::NotConfigured, "no slack configuration"),
             _ => (
                 ProbeStatus::Error,
-                "socket mode needs BOTH slack_bot_token (xoxb-) AND slack_app_token (xapp-)",
+                "Slack inbound needs slack_bot_token, slack_app_token, AND slack_allowed_user_id; open or partial adapters are refused",
             ),
         },
         ChannelKind::WhatsAppBusiness => {
             let any = v.whatsapp_token
                 || v.whatsapp_phone_id
                 || v.whatsapp_verify_token
-                || v.whatsapp_app_secret;
+                || v.whatsapp_app_secret
+                || v.whatsapp_allowed_sender;
             if !any {
                 (ProbeStatus::NotConfigured, "no whatsapp credentials")
             } else if !v.whatsapp_token || !v.whatsapp_phone_id {
@@ -272,12 +280,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             } else if !v.whatsapp_verify_token || !v.whatsapp_app_secret {
                 (
                     ProbeStatus::Warn,
-                    "send works; inbound webhook needs BOTH whatsapp_verify_token AND whatsapp_app_secret",
+                    "send works; inbound webhook needs whatsapp_verify_token, whatsapp_app_secret, AND whatsapp_allowed_sender",
+                )
+            } else if !v.whatsapp_allowed_sender {
+                (
+                    ProbeStatus::Error,
+                    "verified WhatsApp webhook is configured but whatsapp_allowed_sender is missing; inbound remains fail-closed",
                 )
             } else {
                 (
                     ProbeStatus::Ok,
-                    "token + phone_id + verify_token + app_secret configured (outbound + verified inbound)",
+                    "token + phone_id + verified webhook + exact sender allowlist configured",
                 )
             }
         }
@@ -341,24 +354,38 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             }
         }
         ChannelKind::Discord => {
-            if v.discord_bot {
+            if !v.discord_bot && !v.discord_allowed_sender {
+                (ProbeStatus::NotConfigured, "no Discord credentials")
+            } else if !v.discord_bot {
                 (
-                    ProbeStatus::Ok,
-                    "bot token configured; gateway runtime can start",
+                    ProbeStatus::Error,
+                    "discord_allowed_user_id is set but discord_bot_token is missing",
+                )
+            } else if !v.discord_allowed_sender {
+                (
+                    ProbeStatus::Error,
+                    "discord_bot_token is set but discord_allowed_user_id is missing — inbound stays fail-closed",
                 )
             } else {
-                (ProbeStatus::NotConfigured, "no discord_bot_token")
+                (
+                    ProbeStatus::Ok,
+                    "bot token + exact sender allowlist configured; gateway runtime can start",
+                )
             }
         }
-        ChannelKind::Signal => match (v.signal_cli_url, v.signal_phone_number) {
-            (true, true) => (
+        ChannelKind::Signal => match (
+            v.signal_cli_url,
+            v.signal_phone_number,
+            v.signal_allowed_sender,
+        ) {
+            (true, true, true) => (
                 ProbeStatus::Ok,
-                "signal_cli_url + phone_number configured (poll loop) — requires a running signal-cli daemon at that URL",
+                "signal_cli_url + phone_number + exact sender allowlist configured (poll loop)",
             ),
-            (false, false) => (ProbeStatus::NotConfigured, "no signal config"),
+            (false, false, false) => (ProbeStatus::NotConfigured, "no signal config"),
             _ => (
                 ProbeStatus::Error,
-                "Signal needs BOTH signal_cli_url AND signal_phone_number",
+                "Signal inbound needs signal_cli_url, signal_phone_number, AND signal_allowed_sender",
             ),
         },
         ChannelKind::IMessageBlueBubbles => match (
@@ -377,17 +404,25 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             ),
         },
         ChannelKind::Matrix => probe_matrix(v, cfg!(feature = "matrix-channel")),
-        ChannelKind::Line => match (v.line_access_token, v.line_channel_secret) {
-            (true, true) => (
+        ChannelKind::Line => match (
+            v.line_access_token,
+            v.line_channel_secret,
+            v.line_allowed_sender,
+        ) {
+            (true, true, true) => (
                 ProbeStatus::Ok,
-                "line_channel_access_token + line_channel_secret configured — inbound via the /line/webhook listener (front it with a public HTTPS reverse proxy), outbound via push",
+                "LINE token + verified webhook + exact sender allowlist configured",
             ),
-            (false, false) => (ProbeStatus::NotConfigured, "no line config"),
-            (true, false) => (
+            (false, false, false) => (ProbeStatus::NotConfigured, "no line config"),
+            (true, false, _) => (
                 ProbeStatus::Warn,
-                "send works; inbound webhook needs line_channel_secret to verify the X-Line-Signature",
+                "send works; inbound webhook needs line_channel_secret and line_allowed_sender",
             ),
-            (false, true) => (
+            (true, true, false) => (
+                ProbeStatus::Error,
+                "verified LINE webhook is configured but line_allowed_sender is missing; inbound remains fail-closed",
+            ),
+            (false, _, _) => (
                 ProbeStatus::Error,
                 "LINE needs line_channel_access_token to send (the channel secret alone cannot push)",
             ),
@@ -586,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn slack_needs_both_tokens_else_error() {
+    fn slack_needs_tokens_and_sender_policy_else_error() {
         let bot_only = ChannelCredsView {
             slack_bot: true,
             ..Default::default()
@@ -598,6 +633,7 @@ mod tests {
         let both = ChannelCredsView {
             slack_bot: true,
             slack_app: true,
+            slack_allowed_user: true,
             ..Default::default()
         };
         assert_eq!(
@@ -634,11 +670,24 @@ mod tests {
             whatsapp_phone_id: true,
             whatsapp_verify_token: true,
             whatsapp_app_secret: true,
+            whatsapp_allowed_sender: true,
             ..Default::default()
         };
         assert_eq!(
             probe_channel(ChannelKind::WhatsAppBusiness, &full).status,
             ProbeStatus::Ok
+        );
+
+        let no_sender_policy = ChannelCredsView {
+            whatsapp_token: true,
+            whatsapp_phone_id: true,
+            whatsapp_verify_token: true,
+            whatsapp_app_secret: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            probe_channel(ChannelKind::WhatsAppBusiness, &no_sender_policy).status,
+            ProbeStatus::Error
         );
 
         let verify_only = ChannelCredsView {
@@ -723,16 +772,23 @@ mod tests {
     }
 
     #[test]
-    fn discord_ok_when_bot_token_set_else_not_configured() {
-        // GOLD-PROG-16 wired discord_bot_token + the gateway receive loop, so a
-        // present token reports Ok (was wrongly pinned NotConfigured before).
+    fn discord_requires_token_and_exact_sender_policy() {
         let none = ChannelCredsView::default();
         assert_eq!(
             probe_channel(ChannelKind::Discord, &none).status,
             ProbeStatus::NotConfigured
         );
+        let token_only = ChannelCredsView {
+            discord_bot: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            probe_channel(ChannelKind::Discord, &token_only).status,
+            ProbeStatus::Error
+        );
         let configured = ChannelCredsView {
             discord_bot: true,
+            discord_allowed_sender: true,
             ..Default::default()
         };
         assert_eq!(

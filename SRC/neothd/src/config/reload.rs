@@ -2,9 +2,9 @@
 //!
 //! Agent #4 design consensus (2026-05-19): when the operator edits
 //! `freedom.yaml` mid-session, NEOTH must pick up the changes without
-//! a daemon restart. Some fields (`operator_id`, `provider_kind`) are
-//! IMMUTABLE post-init — reloading them would require rebuilding the
-//! provider Arc + channel adapters that hold derived state, which
+//! a daemon restart. Some fields (`operator_id`, `provider_kind`) and the
+//! cluster lifecycle are IMMUTABLE post-init — reloading them would require
+//! rebuilding the provider Arc + channel adapters that hold derived state, which
 //! isn't worth the complexity for a solo-operator daemon. Those
 //! fields cause the reload to be rejected with a reason logged at
 //! warn level + audited via WAL.
@@ -35,7 +35,7 @@
 //! let cfg: Arc<FreedomConfig> = controller.latest();   // fresh snapshot
 //! match controller.try_reload() {
 //!     ReloadResult::Reloaded { changed_fields } => /* audit + log */,
-//!     ReloadResult::Rejected { reason }         => /* audit + warn */,
+//!     ReloadResult::Rejected { rejection }      => /* audit + warn */,
 //!     ReloadResult::Unchanged                   => /* no-op */,
 //! }
 //! ```
@@ -55,6 +55,121 @@ use crate::config::FreedomConfig;
 /// with any user-facing artifact.
 pub const RELOAD_SENTINEL_NAME: &str = ".reload-requested";
 
+/// Typed reason why a candidate config could not replace the live snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReloadRejectionReason {
+    /// Changing the daemon identity requires every identity-bound subsystem to
+    /// be reconstructed from startup.
+    OperatorIdChanged {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    /// The authorized provider transport is constructed once at startup.
+    ProviderKindChanged {
+        old: Option<crate::cli::init::ProviderKind>,
+        new: Option<crate::cli::init::ProviderKind>,
+    },
+    /// Cluster transports own sockets, discovery registrations and gossip
+    /// tasks, so their lifecycle remains restart-bound until one supervisor
+    /// owns those resources.
+    ClusterLifecycleChanged { changed_fields: Vec<&'static str> },
+    /// Enabling sovereign mode requires its explicit consent ceremony, but it
+    /// does not require a daemon restart after that ceremony succeeds.
+    SovereignBuddyCeremonyRequired,
+}
+
+impl ReloadRejectionReason {
+    /// Stable machine-readable reason code for the WAL audit payload.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::OperatorIdChanged { .. } => "operator_id_changed",
+            Self::ProviderKindChanged { .. } => "provider_kind_changed",
+            Self::ClusterLifecycleChanged { .. } => "cluster_lifecycle_changed",
+            Self::SovereignBuddyCeremonyRequired => "sovereign_buddy_ceremony_required",
+        }
+    }
+
+    /// Whether this specific rejection can only be applied by restarting the
+    /// daemon. Policy/consent rejections deliberately return false.
+    pub fn restart_required(&self) -> bool {
+        matches!(
+            self,
+            Self::OperatorIdChanged { .. }
+                | Self::ProviderKindChanged { .. }
+                | Self::ClusterLifecycleChanged { .. }
+        )
+    }
+}
+
+impl std::fmt::Display for ReloadRejectionReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OperatorIdChanged { old, new } => write!(
+                f,
+                "operator_id is immutable post-init (old={old:?}, new={new:?}); restart NEOTH to change operator identity"
+            ),
+            Self::ProviderKindChanged { old, new } => write!(
+                f,
+                "provider_kind is immutable post-init (old={old:?}, new={new:?}); restart NEOTH to switch provider — the provider Arc + consent gate are built once at startup"
+            ),
+            Self::ClusterLifecycleChanged { changed_fields } => write!(
+                f,
+                "cluster lifecycle fields cannot be hot-reloaded yet (changed: {}); the active transport, mDNS announcer, and gossip tasks remain on the prior config; restart NEOTH to apply the on-disk cluster config",
+                changed_fields.join(", ")
+            ),
+            Self::SovereignBuddyCeremonyRequired => write!(
+                f,
+                "sovereign_buddy cannot be enabled via reload — run `neoth autonomy sovereign --enable` (consent ceremony required)"
+            ),
+        }
+    }
+}
+
+/// Complete rejection of one candidate snapshot. All applicable reasons are
+/// retained so a non-restart policy rejection cannot hide a restart-bound
+/// field change in the same file edit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReloadRejection {
+    reasons: Vec<ReloadRejectionReason>,
+}
+
+impl ReloadRejection {
+    fn from_reasons(reasons: Vec<ReloadRejectionReason>) -> Option<Self> {
+        (!reasons.is_empty()).then_some(Self { reasons })
+    }
+
+    pub fn reasons(&self) -> &[ReloadRejectionReason] {
+        &self.reasons
+    }
+
+    /// Stable reason codes for structured audit consumers.
+    pub fn reason_codes(&self) -> Vec<&'static str> {
+        self.reasons
+            .iter()
+            .map(ReloadRejectionReason::code)
+            .collect()
+    }
+
+    /// Restart is required when any retained reason owns startup-only state.
+    pub fn restart_required(&self) -> bool {
+        self.reasons
+            .iter()
+            .any(ReloadRejectionReason::restart_required)
+    }
+}
+
+impl std::fmt::Display for ReloadRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (index, reason) in self.reasons.iter().enumerate() {
+            if index > 0 {
+                f.write_str("; ")?;
+            }
+            write!(f, "{reason}")?;
+        }
+        Ok(())
+    }
+}
+
 /// Result of a reload attempt. Carries operator-visible detail for
 /// the audit trail + the stderr/`tracing` log.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,9 +182,9 @@ pub enum ReloadResult {
     Reloaded { changed_fields: Vec<String> },
     /// Reload rejected — an immutable field was changed. The
     /// `ArcSwap` value did NOT change; current config stays live.
-    /// `reason` includes the field name + the old/new values for the
-    /// operator's audit log.
-    Rejected { reason: String },
+    /// `rejection` retains every applicable typed reason and derives the
+    /// structured restart requirement without parsing operator-facing text.
+    Rejected { rejection: ReloadRejection },
     /// File content identical to live config — no swap performed,
     /// no audit frame emitted. Operator triggered reload against a
     /// freedom.yaml they hadn't actually edited.
@@ -135,6 +250,13 @@ impl ReloadController {
         self.latest().autonomy_policy()
     }
 
+    /// Current hot-reloadable cluster gossip policy. Long-lived transports
+    /// resolve this at each send/receive operation instead of freezing startup
+    /// defaults, so privacy and replay-window changes take effect atomically.
+    pub fn gossip_policy(&self) -> crate::config::ClusterGossipPolicy {
+        self.latest().cluster.gossip.clone()
+    }
+
     /// Source path the controller re-reads on `try_reload`.
     pub fn source_path(&self) -> &Path {
         &self.source_path
@@ -189,8 +311,8 @@ impl ReloadController {
         }
 
         // Validate immutable fields.
-        if let Some(reason) = validate_reload(&old, &candidate) {
-            return Ok(ReloadResult::Rejected { reason });
+        if let Some(rejection) = validate_reload(&old, &candidate) {
+            return Ok(ReloadResult::Rejected { rejection });
         }
 
         // Compute changed top-level fields before publishing the new snapshot.
@@ -210,7 +332,7 @@ impl ReloadController {
 }
 
 /// Validate that no immutable field changed between `old` + `new`.
-/// Returns `Some(reason)` on rejection, `None` when the swap is
+/// Returns a typed aggregate on rejection, `None` when the swap is
 /// allowed to proceed.
 ///
 /// Immutable post-init:
@@ -218,35 +340,100 @@ impl ReloadController {
 ///   - `provider_kind` — the provider Arc is built once at startup
 ///     from this kind; reloading would require rebuilding it +
 ///     re-issuing consent
+///   - cluster lifecycle fields — the active carrier, DHT membership,
+///     mDNS registration and gossip handles are built as one runtime unit.
+///     A restart is required until that unit has a generation-bound supervisor.
+///     `cluster.gossip` is the deliberate exception: workers resolve it from
+///     the live controller for every anti-entropy operation.
 /// Channel-specific fields, including `telegram_user_id`, are mutable because
 /// the credential-aware adapter reconciler restarts only the affected adapter.
-fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<String> {
+fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<ReloadRejection> {
+    let mut reasons = Vec::new();
     if old.operator_id != new.operator_id {
-        return Some(format!(
-            "operator_id is immutable post-init (old={:?}, new={:?}); restart NEOTH \
-             to change operator identity",
-            old.operator_id, new.operator_id
-        ));
+        reasons.push(ReloadRejectionReason::OperatorIdChanged {
+            old: old.operator_id.clone(),
+            new: new.operator_id.clone(),
+        });
     }
     if old.provider_kind != new.provider_kind {
-        return Some(format!(
-            "provider_kind is immutable post-init (old={:?}, new={:?}); restart \
-             NEOTH to switch provider — the provider Arc + consent gate are \
-             built once at startup",
-            old.provider_kind, new.provider_kind
-        ));
+        reasons.push(ReloadRejectionReason::ProviderKindChanged {
+            old: old.provider_kind,
+            new: new.provider_kind,
+        });
+    }
+    let cluster_changes = changed_cluster_lifecycle_fields(old, new);
+    if !cluster_changes.is_empty() {
+        reasons.push(ReloadRejectionReason::ClusterLifecycleChanged {
+            changed_fields: cluster_changes,
+        });
     }
     // Error-hunt #2 (2026-07-03) HIGH: sovereign-buddy must NEVER escalate via a
     // hand-edited freedom.yaml + `neoth reload` — the typed-phrase consent
     // ceremony (`neoth autonomy sovereign --enable`) is the ONLY on-ramp.
     // De-escalation (true→false) through reload is always allowed.
     if new.sovereign_buddy && !old.sovereign_buddy {
-        return Some(
-            "sovereign_buddy cannot be enabled via reload — run              `neoth autonomy sovereign --enable` (consent ceremony required)"
-                .to_string(),
-        );
+        reasons.push(ReloadRejectionReason::SovereignBuddyCeremonyRequired);
     }
-    None
+    ReloadRejection::from_reasons(reasons)
+}
+
+/// Exact cluster fields whose values own long-lived runtime resources.
+///
+/// Keep this field-level instead of comparing serialized `cluster` blobs so the
+/// rejection audit identifies the operator action that requires a restart.
+/// Every lifecycle field in `ClusterConfig` is intentionally covered: even
+/// announce policy and bootstrap-peer changes affect a running carrier. Gossip
+/// policy is omitted deliberately because all transports read it live.
+fn changed_cluster_lifecycle_fields(old: &FreedomConfig, new: &FreedomConfig) -> Vec<&'static str> {
+    let mut changed = Vec::new();
+    if old.cluster.name != new.cluster.name {
+        changed.push("cluster.name");
+    }
+    if old.cluster.enabled != new.cluster.enabled {
+        changed.push("cluster.enabled");
+    }
+    if old.cluster.transport != new.cluster.transport {
+        changed.push("cluster.transport");
+    }
+    if old.cluster.peers != new.cluster.peers {
+        changed.push("cluster.peers");
+    }
+    if old.cluster.mdns != new.cluster.mdns {
+        changed.push("cluster.mdns");
+    }
+    if old.cluster.policy != new.cluster.policy {
+        changed.push("cluster.policy");
+    }
+    if old.cluster.listen_port != new.cluster.listen_port {
+        changed.push("cluster.listen_port");
+    }
+    // Future-proof the safety boundary: if ClusterConfig gains a field and its
+    // contributor forgets to classify it above, reject the reload under an
+    // explicit catch-all instead of silently publishing a value whose runtime
+    // lifecycle is unknown.
+    match (
+        serialized_cluster_lifecycle(&old.cluster),
+        serialized_cluster_lifecycle(&new.cluster),
+    ) {
+        (Ok(old_value), Ok(new_value)) if old_value != new_value && changed.is_empty() => {
+            changed.push("cluster.<unclassified>");
+        }
+        (Err(_), _) | (_, Err(_)) if changed.is_empty() => {
+            changed.push("cluster.<serialization-error>");
+        }
+        _ => {}
+    }
+    changed
+}
+
+fn serialized_cluster_lifecycle(
+    cluster: &crate::config::ClusterConfig,
+) -> Result<serde_yaml::Value, serde_yaml::Error> {
+    let mut value = serde_yaml::to_value(cluster)?;
+    if let serde_yaml::Value::Mapping(mapping) = &mut value {
+        mapping.remove(&serde_yaml::Value::String("gossip".to_string()));
+    }
+    Ok(value)
 }
 
 /// Compare two `FreedomConfig` instances at the top level via their YAML
@@ -344,9 +531,14 @@ mod tests {
         let old = fresh_config();
         let mut new = old.clone();
         new.operator_id = Some("not-sam".into());
-        let reason = validate_reload(&old, &new).expect("must reject");
-        assert!(reason.contains("operator_id"));
-        assert!(reason.contains("restart"));
+        let rejection = validate_reload(&old, &new).expect("must reject");
+        assert!(matches!(
+            rejection.reasons(),
+            [ReloadRejectionReason::OperatorIdChanged { .. }]
+        ));
+        assert_eq!(rejection.reason_codes(), ["operator_id_changed"]);
+        assert!(rejection.restart_required());
+        assert!(rejection.to_string().contains("operator_id"));
     }
 
     #[test]
@@ -354,8 +546,109 @@ mod tests {
         let old = fresh_config();
         let mut new = old.clone();
         new.provider_kind = Some(ProviderKind::OpenaiApi);
-        let reason = validate_reload(&old, &new).expect("must reject");
-        assert!(reason.contains("provider_kind"));
+        let rejection = validate_reload(&old, &new).expect("must reject");
+        assert!(matches!(
+            rejection.reasons(),
+            [ReloadRejectionReason::ProviderKindChanged { .. }]
+        ));
+        assert_eq!(rejection.reason_codes(), ["provider_kind_changed"]);
+        assert!(rejection.restart_required());
+        assert!(rejection.to_string().contains("provider_kind"));
+    }
+
+    #[test]
+    fn every_cluster_lifecycle_field_is_restart_bound() {
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.cluster.name = Some("home-mesh".into());
+        new.cluster.enabled = true;
+        new.cluster.transport = crate::config::ClusterTransport::Iroh;
+        new.cluster.peers = vec!["endpoint-id".into()];
+        new.cluster.mdns.enabled = false;
+        new.cluster.policy.announce_on_untrusted_wifi = true;
+        new.cluster.policy.trusted_ssids = vec!["home".into()];
+        new.cluster.gossip.replicate_raw_ingress = true;
+        new.cluster.gossip.replay_budget_days = 14;
+        new.cluster.listen_port = 49_738;
+
+        assert_eq!(
+            changed_cluster_lifecycle_fields(&old, &new),
+            vec![
+                "cluster.name",
+                "cluster.enabled",
+                "cluster.transport",
+                "cluster.peers",
+                "cluster.mdns",
+                "cluster.policy",
+                "cluster.listen_port",
+            ]
+        );
+
+        let rejection = validate_reload(&old, &new).expect("cluster reload must reject");
+        assert!(rejection.restart_required());
+        let reason = rejection.to_string();
+        assert!(reason.contains("active transport"));
+        assert!(reason.contains("restart NEOTH"));
+    }
+
+    #[test]
+    fn gossip_policy_is_hot_reloadable_and_visible_through_controller() {
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.cluster.gossip.replicate_raw_ingress = true;
+        new.cluster.gossip.replay_budget_days = 14;
+
+        assert!(changed_cluster_lifecycle_fields(&old, &new).is_empty());
+        assert!(
+            validate_reload(&old, &new).is_none(),
+            "gossip policy does not own a carrier and must hot-reload"
+        );
+
+        let controller = ReloadController::new(new, PathBuf::from("missing-freedom.yaml"));
+        let policy = controller.gossip_policy();
+        assert!(policy.replicate_raw_ingress);
+        assert_eq!(policy.replay_budget_days, 14);
+    }
+
+    #[test]
+    fn sovereign_ceremony_rejection_does_not_require_restart() {
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.sovereign_buddy = true;
+
+        let rejection = validate_reload(&old, &new).expect("ceremony must reject raw reload");
+        assert_eq!(
+            rejection.reasons(),
+            &[ReloadRejectionReason::SovereignBuddyCeremonyRequired]
+        );
+        assert_eq!(
+            rejection.reason_codes(),
+            ["sovereign_buddy_ceremony_required"]
+        );
+        assert!(!rejection.restart_required());
+    }
+
+    #[test]
+    fn combined_ceremony_and_lifecycle_rejection_retains_restart_requirement() {
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.cluster.name = Some("new-mesh".into());
+        new.sovereign_buddy = true;
+
+        let rejection = validate_reload(&old, &new).expect("combined edit must reject");
+        assert_eq!(rejection.reasons().len(), 2);
+        assert!(matches!(
+            rejection.reasons()[0],
+            ReloadRejectionReason::ClusterLifecycleChanged { .. }
+        ));
+        assert_eq!(
+            rejection.reasons()[1],
+            ReloadRejectionReason::SovereignBuddyCeremonyRequired
+        );
+        assert!(
+            rejection.restart_required(),
+            "a ceremony rejection must not hide the cluster restart requirement"
+        );
     }
 
     #[test]
@@ -452,13 +745,47 @@ mod tests {
         write_yaml(&yaml_path, &yaml);
         let ctrl = ReloadController::new(initial, yaml_path);
         match ctrl.try_reload().expect("reload call succeeds") {
-            ReloadResult::Rejected { reason } => {
-                assert!(reason.contains("operator_id"));
+            ReloadResult::Rejected { rejection } => {
+                assert!(rejection.restart_required());
+                assert!(rejection.to_string().contains("operator_id"));
             }
             other => panic!("expected Rejected, got {other:?}"),
         }
         // Critically: latest() still returns the ORIGINAL config.
         assert_eq!(ctrl.latest().operator_id, Some("sam".into()));
+    }
+
+    #[test]
+    fn try_reload_rejects_cluster_change_without_swapping_or_bumping_generation() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        let mut new_on_disk = initial.clone();
+        // A name-only change is a valid persisted config, but it changes the
+        // identity from which a future carrier and mDNS registration derive.
+        new_on_disk.cluster.name = Some("new-mesh".into());
+        write_yaml(&yaml_path, &serde_yaml::to_string(&new_on_disk).unwrap());
+
+        let ctrl = ReloadController::new(initial, yaml_path);
+        let generation = ctrl.subscribe_generation();
+        match ctrl.try_reload().expect("reload call succeeds") {
+            ReloadResult::Rejected { rejection } => {
+                assert!(rejection.restart_required());
+                assert!(rejection.to_string().contains("cluster.name"));
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+
+        assert_eq!(
+            ctrl.latest().cluster.name,
+            None,
+            "rejected cluster config must not become the active snapshot"
+        );
+        assert_eq!(
+            *generation.borrow(),
+            0,
+            "rejected cluster config must not wake live-config consumers"
+        );
     }
 
     #[test]

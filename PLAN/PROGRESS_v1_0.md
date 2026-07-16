@@ -34,6 +34,28 @@
 > on the only release-relevant commit. R3-10 and R4-01/02/05/08 remain open
 > until exact-head and native clean-machine evidence exists.
 >
+> **Current C6 cluster correction (2026-07-16; no broad R4 box closed):** the
+> GUI no longer publishes cluster fields independently or treats a file write
+> as runtime success. `neoth cluster configure` commits the full typed public
+> snapshot and optional stdin-only passphrase through the canonical locked
+> config/credential transaction, returns a deny-unknown exact receipt, and the
+> GUI verifies operation, instance path and every submitted value before
+> updating its confirmed state. Peers and SSIDs use lossless JSON-array wire
+> values; the old CSV and CLI-only peer gaps are gone. Native desktop release
+> bundles now include `cluster-iroh` on all six targets, while headless musl
+> remains on `release-server`; 17 release-capability contracts and regenerated
+> license notices bind the new graph. The optional secret/config pair now uses
+> a private durable PREPARED journal; every public config/credential load first
+> commits or rolls back a known crash image, while unknown bytes stop recovery
+> fail-closed. Runtime truth is separately hash-equivalent and daemon-bound: a
+> persistent secret-free marker survives identical retries, and only a daemon
+> owning the PID lock may ACK the exact Snapshot after successful carrier
+> construction. Reload rejection remains before ArcSwap, generation-stable and
+> carries typed reason codes plus `restart_required` in WAL. Startup status
+> responses cannot overwrite newer Apply receipts. C6 and R4-13 remain
+> partial/open only because live Peeroxide/Iroh, mDNS and gossip teardown/switch
+> still lack one runtime supervisor.
+>
 > **Current frozen-source local evidence (2026-07-16):** Channel **69/69**,
 > Preset **11/11**, FULL-AUTO **22/22**, Audit-RPC **14/14**, integration state
 > **41/41**, registry **6/6**, credentials **30/30**, Connect **6/6**, Slash

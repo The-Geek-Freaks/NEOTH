@@ -197,7 +197,21 @@ async fn run_one_session(
                     {
                         continue;
                     }
-                    dispatch_inbound(*inbound, Arc::clone(&handler), Arc::clone(&sender)).await;
+                    // `dispatch_inbound` owns the shared receive -> reply path and
+                    // requires a concrete identity. Production always supplies the
+                    // configured allowlist; the sender fallback preserves the
+                    // construction/test-only open-adapter behavior documented above.
+                    let dispatch_allowed_user_id = allowed_user_id
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| inbound.sender_id.clone());
+                    dispatch_inbound(
+                        *inbound,
+                        &dispatch_allowed_user_id,
+                        gate_writer,
+                        Arc::clone(&handler),
+                        Arc::clone(&sender),
+                    )
+                    .await;
                 }
                 MmFrame::Ignored => {}
                 MmFrame::ParseError(reason) => {

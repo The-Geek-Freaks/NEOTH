@@ -364,11 +364,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 println!("{}", "-".repeat(78));
                 for s in &skills {
                     let enabled = if s.is_enabled() { "yes" } else { "no" };
-                    let desc = if s.description().len() > 40 {
-                        format!("{}…", &s.description()[..39])
-                    } else {
-                        s.description().to_string()
-                    };
+                    let desc = truncate(s.description(), 40);
                     println!(
                         "{:<24} {:<7} {:<5} {}",
                         truncate(s.id(), 24),
@@ -423,10 +419,13 @@ async fn run_skill_toggle(
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n {
+    if s.chars().count() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n.saturating_sub(1)])
+        format!(
+            "{}…",
+            s.chars().take(n.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -434,6 +433,12 @@ fn truncate(s: &str, n: usize) -> String {
 mod tests {
     use super::*;
     use crate::config::SkillsConfig;
+
+    #[test]
+    fn truncate_is_unicode_boundary_safe() {
+        let description = format!("{}🌍tail", "a".repeat(38));
+        assert_eq!(truncate(&description, 40), format!("{}🌍…", "a".repeat(38)));
+    }
 
     #[test]
     fn toggle_enable_moves_id_from_disabled_to_enabled() {

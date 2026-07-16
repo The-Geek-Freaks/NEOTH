@@ -206,7 +206,7 @@ fn run_clean(home: &std::path::Path, skip_confirm: bool, output: &OutputFormat) 
     let reports = scan_for_baks(home).context("scan for bak files")?;
     let candidates: Vec<&BakReport> = reports
         .iter()
-        .filter(|r| matches!(r.verdict, BakVerdict::LiveOk | BakVerdict::Stale))
+        .filter(|r| matches!(r.verdict, BakVerdict::Stale))
         .collect();
 
     if candidates.is_empty() {
@@ -255,10 +255,13 @@ fn run_clean(home: &std::path::Path, skip_confirm: bool, output: &OutputFormat) 
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n {
+    if s.chars().count() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n.saturating_sub(1)])
+        format!(
+            "{}…",
+            s.chars().take(n.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -319,9 +322,10 @@ mod tests {
     #[tokio::test]
     async fn clean_requires_yes_flag_in_non_interactive_path() {
         let dir = tempdir().unwrap();
-        // Create one safe-to-clean bak (LiveOk: live bigger than bak).
-        std::fs::write(dir.path().join("a.yaml"), b"BIG-LIVE-FILE-XYZ").unwrap();
+        // Create one proven-stale bak: backup first, newer live file second.
         std::fs::write(dir.path().join("a.yaml.bak"), b"sm").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.path().join("a.yaml"), b"BIG-LIVE-FILE-XYZ").unwrap();
 
         let mut args = args_with_home(dir.path().to_path_buf());
         args.list = false;
@@ -341,7 +345,25 @@ mod tests {
         run_recover(args2).await.unwrap();
         assert!(
             !dir.path().join("a.yaml.bak").exists(),
-            "--yes → bak deleted",
+            "--yes → proven-stale bak deleted",
+        );
+    }
+
+    #[tokio::test]
+    async fn clean_keeps_live_ok_backup_without_newer_live_proof() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("uncertain.yaml"), b"larger live data").unwrap();
+        std::fs::write(dir.path().join("uncertain.yaml.bak"), b"backup").unwrap();
+
+        let mut args = args_with_home(dir.path().to_path_buf());
+        args.list = false;
+        args.clean = true;
+        args.yes = true;
+        run_recover(args).await.unwrap();
+
+        assert!(
+            dir.path().join("uncertain.yaml.bak").exists(),
+            "LiveOk is not proven stale and must never be auto-deleted"
         );
     }
 

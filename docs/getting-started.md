@@ -104,6 +104,11 @@ The wizard configures:
 | Mesh | LAN, Tailscale, Hysteria, cluster nodes. | Discovery, pairing, topology, and consent rules. |
 
 The normal path does not require editing YAML. Advanced config still lives in `~/.neoth/freedom.yaml` for operators who want it.
+The GUI Cluster panel submits its public fields and optional write-only shared
+passphrase as one complete transaction. If Apply reports **restart required**,
+restart the supervised daemon before expecting transport, mDNS or gossip to
+change; `restart_required: true` means saved, not hot-activated. Disabled plus
+stopped is already inert and correctly returns `false`.
 
 ## 4. First chat
 
@@ -166,10 +171,12 @@ Other surfaces:
 
 | Surface | Command |
 | :-- | :-- |
-| WhatsApp Business | `neoth channel add whatsapp` |
-| Slack | `neoth channel add slack` |
+| WhatsApp Business | `neoth channel add whatsapp --token "$WA_TOKEN" --phone-id <id> --verify-token "$WA_VERIFY_TOKEN" --app-secret "$WA_APP_SECRET" --allowed-sender +491701234567` |
+| Slack | `neoth channel add slack --bot-token "$SLACK_BOT_TOKEN" --app-token "$SLACK_APP_TOKEN" --allowed-sender U0123456789` |
 | Keet-identity private topic | Run `neoth-keet-bridge setup` and `serve`, exchange peer `self_id` values, then `neoth channel add keet`; this is a NEOTH Pear/Hyperswarm topic, not an existing Keet app room. |
-| Discord | `neoth channel add discord`; verify the bot identity without sending via `neoth channel test discord` |
+| Discord | `neoth channel add discord --token "$DISCORD_BOT_TOKEN" --allowed-sender <numeric-user-id>`; verify the bot identity without sending via `neoth channel test discord` |
+| Signal | `neoth channel add signal --url http://127.0.0.1:8080 --phone +491701111111 --allowed-sender +491702222222` |
+| LINE | `neoth channel add line --token "$LINE_TOKEN" --password "$LINE_CHANNEL_SECRET" --allowed-sender U0123456789abcdef` |
 | All messaging adapters | Open the GUI Channels panel or run `neoth channel list`; both use the same 15-channel registry and the same add/test/remove contract. |
 | Email | Source-build opt-in: compile `imap_fetch`, configure IMAP credentials, then run `neoth email fetch` (the named release bundles currently omit this feature) |
 | Calendar | Set `calendar.caldav_url` plus credentials in `freedom.yaml` / `credentials.yaml`; use `neoth calendar list` or the GUI Calendar panel |

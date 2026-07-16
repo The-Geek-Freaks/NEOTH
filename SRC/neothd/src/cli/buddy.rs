@@ -8,8 +8,8 @@
 //!
 //! - `neoth buddy self-activation --enable | --disable [--output json]`
 //!   Toggle `self_activation.enabled` in freedom.yaml via the same atomic,
-//!   0600-preserved write that `neoth autonomy set` uses
-//!   ([`crate::config::FreedomConfig::save_public_to_default_path`]).
+//!   lossless locked update that `neoth autonomy set` uses
+//!   ([`crate::config::FreedomConfig::update_at`]).
 //!
 //! - `neoth buddy proactive --enable | --disable [--output json]`
 //!   Toggle `proactive.enabled` in freedom.yaml, same mechanism.
@@ -187,13 +187,8 @@ fn run_self_activation(enable: bool, disable: bool, output: OutputFormat) -> Res
     }
     let turn_on = enable;
 
-    let mut cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
-
-    cfg.self_activation.enabled = turn_on;
-
-    cfg.save_public_to_default_path()
-        .context("persist self_activation.enabled to freedom.yaml")?;
+    let path = FreedomConfig::default_path();
+    set_self_activation_at(&path, turn_on)?;
 
     let verb = if turn_on { "enabled" } else { "disabled" };
     match output {
@@ -207,6 +202,14 @@ fn run_self_activation(enable: bool, disable: bool, output: OutputFormat) -> Res
     Ok(())
 }
 
+fn set_self_activation_at(path: &std::path::Path, enabled: bool) -> Result<()> {
+    FreedomConfig::update_at(path, |config| {
+        config.self_activation.enabled = enabled;
+        Ok(())
+    })
+    .context("persist self_activation.enabled to freedom.yaml")
+}
+
 // ── proactive toggle ──────────────────────────────────────────────────────────
 
 fn run_proactive(enable: bool, disable: bool, output: OutputFormat) -> Result<()> {
@@ -215,13 +218,8 @@ fn run_proactive(enable: bool, disable: bool, output: OutputFormat) -> Result<()
     }
     let turn_on = enable;
 
-    let mut cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
-
-    cfg.proactive.enabled = turn_on;
-
-    cfg.save_public_to_default_path()
-        .context("persist proactive.enabled to freedom.yaml")?;
+    let path = FreedomConfig::default_path();
+    set_proactive_at(&path, turn_on)?;
 
     let verb = if turn_on { "enabled" } else { "disabled" };
     match output {
@@ -233,6 +231,14 @@ fn run_proactive(enable: bool, disable: bool, output: OutputFormat) -> Result<()
         }
     }
     Ok(())
+}
+
+fn set_proactive_at(path: &std::path::Path, enabled: bool) -> Result<()> {
+    FreedomConfig::update_at(path, |config| {
+        config.proactive.enabled = enabled;
+        Ok(())
+    })
+    .context("persist proactive.enabled to freedom.yaml")
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -390,22 +396,14 @@ mod tests {
         cfg.self_activation.enabled = false;
         write_cfg(&dir, &cfg);
 
-        // Override NEOTH_HOME so save_public_to_default_path writes to our tmp dir.
-        let home = dir.path().to_str().unwrap().to_owned();
-        // We exercise the mutation directly (env override path) via the helper
-        // that mirrors what run_self_activation does.
         let path = dir.path().join("freedom.yaml");
-        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
-        loaded.self_activation.enabled = true;
-        let yaml = serde_yaml::to_string(&loaded).expect("serialize");
-        std::fs::write(&path, yaml).expect("write");
+        set_self_activation_at(&path, true).expect("enable self activation");
 
         let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(
             reloaded.self_activation.enabled,
             "self_activation.enabled must be true after enable toggle"
         );
-        let _ = home; // suppress unused warning
     }
 
     /// Disable self-activation: write cfg with enabled=true, run toggle, reload,
@@ -418,10 +416,7 @@ mod tests {
         write_cfg(&dir, &cfg);
 
         let path = dir.path().join("freedom.yaml");
-        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
-        loaded.self_activation.enabled = false;
-        let yaml = serde_yaml::to_string(&loaded).expect("serialize");
-        std::fs::write(&path, yaml).expect("write");
+        set_self_activation_at(&path, false).expect("disable self activation");
 
         let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(
@@ -442,16 +437,20 @@ mod tests {
         write_cfg(&dir, &cfg);
 
         let path = dir.path().join("freedom.yaml");
-        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
-        loaded.proactive.enabled = true;
-        let yaml = serde_yaml::to_string(&loaded).expect("serialize");
-        std::fs::write(&path, yaml).expect("write");
+        let mut source = std::fs::read_to_string(&path).expect("read fixture");
+        source.push_str("future_buddy_extension:\n  keep: true\n");
+        std::fs::write(&path, source).expect("seed future field");
+        set_proactive_at(&path, true).expect("enable proactive mode");
 
         let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(
             reloaded.proactive.enabled,
             "proactive.enabled must be true after enable toggle"
         );
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).expect("read updated fixture"))
+                .expect("parse updated fixture");
+        assert_eq!(raw["future_buddy_extension"]["keep"].as_bool(), Some(true));
     }
 
     /// Disable proactive: write cfg with proactive.enabled=true, toggle, reload,
@@ -464,10 +463,7 @@ mod tests {
         write_cfg(&dir, &cfg);
 
         let path = dir.path().join("freedom.yaml");
-        let mut loaded = FreedomConfig::load_from_path(&path).expect("load written freedom.yaml");
-        loaded.proactive.enabled = false;
-        let yaml = serde_yaml::to_string(&loaded).expect("serialize");
-        std::fs::write(&path, yaml).expect("write");
+        set_proactive_at(&path, false).expect("disable proactive mode");
 
         let reloaded = FreedomConfig::load_from_path(&path).expect("reload after toggle");
         assert!(

@@ -20,9 +20,11 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   `AwaitingUser` state for QR/OAuth/device/signing work are not wired yet.
 - **Channel completion and OpenClaw parity:** IRC, BlueBubbles, Mattermost,
   Google Chat, Matrix and Nostr fail closed on their named inbound identity
-  policies. Slack, WhatsApp Business, Discord, Signal, LINE and Twitch still
-  authenticate only the transport/bot and need a mandatory typed sender,
-  conversation and mention/pairing policy before release. Five advanced settings are still file-only
+  policies. Discord, Slack, WhatsApp Business, Signal and LINE now require an
+  exact immutable sender identity, refuse open inbound startup, and gate every
+  decoded message before the pipeline with metadata-only WAL rejection
+  evidence. Twitch still authenticates only the transport/bot and needs a
+  mandatory typed audience/mention policy before release. Five advanced settings are still file-only
   (`line_webhook_port`, `irc_port`, `irc_tls`, `irc_allowed_nick`,
   `matrix_store_path`). Durable cross-store credential recovery, persisted
   multi-account identity, descriptor-rendered forms and OpenClaw
@@ -96,6 +98,14 @@ above.
 | Private mesh | Authenticated peeroxide/iroh carriers share durable per-peer pending frames, exact cursor-bound ACKs, restart replay, and transactional receive/materialization for canonical memory and ground-truth snapshots. Raw ingress remains default-off and the mesh is intentionally scoped to typed NEOTH content rather than arbitrary device files. |
 | Doctor | Setup diagnostics for config, secrets, models, channels, plugins, providers, disk, WAL, and cluster discovery. |
 | Docs | Quickstart, privacy proof, install, CLI, providers, local models, channels, plugins, compare pages, security policy. |
+
+Native desktop releases contain both Peeroxide and Iroh; the static headless
+musl server contains Peeroxide only. GUI and CLI persist cluster settings as one
+complete typed transaction with an optional stdin-only shared passphrase.
+Enabled lifecycle changes return `restart_required: true`: they are durable,
+but the current daemon does not hot-switch transport, mDNS or gossip and must
+be restarted before the change is active. Disabled plus stopped is already
+inert and returns `false`.
 
 > **GUI settings coverage (honest status):** the post-onboarding settings window has
 > 10 tabs and — since the Session-37 GU-01 batch — all 10 are real panels (Privacy,

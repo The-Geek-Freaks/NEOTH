@@ -3971,10 +3971,7 @@ pub(crate) fn spawn_reload_poller(
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            if sentinel.exists() {
-                crate::cli::serve::handle_reload_sentinel(&ctrl, &sentinel, &writer_for_reload)
-                    .await;
-            }
+            crate::cli::serve::handle_reload_sentinel(&ctrl, &sentinel, &writer_for_reload).await;
         }
     })
 }
@@ -4343,12 +4340,14 @@ fn credentials_for_channel(
         ChannelKind::Slack => {
             selected.slack_bot_token = credentials.slack_bot_token.clone();
             selected.slack_app_token = credentials.slack_app_token.clone();
+            selected.slack_allowed_user_id = credentials.slack_allowed_user_id.clone();
         }
         ChannelKind::WhatsAppBusiness => {
             selected.whatsapp_token = credentials.whatsapp_token.clone();
             selected.whatsapp_phone_id = credentials.whatsapp_phone_id.clone();
             selected.whatsapp_verify_token = credentials.whatsapp_verify_token.clone();
             selected.whatsapp_app_secret = credentials.whatsapp_app_secret.clone();
+            selected.whatsapp_allowed_sender = credentials.whatsapp_allowed_sender.clone();
         }
         ChannelKind::WhatsAppBaileys => {
             selected.whatsapp_baileys_url = credentials.whatsapp_baileys_url.clone();
@@ -4367,10 +4366,12 @@ fn credentials_for_channel(
         }
         ChannelKind::Discord => {
             selected.discord_bot_token = credentials.discord_bot_token.clone();
+            selected.discord_allowed_user_id = credentials.discord_allowed_user_id.clone();
         }
         ChannelKind::Signal => {
             selected.signal_cli_url = credentials.signal_cli_url.clone();
             selected.signal_phone_number = credentials.signal_phone_number.clone();
+            selected.signal_allowed_sender = credentials.signal_allowed_sender.clone();
         }
         ChannelKind::IMessageBlueBubbles => {
             selected.bluebubbles_url = credentials.bluebubbles_url.clone();
@@ -4392,6 +4393,7 @@ fn credentials_for_channel(
             selected.line_channel_access_token = credentials.line_channel_access_token.clone();
             selected.line_channel_secret = credentials.line_channel_secret.clone();
             selected.line_webhook_port = credentials.line_webhook_port;
+            selected.line_allowed_sender = credentials.line_allowed_sender.clone();
         }
         ChannelKind::Irc => {
             selected.irc_server = credentials.irc_server.clone();
@@ -4618,61 +4620,102 @@ pub(crate) fn spawn_channel_adapters(
     // R4-P1 honest channel-bootstrap status logging: every channel gets an
     // explicit log line at boot so `neoth doctor channels` matches what
     // `neoth serve` actually did (LIVE / CONFIGURED-NOT-STARTED / OUTBOUND-ONLY).
-    // Slack socket-mode inbound — spawns the WebSocket receive loop when both
-    // bot + app tokens are configured. Requires a provider; else log CNS.
+    // Slack socket-mode inbound is fail-closed: a single canonical operator
+    // user id and the WAL rejection writer are bound before the receive loop
+    // can start. Tokens without the policy remain outbound/probe-only.
+    let slack_allowed_user = creds
+        .slack_allowed_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let slack_any_configured = creds.slack_bot_token.is_some()
+        || creds.slack_app_token.is_some()
+        || creds.slack_allowed_user_id.is_some();
     match (
         creds.slack_bot_token.clone(),
         creds.slack_app_token.clone(),
+        slack_allowed_user,
         shared_provider.as_ref(),
     ) {
-        (Some(bot), Some(app), Some(provider)) => {
-            let channel = Arc::new(crate::channels::slack::SlackChannel::new(bot, app));
-            let live_channel: Arc<dyn Channel> = channel.clone();
-            let handler: PipelineHandler = build_live_channel_handler(
-                provider.clone(),
-                live_channel,
-                config,
-                writer,
-                provider_meter,
-                rate_limiter,
-                segment_path,
-                neoth_home,
-                shared_views_conn,
-                reload_controller,
-                confirm_bus.clone(),
-                views_executor.clone(),
-            );
-            spawn_shared_channel_run(channel, handler, ChannelKind::Slack, "Slack", channel_tasks);
-            info!(
-                channel = "slack",
-                status = "LIVE",
-                "channel: spawned (socket-mode WS loop)"
-            );
+        (Some(bot), Some(app), Some(allowed_user), Some(provider)) => {
+            match crate::channels::slack::SlackChannel::new_inbound(
+                bot,
+                app,
+                &allowed_user,
+                writer.clone(),
+            ) {
+                Ok(channel) => {
+                    let channel = Arc::new(channel);
+                    let live_channel: Arc<dyn Channel> = channel.clone();
+                    let handler: PipelineHandler = build_live_channel_handler(
+                        provider.clone(),
+                        live_channel,
+                        config,
+                        writer,
+                        provider_meter,
+                        rate_limiter,
+                        segment_path,
+                        neoth_home,
+                        shared_views_conn,
+                        reload_controller,
+                        confirm_bus.clone(),
+                        views_executor.clone(),
+                    );
+                    spawn_shared_channel_run(
+                        channel,
+                        handler,
+                        ChannelKind::Slack,
+                        "Slack",
+                        channel_tasks,
+                    );
+                    info!(
+                        channel = "slack",
+                        status = "LIVE",
+                        "channel: spawned (socket-mode WS loop)"
+                    );
+                }
+                Err(error) => warn!(
+                    channel = "slack",
+                    status = "CONFIGURED-NOT-STARTED",
+                    error = %error,
+                    "Slack sender policy is invalid; channel not started"
+                ),
+            }
         }
-        (Some(_), None, _) | (None, Some(_), _) => {
-            warn!(
-                channel = "slack",
-                status = "CONFIGURED-NOT-STARTED",
-                "Slack needs BOTH bot_token (xoxb-) and app_token (xapp-) for socket mode; \
-                 only one supplied — receive loop not started. send_text still works."
-            );
-        }
-        (Some(_), Some(_), None) => {
-            warn!(
-                channel = "slack",
-                status = "CONFIGURED-NOT-STARTED",
-                "Slack tokens configured but provider unavailable; channel not started"
-            );
-        }
-        (None, None, _) => {}
+        (Some(_), Some(_), Some(_), None) => warn!(
+            channel = "slack",
+            status = "CONFIGURED-NOT-STARTED",
+            "Slack credentials and sender policy are configured but provider unavailable; channel not started"
+        ),
+        _ if slack_any_configured => warn!(
+            channel = "slack",
+            status = "CONFIGURED-NOT-STARTED",
+            "Slack inbound needs slack_bot_token, slack_app_token, and a non-empty slack_allowed_user_id; refusing an open or partial adapter"
+        ),
+        _ => {}
     }
 
-    // GOLD-PROG-16 — Discord inbound via the gateway WS receive loop. Spawns
-    // when a bot token + provider are present (`DiscordChannel::run` dials the
-    // gateway). Mirrors the Slack creds-based arm.
-    match (creds.discord_bot_token.clone(), shared_provider.as_ref()) {
-        (Some(token), Some(provider)) => {
-            match crate::channels::discord::DiscordChannel::new(token) {
+    // Discord inbound is fail-closed: the immutable sender snowflake and WAL
+    // rejection writer are bound into the adapter before its Gateway loop can
+    // start. A bot token alone is outbound/probe-only configuration.
+    let discord_allowed_sender = creds
+        .discord_allowed_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    match (
+        creds.discord_bot_token.clone(),
+        discord_allowed_sender,
+        shared_provider.as_ref(),
+    ) {
+        (Some(token), Some(allowed_sender), Some(provider)) => {
+            match crate::channels::discord::DiscordChannel::new_inbound(
+                token,
+                &allowed_sender,
+                writer.clone(),
+            ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
                         provider.clone(),
@@ -4703,28 +4746,52 @@ pub(crate) fn spawn_channel_adapters(
                 Err(e) => warn!(
                     channel = "discord",
                     error = %e,
-                    "Discord token configured but adapter construction failed; channel not started"
+                    "Discord configuration is invalid; channel not started"
                 ),
             }
         }
-        (Some(_), None) => warn!(
+        (Some(_), None, _) => warn!(
+            channel = "discord",
+            status = "CONFIGURED-NOT-STARTED",
+            "Discord token configured but discord_allowed_user_id is missing or blank; inbound remains disabled"
+        ),
+        (Some(_), Some(_), None) => warn!(
             channel = "discord",
             status = "CONFIGURED-NOT-STARTED",
             "Discord token configured but provider unavailable; channel not started"
         ),
-        (None, _) => {}
+        (None, Some(_), _) => warn!(
+            channel = "discord",
+            status = "CONFIGURED-NOT-STARTED",
+            "Discord sender allowlist configured but bot token missing; channel not started"
+        ),
+        (None, None, _) => {}
     }
 
-    // GOLD-FEAT-10 — Signal inbound via the signal-cli poll loop. Spawns when
-    // the cli URL + registered number + a provider are all present
-    // (`SignalChannel::run` polls /v1/receive). Mirrors the Discord creds arm.
+    // Signal inbound is fail-closed: the exact E.164 sender and WAL rejection
+    // writer are bound into the poll adapter before it can receive messages.
+    let signal_allowed_sender = creds
+        .signal_allowed_sender
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let signal_any_configured = creds.signal_cli_url.is_some()
+        || creds.signal_phone_number.is_some()
+        || creds.signal_allowed_sender.is_some();
     match (
         creds.signal_cli_url.clone(),
         creds.signal_phone_number.clone(),
+        signal_allowed_sender,
         shared_provider.as_ref(),
     ) {
-        (Some(url), Some(number), Some(provider)) => {
-            match crate::channels::signal::SignalChannel::new(url, number) {
+        (Some(url), Some(number), Some(allowed_sender), Some(provider)) => {
+            match crate::channels::signal::SignalChannel::new_inbound(
+                url,
+                number,
+                &allowed_sender,
+                writer.clone(),
+            ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
                         provider.clone(),
@@ -4759,17 +4826,17 @@ pub(crate) fn spawn_channel_adapters(
                 ),
             }
         }
-        (Some(_), Some(_), None) => warn!(
+        (Some(_), Some(_), Some(_), None) => warn!(
             channel = "signal",
             status = "CONFIGURED-NOT-STARTED",
-            "Signal configured but provider unavailable; channel not started"
+            "Signal credentials and sender policy are configured but provider unavailable; channel not started"
         ),
-        (Some(_), None, _) | (None, Some(_), _) => warn!(
+        _ if signal_any_configured => warn!(
             channel = "signal",
             status = "CONFIGURED-NOT-STARTED",
-            "Signal needs BOTH signal_cli_url and signal_phone_number; only one supplied — not started"
+            "Signal inbound needs signal_cli_url, signal_phone_number, and a non-empty signal_allowed_sender; refusing an open or partial adapter"
         ),
-        (None, None, _) => {}
+        _ => {}
     }
 
     // GOLD-FEAT-10b — iMessage via a local BlueBubbles server (REST polling;
@@ -5347,17 +5414,33 @@ pub(crate) fn spawn_channel_adapters(
         );
     }
 
-    // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
-    // verify-token + app-secret + provider are all present. Listens on
-    // 127.0.0.1:<whatsapp_webhook_port> (default 8443).
+    // WhatsApp inbound via Meta webhook listener. The exact sender policy is
+    // canonicalized before construction and checked before dedup/pipeline work.
+    let whatsapp_allowed_sender = creds
+        .whatsapp_allowed_sender
+        .as_deref()
+        .and_then(|value| crate::channels::whatsapp_webhook::normalize_allowed_sender(value).ok());
+    let whatsapp_any_configured = creds.whatsapp_token.is_some()
+        || creds.whatsapp_phone_id.is_some()
+        || creds.whatsapp_verify_token.is_some()
+        || creds.whatsapp_app_secret.is_some()
+        || creds.whatsapp_allowed_sender.is_some();
     let whatsapp_inbound_started = match (
         creds.whatsapp_token.clone(),
         creds.whatsapp_phone_id.clone(),
         creds.whatsapp_verify_token.clone(),
         creds.whatsapp_app_secret.clone(),
+        whatsapp_allowed_sender,
         shared_provider.as_ref(),
     ) {
-        (Some(token), Some(phone), Some(verify), Some(secret), Some(provider)) => {
+        (
+            Some(token),
+            Some(phone),
+            Some(verify),
+            Some(secret),
+            Some(allowed_sender),
+            Some(provider),
+        ) => {
             let handler: PipelineHandler = build_channel_handler(
                 provider.clone(),
                 config,
@@ -5382,6 +5465,7 @@ pub(crate) fn spawn_channel_adapters(
                 meta_verify_token: verify.expose().to_string(),
                 slack_signing_secret: Vec::new(),
                 pipeline: handler,
+                inbound_allowed_sender: allowed_sender,
                 whatsapp_send_creds: Some(crate::channels::webhook_listener::WhatsAppSendCreds {
                     access_token: token.clone(),
                     phone_number_id: phone.clone(),
@@ -5412,14 +5496,13 @@ pub(crate) fn spawn_channel_adapters(
                 line: None,
             };
             let task = tokio::spawn(async move {
-                // GR-012b — re-dispatch any inbound webhooks spooled before a
-                // prior crash (ACKed 200 to Meta but never provably processed)
-                // BEFORE accepting new ones. Borrow for the drain, then `serve`
-                // consumes the cfg.
-                crate::channels::webhook_listener::drain_inbound_spool(&listener_cfg).await;
                 let shutdown = std::future::pending::<()>();
-                if let Err(e) =
-                    crate::channels::webhook_listener::serve(bind, listener_cfg, shutdown).await
+                if let Err(e) = crate::channels::webhook_listener::serve_with_spool_recovery(
+                    bind,
+                    listener_cfg,
+                    shutdown,
+                )
+                .await
                 {
                     tracing::error!(error = %e, "WhatsApp webhook listener exited with error");
                 }
@@ -5436,7 +5519,7 @@ pub(crate) fn spawn_channel_adapters(
             );
             true
         }
-        (Some(_), _, _, _, None) => {
+        (Some(_), Some(_), Some(_), Some(_), Some(_), None) => {
             warn!(
                 channel = "whatsapp",
                 status = "CONFIGURED-NOT-STARTED",
@@ -5444,12 +5527,28 @@ pub(crate) fn spawn_channel_adapters(
             );
             false
         }
-        (Some(_), _, _, _, _) => {
+        (Some(_), Some(_), Some(_), Some(_), None, _) => {
+            warn!(
+                channel = "whatsapp",
+                status = "CONFIGURED-NOT-STARTED",
+                "WhatsApp webhook credentials are configured but whatsapp_allowed_sender is missing or invalid; refusing an open inbound listener"
+            );
+            false
+        }
+        (Some(_), Some(_), _, _, _, _) => {
             warn!(
                 channel = "whatsapp",
                 status = "OUTBOUND-ONLY",
                 "WhatsApp send_text works but inbound needs whatsapp_verify_token + \
-                 whatsapp_app_secret in credentials.yaml. Listener not started."
+                 whatsapp_app_secret + whatsapp_allowed_sender in credentials.yaml. Listener not started."
+            );
+            false
+        }
+        _ if whatsapp_any_configured => {
+            warn!(
+                channel = "whatsapp",
+                status = "CONFIGURED-NOT-STARTED",
+                "WhatsApp configuration is partial; token and phone id are required for outbound, and webhook verification plus an allowed sender are required for inbound"
             );
             false
         }
@@ -5541,12 +5640,20 @@ pub(crate) fn spawn_channel_adapters(
     // Listens on 127.0.0.1:<line_webhook_port> (default 8444); the operator
     // fronts it with a public HTTPS reverse proxy. Outbound replies route back
     // through the LINE push API, gated + audited like the WhatsApp arm.
+    let line_allowed_sender = creds
+        .line_allowed_sender
+        .as_deref()
+        .and_then(|value| crate::channels::line_api::normalize_allowed_sender(value).ok());
+    let line_any_configured = creds.line_channel_access_token.is_some()
+        || creds.line_channel_secret.is_some()
+        || creds.line_allowed_sender.is_some();
     match (
         creds.line_channel_access_token.clone(),
         creds.line_channel_secret.clone(),
+        line_allowed_sender,
         shared_provider.as_ref(),
     ) {
-        (Some(access_token), Some(secret), Some(provider)) => {
+        (Some(access_token), Some(secret), Some(allowed_sender), Some(provider)) => {
             let handler: PipelineHandler = build_channel_handler(
                 provider.clone(),
                 config,
@@ -5569,6 +5676,7 @@ pub(crate) fn spawn_channel_adapters(
                 meta_verify_token: String::new(),
                 slack_signing_secret: Vec::new(),
                 pipeline: handler,
+                inbound_allowed_sender: allowed_sender,
                 whatsapp_send_creds: None,
                 // P0 — gate + audit every LINE webhook reply under the active
                 // autonomy; honour the proof-hardline required-audit switch.
@@ -5599,8 +5707,12 @@ pub(crate) fn spawn_channel_adapters(
             };
             let task = tokio::spawn(async move {
                 let shutdown = std::future::pending::<()>();
-                if let Err(e) =
-                    crate::channels::webhook_listener::serve(bind, listener_cfg, shutdown).await
+                if let Err(e) = crate::channels::webhook_listener::serve_with_spool_recovery(
+                    bind,
+                    listener_cfg,
+                    shutdown,
+                )
+                .await
                 {
                     tracing::error!(error = %e, "LINE webhook listener exited with error");
                 }
@@ -5616,23 +5728,28 @@ pub(crate) fn spawn_channel_adapters(
                 "channel: spawned (LINE webhook listener on 127.0.0.1)"
             );
         }
-        (Some(_), Some(_), None) => warn!(
+        (Some(_), Some(_), Some(_), None) => warn!(
             channel = "line",
             status = "CONFIGURED-NOT-STARTED",
             "LINE configured but provider unavailable; channel not started"
         ),
-        (Some(_), None, _) => warn!(
+        (Some(_), Some(_), None, _) => warn!(
+            channel = "line",
+            status = "CONFIGURED-NOT-STARTED",
+            "LINE token and secret are configured but line_allowed_sender is missing or invalid; refusing an open inbound listener"
+        ),
+        (Some(_), None, _, _) => warn!(
             channel = "line",
             status = "OUTBOUND-ONLY",
             "LINE access token set but channel secret missing — inbound webhook needs \
-             line_channel_secret to verify signatures. Listener not started (send_text still works)."
+             line_channel_secret and line_allowed_sender. Listener not started (send_text still works)."
         ),
-        (None, Some(_), _) => warn!(
+        _ if line_any_configured => warn!(
             channel = "line",
             status = "CONFIGURED-NOT-STARTED",
-            "LINE channel secret set but line_channel_access_token missing; cannot send. Listener not started."
+            "LINE configuration is partial; line_channel_access_token, line_channel_secret, and line_allowed_sender are required for inbound"
         ),
-        (None, None, _) => {}
+        _ => {}
     }
 
     // Keet through the repository-owned local companion. Construction proves
@@ -6183,6 +6300,14 @@ pub(crate) struct BackgroundHandles {
     pub cluster_foreign_indexer_task: crate::cluster::foreign_indexer::ForeignIndexerHandle,
     #[cfg(feature = "cluster")]
     pub cluster_gossip_task: Option<JoinHandle<()>>,
+    /// Optional iroh outbound anti-entropy loop. It owns WAL and transport
+    /// handles and must be aborted before either is shut down.
+    #[cfg(feature = "cluster-iroh")]
+    pub iroh_gossip_task: Option<JoinHandle<()>>,
+    /// Live iroh router. Kept in the shutdown set so the router-owned inbound
+    /// handler releases its WAL writer sender before the main writer drains.
+    #[cfg(feature = "cluster-iroh")]
+    pub iroh_transport_handle: Option<Arc<crate::cluster::iroh_transport::IrohTransport>>,
     #[cfg(feature = "cluster")]
     pub cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle>,
     /// mDNS LAN announcer (Phase-2 wire-in). Dropping the ServiceDaemon
@@ -6301,6 +6426,10 @@ pub(crate) async fn shutdown_background_tasks(
         cluster_foreign_indexer_task,
         #[cfg(feature = "cluster")]
         cluster_gossip_task,
+        #[cfg(feature = "cluster-iroh")]
+        iroh_gossip_task,
+        #[cfg(feature = "cluster-iroh")]
+        iroh_transport_handle,
         #[cfg(feature = "cluster")]
         cluster_swarm,
         #[cfg(feature = "cluster")]
@@ -6460,6 +6589,23 @@ pub(crate) async fn shutdown_background_tasks(
 
         // SL-01b: stop the gossip send-tick before tearing the transport down.
         crate::cli::serve_tasks::abort_optional(cluster_gossip_task).await;
+
+        // Iroh owns two additional WalWriterHandle senders: the outbound tick
+        // and the router's inbound handler. Drain the tick first, then always
+        // shut the router down so it releases the handler. Shutdown deliberately
+        // works through a shared reference: a future observer Arc must not turn
+        // graceful daemon teardown into a WAL-writer deadlock.
+        #[cfg(feature = "cluster-iroh")]
+        {
+            crate::cli::serve_tasks::abort_optional(iroh_gossip_task).await;
+            if let Some(transport) = iroh_transport_handle {
+                if let Err(error) = transport.shutdown().await {
+                    warn!(%error, "iroh cluster transport shutdown error (non-fatal)");
+                } else {
+                    info!("iroh cluster transport shut down");
+                }
+            }
+        }
 
         // SL-00(1b): tear down the cluster transport. `shutdown()` aborts the
         // discovery task + awaits it so we leave the DHT cleanly (no lingering
@@ -8180,6 +8326,75 @@ mod channel_reconcile_tests {
             changed_channel_credentials(&old, &rotated),
             vec![ChannelKind::Slack]
         );
+    }
+
+    #[test]
+    fn discord_sender_policy_change_restarts_only_discord() {
+        let home = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        let previous = crate::config::credentials::Credentials {
+            discord_bot_token: Some(SecretString::from("discord-token")),
+            discord_allowed_user_id: Some("111111111111111111".into()),
+            ..Default::default()
+        };
+        let mut candidate = previous.clone();
+        candidate.discord_allowed_user_id = Some("222222222222222222".into());
+
+        let previous = channel_credential_fingerprints(&config, &previous, home.path());
+        let candidate = channel_credential_fingerprints(&config, &candidate, home.path());
+        assert_eq!(
+            changed_channel_credentials(&previous, &candidate),
+            vec![ChannelKind::Discord]
+        );
+    }
+
+    #[test]
+    fn inbound_sender_policy_changes_restart_only_their_adapter() {
+        let home = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        let assert_policy_rebind =
+            |kind: ChannelKind,
+             previous: crate::config::credentials::Credentials,
+             candidate: crate::config::credentials::Credentials| {
+                let previous = channel_credential_fingerprints(&config, &previous, home.path());
+                let candidate = channel_credential_fingerprints(&config, &candidate, home.path());
+                assert_eq!(
+                    changed_channel_credentials(&previous, &candidate),
+                    vec![kind]
+                );
+            };
+
+        let previous = crate::config::credentials::Credentials {
+            slack_allowed_user_id: Some("U111".into()),
+            ..Default::default()
+        };
+        let mut candidate = previous.clone();
+        candidate.slack_allowed_user_id = Some("U222".into());
+        assert_policy_rebind(ChannelKind::Slack, previous, candidate);
+
+        let previous = crate::config::credentials::Credentials {
+            whatsapp_allowed_sender: Some("491701111111".into()),
+            ..Default::default()
+        };
+        let mut candidate = previous.clone();
+        candidate.whatsapp_allowed_sender = Some("491702222222".into());
+        assert_policy_rebind(ChannelKind::WhatsAppBusiness, previous, candidate);
+
+        let previous = crate::config::credentials::Credentials {
+            signal_allowed_sender: Some("+491701111111".into()),
+            ..Default::default()
+        };
+        let mut candidate = previous.clone();
+        candidate.signal_allowed_sender = Some("+491702222222".into());
+        assert_policy_rebind(ChannelKind::Signal, previous, candidate);
+
+        let previous = crate::config::credentials::Credentials {
+            line_allowed_sender: Some("U111".into()),
+            ..Default::default()
+        };
+        let mut candidate = previous.clone();
+        candidate.line_allowed_sender = Some("U222".into());
+        assert_policy_rebind(ChannelKind::Line, previous, candidate);
     }
 
     #[test]

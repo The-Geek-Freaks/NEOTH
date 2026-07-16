@@ -98,26 +98,14 @@ pub fn cache_path(home: &Path) -> PathBuf {
 /// Save the report to the cache. Atomic `.tmp` + rename so a
 /// concurrent reader never sees a partial JSON.
 pub fn save_cache(home: &Path, report: &DetectReport) -> std::io::Result<PathBuf> {
-    use std::fs::{self, OpenOptions};
-    use std::io::Write;
-
-    fs::create_dir_all(home)?;
+    std::fs::create_dir_all(home)?;
     let path = cache_path(home);
-    let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_vec_pretty(report).map_err(std::io::Error::other)?;
-    {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp)?;
-        f.write_all(&body)?;
-        f.flush()?;
-    }
-    if path.exists() {
-        fs::remove_file(&path)?;
-    }
-    fs::rename(&tmp, &path)?;
+    // Hardware/tooling details and local paths are operator-private. Reuse the
+    // canonical crash-safe writer so the target is replaced without a
+    // remove-before-rename gap and the staged/final file is 0600/current-user
+    // only from its first byte.
+    crate::util::atomic_write::atomic_write_private(&path, &body)?;
     Ok(path)
 }
 
@@ -267,6 +255,17 @@ mod tests {
         save_cache(home.path(), &second).unwrap();
         let loaded = load_cache(home.path(), 200).unwrap();
         assert_eq!(loaded.docker_version, Some("Docker version 26.0.0".into()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_cache_is_private_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let path = save_cache(home.path(), &fresh_report(100)).unwrap();
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]

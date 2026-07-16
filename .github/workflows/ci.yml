@@ -119,6 +119,7 @@ jobs:
         run: |
           python3 .github/release-tools/test-release-isolation.py
           python3 packaging/tests/test_release_asset_contract.py
+          python3 packaging/tests/test_release_capability_contract.py
           python3 packaging/tests/test_release_gate_contract.py
 
   release-signer:
@@ -475,10 +476,12 @@ jobs:
           # a headless Linux runner (the pure-Rust backends need no display libs
           # at build time; default-OFF in source so this matrix entry is its check).
           - { os: ubuntu-24.04, feature: os-clipboard }
-          # GR-RESID-IROH — the experimental iroh QUIC cluster transport. Compile-
-          # verifies the full iroh dep tree gates cleanly (default-OFF in source;
-          # the unit tests run elsewhere — the loopback round-trip is #[ignore]
-          # because it needs a live relay/discovery network).
+          # C6 / GR-RESID-IROH — the iroh QUIC cluster transport is default-OFF
+          # for ordinary source builds but part of the native release-desktop
+          # bundle. This compile sentinel covers the full iroh dependency tree;
+          # test_release_capability_contract.py separately proves every native
+          # release target selects that bundle while musl stays release-server.
+          # The live relay/discovery round-trip remains #[ignore].
           - { os: ubuntu-24.04, feature: cluster-iroh }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

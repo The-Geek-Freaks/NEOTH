@@ -109,20 +109,20 @@ pub enum DictationError {
 /// unified STT entry point that enforces provider selection (honoring
 /// `config.stt.primary / model_size / language`), cloud gating, audit, and
 /// fallback in one place.
-pub fn transcribe_utterance(
+pub async fn transcribe_utterance(
     pcm: &[f32],
     sample_rate_hz: u32,
     config: &MediaConfig,
     updater: &crate::config::UpdaterConfig,
     neoth_home: &std::path::Path,
 ) -> Result<String, DictationError> {
-    transcribe_utterance_with_writer(pcm, sample_rate_hz, config, updater, neoth_home, None)
+    transcribe_utterance_with_writer(pcm, sample_rate_hz, config, updater, neoth_home, None).await
 }
 
 /// Writer-aware dictation seam. Text-only callers retain
 /// [`transcribe_utterance`]; daemon callers can pass their WAL handle so
 /// required cloud-media audit remains fail-closed without duplicating STT.
-pub fn transcribe_utterance_with_writer(
+pub async fn transcribe_utterance_with_writer(
     pcm: &[f32],
     sample_rate_hz: u32,
     config: &MediaConfig,
@@ -179,34 +179,20 @@ pub fn transcribe_utterance_with_writer(
     // constructed asynchronously and keyed by the explicit NEOTH home,
     // repository, and idle timeout inside that dispatcher.
     //
-    let (text, status) = match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            let stt_result = handle.block_on(crate::media::stt_provider::dispatch_pcm_f32(
-                &config.stt,
-                config,
-                updater,
-                neoth_home,
-                pcm,
-                sample_rate_hz,
-                wal_writer,
-            ));
-            match stt_result {
-                Ok(r) if !r.text.is_empty() => (r.text, "transcribed"),
-                Ok(_) => (String::new(), "empty transcript"),
-                Err(e) => return Err(DictationError::Transcription(e.to_string())),
-            }
-        }
-        Err(_) => {
-            // B20 hard invariant: dispatch_pcm_f32 is the ONLY PCM
-            // production STT entry. A production caller without a runtime is
-            // a wiring bug — fail loud instead of silently bypassing
-            // MediaSttConfig via the legacy candle path.
-            return Err(DictationError::Transcription(
-                "no tokio runtime — dictation requires the daemon/CLI runtime \
-                 (B20: dispatch_pcm_f32 is the only production PCM STT entry)"
-                    .to_string(),
-            ));
-        }
+    let (text, status) = match crate::media::stt_provider::dispatch_pcm_f32(
+        &config.stt,
+        config,
+        updater,
+        neoth_home,
+        pcm,
+        sample_rate_hz,
+        wal_writer,
+    )
+    .await
+    {
+        Ok(r) if !r.text.is_empty() => (r.text, "transcribed"),
+        Ok(_) => (String::new(), "empty transcript"),
+        Err(e) => return Err(DictationError::Transcription(e.to_string())),
     };
     if text.is_empty() {
         Err(DictationError::Transcription(status.to_string()))
@@ -258,8 +244,8 @@ mod tests {
         assert!(first.path().join("dictation_consent_shown").is_file());
     }
 
-    #[test]
-    fn returns_not_enabled_when_dictation_disabled() {
+    #[tokio::test]
+    async fn returns_not_enabled_when_dictation_disabled() {
         let cfg = config_with(false, false);
         let home = tempfile::tempdir().unwrap();
         let result = transcribe_utterance(
@@ -268,15 +254,16 @@ mod tests {
             &cfg,
             &crate::config::UpdaterConfig::default(),
             home.path(),
-        );
+        )
+        .await;
         assert!(
             matches!(result, Err(DictationError::NotEnabled)),
             "must refuse when dictation_enabled = false"
         );
     }
 
-    #[test]
-    fn vad_gate_rejects_silence_utterance() {
+    #[tokio::test]
+    async fn vad_gate_rejects_silence_utterance() {
         // dictation_enabled = true, vad_enabled = true, all-silence PCM.
         // transcribe_pcm_samples is NOT called (VAD short-circuits).
         let cfg = config_with(true, true);
@@ -288,15 +275,16 @@ mod tests {
             &cfg,
             &crate::config::UpdaterConfig::default(),
             home.path(),
-        );
+        )
+        .await;
         assert!(
             matches!(result, Err(DictationError::AllSilence)),
             "VAD must reject an all-silence utterance"
         );
     }
 
-    #[test]
-    fn vad_gate_passes_speech_forward() {
+    #[tokio::test]
+    async fn vad_gate_passes_speech_forward() {
         // dictation_enabled = true, vad_enabled = true, loud PCM.
         // The VAD should pass speech through; transcribe_pcm_samples will
         // return ("", "model not cached") in test builds (no model on disk).
@@ -309,7 +297,8 @@ mod tests {
             &cfg,
             &crate::config::UpdaterConfig::default(),
             home.path(),
-        );
+        )
+        .await;
         // In test builds without model artifacts the STT returns empty text
         // with a non-empty status. We only assert the VAD did NOT short-circuit.
         match result {
@@ -327,8 +316,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn vad_bypass_when_vad_disabled() {
+    #[tokio::test]
+    async fn vad_bypass_when_vad_disabled() {
         // When vad_enabled = false, even silence PCM must reach STT (no gate).
         // Result will be Transcription error (model not cached) not AllSilence.
         let cfg = config_with(true, false);
@@ -339,7 +328,8 @@ mod tests {
             &cfg,
             &crate::config::UpdaterConfig::default(),
             home.path(),
-        );
+        )
+        .await;
         assert!(
             !matches!(result, Err(DictationError::AllSilence)),
             "VAD gate must be bypassed when vad_enabled = false"
@@ -348,49 +338,35 @@ mod tests {
 
     // ── B20 unified-dispatcher tests ──────────────────────────────────────────
     //
-    // `transcribe_utterance` internally calls `Handle::try_current()` and then
-    // `handle.block_on(...)`. `block_on` panics if called from a tokio *executor*
-    // thread (i.e. inside `#[tokio::test]` body). We exercise the dispatch path
-    // by calling `transcribe_utterance` from within `spawn_blocking` — blocking
-    // pool threads have the runtime handle but are NOT executor threads, so
-    // `block_on` is safe there.
+    // `transcribe_utterance` is async and directly awaits the canonical
+    // dispatcher, so executor-thread callers cannot trip a nested block_on.
 
     /// B20 regression: cloud primary is still blocked without cloud_stt_enabled
     /// when routed through transcribe_utterance. The cloud gate lives inside
     /// dispatch_transcription and fires regardless of the outer caller.
-    #[test]
-    fn cloud_primary_still_blocked_without_flag_via_dictation() {
+    #[tokio::test]
+    async fn cloud_primary_still_blocked_without_flag_via_dictation() {
         use crate::media::stt_dispatch::{MediaSttConfig, SttProvider};
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("mini runtime for B20 cloud-gate dictation test");
-
-        let result: Result<String, DictationError> = rt.block_on(async {
-            tokio::task::spawn_blocking(|| {
-                let home = tempfile::tempdir().unwrap();
-                let cfg = MediaConfig {
-                    dictation_enabled: true,
-                    vad_enabled: false,
-                    cloud_stt_enabled: false, // gate is OFF
-                    stt: MediaSttConfig {
-                        primary: SttProvider::OpenAiWhisperApi,
-                        ..Default::default()
-                    },
-                    ..MediaConfig::default()
-                };
-                transcribe_utterance(
-                    &vec![0.1f32; 4_800],
-                    16_000,
-                    &cfg,
-                    &crate::config::UpdaterConfig::default(),
-                    home.path(),
-                )
-            })
-            .await
-            .expect("spawn_blocking join")
-        });
+        let home = tempfile::tempdir().unwrap();
+        let cfg = MediaConfig {
+            dictation_enabled: true,
+            vad_enabled: false,
+            cloud_stt_enabled: false, // gate is OFF
+            stt: MediaSttConfig {
+                primary: SttProvider::OpenAiWhisperApi,
+                ..Default::default()
+            },
+            ..MediaConfig::default()
+        };
+        let result: Result<String, DictationError> = transcribe_utterance(
+            &vec![0.1f32; 4_800],
+            16_000,
+            &cfg,
+            &crate::config::UpdaterConfig::default(),
+            home.path(),
+        )
+        .await;
 
         match result {
             Err(DictationError::Transcription(msg)) => {

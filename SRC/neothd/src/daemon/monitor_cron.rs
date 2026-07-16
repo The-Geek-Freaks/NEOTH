@@ -691,37 +691,15 @@ pub async fn run_pipeline_scorecard_tick(
 /// appear unconfigured and suppress the real misconfigured warnings).
 pub(crate) fn warn_misconfigured_channels(home: &Path) {
     let config_path = home.join("freedom.yaml");
-    let cfg = match config_path.try_exists() {
-        Ok(false) => None,
-        Ok(true) => match crate::config::FreedomConfig::load_from_path(&config_path) {
-            Ok(config) => Some(config),
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    path = %config_path.display(),
-                    "freedom.yaml load failed — channel misconfiguration check skipped"
-                );
-                return;
-            }
-        },
+    let (cfg, creds) = match crate::config::load_optional_runtime_config_pair_from_path(
+        &config_path,
+    ) {
+        Ok(pair) => pair,
         Err(error) => {
             tracing::warn!(
                 error = %error,
                 path = %config_path.display(),
-                "freedom.yaml path inspection failed — channel misconfiguration check skipped"
-            );
-            return;
-        }
-    };
-    let creds_path = home.join("credentials.yaml");
-    let creds = match crate::config::credentials::Credentials::load_or_default(&creds_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                path = %creds_path.display(),
-                "credentials.yaml load failed — channel misconfiguration check skipped \
-                 (repair the file or restore the keychain key)"
+                    "coherent config/credential load failed — channel misconfiguration check skipped"
             );
             return;
         }

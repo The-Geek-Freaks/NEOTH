@@ -164,15 +164,16 @@ pub fn run_consolidation_pass(
 
     // ── Phase 2: hot → warm consolidation ─────────────────────────────────
     //
-    // Events older than 7 days leave `idx_episode`. v1 keeps the original
-    // text verbatim under `kind='retained'`; per-day LLM summary rollups
-    // land when Phase 28a MT-2b adds the extraction prompt.
+    // Unpinned events older than 7 days leave `idx_episode`. Pinned episodes
+    // remain in the hot tier: the warm/cold schemas do not carry the pin bit,
+    // and migrating one would silently turn a permanent operator decision
+    // back into a decaying memory.
     let seven_days_ago = now_ns - 7 * DAY_NS;
 
     let mut select = tx.prepare(
         "SELECT event_id, ts_ns, text, text_hash, importance, access_count \
          FROM idx_episode \
-         WHERE ts_ns < ?1",
+         WHERE ts_ns < ?1 AND pinned = 0",
     )?;
     let rows: Vec<(i64, i64, String, String, f64, i64)> = select
         .query_map(params![seven_days_ago], |r| {
@@ -517,6 +518,28 @@ mod tests {
             pinned > unpinned,
             "the pinned event now outranks the decayed one"
         );
+    }
+
+    #[test]
+    fn pinned_old_episode_stays_hot_instead_of_losing_pin_on_migration() {
+        let (_dir, mut conn) = open();
+        let now: i64 = 1_700_000_000_000_000_000;
+        insert_episode(&conn, 7, 30, 0.8, now);
+        assert_eq!(store::set_episode_pinned(&conn, 7, true).unwrap(), 1);
+
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
+
+        assert_eq!(report.consolidated, 0);
+        let pinned: i64 = conn
+            .query_row(
+                "SELECT pinned FROM idx_episode WHERE event_id = 7",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pinned, 1, "the operator pin must survive indefinitely");
+        assert_eq!(count_in_tier(&conn, Tier::Hot).unwrap(), 1);
+        assert_eq!(count_in_tier(&conn, Tier::Warm).unwrap(), 0);
     }
 
     #[test]

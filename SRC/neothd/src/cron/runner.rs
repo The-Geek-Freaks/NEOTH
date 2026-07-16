@@ -111,9 +111,10 @@ pub async fn run_job_at(
     writer: &WalWriterHandle,
 ) -> Result<RunOutcome> {
     let config_path = home.join("freedom.yaml");
-    let config = crate::config::FreedomConfig::load_from_path_or_default(&config_path)
+    let runtime = crate::config::load_runtime_config_pair_from_path_or_default(&config_path)
         .with_context(|| format!("load Cron runtime config {}", config_path.display()))?;
-    validate_delivery_target(home, job, &config).await?;
+    let config = runtime.config;
+    validate_delivery_target(home, job, &config, &runtime.credentials).await?;
     let provider = resolve_job_provider(home, job, provider, writer, &config).await?;
     if job.execution.thinking_budget.is_some()
         && !provider.get().request_controls().supports_thinking_budget()
@@ -280,6 +281,7 @@ async fn validate_delivery_target(
     home: &Path,
     job: &Job,
     config: &crate::config::FreedomConfig,
+    credentials: &crate::config::credentials::Credentials,
 ) -> Result<()> {
     let Some(delivery) = &job.delivery else {
         return Ok(());
@@ -321,14 +323,6 @@ async fn validate_delivery_target(
                         "Keet Cron delivery resolves its secret topic capability from credentials.yaml; do not copy it into jobs.yaml as delivery.recipient"
                     );
                 }
-                let credentials_path = home.join("credentials.yaml");
-                let credentials = crate::config::credentials::Credentials::load_effective(
-                    &credentials_path,
-                    config.secrets_backend,
-                )
-                .with_context(|| {
-                    format!("load Keet credentials from {}", credentials_path.display())
-                })?;
                 let bridge_url = credentials
                     .keet_bridge_url
                     .as_deref()

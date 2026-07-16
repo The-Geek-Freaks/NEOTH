@@ -187,11 +187,20 @@ pub fn preview_forget_by_topic(conn: &Connection, topic: &str) -> Result<ForgetR
         "idx_relations",
     )?;
     let link_rows = count(
-        "SELECT COUNT(*) FROM idx_memory_links \
-         WHERE lo_id IN (SELECT event_id FROM idx_episode \
-                         WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\') \
-            OR hi_id IN (SELECT event_id FROM idx_episode \
-                         WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\')",
+        "WITH forgotten(event_id) AS ( \
+             SELECT event_id FROM idx_episode \
+             WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+             UNION \
+             SELECT event_id FROM idx_consolidated \
+             WHERE event_id IS NOT NULL \
+               AND text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+             UNION \
+             SELECT event_id FROM idx_longterm \
+             WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+         ) \
+         SELECT COUNT(*) FROM idx_memory_links \
+         WHERE lo_id IN (SELECT event_id FROM forgotten) \
+            OR hi_id IN (SELECT event_id FROM forgotten)",
         "idx_memory_links",
     )?;
     let contradiction_rows = count(
@@ -377,13 +386,22 @@ fn forget_by_topic_as_source(
             .context("collect channel/sender pairs")?
     };
 
-    // GOLD-ADAPT-MEM-07 — collect the matching episode event_ids BEFORE the
-    // delete below removes them, so co-access association links touching a
-    // forgotten memory can be cascaded (else they dangle as graph endpoints).
+    // GOLD-ADAPT-MEM-07 — collect matching event ids from every queryable tier
+    // BEFORE the deletes below remove them. Links retain the original event id
+    // when an episode consolidates/promotes, so looking only in idx_episode
+    // leaves warm/cold endpoints dangling after a GDPR forget.
     let forgotten_event_ids: Vec<i64> = {
         let mut stmt = tx
             .prepare(
-                "SELECT event_id FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+                "SELECT event_id FROM idx_episode \
+                 WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                 UNION \
+                 SELECT event_id FROM idx_consolidated \
+                 WHERE event_id IS NOT NULL \
+                   AND text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                 UNION \
+                 SELECT event_id FROM idx_longterm \
+                 WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             )
             .context("prepare event_id pre-collect for link cascade")?;
         stmt.query_map(rusqlite::params![pattern], |r| r.get::<_, i64>(0))
@@ -1316,6 +1334,34 @@ mod tests {
             preview, report,
             "preview must match confirmed graph cascade"
         );
+    }
+
+    #[test]
+    fn forget_removes_links_for_matching_warm_and_cold_memories() {
+        let conn = seed_db();
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('retained', '2026-05-02', 3, 'warm AcmeCorp memory', 'h5', 0.7, 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access) VALUES \
+             (1, 2, 1.0, 0), (2, 3, 1.0, 0), (2, 10, 1.0, 0)",
+            [],
+        )
+        .unwrap();
+
+        let preview = preview_forget_by_topic(&conn, "AcmeCorp").unwrap();
+        assert_eq!(preview.link_rows, 3, "all three tier endpoints are visible");
+
+        let report = forget_by_topic(&conn, "AcmeCorp", 1_700).unwrap();
+        assert_eq!(report.link_rows, 3);
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_memory_links", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0, "no warm/cold association endpoint may dangle");
     }
 
     #[tokio::test]

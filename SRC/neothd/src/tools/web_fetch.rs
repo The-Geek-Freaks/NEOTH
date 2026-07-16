@@ -194,11 +194,10 @@ pub(crate) async fn extract_goal_from_text(
     // ceiling: the goal + JSON envelope cost tokens too, and most extraction
     // goals are satisfiable from the opening sections of a page.
     const MAX_PAGE_CHARS_FOR_GOAL: usize = 8_000;
-    let page_snippet = if page_text.len() > MAX_PAGE_CHARS_FOR_GOAL {
-        &page_text[..MAX_PAGE_CHARS_FOR_GOAL]
-    } else {
-        page_text
-    };
+    let page_snippet = page_text
+        .char_indices()
+        .nth(MAX_PAGE_CHARS_FOR_GOAL)
+        .map_or(page_text, |(byte_index, _)| &page_text[..byte_index]);
 
     let prompt = format!(
         "GOAL: {goal}\n\nSOURCE URL: {page_url}\n\nPAGE TEXT:\n{page_snippet}\n\n\
@@ -229,9 +228,10 @@ pub(crate) async fn extract_goal_from_text(
         .unwrap_or(raw);
 
     serde_json::from_str::<GoalExtraction>(stripped).with_context(|| {
+        let preview = &stripped[..crate::util::byte_floor(stripped, 200)];
         format!(
             "goal extractor: provider returned non-JSON response: {}",
-            &stripped[..stripped.len().min(200)]
+            preview
         )
     })
 }
@@ -1423,6 +1423,34 @@ mod tests {
             msg.contains("non-JSON response"),
             "error should mention non-JSON response; got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn goal_extraction_unicode_error_preview_never_splits_utf8() {
+        let provider = FixedJsonProvider(format!("{}{{{{", "日本語".repeat(80)));
+        let err = extract_goal_from_text(
+            "page",
+            "https://example.com/bad-unicode-json",
+            "goal",
+            &provider,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("non-JSON response"));
+    }
+
+    #[tokio::test]
+    async fn goal_extraction_unicode_page_limit_never_splits_utf8() {
+        let provider = FixedJsonProvider(
+            r#"{"rational":"safe","evidence":[],"summary":"bounded"}"#.to_string(),
+        );
+        let page = format!("{}🌍tail", "a".repeat(7_999));
+        let result =
+            extract_goal_from_text(&page, "https://example.com/unicode-page", "goal", &provider)
+                .await
+                .unwrap();
+        assert_eq!(result.summary, "bounded");
     }
 
     /// No-goal path: plain `fetch` (without a goal) returns unchanged text —

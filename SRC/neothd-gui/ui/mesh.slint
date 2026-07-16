@@ -46,6 +46,17 @@ export struct MeshForeignRow {
     latest: string,   // pre-formatted latest received time e.g. "12:03"
 }
 
+/// One unresolved canonical-content divergence from `neoth cluster conflicts`.
+export struct MeshConflictRow {
+    content-id: string,
+    incumbent-origin: string,
+    incoming-origin: string,
+    incumbent-digest: string,
+    incoming-digest: string,
+    policy: string,
+    observed-at: string,
+}
+
 // ── PeerCard — fleet peer: health rail + resource meters + quick actions ──────
 
 component PeerCard inherits Rectangle {
@@ -341,6 +352,12 @@ export component MeshView inherits Rectangle {
     in property <string> mesh-foreign-bytes: "";
     in property <int>    mesh-foreign-peers: 0;
 
+    // ── Typed conflict ledger ────────────────────────────────────────────────
+    in property <[MeshConflictRow]> mesh-conflicts: [];
+    in property <int> mesh-conflict-count: 0;
+    in property <bool> mesh-conflicts-valid: true;
+    in property <string> mesh-conflicts-error: "";
+
     // ── Gossip stream + expansion (Wave 5) ───────────────────────────────────
     in property <[string]> gossip-events: [];  // newest-first log lines
     in property <string>   expanded-peer: "";  // peer-id with detail open; "" = none
@@ -351,6 +368,7 @@ export component MeshView inherits Rectangle {
     // ── Per-peer quick action callbacks (Wave 5) ─────────────────────────────
     callback peer-sync-clicked(string /*peer-id*/);  // enqueue WAL sync
     callback peer-expanded(string /*peer-id*/);       // toggle inline detail
+    callback conflict-resolve-clicked(string /*content-id*/, string /*preferred origin*/);
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -490,6 +508,131 @@ export component MeshView inherits Rectangle {
                             }
 
                             RefreshFooter { ts: root.mesh-refreshed-at; }
+                        }
+                    }
+
+                    // ── CONFLICTS CARD ──────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                height: 18px;
+                                Kicker { label: "CONTENT CONFLICTS"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Rectangle {
+                                    height: 18px;
+                                    width: 36px;
+                                    border-radius: Theme.radius-pill;
+                                    background: root.mesh-conflict-count > 0
+                                        ? Theme.warning-tint : Theme.memory-tint;
+                                    border-width: 1px;
+                                    border-color: root.mesh-conflict-count > 0
+                                        ? Theme.warning : Theme.memory;
+                                    Text {
+                                        text: "\{root.mesh-conflict-count}";
+                                        color: root.mesh-conflict-count > 0
+                                            ? Theme.warning : Theme.memory;
+                                        font-family: Theme.font-mono;
+                                        font-size: 9px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            if !root.mesh-conflicts-valid: Rectangle {
+                                min-height: 48px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.consent-tint;
+                                border-width: 1px;
+                                border-color: Theme.consent;
+                                VerticalLayout {
+                                    padding: 10px;
+                                    Text {
+                                        text: root.mesh-conflicts-error;
+                                        color: Theme.consent;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            if root.mesh-conflicts-valid && root.mesh-conflict-count == 0: Text {
+                                text: "No unresolved typed mesh conflicts.";
+                                color: Theme.memory;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                            }
+
+                            for conflict in root.mesh-conflicts: Rectangle {
+                                min-height: 132px;
+                                border-radius: Theme.radius-sm;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: Theme.warning;
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 6px;
+                                    alignment: start;
+                                    Text {
+                                        text: conflict.content-id;
+                                        color: Theme.warning;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: conflict.policy + " · observed " + conflict.observed-at;
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                    }
+                                    Text {
+                                        text: "A  " + conflict.incumbent-origin + "  " + conflict.incumbent-digest;
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: "B  " + conflict.incoming-origin + "  " + conflict.incoming-digest;
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        overflow: elide;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        NeothButton {
+                                            label: "Prefer A";
+                                            size: "sm";
+                                            primary: false;
+                                            clicked => {
+                                                root.conflict-resolve-clicked(
+                                                    conflict.content-id,
+                                                    conflict.incumbent-origin
+                                                );
+                                            }
+                                        }
+                                        NeothButton {
+                                            label: "Prefer B";
+                                            size: "sm";
+                                            primary: false;
+                                            clicked => {
+                                                root.conflict-resolve-clicked(
+                                                    conflict.content-id,
+                                                    conflict.incoming-origin
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 

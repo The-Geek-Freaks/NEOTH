@@ -144,8 +144,10 @@ impl PeerSessionId {
 /// A peer's cryptographic public key, hex-encoded (64-char lowercase) —
 /// same shape as [`registry::PairedPeer`]'s `pub_key_hex`. The single
 /// canonical pubkey identity across the cluster: it keys the gossip
-/// [`gossip_wire::VectorClock`] AND drives the lowest-pubkey-wins
-/// the cluster protocol. Pre ARCH-21 this collided by name with
+/// [`gossip_wire::VectorClock`] and the authenticated per-origin durable
+/// sequence/receipt state. Cross-origin content conflicts remain typed and
+/// operator-resolved; this key never creates a silent lowest-key winner.
+/// Pre ARCH-21 this collided by name with
 /// `gossip_wire::PeerId`.
 ///
 /// `#[serde(transparent)]` so it serialises as a bare string — gossip

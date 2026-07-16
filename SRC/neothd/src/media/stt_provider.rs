@@ -307,17 +307,19 @@ impl AzureSpeechClient {
         self
     }
 
-    fn endpoint(&self, language: &str) -> String {
+    fn endpoint(&self, language: &str) -> Result<reqwest::Url, String> {
         let lang = if language.is_empty() {
             "en-US"
         } else {
             language
         };
-        format!(
-            "{}/speech/recognition/conversation/cognitiveservices/v1?language={}",
-            self.base_url.trim_end_matches('/'),
-            lang
-        )
+        let mut endpoint = reqwest::Url::parse(&format!(
+            "{}/speech/recognition/conversation/cognitiveservices/v1",
+            self.base_url.trim_end_matches('/')
+        ))
+        .map_err(|error| format!("azure speech endpoint: {error}"))?;
+        endpoint.query_pairs_mut().append_pair("language", lang);
+        Ok(endpoint)
     }
 }
 
@@ -393,7 +395,10 @@ impl SttProviderImpl for AzureSpeechClient {
         let client = http_client::build_client()
             .map_err(|e| SttProviderError::permanent(format!("http client config: {e:#}")))?;
         let resp = client
-            .post(self.endpoint(&request.language))
+            .post(
+                self.endpoint(&request.language)
+                    .map_err(SttProviderError::permanent)?,
+            )
             .header("Ocp-Apim-Subscription-Key", self.api_key.expose())
             .header(
                 "Content-Type",
@@ -1786,6 +1791,7 @@ impl SttProviderImpl for FasterWhisperProvider {
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, SttProviderError> {
+        enforce_local_audio_ceiling("faster-whisper", audio.len())?;
         // Model acquisition and backend-load validation finish their D7/D8
         // lifecycle before audio is handled. Transcription is always offline.
         self.ensure_model_ready().await?;
@@ -2014,6 +2020,7 @@ impl SttProviderImpl for WhisperLocalProvider {
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, SttProviderError> {
+        enforce_local_audio_ceiling("whisper local", audio.len())?;
         // Decode audio bytes → 16 kHz f32 PCM (synchronously on spawn_blocking).
         let audio_owned = audio.to_vec();
         let mime = if audio_owned.starts_with(b"RIFF") {
@@ -2053,6 +2060,17 @@ impl SttProviderImpl for WhisperLocalProvider {
             provider: String::new(),
         })
     }
+}
+
+fn enforce_local_audio_ceiling(provider: &str, input_len: usize) -> Result<(), SttProviderError> {
+    let input_len = u64::try_from(input_len).unwrap_or(u64::MAX);
+    if input_len > crate::media::audio::MAX_AUDIO_BYTES {
+        return Err(SttProviderError::permanent(format!(
+            "{provider}: input {input_len} bytes exceeds {}-byte cap",
+            crate::media::audio::MAX_AUDIO_BYTES
+        )));
+    }
+    Ok(())
 }
 
 /// Build a live STT provider from the effective operator configuration.
@@ -2929,12 +2947,30 @@ mod tests {
     #[test]
     fn azure_endpoint_uses_language_and_default() {
         let c = AzureSpeechClient::new("westeurope", SecretString::from("k"));
-        assert!(c.endpoint("de-DE").contains("language=de-DE"));
-        assert!(c.endpoint("").contains("language=en-US"));
         assert!(
             c.endpoint("de-DE")
+                .unwrap()
+                .as_str()
+                .contains("language=de-DE")
+        );
+        assert!(c.endpoint("").unwrap().as_str().contains("language=en-US"));
+        assert!(
+            c.endpoint("de-DE")
+                .unwrap()
+                .as_str()
                 .starts_with("https://westeurope.stt.speech.microsoft.com")
         );
+    }
+
+    #[test]
+    fn azure_endpoint_percent_encodes_language_as_one_query_value() {
+        let c = AzureSpeechClient::new("westeurope", SecretString::from("k"));
+        let endpoint = c.endpoint("en-US&mode=evil").unwrap();
+        let pairs: Vec<_> = endpoint.query_pairs().collect();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "language");
+        assert_eq!(pairs[0].1, "en-US&mode=evil");
+        assert!(!endpoint.as_str().contains("&mode=evil"));
     }
 
     #[test]
@@ -3683,7 +3719,8 @@ mod tests {
     fn python_bridge_pins_local_only_and_jsonl_contract() {
         assert!(FASTER_WHISPER_PYTHON_BRIDGE.contains("from faster_whisper import WhisperModel"));
         assert!(FASTER_WHISPER_PYTHON_BRIDGE.contains("local_files_only="));
-        assert!(FASTER_WHISPER_PYTHON_BRIDGE.contains("download_root=cache_root"));
+        assert!(FASTER_WHISPER_PYTHON_BRIDGE.contains("cache_dir=cache_root"));
+        assert!(!FASTER_WHISPER_PYTHON_BRIDGE.contains("download_root="));
         assert!(FASTER_WHISPER_PYTHON_BRIDGE.contains("mode == \"prefetch\""));
         assert_eq!(
             FASTER_WHISPER_PYTHON_BRIDGE
@@ -3693,6 +3730,23 @@ mod tests {
             "prefetch and transcription must share one model-load path"
         );
         assert!(FASTER_WHISPER_PYTHON_BRIDGE.contains("json.dumps"));
+    }
+
+    #[test]
+    fn local_audio_ceiling_rejects_before_decode_or_wav_materialization() {
+        assert!(
+            enforce_local_audio_ceiling(
+                "test",
+                usize::try_from(crate::media::audio::MAX_AUDIO_BYTES).unwrap()
+            )
+            .is_ok()
+        );
+        let error = enforce_local_audio_ceiling(
+            "test",
+            usize::try_from(crate::media::audio::MAX_AUDIO_BYTES + 1).unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeds"));
     }
 
     struct MockStt;

@@ -78,30 +78,33 @@ not collected by `neoth init`: IMAP uses its documented environment/OAuth
 inputs, while CalDAV uses `caldav_{url,username,password}` in
 `credentials.yaml` or `NEOTH_CALDAV_*`.
 
-`add` prompts per channel (B9): **discord** bot token · **signal** signal-cli
-URL + own E.164 number · **line** channel access token (+ channel secret for
-inbound webhooks; blank = push-only) · **irc** server host, nick, optional
+`add` prompts per channel (B9): **discord** bot token + immutable user ID ·
+**slack** bot/app tokens + immutable member ID · **whatsapp** Cloud credentials
++ exact E.164 sender · **signal** signal-cli URL + own and allowed E.164 numbers
+· **line** channel access token + exact user ID (+ channel secret for inbound
+webhooks; blank = push-only) · **irc** server host, nick, optional
 NickServ password + channels csv · **imessage** BlueBubbles server URL +
 password · **mattermost** server URL + token · **gchat** path to the GCP
-service-account JSON key + Pub/Sub subscription name. Six adapters already
-enforce a mandatory inbound identity policy: IRC requires
+service-account JSON key + Pub/Sub subscription name. Twelve adapters enforce
+a mandatory inbound identity policy: Telegram requires `telegram_user_id`, IRC requires
 `irc_allowed_account`, BlueBubbles requires
 `imessage_allowed_sender`, Mattermost requires `mattermost_allowed_user_id`,
 Google Chat requires `gchat_allowed_sender`, Nostr requires
-`nostr_allowed_pubkey`, and Matrix requires at least one of
+`nostr_allowed_pubkey`, Discord requires `discord_allowed_user_id`, Slack
+requires `slack_allowed_user_id`, WhatsApp Business requires
+`whatsapp_allowed_sender`, Signal requires `signal_allowed_sender`, LINE
+requires `line_allowed_sender`, and Matrix requires at least one of
 `matrix_allowed_user_id` or `matrix_allowed_room_ids`. The shared
 `--allowed-sender` flag supplies the channel-appropriate single identity;
 Matrix additionally accepts `--allowed-rooms-csv`. `channel list` reports
 canonical static configuration truth; `channel test` adds live
 credential/reachability truth.
 
-This is not yet universal. Slack, WhatsApp Business, Discord, Signal, LINE and
-Twitch currently authenticate the workspace/API/bot transport but do not yet
-require an operator sender, conversation or mention policy before dispatch.
-Transport membership is not operator authorization. Their common typed
-DM/group/pairing gate, descriptor-rendered setup and OpenClaw policy migration
-are explicit v1.0 Gold blockers; until that lands, do not expose those adapters
-to an untrusted workspace, server, number or stream audience.
+Twitch remains the explicit audience-policy exception: it authenticates the bot
+and configured stream rooms, but does not yet bind inbound chat to an operator
+identity or mention policy. Do not expose its tool-bearing pipeline to an
+untrusted stream audience. Transport membership is never treated as operator
+authorization for the other inbound adapters.
 
 Five advanced runtime settings are currently file-only and remain explicit
 GUI/CLI parity work for v1.0. Set them under `credentials.yaml` only when the
@@ -160,6 +163,7 @@ NEOTH uses the official Meta WhatsApp Business Cloud API. No personal-number hac
 
 ```bash
 neoth channel add whatsapp
+# Non-interactive equivalent includes --allowed-sender +491701234567
 neoth channel test whatsapp
 neoth serve
 ```
@@ -172,6 +176,7 @@ Credential fields:
 | `whatsapp_phone_id` | Phone number ID from Meta Business console. |
 | `whatsapp_verify_token` | Secret used during webhook verification. |
 | `whatsapp_app_secret` | Used for webhook signature verification. |
+| `whatsapp_allowed_sender` | Exact operator phone number. Stored canonically as 7–15 digits; CLI accepts an optional leading `+`. |
 
 ### Notes
 
@@ -180,6 +185,7 @@ Credential fields:
 | Transport | HTTPS webhook receiver plus Graph API send path. |
 | Streaming | WhatsApp has no edit endpoint; NEOTH sends complete replies. |
 | Approval | External sends remain policy-gated. |
+| Inbound authorization | A valid Meta signature is transport authentication only. The decoded `from` must also match `whatsapp_allowed_sender` before dedup or pipeline dispatch; rejection is WAL-audited without message text. |
 | Business review | Meta approval can take time; use Telegram while waiting. |
 
 ## WhatsApp Web through Baileys
@@ -231,7 +237,10 @@ are never removed by TTL or capacity pruning.
 Slack uses Socket Mode so you do not need a public HTTPS endpoint.
 
 ```bash
-neoth channel add slack
+neoth channel add slack \
+  --bot-token "$SLACK_BOT_TOKEN" \
+  --app-token "$SLACK_APP_TOKEN" \
+  --allowed-sender U0123456789
 neoth channel test slack
 neoth serve
 ```
@@ -246,13 +255,29 @@ Required Slack scopes:
 | `users:read` | Resolve identity. |
 | `connections:write` | Socket Mode app token. |
 
+`slack_allowed_user_id` is the immutable `U…` or `W…` member ID, never a
+display name or email. The daemon refuses token-only Socket Mode startup.
+Every decoded event must match that ID before the shared pipeline runs;
+mismatches are dropped without a reply and recorded as the metadata-only
+`CHANNEL_GATE_REJECTED` WAL event.
+
 ## Discord
 
-Discord stores its bot token in `credentials.yaml` (`discord_bot_token`) —
-`neoth channel add discord` prompts for it, and `neoth serve` starts the
-Gateway loop when it is present. `neoth channel test discord` makes the
-read-only Discord `GET /users/@me` identity probe; it validates the token
-without creating a message.
+Discord stores its bot token and exact inbound-user policy in `credentials.yaml`
+(`discord_bot_token` + `discord_allowed_user_id`). Configure both through the
+CLI or the same registry-driven GUI form:
+
+```bash
+neoth channel add discord \
+  --token "$DISCORD_BOT_TOKEN" \
+  --allowed-sender 123456789012345678
+neoth channel test discord
+```
+
+The allowed sender is the immutable numeric Discord user ID, not a mutable
+username. `neoth serve` refuses to start the Gateway receive loop when the
+policy is missing or blank. `neoth channel test discord` makes the read-only
+Discord `GET /users/@me` identity probe without creating a message.
 
 Discord notes:
 
@@ -261,7 +286,41 @@ Discord notes:
 | Gateway | Uses Discord Gateway WebSocket. |
 | Message content | Requires Message Content Intent. |
 | Formatting | CommonMark-ish with Discord length limits and splitting. |
-| Inbound authorization | Bot-token/Gateway authentication exists, but operator/guild/channel/role/mention policy is not wired yet. Treat inbound Discord as trusted-environment-only until the v1.0 Gold ingress gate lands. |
+| Inbound authorization | Every non-bot message must match `discord_allowed_user_id` before the shared pipeline runs. Mismatches are dropped without a reply and audited as `CHANNEL_GATE_REJECTED`; no message text enters that audit event. |
+
+## Signal
+
+Signal uses a local `signal-cli` HTTP daemon. Configure the registered NEOTH
+number and the one operator number allowed to drive inbound turns:
+
+```bash
+neoth channel add signal \
+  --url http://127.0.0.1:8080 \
+  --phone +491701111111 \
+  --allowed-sender +491702222222
+```
+
+`signal_allowed_sender` is mandatory E.164. The poll loop is not constructed
+without it. Envelopes from any other source are dropped before the pipeline and
+WAL-audited; delivery receipts, typing events and sync envelopes remain
+non-actionable.
+
+## LINE
+
+LINE outbound push can operate with an access token alone, but inbound startup
+requires the channel secret and one immutable `U…` user ID:
+
+```bash
+neoth channel add line \
+  --token "$LINE_CHANNEL_ACCESS_TOKEN" \
+  --password "$LINE_CHANNEL_SECRET" \
+  --allowed-sender U0123456789abcdef
+```
+
+The webhook must pass `X-Line-Signature` verification and the decoded source
+must equal `line_allowed_sender`. Signature validity alone never authorizes a
+turn. Missing/invalid policy keeps the listener off; rejected senders are
+recorded as metadata-only gate events.
 
 ## Matrix
 

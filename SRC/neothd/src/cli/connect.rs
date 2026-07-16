@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn slack_needs_both_tokens_else_partial() {
+    fn slack_needs_tokens_and_sender_policy_else_partial() {
         let config = FreedomConfig::default();
         let mut credentials = Credentials::default();
         credentials.slack_bot_token = Some(SecretString::from("xoxb-1"));
@@ -307,6 +307,12 @@ mod tests {
             "bot token alone is partial"
         );
         credentials.slack_app_token = Some(SecretString::from("xapp-1"));
+        assert_eq!(
+            find(&rows(&config, &credentials), "slack").status,
+            ConnectStatus::Partial,
+            "tokens without a sender policy remain fail-closed"
+        );
+        credentials.slack_allowed_user_id = Some("U123456".into());
         assert_eq!(
             find(&rows(&config, &credentials), "slack").status,
             ConnectStatus::Connected,
@@ -329,10 +335,22 @@ mod tests {
         credentials.whatsapp_app_secret = Some(SecretString::from("secret"));
         assert_eq!(
             find(&rows(&config, &credentials), "whatsapp_business").status,
+            ConnectStatus::Partial,
+            "verified webhook without an exact sender policy remains fail-closed"
+        );
+        credentials.whatsapp_allowed_sender = Some("491701234567".into());
+        assert_eq!(
+            find(&rows(&config, &credentials), "whatsapp_business").status,
             ConnectStatus::Connected,
             "full inbound set is statically ready"
         );
         credentials.discord_bot_token = Some(SecretString::from("discord-token"));
+        assert_eq!(
+            find(&rows(&config, &credentials), "discord").status,
+            ConnectStatus::Partial,
+            "Discord token without an exact sender policy is fail-closed"
+        );
+        credentials.discord_allowed_user_id = Some("123456789012345678".into());
         assert_eq!(
             find(&rows(&config, &credentials), "discord").status,
             ConnectStatus::Connected

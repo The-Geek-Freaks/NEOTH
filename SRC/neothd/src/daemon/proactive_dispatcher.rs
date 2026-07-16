@@ -56,7 +56,7 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::config::FreedomConfig;
+use crate::config::{FreedomConfig, credentials::Credentials};
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
 use crate::permissions::{Action, evaluate};
@@ -654,6 +654,7 @@ fn evict_inflight_claimed(
 pub async fn run_proactive_delivery_tick(
     home: &Path,
     config: &FreedomConfig,
+    credentials: &Credentials,
     writer: &WalWriterHandle,
     now_unix: i64,
 ) -> Result<usize, String> {
@@ -684,34 +685,67 @@ pub async fn run_proactive_delivery_tick(
     // been active within the last `idle_only_window_secs`.
     if config.proactive.idle_only {
         let views_db = home.join("views.db");
-        if views_db.exists() {
-            let window = config.proactive.idle_only_window_secs;
-            let cutoff_ns = (now_unix - window as i64) * 1_000_000_000;
-            let is_active = tokio::task::spawn_blocking(move || {
-                let conn = rusqlite::Connection::open_with_flags(
-                    &views_db,
-                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-                )
-                .ok()?;
-                let last_ns: Option<i64> = conn
-                    .query_row(
-                        "SELECT MAX(ts_ns) FROM idx_episode WHERE event_type = 1",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .ok()
-                    .flatten();
-                last_ns.map(|ts| ts > cutoff_ns)
-            })
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(false);
+        match tokio::fs::try_exists(&views_db).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::debug!(
+                    path = %views_db.display(),
+                    "proactive_dispatcher: idle_only gate — activity database absent, suppressing"
+                );
+                return Ok(0);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    path = %views_db.display(),
+                    "proactive_dispatcher: idle_only gate — activity database state unknown, suppressing"
+                );
+                return Ok(0);
+            }
+        }
 
-            if is_active {
+        let window = config.proactive.idle_only_window_secs;
+        let window_i64 = i64::try_from(window).unwrap_or(i64::MAX);
+        let cutoff_ns = now_unix
+            .saturating_sub(window_i64)
+            .saturating_mul(1_000_000_000);
+        let activity = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let conn = rusqlite::Connection::open_with_flags(
+                &views_db,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .map_err(|error| format!("open activity database: {error}"))?;
+            let last_ns: Option<i64> = conn
+                .query_row(
+                    "SELECT MAX(ts_ns) FROM idx_episode WHERE event_type = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| format!("query last operator activity: {error}"))?;
+            Ok(last_ns.is_some_and(|ts| ts > cutoff_ns))
+        })
+        .await;
+
+        match activity {
+            Ok(Ok(true)) => {
                 tracing::debug!(
                     window_secs = window,
                     "proactive_dispatcher: idle_only gate — operator recently active, suppressing"
+                );
+                return Ok(0);
+            }
+            Ok(Ok(false)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    %error,
+                    "proactive_dispatcher: idle_only gate could not confirm inactivity, suppressing"
+                );
+                return Ok(0);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "proactive_dispatcher: idle_only activity task failed, suppressing"
                 );
                 return Ok(0);
             }
@@ -764,29 +798,10 @@ pub async fn run_proactive_delivery_tick(
     }
 
     let autonomy_policy = config.autonomy_policy();
-    // GOLD-FEAT-13 — routing was loaded fail-closed before queue mutation.
-    // Load credentials once per tick too; a missing file means non-Telegram
-    // channels stay SidecarOnly.
-    // B17: `load()` is fail-closed (only a MISSING file → default; a corrupt or
-    // unreadable one → Err). Don't `.unwrap_or_default()` that away — a bad
-    // credentials.yaml silently routing every channel item to SidecarOnly with
-    // no operator signal is exactly the invisible degradation B17 forbids. On a
-    // real load error we still degrade to defaults for this tick (so the queue
-    // keeps draining to the sidecar), but LOUDLY.
-    let credentials = match crate::config::credentials::Credentials::load_effective(
-        &home.join("credentials.yaml"),
-        config.secrets_backend,
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(
-                error = %format!("{e:#}"),
-                "proactive dispatch: credentials.yaml is unreadable/corrupt — \
-                 routing non-sidecar items to SidecarOnly this tick until it is repaired"
-            );
-            crate::config::credentials::Credentials::default()
-        }
-    };
+    // The daemon supplies config + effective credentials from one coherent
+    // runtime snapshot. Reloading credentials here would permit a backend
+    // migration between the two reads and could silently drain live items to
+    // SidecarOnly under a mixed generation.
     let mut records: Vec<(crate::proactive::ProactiveItem, ProactiveStatus)> =
         Vec::with_capacity(drained.len());
     let mut delivered = 0usize;
@@ -824,7 +839,7 @@ pub async fn run_proactive_delivery_tick(
                 &autonomy_policy,
                 config,
                 &routing,
-                &credentials,
+                credentials,
             )
         };
 
@@ -1397,19 +1412,29 @@ pub fn spawn_proactive_drain_loop(
             let now_unix = crate::time::utc_now().timestamp();
             // One strict fresh snapshot per tick — honours mid-run changes
             // without letting malformed policy masquerade as disabled defaults.
-            let config = match FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))
-            {
-                Ok(config) => config,
+            let runtime = match crate::config::load_runtime_config_pair_from_path_or_default(
+                &home.join("freedom.yaml"),
+            ) {
+                Ok(runtime) => runtime,
                 Err(error) => {
                     warn!(
                         error = %error,
-                        "proactive tick: config invalid; delivery blocked fail-closed"
+                        "proactive tick: config/credential snapshot invalid; delivery blocked fail-closed"
                     );
                     continue;
                 }
             };
+            let config = runtime.config;
             if config.proactive.enabled {
-                match run_proactive_delivery_tick(&home, &config, &writer, now_unix).await {
+                match run_proactive_delivery_tick(
+                    &home,
+                    &config,
+                    &runtime.credentials,
+                    &writer,
+                    now_unix,
+                )
+                .await
+                {
                     Ok(0) => tracing::debug!("proactive delivery tick: nothing delivered"),
                     Ok(n) => info!(delivered = n, "proactive delivery tick: {n} live-sent"),
                     Err(e) => {
@@ -1498,6 +1523,7 @@ mod tests {
             let error = run_proactive_delivery_tick(
                 tmp.path(),
                 &FreedomConfig::default(),
+                &Credentials::default(),
                 &writer,
                 1_700_000_000,
             )
@@ -1514,6 +1540,93 @@ mod tests {
             assert!(!tmp.path().join(PROACTIVE_DELIVERED_SIDECAR).exists());
             assert!(!tmp.path().join(PROACTIVE_INFLIGHT_DIR).exists());
         }
+    }
+
+    #[tokio::test]
+    async fn idle_only_missing_activity_db_suppresses_and_preserves_queue() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(item("wait-for-confirmed-idle", 50, 0));
+        queue.save_to(&queue_path).unwrap();
+        let before = std::fs::read(&queue_path).unwrap();
+        let mut config = FreedomConfig::default();
+        config.proactive.idle_only = true;
+
+        let (writer, join) = crate::wal::spawn(tmp.path().join("idle-missing.wal")).unwrap();
+        let delivered = run_proactive_delivery_tick(
+            tmp.path(),
+            &config,
+            &Credentials::default(),
+            &writer,
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        assert_eq!(delivered, 0);
+        assert_eq!(std::fs::read(queue_path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn idle_only_unreadable_activity_db_fails_closed() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("views.db"), b"not a sqlite database").unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(item("wait-on-db-error", 50, 0));
+        queue.save_to(&queue_path).unwrap();
+        let before = std::fs::read(&queue_path).unwrap();
+        let mut config = FreedomConfig::default();
+        config.proactive.idle_only = true;
+
+        let (writer, join) = crate::wal::spawn(tmp.path().join("idle-corrupt.wal")).unwrap();
+        let delivered = run_proactive_delivery_tick(
+            tmp.path(),
+            &config,
+            &Credentials::default(),
+            &writer,
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        assert_eq!(delivered, 0);
+        assert_eq!(std::fs::read(queue_path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn idle_only_extreme_window_never_overflows() {
+        let tmp = TempDir::new().unwrap();
+        let conn = crate::memory::store::open(&tmp.path().join("views.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
+             VALUES (1, 1, 1700000000000000000, 'active', 'active-hash')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let mut config = FreedomConfig::default();
+        config.proactive.idle_only = true;
+        config.proactive.idle_only_window_secs = u64::MAX;
+        let (writer, join) = crate::wal::spawn(tmp.path().join("idle-overflow.wal")).unwrap();
+
+        let delivered = run_proactive_delivery_tick(
+            tmp.path(),
+            &config,
+            &Credentials::default(),
+            &writer,
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+        assert_eq!(delivered, 0);
     }
 
     #[test]

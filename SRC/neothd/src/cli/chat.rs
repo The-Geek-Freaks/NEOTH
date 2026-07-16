@@ -19,6 +19,14 @@ use crate::wal::events::{
 };
 use crate::wal::spawn as wal_spawn;
 
+const STREAM_CONTROL_TOKEN_ENV: &str = "NEOTH_STREAM_CONTROL_TOKEN";
+
+fn stream_control_token() -> Option<String> {
+    std::env::var(STREAM_CONTROL_TOKEN_ENV)
+        .ok()
+        .filter(|value| value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 /// GOLD-WIRE-10b: fire a `ProviderResponded` domain event so the daemon's
 /// `UsageMeter` counts every provider call, not only council-hemisphere ones.
 /// Mirrors the council path's event shape including latency clamping.
@@ -2267,6 +2275,7 @@ async fn dispatch_provider(
                 "{}",
                 serde_json::json!({
                     "neoth_stream": "done",
+                    "control_token": stream_control_token(),
                     "count": chunk_count,
                     "used_tokens": input_tokens
                         .unwrap_or(0)
@@ -2704,6 +2713,8 @@ async fn dispatch_provider(
                         None,
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config.tools.harness,
+                        // Ordinary chat has no outer multi-round tool budget.
+                        None,
                     )
                     .await
                     {
@@ -4284,7 +4295,14 @@ pub async fn run_chat_with(
         // done-sentinel — the recall early-return must emit it too.
         if args.stream {
             println!();
-            println!("{}", serde_json::json!({"neoth_stream":"done","count":1}));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "neoth_stream": "done",
+                    "control_token": stream_control_token(),
+                    "count": 1,
+                })
+            );
         }
         // Same WAL-writer teardown every other early return in this fn uses.
         drop(writer);
@@ -7838,6 +7856,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // GOLD-ADAPT-HARNESS-01/04/06 — operator-tunable MCP dispatch-loop knobs
     // (`freedom.yaml::tools.harness`), threaded straight into the loop.
     harness_cfg: &crate::config::tools::McpHarnessConfig,
+    // Optional exact tool-call ceiling for the outer loop engine. Ordinary
+    // chat/channel callers pass None; full-autonomy passes the remaining budget.
+    max_tool_calls: Option<u64>,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -7913,7 +7934,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         provider,
         base: base_req,
     };
-    crate::mcp::dispatch_loop::run_tool_loop_with_cap(
+    crate::mcp::dispatch_loop::run_tool_loop_with_budget(
         &mut driver,
         initial_prompt,
         servers,
@@ -7936,6 +7957,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         elicitation_handler,
         // GOLD-ADAPT-HARNESS — thread operator harness knobs into the loop.
         harness_cfg,
+        max_tool_calls,
     )
     .await
 }

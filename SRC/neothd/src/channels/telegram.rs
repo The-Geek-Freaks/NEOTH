@@ -10,6 +10,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -954,9 +955,8 @@ async fn download_telegram_file(bot: &Bot, file_id: &str) -> Result<Vec<u8>> {
         .context("Telegram getFile")?;
     // Pre-download gate: if Telegram reports a non-zero size and it's
     // already over the ceiling, refuse without paying the network cost.
-    // file.size == 0 happens for some voice messages where the API
-    // omits the field; treat that as "unknown size" and rely on the
-    // post-download buffer-length check below.
+    // file.size == 0 happens for some voice messages where the API omits the
+    // field; treat that as "unknown size" and enforce the budget per chunk.
     if file.size > 0 && (file.size as usize) > MAX_INBOUND_ATTACHMENT_BYTES {
         anyhow::bail!(
             "attachment {} bytes exceeds {} ceiling",
@@ -967,26 +967,43 @@ async fn download_telegram_file(bot: &Bot, file_id: &str) -> Result<Vec<u8>> {
     let capacity_hint = if file.size > 0 {
         (file.size as usize).min(MAX_INBOUND_ATTACHMENT_BYTES)
     } else {
-        // Conservative initial allocation — `Vec::extend_from_slice`
-        // will grow if the actual transfer is bigger, and the post-
-        // download check enforces the real ceiling.
+        // Conservative initial allocation for unknown-size transfers.
         64 * 1024
     };
     let mut buf: Vec<u8> = Vec::with_capacity(capacity_hint);
-    bot.download_file(&file.path, &mut buf)
-        .await
-        .context("Telegram download_file")?;
-    // Post-download gate: covers the unknown-size case + a server that
-    // reports a bogus size in the metadata response.
-    if buf.len() > MAX_INBOUND_ATTACHMENT_BYTES {
-        anyhow::bail!(
-            "downloaded {} bytes exceeds {} ceiling (metadata reported size={})",
-            buf.len(),
+    let mut stream = bot.download_file_stream(&file.path);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Telegram download_file chunk")?;
+        append_bounded_download_chunk(
+            &mut buf,
+            &chunk,
+            file.size as usize,
             MAX_INBOUND_ATTACHMENT_BYTES,
-            file.size,
-        );
+        )?;
     }
     Ok(buf)
+}
+
+fn append_bounded_download_chunk(
+    buf: &mut Vec<u8>,
+    chunk: &[u8],
+    reported_size: usize,
+    max_bytes: usize,
+) -> Result<()> {
+    let next_len = buf
+        .len()
+        .checked_add(chunk.len())
+        .context("Telegram attachment length overflow")?;
+    if next_len > max_bytes {
+        anyhow::bail!(
+            "downloaded at least {} bytes exceeds {} ceiling (metadata reported size={})",
+            next_len,
+            max_bytes,
+            reported_size,
+        );
+    }
+    buf.extend_from_slice(chunk);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -997,6 +1014,28 @@ mod tests {
     fn channel_reports_name() {
         let t = TelegramChannel::new(SecretString::from("dummy"), Some(123));
         assert_eq!(t.name(), "telegram");
+    }
+
+    #[test]
+    fn inbound_download_budget_rejects_chunk_before_allocating_it() {
+        let mut buf = vec![0_u8; 6];
+        let len_before = buf.len();
+
+        let error = append_bounded_download_chunk(&mut buf, &[1, 2, 3], 0, 8).unwrap_err();
+
+        assert!(error.to_string().contains("exceeds"));
+        assert_eq!(
+            buf.len(),
+            len_before,
+            "the chunk that crosses the ceiling must never enter the Vec"
+        );
+    }
+
+    #[test]
+    fn inbound_download_budget_accepts_exact_ceiling() {
+        let mut buf = vec![0_u8; 6];
+        append_bounded_download_chunk(&mut buf, &[1, 2], 0, 8).unwrap();
+        assert_eq!(buf.len(), 8);
     }
 
     #[test]

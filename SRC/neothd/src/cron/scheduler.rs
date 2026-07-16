@@ -120,6 +120,7 @@ impl SchedulerState {
                         next.jobs.iter().map(|job| job.id.as_str()).collect();
                     let surviving_ids: HashSet<&str> =
                         previous_ids.intersection(&current_ids).copied().collect();
+                    let mut changed_ids: HashSet<&str> = HashSet::new();
                     let running = self.running.lock().unwrap();
                     let mut retired_running = self.retired_running.lock().unwrap();
                     for deleted_id in previous_ids.difference(&current_ids) {
@@ -127,12 +128,23 @@ impl SchedulerState {
                             retired_running.insert((*deleted_id).to_string());
                         }
                     }
+                    for previous in &self.jobs_file.jobs {
+                        let Some(current) = next.jobs.iter().find(|job| job.id == previous.id)
+                        else {
+                            continue;
+                        };
+                        if current != previous {
+                            changed_ids.insert(previous.id.as_str());
+                            if running.contains(&previous.id) {
+                                retired_running.insert(previous.id.clone());
+                            }
+                        }
+                    }
                     self.last_fired
                         .retain(|id, _| surviving_ids.contains(id.as_str()));
-                    self.completed
-                        .lock()
-                        .unwrap()
-                        .retain(|id, _| surviving_ids.contains(id.as_str()));
+                    self.completed.lock().unwrap().retain(|id, _| {
+                        surviving_ids.contains(id.as_str()) && !changed_ids.contains(id.as_str())
+                    });
                     self.jobs_file = next;
                     ReloadOutcome::Applied {
                         previous_jobs,
@@ -188,6 +200,7 @@ fn record_completion_if_current(
 /// terminal `Ok(RunOutcome { success: false, .. })` values so their WAL audit
 /// can complete; treating every `Ok` as success would bypass the dependency
 /// contract.
+#[cfg(test)]
 fn record_successful_outcome_if_current(
     completed: &Mutex<HashMap<String, DateTime<Utc>>>,
     retired_running: &Mutex<HashSet<String>>,
@@ -197,6 +210,25 @@ fn record_successful_outcome_if_current(
 ) -> bool {
     outcome.success
         && record_completion_if_current(completed, retired_running, job_id, completed_at)
+}
+
+fn merge_durable_checkpoint(state: &mut SchedulerState, checkpoint: &RuntimeState) {
+    let mut completed = state.completed.lock().unwrap();
+    for (id, entry) in &checkpoint.jobs {
+        if let Some(at) = entry.last_fired {
+            state
+                .last_fired
+                .entry(id.clone())
+                .and_modify(|current| *current = (*current).max(at))
+                .or_insert(at);
+        }
+        if let Some(at) = entry.completed_at {
+            completed
+                .entry(id.clone())
+                .and_modify(|current| *current = (*current).max(at))
+                .or_insert(at);
+        }
+    }
 }
 
 /// Run the scheduler loop until the future is dropped.
@@ -214,16 +246,7 @@ pub async fn run_scheduler(
         Ok(durable.clone())
     })
     .map_err(|error| anyhow::anyhow!("load durable Cron runtime state: {error:#}"))?;
-    state.last_fired = durable
-        .jobs
-        .iter()
-        .filter_map(|(id, entry)| entry.last_fired.map(|at| (id.clone(), at)))
-        .collect();
-    *state.completed.lock().unwrap() = durable
-        .jobs
-        .iter()
-        .filter_map(|(id, entry)| entry.completed_at.map(|at| (id.clone(), at)))
-        .collect();
+    merge_durable_checkpoint(&mut state, &durable);
     let mut ticker = interval(DEFAULT_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dispatch_enabled = true;
@@ -260,16 +283,7 @@ pub async fn run_scheduler(
                         checkpoint.reconcile(&state.jobs_file.jobs)?;
                         Ok(checkpoint.clone())
                     })?;
-                    state.last_fired = checkpoint
-                        .jobs
-                        .iter()
-                        .filter_map(|(id, entry)| entry.last_fired.map(|at| (id.clone(), at)))
-                        .collect();
-                    *state.completed.lock().unwrap() = checkpoint
-                        .jobs
-                        .iter()
-                        .filter_map(|(id, entry)| entry.completed_at.map(|at| (id.clone(), at)))
-                        .collect();
+                    merge_durable_checkpoint(&mut state, &checkpoint);
                 }
                 info!(
                     path = %jobs_path.display(),
@@ -374,25 +388,29 @@ pub async fn run_scheduler(
                     .await
                     {
                         Ok(outcome) => {
-                            // Deleted generations may finish, but their result
-                            // must not satisfy dependencies of a re-added ID.
-                            let current_generation = record_successful_outcome_if_current(
-                                &completed_for_task,
-                                &retired_for_task,
-                                job_id,
-                                crate::time::utc_now(),
-                                &outcome,
-                            );
-                            if current_generation {
+                            if outcome.success {
                                 let completed_at = crate::time::utc_now();
-                                if let Err(error) =
-                                    RuntimeState::modify(&home_for_task, |checkpoint| {
-                                        checkpoint.record_completion(&job_for_task, completed_at)
-                                    })
-                                {
-                                    warn!(job_id = %job_for_task.id, error = %error,
+                                match RuntimeState::modify(&home_for_task, |checkpoint| {
+                                    checkpoint.record_completion(&job_for_task, completed_at)
+                                }) {
+                                    Ok(true) => {
+                                        if !record_completion_if_current(
+                                            &completed_for_task,
+                                            &retired_for_task,
+                                            job_id,
+                                            completed_at,
+                                        ) {
+                                            debug!(job_id = %job_for_task.id,
+                                                "late Cron completion suppressed after generation retirement");
+                                        }
+                                    }
+                                    Ok(false) => debug!(job_id = %job_for_task.id,
+                                        "stale Cron generation completion ignored"),
+                                    Err(error) => {
+                                        warn!(job_id = %job_for_task.id, error = %error,
                                         "Cron completion checkpoint failed; downstream state may not survive restart");
-                                    completed_for_task.lock().unwrap().remove(&job_for_task.id);
+                                        completed_for_task.lock().unwrap().remove(&job_for_task.id);
+                                    }
                                 }
                             }
                             if !outcome.success {
@@ -691,6 +709,106 @@ mod tests {
             state.last_fired.get("j").copied(),
         ));
         assert!(!state.running.lock().unwrap().insert("j".into()));
+        assert!(
+            state.retired_running.lock().unwrap().contains("j"),
+            "the old in-flight generation must not complete into the edited job"
+        );
+    }
+
+    #[test]
+    fn edited_generation_restart_keeps_consumed_schedule_boundary() {
+        let home = tempfile::tempdir().unwrap();
+        let mut first = job_at("* * * * *");
+        first.prompt = "generation one".into();
+        let fired_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+
+        let mut durable = RuntimeState::default();
+        durable.reconcile(std::slice::from_ref(&first)).unwrap();
+        durable.record_fire(&first, fired_at).unwrap();
+        durable.record_completion(&first, fired_at).unwrap();
+        durable.save(home.path()).unwrap();
+
+        let mut edited = first.clone();
+        edited.prompt = "generation two".into();
+        RuntimeState::modify(home.path(), |checkpoint| {
+            checkpoint.reconcile(std::slice::from_ref(&edited))?;
+            Ok(())
+        })
+        .unwrap();
+
+        let reloaded = RuntimeState::load(home.path()).unwrap();
+        let entry = &reloaded.jobs["j"];
+        assert_eq!(entry.last_fired, Some(fired_at));
+        assert!(
+            entry.completed_at.is_none(),
+            "old generation completion must not satisfy edited dependencies"
+        );
+        assert!(
+            !should_fire_now(
+                &edited,
+                fired_at + chrono::Duration::seconds(30),
+                entry.last_fired,
+            ),
+            "restart inside the lookback window must not double-fire an edited job"
+        );
+    }
+
+    #[tokio::test]
+    async fn edited_generation_clears_live_completion_without_losing_fire_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs_path = dir.path().join("jobs.yaml");
+        let mut first = job_at("* * * * *");
+        first.prompt = "generation one".into();
+        snapshot(vec![first.clone()])
+            .save_to_path(&jobs_path)
+            .unwrap();
+
+        let fired_at = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        let mut state = SchedulerState::new(snapshot(vec![first.clone()]));
+        state.last_fired.insert("j".into(), fired_at);
+        state.completed.lock().unwrap().insert("j".into(), fired_at);
+
+        let mut durable = RuntimeState::default();
+        durable.reconcile(std::slice::from_ref(&first)).unwrap();
+        durable.record_fire(&first, fired_at).unwrap();
+        durable.record_completion(&first, fired_at).unwrap();
+
+        let mut edited = first;
+        edited.prompt = "generation two".into();
+        snapshot(vec![edited.clone()])
+            .save_to_path(&jobs_path)
+            .unwrap();
+        assert!(matches!(
+            state.reload(&jobs_path).await,
+            ReloadOutcome::Applied { .. }
+        ));
+        durable.reconcile(std::slice::from_ref(&edited)).unwrap();
+        merge_durable_checkpoint(&mut state, &durable);
+
+        assert_eq!(state.last_fired["j"], fired_at);
+        assert!(
+            !state.completed.lock().unwrap().contains_key("j"),
+            "a completion from generation one must not satisfy generation two"
+        );
+    }
+
+    #[test]
+    fn durable_reload_merge_never_moves_live_cursors_backwards() {
+        let job = job_at("* * * * *");
+        let mut state = SchedulerState::new(snapshot(vec![job.clone()]));
+        let older = Utc.with_ymd_and_hms(2026, 5, 14, 11, 59, 0).unwrap();
+        let newer = Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap();
+        state.last_fired.insert("j".into(), newer);
+        state.completed.lock().unwrap().insert("j".into(), newer);
+        let mut checkpoint = RuntimeState::default();
+        checkpoint.reconcile(&[job]).unwrap();
+        checkpoint.jobs.get_mut("j").unwrap().last_fired = Some(older);
+        checkpoint.jobs.get_mut("j").unwrap().completed_at = Some(older);
+
+        merge_durable_checkpoint(&mut state, &checkpoint);
+
+        assert_eq!(state.last_fired["j"], newer);
+        assert_eq!(state.completed.lock().unwrap()["j"], newer);
     }
 
     #[tokio::test]

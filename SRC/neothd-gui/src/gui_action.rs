@@ -18,6 +18,218 @@ pub struct JsonReceipt<T> {
     pub stderr: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Keep the complete status wire shape fail-closed as it evolves.
+pub struct ClusterStatusAck {
+    pub mode: String,
+    pub policy: String,
+    pub peer_count: usize,
+    pub conflict_count: usize,
+    pub operator_id: String,
+    pub node_id: String,
+    pub cluster_name: Option<String>,
+    pub cluster_passphrase_set: bool,
+    pub cluster_identity_configured: bool,
+    pub cluster_enabled: bool,
+    pub restart_required: bool,
+    pub transport_active: bool,
+    pub transport: String,
+    pub listen_port: u16,
+    pub mdns_enabled: bool,
+    pub trusted_ssids: Vec<String>,
+    pub peers: Vec<ClusterPeerAck>,
+    pub gossip: ClusterGossipAck,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterPeerAck {
+    pub id: String,
+    pub label: String,
+    pub last_seen: String,
+    pub last_seen_unix: i64,
+    pub reachable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterConflictListAck {
+    pub unresolved_count: usize,
+    pub include_resolved: bool,
+    pub conflicts: Vec<ClusterConflictAck>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterConflictAck {
+    pub id: i64,
+    pub content_id: String,
+    pub incumbent_origin: String,
+    pub incoming_origin: String,
+    pub incumbent_sha256: String,
+    pub incoming_sha256: String,
+    pub policy: String,
+    pub observed_at: i64,
+    pub resolved_at: Option<i64>,
+    pub preferred_origin: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterConflictResolveAck {
+    pub operation: String,
+    pub content_id: String,
+    pub preferred_origin: String,
+    pub resolved_count: usize,
+    pub unresolved_remaining: usize,
+}
+
+impl ClusterConflictResolveAck {
+    pub fn verify(&self, content_id: &str, preferred_origin: &str) -> Result<(), String> {
+        if self.operation != "cluster.conflicts.resolve"
+            || self.content_id != content_id
+            || self.preferred_origin != preferred_origin
+            || self.resolved_count == 0
+        {
+            return Err("cluster conflict receipt does not match the requested decision".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterMdnsAck {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterPolicyAck {
+    pub announce_on_untrusted_wifi: bool,
+    pub trusted_ssids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterGossipAck {
+    pub replicate_raw_ingress: bool,
+    pub replay_budget_days: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterSnapshotAck {
+    pub name: Option<String>,
+    pub enabled: bool,
+    pub transport: String,
+    pub peers: Vec<String>,
+    pub mdns: ClusterMdnsAck,
+    pub policy: ClusterPolicyAck,
+    pub gossip: ClusterGossipAck,
+    pub listen_port: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterConfigureAck {
+    pub operation: String,
+    pub path: String,
+    pub reload_requested: bool,
+    pub reload_error: Option<String>,
+    pub restart_required: bool,
+    pub cluster_passphrase_set: bool,
+    pub cluster: ClusterSnapshotAck,
+}
+
+pub struct ExpectedClusterConfig<'a> {
+    pub name: Option<&'a str>,
+    pub enabled: bool,
+    pub transport: &'a str,
+    pub peers: &'a [String],
+    pub mdns_enabled: bool,
+    pub announce_on_untrusted_wifi: bool,
+    pub trusted_ssids: &'a [String],
+    pub replicate_raw_ingress: bool,
+    pub replay_budget_days: u32,
+    pub listen_port: u16,
+    /// `Some(true)` when the submitted operation requires a usable secret;
+    /// `None` when the GUI intentionally left the existing store untouched.
+    pub cluster_passphrase_set: Option<bool>,
+}
+
+impl ClusterConfigureAck {
+    pub fn verify(
+        &self,
+        expected: &ExpectedClusterConfig<'_>,
+        expected_path: &Path,
+    ) -> Result<(), String> {
+        require_action(&self.operation, "cluster.configure")?;
+        require_config_path(&self.path, expected_path)?;
+        if self.reload_requested == self.reload_error.is_some() {
+            return Err(
+                "cluster acknowledgement has inconsistent reload_requested/reload_error fields"
+                    .to_string(),
+            );
+        }
+        let checks = [
+            (
+                self.cluster.name.as_deref() == expected.name,
+                "cluster.name",
+            ),
+            (self.cluster.enabled == expected.enabled, "cluster.enabled"),
+            (
+                self.cluster.transport == expected.transport,
+                "cluster.transport",
+            ),
+            (
+                self.cluster.peers.as_slice() == expected.peers,
+                "cluster.peers",
+            ),
+            (
+                self.cluster.mdns.enabled == expected.mdns_enabled,
+                "cluster.mdns.enabled",
+            ),
+            (
+                self.cluster.policy.announce_on_untrusted_wifi
+                    == expected.announce_on_untrusted_wifi,
+                "cluster.policy.announce_on_untrusted_wifi",
+            ),
+            (
+                self.cluster.policy.trusted_ssids.as_slice() == expected.trusted_ssids,
+                "cluster.policy.trusted_ssids",
+            ),
+            (
+                self.cluster.gossip.replicate_raw_ingress == expected.replicate_raw_ingress,
+                "cluster.gossip.replicate_raw_ingress",
+            ),
+            (
+                self.cluster.gossip.replay_budget_days == expected.replay_budget_days,
+                "cluster.gossip.replay_budget_days",
+            ),
+            (
+                self.cluster.listen_port == expected.listen_port,
+                "cluster.listen_port",
+            ),
+        ];
+        if let Some((_, field)) = checks.into_iter().find(|(matches, _)| !matches) {
+            return Err(format!(
+                "cluster acknowledgement does not match submitted `{field}`"
+            ));
+        }
+        if let Some(expected_set) = expected.cluster_passphrase_set
+            && self.cluster_passphrase_set != expected_set
+        {
+            return Err(
+                "cluster acknowledgement does not match required `cluster_passphrase_set`"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
 pub fn run_json<T>(command: &mut Command, action: &str) -> Result<T, String>
 where
     T: DeserializeOwned,
@@ -38,6 +250,53 @@ where
         acknowledgement,
         stderr,
     })
+}
+
+/// Execute a typed mutation while sending secret material only over the
+/// child's private stdin. The caller-owned buffer is zeroed immediately after
+/// the write attempt, before waiting for or decoding the acknowledgement.
+pub fn run_json_with_private_stdin<T>(
+    command: &mut Command,
+    action: &str,
+    stdin_body: &mut [u8],
+) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let child_result = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match child_result {
+        Ok(child) => child,
+        Err(error) => {
+            stdin_body.fill(0);
+            return Err(format!("could not start {action}: {error}"));
+        }
+    };
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("could not open private stdin for {action}"))
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(stdin_body)
+                .map_err(|error| format!("could not send private input for {action}: {error}"))
+        });
+    stdin_body.fill(0);
+    if let Err(error) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not wait for {action}: {error}"))?;
+    decode_json_output(&output, action)
 }
 
 fn decode_json_output<T>(output: &Output, action: &str) -> Result<T, String>
@@ -113,6 +372,36 @@ fn require_task_id(actual: i64, expected: &str) -> Result<(), String> {
     }
 }
 
+fn require_config_path(actual: &str, expected_path: &Path) -> Result<(), String> {
+    if actual.trim().is_empty() {
+        return Err("acknowledgement is missing its config path".to_string());
+    }
+    let actual = std::path::absolute(actual).map_err(|error| {
+        format!("could not normalize acknowledged config path `{actual}`: {error}")
+    })?;
+    let expected = std::path::absolute(expected_path).map_err(|error| {
+        format!(
+            "could not normalize expected config path `{}`: {error}",
+            expected_path.display()
+        )
+    })?;
+    #[cfg(windows)]
+    let matches = actual
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&expected.to_string_lossy());
+    #[cfg(not(windows))]
+    let matches = actual == expected;
+    if matches {
+        Ok(())
+    } else {
+        Err(format!(
+            "acknowledged config path `{}`, expected `{}`",
+            actual.display(),
+            expected.display()
+        ))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionMutationAck {
@@ -150,36 +439,7 @@ impl PermissionMutationAck {
     }
 
     fn require_path(&self, expected_path: &Path) -> Result<(), String> {
-        if self.path.trim().is_empty() {
-            return Err("permission acknowledgement is missing its config path".to_string());
-        }
-        let actual = std::path::absolute(&self.path).map_err(|error| {
-            format!(
-                "could not normalize acknowledged config path `{}`: {error}",
-                self.path
-            )
-        })?;
-        let expected = std::path::absolute(expected_path).map_err(|error| {
-            format!(
-                "could not normalize expected config path `{}`: {error}",
-                expected_path.display()
-            )
-        })?;
-        #[cfg(windows)]
-        let matches = actual
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&expected.to_string_lossy());
-        #[cfg(not(windows))]
-        let matches = actual == expected;
-        if matches {
-            Ok(())
-        } else {
-            Err(format!(
-                "acknowledged config path `{}`, expected `{}`",
-                actual.display(),
-                expected.display()
-            ))
-        }
+        require_config_path(&self.path, expected_path)
     }
 }
 
@@ -1336,6 +1596,103 @@ mod tests {
             assert!(
                 !legacy.contains(unchecked),
                 "legacy Kanban mutation regressed to unchecked boundary: {unchecked}"
+            );
+        }
+    }
+
+    #[test]
+    fn cluster_configure_receipt_binds_every_submitted_field_and_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let peers = vec!["peer,one".to_string(), " peer two ".to_string()];
+        let ssids = vec!["home,lab".to_string(), "  exact wifi  ".to_string()];
+        let raw = format!(
+            r#"{{"operation":"cluster.configure","path":{},"reload_requested":true,"reload_error":null,"restart_required":true,"cluster_passphrase_set":true,"cluster":{{"name":"studio","enabled":true,"transport":"peeroxide","peers":["peer,one"," peer two "],"mdns":{{"enabled":false}},"policy":{{"announce_on_untrusted_wifi":false,"trusted_ssids":["home,lab","  exact wifi  "]}},"gossip":{{"replicate_raw_ingress":true,"replay_budget_days":14}},"listen_port":49738}}}}"#,
+            serde_json::to_string(&path.display().to_string()).unwrap()
+        );
+        let ack: ClusterConfigureAck = serde_json::from_str(&raw).unwrap();
+        let expected = ExpectedClusterConfig {
+            name: Some("studio"),
+            enabled: true,
+            transport: "peeroxide",
+            peers: &peers,
+            mdns_enabled: false,
+            announce_on_untrusted_wifi: false,
+            trusted_ssids: &ssids,
+            replicate_raw_ingress: true,
+            replay_budget_days: 14,
+            listen_port: 49738,
+            cluster_passphrase_set: Some(true),
+        };
+        ack.verify(&expected, &path).unwrap();
+
+        let mut wrong = expected;
+        wrong.listen_port = 49739;
+        assert!(ack.verify(&wrong, &path).is_err());
+        assert!(
+            serde_json::from_str::<ClusterConfigureAck>(&raw.replacen(
+                "\"cluster\":{",
+                "\"unexpected\":1,\"cluster\":{",
+                1,
+            ))
+            .is_err(),
+            "cluster receipts must reject uncontracted fields"
+        );
+    }
+
+    #[test]
+    fn cluster_conflict_resolution_receipt_is_exact_and_fail_closed() {
+        let raw = r#"{"operation":"cluster.conflicts.resolve","content_id":"memory:abc","preferred_origin":"peer-a","resolved_count":2,"unresolved_remaining":0}"#;
+        let ack: ClusterConflictResolveAck = serde_json::from_str(raw).unwrap();
+        ack.verify("memory:abc", "peer-a").unwrap();
+        assert!(ack.verify("memory:other", "peer-a").is_err());
+        assert!(ack.verify("memory:abc", "peer-b").is_err());
+        assert!(
+            serde_json::from_str::<ClusterConflictResolveAck>(&raw.replacen(
+                "\"resolved_count\":2",
+                "\"resolved_count\":0",
+                1
+            ))
+            .unwrap()
+            .verify("memory:abc", "peer-a")
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<ClusterConflictResolveAck>(&raw.replacen(
+                "}",
+                ",\"unexpected\":true}",
+                1
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cluster_gui_apply_has_no_direct_yaml_mutation_escape_hatch() {
+        let source = include_str!("main.rs");
+        let start = source
+            .find("C6 — complete cluster desired state")
+            .expect("cluster callback marker");
+        let end = source[start..]
+            .find("C3 — operator identity")
+            .map(|offset| start + offset)
+            .expect("cluster callback end marker");
+        let callback = &source[start..end];
+        assert!(callback.contains("ClusterConfigureAck"));
+        assert!(callback.contains("acknowledgement.verify(&expected, &expected_path)"));
+        assert!(callback.contains("run_json_with_private_stdin"));
+        assert!(callback.contains("gui_action::run_json(&mut command"));
+        assert!(callback.contains("FREEDOM_WRITE_LOCK"));
+        assert!(callback.contains("CLUSTER_UI_REVISION.fetch_add"));
+        for unchecked in [
+            "set_nested_in_freedom",
+            "set_cluster_mdns_enabled_in_freedom",
+            "std::fs::write",
+            "run_neothd_probe(",
+        ] {
+            assert!(
+                !callback.contains(unchecked),
+                "cluster mutation regressed to unchecked boundary: {unchecked}"
             );
         }
     }

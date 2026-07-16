@@ -1208,12 +1208,14 @@ const GUI_TELEGRAM_SETUP: &[GuiSetupField] = &[
 const GUI_SLACK_SETUP: &[GuiSetupField] = &[
     gui_required("slack_bot_token"),
     gui_required("slack_app_token"),
+    gui_required("slack_allowed_user_id"),
 ];
 const GUI_WHATSAPP_BUSINESS_SETUP: &[GuiSetupField] = &[
     gui_required("whatsapp_token"),
     gui_required("whatsapp_phone_id"),
     gui_required("whatsapp_verify_token"),
     gui_required("whatsapp_app_secret"),
+    gui_required("whatsapp_allowed_sender"),
 ];
 const GUI_WHATSAPP_BAILEYS_SETUP: &[GuiSetupField] = &[
     gui_required("whatsapp_baileys_url"),
@@ -1227,14 +1229,19 @@ const GUI_KEET_SETUP: &[GuiSetupField] = &[
     gui_required("keet_topic"),
     gui_required("keet_allowed_senders"),
 ];
-const GUI_DISCORD_SETUP: &[GuiSetupField] = &[gui_required("discord_bot_token")];
+const GUI_DISCORD_SETUP: &[GuiSetupField] = &[
+    gui_required("discord_bot_token"),
+    gui_required("discord_allowed_user_id"),
+];
 const GUI_SIGNAL_SETUP: &[GuiSetupField] = &[
     gui_required("signal_cli_url"),
     gui_required("signal_phone_number"),
+    gui_required("signal_allowed_sender"),
 ];
 const GUI_LINE_SETUP: &[GuiSetupField] = &[
     gui_required("line_channel_access_token"),
     gui_optional("line_channel_secret"),
+    gui_required("line_allowed_sender"),
 ];
 const GUI_IRC_SETUP: &[GuiSetupField] = &[
     gui_required("irc_server"),
@@ -1382,18 +1389,24 @@ pub fn build_channel_credential_request(
             })
         }
         GuiChannelForm::Slack => {
-            if !secret_present(f1) || !secret_present(f2) {
-                return Err("slack needs: --bot-token and --app-token".into());
+            if !secret_present(f1) || !secret_present(f2) || n3.is_empty() {
+                return Err("slack needs: --bot-token, --app-token, and --allowed-sender".into());
             }
             serde_json::json!({
                 "bot_token": f1,
                 "app_token": f2,
+                "allowed_sender": n3,
             })
         }
         GuiChannelForm::WhatsAppBusiness => {
-            if !secret_present(f1) || n2.is_empty() || !secret_present(f3) || !secret_present(f4) {
+            if !secret_present(f1)
+                || n2.is_empty()
+                || !secret_present(f3)
+                || !secret_present(f4)
+                || n5.is_empty()
+            {
                 return Err(
-                    "whatsapp_business needs: --token, --phone-id, --verify-token, and --app-secret"
+                    "whatsapp_business needs: --token, --phone-id, --verify-token, --app-secret, and --allowed-sender"
                         .into(),
                 );
             }
@@ -1402,6 +1415,7 @@ pub fn build_channel_credential_request(
                 "phone_id": n2,
                 "verify_token": f3,
                 "app_secret": f4,
+                "allowed_sender": n5,
             })
         }
         GuiChannelForm::WhatsAppBaileys => {
@@ -1429,24 +1443,27 @@ pub fn build_channel_credential_request(
             })
         }
         GuiChannelForm::Discord => {
-            if !secret_present(f1) {
-                return Err("discord needs: --token".into());
+            if !secret_present(f1) || n2.is_empty() {
+                return Err("discord needs: --token and --allowed-sender (numeric user ID)".into());
             }
-            serde_json::json!({ "token": f1 })
+            let allowed_sender = neothd::channels::discord::normalize_allowed_sender_id(n2)
+                .map_err(|error| error.to_string())?;
+            serde_json::json!({ "token": f1, "allowed_sender": allowed_sender })
         }
         GuiChannelForm::Signal => {
-            if n1.is_empty() || n2.is_empty() {
-                return Err("signal needs: --url and --phone".into());
+            if n1.is_empty() || n2.is_empty() || n3.is_empty() {
+                return Err("signal needs: --url, --phone, and --allowed-sender".into());
             }
-            serde_json::json!({ "url": n1, "phone": n2 })
+            serde_json::json!({ "url": n1, "phone": n2, "allowed_sender": n3 })
         }
         GuiChannelForm::Line => {
-            if !secret_present(f1) {
-                return Err("line needs: --token".into());
+            if !secret_present(f1) || n3.is_empty() {
+                return Err("line needs: --token and --allowed-sender".into());
             }
             serde_json::json!({
                 "token": f1,
                 "password": secret_present(f2).then_some(f2),
+                "allowed_sender": n3,
             })
         }
         GuiChannelForm::Irc => {
@@ -1838,7 +1855,11 @@ pub fn parse_channel_test_status(
         ));
     }
     let detail = result.detail.trim();
-    if detail.is_empty() || detail.chars().any(char::is_control) {
+    if detail.is_empty()
+        || detail
+            .chars()
+            .any(|character| character.is_control() && !character.is_whitespace())
+    {
         return Err(format!(
             "channel `{expected_channel}` returned invalid test detail"
         ));
@@ -3537,11 +3558,12 @@ pub fn parse_calendar_next(json: &str, n: usize) -> (bool, Vec<(String, String)>
                 .or_else(|| ev.get("time").and_then(|x| x.as_str()))
                 .map(|s| {
                     // Abbreviate ISO datetime to HH:MM if possible.
-                    if s.len() >= 16 && s.contains('T') {
-                        s[11..16].to_string()
-                    } else {
-                        s[..s.len().min(10)].to_string()
+                    if s.as_bytes().get(10) == Some(&b'T')
+                        && let Some(time) = s.get(11..16)
+                    {
+                        return time.to_string();
                     }
+                    s.chars().take(10).collect()
                 })
                 .unwrap_or_else(|| "—".to_string());
             (time, summary)
@@ -3868,11 +3890,11 @@ pub fn parse_calendar_events(json: &str) -> (bool, Vec<(String, String, String)>
                 .unwrap_or("")
                 .to_string();
             // Display: keep first 16 chars of ISO timestamp (YYYY-MM-DDTHH:MM).
-            let datetime = if start_raw.len() >= 16 {
-                start_raw[..16].replace('T', " ")
-            } else {
-                start_raw.clone()
-            };
+            let datetime = start_raw
+                .chars()
+                .take(16)
+                .collect::<String>()
+                .replace('T', " ");
             let location = item
                 .get("location")
                 .and_then(|x| x.as_str())
@@ -4204,8 +4226,10 @@ pub struct MeshPeerData {
 pub struct MeshStatusSnap {
     pub node_id: String,
     pub listen_port: String,
+    pub mdns_enabled: bool,
     pub trusted_ssids: String,
     pub peers: Vec<MeshPeerData>,
+    pub conflict_count: usize,
     pub gossip_note: String,
 }
 
@@ -4379,7 +4403,8 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
 /// Parse `neoth cluster status --output json` → `MeshStatusSnap`.
 ///
 /// Expected shape: `{"node_id":"...","listen_port":7700,"mdns_enabled":true,
-///   "trusted_ssids":["HomeNet"],"peers":[{"id":"...","last_seen":"3s ago","reachable":true}]}`
+///   "trusted_ssids":["HomeNet"],"conflict_count":0,"gossip":{...},
+///   "peers":[{"id":"...","last_seen":"3s ago","reachable":true}]}`
 /// On parse failure all fields are empty / defaults (the cluster feature may not be built).
 pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
     let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
@@ -4392,6 +4417,10 @@ pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
         .get("listen_port")
         .map(|x| x.to_string().replace('"', ""))
         .unwrap_or_default();
+    let mdns_enabled = v
+        .get("mdns_enabled")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
     let trusted_ssids = v
         .get("trusted_ssids")
         .and_then(|x| x.as_array())
@@ -4426,12 +4455,35 @@ pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
                 .collect()
         })
         .unwrap_or_default();
+    let conflict_count = v
+        .get("conflict_count")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0) as usize;
+    let gossip_note = v
+        .get("gossip")
+        .map(|gossip| {
+            let raw = gossip
+                .get("replicate_raw_ingress")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false);
+            let days = gossip
+                .get("replay_budget_days")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(30);
+            format!(
+                "raw ingress {} · replay window {days} days",
+                if raw { "enabled" } else { "disabled" }
+            )
+        })
+        .unwrap_or_default();
     MeshStatusSnap {
         node_id,
         listen_port,
+        mdns_enabled,
         trusted_ssids,
         peers,
-        gossip_note: String::new(),
+        conflict_count,
+        gossip_note,
     }
 }
 
@@ -5740,6 +5792,66 @@ mod tests {
         assert_eq!(telegram["fields"]["token"], "bot-secret");
         assert_eq!(telegram["fields"]["telegram_user_id"], 123_456_789);
 
+        let discord = build_channel_credential_request(
+            "discord",
+            ["discord-secret", "123456789012345678", "", "", "", ""],
+            false,
+        )
+        .unwrap();
+        let discord: serde_json::Value = serde_json::from_slice(discord.as_slice()).unwrap();
+        assert_eq!(discord["fields"]["token"], "discord-secret");
+        assert_eq!(discord["fields"]["allowed_sender"], "123456789012345678");
+
+        let slack = build_channel_credential_request(
+            "slack",
+            ["xoxb-secret", "xapp-secret", "U123456", "", "", ""],
+            false,
+        )
+        .unwrap();
+        let slack: serde_json::Value = serde_json::from_slice(slack.as_slice()).unwrap();
+        assert_eq!(slack["fields"]["allowed_sender"], "U123456");
+
+        let whatsapp = build_channel_credential_request(
+            "whatsapp_business",
+            [
+                "meta-token",
+                "12345",
+                "verify",
+                "secret",
+                "+491701234567",
+                "",
+            ],
+            false,
+        )
+        .unwrap();
+        let whatsapp: serde_json::Value = serde_json::from_slice(whatsapp.as_slice()).unwrap();
+        assert_eq!(whatsapp["fields"]["allowed_sender"], "+491701234567");
+
+        let signal = build_channel_credential_request(
+            "signal",
+            [
+                "http://127.0.0.1:8080",
+                "+491701111111",
+                "+491702222222",
+                "",
+                "",
+                "",
+            ],
+            false,
+        )
+        .unwrap();
+        let signal: serde_json::Value = serde_json::from_slice(signal.as_slice()).unwrap();
+        assert_eq!(signal["fields"]["allowed_sender"], "+491702222222");
+
+        let line = build_channel_credential_request(
+            "line",
+            ["line-token", "line-secret", "U123456", "", "", ""],
+            false,
+        )
+        .unwrap();
+        let line: serde_json::Value = serde_json::from_slice(line.as_slice()).unwrap();
+        assert_eq!(line["fields"]["allowed_sender"], "U123456");
+
         let matrix = build_channel_credential_request(
             "matrix",
             [
@@ -6044,6 +6156,16 @@ mod tests {
         .unwrap();
         assert_eq!(unavailable.status, "unavailable");
         assert_eq!(unavailable.detail, "no safe auth probe");
+
+        let multiline = parse_channel_test_status(
+            r#"{"channel":"signal","status":"fail","detail":"Connection refused\n\tverify signal-cli with neoth doctor"}"#,
+            "signal",
+        )
+        .unwrap();
+        assert_eq!(
+            multiline.detail,
+            "Connection refused\n\tverify signal-cli with neoth doctor"
+        );
     }
 
     #[test]
@@ -6065,6 +6187,13 @@ mod tests {
         assert!(
             parse_channel_test_status(r#"{"channel":"keet","status":"ok","detail":""}"#, "keet")
                 .is_err()
+        );
+        assert!(
+            parse_channel_test_status(
+                r#"{"channel":"keet","status":"fail","detail":"bad\u0007detail"}"#,
+                "keet"
+            )
+            .is_err()
         );
     }
 
@@ -6654,6 +6783,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_calendar_next_fallback_is_utf8_boundary_safe() {
+        let json = r#"{"events":[{"start":"日本語予定","summary":"祝日"}]}"#;
+        let (configured, events) = super::parse_calendar_next(json, 1);
+        assert!(configured);
+        assert_eq!(events, vec![("日本語予定".to_string(), "祝日".to_string())]);
+    }
+
+    #[test]
     fn parse_calendar_next_not_configured_on_error_key() {
         let json = r#"{"error":"CalDAV not configured"}"#;
         let (configured, evs) = super::parse_calendar_next(json, 3);
@@ -6800,6 +6937,15 @@ mod tests {
         assert_eq!(evs[0].1, "Standup");
         assert_eq!(evs[0].2, "Zoom");
         assert_eq!(evs[1].2, "");
+    }
+
+    #[test]
+    fn parse_calendar_events_unicode_start_is_boundary_safe() {
+        let json = r#"{"events":[{"summary":"Holiday","start":"日本語予定🌍abcdefghijklmnop","location":"Home"}]}"#;
+        let (configured, events) = super::parse_calendar_events(json);
+        assert!(configured);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0.chars().count(), 16);
     }
 
     #[test]
@@ -7036,13 +7182,19 @@ mod tests {
 
     #[test]
     fn parse_mesh_status_happy_path() {
-        let json = r#"{"node_id":"node-abc","listen_port":7700,"mdns_enabled":true,"trusted_ssids":["HomeNet"],"peers":[{"id":"peer-1","last_seen":"3s ago","reachable":true}]}"#;
+        let json = r#"{"node_id":"node-abc","listen_port":7700,"mdns_enabled":true,"trusted_ssids":["HomeNet"],"conflict_count":2,"gossip":{"replicate_raw_ingress":false,"replay_budget_days":14},"peers":[{"id":"peer-1","last_seen":"3s ago","reachable":true}]}"#;
         let snap = super::parse_mesh_status(json);
         assert_eq!(snap.node_id, "node-abc");
         assert!(snap.listen_port.contains("7700"));
+        assert!(snap.mdns_enabled);
         assert!(snap.trusted_ssids.contains("HomeNet"));
         assert_eq!(snap.peers.len(), 1);
         assert!(snap.peers[0].reachable);
+        assert_eq!(snap.conflict_count, 2);
+        assert_eq!(
+            snap.gossip_note,
+            "raw ingress disabled · replay window 14 days"
+        );
     }
 
     #[test]

@@ -229,9 +229,6 @@ async fn run_preset(
     count: Option<u8>,
     output: &OutputFormat,
 ) -> Result<()> {
-    let mut cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml — run `neoth init` first")?;
-
     // VRAM is only consulted by the abliterated plan; probe lazily so the
     // other presets stay offline-pure.
     let vram_mib = if matches!(name, PresetName::LocalAbliterated) {
@@ -240,21 +237,26 @@ async fn run_preset(
         vram
     };
 
-    let prior = [
-        (HemisphereRole::Left, cfg.inference.left.clone()),
-        (HemisphereRole::Right, cfg.inference.right.clone()),
-        (HemisphereRole::Cerebellum, cfg.inference.cerebellum.clone()),
-    ];
-    let (new_topo, summary) =
-        build_preset_topology(name, std::mem::take(&mut cfg.inference), vram_mib, count)?;
-    cfg.inference = new_topo;
-
     let path = FreedomConfig::default_path();
+    let (prepared, (cfg, prior, summary)) = FreedomConfig::prepare_update_at(&path, |cfg| {
+        let prior = [
+            (HemisphereRole::Left, cfg.inference.left.clone()),
+            (HemisphereRole::Right, cfg.inference.right.clone()),
+            (HemisphereRole::Cerebellum, cfg.inference.cerebellum.clone()),
+        ];
+        let (new_topo, summary) =
+            build_preset_topology(name, std::mem::take(&mut cfg.inference), vram_mib, count)?;
+        cfg.inference = new_topo;
+        Ok((cfg.clone(), prior, summary))
+    })
+    .context("prepare lossless hemisphere preset update")?;
     let now_unix = crate::time::now_unix_i64();
 
     // Pre-mutation rollback snapshot (mirrors run_set), so a mis-applied preset
     // can be reverted via `neoth rollback apply`.
-    let prior_yaml_bytes = std::fs::read(&path).unwrap_or_default();
+    let prior_yaml_bytes = prepared
+        .source_bytes()
+        .ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres preset audit")?;
     let snapshot_segment = wal_dir.join(format!("hemispheres-preset-snapshot-{now_unix}.wal"));
@@ -265,7 +267,7 @@ async fn run_preset(
         &cfg.rollback,
         crate::wal::snapshot::MutationKind::ConfigWrite,
         path.display().to_string(),
-        &prior_yaml_bytes,
+        prior_yaml_bytes,
         now_unix,
         Some(format!("hemispheres preset {name:?} via CLI")),
     )
@@ -274,8 +276,9 @@ async fn run_preset(
     drop(snap_writer);
     let _ = snap_join.await;
 
-    cfg.save_public_to_default_path()
-        .with_context(|| format!("write {}", path.display()))?;
+    prepared
+        .commit()
+        .with_context(|| format!("publish reviewed {} update", path.display()))?;
 
     // Emit a HEMISPHERE_REBOUND frame for each role the preset actually changed.
     let mut changed: Vec<&str> = Vec::new();
@@ -388,6 +391,35 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
 /// all three roles resolve to one provider. Mirrors `run_set`'s atomic save +
 /// pre-mutation rollback snapshot. `preset single` keeps the existing default
 /// slot; this picks the provider explicitly in one command.
+fn apply_single_mode_update(
+    cfg: &mut FreedomConfig,
+    credentials: &mut crate::config::credentials::Credentials,
+    provider: InferenceProvider,
+    model: Option<&str>,
+    supplied_key: Option<&crate::secret::SecretString>,
+    endpoint: Option<&str>,
+) -> FreedomConfig {
+    let prior_voice = cfg.inference.default_slot.voice;
+    if let Some(key) = supplied_key {
+        credentials.inference_default_slot_key = Some(key.clone());
+    } else if credentials.inference_default_slot_key.is_none() {
+        // Preserve the pre-split default-slot key in the dedicated store
+        // before the public topology is rewritten.
+        credentials.inference_default_slot_key = cfg.inference.default_slot.key.clone();
+    }
+    cfg.inference.mode = crate::config::inference::TopologyMode::Single;
+    cfg.inference.default_slot = crate::config::inference::HemisphereSlot {
+        provider: Some(provider),
+        model: model.map(str::to_owned),
+        key: None,
+        endpoint: endpoint.map(str::to_owned),
+        region: None,
+        api_version: None,
+        voice: prior_voice,
+    };
+    cfg.clone()
+}
+
 async fn run_mode_single(
     provider_str: &str,
     model: Option<String>,
@@ -403,28 +435,21 @@ async fn run_mode_single(
         )
     })?;
 
-    let mut cfg = FreedomConfig::load_from_default_path().context("load freedom.yaml")?;
-    let prior_mode = cfg.inference.mode;
-    let prior_voice = cfg.inference.default_slot.voice;
-
-    cfg.inference.mode = crate::config::inference::TopologyMode::Single;
-    cfg.inference.default_slot = crate::config::inference::HemisphereSlot {
-        provider: Some(provider),
-        model: model.clone(),
-        key: key.map(crate::secret::SecretString::from),
-        endpoint: endpoint.clone(),
-        region: None,
-        api_version: None,
-        // Preserve any specialist voice already on the default slot.
-        voice: prior_voice,
-    };
-
     let path = FreedomConfig::default_path();
+    let credentials_path = FreedomConfig::default_neoth_home().join("credentials.yaml");
+    let snapshot = crate::config::snapshot_raw_config_pair(&path)
+        .context("capture coherent config/credential generation before single-mode update")?;
+    let prior_yaml_bytes = snapshot
+        .freedom
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
+    let snapshot_config: FreedomConfig =
+        serde_yaml::from_slice(prior_yaml_bytes).context("parse snapshotted freedom.yaml")?;
+    let prior_mode = snapshot_config.inference.mode;
     let now_unix = crate::time::now_unix_i64();
 
     // Pre-mutation rollback snapshot (same policy gate as `run_set`) so
     // `neoth rollback apply` can restore the prior topology.
-    let prior_yaml_bytes = std::fs::read(&path).unwrap_or_default();
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
     let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{now_unix}.wal"));
@@ -432,10 +457,10 @@ async fn run_mode_single(
         .context("spawn WAL writer for hemispheres rollback snapshot")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
         &snap_writer,
-        &cfg.rollback,
+        &snapshot_config.rollback,
         crate::wal::snapshot::MutationKind::ConfigWrite,
         path.display().to_string(),
-        &prior_yaml_bytes,
+        prior_yaml_bytes,
         now_unix,
         Some("hemispheres mode single via CLI".to_string()),
     )
@@ -444,8 +469,23 @@ async fn run_mode_single(
     drop(snap_writer);
     let _ = snap_join.await;
 
-    cfg.save_public_to_default_path()
-        .with_context(|| format!("write {}", path.display()))?;
+    let supplied_key = key.map(crate::secret::SecretString::from);
+    let cfg = crate::config::credentials::Credentials::update_with_freedom_at_if_source(
+        &path,
+        &credentials_path,
+        prior_yaml_bytes,
+        |cfg, credentials| {
+            Ok(apply_single_mode_update(
+                cfg,
+                credentials,
+                provider,
+                model.as_deref(),
+                supplied_key.as_ref(),
+                endpoint.as_deref(),
+            ))
+        },
+    )
+    .with_context(|| format!("publish reviewed {} and credentials", path.display()))?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -561,15 +601,14 @@ pub(crate) async fn rebind_at(
     })?;
     let path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
-    if key.is_some() {
-        crate::config::credentials::Credentials::load_or_default(&credentials_path)
-            .context("validate credentials.yaml before provider rebind")?;
-    }
-
-    let snapshot = FreedomConfig::load_from_path(&path).context("load freedom.yaml")?;
+    let config_snapshot = crate::config::snapshot_raw_config_pair(&path)
+        .context("capture coherent freedom/credential generation before provider rebind")?;
+    let prior_yaml_bytes = config_snapshot
+        .freedom
+        .ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
+    let snapshot: FreedomConfig =
+        serde_yaml::from_slice(&prior_yaml_bytes).context("parse freedom.yaml")?;
     let now_unix = crate::time::now_unix_i64();
-    let prior_yaml_bytes = std::fs::read(&path)
-        .with_context(|| format!("read pre-mutation config at {}", path.display()))?;
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
     let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{now_unix}.wal"));
@@ -590,50 +629,94 @@ pub(crate) async fn rebind_at(
     drop(snap_writer);
     let _ = snap_join.await;
 
-    // Store a supplied key first. If the later config RMW fails, this leaves
-    // only an inert credential behind; writing config first could activate a
-    // provider without its new key and expose a partial routing state on the
-    // next process start.
-    if let Some(key) = key {
-        let key = crate::secret::SecretString::from(key);
-        crate::config::credentials::Credentials::update_at(&credentials_path, |credentials| {
-            match role {
-                HemisphereRole::Left => credentials.inference_left_key = Some(key.clone()),
-                HemisphereRole::Right => credentials.inference_right_key = Some(key.clone()),
-                HemisphereRole::Cerebellum => {
-                    credentials.inference_cerebellum_key = Some(key.clone())
+    let supplied_key = key.map(crate::secret::SecretString::from);
+    let (prior, new_slot, mode) =
+        crate::config::credentials::Credentials::update_raw_freedom_with_credentials_at(
+            &path,
+            &credentials_path,
+            |source, credentials| {
+                let source = source.ok_or_else(|| {
+                    anyhow::anyhow!("freedom.yaml disappeared at {}", path.display())
+                })?;
+                anyhow::ensure!(
+                    source.as_bytes() == prior_yaml_bytes.as_slice(),
+                    "freedom.yaml changed after its rollback snapshot; retry the hemisphere rebind"
+                );
+                let mut persisted: serde_yaml::Value = serde_yaml::from_str(source)
+                    .with_context(|| format!("parse {} for lossless rebind", path.display()))?;
+                let mut cfg: FreedomConfig = serde_yaml::from_str(source)
+                    .with_context(|| format!("parse config at {}", path.display()))?;
+                let prior = cfg.inference.slot_for(role).clone();
+                let role_credential = match role {
+                    HemisphereRole::Left => &mut credentials.inference_left_key,
+                    HemisphereRole::Right => &mut credentials.inference_right_key,
+                    HemisphereRole::Cerebellum => &mut credentials.inference_cerebellum_key,
+                };
+                if let Some(key) = supplied_key.as_ref() {
+                    *role_credential = Some(key.clone());
+                } else if role_credential.is_none() {
+                    // Pre-split configs stored the key inline in this slot.
+                    // Rebinding always removes inline secrets, so migrate the
+                    // legacy value into the role-specific credential field
+                    // before publishing the public slot without `key`.
+                    *role_credential = prior.key.clone();
                 }
-            }
-            Ok(())
-        })
-        .context("write role-specific provider key to credentials.yaml")?;
-    }
 
-    let (prior, new_slot, mode) = FreedomConfig::update_at(&path, |cfg| {
-        let prior = cfg.inference.slot_for(role).clone();
-        if matches!(
-            cfg.inference.mode,
-            crate::config::inference::TopologyMode::Single
-        ) {
-            cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
-        }
-        let new_slot = crate::config::inference::HemisphereSlot {
-            provider: Some(provider),
-            model: model.clone(),
-            key: None,
-            endpoint: endpoint.clone(),
-            region: None,
-            api_version: None,
-            voice: cfg.inference.slot_for(role).voice,
-        };
-        match role {
-            HemisphereRole::Left => cfg.inference.left = new_slot.clone(),
-            HemisphereRole::Right => cfg.inference.right = new_slot.clone(),
-            HemisphereRole::Cerebellum => cfg.inference.cerebellum = new_slot.clone(),
-        }
-        Ok((prior, new_slot, cfg.inference.mode))
-    })
-    .with_context(|| format!("update {}", path.display()))?;
+                if matches!(
+                    cfg.inference.mode,
+                    crate::config::inference::TopologyMode::Single
+                ) {
+                    cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
+                }
+                let new_slot = crate::config::inference::HemisphereSlot {
+                    provider: Some(provider),
+                    model: model.clone(),
+                    key: None,
+                    endpoint: endpoint.clone(),
+                    region: None,
+                    api_version: None,
+                    voice: prior.voice,
+                };
+                match role {
+                    HemisphereRole::Left => cfg.inference.left = new_slot.clone(),
+                    HemisphereRole::Right => cfg.inference.right = new_slot.clone(),
+                    HemisphereRole::Cerebellum => cfg.inference.cerebellum = new_slot.clone(),
+                }
+
+                let root = persisted
+                    .as_mapping_mut()
+                    .context("freedom.yaml root must be a YAML mapping")?;
+                let inference_key = serde_yaml::Value::String("inference".to_string());
+                let inference = root
+                    .entry(inference_key)
+                    .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+                let inference = inference
+                    .as_mapping_mut()
+                    .context("freedom.yaml inference must be a YAML mapping")?;
+                inference.insert(
+                    serde_yaml::Value::String("mode".to_string()),
+                    serde_yaml::to_value(cfg.inference.mode)
+                        .context("serialize inference topology mode")?,
+                );
+                let role_key = serde_yaml::Value::String(role.as_str().to_string());
+                let new_slot_value =
+                    serde_yaml::to_value(&new_slot).context("serialize rebound hemisphere slot")?;
+                if let (Some(current), serde_yaml::Value::Mapping(new_fields)) =
+                    (inference.get_mut(&role_key), &new_slot_value)
+                    && let Some(current) = current.as_mapping_mut()
+                {
+                    for (key, value) in new_fields {
+                        current.insert(key.clone(), value.clone());
+                    }
+                } else {
+                    inference.insert(role_key, new_slot_value);
+                }
+                let target = serde_yaml::to_string(&persisted)
+                    .context("serialize losslessly rebound freedom.yaml")?;
+                Ok((Some(target), (prior, new_slot, cfg.inference.mode)))
+            },
+        )
+        .with_context(|| format!("atomically update {} and credentials", path.display()))?;
 
     let audit_segment =
         emit_rebind_audit_to(home, &wal_dir, role, &prior, &new_slot, now_unix).await?;
@@ -909,6 +992,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn single_mode_stores_supplied_key_in_credentials_not_public_slot() {
+        let mut cfg = FreedomConfig::default();
+        cfg.inference.default_slot.key = Some(crate::secret::SecretString::from("legacy-key"));
+        let mut credentials = crate::config::credentials::Credentials::default();
+        let supplied = crate::secret::SecretString::from("new-key");
+
+        let updated = apply_single_mode_update(
+            &mut cfg,
+            &mut credentials,
+            InferenceProvider::OpenAiCompat,
+            Some("new-model"),
+            Some(&supplied),
+            Some("http://127.0.0.1:11434/v1"),
+        );
+
+        assert_eq!(
+            credentials
+                .inference_default_slot_key
+                .as_ref()
+                .expect("dedicated default-slot key")
+                .expose(),
+            "new-key"
+        );
+        assert!(updated.inference.default_slot.key.is_none());
+        assert_eq!(
+            updated.inference.mode,
+            crate::config::inference::TopologyMode::Single
+        );
+        assert_eq!(
+            updated.inference.default_slot.provider,
+            Some(InferenceProvider::OpenAiCompat)
+        );
+    }
+
+    #[test]
     fn parse_role_accepts_canonical_names() {
         assert_eq!(parse_role("left").unwrap(), HemisphereRole::Left);
         assert_eq!(parse_role("right").unwrap(), HemisphereRole::Right);
@@ -1116,6 +1234,60 @@ mod tests {
         assert_eq!(r.question, "ping");
         assert!(r.response.is_none());
         assert!(r.completion_latency_ms.is_none());
+    }
+
+    #[tokio::test]
+    async fn rebind_migrates_legacy_inline_key_and_preserves_unknown_slot_fields() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"operator_id: test-operator
+inference:
+  mode: custom
+  left:
+    provider: openai_api
+    model: old-model
+    key: legacy-inline-key
+    future_slot_field: preserve-me
+"#,
+        )
+        .unwrap();
+
+        rebind_at(
+            home.path(),
+            "left",
+            "openai_compat",
+            Some("new-model".to_string()),
+            None,
+            Some("http://127.0.0.1:11434/v1".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom).unwrap()).unwrap();
+        assert_eq!(
+            raw["inference"]["left"]["future_slot_field"].as_str(),
+            Some("preserve-me")
+        );
+        assert!(
+            raw["inference"]["left"]["key"].is_null(),
+            "the legacy inline key must leave the public config"
+        );
+        let credentials = crate::config::credentials::Credentials::load_or_default(
+            &home.path().join("credentials.yaml"),
+        )
+        .unwrap();
+        assert_eq!(
+            credentials.inference_left_key.as_ref().unwrap().expose(),
+            "legacy-inline-key"
+        );
+        let effective = FreedomConfig::load_from_path(&freedom).unwrap();
+        assert_eq!(
+            effective.inference.left.key.as_ref().unwrap().expose(),
+            "legacy-inline-key"
+        );
     }
 
     #[tokio::test]

@@ -58,18 +58,44 @@ const DISCORD_MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const DISCORD_USER_AGENT: &str =
     concat!("NEOTH/", env!("CARGO_PKG_VERSION"), " (+https://neoth.dev)");
 
-/// Send-only Discord adapter. Holds the bot token + a shared HTTP
-/// client. Stateless — every send call is one HTTP round trip.
+/// Discord adapter. `new` creates the outbound/probe surface; daemon inbound
+/// must use [`DiscordChannel::new_inbound`] so `Channel::run` cannot ever start
+/// with an open sender policy or without a WAL gate-audit writer.
 pub struct DiscordChannel {
     bot_token: SecretString,
     http: reqwest::Client,
+    inbound_gate: Option<DiscordInboundGate>,
+}
+
+struct DiscordInboundGate {
+    allowed_sender_id: String,
+    writer: crate::wal::writer::WalWriterHandle,
 }
 
 impl DiscordChannel {
     pub fn new(bot_token: SecretString) -> Result<Self> {
         let http = crate::providers::http_client::build_client_no_redirect()
             .context("build reqwest client for Discord adapter")?;
-        Ok(Self { bot_token, http })
+        Ok(Self {
+            bot_token,
+            http,
+            inbound_gate: None,
+        })
+    }
+
+    /// Construct the receive-capable adapter with its mandatory exact-user
+    /// authorization policy and audit sink bound for the whole gateway life.
+    pub fn new_inbound(
+        bot_token: SecretString,
+        allowed_sender_id: &str,
+        writer: crate::wal::writer::WalWriterHandle,
+    ) -> Result<Self> {
+        let mut channel = Self::new(bot_token)?;
+        channel.inbound_gate = Some(DiscordInboundGate {
+            allowed_sender_id: normalize_allowed_sender_id(allowed_sender_id)?,
+            writer,
+        });
+        Ok(channel)
     }
 
     /// Validate the configured bot token without sending a message.
@@ -80,6 +106,25 @@ impl DiscordChannel {
     pub async fn validate_bot(&self) -> std::result::Result<DiscordBotIdentity, ChannelError> {
         validate_bot_at(&self.http, DISCORD_API_BASE, &self.bot_token).await
     }
+}
+
+/// Validate and canonicalize an immutable Discord user snowflake. Usernames
+/// are mutable and therefore never accepted as authorization identities.
+pub fn normalize_allowed_sender_id(raw: &str) -> Result<String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        anyhow::bail!("Discord allowed sender id is required");
+    }
+    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        anyhow::bail!("Discord allowed sender id must be a numeric user snowflake");
+    }
+    let parsed = value
+        .parse::<u64>()
+        .context("Discord allowed sender id exceeds the snowflake range")?;
+    if parsed == 0 || parsed.to_string() != value {
+        anyhow::bail!("Discord allowed sender id must be a canonical positive user snowflake");
+    }
+    Ok(value.to_string())
 }
 
 /// The Discord REST `Authorization` header value — single source of the
@@ -169,6 +214,9 @@ impl Channel for DiscordChannel {
             OutboundSender, default_intents, run_gateway_loop,
         };
 
+        let inbound_gate = self.inbound_gate.as_ref().context(
+            "Discord inbound is fail-closed: construct with an allowed sender id and WAL writer",
+        )?;
         let http = self.http.clone();
         let token = std::sync::Arc::new(self.bot_token.clone());
         let sender: OutboundSender = {
@@ -188,6 +236,8 @@ impl Channel for DiscordChannel {
         run_gateway_loop(
             self.bot_token.clone(),
             default_intents(),
+            inbound_gate.allowed_sender_id.clone(),
+            inbound_gate.writer.clone(),
             handler,
             Some(sender),
         )

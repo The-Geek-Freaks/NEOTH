@@ -6,6 +6,110 @@ use std::path::Path;
 
 use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
+/// Unresolved typed mesh conflicts are never a silent LWW detail. This check
+/// is deliberately read-only: doctor must not create or migrate views.db.
+pub(crate) fn check_cluster_conflicts(home: &Path) -> CheckOutcome {
+    const NAME: &str = "cluster mesh conflicts";
+    let db_path = home.join("views.db");
+    if !db_path.exists() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "no mesh database yet; 0 unresolved conflicts".to_string(),
+        };
+    }
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = match rusqlite::Connection::open_with_flags(&db_path, flags) {
+        Ok(conn) => conn,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("cannot read {}: {error}", db_path.display()),
+            };
+        }
+    };
+    let table_exists = match conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+             WHERE type = 'table' AND name = 'mesh_sync_conflicts')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ) {
+        Ok(exists) => exists,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("cannot inspect mesh conflict schema: {error}"),
+            };
+        }
+    };
+    if !table_exists {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "mesh conflict ledger not initialized; 0 unresolved conflicts".to_string(),
+        };
+    }
+    let has_resolution_column = match conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('mesh_sync_conflicts') \
+             WHERE name = 'resolved_at')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ) {
+        Ok(exists) => exists,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("cannot inspect mesh conflict columns: {error}"),
+            };
+        }
+    };
+    let sql = if has_resolution_column {
+        "SELECT count(*) FROM mesh_sync_conflicts WHERE resolved_at IS NULL"
+    } else {
+        // v29 databases have not been migrated by a normal runtime open yet;
+        // every row in that schema is unresolved.
+        "SELECT count(*) FROM mesh_sync_conflicts"
+    };
+    let count = match conn.query_row(sql, [], |row| row.get::<_, i64>(0)) {
+        Ok(count) if count >= 0 => count,
+        Ok(count) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("invalid negative conflict count {count}"),
+            };
+        }
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("cannot query mesh conflict ledger: {error}"),
+            };
+        }
+    };
+    if count == 0 {
+        CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "0 unresolved typed mesh conflicts".to_string(),
+        }
+    } else {
+        CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "{count} unresolved typed mesh conflict(s); inspect with `neoth cluster \
+                 conflicts`, then acknowledge with `neoth cluster conflicts resolve \
+                 <content-id> --prefer <origin>`"
+            ),
+        }
+    }
+}
+
 /// Cluster mDNS announcer state — surfaces whether the announcer
 /// would actually broadcast on the current network. Composes the
 /// Q2-ratified `policy::gate_discover` verdict with the paired-peer
@@ -214,7 +318,11 @@ pub(crate) fn check_cluster_registry(_home: &Path) -> CheckOutcome {
 
 /// Registration: this domain's diagnostics, run in order by
 /// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
-pub(crate) const CHECKS: &[CheckFn] = &[check_cluster_registry, check_cluster_mdns_announcer];
+pub(crate) const CHECKS: &[CheckFn] = &[
+    check_cluster_registry,
+    check_cluster_mdns_announcer,
+    check_cluster_conflicts,
+];
 
 /// Operator runbook entries for this domain (the `--explain` surface).
 pub(crate) const DOCS: &[CheckDoc] = &[
@@ -260,4 +368,67 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               `neoth cluster discover` surfaces the same verdict \
               + suggested fix before scanning.",
     },
+    CheckDoc {
+        name: "cluster mesh conflicts",
+        purpose: "Reads the durable typed-conflict ledger in views.db without \
+                  creating or migrating it. Warns whenever same-content mesh \
+                  variants still need an explicit operator decision.",
+        common_failures: "Two origins publish different canonical values for \
+                          the same stable content id, or one origin replaces a \
+                          value while an older digest remains materialized.",
+        fix: "Run `neoth cluster conflicts` to inspect origins and digests. \
+              Then run `neoth cluster conflicts resolve <content-id> --prefer \
+              <origin>`. The decision is persisted; a future new digest pair \
+              becomes unresolved again instead of being hidden.",
+    },
 ];
+
+#[cfg(test)]
+mod conflict_tests {
+    use super::*;
+    use rusqlite::params;
+
+    #[test]
+    fn missing_mesh_db_is_a_clean_zero_conflict_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = check_cluster_conflicts(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("0 unresolved"));
+        assert!(!dir.path().join("views.db").exists());
+    }
+
+    #[test]
+    fn unresolved_conflict_warns_and_resolution_clears_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let incumbent = [1_u8; 32];
+        let incoming = [2_u8; 32];
+        conn.execute(
+            "INSERT INTO mesh_sync_conflicts \
+             (content_id, incumbent_origin, incoming_origin, incumbent_sha256, \
+              incoming_sha256, policy, observed_at) \
+             VALUES ('memory:test', 'peer-a', 'peer-b', ?1, ?2, \
+                     'cross_origin_typed_conflict', 10)",
+            params![incumbent.as_slice(), incoming.as_slice()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let unresolved = check_cluster_conflicts(dir.path());
+        assert_eq!(unresolved.status, CheckStatus::Warn);
+        assert!(unresolved.detail.contains("1 unresolved"));
+
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        conn.execute(
+            "UPDATE mesh_sync_conflicts \
+             SET resolved_at = 20, preferred_origin = 'peer-a'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let resolved = check_cluster_conflicts(dir.path());
+        assert_eq!(resolved.status, CheckStatus::Pass);
+        assert!(resolved.detail.contains("0 unresolved"));
+    }
+}

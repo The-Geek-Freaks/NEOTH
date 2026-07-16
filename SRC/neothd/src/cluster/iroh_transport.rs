@@ -52,6 +52,17 @@ pub type PeerRegistry = Arc<Mutex<HashSet<EndpointId>>>;
 /// every authenticated gossip stream (32-byte HMAC-SHA256, see
 /// [`crate::cluster::peer_auth`]).
 const CLUSTER_PROOF_BYTES: usize = 32;
+const GOSSIP_SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+async fn bounded_gossip_send<F>(
+    timeout: std::time::Duration,
+    send: F,
+) -> std::result::Result<F::Output, tokio::time::error::Elapsed>
+where
+    F: Future,
+{
+    tokio::time::timeout(timeout, send).await
+}
 
 /// F19 — best-effort WAL audit for an inbound gossip decision over iroh. Uses
 /// the SYNC WAL append so it works from the sync [`FrameHandler`] closure AND
@@ -113,7 +124,7 @@ fn emit_gossip_sent(
 
 /// ALPN for NEOTH cluster gossip. Both ends must present the same bytestring or
 /// iroh aborts the handshake — a cheap protocol/version guard.
-pub const NEOTH_CLUSTER_ALPN: &[u8] = b"neoth/cluster/gossip/2";
+pub const NEOTH_CLUSTER_ALPN: &[u8] = b"neoth/cluster/gossip/3";
 
 /// Hard cap on a single gossip frame (DoS guard on the QUIC read). Gossip
 /// frames are small (a vector clock + a band of WAL frames); 4 MiB is generous.
@@ -418,7 +429,13 @@ impl IrohTransport {
     }
 
     /// Gracefully shut down the router + endpoint (flushes queued closes).
-    pub async fn shutdown(self) -> Result<()> {
+    ///
+    /// The router shutdown API is shared-reference based and idempotent, so do
+    /// not require unique ownership here. Shutdown must remain effective if a
+    /// future observer temporarily holds another `Arc<IrohTransport>`; making
+    /// teardown depend on `Arc::try_unwrap` can otherwise retain the inbound
+    /// handler's WAL sender and deadlock the writer drain.
+    pub async fn shutdown(&self) -> Result<()> {
         self.router
             .shutdown()
             .await
@@ -443,17 +460,17 @@ impl IrohTransport {
 /// audited as dropped gossip. Production and test transports both require an
 /// explicit cluster key at construction.
 pub fn gossip_handler(
-    _state: std::sync::Arc<std::sync::Mutex<crate::cluster::wal_sync::GossipState>>,
+    state: crate::cluster::wal_sync::SharedGossipState,
     persist_tx: Option<crate::cluster::wal_sync::ForeignPersistTx>,
     writer: Option<Arc<WalWriterHandle>>,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> FrameHandler {
-    use crate::cluster::gossip::GossipPolicy;
     use crate::cluster::gossip_wire::GossipFrame;
-    let policy = GossipPolicy::default();
     std::sync::Arc::new(move |authenticated_peer, req: Vec<u8>| {
         let persist_tx = persist_tx.clone();
         let writer = writer.clone();
-        let policy = policy.clone();
+        let state = Arc::clone(&state);
+        let reload_controller = Arc::clone(&reload_controller);
         Box::pin(async move {
             let reject = |verdict: &str| {
                 serde_json::to_vec(&serde_json::json!({
@@ -478,6 +495,7 @@ pub fn gossip_handler(
                 );
                 return reject("peer_origin_mismatch");
             }
+            let frame_for_frontier = frame.clone();
             let Some(tx) = persist_tx else {
                 emit_gossip_audit(
                     &writer,
@@ -491,7 +509,7 @@ pub fn gossip_handler(
             let job = crate::cluster::wal_sync::ForeignPersistJob {
                 authenticated_peer: authenticated_peer.clone(),
                 frame,
-                policy,
+                policy: reload_controller.gossip_policy(),
                 reply: reply_tx,
             };
             match tx.try_send(job) {
@@ -516,9 +534,26 @@ pub fn gossip_handler(
                 }
             }
             match reply_rx.await {
-                Ok(Ok(crate::cluster::durable_sync::InboundCommit::Committed(ack)))
-                | Ok(Ok(crate::cluster::durable_sync::InboundCommit::Duplicate(ack))) => {
-                    emit_gossip_audit(&writer, true, "committed", authenticated_peer.as_str());
+                Ok(Ok(commit @ crate::cluster::durable_sync::InboundCommit::Committed(_)))
+                | Ok(Ok(commit @ crate::cluster::durable_sync::InboundCommit::Duplicate(_)))
+                | Ok(Ok(
+                    commit @ crate::cluster::durable_sync::InboundCommit::DuplicateUnbound(_),
+                )) => {
+                    let frontier_merged =
+                        crate::cluster::durable_sync::merge_frontier_after_durable_commit(
+                            &state,
+                            &frame_for_frontier,
+                            &commit,
+                        );
+                    let ack = commit
+                        .ack()
+                        .expect("committed/duplicate inbound has an ACK");
+                    let verdict = if frontier_merged {
+                        "committed"
+                    } else {
+                        "duplicate_unbound"
+                    };
+                    emit_gossip_audit(&writer, true, verdict, authenticated_peer.as_str());
                     serde_json::to_vec(&ack).unwrap_or_default()
                 }
                 Ok(Ok(crate::cluster::durable_sync::InboundCommit::Gap { expected, received })) => {
@@ -556,13 +591,12 @@ pub fn gossip_handler(
 pub fn spawn_gossip_broadcast(
     transport: Arc<IrohTransport>,
     segment_path: std::path::PathBuf,
-    _state: Arc<Mutex<crate::cluster::wal_sync::GossipState>>,
+    state: crate::cluster::wal_sync::SharedGossipState,
     self_id: crate::cluster::PeerPubkey,
     writer: Option<Arc<WalWriterHandle>>,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> tokio::task::JoinHandle<()> {
-    use crate::cluster::gossip::GossipPolicy;
     tokio::spawn(async move {
-        let policy = GossipPolicy::default();
         let wal_dir = segment_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -579,12 +613,13 @@ pub fn spawn_gossip_broadcast(
             if transport.peer_count() == 0 {
                 continue; // no peers ⇒ nothing to gossip
             }
+            let policy = reload_controller.gossip_policy();
 
             let mut delivered = 0usize;
             for endpoint in transport.known_peers() {
                 let peer = crate::cluster::PeerPubkey::new(endpoint.to_string());
                 match durable
-                    .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy)
+                    .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy, &state)
                     .await
                 {
                     Ok(Some(prepared)) => {
@@ -608,8 +643,13 @@ pub fn spawn_gossip_broadcast(
                                 continue;
                             }
                         }
-                        match transport.send_frame(endpoint, &wire).await {
-                            Ok(reply) => {
+                        match bounded_gossip_send(
+                            GOSSIP_SEND_TIMEOUT,
+                            transport.send_frame(endpoint, &wire),
+                        )
+                        .await
+                        {
+                            Ok(Ok(reply)) => {
                                 let Ok(ack) = serde_json::from_slice::<
                                     crate::cluster::gossip_wire::GossipAck,
                                 >(&reply) else {
@@ -633,9 +673,14 @@ pub fn spawn_gossip_broadcast(
                                     }
                                 }
                             }
-                            Err(error) => {
+                            Ok(Err(error)) => {
                                 tracing::debug!(%error, peer = %peer.as_str(), "iroh mesh send failed; pending frame retained")
                             }
+                            Err(_) => tracing::warn!(
+                                peer = %peer.as_str(),
+                                timeout_secs = GOSSIP_SEND_TIMEOUT.as_secs(),
+                                "iroh mesh peer timed out; pending frame retained"
+                            ),
                         }
                     }
                     Ok(None) => {}
@@ -658,8 +703,25 @@ pub fn spawn_gossip_broadcast(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn stalled_peer_send_is_bounded_by_the_gossip_timeout() {
+        let stalled = std::future::pending::<anyhow::Result<Vec<u8>>>();
+        let outcome = bounded_gossip_send(std::time::Duration::ZERO, stalled).await;
+        assert!(
+            outcome.is_err(),
+            "a peer that never resolves must hit the send timeout"
+        );
+    }
+
     fn test_cluster_key() -> Arc<ClusterKey> {
         Arc::new(ClusterKey([0x42; 32]))
+    }
+
+    fn test_reload_controller() -> Arc<crate::config::reload::ReloadController> {
+        Arc::new(crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            std::path::PathBuf::from("missing-freedom.yaml"),
+        ))
     }
 
     /// Two endpoints, one round-trip: B dials A by key, A's handler replies.
@@ -723,14 +785,14 @@ mod tests {
 
     #[test]
     fn alpn_is_versioned() {
-        assert!(NEOTH_CLUSTER_ALPN.ends_with(b"/2"));
+        assert!(NEOTH_CLUSTER_ALPN.ends_with(b"/3"));
     }
 
     #[tokio::test]
     async fn gossip_handler_rejects_malformed_and_replies_json() {
         use crate::cluster::wal_sync::GossipState;
         let state = std::sync::Arc::new(std::sync::Mutex::new(GossipState::new()));
-        let handler = gossip_handler(state, None, None);
+        let handler = gossip_handler(state, None, None, test_reload_controller());
         // A non-GossipFrame byte blob must be rejected (decode failure), not
         // panic — and the reply is a parseable JSON verdict.
         let reply = handler(
@@ -754,7 +816,12 @@ mod tests {
             crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let writer = Arc::new(writer);
         let state = Arc::new(Mutex::new(GossipState::new()));
-        let handler = gossip_handler(Arc::clone(&state), None, Some(Arc::clone(&writer)));
+        let handler = gossip_handler(
+            Arc::clone(&state),
+            None,
+            Some(Arc::clone(&writer)),
+            test_reload_controller(),
+        );
         let reply = handler(
             crate::cluster::PeerPubkey::new("test-peer"),
             b"not a gossip frame".to_vec(),
@@ -779,6 +846,38 @@ mod tests {
             dropped, 1,
             "a malformed inbound gossip frame writes one 0xEF DROPPED audit"
         );
+    }
+
+    #[tokio::test]
+    async fn dropping_gossip_handler_releases_its_wal_sender() {
+        use crate::cluster::wal_sync::GossipState;
+
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn_for_home(seg, dir.path().to_path_buf()).unwrap();
+        let writer = Arc::new(writer);
+        let weak = Arc::downgrade(&writer);
+        let handler = gossip_handler(
+            Arc::new(Mutex::new(GossipState::new())),
+            None,
+            Some(Arc::clone(&writer)),
+            test_reload_controller(),
+        );
+
+        drop(writer);
+        assert!(
+            weak.upgrade().is_some(),
+            "the live inbound handler owns the audit sender"
+        );
+        drop(handler);
+        assert!(
+            weak.upgrade().is_none(),
+            "transport teardown must release the handler-owned audit sender"
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), join)
+            .await
+            .expect("WAL writer exits after the final handler sender is released")
+            .expect("WAL writer task joins cleanly");
     }
 
     #[tokio::test]
@@ -820,7 +919,12 @@ mod tests {
             envelope,
         };
         let receiver = Arc::new(Mutex::new(GossipState::new()));
-        let handler = gossip_handler(receiver, Some(persist_tx.clone()), None);
+        let handler = gossip_handler(
+            receiver,
+            Some(persist_tx.clone()),
+            None,
+            test_reload_controller(),
+        );
         let reply = handler(origin, serde_json::to_vec(&frame).unwrap()).await;
         let ack: crate::cluster::gossip_wire::GossipAck =
             serde_json::from_slice(&reply).expect("post-commit ACK");

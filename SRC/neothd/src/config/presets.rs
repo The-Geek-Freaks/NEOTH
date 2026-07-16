@@ -353,14 +353,16 @@ pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<Appl
 
 fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String)> {
     let freedom_path = home.join("freedom.yaml");
-    let original = match std::fs::read_to_string(&freedom_path) {
-        Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => {
-            return Err(error).with_context(|| format!("read {}", freedom_path.display()));
-        }
-    };
-    plan_apply_source(&original, preset, false)
+    super::credentials::with_dual_file_transaction_lock(&freedom_path, || {
+        let original = match std::fs::read_to_string(&freedom_path) {
+            Ok(body) => body,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(error).with_context(|| format!("read {}", freedom_path.display()));
+            }
+        };
+        plan_apply_source(&original, preset, false)
+    })
 }
 
 fn plan_apply_source(

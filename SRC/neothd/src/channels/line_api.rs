@@ -53,6 +53,20 @@ const USER_AGENT: &str = "NEOTH/0.1 (+https://neoth.dev)";
 /// this boundary on the `send_canonical` path.
 pub const LINE_MAX_TEXT_CHARS: usize = 5000;
 
+/// Canonicalize the immutable LINE member identity used by inbound policy.
+/// Display names are mutable; group/room ids are conversation identities and
+/// cannot substitute for a member authorization rule.
+pub fn normalize_allowed_sender(raw: &str) -> Result<String> {
+    let value = raw.trim();
+    if value.len() < 2
+        || !value.starts_with('U')
+        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        anyhow::bail!("LINE allowed sender must be an immutable `U…` user ID");
+    }
+    Ok(value.to_string())
+}
+
 #[derive(Debug, Deserialize)]
 struct LineBotInfo {
     #[serde(default, rename = "userId")]
@@ -425,6 +439,17 @@ fn map_status(response: &reqwest::Response, ctx: &str) -> std::result::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allowed_sender_requires_immutable_line_user_id() {
+        assert_eq!(
+            normalize_allowed_sender(" Ualice123 ").unwrap(),
+            "Ualice123"
+        );
+        for invalid in ["", "alice", "U alice", "Ggroup"] {
+            assert!(normalize_allowed_sender(invalid).is_err(), "{invalid}");
+        }
+    }
 
     fn decode_one(body: &str) -> Vec<InboundMessage> {
         match decode_line_payload(body) {

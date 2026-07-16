@@ -53,7 +53,7 @@ pub use turn_journal::{JournalReport, TurnEvent, TurnJournal, scan_for_journals}
 /// — useful for the audit trail.
 pub fn shrink_safe_write(path: &Path, new_content: &[u8]) -> Result<bool> {
     let bak_written = match std::fs::metadata(path) {
-        Ok(meta) if meta.len() as usize > new_content.len() => {
+        Ok(meta) if meta.len() > new_content.len() as u64 => {
             // New content shrinks the file → snapshot first.
             let bak = bak_path(path);
             std::fs::copy(path, &bak)
@@ -127,8 +127,8 @@ pub enum BakVerdict {
     /// the shrink that caused this bak was NOT compensated by a
     /// later growth, so the operator probably lost data.
     LiveShrunk,
-    /// Live file is the same size as or larger than the bak.
-    /// Default-safe state.
+    /// Live file is the same size as or larger than the bak, but is not proven
+    /// newer. Keep the backup until the operator decides.
     LiveOk,
 }
 
@@ -152,7 +152,7 @@ fn walk_for_baks(
     max_depth: usize,
     out: &mut Vec<BakReport>,
 ) -> Result<()> {
-    if depth > max_depth {
+    if depth >= max_depth {
         return Ok(());
     }
     let entries = match std::fs::read_dir(dir) {
@@ -182,11 +182,13 @@ fn walk_for_baks(
         if name.contains(".tmp") {
             continue;
         }
-        let bak_size = entry.metadata()?.len();
+        let bak_metadata = entry.metadata()?;
+        let bak_size = bak_metadata.len();
+        let bak_modified = bak_metadata.modified().ok();
         let live_path = strip_bak_suffix(&path);
-        let live_size = match std::fs::metadata(&live_path) {
-            Ok(m) => Some(m.len()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        let (live_size, live_modified) = match std::fs::metadata(&live_path) {
+            Ok(m) => (Some(m.len()), m.modified().ok()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, None),
             Err(e) => {
                 return Err(e).context(format!("stat live {}", live_path.display()));
             }
@@ -194,6 +196,13 @@ fn walk_for_baks(
         let verdict = match live_size {
             None => BakVerdict::LiveMissing,
             Some(live) if live < bak_size => BakVerdict::LiveShrunk,
+            Some(_)
+                if live_modified
+                    .zip(bak_modified)
+                    .is_some_and(|(live, bak)| live > bak) =>
+            {
+                BakVerdict::Stale
+            }
             Some(_) => BakVerdict::LiveOk,
         };
         out.push(BakReport {
@@ -310,9 +319,28 @@ mod tests {
         std::fs::write(dir.path().join("b.yaml.bak"), b"BBBBBBBB").unwrap();
         // Case C: live file gone → LiveMissing.
         std::fs::write(dir.path().join("c.yaml.bak"), b"CCC").unwrap();
+        // Case D: live file is at least as large and provably newer → Stale.
+        let d_bak = dir.path().join("d.yaml.bak");
+        let d_live = dir.path().join("d.yaml");
+        std::fs::write(&d_bak, b"DD").unwrap();
+        std::fs::write(&d_live, b"DDDD").unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let new = old + std::time::Duration::from_secs(10);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&d_bak)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&d_live)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(new))
+            .unwrap();
 
         let reports = scan_for_baks(dir.path()).unwrap();
-        assert_eq!(reports.len(), 3);
+        assert_eq!(reports.len(), 4);
 
         let a = reports
             .iter()
@@ -335,6 +363,12 @@ mod tests {
             .unwrap();
         assert_eq!(c.verdict, BakVerdict::LiveMissing);
         assert_eq!(c.live_size, None);
+
+        let d = reports
+            .iter()
+            .find(|r| r.live_path.ends_with("d.yaml"))
+            .unwrap();
+        assert_eq!(d.verdict, BakVerdict::Stale);
     }
 
     #[test]
@@ -346,6 +380,20 @@ mod tests {
         let reports = scan_for_baks(dir.path()).unwrap();
         assert_eq!(reports.len(), 1);
         assert!(reports[0].live_path.ends_with("000001.wal"));
+    }
+
+    #[test]
+    fn scan_does_not_descend_beyond_documented_subdirectory_depth() {
+        let dir = tempdir().unwrap();
+        let deep = dir.path().join("one/two");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("hidden.yaml.bak"), b"bak").unwrap();
+
+        let reports = scan_for_baks(dir.path()).unwrap();
+        assert!(
+            reports.is_empty(),
+            "scanner must not inspect grandchildren outside its documented radius"
+        );
     }
 
     #[test]

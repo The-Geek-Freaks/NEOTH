@@ -14,19 +14,21 @@
 //!
 //! Per Lamport 1978 — each peer holds a map of peer-id → logical
 //! counter. The map captures "I know peer X has issued ≥ N events
-//! that I've seen". On send, the origin attaches its current VC;
-//! on receive, the recipient `merge()`s VCs by element-wise max
-//! then increments its own slot.
+//! that I've seen". On a newly staged send, the durable state machine ticks
+//! the origin and stores the exact frame in one transaction. On receive, it
+//! merges an exact receipt-bound clock into the durable frontier in the same
+//! transaction as content and high-water state. The in-memory `merge()` helper
+//! is observability/diagnostic state, never the persistence authority.
 //!
 //! Compare two VCs:
 //!   - `VC1 ≤ VC2` ⇔ ∀peer: VC1[peer] ≤ VC2[peer]
 //!   - `VC1 < VC2` ⇔ VC1 ≤ VC2 AND ∃peer: VC1[peer] < VC2[peer]
 //!   - `VC1 || VC2` (concurrent) ⇔ NOT(VC1 ≤ VC2) AND NOT(VC2 ≤ VC1)
 //!
-//! Concurrent events surface as **conflicts** the receiver
-//! application-layer resolver (CRDT-style merge, last-writer-wins,
-//! operator manual reconcile) handles. The wire layer just
-//! reports the relation honestly.
+//! `compare()` reports causal relations for diagnostics and future consumers.
+//! Production conflict semantics deliberately remain authenticated same-origin
+//! sequencing plus a typed, explicit operator decision for cross-origin
+//! divergence; a peer-asserted clock never authorizes an automatic winner.
 
 use std::collections::BTreeMap;
 
@@ -37,7 +39,7 @@ use super::gossip::GossipTag;
 
 /// Breaking durable-sync envelope version. Transport handshakes reject old
 /// peers before these fields can be decoded.
-pub const SYNC_PROTOCOL_VERSION: u16 = 5;
+pub const SYNC_PROTOCOL_VERSION: u16 = 6;
 pub const SYNC_ENVELOPE_VERSION: u16 = 1;
 
 /// Canonical restore content. The type intentionally has no representation
@@ -128,9 +130,15 @@ pub struct VectorClock {
     pub clocks: BTreeMap<PeerPubkey, u64>,
 }
 
-/// Strict ordering relation between two vector clocks. Captures
-/// the three mutually-exclusive cases the gossip receiver branches
-/// on per Lamport.
+/// Hard upper bound for logical-clock slots carried into local state and every
+/// later outbound frame. A cluster member can authenticate yet still be
+/// compromised; arbitrary peer labels from its wire clock must not grow the
+/// resident/outbound map without bound.
+pub const MAX_VECTOR_CLOCK_PEERS: usize = 256;
+
+/// Strict ordering relation between two vector clocks for diagnostics and
+/// higher-level causal consumers. Durable receive currently stores the bounded
+/// frontier transactionally; ACK and conflict policy do not branch on this enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VcOrdering {
     /// `lhs < rhs` — lhs happened-before rhs.
@@ -151,8 +159,20 @@ impl VectorClock {
 
     /// Increment THIS peer's counter — call on every local event
     /// before attaching the VC to an outgoing GossipFrame.
-    pub fn tick(&mut self, self_id: &PeerPubkey) {
-        *self.clocks.entry(self_id.clone()).or_insert(0) += 1;
+    /// Returns `false` without mutation when the counter is exhausted or the
+    /// bounded clock has no free slot for a previously unseen identity. A
+    /// caller must surface that capacity error; silently evicting causal state
+    /// would make a later authenticated peer impossible to admit correctly.
+    pub fn tick(&mut self, self_id: &PeerPubkey) -> bool {
+        if !self.clocks.contains_key(self_id) && self.clocks.len() >= MAX_VECTOR_CLOCK_PEERS {
+            return false;
+        }
+        let counter = self.clocks.entry(self_id.clone()).or_insert(0);
+        let Some(next) = counter.checked_add(1) else {
+            return false;
+        };
+        *counter = next;
+        true
     }
 
     /// Merge another VC into self by element-wise max. Used on
@@ -162,9 +182,13 @@ impl VectorClock {
     pub fn merge(&mut self, other: &VectorClock) -> usize {
         let mut changed = 0;
         for (peer, &other_n) in &other.clocks {
-            let own = self.clocks.entry(peer.clone()).or_insert(0);
-            if other_n > *own {
-                *own = other_n;
+            if let Some(own) = self.clocks.get_mut(peer) {
+                if other_n > *own {
+                    *own = other_n;
+                    changed += 1;
+                }
+            } else if self.clocks.len() < MAX_VECTOR_CLOCK_PEERS {
+                self.clocks.insert(peer.clone(), other_n);
                 changed += 1;
             }
         }
@@ -212,14 +236,16 @@ impl VectorClock {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GossipFrame {
     pub protocol_version: u16,
-    /// Sender's logical-time view at emit. Recipient merges this
-    /// into its own VC before applying the payload (or before
-    /// deferring on concurrent / older-than-budget conflicts).
+    /// Sender's logical-time view at emit. After authentication and content
+    /// validation, the recipient merges trusted slots into its durable frontier
+    /// in the same transaction as payload apply and receipt persistence.
     pub vector_clock: VectorClock,
     /// Which peer emitted this frame. Stable identity tied to the
     /// cluster registry (`PairedPeer::pub_key_hex`).
     pub origin: PeerPubkey,
-    /// Monotonic durable sequence allocated by the origin database.
+    /// Monotonic durable delivery sequence allocated for this destination.
+    /// It is intentionally independent from the origin's node-global vector
+    /// counter and is the contiguous sequence bound by [`GossipAck`].
     pub event_seq: u64,
     /// Full canonical-content digest, independent from ordering.
     pub content_sha256: [u8; 32],
@@ -242,8 +268,8 @@ pub struct GossipFrame {
 }
 
 impl GossipFrame {
-    /// Predicate the receiver runs before merging the VC + applying
-    /// the payload. Composes three checks:
+    /// Stateless predicate the receiver runs before the durable receipt,
+    /// payload, and frontier transaction. Composes three checks:
     ///   1. Tag is replicable (defence — emitter should have dropped
     ///      DoNotGossip frames upstream)
     ///   2. Inside the operator's ReplayBudget window
@@ -372,6 +398,38 @@ mod tests {
         let mut local = vc(&[("a", 5), ("b", 5)]);
         let remote = vc(&[("a", 3), ("b", 4)]);
         assert_eq!(local.merge(&remote), 0);
+    }
+
+    #[test]
+    fn vc_merge_and_local_tick_fail_closed_at_peer_cap() {
+        let mut remote = VectorClock::new();
+        for index in 0..(MAX_VECTOR_CLOCK_PEERS * 2) {
+            remote.clocks.insert(pid(&format!("peer-{index:04}")), 1);
+        }
+        let mut local = VectorClock::new();
+        assert_eq!(local.merge(&remote), MAX_VECTOR_CLOCK_PEERS);
+        assert_eq!(local.clocks.len(), MAX_VECTOR_CLOCK_PEERS);
+
+        let self_id = pid("this-node");
+        assert!(!local.tick(&self_id));
+        assert_eq!(local.clocks.len(), MAX_VECTOR_CLOCK_PEERS);
+        assert_eq!(local.get(&self_id), 0);
+
+        let mut update = VectorClock::new();
+        update.clocks.insert(pid("peer-0000"), 9);
+        update.clocks.insert(pid("zzzz-new-attacker-slot"), 9);
+        assert_eq!(local.merge(&update), 1, "existing slots can still advance");
+        assert_eq!(local.clocks.len(), MAX_VECTOR_CLOCK_PEERS);
+        assert_eq!(local.get(&pid("peer-0000")), 9);
+        assert_eq!(local.get(&pid("zzzz-new-attacker-slot")), 0);
+    }
+
+    #[test]
+    fn vc_tick_fails_without_wrapping_at_counter_exhaustion() {
+        let self_id = pid("this-node");
+        let mut local = vc(&[("this-node", u64::MAX)]);
+        assert!(!local.tick(&self_id));
+        assert_eq!(local.get(&self_id), u64::MAX);
     }
 
     #[test]

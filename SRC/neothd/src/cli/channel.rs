@@ -104,17 +104,17 @@ fn run_list_at(home: &std::path::Path, output: &OutputFormat) -> Result<()> {
 
 pub(crate) fn load_channel_statuses_at(home: &std::path::Path) -> Result<Vec<ChannelStatus>> {
     let config_path = home.join("freedom.yaml");
-    let credentials_path = home.join("credentials.yaml");
-    let cfg = FreedomConfig::load_from_path_or_default(&config_path)?;
-    let creds =
-        Credentials::load_effective(&credentials_path, cfg.secrets_backend).with_context(|| {
-            format!(
-                "load effective credentials at {} — file/keychain cannot be read; \
+    let (config, credentials) = crate::config::load_optional_runtime_config_pair_from_path(
+        &config_path,
+    )
+    .with_context(|| {
+        format!(
+            "load coherent config and effective credentials at {} — file/keychain cannot be read; \
                  repair it before running `neoth channel list`",
-                credentials_path.display()
-            )
-        })?;
-    Ok(channel_statuses(&cfg, &creds))
+            config_path.display()
+        )
+    })?;
+    Ok(channel_statuses(&config.unwrap_or_default(), &credentials))
 }
 
 /// Render the inventory as table or JSON. Returned as a String so it is
@@ -236,7 +236,10 @@ fn plan_channel_test_for_id(
                 && view.keet_bearer,
             ChannelTestPlan::Keet,
         ),
-        ChannelId::Discord => yes_if(view.discord_bot, ChannelTestPlan::Discord),
+        ChannelId::Discord => yes_if(
+            view.discord_bot && view.discord_allowed_sender,
+            ChannelTestPlan::Discord,
+        ),
         ChannelId::Signal => yes_if(
             view.signal_cli_url && view.signal_phone_number,
             ChannelTestPlan::Signal,
@@ -329,18 +332,14 @@ pub(crate) async fn test_channel_at(
 ) -> Result<ChannelTestResult> {
     let channel_id = resolve_operator_channel(name)?;
     let config_path = home.join("freedom.yaml");
-    let credentials_path = home.join("credentials.yaml");
-    let cfg = FreedomConfig::load_from_path(&config_path)
-        .with_context(|| format!("load config at {}", config_path.display()))?;
-    let creds =
-        Credentials::load_effective(&credentials_path, cfg.secrets_backend).with_context(|| {
-            format!(
-                "load effective credentials at {} — file/keychain cannot be read; \
+    let pair = crate::config::load_runtime_config_pair_from_path(&config_path).with_context(|| {
+        format!(
+            "load coherent config and effective credentials at {} — file/keychain cannot be read; \
              repair it before running `neoth channel test`",
-                credentials_path.display()
-            )
-        })?;
-    test_channel_candidate_for_id(channel_id, &cfg, &creds).await
+            config_path.display()
+        )
+    })?;
+    test_channel_candidate_for_id(channel_id, &pair.config, &pair.credentials).await
 }
 
 /// Verify an in-memory candidate without persisting it first. This is the
@@ -791,8 +790,8 @@ pub struct ChannelAddFields {
     pub password: Option<SecretString>,
     /// B9 — irc channels csv (`#neoth,#dev`).
     pub channels_csv: Option<String>,
-    /// Matrix inbound/invite sender allowlist (`@user:server`) or Keet exact
-    /// companion sender IDs (comma-separated).
+    /// Channel-specific exact inbound sender allowlist: Discord user snowflake,
+    /// Matrix user id, or Keet companion sender IDs (comma-separated).
     pub allowed_sender: Option<String>,
     /// Matrix room-id allowlist, comma-separated (`!id:server`).
     pub allowed_rooms_csv: Option<String>,
@@ -927,13 +926,19 @@ impl ChannelCredentialWireFields {
 fn private_fields_for(channel_id: ChannelId) -> &'static [&'static str] {
     match channel_id {
         ChannelId::Telegram => &["telegram_user_id", "token"],
-        ChannelId::Slack => &["bot_token", "app_token"],
-        ChannelId::WhatsAppBusiness => &["token", "phone_id", "verify_token", "app_secret"],
+        ChannelId::Slack => &["bot_token", "app_token", "allowed_sender"],
+        ChannelId::WhatsAppBusiness => &[
+            "token",
+            "phone_id",
+            "verify_token",
+            "app_secret",
+            "allowed_sender",
+        ],
         ChannelId::WhatsAppBaileys => &["url", "token", "allowed_sender", "allowed_rooms_csv"],
         ChannelId::Keet => &["url", "token", "server", "allowed_sender"],
-        ChannelId::Discord => &["token"],
-        ChannelId::Signal => &["url", "phone"],
-        ChannelId::Line => &["token", "password"],
+        ChannelId::Discord => &["token", "allowed_sender"],
+        ChannelId::Signal => &["url", "phone", "allowed_sender"],
+        ChannelId::Line => &["token", "password", "allowed_sender"],
         ChannelId::Irc => &[
             "server",
             "nick",
@@ -1200,14 +1205,24 @@ fn stage_channel_add_for_id(
             if !app.expose().starts_with("xapp-") {
                 anyhow::bail!("slack app token should start with `xapp-` (socket-mode app token)");
             }
+            let allowed_user = crate::channels::slack::normalize_allowed_user_id(&require(
+                &fields.allowed_sender,
+                "Slack sender allowlist (--allowed-sender)",
+            )?)?;
             creds.slack_bot_token = Some(bot.clone());
             creds.slack_app_token = Some(app.clone());
+            creds.slack_allowed_user_id = Some(allowed_user);
         }
         ChannelId::WhatsAppBusiness => {
             let t = require_secret(&fields.token, "whatsapp access token")?;
             let phone = require(&fields.phone_id, "whatsapp phone-number id")?;
             let verify = require_secret(&fields.verify_token, "whatsapp webhook verify token")?;
             let app_secret = require_secret(&fields.app_secret, "whatsapp Meta app secret")?;
+            let allowed_sender =
+                crate::channels::whatsapp_webhook::normalize_allowed_sender(&require(
+                    &fields.allowed_sender,
+                    "WhatsApp Business sender allowlist (--allowed-sender)",
+                )?)?;
             if !phone.chars().all(|c| c.is_ascii_digit()) {
                 anyhow::bail!(
                     "whatsapp phone id must be the NUMERIC phone-number id from the Meta console \
@@ -1218,6 +1233,7 @@ fn stage_channel_add_for_id(
             creds.whatsapp_phone_id = Some(phone);
             creds.whatsapp_verify_token = Some(verify.clone());
             creds.whatsapp_app_secret = Some(app_secret.clone());
+            creds.whatsapp_allowed_sender = Some(allowed_sender);
         }
         ChannelId::WhatsAppBaileys => {
             let url = require_http_url(&fields.url, "Baileys bridge URL")?;
@@ -1293,13 +1309,23 @@ fn stage_channel_add_for_id(
                 &fields.token,
                 "discord bot token (from the developer portal)",
             )?;
+            let allowed_sender = crate::channels::discord::normalize_allowed_sender_id(&require(
+                &fields.allowed_sender,
+                "Discord sender allowlist (--allowed-sender)",
+            )?)?;
             creds.discord_bot_token = Some(t.clone());
+            creds.discord_allowed_user_id = Some(allowed_sender);
         }
         ChannelId::Signal => {
             let url = require_http_url(&fields.url, "signal-cli daemon URL")?;
             let phone = require_e164(&fields.phone, "signal phone number")?;
+            let allowed_sender = require_e164(
+                &fields.allowed_sender,
+                "Signal sender allowlist (--allowed-sender)",
+            )?;
             creds.signal_cli_url = Some(url);
             creds.signal_phone_number = Some(phone);
+            creds.signal_allowed_sender = Some(allowed_sender);
         }
         ChannelId::Line => {
             let t = require_secret(&fields.token, "LINE channel access token")?;
@@ -1313,6 +1339,11 @@ fn stage_channel_add_for_id(
             {
                 creds.line_channel_secret = Some(s.clone());
             }
+            let allowed_sender = crate::channels::line_api::normalize_allowed_sender(&require(
+                &fields.allowed_sender,
+                "LINE sender allowlist (--allowed-sender)",
+            )?)?;
+            creds.line_allowed_sender = Some(allowed_sender);
         }
         ChannelId::Irc => {
             let server = require(&fields.server, "irc server host (e.g. irc.libera.chat)")?;
@@ -1584,13 +1615,15 @@ impl ChannelAddFlags {
 fn required_flags_for(channel_id: ChannelId) -> &'static str {
     match channel_id {
         ChannelId::Telegram => "--token --telegram-user-id",
-        ChannelId::Slack => "--bot-token --app-token",
-        ChannelId::WhatsAppBusiness => "--token --phone-id --verify-token --app-secret",
+        ChannelId::Slack => "--bot-token --app-token --allowed-sender",
+        ChannelId::WhatsAppBusiness => {
+            "--token --phone-id --verify-token --app-secret --allowed-sender"
+        }
         ChannelId::WhatsAppBaileys => "--url --token --allowed-sender [--allowed-rooms-csv]",
         ChannelId::Keet => "--url --token --server (topic) --allowed-sender",
-        ChannelId::Discord => "--token",
-        ChannelId::Signal => "--url --phone",
-        ChannelId::Line => "--token  [--password]",
+        ChannelId::Discord => "--token --allowed-sender",
+        ChannelId::Signal => "--url --phone --allowed-sender",
+        ChannelId::Line => "--token [--password] --allowed-sender",
         ChannelId::Irc => "--server --nick --allowed-sender  [--password --channels-csv]",
         ChannelId::IMessageBlueBubbles => {
             "--url --password --allowed-sender [--channels-csv (chat GUIDs)]"
@@ -1729,20 +1762,16 @@ fn prepare_channel_add_with_fields_at(
     fields: ChannelAddFields,
 ) -> Result<PreparedChannelAdd> {
     let config_path = home.join("freedom.yaml");
-    let credentials_path = home.join("credentials.yaml");
-    let config = FreedomConfig::load_from_path(&config_path)
-        .with_context(|| format!("load config at {}", config_path.display()))?;
-    let raw_credentials = Credentials::load_or_default(&credentials_path)
-        .with_context(|| format!("load credentials at {}", credentials_path.display()))?;
-    let effective_credentials =
-        Credentials::load_effective(&credentials_path, config.secrets_backend).with_context(
-            || {
-                format!(
-                    "load effective credentials at {} for candidate verification",
-                    credentials_path.display()
-                )
-            },
-        )?;
+    let pair =
+        crate::config::load_runtime_config_pair_from_path(&config_path).with_context(|| {
+            format!(
+                "load coherent config and credentials at {} for candidate verification",
+                config_path.display()
+            )
+        })?;
+    let config = pair.config;
+    let raw_credentials = pair.raw_credentials;
+    let effective_credentials = pair.credentials;
 
     let expected_config = config_fingerprint(&config)?;
     let expected_credentials = credentials_fingerprint(&raw_credentials)?;
@@ -1927,6 +1956,7 @@ fn prompt_channel_fields(channel_id: ChannelId) -> Result<ChannelAddFields> {
         ChannelId::Slack => {
             f.bot_token = Some(read_secret("Slack bot token (xoxb-…)")?);
             f.app_token = Some(read_secret("Slack app token (xapp-…, socket mode)")?);
+            f.allowed_sender = Some(read_plain("Allowed Slack user ID (U… or W…)")?);
         }
         ChannelId::WhatsAppBusiness => {
             f.token = Some(read_secret("WhatsApp access token")?);
@@ -1935,6 +1965,9 @@ fn prompt_channel_fields(channel_id: ChannelId) -> Result<ChannelAddFields> {
             )?);
             f.verify_token = Some(read_secret("WhatsApp webhook verification token")?);
             f.app_secret = Some(read_secret("WhatsApp Meta app secret")?);
+            f.allowed_sender = Some(read_plain(
+                "Allowed WhatsApp sender phone number (E.164, e.g. +4917…)",
+            )?);
         }
         ChannelId::WhatsAppBaileys => {
             f.url = Some(read_plain(
@@ -1962,18 +1995,25 @@ fn prompt_channel_fields(channel_id: ChannelId) -> Result<ChannelAddFields> {
                 "Allowed 43-character Keet sender IDs from the companion, comma-separated",
             )?);
         }
-        ChannelId::Discord => f.token = Some(read_secret("Discord bot token (developer portal)")?),
+        ChannelId::Discord => {
+            f.token = Some(read_secret("Discord bot token (developer portal)")?);
+            f.allowed_sender = Some(read_plain(
+                "Allowed Discord user ID (numeric snowflake; enable Developer Mode and copy user ID)",
+            )?);
+        }
         ChannelId::Signal => {
             f.url = Some(read_plain(
                 "signal-cli daemon URL (e.g. http://127.0.0.1:8080)",
             )?);
             f.phone = Some(read_plain("Signal phone number (E.164, e.g. +4917…)")?);
+            f.allowed_sender = Some(read_plain("Allowed Signal sender (E.164, e.g. +4917…)")?);
         }
         ChannelId::Line => {
             f.token = Some(read_secret("LINE channel access token")?);
             f.password = Some(read_secret(
                 "LINE channel secret (empty = push-only, no inbound webhook)",
             )?);
+            f.allowed_sender = Some(read_plain("Allowed LINE user ID (U…)")?);
         }
         ChannelId::Irc => {
             f.server = Some(read_plain("IRC server host (e.g. irc.libera.chat)")?);
@@ -2341,7 +2381,7 @@ fn persist_channel_replacement_at(
     };
 
     let update = if channel_id == ChannelId::Telegram {
-        Credentials::update_with_freedom_at(
+        Credentials::update_telegram_with_freedom_at(
             &freedom_path,
             &credentials_path,
             |config, credentials| {
@@ -2392,17 +2432,25 @@ fn stage_channel_remove_for_id(
             had
         }
         ChannelId::Slack => {
-            let had = creds.slack_bot_token.is_some() || creds.slack_app_token.is_some();
+            let had = creds.slack_bot_token.is_some()
+                || creds.slack_app_token.is_some()
+                || creds.slack_allowed_user_id.is_some();
             creds.slack_bot_token = None;
             creds.slack_app_token = None;
+            creds.slack_allowed_user_id = None;
             had
         }
         ChannelId::WhatsAppBusiness => {
-            let had = creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some();
+            let had = creds.whatsapp_token.is_some()
+                || creds.whatsapp_phone_id.is_some()
+                || creds.whatsapp_verify_token.is_some()
+                || creds.whatsapp_app_secret.is_some()
+                || creds.whatsapp_allowed_sender.is_some();
             creds.whatsapp_token = None;
             creds.whatsapp_phone_id = None;
             creds.whatsapp_verify_token = None;
             creds.whatsapp_app_secret = None;
+            creds.whatsapp_allowed_sender = None;
             had
         }
         ChannelId::WhatsAppBaileys => {
@@ -2430,21 +2478,28 @@ fn stage_channel_remove_for_id(
             had
         }
         ChannelId::Discord => {
-            let had = creds.discord_bot_token.is_some();
+            let had = creds.discord_bot_token.is_some() || creds.discord_allowed_user_id.is_some();
             creds.discord_bot_token = None;
+            creds.discord_allowed_user_id = None;
             had
         }
         ChannelId::Signal => {
-            let had = creds.signal_cli_url.is_some() || creds.signal_phone_number.is_some();
+            let had = creds.signal_cli_url.is_some()
+                || creds.signal_phone_number.is_some()
+                || creds.signal_allowed_sender.is_some();
             creds.signal_cli_url = None;
             creds.signal_phone_number = None;
+            creds.signal_allowed_sender = None;
             had
         }
         ChannelId::Line => {
-            let had = creds.line_channel_access_token.is_some();
+            let had = creds.line_channel_access_token.is_some()
+                || creds.line_channel_secret.is_some()
+                || creds.line_allowed_sender.is_some();
             creds.line_channel_access_token = None;
             creds.line_channel_secret = None;
             creds.line_webhook_port = None;
+            creds.line_allowed_sender = None;
             had
         }
         ChannelId::Irc => {
@@ -2582,7 +2637,7 @@ pub(crate) fn run_remove_at(
         Ok(removed || token_removed)
     };
     let update = if channel_id == ChannelId::Telegram {
-        Credentials::update_with_freedom_at(&freedom_path, &path, |config, credentials| {
+        Credentials::update_telegram_with_freedom_at(&freedom_path, &path, |config, credentials| {
             let token_removed = remove_credentials(config, credentials)?;
             let policy_removed = config.telegram_user_id.take().is_some();
             was_removed |= token_removed || policy_removed;
@@ -2789,7 +2844,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_keet_seed_is_visible_as_broken_config_and_discord_uses_bot_token() {
+    fn legacy_keet_seed_is_broken_and_discord_requires_sender_policy() {
         let mut creds = creds_empty();
         creds.keet_seed_phrase = Some(SecretString::from("word ".repeat(24)));
         let rows = channel_statuses(&FreedomConfig::default(), &creds);
@@ -2797,23 +2852,23 @@ mod tests {
         assert!(keet.configured);
         assert_eq!(keet.status, ProbeStatus::Error);
         assert!(keet.detail.contains("ignored"));
-        // GOLD-PROG-16: Discord is unconfigured until discord_bot_token is set.
         let d = rows.iter().find(|r| r.name == "discord").unwrap();
         assert!(!d.configured);
-        // Detail comes from probe.rs: "no discord_bot_token".
-        assert!(
-            d.detail.contains("discord_bot_token"),
-            "discord detail: {}",
-            d.detail
-        );
-        // With a bot token present → configured (gateway receive loop).
+        assert!(d.detail.contains("no Discord credentials"));
+
+        // A token-only adoption stays visibly broken and cannot start inbound.
         creds.discord_bot_token = Some(SecretString::from("bot-xyz"));
         let rows = channel_statuses(&FreedomConfig::default(), &creds);
-        assert!(
-            rows.iter()
-                .find(|r| r.name == "discord")
-                .unwrap()
-                .configured
+        let d = rows.iter().find(|r| r.name == "discord").unwrap();
+        assert!(d.configured);
+        assert_eq!(d.status, ProbeStatus::Error);
+        assert!(d.detail.contains("discord_allowed_user_id"));
+
+        creds.discord_allowed_user_id = Some("123456789012345678".into());
+        let rows = channel_statuses(&FreedomConfig::default(), &creds);
+        assert_eq!(
+            rows.iter().find(|r| r.name == "discord").unwrap().status,
+            ProbeStatus::Ok
         );
     }
 
@@ -2841,6 +2896,11 @@ mod tests {
         );
         let mut creds_dc = creds_empty();
         creds_dc.discord_bot_token = Some(SecretString::from("bot"));
+        assert_eq!(
+            plan_channel_test("discord", &cfg, &creds_dc),
+            ChannelTestPlan::NotConfigured
+        );
+        creds_dc.discord_allowed_user_id = Some("123456789012345678".into());
         assert_eq!(
             plan_channel_test("discord", &cfg, &creds_dc),
             ChannelTestPlan::Discord
@@ -3027,16 +3087,19 @@ mod tests {
         let wrong_prefix = ChannelAddFields {
             bot_token: Some("nope".into()),
             app_token: Some("xapp-1".into()),
+            allowed_sender: Some("U123456".into()),
             ..Default::default()
         };
         assert!(stage_channel_add("slack", &wrong_prefix, Credentials::default()).is_err());
         let good = ChannelAddFields {
             bot_token: Some("xoxb-1".into()),
             app_token: Some("xapp-1".into()),
+            allowed_sender: Some("U123456".into()),
             ..Default::default()
         };
         let c = stage_channel_add("slack", &good, Credentials::default()).unwrap();
         assert!(c.slack_bot_token.is_some() && c.slack_app_token.is_some());
+        assert_eq!(c.slack_allowed_user_id.as_deref(), Some("U123456"));
     }
 
     #[test]
@@ -3046,6 +3109,7 @@ mod tests {
             phone_id: Some("not-numeric".into()),
             verify_token: Some("verify".into()),
             app_secret: Some("app-secret".into()),
+            allowed_sender: Some("+491701234567".into()),
             ..Default::default()
         };
         assert!(stage_channel_add("whatsapp", &nonnum, Credentials::default()).is_err());
@@ -3063,6 +3127,7 @@ mod tests {
             phone_id: Some("1234567890".into()),
             verify_token: Some("verify".into()),
             app_secret: Some("app-secret".into()),
+            allowed_sender: Some("+491701234567".into()),
             ..Default::default()
         };
         let c = stage_channel_add("whatsapp", &good, Credentials::default()).unwrap();
@@ -3070,6 +3135,7 @@ mod tests {
         assert!(c.whatsapp_token.is_some());
         assert!(c.whatsapp_verify_token.is_some());
         assert!(c.whatsapp_app_secret.is_some());
+        assert_eq!(c.whatsapp_allowed_sender.as_deref(), Some("491701234567"));
     }
 
     #[test]
@@ -3189,13 +3255,27 @@ mod tests {
     }
 
     #[test]
-    fn stage_add_discord_stores_token() {
+    fn stage_add_discord_stores_token_and_exact_sender_policy() {
         let f = ChannelAddFields {
             token: Some("bot-token".into()),
+            allowed_sender: Some("123456789012345678".into()),
             ..Default::default()
         };
         let c = stage_channel_add("discord", &f, Credentials::default()).unwrap();
         assert!(c.discord_bot_token.is_some());
+        assert_eq!(
+            c.discord_allowed_user_id.as_deref(),
+            Some("123456789012345678")
+        );
+
+        for invalid in ["", "alice", "012345678901234567", "18446744073709551616"] {
+            let invalid = ChannelAddFields {
+                token: Some("bot-token".into()),
+                allowed_sender: Some(invalid.into()),
+                ..Default::default()
+            };
+            assert!(stage_channel_add("discord", &invalid, Credentials::default()).is_err());
+        }
     }
 
     #[test]
@@ -3203,23 +3283,27 @@ mod tests {
         let bad_url = ChannelAddFields {
             url: Some("127.0.0.1:8080".into()),
             phone: Some("+491701234567".into()),
+            allowed_sender: Some("+491709999999".into()),
             ..Default::default()
         };
         assert!(stage_channel_add("signal", &bad_url, Credentials::default()).is_err());
         let bad_phone = ChannelAddFields {
             url: Some("http://127.0.0.1:8080".into()),
             phone: Some("0170-123".into()),
+            allowed_sender: Some("+491709999999".into()),
             ..Default::default()
         };
         assert!(stage_channel_add("signal", &bad_phone, Credentials::default()).is_err());
         let good = ChannelAddFields {
             url: Some("http://127.0.0.1:8080/".into()),
             phone: Some("+491701234567".into()),
+            allowed_sender: Some("+491709999999".into()),
             ..Default::default()
         };
         let c = stage_channel_add("signal", &good, Credentials::default()).unwrap();
         assert_eq!(c.signal_cli_url.as_deref(), Some("http://127.0.0.1:8080"));
         assert_eq!(c.signal_phone_number.as_deref(), Some("+491701234567"));
+        assert_eq!(c.signal_allowed_sender.as_deref(), Some("+491709999999"));
     }
 
     #[test]
@@ -3227,6 +3311,7 @@ mod tests {
         let push_only = ChannelAddFields {
             token: Some("line-token".into()),
             password: Some("  ".into()),
+            allowed_sender: Some("U123456".into()),
             ..Default::default()
         };
         let c = stage_channel_add("line", &push_only, Credentials::default()).unwrap();
@@ -3235,6 +3320,7 @@ mod tests {
         let full = ChannelAddFields {
             token: Some("line-token".into()),
             password: Some("channel-secret".into()),
+            allowed_sender: Some("U123456".into()),
             ..Default::default()
         };
         let c = stage_channel_add("line", &full, Credentials::default()).unwrap();
@@ -3373,6 +3459,7 @@ mod tests {
         let f = ChannelAddFields {
             bot_token: Some("xoxb-1".into()),
             app_token: Some("xapp-1".into()),
+            allowed_sender: Some("U123456".into()),
             ..Default::default()
         };
         let c = stage_channel_add("slack", &f, base).unwrap();
@@ -3390,10 +3477,13 @@ mod tests {
         base.telegram_token = Some(SecretString::from(valid_tg_token().as_str()));
         base.slack_bot_token = Some(SecretString::from("xoxb-1"));
         base.slack_app_token = Some(SecretString::from("xapp-1"));
+        base.slack_allowed_user_id = Some("U123456".into());
         let (c, removed) = stage_channel_remove("slack", base).unwrap();
         assert!(removed);
         assert!(
-            c.slack_bot_token.is_none() && c.slack_app_token.is_none(),
+            c.slack_bot_token.is_none()
+                && c.slack_app_token.is_none()
+                && c.slack_allowed_user_id.is_none(),
             "slack cleared"
         );
         assert!(c.telegram_token.is_some(), "telegram untouched");
@@ -4137,6 +4227,7 @@ mod tests {
         std::fs::write(&freedom_path, freedom.as_bytes()).unwrap();
         Credentials {
             discord_bot_token: Some(SecretString::from("discord-secret")),
+            discord_allowed_user_id: Some("123456789012345678".into()),
             ..Default::default()
         }
         .write(&credentials_path)
@@ -4146,12 +4237,10 @@ mod tests {
         run_remove_at(home.path(), "discord", &OutputFormat::Json).unwrap();
 
         assert_eq!(std::fs::read(&freedom_path).unwrap(), before);
-        assert!(
-            Credentials::load_or_default(&credentials_path)
-                .unwrap()
-                .discord_bot_token
-                .is_none()
-        );
+        assert!({
+            let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+            credentials.discord_bot_token.is_none() && credentials.discord_allowed_user_id.is_none()
+        });
     }
 
     #[test]
@@ -4248,7 +4337,10 @@ mod tests {
                 c.keet_bridge_bearer_token =
                     Some(SecretString::from("0123456789abcdef0123456789abcdef"));
             }
-            "discord" => c.discord_bot_token = Some(SecretString::from("bot")),
+            "discord" => {
+                c.discord_bot_token = Some(SecretString::from("bot"));
+                c.discord_allowed_user_id = Some("123456789012345678".into());
+            }
             "signal" => {
                 c.signal_cli_url = Some("http://127.0.0.1:8080".into());
                 c.signal_phone_number = Some("+491701234567".into());

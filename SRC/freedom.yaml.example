@@ -74,6 +74,12 @@ provider_kind: claude_cli
 # restricts who can talk to the bot — without it, anyone who finds the bot
 # username can issue commands.
 # telegram_user_id: 123456789
+# Other messaging sender policies live beside their channel credentials in
+# credentials.yaml (or are written through `neoth channel add` / the GUI):
+# `discord_allowed_user_id`, `slack_allowed_user_id`,
+# `whatsapp_allowed_sender`, `signal_allowed_sender`, and
+# `line_allowed_sender`. They are mandatory for inbound startup; a valid bot
+# token or webhook signature never opens the adapter by itself.
 
 
 # ── 4. Autonomy level ────────────────────────────────────────────────────────
@@ -109,19 +115,28 @@ custom_autonomy:
 
 # The cluster master switch is OFF by default. A public `name`, a shared
 # `cluster_passphrase` in credentials.yaml, and `enabled: true` are all required
-# before the daemon joins a transport. mDNS discovery defaults on, but the
+# before the daemon joins a transport. Prefer the GUI Cluster panel or
+# `neoth cluster configure` over independent YAML edits: it writes the complete
+# snapshot (plus an optional stdin-only passphrase) atomically. A changed
+# snapshot reports `restart_required: true`; restart the supervised daemon to
+# activate transport/mDNS lifecycle changes. Gossip privacy/replay values are
+# read live by every carrier after a successful reload. mDNS discovery defaults on, but the
 # privacy policy below announces only on explicitly trusted SSIDs; an empty
 # list therefore stays silent. `listen_port` is shared by mDNS and Tailscale.
 cluster:
   # name: home-lab
   enabled: false
-  transport: peeroxide       # peeroxide | iroh (iroh needs cluster-iroh build)
-  peers: []                  # iroh endpoint ids for first outbound contact
+  transport: peeroxide       # peeroxide | iroh (native desktop includes both;
+                             # source builds need cluster-iroh for iroh)
+  peers: []                  # iroh Node IDs for first outbound contact
   mdns:
     enabled: true
   policy:
     announce_on_untrusted_wifi: false
     trusted_ssids: []        # e.g. [home-wifi, home-wifi-5g]
+  gossip:
+    replicate_raw_ingress: false  # privacy-first; semantic events only
+    replay_budget_days: 30         # valid range: 1..90 days
   listen_port: 49737
 
 

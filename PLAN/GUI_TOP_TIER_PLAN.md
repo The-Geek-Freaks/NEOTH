@@ -57,7 +57,23 @@
 - [ ] C4 MCP-Panel (`neoth mcp` list/add/remove/toggle).
 - [ ] C5 Undo-Trigger + Slash-Command-Lücken: /quit (Daemon-Stop-Button Doctor),
       /critic + /background (Chat-Composer-Buttons), /tour //recipe //glossary (Chat).
-- [x] C6 Cluster-Config editierbar (master switch, name, transport-Combo, announce-policy, trusted_ssids als Array-Writer). peers-Liste bewusst CLI-only (iroh endpoint ids).
+- [~] C6 Cluster-Config editierbar: ein expliziter Apply-Vorgang überträgt
+      Master-Switch, Name, den in Desktop-Releases vollständig enthaltenen
+      Peeroxide/Iroh-Carrier, Bootstrap-Peers, mDNS, Announce-Policy, exakte
+      Trusted-SSID-Zeilen, Listen-Port und ein write-only Shared Secret in eine
+      typisierte, prozessübergreifend gesperrte und PREPARED-journalisierte
+      Zwei-Datei-Transaktion. GUI und CLI verlangen den vollständigen
+      JSON-Receipt und prüfen Pfad plus jedes Zielfeld; die GUI serialisiert
+      diesen CLI-Commit zusätzlich mit ihren älteren Autosave-Workern. Direkte
+      Cluster-Einzelwrites, Lost Updates und optimistische Erfolgstoasts sind
+      entfernt. Ein privater exakter Runtime-Marker hält echte Pending-Zustände
+      über identische Retries; nur der Daemon darf ihn nach erfolgreichem
+      Carrier-Start für exakten öffentlichen Snapshot, nicht reversibles
+      privates Identity-Binding und PID-Lock bestätigen. Disabled plus stopped
+      ist bereits inert und liefert korrekt `restart_required=false`.
+      **Residual:** aktivierte Lifecycle-Änderungen werden noch nicht live
+      umgeschaltet. C6 bleibt partiell, bis ein gemeinsamer Transport/mDNS/
+      Gossip-Supervisor Start, Teardown und Carrier-Wechsel kontrolliert.
 - [x] C7 Usage/Cost-Analytics-View (`neoth cost/usage`) im Overview.
 
 ### Wave D — Interaction-Grammar (Best-in-Class-Transfer)

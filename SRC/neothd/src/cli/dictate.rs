@@ -56,30 +56,27 @@ pub async fn run_dictate(args: DictateArgs) -> Result<()> {
     };
     let writer_for_stt = audit.as_ref().map(|(writer, _)| writer.clone());
 
-    // Decode + STT are blocking (symphonia / whisper) — keep them off
-    // the async reactor. The closure returns Ok(Result<String,
-    // DictationError>) ON PURPOSE: DictationError is a match-handled
-    // outcome below (AllSilence = clean exit), NOT a `?`-propagated
-    // failure — don't "simplify" the double wrap.
-    let blocking_result = tokio::task::spawn_blocking(move || {
-        let samples = crate::media::audio::decode_file_to_pcm(&file)?;
-        Ok::<_, anyhow::Error>(crate::media::dictation::transcribe_utterance_with_writer(
-            &samples,
-            crate::media::audio::TARGET_SAMPLE_RATE,
-            &media_cfg,
-            &updater_cfg,
-            &neoth_home,
-            writer_for_stt.as_ref(),
-        ))
-    })
+    // Symphonia decode is blocking; the canonical STT dispatcher is async and
+    // must stay on the runtime rather than calling Handle::block_on from an
+    // executor thread.
+    let samples =
+        tokio::task::spawn_blocking(move || crate::media::audio::decode_file_to_pcm(&file))
+            .await
+            .context("dictate: blocking decode task panicked")??;
+    let outcome = crate::media::dictation::transcribe_utterance_with_writer(
+        &samples,
+        crate::media::audio::TARGET_SAMPLE_RATE,
+        &media_cfg,
+        &updater_cfg,
+        &neoth_home,
+        writer_for_stt.as_ref(),
+    )
     .await;
 
     if let Some((writer, join)) = audit {
         drop(writer);
         join.await.context("dictate: WAL writer task panicked")?;
     }
-    let outcome = blocking_result.context("dictate: blocking decode/STT task panicked")??;
-
     match outcome {
         Ok(text) => match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
@@ -115,8 +112,8 @@ mod tests {
     /// The CLI is a thin shim; the load-bearing contract is that the
     /// default config (dictation_enabled=false) refuses before touching
     /// any STT backend.
-    #[test]
-    fn default_config_refuses_dictation() {
+    #[tokio::test]
+    async fn default_config_refuses_dictation() {
         let cfg = MediaConfig::default();
         let home = tempfile::tempdir().unwrap();
         let pcm = vec![0.0f32; 3200]; // 200 ms of silence @ 16 kHz
@@ -127,6 +124,7 @@ mod tests {
             &crate::config::UpdaterConfig::default(),
             home.path(),
         )
+        .await
         .unwrap_err();
         assert!(matches!(err, DictationError::NotEnabled));
     }

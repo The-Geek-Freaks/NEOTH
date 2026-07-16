@@ -18,10 +18,13 @@
 //!     already in the codebase.
 //!
 //! These policy types are live in `cluster::wal_sync` on both the peeroxide and
-//! optional iroh transports. Accepted frames are persisted in the foreign-event
-//! ledger before the receiver advances its dedup/vector-clock state.
+//! optional iroh transports. Receipt, foreign ledger, materialized content,
+//! sequence high-water and bounded causal-frontier merge commit atomically;
+//! only that post-commit outcome can be ACKed or mirrored in memory.
 
 use serde::{Deserialize, Serialize};
+
+pub use crate::config::ClusterGossipPolicy as GossipPolicy;
 
 /// Wire-level replication tag carried by a gossip frame. The production sender
 /// currently emits `Replicate` only after the default-deny event ACL accepts the
@@ -52,42 +55,6 @@ impl GossipTag {
     }
 }
 
-/// Operator-tweakable cluster gossip policy (lives at
-/// `freedom.yaml::cluster.gossip`). Defaults align with the
-/// architect verdict — privacy-first.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct GossipPolicy {
-    /// When true, replicate raw channel-ingress frames (Telegram /
-    /// Slack / WhatsApp messages verbatim) to paired peers. Default
-    /// `false`: only semantic episodes cross the peer boundary.
-    /// Operators on a single-operator-multi-device topology may
-    /// flip this on to mirror every conversation.
-    pub replicate_raw_ingress: bool,
-    /// Replay budget in days. Peers offline longer than this drop
-    /// local state + re-pair as a fresh node on next contact.
-    /// Default 30 (matches warm-tier window).
-    #[serde(default = "default_replay_budget_days")]
-    pub replay_budget_days: u32,
-}
-
-impl Default for GossipPolicy {
-    fn default() -> Self {
-        // Hand-roll Default — derive(Default) on u32 gives 0,
-        // bypassing #[serde(default = ...)] which only fires on
-        // deserialise paths. We want 30 days in both code-side
-        // and YAML-side default-construction paths.
-        Self {
-            replicate_raw_ingress: false,
-            replay_budget_days: default_replay_budget_days(),
-        }
-    }
-}
-
-fn default_replay_budget_days() -> u32 {
-    30
-}
-
 /// Hard ceiling — even an operator override is clamped here to
 /// avoid pathological replay loads. 90 days = ~3 months of WAL
 /// frames; beyond that the catching-up peer's LLM-cost blow-up
@@ -114,7 +81,7 @@ impl ReplayBudget {
                 "GossipPolicy: replay_budget_days=0 disables gossip entirely; \
                  clamping to default 30"
             );
-            days = default_replay_budget_days();
+            days = crate::config::default_cluster_replay_budget_days();
         }
         if days > MAX_REPLAY_BUDGET_DAYS {
             tracing::warn!(
@@ -322,6 +289,6 @@ mod tests {
     #[test]
     fn constants_pinned() {
         assert_eq!(MAX_REPLAY_BUDGET_DAYS, 90);
-        assert_eq!(default_replay_budget_days(), 30);
+        assert_eq!(crate::config::default_cluster_replay_budget_days(), 30);
     }
 }

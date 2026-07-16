@@ -41,6 +41,18 @@ use serde::Deserialize;
 
 use super::{ChannelKind, InboundMessage};
 
+/// Canonical WhatsApp Business sender identity used by the exact inbound
+/// allowlist. Meta webhook `from` values are international digits without `+`;
+/// accept operator-friendly E.164 input and store the wire-canonical form.
+pub fn normalize_allowed_sender(raw: &str) -> anyhow::Result<String> {
+    let value = raw.trim();
+    let digits = value.strip_prefix('+').unwrap_or(value);
+    if !(7..=15).contains(&digits.len()) || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        anyhow::bail!("WhatsApp allowed sender must be E.164 (`+` optional, 7-15 digits)");
+    }
+    Ok(digits.to_string())
+}
+
 /// Top-level webhook envelope. Meta wraps every dispatched event in
 /// `object: "whatsapp_business_account"` plus an `entry` array. The decoder
 /// walks every entry and change so a multi-WABA delivery is not truncated.
@@ -223,6 +235,17 @@ pub fn decode_payload(raw: &str) -> DecodedWebhook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allowed_sender_is_canonical_digits_and_rejects_non_e164_values() {
+        assert_eq!(
+            normalize_allowed_sender(" +491701234567 ").unwrap(),
+            "491701234567"
+        );
+        for invalid in ["", "+123", "+49 170", "49170x123"] {
+            assert!(normalize_allowed_sender(invalid).is_err(), "{invalid}");
+        }
+    }
 
     /// Real Meta payload (trimmed) — one text message from a known user.
     const FIXTURE_TEXT: &str = r#"{

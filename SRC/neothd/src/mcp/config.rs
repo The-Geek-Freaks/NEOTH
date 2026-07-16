@@ -288,9 +288,10 @@ impl AutorouteDecision {
 impl McpServerConfig {
     /// Validate the launcher without consulting process-global state.
     ///
-    /// This is the shared static contract used by `doctor`, `mcp list`, and
-    /// installers. The live spawn path additionally calls
-    /// [`Self::validate_spawn_context`] to reject ambient Node/npm overrides.
+    /// This is the shared static contract used by `doctor`, `mcp list`,
+    /// installers, and the live spawn path. The live client then starts from
+    /// an `env_clear` baseline and adds only explicitly configured variables,
+    /// so ambient Node/npm overrides never enter the MCP child.
     pub fn validate_launcher(&self) -> Result<McpLauncherPosture> {
         let command = self.command.trim();
         if command.is_empty() || command.contains('\0') {
@@ -381,9 +382,11 @@ impl McpServerConfig {
         })
     }
 
-    /// Validate the full live spawn context, including inherited Node/npm
-    /// variables that could redirect the registry or inject JavaScript before
-    /// the MCP server starts.
+    /// Validate an inheritance-based spawn context, including ambient Node/npm
+    /// variables that could redirect the registry or inject JavaScript. Kept
+    /// for diagnostic/compatibility callers; [`crate::mcp::client::McpClient`]
+    /// does not inherit these variables and instead uses an `env_clear`
+    /// allowlist plus the server's explicit `env` block.
     pub fn validate_spawn_context(&self) -> Result<McpLauncherPosture> {
         let posture = self.validate_launcher()?;
         let command_name = normalise_command_name(&self.command);

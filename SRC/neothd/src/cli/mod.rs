@@ -1167,14 +1167,15 @@ pub enum ChannelAction {
     ///
     /// Pass at least the flags the channel requires to skip all prompts:
     ///   telegram:              --token --telegram-user-id
-    ///   slack:                 --bot-token --app-token
+    ///   slack:                 --bot-token --app-token --allowed-sender
     ///   whatsapp:              --token --phone-id --verify-token --app-secret
+    ///                           --allowed-sender
     ///   whatsapp_baileys:      --url --token --allowed-sender
     ///                           [--allowed-rooms-csv]
     ///   keet:                  --url --token --server --allowed-sender
-    ///   discord:               --token
-    ///   signal:                --url --phone
-    ///   line:                  --token  [--password]
+    ///   discord:               --token --allowed-sender
+    ///   signal:                --url --phone --allowed-sender
+    ///   line:                  --token --allowed-sender [--password]
     ///   irc:                   --server --nick  [--password --channels-csv]
     ///   imessage/bluebubbles:  --url --password
     ///   mattermost:            --url --token
@@ -1237,9 +1238,10 @@ pub enum ChannelAction {
         /// IRC/Twitch rooms to join, or Nostr relay URLs, comma-separated.
         #[arg(long)]
         channels_csv: Option<String>,
-        /// Matrix inviter/inbound sender allowlist (`@user:server`), Baileys
-        /// sender allowlist (E.164/JID), or exact Keet companion sender IDs.
-        /// Multiple values are comma-separated.
+        /// Exact inbound sender allowlist: Discord/Slack/LINE user ID,
+        /// WhatsApp/Signal E.164 number, Matrix user ID (`@user:server`),
+        /// Baileys E.164/JID, or Keet companion sender IDs.
+        /// Channels that support multiple identities accept comma-separated values.
         #[arg(long)]
         allowed_sender: Option<String>,
         /// Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV.

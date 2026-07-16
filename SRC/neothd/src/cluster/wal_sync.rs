@@ -14,17 +14,18 @@
 //!   frame per destination, accepts only contiguous authenticated sequences,
 //!   commits canonical content and receipts atomically, and advances a cursor
 //!   only on the receiver's exact post-commit ACK.
-//! - **Legacy compatibility helpers** ([`GossipState`],
-//!   [`ingest_foreign_event`], [`apply_restore_frame`]) remain for old exports
-//!   and focused policy tests; production protocol-v5 transport does not use
-//!   their in-memory dedup state.
+//! - **Causal frontier** is durably stored by [`super::durable_sync`] and
+//!   updated in the same SQLite transactions that stage outbound or commit
+//!   inbound frames. [`GossipState`] is only the shared runtime observability
+//!   mirror; it is never the source of truth. Legacy restore helpers remain for
+//!   old exports and focused policy tests.
 //! - **Restore** ([`apply_restore_envelope`]): canonical memory and ground-truth
 //!   snapshots allocate receiver-local ids through a durable origin/content
 //!   map. A peer-local numeric id is never guessed.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
 use rusqlite::OptionalExtension as _;
@@ -174,6 +175,11 @@ pub struct GossipState {
     latest_seen: HashMap<PeerPubkey, u64>,
 }
 
+/// The one bounded runtime mirror shared by an active carrier's receive and
+/// send paths. Durable sync is authoritative; this mirror exists for live
+/// observability and compatibility helpers only.
+pub type SharedGossipState = Arc<Mutex<GossipState>>;
+
 const SEEN_EVENTS_PER_PEER: usize = 16_384;
 
 #[derive(Debug, Default)]
@@ -224,7 +230,9 @@ impl GossipState {
         if !is_replicable_ext(event_type, event_subtype, policy) {
             return None;
         }
-        self.vc.tick(self_id);
+        if !self.vc.tick(self_id) {
+            return None;
+        }
         let event_seq = self.vc.get(self_id);
         use sha2::Digest as _;
         let envelope = SyncEnvelope {
@@ -318,6 +326,49 @@ impl GossipState {
         self.latest_seen
             .insert(frame.origin.clone(), frame.event_seq);
         self.vc.merge(&frame.vector_clock);
+    }
+
+    /// Mirror a production durable commit without allowing one paired peer to
+    /// invent transitive identities. The authenticated frame origin may enter;
+    /// third-party slots only advance identities already known to this mirror.
+    pub fn commit_authenticated_inbound(&mut self, frame: &GossipFrame) {
+        self.seen
+            .entry(frame.origin.clone())
+            .or_default()
+            .insert(frame.event_seq);
+        self.latest_seen
+            .insert(frame.origin.clone(), frame.event_seq);
+        let origin_counter = frame.vector_clock.get(&frame.origin);
+        if !self.vc.clocks.contains_key(&frame.origin)
+            && self.vc.clocks.len() == super::gossip_wire::MAX_VECTOR_CLOCK_PEERS
+        {
+            // The durable transaction already made the authoritative admission
+            // decision. This runtime-only mirror may be stale, but it must never
+            // evict an existing (possibly local) causal slot to imitate that
+            // decision. Leave the new origin absent until the mirror is hydrated
+            // from durable state; dedup observability above still advances.
+            return;
+        }
+        self.vc
+            .clocks
+            .entry(frame.origin.clone())
+            .and_modify(|counter| *counter = (*counter).max(origin_counter))
+            .or_insert(origin_counter);
+        for (peer, incoming_counter) in &frame.vector_clock.clocks {
+            if peer == &frame.origin {
+                continue;
+            }
+            if let Some(counter) = self.vc.clocks.get_mut(peer) {
+                *counter = (*counter).max(*incoming_counter);
+            }
+        }
+    }
+
+    /// Record a newly durably staged outbound frame in the shared frontier.
+    /// The frame is an authoritative bounded snapshot loaded and committed by
+    /// durable sync, so it can hydrate the runtime mirror exactly after restart.
+    pub fn commit_outbound(&mut self, frame: &GossipFrame) {
+        self.vc = frame.vector_clock.clone();
     }
 
     /// Highest applied seq for a peer (observability).
@@ -467,11 +518,18 @@ fn collect_gossipable_from_wal_dir(
         return Ok(Vec::new());
     }
 
-    let start_index = cursor
-        .segment
-        .as_ref()
-        .and_then(|current| segments.iter().position(|path| path == current))
-        .unwrap_or(0);
+    let start_index = match cursor.segment.as_ref() {
+        Some(current) => segments
+            .iter()
+            .position(|path| path == current)
+            .with_context(|| {
+                format!(
+                    "cluster anti-entropy cursor segment {} no longer exists; refusing an implicit full-history rescan",
+                    current.display()
+                )
+            })?,
+        None => 0,
+    };
     let start_offset = if cursor.segment.as_ref() == Some(&segments[start_index]) {
         cursor.offset
     } else {
@@ -479,10 +537,13 @@ fn collect_gossipable_from_wal_dir(
     };
     let mut out = Vec::new();
 
-    for visited in 0..segments.len() {
-        let index = (start_index + visited) % segments.len();
+    for index in start_index..segments.len() {
         let path = &segments[index];
-        let offset = if visited == 0 { start_offset } else { 0 };
+        let offset = if index == start_index {
+            start_offset
+        } else {
+            0
+        };
         let raw = std::fs::read(path).with_context(|| {
             format!(
                 "cluster anti-entropy cannot read segment {}",
@@ -521,10 +582,15 @@ fn collect_gossipable_from_wal_dir(
             return Ok(out);
         }
 
-        // A completely decoded segment can advance to the next sorted segment.
-        let next_index = (index + 1) % segments.len();
-        cursor.segment = Some(segments[next_index].clone());
-        cursor.offset = 0;
+        // A completely decoded segment advances monotonically. At the final
+        // segment retain its exact EOF as the sentinel: wrapping to segment 0
+        // would replay the complete WAL forever after exhaustion.
+        cursor.segment = Some(path.clone());
+        cursor.offset = body.len();
+        if let Some(next) = segments.get(index + 1) {
+            cursor.segment = Some(next.clone());
+            cursor.offset = 0;
+        }
         if out.len() >= max {
             return Ok(out);
         }
@@ -532,8 +598,8 @@ fn collect_gossipable_from_wal_dir(
     Ok(out)
 }
 
-/// Protocol-v5 peeroxide send path. Every
-/// [`GOSSIP_TICK_INTERVAL`] it cycles the complete WAL segment history,
+/// Protocol-v6 peeroxide send path. Every
+/// [`GOSSIP_TICK_INTERVAL`] it advances through the complete WAL history,
 /// band-filters replicable frames, stages one exact durable [`GossipFrame`] per
 /// destination, and queues it to paired peers. Read-only consumer of
 /// the WAL (NOT a write hook
@@ -547,13 +613,14 @@ pub fn spawn_gossip_tick(
     peer_streams: Arc<PeerStreamRegistry>,
     segment_path: PathBuf,
     writer: Arc<WalWriterHandle>,
+    state: SharedGossipState,
     self_id: PeerPubkey,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let policy = GossipPolicy::default();
         // The seed path's parent is the segment directory. The shared cursor
-        // cycles every live and sealed segment, so rollover cannot create an
-        // unsynchronised historical gap.
+        // advances through every live and sealed segment, so rollover cannot
+        // create an unsynchronised historical gap or wrap into old history.
         let wal_dir = segment_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -571,11 +638,12 @@ pub fn spawn_gossip_tick(
             if peer_streams.peer_count() == 0 {
                 continue;
             }
+            let policy = reload_controller.gossip_policy();
             let mut queued = 0usize;
             for peer_pk in peer_streams.connected_peers() {
                 let peer = PeerPubkey::new(peer_pk.clone());
                 match durable
-                    .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy)
+                    .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy, &state)
                     .await
                 {
                     Ok(Some(prepared)) => {
@@ -1816,12 +1884,12 @@ fn apply_restore_frame_inner(
 /// `ClusterKey` (HMAC of the passphrase). This is the same value stored in
 /// `origin_peer_pk` when this node exports its own foreign events.
 pub fn local_node_pubkey(home: &std::path::Path) -> anyhow::Result<Option<String>> {
-    let freedom =
-        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
-    let creds =
-        crate::config::credentials::Credentials::load_or_default(&home.join("credentials.yaml"))?;
-    let Some(identity) = crate::cluster::identity::resolve_cluster_identity(&freedom, &creds)
-    else {
+    let (config, credentials) =
+        crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))?;
+    let Some(identity) = crate::cluster::identity::resolve_cluster_identity(
+        &config.unwrap_or_default(),
+        &credentials,
+    ) else {
         return Ok(None);
     };
     let hex = identity
@@ -1956,7 +2024,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn anti_entropy_cycles_live_and_sealed_segments() {
+    async fn anti_entropy_exhaustion_never_wraps_and_sees_new_segments() {
         use crate::wal::compress::compress_frames;
         use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeader, SegmentHeaderV2};
 
@@ -1991,7 +2059,58 @@ mod tests {
 
         assert_eq!(first_batch[0].0, 0x90);
         assert_eq!(second_batch[0].0, 0x91);
-        assert_eq!(retry_batch[0].0, 0x90, "cursor must wrap for retries");
+        assert!(
+            retry_batch.is_empty(),
+            "an exhausted cursor must not wrap into already acknowledged history"
+        );
+        let exhausted = cursor.clone();
+        let still_empty = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1)
+            .await
+            .unwrap();
+        assert!(still_empty.is_empty());
+        assert_eq!(
+            cursor, exhausted,
+            "idle retries keep the exact EOF sentinel"
+        );
+
+        let third = dir.path().join("000003.wal");
+        let mut appended = SegmentHeader::new(1, 3, 3, 3, [1; 16])
+            .to_le_bytes()
+            .to_vec();
+        appended.extend_from_slice(&fake_frame(0x92));
+        std::fs::write(third, appended).unwrap();
+        let appended_batch = read_gossipable_batch(dir.path(), &mut cursor, &policy, 1)
+            .await
+            .unwrap();
+        assert_eq!(appended_batch[0].0, 0x92);
+    }
+
+    #[tokio::test]
+    async fn anti_entropy_missing_cursor_segment_fails_closed_without_rescan() {
+        use crate::wal::segment_header::SegmentHeader;
+
+        let dir = tempfile::tempdir().unwrap();
+        let existing = dir.path().join("000002.wal");
+        let mut body = SegmentHeader::new(1, 2, 2, 2, [1; 16])
+            .to_le_bytes()
+            .to_vec();
+        body.extend_from_slice(&fake_frame(0x90));
+        std::fs::write(existing, body).unwrap();
+        let mut cursor = GossipWalCursor {
+            segment: Some(dir.path().join("000001.wal")),
+            offset: 77,
+        };
+        let before = cursor.clone();
+
+        let error = read_gossipable_batch(dir.path(), &mut cursor, &GossipPolicy::default(), 8)
+            .await
+            .expect_err("a missing durable cursor target must not reset to segment zero");
+        assert!(
+            error
+                .to_string()
+                .contains("refusing an implicit full-history rescan")
+        );
+        assert_eq!(cursor, before);
     }
 
     #[tokio::test]
@@ -2291,6 +2410,33 @@ mod tests {
             VcOrdering::After,
             "after accept the local clock must advance past the peer's causal frontier"
         );
+    }
+
+    #[test]
+    fn authenticated_commit_never_evicts_a_full_live_frontier() {
+        let mut state = GossipState::new();
+        let retained_local = PeerPubkey::new("zz-local");
+        state.vc.clocks.insert(retained_local.clone(), 77);
+        for index in 0..(crate::cluster::gossip_wire::MAX_VECTOR_CLOCK_PEERS - 1) {
+            state
+                .vc
+                .clocks
+                .insert(PeerPubkey::new(format!("peer-{index:03}")), 1);
+        }
+        let origin = PeerPubkey::new("new-authenticated-origin");
+        let mut incoming = VectorClock::new();
+        assert!(incoming.tick(&origin));
+        let frame = test_gossip_frame(incoming, origin.clone(), 9, 2_000_000_000, vec![0]);
+
+        state.commit_authenticated_inbound(&frame);
+
+        assert_eq!(
+            state.vc.clocks.len(),
+            crate::cluster::gossip_wire::MAX_VECTOR_CLOCK_PEERS
+        );
+        assert_eq!(state.vc.get(&retained_local), 77);
+        assert_eq!(state.vc.get(&origin), 0);
+        assert_eq!(state.last_seen_seq(&origin), Some(9));
     }
 
     // ── Foreign event ingest (G-02 CLUSTER-01) ─────────────────────────────

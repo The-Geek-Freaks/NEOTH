@@ -34,7 +34,7 @@
 //!   above 1.0 (which breaks the Hebbian decay math).
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use tracing::{debug, warn};
 
 use crate::config::automation::ConsolidationSweepConfig;
@@ -253,6 +253,12 @@ pub fn run_sweep(
         .map(|&i| rows[i].event_id_str.as_str())
         .collect();
 
+    // Reserve the writer slot before loading mutable episode metadata. Keeping
+    // the read and the relative boosts in the same IMMEDIATE transaction stops
+    // a concurrent reinforcement from being overwritten by a stale sweep.
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
+        .context("begin immediate consolidation sweep transaction")?;
+
     // Load idx_episode metadata via a loop (rusqlite doesn't support IN with
     // dynamic bind params easily — use repeated queries with caching).
     let mut ep_cache: std::collections::HashMap<String, EpMeta> = Default::default();
@@ -272,7 +278,7 @@ pub fn run_sweep(
                 continue;
             }
         };
-        let meta: Option<(String, f64, i64)> = conn
+        let meta: Option<(String, f64, i64)> = tx
             .query_row(
                 "SELECT text, importance, ts_ns FROM idx_episode WHERE event_id = ?1",
                 params![event_id],
@@ -294,9 +300,7 @@ pub fn run_sweep(
         }
     }
 
-    // ── 4. Apply boosts and groundtruth merges inside a transaction ──────────
-    let tx = conn.unchecked_transaction()?;
-
+    // ── 4. Apply boosts and groundtruth merges inside the transaction ────────
     let mut report = SweepReport {
         clusters_found: qualifying.len(),
         ..Default::default()
@@ -315,14 +319,19 @@ pub fn run_sweep(
 
         // 4a. Boost importance for all members present in idx_episode.
         for meta in &metas {
-            let new_importance =
-                (meta.importance * IMPORTANCE_BOOST_FACTOR).min(cfg.importance_boost_cap);
-            tx.execute(
-                "UPDATE idx_episode SET importance = ?1 WHERE event_id = ?2",
-                params![new_importance, meta.event_id],
-            )
-            .context("boost importance")?;
-            report.members_boosted += 1;
+            let boosted = tx
+                .execute(
+                    "UPDATE idx_episode \
+                     SET importance = MIN(importance * ?1, ?2) \
+                     WHERE event_id = ?3",
+                    params![
+                        IMPORTANCE_BOOST_FACTOR,
+                        cfg.importance_boost_cap,
+                        meta.event_id
+                    ],
+                )
+                .context("boost importance")?;
+            report.members_boosted += boosted;
         }
 
         // 4b. Check maturity for groundtruth merge.

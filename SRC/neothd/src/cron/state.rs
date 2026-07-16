@@ -1,8 +1,9 @@
 //! Durable Cron runtime and delivery truth.
 //!
 //! jobs.yaml is operator intent. This sidecar stores only scheduler cursors and
-//! delivery outcomes, keyed by a SHA-256 job-generation fingerprint so an edit
-//! cannot inherit a prior generation's fire/completion state.
+//! delivery outcomes, keyed by a SHA-256 job-generation fingerprint. A job edit
+//! keeps the logical schedule's fire cursor to prevent restart double-fires,
+//! while completion state is generation-bound and is never inherited.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -155,18 +156,26 @@ impl RuntimeState {
         let mut next = BTreeMap::new();
         for job in jobs {
             let generation_sha256 = job_generation(job)?;
-            let entry = self
-                .jobs
-                .get(&job.id)
-                .filter(|entry| entry.generation_sha256 == generation_sha256);
-            next.insert(
-                job.id.clone(),
-                entry.cloned().unwrap_or(JobRuntimeState {
+            let entry = self.jobs.get(&job.id);
+            let reconciled = match entry {
+                Some(entry) if entry.generation_sha256 == generation_sha256 => entry.clone(),
+                Some(entry) => JobRuntimeState {
+                    generation_sha256,
+                    // The id identifies one logical schedule. Preserve its last
+                    // consumed boundary across prompt/delivery edits so a
+                    // restart inside the lookback window cannot fire it twice.
+                    last_fired: entry.last_fired,
+                    // A successful outcome belongs to the exact job generation
+                    // that produced it and must not satisfy edited dependencies.
+                    completed_at: None,
+                },
+                None => JobRuntimeState {
                     generation_sha256,
                     last_fired: None,
                     completed_at: None,
-                }),
-            );
+                },
+            };
+            next.insert(job.id.clone(), reconciled);
         }
         self.jobs = next;
         Ok(())
@@ -190,18 +199,17 @@ impl RuntimeState {
         Ok(())
     }
 
-    pub fn record_completion(&mut self, job: &Job, completed_at: DateTime<Utc>) -> Result<()> {
-        self.record_fire(
-            job,
-            self.jobs
-                .get(&job.id)
-                .and_then(|s| s.last_fired)
-                .unwrap_or(completed_at),
-        )?;
-        if let Some(entry) = self.jobs.get_mut(&job.id) {
-            entry.completed_at = Some(completed_at);
+    pub fn record_completion(&mut self, job: &Job, completed_at: DateTime<Utc>) -> Result<bool> {
+        let generation = job_generation(job)?;
+        let Some(entry) = self.jobs.get_mut(&job.id) else {
+            return Ok(false);
+        };
+        if entry.generation_sha256 != generation {
+            return Ok(false);
         }
-        Ok(())
+        entry.last_fired.get_or_insert(completed_at);
+        entry.completed_at = Some(completed_at);
+        Ok(true)
     }
 
     pub fn begin_delivery(
@@ -303,14 +311,40 @@ mod tests {
     }
 
     #[test]
-    fn edited_generation_does_not_inherit_fire_cursor() {
+    fn edited_generation_keeps_fire_cursor_but_not_completion() {
         let mut state = RuntimeState::default();
         let first = job("first");
         state.reconcile(std::slice::from_ref(&first)).unwrap();
-        state.record_fire(&first, crate::time::utc_now()).unwrap();
+        let fired_at = crate::time::utc_now();
+        state.record_fire(&first, fired_at).unwrap();
+        state.record_completion(&first, fired_at).unwrap();
         let edited = job("second");
         state.reconcile(std::slice::from_ref(&edited)).unwrap();
-        assert!(state.jobs["j"].last_fired.is_none());
+        assert_eq!(state.jobs["j"].last_fired, Some(fired_at));
+        assert!(state.jobs["j"].completed_at.is_none());
+    }
+
+    #[test]
+    fn stale_generation_completion_cannot_replace_current_disk_state() {
+        let mut state = RuntimeState::default();
+        let first = job("first");
+        state.reconcile(std::slice::from_ref(&first)).unwrap();
+        let first_fire = crate::time::utc_now();
+        state.record_fire(&first, first_fire).unwrap();
+        let edited = job("second");
+        state.reconcile(std::slice::from_ref(&edited)).unwrap();
+        let generation_before = state.jobs["j"].generation_sha256.clone();
+
+        assert!(
+            !state
+                .record_completion(&first, first_fire + chrono::Duration::seconds(1))
+                .unwrap(),
+            "a completion from the retired generation must be ignored"
+        );
+        let current = &state.jobs["j"];
+        assert_eq!(current.generation_sha256, generation_before);
+        assert_eq!(current.last_fired, Some(first_fire));
+        assert!(current.completed_at.is_none());
     }
 
     #[test]

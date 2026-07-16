@@ -75,16 +75,31 @@ pub enum WalCompression {
 /// configuration is returned as an error so encryption/compression policy can
 /// never silently become `none`.
 pub fn load_wal_config(freedom_yaml_path: &Path) -> Result<WalConfig> {
-    if !freedom_yaml_path.exists() {
-        return Ok(WalConfig::default());
-    }
-    load_wal_config_strict(freedom_yaml_path)
+    super::credentials::with_dual_file_transaction_lock(freedom_yaml_path, || {
+        load_wal_config_unlocked(freedom_yaml_path, true)
+    })
 }
 
 /// Like `load_wal_config` but surfaces parse errors.
 pub fn load_wal_config_strict(freedom_yaml_path: &Path) -> Result<WalConfig> {
-    let text = std::fs::read_to_string(freedom_yaml_path)
-        .with_context(|| format!("read {}", freedom_yaml_path.display()))?;
+    super::credentials::with_dual_file_transaction_lock(freedom_yaml_path, || {
+        load_wal_config_unlocked(freedom_yaml_path, false)
+    })
+}
+
+fn load_wal_config_unlocked(
+    freedom_yaml_path: &Path,
+    missing_is_default: bool,
+) -> Result<WalConfig> {
+    let text = match std::fs::read_to_string(freedom_yaml_path) {
+        Ok(text) => text,
+        Err(error) if missing_is_default && error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WalConfig::default());
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("read {}", freedom_yaml_path.display()));
+        }
+    };
     let value: serde_yaml::Value = serde_yaml::from_str(&text)
         .with_context(|| format!("parse {}", freedom_yaml_path.display()))?;
     match value.get("wal").cloned() {

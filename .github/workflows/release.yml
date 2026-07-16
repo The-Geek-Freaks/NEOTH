@@ -196,6 +196,7 @@ jobs:
       - name: Verify release asset and exact-head gate contracts
         run: |
           python packaging/tests/test_release_asset_contract.py
+          python packaging/tests/test_release_capability_contract.py
           python packaging/tests/test_release_gate_contract.py
 
       - name: Verify clean-machine authenticity bootstrap contract
@@ -784,6 +785,12 @@ jobs:
       #     plugins are a desktop surface). Runtime gated by `plugins.*` + the
       #     default-inactive `neoth plugin enable` flow; source builds opt in via
       #     `--features release-desktop` for the complete desktop contract.
+      #   * `cluster-iroh` (C6) — compiles the QUIC/NAT-traversal transport offered
+      #     by the desktop GUI. It remains absent from the portable headless musl
+      #     bundle; that artifact keeps the peeroxide transport from default
+      #     features and avoids adding iroh's relay/network stack to its static
+      #     compatibility contract. The release-capability contract binds every
+      #     native desktop matrix entry to this named bundle and fails on drift.
       - name: Build (native)
         if: "!matrix.use_cross"
         working-directory: SRC/neothd

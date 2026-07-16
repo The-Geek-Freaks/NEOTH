@@ -44,6 +44,7 @@ MANIFEST_GRANT_FALLBACKS = {
     ("crc32c", "0.6.8"): "Apache-2.0",
     ("dispatch", "0.2.0"): "MIT",
     ("drm-fourcc", "2.2.0"): "MIT",
+    ("enum-assoc", "1.3.0"): "MIT",
     ("pdf-extract", "0.12.0"): "MIT",
     ("realfft", "3.5.0"): "MIT",
     ("simd_helpers", "0.1.0"): "MIT",

@@ -69,7 +69,12 @@ use rusqlite::Connection;
 /// v29: GOLD-R3-09 durable mesh synchronization state: per-peer ACK cursors,
 ///      exact pending frames, monotonic local origin sequences, contiguous
 ///      inbound high-water state, canonical foreign content and typed conflicts.
-pub const SCHEMA_VERSION: i64 = 29;
+/// v30: durable operator resolution for typed mesh conflicts.
+/// v31: bind inbound mesh receipts to the canonical full frame so a duplicate
+///      cannot mutate its causal vector clock after the content was committed.
+/// v32: persist the bounded, node-global mesh vector frontier independently of
+///      per-destination delivery sequences.
+pub const SCHEMA_VERSION: i64 = 32;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -1109,10 +1114,24 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             origin_peer_pk TEXT NOT NULL,
             origin_seq     INTEGER NOT NULL CHECK (origin_seq > 0),
             content_sha256 BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
+            frame_sha256   BLOB CHECK (frame_sha256 IS NULL OR (typeof(frame_sha256) = 'blob' AND length(frame_sha256) = 32)),
             content_stored INTEGER NOT NULL CHECK (content_stored IN (0, 1)),
             committed_at   INTEGER NOT NULL,
             PRIMARY KEY (origin_peer_pk, origin_seq)
         );
+        CREATE TABLE IF NOT EXISTS mesh_sync_vector_frontier (
+            peer_pk TEXT PRIMARY KEY CHECK (length(peer_pk) > 0),
+            counter INTEGER NOT NULL CHECK (counter > 0)
+        );
+        CREATE TRIGGER IF NOT EXISTS mesh_sync_vector_frontier_cap
+        BEFORE INSERT ON mesh_sync_vector_frontier
+        WHEN NOT EXISTS (
+                SELECT 1 FROM mesh_sync_vector_frontier WHERE peer_pk = NEW.peer_pk
+             )
+             AND (SELECT COUNT(*) FROM mesh_sync_vector_frontier) >= 256
+        BEGIN
+            SELECT RAISE(ABORT, 'mesh vector frontier exceeds 256 peers');
+        END;
         CREATE TABLE IF NOT EXISTS mesh_sync_materialized (
             origin_peer_pk  TEXT NOT NULL,
             content_id      TEXT NOT NULL,
@@ -1132,6 +1151,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             incoming_sha256 BLOB NOT NULL CHECK (length(incoming_sha256) = 32),
             policy          TEXT NOT NULL CHECK (policy IN ('ordered_origin_lww', 'cross_origin_typed_conflict')),
             observed_at     INTEGER NOT NULL,
+            resolved_at     INTEGER CHECK (resolved_at IS NULL OR resolved_at > 0),
+            preferred_origin TEXT,
+            CHECK ((resolved_at IS NULL AND preferred_origin IS NULL) OR
+                   (resolved_at IS NOT NULL AND preferred_origin IS NOT NULL AND
+                    length(preferred_origin) > 0)),
             UNIQUE (content_id, incumbent_origin, incoming_origin, incumbent_sha256, incoming_sha256)
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_restore_map (

@@ -2,8 +2,9 @@
 //!
 //! Bundles the operator's stateful files into a gzipped tarball so an
 //! offsite copy is a one-shot command. Symmetric `restore` unpacks the
-//! same shape back. No daemon-side coordination: the operator should
-//! stop the daemon before either operation to avoid mid-write snapshots.
+//! same shape back. Config and credential snapshots/publication use the live
+//! transaction boundary; stopping the daemon is still recommended for a fully
+//! quiescent snapshot of databases and other independently managed files.
 //!
 //! ## What goes into the tarball
 //!
@@ -31,26 +32,28 @@
 //! ## Secrets in the tarball
 //!
 //! `credentials.yaml` (API keys, Telegram/Slack tokens) is excluded by
-//! default because the archive is plaintext. The operator must explicitly
-//! pass `--include-credentials`; backup then emits a loud warning. This keeps
-//! the default artifact safe to place on ordinary backup storage while still
-//! supporting a complete restore onto operator-controlled encrypted media
-//! (GOLD-SEC-27).
+//! default. The operator must explicitly pass `--include-credentials`; backup
+//! emits a loud warning when those bytes are plaintext. An already encrypted
+//! CONF_MAGIC frame is copied byte-exactly without a false plaintext warning.
 //!
 //! ## Restore safety
 //!
-//! Archive entry paths are untrusted. `restore_backup` joins each entry
-//! through `safe_join`, which refuses absolute paths and any `..`
-//! component (zip-slip / CWE-22), and rejects symlink/hard-link entries
-//! outright — NEOTH backups only ever contain regular files + dirs
-//! (GOLD-SEC-02).
+//! Archive entry paths are untrusted. `restore_backup` validates and writes
+//! every regular file/directory into a private staging tree first. `safe_join`
+//! refuses absolute paths and any `..` component (zip-slip / CWE-22); all link
+//! and special-file entries, duplicate paths, runtime lock/journal metadata,
+//! and pre-existing symlink destinations are rejected before live writes.
+//! Publication then holds the config/credential transaction locks and creates
+//! a private durable `.restore-in-progress.yaml` marker before the first live
+//! write. If the process or machine stops mid-publication, subsequent runtime
+//! config activation fails closed; rerunning the same restore resumes it and
+//! clears the marker only after every file and the exact config pair commit.
 //!
 //! ## Format
 //!
-//! `tar.gz` with paths relative to `~/.neoth/`. Restore unpacks straight
-//! into an empty target directory. The archive is plaintext, therefore
-//! secret-bearing files are opt-in and the operator is responsible for
-//! storing an opted-in archive on encrypted media.
+//! `tar.gz` with paths relative to `~/.neoth/`. Restore stages and validates
+//! the complete archive, publishes ordinary files privately, then commits
+//! `freedom.yaml` + `credentials.yaml` together as the activation point.
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -97,7 +100,7 @@ const DEFAULT_INCLUDES: &[&str] = &[
 pub struct BackupOutcome {
     /// Number of top-level paths included in the tarball.
     pub included: usize,
-    /// True when the operator explicitly included the plaintext
+    /// True when the operator explicitly included an unencrypted
     /// `credentials.yaml` (API keys, channel tokens). The caller MUST warn the
     /// operator to store the archive on encrypted media (GOLD-SEC-27).
     pub included_plaintext_credentials: bool,
@@ -108,16 +111,37 @@ pub struct BackupOutcome {
 /// Missing files are silently skipped — a fresh install has no
 /// `tweaks.toml` and that's fine. Caller passes `include_wal = true` to
 /// add raw WAL segments to the bundle, and must explicitly pass
-/// `include_credentials = true` to bundle `credentials.yaml` (plaintext
-/// secrets — the returned
-/// [`BackupOutcome::included_plaintext_credentials`] is set so the caller
-/// can warn the operator).
+/// `include_credentials = true` to bundle `credentials.yaml`. The returned
+/// [`BackupOutcome::included_plaintext_credentials`] is set only when the
+/// bundled bytes are not already CONF_MAGIC-framed at-rest ciphertext.
 pub fn write_backup(
     home: &Path,
     out: &Path,
     include_wal: bool,
     include_credentials: bool,
 ) -> Result<BackupOutcome> {
+    write_backup_with_pair_loader(
+        home,
+        out,
+        include_wal,
+        include_credentials,
+        crate::config::snapshot_raw_config_pair,
+    )
+}
+
+fn write_backup_with_pair_loader(
+    home: &Path,
+    out: &Path,
+    include_wal: bool,
+    include_credentials: bool,
+    load_pair: impl FnOnce(&Path) -> Result<crate::config::RawConfigPairSnapshot>,
+) -> Result<BackupOutcome> {
+    // Capture the two files governed by the config transaction before opening
+    // the archive. The helper recovers any PREPARED journal and copies both
+    // exact byte generations under one short-lived lock; large databases,
+    // archives, skills, and WAL directories are tarred only after release.
+    let config_pair = load_pair(&home.join("freedom.yaml"))?;
+
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create backup parent {}", parent.display()))?;
@@ -129,10 +153,20 @@ pub fn write_backup(
 
     let mut included = 0usize;
     let mut included_plaintext_credentials = false;
+    if let Some(freedom) = config_pair.freedom.as_deref() {
+        append_snapshot(&mut tar, "freedom.yaml", freedom)?;
+        included += 1;
+    }
+    if include_credentials && let Some(credentials) = config_pair.credentials.as_deref() {
+        append_snapshot(&mut tar, "credentials.yaml", credentials)?;
+        included += 1;
+        included_plaintext_credentials = !config_pair.credentials_encrypted;
+    }
+
     for rel in DEFAULT_INCLUDES {
-        // credentials.yaml is plaintext secrets — only bundle it when the
-        // operator explicitly opted in, and flag it so the caller warns.
-        if *rel == "credentials.yaml" && !include_credentials {
+        // These two were captured as one coherent generation above. Reading
+        // either path again here could split a concurrent dual-file commit.
+        if matches!(*rel, "freedom.yaml" | "credentials.yaml") {
             continue;
         }
         let path = home.join(rel);
@@ -145,9 +179,6 @@ pub fn write_backup(
         } else {
             tar.append_path_with_name(&path, rel)
                 .with_context(|| format!("tar file {}", path.display()))?;
-        }
-        if *rel == "credentials.yaml" {
-            included_plaintext_credentials = true;
         }
         included += 1;
     }
@@ -180,58 +211,332 @@ pub fn write_backup(
     })
 }
 
+fn append_snapshot<W: Write>(tar: &mut tar::Builder<W>, name: &str, bytes: &[u8]) -> Result<()> {
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Regular);
+    header.set_mode(0o600);
+    header.set_size(bytes.len() as u64);
+    header.set_cksum();
+    tar.append_data(&mut header, name, bytes)
+        .with_context(|| format!("tar coherent snapshot {name}"))
+}
+
 /// Restore a `.tar.gz` backup into `target_home`. If `target_home` is
 /// non-empty and `force == false`, returns an error to prevent
 /// accidentally overwriting a live install.
 pub fn restore_backup(archive: &Path, target_home: &Path, force: bool) -> Result<usize> {
-    if target_home.exists()
-        && std::fs::read_dir(target_home)
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false)
-        && !force
-    {
+    anyhow::ensure!(
+        target_home.parent().is_some(),
+        "refusing to restore directly into a filesystem root"
+    );
+    let target_nonempty = match std::fs::symlink_metadata(target_home) {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+                "restore target {} must be a real directory, never a symlink",
+                target_home.display()
+            );
+            std::fs::read_dir(target_home)
+                .with_context(|| format!("inspect target {}", target_home.display()))?
+                .next()
+                .is_some()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect target {}", target_home.display()));
+        }
+    };
+    if target_nonempty && !force {
         anyhow::bail!(
             "target {} is not empty. Pass --force to overwrite, or restore into a fresh path.",
             target_home.display()
         );
     }
-    std::fs::create_dir_all(target_home)
-        .with_context(|| format!("create target {}", target_home.display()))?;
+    crate::cli::init::ensure_dir_secure(target_home)
+        .with_context(|| format!("create private restore target {}", target_home.display()))?;
+
+    let staging_parent = target_home
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let staging = tempfile::Builder::new()
+        .prefix(".neoth-restore-")
+        .tempdir_in(staging_parent)
+        .with_context(|| format!("create restore staging beside {}", target_home.display()))?;
+    crate::cli::init::ensure_dir_secure(staging.path())
+        .context("secure private restore staging")?;
+
     let file = File::open(archive).with_context(|| format!("open backup {}", archive.display()))?;
     let mut reader = BufReader::new(file);
     let mut gz = GzDecoder::new(&mut reader);
-    let mut tar_bytes = Vec::new();
+    let mut tar_bytes = zeroize::Zeroizing::new(Vec::new());
     gz.read_to_end(&mut tar_bytes).context("decode gzip")?;
     let mut archive = tar::Archive::new(&tar_bytes[..]);
     let mut count = 0usize;
+    let mut seen = std::collections::HashSet::new();
+    let mut staged_files = Vec::new();
+    let mut staged_dirs = Vec::new();
+    let mut staged_executables = std::collections::HashSet::new();
     for entry in archive.entries().context("read tar entries")? {
         let mut entry = entry.context("tar entry")?;
         let rel = entry.path().context("tar entry path")?.into_owned();
-        // Reject symlink/hard-link entries — a NEOTH backup only ever
-        // contains regular files + dirs, and a crafted link could be used
-        // to redirect a later entry's write outside the target tree.
         let etype = entry.header().entry_type();
-        if etype.is_symlink() || etype.is_hard_link() {
+        if !etype.is_file() && !etype.is_dir() {
             anyhow::bail!(
                 "refusing {:?} archive entry {} — NEOTH backups contain only regular files and directories",
                 etype,
                 rel.display()
             );
         }
-        // Zip-slip guard (CWE-22): join through `safe_join` so an entry
-        // path with `..` or an absolute root cannot escape target_home.
-        let dest = safe_join(target_home, &rel)
+        let staged_dest = safe_join(staging.path(), &rel)
             .with_context(|| format!("reject unsafe archive entry {}", rel.display()))?;
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create restore parent {}", parent.display()))?;
+        let normalized = staged_dest
+            .strip_prefix(staging.path())
+            .expect("safe_join always remains below staging")
+            .to_path_buf();
+        anyhow::ensure!(
+            !normalized.as_os_str().is_empty(),
+            "refusing empty/root archive entry"
+        );
+        anyhow::ensure!(
+            !restore_path_is_transaction_metadata(&normalized),
+            "refusing runtime lock/journal archive entry {}",
+            normalized.display()
+        );
+        anyhow::ensure!(
+            seen.insert(normalized.clone()),
+            "duplicate archive entry {}",
+            normalized.display()
+        );
+
+        if etype.is_dir() {
+            crate::cli::init::ensure_dir_secure(&staged_dest).with_context(|| {
+                format!("create private staged directory {}", normalized.display())
+            })?;
+            staged_dirs.push(normalized);
+        } else {
+            let executable = entry
+                .header()
+                .mode()
+                .map(|mode| mode & 0o111 != 0)
+                .unwrap_or(false);
+            let parent = staged_dest
+                .parent()
+                .context("staged regular file must have a parent")?;
+            crate::cli::init::ensure_dir_secure(parent).with_context(|| {
+                format!("create private staged parent for {}", normalized.display())
+            })?;
+            let mut output = crate::cli::init::open_for_create_secure(&staged_dest)
+                .with_context(|| format!("create staged file {}", normalized.display()))?;
+            std::io::copy(&mut entry, &mut output)
+                .with_context(|| format!("stage archive file {}", normalized.display()))?;
+            output
+                .flush()
+                .with_context(|| format!("flush staged file {}", normalized.display()))?;
+            output
+                .sync_all()
+                .with_context(|| format!("fsync staged file {}", normalized.display()))?;
+            if executable {
+                staged_executables.insert(normalized.clone());
+            }
+            staged_files.push(normalized);
         }
-        entry
-            .unpack(&dest)
-            .with_context(|| format!("unpack {} → {}", rel.display(), dest.display()))?;
         count += 1;
     }
+
+    let freedom_staged = staged_files
+        .iter()
+        .any(|path| path == Path::new("freedom.yaml"));
+    let credentials_staged = staged_files
+        .iter()
+        .any(|path| path == Path::new("credentials.yaml"));
+    let freedom = freedom_staged
+        .then(|| std::fs::read(staging.path().join("freedom.yaml")))
+        .transpose()
+        .context("read staged freedom.yaml")?
+        .map(zeroize::Zeroizing::new);
+    let credentials = credentials_staged
+        .then(|| std::fs::read(staging.path().join("credentials.yaml")))
+        .transpose()
+        .context("read staged credentials.yaml")?
+        .map(zeroize::Zeroizing::new);
+    crate::config::credentials::Credentials::validate_exact_raw_pair(
+        &target_home.join("freedom.yaml"),
+        &target_home.join("credentials.yaml"),
+        freedom.as_ref().map(|bytes| bytes.as_slice()),
+        credentials.as_ref().map(|bytes| bytes.as_slice()),
+    )
+    .context("validate staged config/credential pair")?;
+    if freedom.is_some() || credentials.is_some() {
+        validate_restore_destination(target_home, Path::new("freedom.yaml"), false, force)?;
+        validate_restore_destination(target_home, Path::new("credentials.yaml"), false, force)?;
+    }
+
+    // Validate every live destination before changing any of them. This is a
+    // second containment layer after staging and refuses pre-existing symlink
+    // parents/finals even under --force.
+    for rel in &staged_dirs {
+        validate_restore_destination(target_home, rel, true, force)?;
+    }
+    for rel in &staged_files {
+        validate_restore_destination(target_home, rel, false, force)?;
+    }
+
+    staged_dirs.sort_by_key(|path| path.components().count());
+    crate::config::credentials::with_restore_publication_at(
+        &target_home.join("freedom.yaml"),
+        || {
+            for rel in &staged_dirs {
+                ensure_restore_directory(target_home, rel)?;
+            }
+            for rel in &staged_files {
+                if rel == Path::new("freedom.yaml") || rel == Path::new("credentials.yaml") {
+                    continue;
+                }
+                publish_staged_regular_file(
+                    staging.path(),
+                    target_home,
+                    rel,
+                    staged_executables.contains(rel),
+                )?;
+            }
+
+            // Config + credentials are the activation/commit point and
+            // therefore land last, through the same durable PREPARED journal
+            // as live mutations. The outer restore marker covers ancillary
+            // files as well, so a crash can never activate their mixed state.
+            if freedom.is_some() || credentials.is_some() {
+                crate::config::credentials::Credentials::publish_exact_raw_pair_at(
+                    &target_home.join("freedom.yaml"),
+                    &target_home.join("credentials.yaml"),
+                    freedom.as_ref().map(|bytes| bytes.as_slice()),
+                    credentials.as_ref().map(|bytes| bytes.as_slice()),
+                )
+                .context("publish restored config/credential pair")?;
+            }
+            Ok(())
+        },
+    )?;
     Ok(count)
+}
+
+fn restore_path_is_transaction_metadata(rel: &Path) -> bool {
+    rel.parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+        && matches!(
+            rel.file_name().and_then(|name| name.to_str()),
+            Some(
+                ".freedom-credentials.prepared.yaml"
+                    | ".freedom-credentials.transaction.lock"
+                    | ".restore-in-progress.yaml"
+                    | "freedom.lock"
+                    | "credentials.lock"
+                    | "neothd.pid"
+            )
+        )
+}
+
+fn validate_restore_destination(
+    root: &Path,
+    rel: &Path,
+    expected_directory: bool,
+    force: bool,
+) -> Result<()> {
+    let components: Vec<_> = rel.components().collect();
+    let mut current = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        let std::path::Component::Normal(segment) = component else {
+            anyhow::bail!("non-normal staged restore component in {}", rel.display());
+        };
+        current.push(segment);
+        let final_component = index + 1 == components.len();
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                anyhow::ensure!(
+                    !metadata.file_type().is_symlink(),
+                    "refusing restore through existing symlink {}",
+                    current.display()
+                );
+                if final_component {
+                    anyhow::ensure!(
+                        (expected_directory && metadata.file_type().is_dir())
+                            || (!expected_directory && metadata.file_type().is_file()),
+                        "restore destination {} has the wrong file type",
+                        current.display()
+                    );
+                    anyhow::ensure!(
+                        force,
+                        "restore destination {} appeared after the empty-target check",
+                        current.display()
+                    );
+                } else {
+                    anyhow::ensure!(
+                        metadata.file_type().is_dir(),
+                        "restore parent {} is not a directory",
+                        current.display()
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect restore destination {}", current.display()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_restore_directory(root: &Path, rel: &Path) -> Result<()> {
+    let mut current = root.to_path_buf();
+    for component in rel.components() {
+        let std::path::Component::Normal(segment) = component else {
+            anyhow::bail!("non-normal staged restore component in {}", rel.display());
+        };
+        current.push(segment);
+        crate::cli::init::ensure_dir_secure(&current)
+            .with_context(|| format!("create private restore directory {}", current.display()))?;
+    }
+    Ok(())
+}
+
+fn publish_staged_regular_file(
+    staging: &Path,
+    root: &Path,
+    rel: &Path,
+    executable: bool,
+) -> Result<()> {
+    if let Some(parent) = rel.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        ensure_restore_directory(root, parent)?;
+    }
+    let destination = safe_join(root, rel)?;
+    match std::fs::symlink_metadata(&destination) {
+        Ok(metadata) => anyhow::ensure!(
+            metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+            "restore destination {} changed to a symlink/non-file",
+            destination.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect restore file {}", destination.display()));
+        }
+    }
+    let bytes = zeroize::Zeroizing::new(
+        std::fs::read(staging.join(rel))
+            .with_context(|| format!("read staged restore file {}", rel.display()))?,
+    );
+    crate::util::atomic_write::atomic_write_private(&destination, &bytes)
+        .with_context(|| format!("atomically restore {}", destination.display()))?;
+    #[cfg(unix)]
+    if executable {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("restore executable mode on {}", destination.display()))?;
+    }
+    #[cfg(not(unix))]
+    let _ = executable;
+    Ok(())
 }
 
 /// Join an untrusted archive-relative path onto `base`, rejecting any
@@ -298,6 +603,89 @@ mod tests {
         let n = write_backup(&home, &out, false, true).unwrap();
         assert!(out.exists());
         assert!(n.included >= 4, "expected ≥4 entries, got {}", n.included);
+    }
+
+    #[test]
+    fn backup_cannot_split_a_concurrent_config_credential_generation() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let home = fake_home(dir.path());
+        let freedom_path = home.join("freedom.yaml");
+        let credentials_path = home.join("credentials.yaml");
+        std::fs::write(&credentials_path, "provider_key: old-secret\n").unwrap();
+        let out = dir.path().join("coherent-backup.tar.gz");
+
+        let (freedom_read_tx, freedom_read_rx) = mpsc::channel();
+        let (release_snapshot_tx, release_snapshot_rx) = mpsc::channel();
+        let backup_home = home.clone();
+        let backup_out = out.clone();
+        let backup = std::thread::spawn(move || {
+            write_backup_with_pair_loader(&backup_home, &backup_out, false, true, |path| {
+                crate::config::snapshot_raw_config_pair_with_hook(path, || {
+                    freedom_read_tx.send(()).unwrap();
+                    release_snapshot_rx.recv().unwrap();
+                })
+            })
+            .unwrap()
+        });
+
+        freedom_read_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let writer_freedom = freedom_path.clone();
+        let writer_credentials = credentials_path.clone();
+        let (writer_done_tx, writer_done_rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            crate::config::credentials::Credentials::update_with_freedom_at(
+                &writer_freedom,
+                &writer_credentials,
+                |config, credentials| {
+                    config.operator_id = Some("new-operator".to_string());
+                    credentials.provider_key =
+                        Some(crate::secret::SecretString::from("new-secret"));
+                    Ok(())
+                },
+            )
+            .unwrap();
+            writer_done_tx.send(()).unwrap();
+        });
+        assert!(
+            writer_done_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "dual-file writer must remain blocked while backup captures its pair"
+        );
+
+        release_snapshot_tx.send(()).unwrap();
+        let outcome = backup.join().unwrap();
+        writer_done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        writer.join().unwrap();
+        assert!(outcome.included_plaintext_credentials);
+
+        let restored = dir.path().join("coherent-restore");
+        restore_backup(&out, &restored, false).unwrap();
+        let archived_config: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(restored.join("freedom.yaml")).unwrap()).unwrap();
+        let archived_credentials: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(restored.join("credentials.yaml")).unwrap())
+                .unwrap();
+        assert_eq!(archived_config["operator_id"].as_str(), Some("sam"));
+        assert_eq!(
+            archived_credentials["provider_key"].as_str(),
+            Some("old-secret")
+        );
+
+        let live_config: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).unwrap()).unwrap();
+        let live_credentials: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&credentials_path).unwrap()).unwrap();
+        assert_eq!(live_config["operator_id"].as_str(), Some("new-operator"));
+        assert_eq!(
+            live_credentials["provider_key"].as_str(),
+            Some("new-secret")
+        );
     }
 
     #[test]
@@ -372,6 +760,155 @@ mod tests {
     }
 
     #[test]
+    fn restore_validates_pair_before_publishing_any_other_file() {
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("invalid-pair.tar.gz");
+        {
+            let file = File::create(&archive_path).unwrap();
+            let gz = GzEncoder::new(BufWriter::new(file), Compression::default());
+            let mut tar = tar::Builder::new(gz);
+            for (name, body) in [
+                ("views.db", b"new-view-state".as_slice()),
+                ("freedom.yaml", b"not: [valid yaml".as_slice()),
+                ("credentials.yaml", b"provider_key: new-secret\n".as_slice()),
+            ] {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_mode(0o600);
+                header.set_size(body.len() as u64);
+                header.set_cksum();
+                tar.append_data(&mut header, name, body).unwrap();
+            }
+            let gz = tar.into_inner().unwrap();
+            gz.finish().unwrap();
+        }
+        let target = dir.path().join("live");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("views.db"), b"old-view-state").unwrap();
+        std::fs::write(target.join("freedom.yaml"), b"operator_id: old\n").unwrap();
+        std::fs::write(
+            target.join("credentials.yaml"),
+            b"provider_key: old-secret\n",
+        )
+        .unwrap();
+
+        let error = restore_backup(&archive_path, &target, true).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("validate staged config/credential pair")
+        );
+        assert_eq!(
+            std::fs::read(target.join("views.db")).unwrap(),
+            b"old-view-state"
+        );
+        assert_eq!(
+            std::fs::read(target.join("freedom.yaml")).unwrap(),
+            b"operator_id: old\n"
+        );
+        assert_eq!(
+            std::fs::read(target.join("credentials.yaml")).unwrap(),
+            b"provider_key: old-secret\n"
+        );
+    }
+
+    #[test]
+    fn incomplete_restore_blocks_runtime_until_restore_is_resumed() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("live");
+        std::fs::create_dir_all(&target).unwrap();
+        let freedom_path = target.join("freedom.yaml");
+        let credentials_path = target.join("credentials.yaml");
+        let views_path = target.join("views.db");
+
+        let mut old_config = crate::config::FreedomConfig::default();
+        old_config.operator_id = Some("old-operator".to_string());
+        let old_freedom = serde_yaml::to_string(&old_config).unwrap().into_bytes();
+        let old_credentials = b"provider_key: old-secret\n".to_vec();
+        std::fs::write(&freedom_path, &old_freedom).unwrap();
+        std::fs::write(&credentials_path, &old_credentials).unwrap();
+        std::fs::write(&views_path, b"old-view-state").unwrap();
+
+        let interrupted = crate::config::credentials::with_restore_publication_at(
+            &freedom_path,
+            || -> Result<()> {
+                crate::util::atomic_write::atomic_write_private(
+                    &views_path,
+                    b"partially-restored-view-state",
+                )?;
+                anyhow::bail!("injected restore interruption after ancillary publication")
+            },
+        )
+        .unwrap_err();
+        assert!(
+            format!("{interrupted:#}").contains("injected restore interruption"),
+            "{interrupted:#}"
+        );
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), old_freedom);
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), old_credentials);
+        assert_eq!(
+            std::fs::read(&views_path).unwrap(),
+            b"partially-restored-view-state"
+        );
+        assert!(target.join(".restore-in-progress.yaml").exists());
+
+        let blocked = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap_err();
+        assert!(
+            format!("{blocked:#}").contains("incomplete backup restore"),
+            "{blocked:#}"
+        );
+
+        let mut new_config = crate::config::FreedomConfig::default();
+        new_config.operator_id = Some("new-operator".to_string());
+        let new_freedom = serde_yaml::to_string(&new_config).unwrap().into_bytes();
+        let new_credentials = b"provider_key: new-secret\n".to_vec();
+        crate::config::credentials::with_restore_publication_at(&freedom_path, || {
+            crate::util::atomic_write::atomic_write_private(
+                &views_path,
+                b"fully-restored-view-state",
+            )?;
+            crate::config::credentials::Credentials::publish_exact_raw_pair_at(
+                &freedom_path,
+                &credentials_path,
+                Some(&new_freedom),
+                Some(&new_credentials),
+            )
+        })
+        .unwrap();
+
+        assert!(!target.join(".restore-in-progress.yaml").exists());
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), new_freedom);
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), new_credentials);
+        assert_eq!(
+            std::fs::read(&views_path).unwrap(),
+            b"fully-restored-view-state"
+        );
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path).unwrap();
+        assert_eq!(pair.config.operator_id.as_deref(), Some("new-operator"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_force_refuses_existing_symlink_destination() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let home = fake_home(dir.path());
+        let archive_path = dir.path().join("backup.tar.gz");
+        write_backup(&home, &archive_path, false, true).unwrap();
+        let target = dir.path().join("live");
+        std::fs::create_dir_all(&target).unwrap();
+        let outside = dir.path().join("outside.db");
+        std::fs::write(&outside, b"outside-untouched").unwrap();
+        symlink(&outside, target.join("views.db")).unwrap();
+
+        let error = restore_backup(&archive_path, &target, true).unwrap_err();
+        assert!(error.to_string().contains("existing symlink"));
+        assert_eq!(std::fs::read(&outside).unwrap(), b"outside-untouched");
+        assert!(!target.join("freedom.yaml").exists());
+    }
+
+    #[test]
     fn missing_files_are_skipped_not_errored() {
         let dir = tempdir().unwrap();
         let home = dir.path().join("sparse");
@@ -419,6 +956,30 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_credentials_are_included_without_plaintext_warning() {
+        let dir = tempdir().unwrap();
+        let home = fake_home(dir.path());
+        let mut encrypted = b"NEOTH_CONF_ENCv1\n".to_vec();
+        encrypted.extend_from_slice(&[7_u8; 12]);
+        encrypted.extend_from_slice(&[9_u8; 16]);
+        std::fs::write(home.join("credentials.yaml"), &encrypted).unwrap();
+        let out = dir.path().join("encrypted-credentials.tar.gz");
+
+        let outcome = write_backup(&home, &out, false, true).unwrap();
+
+        assert!(
+            !outcome.included_plaintext_credentials,
+            "an encrypted-at-rest blob must not trigger the plaintext archive warning"
+        );
+        let restored = dir.path().join("restored-encrypted");
+        restore_backup(&out, &restored, false).unwrap();
+        assert_eq!(
+            std::fs::read(restored.join("credentials.yaml")).unwrap(),
+            encrypted
+        );
+    }
+
+    #[test]
     fn safe_join_allows_normal_paths_and_rejects_escapes() {
         let base = Path::new("/srv/neoth");
         assert_eq!(
@@ -432,6 +993,26 @@ mod tests {
         assert!(safe_join(base, Path::new("../escape")).is_err());
         assert!(safe_join(base, Path::new("a/../../escape")).is_err());
         assert!(safe_join(base, Path::new("/etc/passwd")).is_err());
+    }
+
+    #[test]
+    fn restore_rejects_all_root_transaction_metadata() {
+        for name in [
+            ".freedom-credentials.prepared.yaml",
+            ".freedom-credentials.transaction.lock",
+            ".restore-in-progress.yaml",
+            "freedom.lock",
+            "credentials.lock",
+            "neothd.pid",
+        ] {
+            assert!(
+                restore_path_is_transaction_metadata(Path::new(name)),
+                "{name} must never be restorable from an untrusted archive"
+            );
+        }
+        assert!(!restore_path_is_transaction_metadata(Path::new(
+            "archive/neothd.pid"
+        )));
     }
 
     #[test]

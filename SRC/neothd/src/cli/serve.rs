@@ -124,21 +124,21 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     }
 
     // ── 1. Load config ──────────────────────────────────────────────────────
-    let config = FreedomConfig::load_from_path(&config_path)?;
     let credentials_path = neoth_home.join("credentials.yaml");
     // Load the complete secret contract before any runtime service is primed.
     // This keeps custom --config homes and the OS-keychain backend aligned with
-    // the exact credentials later passed to channel and OMI workers.
-    let creds = crate::config::credentials::Credentials::load_effective(
-        &credentials_path,
-        config.secrets_backend,
-    )
-    .with_context(|| {
-        format!(
-            "credentials at {} cannot be loaded; repair the file/keychain before starting",
-            credentials_path.display()
-        )
-    })?;
+    // the exact freedom.yaml generation later passed to channel, cluster, and
+    // OMI workers. The pair loader also recovers any interrupted dual-file
+    // publication before exposing either half.
+    let runtime_config = crate::config::load_runtime_config_pair_from_path(&config_path)
+        .with_context(|| {
+            format!(
+                "runtime config pair at {} cannot be loaded; repair freedom.yaml and its credential file/keychain before starting",
+                config_path.display()
+            )
+        })?;
+    let config = runtime_config.config;
+    let creds = runtime_config.credentials;
     #[cfg(feature = "cluster")]
     if config.cluster.enabled
         && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_none()
@@ -147,6 +147,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             "cluster.enabled is true, but the identity is incomplete; set both cluster.name in {} and cluster_passphrase in {}",
             config_path.display(),
             credentials_path.display()
+        );
+    }
+    #[cfg(all(feature = "cluster", not(feature = "cluster-iroh")))]
+    if config.cluster.enabled && config.cluster.transport == crate::config::ClusterTransport::Iroh {
+        anyhow::bail!(
+            "cluster.transport is `iroh`, but this binary was built without the `cluster-iroh` feature; install a native desktop release or switch the complete cluster config to `peeroxide`"
         );
     }
     // Hooks are operator policy. Validate and retain one known-good snapshot
@@ -440,9 +446,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // before the indexer + handler-spawn use the controller.
     {
         let sentinel = neoth_home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
-        if sentinel.exists() {
-            handle_reload_sentinel(&reload_controller, &sentinel, &writer).await;
-        }
+        handle_reload_sentinel(&reload_controller, &sentinel, &writer).await;
     }
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let reload_task =
@@ -748,6 +752,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let drain_reload_controller = std::sync::Arc::clone(&reload_controller);
     let drain_neoth_home = neoth_home.clone();
     let confirm_drain_task: Option<tokio::task::JoinHandle<()>> = Some(tokio::spawn(async move {
+        let confirm_client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::error!(%error, "approval delivery client could not be constructed");
+                return;
+            }
+        };
         while let Some(req) = confirm_rx.recv().await {
             let drain_config = drain_reload_controller.latest();
             let drain_credentials = crate::config::credentials::Credentials::load_effective(
@@ -772,9 +786,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             // Best-effort: send via Telegram if credentials are present.
             if let (Some(token), Some(user_id)) = (&drain_telegram_token, drain_telegram_user_id) {
                 let url = format!("https://api.telegram.org/bot{}/sendMessage", token.expose());
-                // Fire-and-forget — a failed delivery lets the gate time
-                // out (fail-closed); no retry needed here.
-                let _ = reqwest::Client::new()
+                // A failed or timed-out delivery leaves the permission gate
+                // fail-closed, but is surfaced so the operator can diagnose it.
+                if let Err(error) = confirm_client
                     .post(&url)
                     .json(&serde_json::json!({
                         "chat_id": user_id,
@@ -782,7 +796,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         "parse_mode": "Markdown"
                     }))
                     .send()
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        uuid = %req.uuid,
+                        %error,
+                        "approval notification delivery failed"
+                    );
+                }
             } else if let Err(load_error) = drain_credentials {
                 tracing::error!(
                     uuid = %req.uuid,
@@ -1774,12 +1795,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         if !current.email_ingest_cron.enabled {
                             continue;
                         }
-                        if let Err(e) = crate::daemon::email_ingest_cron::run_email_ingest_tick(
-                            &home,
-                            &current.email_ingest_cron,
-                            &current,
-                        )
-                        .await
+                        if let Err(e) =
+                            crate::daemon::email_ingest_cron::run_email_ingest_tick(&home).await
                         {
                             warn!(error = %e, "email_ingest_cron tick error");
                         }
@@ -1918,6 +1935,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // transport actually comes up), aborted on shutdown alongside the swarm.
     #[cfg(feature = "cluster")]
     let mut cluster_gossip_task: Option<tokio::task::JoinHandle<()>> = None;
+    #[cfg(feature = "cluster-iroh")]
+    let mut iroh_gossip_task: Option<tokio::task::JoinHandle<()>> = None;
 
     // iroh live-carrier: when `cluster.transport=iroh` (+ the `cluster-iroh`
     // build feature) AND clustering is configured, bring up the iroh QUIC
@@ -1935,8 +1954,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         && crate::cluster::identity::cluster_transport_activation(&config, &creds).is_some()
     {
         // GR-RESID-IROH (D3/F19/F56): thread the cluster_key (peer-auth proof),
-        // the daemon WAL writer (gossip audit), and ONE shared GossipState into
-        // both the inbound handler and the outbound broadcast.
+        // the daemon WAL writer (gossip audit), and one shared in-process
+        // GossipState into both directions for observability. DurableSync's
+        // SQLite transaction remains the authoritative receipt/vector state.
         let activation = crate::cluster::identity::cluster_transport_activation(&config, &creds)
             .expect("cluster_transport_activation is Some — checked in the guard above");
         let cluster_key = std::sync::Arc::new(activation.key);
@@ -1956,6 +1976,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 std::sync::Arc::clone(&gs),
                 Some(foreign_persist_tx),
                 cluster_wal.clone(),
+                std::sync::Arc::clone(&reload_controller),
             ),
             cluster_key,
             cluster_wal.clone(),
@@ -1974,19 +1995,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     }
                 }
                 // Outbound gossip broadcast tick (WAL tail → peers, dial-by-key).
-                // Detached: daemon-lifetime; process exit reaps it.
+                // Its handle is owned by BackgroundHandles so shutdown aborts
+                // and awaits it before closing the transport and WAL writer.
                 // F56 — derive self_id from the REAL iroh transport identity
                 // (node id) instead of a throwaway per-process uuid, and share
-                // the SAME GossipState with the inbound handler so the vector
-                // clock + dedup frontier converge across send + receive.
+                // the same observability mirror with the inbound handler. The
+                // node-global vector frontier and per-destination ACK sequence
+                // advance only through DurableSync's committed transactions.
                 let self_id = crate::cluster::PeerPubkey::new(t.node_id());
-                let _broadcast = crate::cluster::iroh_transport::spawn_gossip_broadcast(
+                iroh_gossip_task = Some(crate::cluster::iroh_transport::spawn_gossip_broadcast(
                     std::sync::Arc::clone(&t),
                     segment_path.clone(),
                     std::sync::Arc::clone(&gs),
                     self_id,
                     cluster_wal.clone(),
-                );
+                    std::sync::Arc::clone(&reload_controller),
+                ));
                 info!(
                     node = %t.node_id(),
                     seeded_peers = n_seeded,
@@ -2078,6 +2102,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // (queues TaskResult replies), and the SL-01b gossip tick.
                 let peer_streams =
                     std::sync::Arc::new(crate::cluster::peer_streams::PeerStreamRegistry::new());
+                let gossip_state = std::sync::Arc::new(std::sync::Mutex::new(
+                    crate::cluster::wal_sync::GossipState::new(),
+                ));
                 // SL-01: spawn the single task executor (holds the provider +
                 // a clone of peer_streams) and thread its bounded dispatch
                 // sender into the transport's accept gate.
@@ -2110,6 +2137,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     registry,
                     cluster_wal,
                     peer_streams,
+                    std::sync::Arc::clone(&gossip_state),
                     std::sync::Arc::clone(&reload_controller),
                     neoth_home.clone(),
                     Some(dispatch_tx),
@@ -2125,7 +2153,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             gossip_streams,
                             gossip_segment,
                             gossip_writer,
+                            gossip_state,
                             crate::cluster::PeerPubkey::new(handle.own_peer_id().to_string()),
+                            std::sync::Arc::clone(&reload_controller),
                         ));
                         Some(handle)
                     }
@@ -2143,6 +2173,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 None
             }
         };
+
+    // The CLI must never infer a live cluster carrier from freedom.yaml or a
+    // PID alone. Publish the exact daemon-owned runtime acknowledgement only
+    // after the selected carrier has started successfully (or after startup
+    // has proven the configured disabled state inert).
+    #[cfg(feature = "cluster")]
+    crate::cli::cluster::acknowledge_cluster_runtime_at(
+        &neoth_home,
+        &config,
+        &creds,
+        iroh_active || cluster_swarm.is_some(),
+        mdns_daemon.is_some(),
+    )?;
 
     // ── W-05d installer_ran sidecar ingester (Session 26) ─────────────────
     // `neoth installer apply --yes` drops `~/.neoth/installer_ran_<ts>.json`
@@ -2253,7 +2296,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             ticker.tick().await; // burn immediate
             loop {
                 ticker.tick().await;
-                if crate::daemon::supervisor::take_restart_request(&restart_home) {
+                if crate::daemon::supervisor::take_restart_request(&restart_home).await {
                     notify.notify_one();
                     break;
                 }
@@ -2395,6 +2438,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         cluster_foreign_indexer_task,
         #[cfg(feature = "cluster")]
         cluster_gossip_task,
+        #[cfg(feature = "cluster-iroh")]
+        iroh_gossip_task,
+        #[cfg(feature = "cluster-iroh")]
+        iroh_transport_handle,
         #[cfg(feature = "cluster")]
         cluster_swarm,
         #[cfg(feature = "cluster")]
@@ -2581,14 +2628,53 @@ pub(crate) fn cron_spec_fingerprint(
 /// sentinel delete) logs at warn level + continues. The daemon's
 /// receive loop must keep running even when the reload mechanism
 /// itself misbehaves.
+async fn claim_reload_sentinel(
+    sentinel_path: &std::path::Path,
+) -> std::io::Result<Option<std::path::PathBuf>> {
+    let claimed_path = sentinel_path.with_file_name(format!(
+        "{}.processing",
+        crate::config::reload::RELOAD_SENTINEL_NAME
+    ));
+    // A crash after the rename leaves the claim behind. Resume that durable
+    // request before consuming a newer public sentinel.
+    if tokio::fs::try_exists(&claimed_path).await? {
+        return Ok(Some(claimed_path));
+    }
+    match tokio::fs::rename(sentinel_path, &claimed_path).await {
+        Ok(()) => Ok(Some(claimed_path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) async fn handle_reload_sentinel(
-    controller: &crate::config::reload::ReloadController,
+    controller: &std::sync::Arc<crate::config::reload::ReloadController>,
     sentinel_path: &std::path::Path,
     writer: &crate::wal::writer::WalWriterHandle,
 ) {
-    let result = match controller.try_reload() {
-        Ok(r) => r,
-        Err(e) => {
+    // Claim by atomic rename before doing any parse or audit work. A second
+    // `neoth reload` can then create the public sentinel again and cannot be
+    // erased by completion of this request.
+    let claimed_path = match claim_reload_sentinel(sentinel_path).await {
+        Ok(Some(path)) => path,
+        Ok(None) => return,
+        Err(error) => {
+            warn!(
+                %error,
+                path = %sentinel_path.display(),
+                "reload: could not claim sentinel"
+            );
+            return;
+        }
+    };
+    // Loading and parsing freedom.yaml uses synchronous filesystem APIs. Keep
+    // that work off the Tokio runtime: instance homes can live on slow or
+    // temporarily unavailable network filesystems.
+    let controller_for_reload = std::sync::Arc::clone(controller);
+    let result = match tokio::task::spawn_blocking(move || controller_for_reload.try_reload()).await
+    {
+        Ok(Ok(result)) => result,
+        Ok(Err(e)) => {
             warn!(
                 error = %e,
                 path = %controller.source_path().display(),
@@ -2596,7 +2682,32 @@ pub(crate) async fn handle_reload_sentinel(
             );
             // Still delete the sentinel — otherwise the poll task
             // re-tries the same broken file every 2s + spams logs.
-            let _ = std::fs::remove_file(sentinel_path);
+            if let Err(remove_error) = tokio::fs::remove_file(&claimed_path).await
+                && remove_error.kind() != std::io::ErrorKind::NotFound
+            {
+                warn!(
+                    error = %remove_error,
+                    path = %claimed_path.display(),
+                    "reload sentinel delete failed after reload read error"
+                );
+            }
+            return;
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                path = %controller.source_path().display(),
+                "reload: config reload worker failed; sentinel will be deleted to prevent loop"
+            );
+            if let Err(remove_error) = tokio::fs::remove_file(&claimed_path).await
+                && remove_error.kind() != std::io::ErrorKind::NotFound
+            {
+                warn!(
+                    error = %remove_error,
+                    path = %claimed_path.display(),
+                    "reload sentinel delete failed after reload worker failure"
+                );
+            }
             return;
         }
     };
@@ -2641,14 +2752,20 @@ pub(crate) async fn handle_reload_sentinel(
                 }
             }
         }
-        crate::config::reload::ReloadResult::Rejected { reason } => {
+        crate::config::reload::ReloadResult::Rejected { rejection } => {
+            let reason = rejection.to_string();
+            let restart_required = rejection.restart_required();
+            let reason_codes = rejection.reason_codes();
             warn!(
                 reason = %reason,
+                restart_required,
                 source = %controller.source_path().display(),
                 "config reload REJECTED — immutable field changed; daemon stays on prior config"
             );
             let payload = serde_json::json!({
                 "reason": reason,
+                "reason_codes": reason_codes,
+                "restart_required": restart_required,
                 "source_path": controller.source_path().display().to_string(),
                 "ts_unix": ts_unix,
             });
@@ -2673,11 +2790,63 @@ pub(crate) async fn handle_reload_sentinel(
             // audit log would dilute the signal.
         }
     }
-    if let Err(e) = std::fs::remove_file(sentinel_path) {
+    if let Err(e) = tokio::fs::remove_file(&claimed_path).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
         warn!(
             error = %e,
-            path = %sentinel_path.display(),
+            path = %claimed_path.display(),
             "reload sentinel delete failed; next poll tick may double-fire"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reload_sentinel_claim_tests {
+    use super::claim_reload_sentinel;
+
+    #[tokio::test]
+    async fn a_new_reload_request_survives_completion_of_the_claimed_request() {
+        let home = tempfile::tempdir().unwrap();
+        let sentinel = home
+            .path()
+            .join(crate::config::reload::RELOAD_SENTINEL_NAME);
+        tokio::fs::write(&sentinel, b"request-one").await.unwrap();
+
+        let claimed = claim_reload_sentinel(&sentinel)
+            .await
+            .unwrap()
+            .expect("first request claimed");
+        assert!(!tokio::fs::try_exists(&sentinel).await.unwrap());
+        tokio::fs::write(&sentinel, b"request-two").await.unwrap();
+
+        tokio::fs::remove_file(&claimed).await.unwrap();
+        assert!(
+            tokio::fs::try_exists(&sentinel).await.unwrap(),
+            "finishing request one must not delete request two"
+        );
+        assert_eq!(
+            claim_reload_sentinel(&sentinel)
+                .await
+                .unwrap()
+                .expect("second request claimed"),
+            claimed
+        );
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_claim_is_resumed_after_restart() {
+        let home = tempfile::tempdir().unwrap();
+        let sentinel = home
+            .path()
+            .join(crate::config::reload::RELOAD_SENTINEL_NAME);
+        tokio::fs::write(&sentinel, b"request").await.unwrap();
+        let claimed = claim_reload_sentinel(&sentinel).await.unwrap().unwrap();
+
+        assert_eq!(
+            claim_reload_sentinel(&sentinel).await.unwrap(),
+            Some(claimed),
+            "a crash-retained processing marker remains a durable request"
         );
     }
 }

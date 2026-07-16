@@ -124,6 +124,7 @@ cloud model.
 | Claude CLI behaves strangely | `neoth doctor --explain "tmux for claude_cli"` | Interactive CLI providers may need tmux/PTY support. |
 | Plugins do not run | `neoth doctor --explain "wasm plugins"` | Build/runtime plugin host state does not match config. |
 | Cluster discovery is quiet | `neoth doctor --explain "cluster mDNS announcer"` | Current network is not trusted for broadcast discovery. |
+| Cluster settings were saved but behavior is unchanged | `neoth cluster status` | If the receipt reports `restart_required: true`, restart the supervised daemon because transport and mDNS lifecycle changes do not hot-switch. Gossip privacy/replay policy takes effect after a successful reload. Disabled plus stopped is already inert. |
 
 ## Keep it boring
 

@@ -264,16 +264,23 @@ pub fn request_restart(neoth_home: &Path) -> std::io::Result<()> {
     std::fs::write(restart_request_path(neoth_home), b"restart\n")
 }
 
-/// Consume the restart-request marker: returns `true` (and removes the
-/// file) when a restart was requested, `false` otherwise. The daemon
-/// watcher polls this.
-pub fn take_restart_request(neoth_home: &Path) -> bool {
+/// Consume the restart-request marker without blocking an async runtime:
+/// returns `true` (and removes the file) when a restart was requested,
+/// `false` otherwise. Removal itself is the atomic consume operation, so
+/// concurrent watchers cannot both observe one request.
+pub async fn take_restart_request(neoth_home: &Path) -> bool {
     let path = restart_request_path(neoth_home);
-    if path.exists() {
-        let _ = std::fs::remove_file(&path);
-        true
-    } else {
-        false
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                path = %path.display(),
+                "could not consume restart request"
+            );
+            false
+        }
     }
 }
 
@@ -372,18 +379,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn restart_request_round_trip() {
+    #[tokio::test]
+    async fn restart_request_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         // No marker yet.
-        assert!(!take_restart_request(home));
+        assert!(!take_restart_request(home).await);
         // Apply path writes it.
         request_restart(home).unwrap();
         assert!(restart_request_path(home).exists());
         // Watcher consumes it exactly once (removes the file).
-        assert!(take_restart_request(home), "first take sees the request");
-        assert!(!take_restart_request(home), "second take is clean");
+        assert!(
+            take_restart_request(home).await,
+            "first take sees the request"
+        );
+        assert!(!take_restart_request(home).await, "second take is clean");
         assert!(
             !restart_request_path(home).exists(),
             "marker removed on take"

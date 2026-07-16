@@ -245,6 +245,10 @@ pub struct LiveTranscriptBuffer {
     seen_speech: bool,
 }
 
+/// Sustained noise/music must not grow an utterance forever. Thirty seconds is
+/// long enough for dictation while bounding PCM memory deterministically.
+const MAX_LIVE_UTTERANCE_SECS: usize = 30;
+
 impl LiveTranscriptBuffer {
     pub fn new(sample_rate_hz: u32) -> Self {
         Self {
@@ -284,11 +288,13 @@ impl LiveTranscriptBuffer {
         // sample_rate_hz * 20 / 1000 samples.
         let frame_len = (self.sample_rate_hz as usize * FRAME_MS as usize) / 1000;
         if frame_len == 0 {
-            self.pending.extend_from_slice(samples);
+            self.extend_pending_bounded(samples);
             return;
         }
         for chunk in samples.chunks(frame_len) {
-            self.pending.extend_from_slice(chunk);
+            if !self.extend_pending_bounded(chunk) {
+                return;
+            }
             let rms = rms_energy(chunk);
             if rms >= self.silence_rms_threshold {
                 self.silence_ms = 0;
@@ -298,6 +304,18 @@ impl LiveTranscriptBuffer {
                 self.silence_ms = self.silence_ms.saturating_add(frame_ms);
             }
         }
+    }
+
+    fn extend_pending_bounded(&mut self, samples: &[f32]) -> bool {
+        let max_samples = (self.sample_rate_hz as usize).saturating_mul(MAX_LIVE_UTTERANCE_SECS);
+        if samples.len() > max_samples
+            || self.pending.len() > max_samples.saturating_sub(samples.len())
+        {
+            self.reset();
+            return false;
+        }
+        self.pending.extend_from_slice(samples);
+        true
     }
 
     /// Returns and drains a completed utterance when the silence
@@ -655,6 +673,18 @@ mod tests {
         b.feed_pcm_f32(&[0.0; 100]);
         b.feed_pcm_f32(&[0.0; 50]);
         assert_eq!(b.pending_samples(), 150);
+    }
+
+    #[test]
+    fn buffer_resets_instead_of_growing_past_thirty_seconds() {
+        let mut b = LiveTranscriptBuffer::new(1_000);
+        b.feed_pcm_f32(&vec![0.5; 30_001]);
+        assert_eq!(
+            b.pending_samples(),
+            0,
+            "sustained above-threshold input must hit a hard memory ceiling"
+        );
+        assert!(b.finish().is_none());
     }
 
     #[test]

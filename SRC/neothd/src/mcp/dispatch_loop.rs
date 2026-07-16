@@ -176,6 +176,58 @@ pub async fn run_tool_loop_with_cap<D, P>(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
     max_iterations: u32,
+    security_policy: &crate::config::SecurityPolicy,
+    agent_disallowed_tools: Option<&[String]>,
+    subject: Option<String>,
+    goal_context: crate::mcp::goal_tracker::GoalContext,
+    hints_enabled: bool,
+    compaction: crate::context::compaction::CompactionPolicy,
+    compression: Option<crate::context::compress::CompressionRuntime>,
+    judge_provider: Option<&dyn crate::providers::Provider>,
+    elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
+    harness_cfg: &crate::config::tools::McpHarnessConfig,
+) -> Result<LoopOutcome>
+where
+    D: CompletionDriver + Send,
+    P: PolicyArgument + Copy + Send + Sync,
+{
+    run_tool_loop_with_budget(
+        driver,
+        initial_prompt,
+        servers,
+        policy,
+        writer,
+        rollback_policy,
+        skill_allowlist,
+        max_iterations,
+        security_policy,
+        agent_disallowed_tools,
+        subject,
+        goal_context,
+        hints_enabled,
+        compaction,
+        compression,
+        judge_provider,
+        elicitation_handler,
+        harness_cfg,
+        None,
+    )
+    .await
+}
+
+/// Variant used by the outer full-autonomy loop. `max_tool_calls` is an exact
+/// per-invocation remainder and is enforced before every call in round one and
+/// later rounds; ordinary chat callers keep the iteration-only wrapper above.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_tool_loop_with_budget<D, P>(
+    driver: &mut D,
+    initial_prompt: String,
+    servers: &McpServers,
+    policy: P,
+    writer: Option<&WalWriterHandle>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    skill_allowlist: Option<&[String]>,
+    max_iterations: u32,
     // GOLD-ADOPT-23 P0 — egress + dangerous-command policy gate.
     security_policy: &crate::config::SecurityPolicy,
     // GOLD-CCPARITY-SA-DENY-01 — sub-agent denylist threaded from
@@ -215,6 +267,9 @@ pub async fn run_tool_loop_with_cap<D, P>(
     // `freedom.yaml::tools.harness`. Last param so existing call-sites need only
     // a one-line append.
     harness_cfg: &crate::config::tools::McpHarnessConfig,
+    // Optional hard ceiling on parsed/blocked/dispatched tool calls in this
+    // invocation. Checked before every call, including iteration one.
+    max_tool_calls: Option<u64>,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
@@ -225,6 +280,7 @@ where
     let mut hit_cap = false;
     let mut successful_calls = 0u32;
     let mut failed_calls = 0u32;
+    let mut tool_budget_exhausted = false;
     let mut tool_call_records: Vec<ToolCallRecord> = Vec::new();
     let mut current_text;
     // GOLD-TASK-05 — track the goal-specific loop exit reason so the caller can
@@ -265,6 +321,10 @@ where
     // GOLD-ADAPT-HARNESS-04 — one-shot: the token guard fires at most once
     // per session (not per turn) to avoid nagging the model every turn.
     let mut harness_token_nudge_fired = false;
+    // GOLD-ADAPT-HARNESS-01 — exactly one corrective provider retry per loop
+    // session. The retry response is parsed and dispatched in the SAME loop
+    // iteration; it is never probed and then requested a second time.
+    let mut harness_leaked_retry_used = false;
 
     loop {
         iterations += 1;
@@ -301,38 +361,30 @@ where
             }
         }
         current_text = driver.complete(&prompt).await?;
-        let extraction = extract_tool_calls(&current_text);
+        let mut extraction = extract_tool_calls(&current_text);
+        // GOLD-ADAPT-HARNESS-01 — leaked tool-call retry: if the model returned
+        // no proper fenced call but the reply looks like free-text XML/JSON,
+        // issue one corrective provider call. Parse that exact response now;
+        // the old probe+continue path discarded it and made a third provider
+        // call before dispatch.
+        if extraction.is_empty()
+            && harness_cfg.leaked_call_retry_enabled
+            && !harness_leaked_retry_used
+            && crate::mcp::harness::detect_leaked_tool_call(&current_text)
+        {
+            harness_leaked_retry_used = true;
+            warn!(
+                iteration = iterations,
+                "HARNESS-01: leaked tool-call detected — re-prompting once with corrective nudge"
+            );
+            let nudge_prompt = format!(
+                "{prompt}\n\n{current_text}\n\n{}",
+                crate::mcp::harness::LEAKED_CALL_NUDGE
+            );
+            current_text = driver.complete(&nudge_prompt).await?;
+            extraction = extract_tool_calls(&current_text);
+        }
         if extraction.is_empty() {
-            // GOLD-ADAPT-HARNESS-01 — leaked tool-call retry: if the model
-            // returned no proper fenced call but the reply looks like it
-            // described one as free text (XML tag or bare JSON), re-prompt
-            // once with a corrective nudge. Bound to ONE retry per turn.
-            if harness_cfg.leaked_call_retry_enabled
-                && crate::mcp::harness::detect_leaked_tool_call(&current_text)
-                && iterations < max_iterations
-            {
-                warn!(
-                    iteration = iterations,
-                    "HARNESS-01: leaked tool-call detected — re-prompting once with corrective nudge"
-                );
-                let nudge_prompt = format!(
-                    "{prompt}\n\n{current_text}\n\n{}",
-                    crate::mcp::harness::LEAKED_CALL_NUDGE
-                );
-                let retry_text = driver.complete(&nudge_prompt).await?;
-                if !extract_tool_calls(&retry_text).is_empty() {
-                    // Retry produced a proper fenced call. Re-run the loop on the
-                    // nudge_prompt so the next iteration parses + dispatches the
-                    // call through the normal path (one extra iteration consumed;
-                    // current_text is reassigned at the loop head, so retry_text
-                    // here was only the probe that a nudge yields a clean fence).
-                    prompt = nudge_prompt;
-                    continue;
-                }
-                // Retry still no fence — fall through to clean-exit with retry text.
-                current_text = retry_text;
-            }
-
             // No tool calls → the model thinks it's done. GOLD-ADOPT-22: if a
             // goal/grind is active and we're under the cap, inject one nudge and
             // keep going; otherwise stop.
@@ -403,8 +455,24 @@ where
             break;
         }
         let mut iteration_made_progress = false;
+        // MCP `tools/call` may return a protocol-successful JSON-RPC response
+        // with `isError:true`. Its content is useful corrective feedback and
+        // must reach the next model turn even though it is not progress.
+        let mut iteration_has_tool_error_output = false;
         let mut tool_result_blocks = Vec::new();
         for call in &extraction.calls {
+            if max_tool_calls.is_some_and(|budget| {
+                u64::from(successful_calls) + u64::from(failed_calls) >= budget
+            }) {
+                tool_budget_exhausted = true;
+                warn!(
+                    budget = max_tool_calls.unwrap_or(0),
+                    successful_calls,
+                    failed_calls,
+                    "MCP tool-call budget reached; remaining calls were not dispatched"
+                );
+                break;
+            }
             // GOLD-ADAPT-GOOSE-02 — run the pluggable pre-dispatch inspection
             // chain (repetition guard GOLD-ADOPT-20, then risk policy
             // GOLD-ADOPT-23). The chain computes the verdict + surfaces the
@@ -920,18 +988,16 @@ where
             )
             .await
             {
-                Ok(rendered) => {
-                    successful_calls += 1;
-                    iteration_made_progress = true;
-                    // REVFIX-EXCERPTS-01 — accumulate a compact call record so
-                    // the post-turn skill distiller sees structured tool digest
-                    // instead of a blind 512-char response prefix.
-                    tool_call_records.push(ToolCallRecord {
-                        server: call.server.clone(),
-                        tool: call.tool.clone(),
-                        args_summary: summarize_args(&call.arguments),
-                        success: true,
-                    });
+                Ok(dispatched) => {
+                    let rendered = dispatched.rendered;
+                    iteration_has_tool_error_output |= record_rpc_outcome(
+                        call,
+                        dispatched.is_error,
+                        &mut successful_calls,
+                        &mut failed_calls,
+                        &mut iteration_made_progress,
+                        &mut tool_call_records,
+                    );
                     // GR-127 — record the dirs this call touched ONLY after it
                     // passed EVERY gate (repetition + risk + skill-allowlist +
                     // autonomy, all inside dispatch_one) and was actually invoked.
@@ -1005,15 +1071,30 @@ where
                 }
             }
         }
+        if tool_budget_exhausted {
+            break;
+        }
         for err in &extraction.errors {
+            if max_tool_calls.is_some_and(|budget| {
+                u64::from(successful_calls) + u64::from(failed_calls) >= budget
+            }) {
+                tool_budget_exhausted = true;
+                break;
+            }
             failed_calls += 1;
             tool_result_blocks.push(format_parse_error(err));
+        }
+        if tool_budget_exhausted {
+            break;
         }
         // Defensive termination: if EVERY call in this iteration failed
         // (no successes), feeding the LLM the same errors next round is
         // unlikely to converge. Break + return the last response so the
         // operator sees what happened.
-        if !iteration_made_progress && !extraction.calls.is_empty() {
+        if !iteration_made_progress
+            && !iteration_has_tool_error_output
+            && !extraction.calls.is_empty()
+        {
             info!(
                 failed = failed_calls,
                 "every dispatch in this round failed; terminating loop early",
@@ -1220,6 +1301,14 @@ fn now_unix_i64() -> i64 {
     crate::time::now_unix_i64()
 }
 
+/// A JSON-RPC-successful `tools/call` response. MCP carries tool-level failure
+/// separately in `isError`, so flattening this to a rendered string loses the
+/// accounting signal the loop needs.
+struct DispatchedToolResult {
+    rendered: String,
+    is_error: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_one<P: PolicyArgument + Copy>(
     call: &ParsedToolCall,
@@ -1236,7 +1325,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
     // McpTool lease-backed consent upgrade. See invoke_with_audit docs.
     subject: Option<&str>,
-) -> std::result::Result<String, String> {
+) -> std::result::Result<DispatchedToolResult, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
             "no enabled MCP server `{}` configured. Available: {}",
@@ -1296,7 +1385,40 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     )
     .await
     .map_err(|e| format!("dispatch `{}::{}`: {e}", call.server, call.tool))?;
-    Ok(format_success(call, &result))
+    Ok(DispatchedToolResult {
+        rendered: format_success(call, &result),
+        is_error: result.is_error,
+    })
+}
+
+/// Account for a response that reached the MCP server. `isError:true` is a
+/// failed tool call, not progress, even though its content remains valuable
+/// model feedback and is durably audited by `invoke_with_audit`.
+///
+/// Returns true when the caller must thread the error content into another
+/// model turn instead of taking the generic all-dispatches-failed fast exit.
+fn record_rpc_outcome(
+    call: &ParsedToolCall,
+    is_error: bool,
+    successful_calls: &mut u32,
+    failed_calls: &mut u32,
+    iteration_made_progress: &mut bool,
+    tool_call_records: &mut Vec<ToolCallRecord>,
+) -> bool {
+    let success = !is_error;
+    if success {
+        *successful_calls += 1;
+        *iteration_made_progress = true;
+    } else {
+        *failed_calls += 1;
+    }
+    tool_call_records.push(ToolCallRecord {
+        server: call.server.clone(),
+        tool: call.tool.clone(),
+        args_summary: summarize_args(&call.arguments),
+        success,
+    });
+    is_error
 }
 
 fn format_success(call: &ParsedToolCall, result: &crate::mcp::client::ToolCallResult) -> String {
@@ -2169,6 +2291,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn leaked_call_retry_dispatches_retry_text_without_third_provider_call() {
+        let leaked = r#"<tool_call>{"server":"ghost","tool":"read","arguments":{}}</tool_call>"#;
+        let fenced = r#"```mcp-tool-call
+{"server":"ghost","tool":"read","arguments":{}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![leaked, fenced, "third call must not happen"]);
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "read it".into(),
+            &McpServers::default(),
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            None,
+            None,
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            driver.cursor.load(Ordering::SeqCst),
+            2,
+            "initial leak plus one corrective retry are the only provider calls"
+        );
+        assert_eq!(
+            outcome.iterations, 1,
+            "retry dispatch stays in the same turn"
+        );
+        assert_eq!(outcome.failed_calls, 1, "retry fence reached dispatch");
+        assert_eq!(outcome.final_text, fenced);
+        let prompts = driver.seen_prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[1].contains(crate::mcp::harness::LEAKED_CALL_NUDGE));
+    }
+
+    #[tokio::test]
     async fn loop_terminates_immediately_when_no_tool_calls() {
         let mut driver = ScriptedDriver::new(vec!["plain text reply, no tool calls"]);
         let servers = McpServers::default();
@@ -2221,6 +2389,51 @@ mod tests {
         );
         assert_eq!(outcome.successful_calls, 0);
         assert_eq!(outcome.failed_calls, 1);
+    }
+
+    #[tokio::test]
+    async fn tool_budget_caps_calls_inside_first_iteration() {
+        let reply = r#"
+```mcp-tool-call
+{"server":"ghost","tool":"one","arguments":{}}
+```
+```mcp-tool-call
+{"server":"ghost","tool":"two","arguments":{}}
+```
+```mcp-tool-call
+{"server":"ghost","tool":"three","arguments":{}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![reply]);
+        let outcome = run_tool_loop_with_budget(
+            &mut driver,
+            "bounded".into(),
+            &McpServers::default(),
+            AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            None,
+            None,
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.iterations, 1);
+        assert_eq!(outcome.successful_calls, 0);
+        assert_eq!(
+            outcome.failed_calls, 1,
+            "only one of three first-round calls may consume the one-call budget"
+        );
     }
 
     #[tokio::test]
@@ -2442,6 +2655,49 @@ mod tests {
             "compressed block ({}) must be shorter than the raw log ({})",
             block.len(),
             log.len()
+        );
+    }
+
+    #[test]
+    fn mcp_is_error_counts_failed_without_progress_and_keeps_model_feedback() {
+        let call = ParsedToolCall {
+            server: "filesystem".into(),
+            tool: "read_file".into(),
+            arguments: serde_json::json!({"path": "missing.txt"}),
+        };
+        let result = crate::mcp::client::ToolCallResult {
+            content: vec![crate::mcp::client::McpContent::Text {
+                text: "file missing; choose another path".into(),
+            }],
+            is_error: true,
+        };
+        let mut successful = 0;
+        let mut failed = 0;
+        let mut progress = false;
+        let mut records = Vec::new();
+        let needs_feedback = record_rpc_outcome(
+            &call,
+            result.is_error,
+            &mut successful,
+            &mut failed,
+            &mut progress,
+            &mut records,
+        );
+
+        assert_eq!(successful, 0);
+        assert_eq!(failed, 1);
+        assert!(!progress);
+        assert!(needs_feedback);
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].success);
+
+        let block = format_success(&call, &result);
+        assert!(block.contains(r#""status": "ERROR""#));
+        assert!(block.contains("file missing; choose another path"));
+        let next_prompt = build_next_prompt("try a read", "calling", &[block], &[]);
+        assert!(
+            next_prompt.contains("file missing; choose another path"),
+            "tool-level error content must still reach the corrective model turn"
         );
     }
 

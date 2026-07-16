@@ -264,7 +264,12 @@ pub fn validate_operator_id(id: &str) -> Result<()> {
 
 /// Validate BCP-47 language code (simplified pattern check).
 pub fn validate_bcp47(code: &str) -> Result<()> {
-    if code.len() < 2 || code.split('-').any(|p| p.is_empty() || p.len() > 8) {
+    if code.len() < 2
+        || code.len() > 64
+        || code.split('-').any(|p| {
+            p.is_empty() || p.len() > 8 || !p.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+    {
         anyhow::bail!("invalid BCP-47 language code: {code}");
     }
     Ok(())
@@ -374,4 +379,21 @@ pub(crate) fn which_binary(name: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::validate_bcp47;
+
+    #[test]
+    fn bcp47_rejects_oversized_and_non_alphanumeric_subtags() {
+        let oversized = std::iter::repeat_n("abcdefgh", 9)
+            .collect::<Vec<_>>()
+            .join("-");
+        assert!(oversized.len() > 64);
+        assert!(validate_bcp47(&oversized).is_err());
+        assert!(validate_bcp47("en-US&mode=evil").is_err());
+        assert!(validate_bcp47("de_DE").is_err());
+        assert!(validate_bcp47("zh-Hant-TW").is_ok());
+    }
 }

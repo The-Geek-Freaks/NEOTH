@@ -10,10 +10,14 @@ use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 /// `serde_yaml::Value` walk so a partial/unparseable config (or a missing
 /// `memory` block) reads as "brute_force" rather than tripping the check.
 pub(crate) fn freedom_vector_backend_is_hnsw(home: &Path) -> bool {
-    let Ok(body) = std::fs::read_to_string(home.join("freedom.yaml")) else {
+    let freedom_path = home.join("freedom.yaml");
+    let Ok(snapshot) = crate::config::snapshot_raw_config_pair(&freedom_path) else {
         return false;
     };
-    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+    let Some(body) = snapshot.freedom.as_deref() else {
+        return false;
+    };
+    let Ok(val) = serde_yaml::from_slice::<serde_yaml::Value>(body) else {
         return false;
     };
     val.get("memory")
@@ -101,13 +105,14 @@ pub(crate) fn check_vector_index_snapshot(home: &Path) -> CheckOutcome {
 pub(crate) fn check_omi_runtime(home: &Path) -> CheckOutcome {
     const NAME: &str = "OMI runtime";
     let config_path = home.join("freedom.yaml");
-    let Ok(config) = crate::config::FreedomConfig::load_from_path(&config_path) else {
+    let Ok(runtime) = crate::config::load_runtime_config_pair_from_path(&config_path) else {
         return CheckOutcome {
             name: NAME,
             status: CheckStatus::Pass,
-            detail: "freedom.yaml unreadable; config check owns the diagnostic".into(),
+            detail: "config/credential pair unreadable; config check owns the diagnostic".into(),
         };
     };
+    let config = runtime.config;
     if !config.omi.enabled {
         return CheckOutcome {
             name: NAME,
@@ -115,21 +120,7 @@ pub(crate) fn check_omi_runtime(home: &Path) -> CheckOutcome {
             detail: "disabled (opt-in)".into(),
         };
     }
-    let credentials_path = home.join("credentials.yaml");
-    let credentials = match crate::config::credentials::Credentials::load_effective(
-        &credentials_path,
-        config.secrets_backend,
-    ) {
-        Ok(credentials) => credentials,
-        Err(error) => {
-            return CheckOutcome {
-                name: NAME,
-                status: CheckStatus::Fail,
-                detail: format!("credential load failed: {error:#}"),
-            };
-        }
-    };
-    if let Err(error) = config.omi.validate_with_credentials(&credentials) {
+    if let Err(error) = config.omi.validate_with_credentials(&runtime.credentials) {
         return CheckOutcome {
             name: NAME,
             status: CheckStatus::Fail,

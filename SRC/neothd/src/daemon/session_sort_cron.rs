@@ -194,9 +194,10 @@ pub async fn group_titles(
     let parsed: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => {
+            let preview = &raw[..crate::util::byte_floor(raw, 200)];
             warn!(
                 error = %e,
-                raw = %&raw[..raw.len().min(200)],
+                raw = %preview,
                 "session_sort_cron: LLM returned invalid JSON — skipping grouping this pass"
             );
             return Ok(vec![]);
@@ -755,6 +756,19 @@ mod tests {
             folders.is_empty(),
             "invalid JSON must produce empty folder list"
         );
+    }
+
+    #[tokio::test]
+    async fn group_titles_unicode_garbage_preview_never_splits_utf8() {
+        let cards = vec![make_card(
+            "unicode",
+            3,
+            vec!["日本語"],
+            "3 turns over 1 min on 日本語",
+        )];
+        let provider = MockProvider::new(format!("{}{{{{", "日本語".repeat(80)));
+        let folders = group_titles(&cards, &provider).await.unwrap();
+        assert!(folders.is_empty());
     }
 
     #[tokio::test]

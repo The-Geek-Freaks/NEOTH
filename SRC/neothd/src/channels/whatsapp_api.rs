@@ -25,6 +25,10 @@ use crate::secret::SecretString;
 /// it with a `wiremock` base URL via the `*_at` variants below.
 pub const GRAPH_API_BASE: &str = "https://graph.facebook.com/v18.0";
 
+/// Hostile or broken upstreams must not be able to park a durable webhook
+/// delivery indefinitely through an oversized `Retry-After` header.
+pub(crate) const MAX_RETRY_AFTER_SECS: u64 = 15 * 60;
+
 struct GraphEndpoint {
     base: reqwest::Url,
     loopback: bool,
@@ -106,6 +110,14 @@ pub struct SendMessageResult {
     pub wa_id: Option<String>,
     pub message_id: Option<String>,
     pub error: Option<String>,
+    /// Numeric transport status when the result came from a real HTTP call.
+    /// Pure parser callers leave this absent for backward compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    /// Parsed integer `Retry-After` value, capped locally. Raw headers are
+    /// never retained or serialized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
 }
 
 /// POST a text message via the WhatsApp Business Cloud Graph API.
@@ -154,9 +166,21 @@ pub(crate) async fn send_text_message_at(
         .send()
         .await
         .context("WhatsApp Graph API request")?;
-    let status = resp.status();
+    // Preserve status + the only transport header the retry state machine
+    // needs before consuming the response body. Never retain the full header
+    // map (it can contain provider or proxy-specific sensitive metadata).
+    let status = resp.status().as_u16();
+    let retry_after_secs = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|seconds| seconds.min(MAX_RETRY_AFTER_SECS));
     let body_text = resp.text().await.context("WhatsApp send response body")?;
-    parse_send_response(status.is_success(), &body_text)
+    let mut result = parse_send_response((200..300).contains(&status), &body_text)?;
+    result.http_status = Some(status);
+    result.retry_after_secs = retry_after_secs;
+    Ok(result)
 }
 
 /// Pure parser — split out so we can unit-test the response shapes
@@ -172,6 +196,8 @@ pub(crate) fn parse_send_response(http_ok: bool, body: &str) -> Result<SendMessa
             wa_id: first_contact.map(|c| c.wa_id),
             message_id: first_msg.map(|m| m.id),
             error: None,
+            http_status: None,
+            retry_after_secs: None,
         });
     }
     // Either http error or unrecognised success shape — try error shape.
@@ -185,6 +211,8 @@ pub(crate) fn parse_send_response(http_ok: bool, body: &str) -> Result<SendMessa
                 err.error.error_type.as_deref().unwrap_or("api_error"),
                 err.error.message,
             )),
+            http_status: None,
+            retry_after_secs: None,
         });
     }
     // Total surprise — surface the raw body so the operator can debug.
@@ -196,6 +224,8 @@ pub(crate) fn parse_send_response(http_ok: bool, body: &str) -> Result<SendMessa
             "unrecognised response (first 200 chars): {}",
             body.chars().take(200).collect::<String>()
         )),
+        http_status: None,
+        retry_after_secs: None,
     })
 }
 
@@ -419,10 +449,14 @@ mod tests {
             wa_id: Some("4915112345678".into()),
             message_id: Some("wamid.x".into()),
             error: None,
+            http_status: None,
+            retry_after_secs: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(s.contains("\"ok\":true"));
         assert!(s.contains("\"message_id\":\"wamid.x\""));
+        assert!(!s.contains("http_status"));
+        assert!(!s.contains("retry_after_secs"));
     }
 
     #[tokio::test]
@@ -484,7 +518,46 @@ mod tests {
             .unwrap();
         assert!(r.ok);
         assert_eq!(r.message_id.as_deref(), Some("wamid.X"));
+        assert_eq!(r.http_status, Some(200));
+        assert_eq!(r.retry_after_secs, None);
         // The mock's `.expect(1)` is verified on `server` drop: exactly one POST.
+    }
+
+    #[tokio::test]
+    async fn send_text_message_at_preserves_status_and_caps_retry_after() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/123/messages"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", (MAX_RETRY_AFTER_SECS + 10_000).to_string())
+                    .set_body_string(
+                        r#"{"error":{"message":"slow down","type":"ApiException","code":4}}"#,
+                    ),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = send_text_message_at(
+            &server.uri(),
+            &SecretString::from("fake"),
+            "123",
+            "+4915112345678",
+            "hi",
+        )
+        .await
+        .unwrap();
+
+        assert!(!result.ok);
+        assert_eq!(result.http_status, Some(429));
+        assert_eq!(result.retry_after_secs, Some(MAX_RETRY_AFTER_SECS));
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("Retry-After"));
+        assert!(!serialized.contains(&(MAX_RETRY_AFTER_SECS + 10_000).to_string()));
     }
 
     #[tokio::test]

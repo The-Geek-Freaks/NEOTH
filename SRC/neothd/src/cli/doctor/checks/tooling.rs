@@ -268,20 +268,18 @@ pub(crate) fn check_tts_runtime(home: &Path) -> CheckOutcome {
     use crate::media::tts_dispatch::TtsProvider;
 
     let path = home.join("freedom.yaml");
-    let config = if path.exists() {
-        match crate::config::FreedomConfig::load_from_path(&path) {
-            Ok(config) => config,
-            Err(_) => {
-                return CheckOutcome {
-                    name: "TTS runtime",
-                    status: CheckStatus::Pass,
-                    detail: "freedom.yaml unreadable; config check owns this diagnostic".into(),
-                };
-            }
+    let runtime = match crate::config::load_runtime_config_pair_from_path_or_default(&path) {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return CheckOutcome {
+                name: "TTS runtime",
+                status: CheckStatus::Pass,
+                detail: "config/credential pair unreadable; config check owns this diagnostic"
+                    .into(),
+            };
         }
-    } else {
-        crate::config::FreedomConfig::default()
     };
+    let config = runtime.config;
     let provider = config.media.tts.primary;
     let result = match provider {
         TtsProvider::SystemNative => {
@@ -339,19 +337,7 @@ pub(crate) fn check_tts_runtime(home: &Path) -> CheckOutcome {
                     provider.as_str()
                 ))
             } else {
-                let credentials = match crate::config::credentials::Credentials::load_effective(
-                    &home.join("credentials.yaml"),
-                    config.secrets_backend,
-                ) {
-                    Ok(credentials) => credentials,
-                    Err(error) => {
-                        return CheckOutcome {
-                            name: "TTS runtime",
-                            status: CheckStatus::Warn,
-                            detail: format!("load TTS credentials: {error}"),
-                        };
-                    }
-                };
+                let credentials = &runtime.credentials;
                 let present = match provider {
                     TtsProvider::ElevenLabs => credentials.elevenlabs_tts_api_key.is_some(),
                     TtsProvider::AzureTts => {

@@ -19,7 +19,7 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tracing::{error, info, warn};
 
@@ -40,6 +40,12 @@ pub struct SignalChannel {
     endpoint: SignalEndpoint,
     phone_number: String,
     poll_interval: Duration,
+    inbound_gate: Option<SignalInboundGate>,
+}
+
+struct SignalInboundGate {
+    allowed_sender: String,
+    writer: crate::wal::writer::WalWriterHandle,
 }
 
 impl SignalChannel {
@@ -54,7 +60,24 @@ impl SignalChannel {
             endpoint,
             phone_number,
             poll_interval: DEFAULT_POLL_INTERVAL,
+            inbound_gate: None,
         })
+    }
+
+    pub fn new_inbound(
+        cli_url: impl Into<String>,
+        phone_number: impl Into<String>,
+        allowed_sender: &str,
+        writer: crate::wal::writer::WalWriterHandle,
+    ) -> Result<Self> {
+        let mut channel = Self::new(cli_url, phone_number)?;
+        let allowed_sender = allowed_sender.trim();
+        validate_signal_number(allowed_sender).context("validate Signal allowed sender")?;
+        channel.inbound_gate = Some(SignalInboundGate {
+            allowed_sender: allowed_sender.to_string(),
+            writer,
+        });
+        Ok(channel)
     }
 
     /// Override the poll cadence (tuning / tests).
@@ -77,6 +100,9 @@ impl Channel for SignalChannel {
     /// error rather than polling forever against a broken config. Loops
     /// until the daemon aborts the spawned task at shutdown.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
+        let gate = self.inbound_gate.as_ref().context(
+            "Signal inbound is fail-closed: construct with an allowed sender and WAL writer",
+        )?;
         info!(
             url = %self.endpoint.as_str(),
             poll_secs = self.poll_interval.as_secs(),
@@ -89,24 +115,15 @@ impl Channel for SignalChannel {
                         let Some(inbound) = envelope_to_inbound(env) else {
                             continue; // receipt / typing / sync — not actionable
                         };
-                        match handler(inbound).await {
-                            Ok(Some(out)) => {
-                                if let Err(e) = send_signal_message(
-                                    &self.endpoint,
-                                    &self.phone_number,
-                                    &out.recipient_id,
-                                    &out.text,
-                                )
-                                .await
-                                {
-                                    warn!(error = %e, "signal reply send failed (dropped)");
-                                }
-                            }
-                            Ok(None) => {} // pipeline chose to stay silent
-                            Err(e) => {
-                                warn!(error = %e, "signal pipeline handler errored; skipping message")
-                            }
-                        }
+                        dispatch_inbound_message(
+                            &self.endpoint,
+                            &self.phone_number,
+                            &gate.allowed_sender,
+                            Some(&gate.writer),
+                            inbound,
+                            &handler,
+                        )
+                        .await;
                     }
                 }
                 Err(ChannelError::Auth(msg)) => {
@@ -156,9 +173,71 @@ impl Channel for SignalChannel {
     }
 }
 
+async fn dispatch_inbound_message(
+    endpoint: &SignalEndpoint,
+    phone_number: &str,
+    allowed_sender: &str,
+    gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    inbound: crate::channels::InboundMessage,
+    handler: &PipelineHandler,
+) {
+    if crate::channels::sender_blocked_by_allowlist(
+        Some(allowed_sender),
+        &inbound.sender_id,
+        gate_writer,
+        "signal",
+    )
+    .await
+    {
+        return;
+    }
+    match handler(inbound).await {
+        Ok(Some(out)) => {
+            if let Err(e) =
+                send_signal_message(endpoint, phone_number, &out.recipient_id, &out.text).await
+            {
+                warn!(error = %e, "signal reply send failed (dropped)");
+            }
+        }
+        Ok(None) => {} // pipeline chose to stay silent
+        Err(e) => warn!(error = %e, "signal pipeline handler errored; skipping message"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn inbound(sender: &str) -> crate::channels::InboundMessage {
+        crate::channels::InboundMessage {
+            channel: crate::channels::ChannelKind::Signal,
+            chat_id: sender.into(),
+            thread_id: None,
+            sender_id: sender.into(),
+            sender_display: None,
+            text: Some("hello".into()),
+            media: None,
+            reply_to: None,
+            message_id: Some("1".into()),
+            edit_unix: None,
+            mention_kind: None,
+            channel_ts_unix: 1,
+            raw_ts_ms: Some(1_000),
+            human_uuid: None,
+        }
+    }
+
+    fn counting_handler(calls: Arc<AtomicUsize>) -> PipelineHandler {
+        Box::new(move |_inbound| {
+            let calls = Arc::clone(&calls);
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            })
+        })
+    }
 
     #[test]
     fn adapter_reports_signal_name() {
@@ -212,5 +291,34 @@ mod tests {
             s.contains("30"),
             "RateLimited display must include retry_after_secs: {s}"
         );
+    }
+
+    #[tokio::test]
+    async fn sender_gate_blocks_mismatch_and_passes_exact_match() {
+        let channel = SignalChannel::new("http://127.0.0.1:8080", "+491701111111").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler = counting_handler(Arc::clone(&calls));
+
+        dispatch_inbound_message(
+            &channel.endpoint,
+            &channel.phone_number,
+            "+491702222222",
+            None,
+            inbound("+491703333333"),
+            &handler,
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        dispatch_inbound_message(
+            &channel.endpoint,
+            &channel.phone_number,
+            "+491702222222",
+            None,
+            inbound("+491702222222"),
+            &handler,
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

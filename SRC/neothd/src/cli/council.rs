@@ -296,11 +296,38 @@ fn run_tune(
             yaml.display()
         );
     }
-    let mut cfg = FreedomConfig::load_from_path(&yaml).context("load freedom.yaml")?;
+    let apply = |cfg: &mut FreedomConfig| {
+        apply_tune(
+            cfg,
+            selection_mode.as_deref(),
+            self_reflect,
+            refine_threshold,
+            max_calls,
+            daily_usd_cap,
+        )
+    };
+    let changes = if dry_run {
+        let mut cfg = FreedomConfig::load_from_path(&yaml).context("load freedom.yaml")?;
+        apply(&mut cfg)?
+    } else {
+        FreedomConfig::update_at(&yaml, apply).context("update freedom.yaml council settings")?
+    };
+
+    render_tune_changes(&changes, dry_run, output)
+}
+
+fn apply_tune(
+    cfg: &mut FreedomConfig,
+    selection_mode: Option<&str>,
+    self_reflect: Option<bool>,
+    refine_threshold: Option<f32>,
+    max_calls: Option<u32>,
+    daily_usd_cap: Option<f32>,
+) -> Result<Vec<(&'static str, String, String)>> {
     let mut changes: Vec<(&'static str, String, String)> = Vec::new();
 
     if let Some(mode_str) = selection_mode {
-        let parsed = parse_selection_mode(&mode_str)?;
+        let parsed = parse_selection_mode(mode_str)?;
         let before = selection_mode_as_str(cfg.council.selection_mode).to_string();
         let after = selection_mode_as_str(parsed).to_string();
         if before != after {
@@ -354,6 +381,14 @@ fn run_tune(
         changes.push(("daily_usd_cap", before, after));
     }
 
+    Ok(changes)
+}
+
+fn render_tune_changes(
+    changes: &[(&'static str, String, String)],
+    dry_run: bool,
+    output: OutputFormat,
+) -> Result<()> {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let j = json!({
@@ -379,16 +414,13 @@ fn run_tune(
                     changes.len(),
                     if dry_run { " — DRY RUN" } else { "" }
                 );
-                for (field, before, after) in &changes {
+                for (field, before, after) in changes {
                     println!("  {field:<28} {before:>14} → {after}");
                 }
             }
         }
     }
 
-    if !dry_run && !changes.is_empty() {
-        write_freedom_yaml(&yaml, &cfg)?;
-    }
     Ok(())
 }
 
@@ -514,6 +546,7 @@ fn role_to_str(role: crate::config::inference::HemisphereRole) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn write_freedom_yaml(path: &PathBuf, cfg: &FreedomConfig) -> Result<()> {
     let yaml = serde_yaml::to_string(cfg).context("serialize freedom.yaml")?;
     let tmp = path.with_extension("yaml.tmp");
@@ -1012,10 +1045,12 @@ fn run_suppress(home: &Path, off: bool, output: OutputFormat) -> Result<()> {
             yaml.display()
         );
     }
-    let mut cfg = FreedomConfig::load_from_path(&yaml).context("load freedom.yaml")?;
     let new_value = !off;
-    cfg.council.disabled = Some(new_value);
-    write_freedom_yaml(&yaml, &cfg)?;
+    FreedomConfig::update_at(&yaml, |config| {
+        config.council.disabled = Some(new_value);
+        Ok(())
+    })
+    .context("update freedom.yaml council suppression")?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -1388,8 +1423,11 @@ mod tests {
     fn run_suppress_round_trips_the_disabled_flag() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = dir.path().join("freedom.yaml");
-        // Seed a default freedom.yaml (disabled = None initially).
-        write_freedom_yaml(&yaml, &FreedomConfig::default()).unwrap();
+        std::fs::write(
+            &yaml,
+            "operator_id: council-test\nfuture_extension:\n  keep: true\n",
+        )
+        .unwrap();
         assert!(
             FreedomConfig::load_from_path(&yaml)
                 .unwrap()
@@ -1417,6 +1455,9 @@ mod tests {
                 .disabled,
             Some(false)
         );
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&yaml).unwrap()).unwrap();
+        assert_eq!(raw["future_extension"]["keep"].as_bool(), Some(true));
     }
 
     #[test]
