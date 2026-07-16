@@ -393,6 +393,13 @@ export component StatusFooter inherits Rectangle {
                 y: (parent.height - self.height) / 2;
             }
             Text { text: "local"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            // Operator-requested footer copyright — the always-visible
+            // ownership line, tying every screen back to the product.
+            Text {
+                text: "· © 2026 The Geek Freaks";
+                color: Theme.text-disabled; font-family: Theme.font-mono; font-size: 11px;
+                vertical-alignment: center;
+            }
         }
     }
 }
