@@ -36,6 +36,7 @@ fn orb_rgba(size: u32) -> Vec<u8> {
     rgba
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn orb_argb(size: u32) -> Vec<u8> {
     let mut argb = orb_rgba(size);
     for pixel in argb.chunks_exact_mut(4) {
@@ -50,6 +51,7 @@ mod linux {
     use std::time::Duration;
 
     use ksni::blocking::TrayMethods;
+    use slint::ComponentHandle as _;
 
     use super::{ICON_SIZE, MainWindow, TOOLTIP, orb_argb};
 
@@ -117,12 +119,12 @@ mod linux {
         }
     }
 
-    pub(super) struct TrayHandle {
+    pub(crate) struct TrayHandle {
         _service: ksni::blocking::Handle<NeothTray>,
         _timer: slint::Timer,
     }
 
-    pub(super) fn setup(window: &MainWindow) -> Option<TrayHandle> {
+    pub(crate) fn setup(window: &MainWindow) -> Option<TrayHandle> {
         let (commands, receiver) = mpsc::channel();
         let tray = NeothTray {
             commands,
@@ -174,6 +176,7 @@ mod linux {
 mod desktop {
     use std::time::Duration;
 
+    use slint::ComponentHandle as _;
     use tray_icon::{
         TrayIconBuilder, TrayIconEvent,
         menu::{Menu, MenuEvent, MenuItem},
@@ -181,12 +184,12 @@ mod desktop {
 
     use super::{ICON_SIZE, MainWindow, TOOLTIP, orb_rgba};
 
-    pub(super) struct TrayHandle {
+    pub(crate) struct TrayHandle {
         _icon: tray_icon::TrayIcon,
         _timer: slint::Timer,
     }
 
-    pub(super) fn setup(window: &MainWindow) -> Option<TrayHandle> {
+    pub(crate) fn setup(window: &MainWindow) -> Option<TrayHandle> {
         let icon = tray_icon::Icon::from_rgba(orb_rgba(ICON_SIZE), ICON_SIZE, ICON_SIZE).ok()?;
         let menu = Menu::new();
         let show_item = MenuItem::new("Show NEOTH", true, None);
@@ -242,19 +245,19 @@ mod desktop {
 mod unsupported {
     use super::MainWindow;
 
-    pub(super) struct TrayHandle;
+    pub(crate) struct TrayHandle;
 
-    pub(super) fn setup(_window: &MainWindow) -> Option<TrayHandle> {
+    pub(crate) fn setup(_window: &MainWindow) -> Option<TrayHandle> {
         None
     }
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub(super) use desktop::{TrayHandle, setup};
+pub(super) use desktop::setup;
 #[cfg(target_os = "linux")]
-pub(super) use linux::{TrayHandle, setup};
+pub(super) use linux::setup;
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-pub(super) use unsupported::{TrayHandle, setup};
+pub(super) use unsupported::setup;
 
 #[cfg(test)]
 mod tests {

@@ -1387,8 +1387,13 @@ export component ConfirmDialog inherits Rectangle {
     property <color> _col: root.danger ? Theme.consent : Theme.accent-green;
 
     // (Slint 1.16 has no `dialog` accessible-role; label carries intent.)
+    accessible-role: text;
     accessible-label: root.title;
     background: Theme.scrim;
+    // Scrim fades in rather than snapping to full alpha (design audit).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-fast; easing: ease-out; }
 
     // Keyboard handler — Escape cancels.
     dlg-focus := FocusScope {
@@ -1408,7 +1413,10 @@ export component ConfirmDialog inherits Rectangle {
         width: min(480px, root.width - 80px);
         height: dlg-layout.preferred-height;
         x: (root.width  - self.width)  / 2;
-        y: (root.height - self.height) / 2;
+        // 8px upward rise on entrance (sovereign curve), synchronized with
+        // the opacity fade — the Linear/Notion/Claude-Desktop dialog feel.
+        property <length> rise: 8px;
+        y: (root.height - self.height) / 2 + self.rise;
         background: Theme.surface-2;
         border-radius: Theme.radius-lg;
         border-width: 1px;
@@ -1419,10 +1427,15 @@ export component ConfirmDialog inherits Rectangle {
         opacity: 0;
         init => {
             self.opacity = 1;
+            self.rise = 0px;
             dlg-focus.focus();
         }
         animate opacity {
             duration: Theme.duration-fast;
+            easing: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        animate rise {
+            duration: Theme.duration-entrance;
             easing: cubic-bezier(0.16, 1, 0.3, 1);
         }
 

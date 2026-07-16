@@ -52,6 +52,40 @@ pub struct ClusterPeerAck {
     pub reachable: bool,
 }
 
+impl ClusterStatusAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.peer_count != self.peers.len() {
+            return Err(format!(
+                "cluster status reports {} peers but returned {} peer rows",
+                self.peer_count,
+                self.peers.len()
+            ));
+        }
+        let mut peer_ids = std::collections::HashSet::with_capacity(self.peers.len());
+        for peer in &self.peers {
+            if peer.id.trim().is_empty()
+                || peer.label.trim().is_empty()
+                || peer.last_seen.trim().is_empty()
+            {
+                return Err("cluster status returned an incomplete peer identity".into());
+            }
+            if !peer_ids.insert(peer.id.as_str()) {
+                return Err(format!(
+                    "cluster status returned duplicate peer `{}`",
+                    peer.id
+                ));
+            }
+            if peer.reachable && peer.last_seen_unix <= 0 {
+                return Err(format!(
+                    "cluster status marked peer `{}` reachable without a durable last-seen time",
+                    peer.id
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterConflictListAck {
@@ -73,6 +107,30 @@ pub struct ClusterConflictAck {
     pub observed_at: i64,
     pub resolved_at: Option<i64>,
     pub preferred_origin: Option<String>,
+}
+
+impl ClusterConflictListAck {
+    pub fn verify_unresolved(&self) -> Result<(), String> {
+        if self.include_resolved {
+            return Err("cluster returned forensic history instead of unresolved conflicts".into());
+        }
+        if self.unresolved_count < self.conflicts.len() {
+            return Err("cluster unresolved count is smaller than its returned rows".into());
+        }
+        let mut row_ids = std::collections::HashSet::with_capacity(self.conflicts.len());
+        for conflict in &self.conflicts {
+            if conflict.id <= 0 || !row_ids.insert(conflict.id) {
+                return Err("cluster returned a missing or duplicate conflict row id".into());
+            }
+            if conflict.resolved_at.is_some() || conflict.preferred_origin.is_some() {
+                return Err(format!(
+                    "cluster returned resolved state for unresolved conflict `{}`",
+                    conflict.content_id
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1665,6 +1723,49 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn cluster_read_receipts_reject_inconsistent_peer_and_conflict_rows() {
+        let status_raw = r#"{
+            "mode":"cluster","policy":"trusted","peer_count":1,"conflict_count":1,
+            "operator_id":"operator","node_id":"node","cluster_name":"studio",
+            "cluster_passphrase_set":true,"cluster_identity_configured":true,
+            "cluster_enabled":true,"restart_required":false,"transport_active":true,
+            "transport":"peeroxide","listen_port":49738,"mdns_enabled":true,
+            "trusted_ssids":[],
+            "peers":[{"id":"peer-a","label":"A","last_seen":"1s ago","last_seen_unix":1,"reachable":true}],
+            "gossip":{"replicate_raw_ingress":false,"replay_budget_days":14}
+        }"#;
+        let status: ClusterStatusAck = serde_json::from_str(status_raw).unwrap();
+        status.verify().unwrap();
+        let wrong_count: ClusterStatusAck =
+            serde_json::from_str(&status_raw.replacen("\"peer_count\":1", "\"peer_count\":2", 1))
+                .unwrap();
+        assert!(wrong_count.verify().is_err());
+        let impossible_reachable: ClusterStatusAck = serde_json::from_str(&status_raw.replacen(
+            "\"last_seen_unix\":1",
+            "\"last_seen_unix\":0",
+            1,
+        ))
+        .unwrap();
+        assert!(impossible_reachable.verify().is_err());
+
+        let conflicts_raw = r#"{
+            "unresolved_count":1,"include_resolved":false,
+            "conflicts":[{"id":7,"content_id":"memory:abc","incumbent_origin":"peer-a",
+            "incoming_origin":"peer-b","incumbent_sha256":"aa","incoming_sha256":"bb",
+            "policy":"manual","observed_at":1,"resolved_at":null,"preferred_origin":null}]
+        }"#;
+        let conflicts: ClusterConflictListAck = serde_json::from_str(conflicts_raw).unwrap();
+        conflicts.verify_unresolved().unwrap();
+        let resolved: ClusterConflictListAck = serde_json::from_str(&conflicts_raw.replacen(
+            "\"resolved_at\":null",
+            "\"resolved_at\":2",
+            1,
+        ))
+        .unwrap();
+        assert!(resolved.verify_unresolved().is_err());
     }
 
     #[test]

@@ -1927,25 +1927,22 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 
 ## WS-BUG — 2026-07-16 Bug-Hunt Findings (16-finder + adversarial-verify workflow `wf_796be4c9-ea1`)
 
-**Provenance and current resolution:** the original max-scale read-only hunt covered 16 daemon+GUI subsystems and captured 62 candidate findings. The subsequent source-by-source implementation/reconciliation wave resolved the set as **60 FIXED / 2 REFUTED / 0 original OPEN or PARTIAL**. The two refutations are the unattached live-vector-clock baseline attack (#28; no production authority path) and the alleged NUL truncation (#59; Rust `Command` rejects interior NUL before spawn). Full scenarios remain in `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`; this tracker preserves the original text below as provenance. Four newly discovered Wave-2 P1 contracts are listed separately and remain open.
+**Provenance and current resolution:** the original max-scale read-only hunt covered 16 daemon+GUI subsystems and captured 62 candidate findings. The subsequent source-by-source implementation/reconciliation wave resolved the set as **60 FIXED / 2 REFUTED / 0 original OPEN or PARTIAL**. The two refutations are the unattached live-vector-clock baseline attack (#28; no production authority path) and the alleged NUL truncation (#59; Rust `Command` rejects interior NUL before spawn). Full scenarios remain in `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`; this tracker preserves the original text below as provenance. The first post-corpus audit exposed four P1 contracts. A later seven-subsystem audit reported 17 more candidates; current-source reconciliation leaves **14 actionable, 2 already closed and 1 mooted**, with Cron `once` folded into the existing hook-parity task. The unique post-corpus actionable count is therefore **17** (14 reconciled findings plus the three non-overlapping initial tasks).
 
 ### Coverage note + pending wave 2
 
 Wave 1 (workflow `wf_796be4c9-ea1`) landed **9 of 16** subsystem finders before the
 verify barrier saturated on API load: channels, cluster-mesh, daemon-lifecycle,
-gui-glue, media, memory-recall, onboarding-repair, scheduling, selfdev. **Still un-hunted
-(wave 2 `wf_323561b2-fb8` aborted on the monthly API spend limit — 5 finders `spend limit`,
-2 `prompt too long`):** `wal/`, `coding/`, `council/`+`providers/`, `security/`+`permissions/`,
-`config/`+`tweaks/`, `mcp/`+`wasm_plugin/`+`skills/`+`hooks/`, `updater/`. Re-run wave 2 once
-budget resets (chunk the crypto/coding prompts smaller — they overran the context window).
-Manual spot-checks this session: `updater::constant_time_eq` (install_transaction.rs:2085)
-and `verify_sha256_bytes` (self_update.rs:972) reviewed — both correct (fixed-length CT
-compare; artifact-integrity hash needs no constant-time), no finding.
+gui-glue, media, memory-recall, onboarding-repair, scheduling, selfdev. The first
+wave-2 attempt (`wf_323561b2-fb8`) aborted on spend/context limits; the later
+title-echoed workflow `wf_e42cac83-d3d` completed the seven missing subsystem
+families. Its raw 17 findings and the corrected source-level verdicts are retained
+below. `updater::constant_time_eq` and `verify_sha256_bytes` remain reviewed-correct.
 
 ### Wave-2 confirmed P1 remainder (not part of the resolved original 62)
 
 - [ ] **BUG-W2-P1-HOOK-FAILFAST** — wire the configured hook `fail_fast` policy into the live dispatcher and prove the requested stop/continue semantics at every hook stage.
-- [ ] **BUG-W2-P1-HOOK-CHANNEL-PARITY** — add the missing channel `PostProviderCall`/restoration path and make `once` consumption atomic so concurrent channel turns cannot execute a once-hook twice.
+- [ ] **BUG-W2-P1-HOOK-CHANNEL-PARITY / HOOK-ONCE-PARITY** — centralize claim-before-effect `once` enforcement and the missing `PostProviderCall`/restoration path so CLI, channels and Cron share one dispatcher; prove concurrent channel turns and repeated scheduler ticks cannot execute a once-hook twice and emit `HOOK_SKIPPED_ONCE` consistently.
 - [ ] **BUG-W2-P1-SKILL-WATCHER** — make the live skill watcher observe skill directories created after daemon boot, not only directories present during initial watch registration.
 - [ ] **BUG-W2-P1-CHANNEL-DELEGATION** — preserve and execute the routed channel `delegate_to` decision through dispatch instead of dropping it between routing and provider execution.
 
@@ -1975,6 +1972,29 @@ compare; artifact-integrity hash needs no constant-time), no finding.
 - [x] **BUG-P1-selfdev** ✅ FIXED — validate_verification_command denylist bypassed by bash shell-quote splitting (`SRC/neothd/src/self_improve.rs:2149`, security). **Fix:** At self_improve.rs:2149, before the denylist loop sanitise the command by collapsing shell quoting chars to spaces: let sanitised = cmd.chars().map(|c| if matches!(c, '\'|'"'|'`'|'$'|'\\') { ' ' } else { c }).collect::<String>(); then run command_contains_token against sanitised. c'url' becomes c url, which does not match curl as a whole token, so the validator correctly blocks it.
 - [x] **BUG-P1-selfdev** ✅ FIXED — False Approved return when proposal entry disappears before VerifiedApproved can be persisted (`SRC/neothd/src/self_improve.rs:1788`, error-handling). **Fix:** At self_improve.rs:1789 change the if-let to a mandatory find: let entry = proposals_w.iter_mut().find(|x| x.id == pid).ok_or_else(|| anyhow::anyhow!("proposal {pid} disappeared before VerifiedApproved could be persisted"))?; — propagates Err so the function returns Err rather than a false Approved.
 
+
+
+### Wave 2 (2026-07-16, workflow `wf_e42cac83-d3d`) — seven-subsystem source reconciliation
+
+Raw report: **17 findings** (1×P0 · 3×P1 · 12×P2 · 1×P3). Current integrated source: **14 actionable / 2 already closed / 1 mooted**. Finding 13 is merged into `HOOK-ONCE-PARITY` above rather than duplicated. Full raw scenarios remain in `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`.
+
+- [ ] **BUG-W2-P0-WAL-REDACT-V3-PROBE** — `scan_and_redact` reads 61 bytes while current v3 headers require 65, so physical redaction rejects every current segment as tamper-suspect. Read the version-complete header and regress v1/v2/v3 live, sealed and compressed segments.
+- [ ] **BUG-W2-P1-COUNCIL-DAILY-CAP-ATOMIC** — `daily_usd_cap` has no production gate. Implement an atomic UTC-day reserve/settle ledger before every actual Council leaf, retry and fallback; unknown/unbounded cost under an active cap fails closed unless explicitly overridden.
+- [x] **BUG-W2-P1-MCP-AMBIENT-ENV** — ✅ CLOSED by current source: `configure_child_process` uses `env_clear()` plus a bounded startup baseline; the regression proves ambient API keys/proxies do not reach the child while explicit operator env remains available.
+- [ ] **BUG-W2-P1-RISK-LEASE-CONSUME-LOAD** — `consume_risk_leases_at` maps a lease-store load error to `Ok(None)` after the preceding check may have lifted the gate. Propagate the error and prove the check/consume race stays fail-closed.
+- [x] **BUG-W2-P2-BABEL-LOCKED-RMW** — ✅ CLOSED by current source: both Babel config writers already use `FreedomConfig::update_at`, holding the coherent lock through read, mutate and atomic publication.
+- [ ] **BUG-W2-P2-PRESET-MODEL-ROLE-UNION** — apply a deterministic union of `preset.hemispheres` and `preset.models`; model-only roles must not disappear.
+- [ ] **BUG-W2-P2-PRESET-TRUE-DIFF** — derive the complete apply report from before/after values. Identical re-apply must emit no false changed fields or reload signal, including unconditional inference-role pushes.
+- [ ] **BUG-W2-P2-MIGRATE-JSON-SCAN-TRUTH** — distinguish valid empty JSON from parse failure and retain a bounded concrete parser diagnostic in the migration report.
+- [ ] **BUG-W2-P2-FALLBACK-QUOTA-PERSISTENCE** — persist and audit each candidate's 429 through one locked `QuotaTracker::update_at` path before trying the next provider; the following request must skip the throttled primary.
+- [ ] **BUG-W2-P1-TOKEN-BUDGET-BLOCK-WIRING** — retain typed A–E/Conductor blocks through final request assembly, apply the degraded values (including `div_ceil` for one D item), and guarantee the final request fits the cap or fails closed. The current helper mutates a temporary A+E view and returns the original estimate.
+- [ ] **BUG-W2-P2-UPDATER-DESCRIPTOR-BOUND-READ** — replace path-check-then-`File::open` with a shared no-follow, opened-handle identity/size verification for staged artifacts and Windows handoff inputs.
+- [ ] **BUG-W2-P2-SMARTAPPROVE-IMMUTABLE-SNAPSHOT** — bind read-only metadata once to the reviewed server/tool/config session snapshot; cache miss or metadata drift must require confirmation, never live-requery into Allow.
+- **Finding 13 consolidated:** Cron `once` shares the open `BUG-W2-P1-HOOK-CHANNEL-PARITY / HOOK-ONCE-PARITY` acceptance contract above.
+- [x] **BUG-W2-P2-MCP-AMBIENT-LOADER-ENV** — ✅ MOOTED by `env_clear`: ambient `LD_PRELOAD`/interpreter variables no longer reach direct executables. Explicit `mcp_servers.yaml` env remains operator authority; optional footgun hardening is not the reported attack path.
+- [ ] **BUG-W2-P2-SECRET-SCAN-LAZYLOCK** — compile secret regexes once with `LazyLock`; MCP inspection must borrow the immutable set rather than rebuild seven automata per call.
+- [ ] **BUG-W2-P2-WAL-REDACT-CRASH-RECOVERY** — make live-segment redaction crash-consistent via coordinated rotation plus owner-private whole-segment rewrite, temp fsync, atomic replace and parent fsync (or an equivalent durable recovery journal). A flush after three in-place writes is insufficient.
+- [ ] **BUG-W2-P3-UPDATE-STAGE-UNIX-MODE** — create and verify/correct persistent Unix staging directories as `0700`, including a permissive-umask regression.
 
 ## 5. Definition of GOLD (Release Gate)
 

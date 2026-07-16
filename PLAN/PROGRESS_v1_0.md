@@ -5,10 +5,13 @@
 >
 > **Current integrated Gold wave (2026-07-16):** the original 62-finding
 > bug-hunt corpus is reconciled as **60 fixed / 2 refuted / 0 original open or
-> partial**. Four newly discovered, non-duplicate Wave-2 P1 contracts remain
-> explicitly open: live hook `fail_fast`, channel PostProviderCall/restoration
-> plus atomic `once`, skill directories created after watcher startup, and
-> preservation of channel `delegate_to` through provider dispatch. The durable
+> partial**. Four initial post-corpus P1 contracts exposed live hook
+> `fail_fast`, channel PostProviderCall/restoration plus atomic `once`, skill
+> directories created after watcher startup, and lost channel `delegate_to`.
+> A later seven-subsystem report added 17 findings; current-source triage leaves
+> **14 actionable / 2 already closed / 1 mooted**, and folds its Cron `once`
+> item into the central hook-parity contract. The unique post-corpus actionable
+> count is therefore **17**, all explicit in `ROAD_TO_1_0_GOLD.md`. The durable
 > cluster authority is now protocol v6 / Iroh ALPN `neoth/cluster/gossip/3`: a
 > node-global SQLite-backed 256-slot frontier ticks and stages in one immediate
 > transaction, retries exact frames, binds the full inbound frontier, never
@@ -27,7 +30,7 @@
 > override, auto-update controls and read-only MCP/hooks/ground-truth/quota/
 > tweaks probes coexist with the fail-closed cluster transaction and hardened
 > chat subprocess boundary. Read-only probes are observability, not full GUI/CLI
-> mutation parity, so they close no broad R4 box. The four Wave-2 contracts,
+> mutation parity, so they close no broad R4 box. The 17 post-corpus contracts,
 > remaining R4 acceptance boxes, native clean-machine proof and exact-head
 > CI/Security/CodeQL remain release blockers.
 >

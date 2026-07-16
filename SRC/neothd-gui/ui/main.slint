@@ -438,11 +438,6 @@ export component MainWindow inherits Window {
     callback cfg-autoupdate-channel-changed(int);
     callback cfg-autoupdate-interval-changed(string);
     callback autoupdate-check-clicked();
-    callback cfg-cluster-enabled-changed(bool);
-    callback cfg-cluster-name-changed(string);
-    callback cfg-cluster-transport-changed(int);
-    callback cfg-cluster-announce-untrusted-changed(bool);
-    callback cfg-cluster-ssids-changed(string);
     in-out property <int> cluster-listen-port: 49737;
     in-out property <string> cluster-trusted-ssids-summary: "";
     // GOLD-FEAT-01c — full-auto (sudomode) toggle, forwarded to SettingsView.
@@ -3035,6 +3030,7 @@ export component MainWindow inherits Window {
                 operator-name: root.operator-id != "" ? root.operator-id : "operator";
                 project-domain: root.project-domain;
                 version-line: root.app-version-line;
+                buddy-mood: root.buddy-mood;
                 version-clicked => { root.about-open = true; }
                 nav(t) => {
                     root.nav-active = t;
@@ -3336,11 +3332,8 @@ export component MainWindow inherits Window {
                 root.provider-choice = name;
                 root.provider-changed(name);
             }
-            // Bite #5: cluster auto-discovery state. Read flows
-            // root → SettingsView via two-way bind (`<=>` lets the
-            // checkbox toggle propagate back into root so callbacks
-            // see the latest value); the changed-callback bubbles
-            // up to MainWindow where Rust mutates freedom.yaml.
+            // Cluster fields remain a local draft until the operator applies
+            // the complete snapshot through the atomic receipt-bound writer.
             cluster-mdns-enabled <=> root.cluster-mdns-enabled;
             // C6 — cluster transport config.
             cfg-cluster-enabled <=> root.cfg-cluster-enabled;
@@ -3359,11 +3352,6 @@ export component MainWindow inherits Window {
             cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase) => {
                 root.cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase);
             }
-            cfg-cluster-enabled-changed(v) => { root.cfg-cluster-enabled-changed(v); }
-            cfg-cluster-name-changed(v) => { root.cfg-cluster-name-changed(v); }
-            cfg-cluster-transport-changed(i) => { root.cfg-cluster-transport-changed(i); }
-            cfg-cluster-announce-untrusted-changed(v) => { root.cfg-cluster-announce-untrusted-changed(v); }
-            cfg-cluster-ssids-changed(v) => { root.cfg-cluster-ssids-changed(v); }
             cfg-autoupdate-enabled <=> root.cfg-autoupdate-enabled;
             cfg-autoupdate-apply <=> root.cfg-autoupdate-apply;
             cfg-autoupdate-channel-idx <=> root.cfg-autoupdate-channel-idx;

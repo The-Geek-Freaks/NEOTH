@@ -111,6 +111,10 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
 - [ ] D2 Rechtsklick-Kontextmenü-Primitive in components.slint; Rollout auf
       Listen (Sessions, Channels, Cron, Plugins, Memory).
 - [ ] D3 Einheitliche hover/focus/active-Grammar + Focus-Rings überall (ein Muster).
+      `accessible-action-default` alone is not keyboard wiring: NavBtn,
+      Complexity-Segmente und Theme-Toggle brauchen `FocusScope`/`forward-focus`,
+      Enter/Space, sichtbaren Fokus sowie passende tab/radio/switch-Rollen und
+      selected/checked state.
 - [ ] D4 Filter-as-you-type in jeder Listen-View.
 - [~] D5 Keyboard-Shortcuts (Ctrl+1..9 Tabs, Ctrl+Enter send, Esc close) +
       Shortcut-Cheatsheet (? oder Ctrl+/).
@@ -126,6 +130,9 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
       + offizielles `AboutSlint`-Attributionswidget.
 - [x] E5 `agents`-ProbeView → strukturierte View (Cards statt Text-Dump).
 - [ ] E6 Density-Mode-Rollout auf alle Tabs (bisher nur chat).
+- [ ] E7 Reduced-/No-Motion-Vertrag für jede tick-getriebene Animation. Der
+      Consent-Badge-Throb hängt aktuell direkt an `animation-tick()` und muss
+      bei `Theme.animation-mode == 0` statisch bleiben.
 
 ### Wave G — GUI-Inventar-P0/P1 (aus gui-inventory Agent)
 - [x] G1 P0: ToastStack click-to-dismiss (`callback toast-dismissed(int)` + Rust-Drain).
@@ -136,7 +143,9 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
 - [~] G5 P1: ConfirmDialog-Primitive (Primitive ✅, Rollout offen) (ersetzt one-off PopupWindows, gated destructive ops).
 - [x] G6 P1: Version-Binding (`env!("CARGO_PKG_VERSION")` → StatusFooter) +
       update-available Badge.
-- [ ] G7 P1: Accessibility-Pass (accessible-label auf Icon-Elemente, ~25 → flächendeckend).
+- [ ] G7 P1: Accessibility-Pass (Labels flächendeckend plus Fokusreihenfolge,
+      Tastaturaktivierung, Rollen/States und Modal-Focus-Trap; `ConfirmDialog`
+      hat wegen fehlender Slint-Dialogrolle derzeit nur Text-Fallback-Semantik).
 
 ### Wave F — Cluster/Mesh-Dashboard
 - [x] F1 Per-Peer-Ressourcen aus SwarmTable in Mesh-Tab (CPU/RAM/VRAM je Node).

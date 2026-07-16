@@ -5873,8 +5873,11 @@ fn main() -> Result<()> {
                             "success",
                             "Mesh conflict resolved",
                             &format!(
-                                "Accepted {} for {} ({} row(s)).",
-                                ack.preferred_origin, ack.content_id, ack.resolved_count
+                                "Accepted {} for {} ({} row(s); {} unresolved remain).",
+                                ack.preferred_origin,
+                                ack.content_id,
+                                ack.resolved_count,
+                                ack.unresolved_remaining
                             ),
                         );
                         refresh_mesh(weak);
@@ -11426,6 +11429,13 @@ fn refresh_cluster_config_status(weak: slint::Weak<MainWindow>) {
             };
             match result {
                 Ok(status) => {
+                    if let Err(error) = status.verify() {
+                        window.set_cfg_cluster_apply_status(
+                            format!("Cluster readiness returned inconsistent state: {error}")
+                                .into(),
+                        );
+                        return;
+                    }
                     window.set_cfg_cluster_passphrase_set(status.cluster_passphrase_set);
                     window
                         .set_cfg_cluster_replicate_raw_ingress(status.gossip.replicate_raw_ingress);
@@ -14559,7 +14569,11 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     let conflict_result = run_neothd_json_action::<gui_action::ClusterConflictListAck>(
         &["cluster", "conflicts"],
         "Cluster conflicts",
-    );
+    )
+    .and_then(|ack| {
+        ack.verify_unresolved()?;
+        Ok(ack)
+    });
     // DES-13 — the failover backup that already exists: replicated peer events
     // this node persists (idx_foreign_events). Empty when the cluster feature
     // isn't built or no peers are paired.
@@ -14610,7 +14624,7 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         ))));
         w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
         match conflict_result {
-            Ok(conflicts) if !conflicts.include_resolved => {
+            Ok(conflicts) => {
                 let conflict_rows: Vec<MeshConflictRow> = conflicts
                     .conflicts
                     .into_iter()
@@ -14640,13 +14654,6 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
                 w.set_mesh_conflict_count(conflicts.unresolved_count as i32);
                 w.set_mesh_conflicts_valid(true);
                 w.set_mesh_conflicts_error("".into());
-            }
-            Ok(_) => {
-                w.set_mesh_conflicts_valid(false);
-                w.set_mesh_conflict_count(snap.conflict_count as i32);
-                w.set_mesh_conflicts_error(
-                    "Cluster returned a forensic history instead of the unresolved view.".into(),
-                );
             }
             Err(error) => {
                 // Keep the status count visible, but never render an empty list

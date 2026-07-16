@@ -37,6 +37,11 @@ component NavBtn inherits Rectangle {
     in property <int> count: -1;        // ≥0 shows a count chip
     callback clicked();
 
+    // R4-09 — screen-reader / keyboard support on primary navigation.
+    accessible-role: button;
+    accessible-label: root.label + " tab";
+    accessible-action-default => { root.clicked(); }
+
     property <color> tier-color: root.tier == "memory" ? Theme.memory
         : root.tier == "consent" ? Theme.consent
         : Theme.accent;
@@ -108,6 +113,9 @@ component ComplexitySeg inherits Rectangle {
     HorizontalLayout {
         padding: 3px; spacing: 3px;
         for seg[i] in ["MIN", "STD", "FULL"]: Rectangle {
+            accessible-role: button;
+            accessible-label: "complexity " + seg;
+            accessible-action-default => { root.set-level(i); }
             border-radius: Theme.radius-sm;
             background: root.level == i ? Theme.accent-tint : transparent;
             border-width: root.level == i ? 1px : 0px;
@@ -132,6 +140,8 @@ export component Sidebar inherits Rectangle {
     // GOLD-ADAPT-AOS-03 — project domain from the wizard's context step.
     in property <string> project-domain: "";
     in property <bool> theme-dark: true;
+    // Living-companion: the brand-bar orb reflects real daemon activity.
+    in property <string> buddy-mood: "idle";
     in property <string> operator-name: "operator";
     in property <int> channels-count: 0;
     // Version line under the wordmark — Rust binds CARGO_PKG_VERSION so
@@ -155,7 +165,7 @@ export component Sidebar inherits Rectangle {
         HorizontalLayout {
             spacing: 12px; alignment: start;
             padding-bottom: 16px;
-            Buddy { mood: "idle"; orb-size: 34px; show-face: true; }
+            Buddy { mood: root.buddy-mood; orb-size: 34px; show-face: true; }
             VerticalLayout {
                 alignment: center; spacing: 3px;
                 Text {
@@ -307,6 +317,9 @@ export component Sidebar inherits Rectangle {
                 }
                 // Flip the global theme immediately (live), then bubble up so
                 // Rust can persist the choice.
+                accessible-role: button;
+                accessible-label: Theme.dark ? "switch to light theme" : "switch to dark theme";
+                accessible-action-default => { Theme.dark = !Theme.dark; root.toggle-theme(); }
                 ta := TouchArea { clicked => { Theme.dark = !Theme.dark; root.toggle-theme(); } }
             }
         }

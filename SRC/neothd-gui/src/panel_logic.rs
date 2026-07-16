@@ -1446,9 +1446,18 @@ pub fn build_channel_credential_request(
             if !secret_present(f1) || n2.is_empty() {
                 return Err("discord needs: --token and --allowed-sender (numeric user ID)".into());
             }
-            let allowed_sender = neothd::channels::discord::normalize_allowed_sender_id(n2)
-                .map_err(|error| error.to_string())?;
-            serde_json::json!({ "token": f1, "allowed_sender": allowed_sender })
+            if !n2.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err("Discord allowed sender id must be a numeric user snowflake".into());
+            }
+            let parsed = n2
+                .parse::<u64>()
+                .map_err(|_| "Discord allowed sender id exceeds the snowflake range")?;
+            if parsed == 0 || parsed.to_string() != n2 {
+                return Err(
+                    "Discord allowed sender id must be a canonical positive user snowflake".into(),
+                );
+            }
+            serde_json::json!({ "token": f1, "allowed_sender": n2 })
         }
         GuiChannelForm::Signal => {
             if n1.is_empty() || n2.is_empty() || n3.is_empty() {
@@ -5840,6 +5849,17 @@ mod tests {
         let discord: serde_json::Value = serde_json::from_slice(discord.as_slice()).unwrap();
         assert_eq!(discord["fields"]["token"], "discord-secret");
         assert_eq!(discord["fields"]["allowed_sender"], "123456789012345678");
+        for invalid in ["0", "01", "owner", "18446744073709551616"] {
+            assert!(
+                build_channel_credential_request(
+                    "discord",
+                    ["discord-secret", invalid, "", "", "", ""],
+                    false,
+                )
+                .is_err(),
+                "Discord identity `{invalid}` must fail closed",
+            );
+        }
 
         let slack = build_channel_credential_request(
             "slack",

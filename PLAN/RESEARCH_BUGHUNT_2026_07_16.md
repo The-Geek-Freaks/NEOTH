@@ -5,11 +5,15 @@
 > resolved the original 62 candidates as **60 FIXED / 2 REFUTED / 0 original
 > OPEN or PARTIAL**. The two refutations are the unattached live-vector-clock
 > baseline attack and the alleged NUL truncation; neither has a reachable
-> production failure path. Four net-new Wave-2 P1 contracts discovered during
-> implementation remain open and are tracked under `WS-BUG` in
-> `PLAN/ROAD_TO_1_0_GOLD.md`: hook `fail_fast`, channel hook parity plus atomic
-> `once`, post-boot skill-directory watching, and channel `delegate_to`
-> preservation. The historical scenarios below remain verbatim for provenance.
+> production failure path. Four initial post-corpus P1 contracts were then
+> discovered during implementation. The later seven-subsystem Wave-2 report
+> appended below captured 17 more findings; reconciliation against the
+> integrated source yields **14 actionable / 2 already closed / 1 mooted**.
+> Its Cron `once` item is part of the existing hook-parity contract, producing
+> **17 unique actionable post-corpus contracts** in the Gold tracker. The
+> authoritative corrected scopes and acceptance tests live under `WS-BUG` in
+> `PLAN/ROAD_TO_1_0_GOLD.md`; all raw scenarios below remain verbatim for
+> provenance and must not be mistaken for current status.
 
 > Max-scale read-only bug hunt: 16 subsystem finders + adversarial-verify
 > per finding (Workflow `wf_796be4c9-ea1`). Each finder was told to report only
@@ -413,3 +417,125 @@
 - **Location:** `SRC/neothd/src/self_improve.rs:1975`
 - **Failure scenario:** On Unix the success path kills the process group at line 1971 before recv(), closing grandchildren pipe write-ends. On Windows no equivalent kill fires. If assign_child_to_job fails (result ignored, line 1898) and the verification command launches a background subprocess before job assignment, that subprocess holds the stdout write-end after the parent shell exits. rx_out.recv() at line 1975 blocks indefinitely, stalling the executor thread long past the wall-clock timeout that already killed only the direct child.
 - **Fix:** At self_improve.rs:1975 replace rx_out.recv() with recv_timeout(Duration::from_secs(2)).unwrap_or_default() on all platforms, and on Windows close the Job Object handle before recv to trigger KILL_ON_JOB_CLOSE for any assigned grandchildren. Also check the return value of assign_child_to_job and log a warning when it fails, so operators know the containment guarantee is degraded.
+---
+
+# WAVE 2 (2026-07-16) — 7 previously un-hunted subsystems
+> Workflow `wf_e42cac83-d3d`, title-echoed verify (1:1 matched). 17 confirmed.
+
+
+## wal-audit
+
+### P0 · correctness — scan_and_redact probe is 4 bytes too short for v3 segment headers — physical GDPR redaction always fails
+- **Location:** `SRC/neothd/src/wal/redact.rs:129`
+- **Failure scenario:** Every WAL segment written by the current writer uses v3 format (SEGMENT_FORMAT_VERSION=3, header=65 bytes). scan_and_redact reads a probe of only SEGMENT_HEADER_LEN+1=61 bytes. parse_segment_header detects version=3, hits `if raw.len() < SEGMENT_HEADER_V3_LEN { return Err(UnknownFormat{version:3}) }` (61<65), and returns Err. The Err arm in scan_and_redact then bails with 'tamper-suspect' for any file_len>=60. Result: memory::forget --physical returns an error on every live segment, reporting valid WAL as tampered. No physical redaction ever succeeds on the current format.
+- **Fix:** Change `let probe_len = (SEGMENT_HEADER_LEN + 1).min(file_len as usize);` to `let probe_len = segment_header::SEGMENT_HEADER_V3_LEN.min(file_len as usize);` (currently 65) and import SEGMENT_HEADER_V3_LEN. This gives parse_segment_header enough bytes to identify v3 headers while keeping the sealed-vs-live magic-peek done separately via file.read_exact.
+
+
+## council-providers
+
+### P1 · correctness — daily_usd_cap never enforced as a hard gate — fails open
+- **Location:** `SRC/neothd/src/cli/chat.rs:7689`
+- **Failure scenario:** Operator sets daily_usd_cap=5.0 in freedom.yaml. User runs council debate all day. run_council_debate() at L7689 dispatches hemispheres with no pre-check against cap. The only enforcement exists in cli/doctor/checks/providers.rs::check_usage_today() which returns CheckStatus::Warn — it requires the user to manually run `neoth doctor`, does not block any call. council/budget.rs L43-46 has a comment claiming wiring to a DailyBudget in providers/cost.rs; no such struct exists. Result: spend is unlimited regardless of config; operator daily cap is purely cosmetic.
+- **Fix:** In cli/chat.rs run_council_debate() (~L7689), before dispatching hemispheres, load usage_log for last 24h, sum actual_cost_usd, compare to CouncilConfig::daily_usd_cap, return Err if exceeded. Remove false comment from council/budget.rs L43-46.
+
+
+## extensions
+
+### P1 · security — MCP subprocess inherits full parent environment — all secrets exposed to child
+- **Location:** `SRC/neothd/src/mcp/client.rs:176`
+- **Failure scenario:** Every MCP server child spawned via spawn_with_timeout executes cmd.envs(&env) without a prior cmd.env_clear(). Tokio Command::new inherits the parent environment by default; .envs() only adds/overrides entries, it does not replace. Every MCP child receives NEOTH's full environment including ANTHROPIC_API_KEY and other secrets. A malicious or compromised MCP server can read these via std::env::var — no capability escape required. forbidden_launcher_env only guards Node.js registry-redirect vars and is skipped for non-node launchers, providing zero coverage for this path.
+- **Fix:** Call cmd.env_clear() immediately after Command::new in spawn_with_timeout (before .envs(&env)). Explicitly pass only PATH and vars the MCP spec requires. extend resolve_env/validate_spawn_context to build an explicit allowlist of vars that may be forwarded, defaulting to empty.
+
+
+## security-perms
+
+### P1 · ? — consume_risk_leases_at fails open on I/O error — dangerous call allowed without revocation
+- **Location:** `SRC/neothd/src/mcp/dispatch_loop.rs:1495`
+- **Failure scenario:** If the lease-store file is temporarily unreadable (NTFS lock, torn write, permission race), `LeaseStore::load` returns Err. `consume_risk_leases_at` catches this with `let Ok(mut store) = ... else { return Ok(None); }`. The dispatch loop's Ok(None) arm interprets None as 'no lease to consume and nothing went wrong', so it treats the gate as lifted and allows the dangerous tool call — and the single-use lease is never revoked, so it can be replayed indefinitely. The parallel `check_risk_leases` at line 1428-1429 correctly returns `(false, false, None, false)` on load error (fail-closed). Only `consume` is broken.
+- **Fix:** Replace `return Ok(None)` with `return Err(anyhow::anyhow!("lease store load failed: {e}"))` so the dispatch loop's Err arm keeps the call blocked. The caller at the dispatch site already handles Err by staying blocked.
+
+
+## config-migrate
+
+### P2 · ? — Coalescing-writer lost update in babel CLI actions
+- **Location:** `SRC/neothd/src/cli/babel.rs:120`
+- **Failure scenario:** Two concurrent writes race: `neoth babel enable` reads freedom.yaml at line 120 (no lock held), daemon simultaneously writes a preset apply, then babel writes its stale base back at line 127 inside the lock. The daemon's preset change is silently overwritten. Same pattern at line 462 for the `Federate` action. Any config field modified between the read and write is lost with no error.
+- **Fix:** Replace the read-modify-save triplet with `FreedomConfig::update_at(&path, |fc| { fc.babel.enabled = enabled; Ok(()) })` which holds the combined process-mutex + OS file lock across the entire read-modify-write. Same fix for the federate branch at line 462.
+
+### P2 · ? — preset.models entries silently dropped when role absent from preset.hemispheres
+- **Location:** `SRC/neothd/src/config/presets.rs:484`
+- **Failure scenario:** An operator writes a preset that overrides models for a role (e.g. `cerebellum`) without also specifying a provider in `hemispheres`. The loop at line 484 iterates only `&preset.hemispheres`; the inner `if let Some(model) = preset.models.get(role)` can therefore never match that role. The model override is silently discarded, the apply report says success, and the operator's chosen model is never applied.
+- **Fix:** Iterate the union of all roles in both `preset.hemispheres` and `preset.models`. Build a combined key set: `let roles: BTreeSet<_> = preset.hemispheres.keys().chain(preset.models.keys()).collect();` then loop over `roles`, looking up provider and model independently.
+
+### P2 · ? — set_nested unconditionally marks field changed even when value is identical
+- **Location:** `SRC/neothd/src/config/presets.rs:725`
+- **Failure scenario:** Every call to `set_nested` pushes `format!("{block}.{key}")` to `report.fields_changed` regardless of whether `mutate` actually changed the stored value. A preset re-apply on an already-configured system presents a consent diff listing every field as modified. Operator tooling that gates on `fields_changed` being non-empty incorrectly treats no-ops as changes, potentially re-triggering downstream logic (notifications, WAL events).
+- **Fix:** Snapshot the value before mutation: `let old = inner.get(key).cloned();` call `mutate(&mut inner, key);` then `if inner.get(key) != old.as_ref() { report.fields_changed.push(...); }`.
+
+### P2 · ? — scan_json_file misclassifies valid empty JSON as parse error and discards real error detail
+- **Location:** `SRC/neoth-migrate/src/readers.rs:594`
+- **Failure scenario:** Two distinct failures collapse to the same code path. (1) A source file containing `[]` or `{}` parses successfully but yields `row_count == 0`, triggering `ScanStatus::Error { detail: "JSON parse failed" }` — a valid empty source is blocked from migration with a misleading message. (2) A file that actually fails to parse also yields `row_count == 0` via the `Err(_) => 0` arm, silently discarding the `serde_json::Error` detail. Operators see the same `"JSON parse failed"` whether the file is empty-but-valid or corrupt.
+- **Fix:** Separate the two arms: `let (row_count, parse_ok, parse_err) = match serde_json::from_str(content) { Ok(Value::Array(a)) => (a.len(), true, None), Ok(_) => (1, true, None), Err(e) => (0, false, Some(e.to_string())) };` then set `ScanStatus::Ok` when `parse_ok && row_count == 0` (empty valid), `ScanStatus::Error` only when `!parse_ok`, carrying the real `parse_err` string.
+
+
+## council-providers
+
+### P2 · correctness — FallbackProvider swallows primary 429 — QuotaTracker never updated, thundering herd
+- **Location:** `SRC/neothd/src/providers/fallback.rs:292`
+- **Failure scenario:** Primary provider returns QuotaError(429). FallbackProvider::complete_with_authorization() at L292 sets last_err = Some(error) and continues to the next candidate, which succeeds. Caller receives Ok — so chat.rs::record_quota_exceeded() at L4920 is never invoked. quota.json is never updated with the primary's 429. No backoff window opens. Every subsequent request immediately retries the already-throttled primary, inducing thundering herd. QuotaTracker loaded once from disk at fallback entry (i>0) and never written back within the call.
+- **Fix:** In fallback.rs, when a candidate returns QuotaError, call QuotaTracker::load_from_disk(), record_429(provider_id), save() before trying the next hop. Mirror the logic already in chat.rs::record_quota_exceeded().
+
+### P2 · correctness — enforce_budget Step 1 floor-div is 0 for single D-block item — sole oversized block never evicted
+- **Location:** `SRC/neothd/src/tokens/budget.rs:219`
+- **Failure scenario:** D block contains exactly 1 item (e.g. one large episode recall). enforce_budget Step 1 computes `let half = sorted.len() / 2` = 1/2 = 0. Zero items are drained. The sole oversized block survives all degradation passes and is injected into the provider call at full size. Provider receives an oversized prompt: context-length 400 errors or silent truncation. Policy intent was to drop the oldest 50% of D, which for n=1 should drop the single item.
+- **Fix:** Change `let half = sorted.len() / 2` to `let half = sorted.len().div_ceil(2)` (or `(sorted.len() + 1) / 2`) so that a 1-item D block drops its sole entry.
+
+
+## crypto-updater
+
+### P2 · security — read_file_bounded uses File::open (symlink-following) after separate non-atomic symlink pre-check
+- **Location:** `SRC/neothd/src/updater/self_update.rs:2456`
+- **Failure scenario:** validated_staged_path returns after confirming no symlink via symlink_metadata (L2488). In the race window before read_file_bounded opens the file at L2456, the attacker replaces the regular file with a symlink (Unix O_NOFOLLOW race) or a hardlink to any file they own (hardlinks are not symlinks; is_symlink() at L2491 returns false, canonicalize resolves to the hardlink path which matches canonical_expected, all checks pass). std::fs::File::open follows the symlink or opens the hardlink inode; up to MAX_RELEASE_ARCHIVE_BYTES (512 MB) is pre-allocated and read into heap. The SHA-256 mismatch returns IntegrityViolation, but arbitrary file bytes are transiently held. The same TOCTOU applies in run_windows_bundle_handoff_inner (L1741, L1746, L1752) where three separate symlink_metadata pre-checks and three read_file_bounded calls create three independent race windows.
+- **Fix:** Replace std::fs::File::open(path) inside read_file_bounded with the already-present open_regular_nofollow(path) from install_transaction.rs:1600, which uses O_NOFOLLOW (Unix) and FILE_FLAG_OPEN_REPARSE_POINT (Windows) and performs a double metadata check on the open file descriptor, closing the race window.
+
+
+## extensions
+
+### P2 · security — SmartApprove re-seeds readOnlyHint cache from live server mid-session — server-controlled Confirm→Allow bypass
+- **Location:** `SRC/neothd/src/mcp/gate.rs:563`
+- **Failure scenario:** When cfg.smart_approve is true and a tool is not in cache, smart_approve_is_readonly calls list_tools_sanitized(client) against the LIVE MCP server (line 563) to refresh. A compromised server can initially advertise a destructive tool with readOnlyHint:false to pass operator review, then switch to readOnlyHint:true before the first call that triggers a cache miss. On that miss the function re-fetches and returns true, causing invoke_with_audit to auto-upgrade Confirm to Allow. The operator's confirmation dialog is skipped. The WAL records SMART_APPROVE but the user sees no prompt.
+- **Fix:** Seed the SmartApprove cache exactly once at session initialization when the MCP connection is first established, never again. On a cache miss during invoke_with_audit, fail-closed (return false, require explicit confirmation) rather than issuing a live re-query. Add a doc comment making this invariant explicit.
+
+### P2 · correctness — once-hook enforcement missing in cron pipeline — once-flagged hooks fire on every cron tick
+- **Location:** `SRC/neothd/src/cron/runner.rs:136`
+- **Failure scenario:** HookDef.once is documented to fire at most once per session with HOOK_SKIPPED_ONCE (0x8B) WAL frames on subsequent calls. chat.rs implements this correctly via a session_fired_once HashSet maintained across turns (line 4466, checked in wrapper at line 4792). But cron/runner.rs passes the raw crate::hooks::run_stage function reference at lines 136, 1713, 1757, 1816, 1870, 1911, 1949 — which calls straight through to run_stage_with_config_returning_blocks with no once-tracking. A once:true hook bound to any stage used by cron jobs fires on every cron tick, emitting no HOOK_SKIPPED_ONCE WAL event and executing its action (Block, Replace, Plugin) repeatedly.
+- **Fix:** Extract the once-checking wrapper from chat.rs into a standalone function in hooks/dispatcher.rs accepting a fired_set:&mut HashSet<String> alongside existing args. Both chat.rs and cron/runner.rs must use this wrapper and maintain a per-session (or per-job-run) HashSet. The bare run_stage function should be removed from the public surface or clearly documented as once-unsafe.
+
+### P2 · security — LD_PRELOAD and interpreter path-hijack vars not blocked for direct-executable MCP launchers
+- **Location:** `SRC/neothd/src/mcp/config.rs:449`
+- **Failure scenario:** forbidden_launcher_env hard-codes a guard only for 'npx' | 'node' commands (line 449 match arm). For any other launcher — Python MCP servers, Go binaries, Rust executables — the function unconditionally returns false. An attacker who can set LD_PRELOAD=/tmp/evil.so in NEOTH's environment makes every DirectExecutable MCP server a code-injection vector. This compounds Bug A: even after env_clear, an explicit blocklist must exclude loader vars that NEOTH itself might carry and must not forward.
+- **Fix:** Add a universal forbidden-var set applied to ALL launcher types: at minimum LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES, DYLD_LIBRARY_PATH, PYTHONPATH, PYTHONSTARTUP, PYTHONEXECUTABLE, RUBYLIB, RUBYOPT, PERL5LIB, NODE_OPTIONS. Apply this before env_clear as defence-in-depth, and also inside the explicit-allowlist-only baseline from Bug A's fix.
+
+
+## security-perms
+
+### P2 · ? — secrets_scan::patterns() recompiles 7 regexes per scan_text call — hot-path CPU amplification in SecretEgressInspector
+- **Location:** `SRC/neothd/src/security/secrets_scan.rs:23`
+- **Failure scenario:** `scan_text` (line 73) calls `patterns()` unconditionally at the top. `SecretEgressInspector::inspect` calls `scan_text` for every MCP tool invocation. Under moderate load (e.g. a shell-loop MCP client issuing 100 calls/s) this compiles 700 regex automata/s. `redact.rs` uses `static PATTERNS: LazyLock<Vec<Pattern>>` for the exact same compile-once pattern; `secrets_scan.rs` has a comment saying 'CLI scan is one-shot' but the inspector is not CLI-only. This wastes CPU and, on a regex-bomb input, concentrates the compilation cost inside the gate path.
+- **Fix:** Replace the function-local `Vec` with `static PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| { ... })` mirroring redact.rs, and have `scan_text` borrow from it. The `patterns()` public function can remain for CLI use but should call the same static.
+
+
+## wal-audit
+
+### P2 · correctness — redact_frame_in_place three non-atomic writes without intermediate fsync — crash leaves frame with invalid CRC
+- **Location:** `SRC/neothd/src/wal/redact.rs:535`
+- **Failure scenario:** redact_frame_in_place does three separate seeks+writes: (1) zero the payload, (2) update the REDACTED flag byte, (3) re-read the frame and write the new CRC. scan_and_redact does a single sync_all() only at the very end (line 258). A crash between write-1 and write-3 leaves the payload zeroed (or flags partially set) but the old CRC on disk. On next startup for_each_frame decodes that frame, finds CRC mismatch, and returns an error — all frames from that point in the segment become unreadable to the indexer, silently losing un-redacted events. The doc comment at line 93-94 ('each redaction is fsync'd before the next predicate call') actively misleads: no per-frame fsync exists.
+- **Fix:** After the three writes inside redact_frame_in_place, add `file.flush().context("flush after frame rewrite")?;` before returning. In scan_and_redact, replace the single trailing sync_all with a per-frame sync: call `file.sync_all()` (or at minimum `file.flush()`) immediately after each successful `redact_frame_in_place` call, before advancing cursor. Update the doc comment to accurately state the actual sync guarantee. The compressed path is safe (atomic rename).
+
+
+## crypto-updater
+
+### P3 · security — Unix staging directory created with umask-derived permissions — world-traversable by default
+- **Location:** `SRC/neothd/src/updater/self_update.rs:2768`
+- **Failure scenario:** std::fs::create_dir_all(stage_dir) on Linux creates ~/.neoth/staged/ with permissions 0o777 & !umask, typically 0o755. Local unprivileged users can list the directory and read the archive filename (e.g. neoth-v1.1.0-x86_64-unknown-linux-gnu.tar.gz), leaking the version being staged and the upgrade schedule. Contrast: on Windows, create_release_staging_directory (L1054) explicitly calls set_private_current_user_directory_dacl and verify_private_directory_dacl; the permanent staging directory on Unix has no equivalent hardening. The individual archive files are protected (atomic_write_private enforces 0o600) but the directory listing is open.
+- **Fix:** After create_dir_all, add `#[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(stage_dir, std::fs::Permissions::from_mode(0o700)).with_context(|| ...)?; }` or switch to DirBuilder::new().mode(0o700).recursive(true).create(stage_dir) on Unix so the staging directory is private at creation.
