@@ -468,6 +468,10 @@ export component MainWindow inherits Window {
     in property <string> doctor-security-output: "";
     in property <bool> doctor-security-running: false;
     callback doctor-security-run-clicked();
+    // C4/undo — reversible-actions probe.
+    in property <string> doctor-undo-output: "";
+    in property <bool> doctor-undo-running: false;
+    callback doctor-undo-run-clicked();
     // Agents tab — `neoth cluster status` (the agent/worker topology).
     in property <string> agents-output: "";
     in property <bool> agents-running: false;
@@ -3506,6 +3510,9 @@ export component MainWindow inherits Window {
                     security-output: root.doctor-security-output;
                     security-running: root.doctor-security-running;
                     security-run-clicked => { root.doctor-security-run-clicked(); }
+                    undo-output: root.doctor-undo-output;
+                    undo-running: root.doctor-undo-running;
+                    undo-run-clicked => { root.doctor-undo-run-clicked(); }
                 }
                 // Agents — structured card grid (Wave 5); raw probe output
                 // stays as the fallback body when parsing fails.

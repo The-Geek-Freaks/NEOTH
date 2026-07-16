@@ -3488,6 +3488,47 @@ fn main() -> Result<()> {
         });
     });
 
+    // C4/undo — `neoth undo --limit 10` read-only list of reversible actions.
+    let weak_undo = window.as_weak();
+    window.on_doctor_undo_run_clicked(move || {
+        let Some(w0) = weak_undo.upgrade() else {
+            return;
+        };
+        w0.set_doctor_undo_running(true);
+        let weak = weak_undo.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("undo")
+                    .arg("--limit")
+                    .arg("10")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "No reversible actions recorded yet.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list reversible actions.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_doctor_undo_output(output.into());
+                    w.set_doctor_undo_running(false);
+                }
+            });
+        });
+    });
+
     // Agents tab — `neothd cluster status` (the agent/worker + node topology).
     let weak_agents = window.as_weak();
     window.on_agents_refresh_clicked(move || {
