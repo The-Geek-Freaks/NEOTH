@@ -1,0 +1,425 @@
+// agents_view.slint — Structured agent-topology tab for the Agents nav rail entry.
+//
+// Replaces the raw ProbeView mono dump with a typed card grid that shows each
+// agent's hemisphere, provider/model, live state Led, current task, and
+// tasks-done count.  Falls back to a mono dump card when the probe returns
+// plain text instead of JSON, so nothing regresses during rollout.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// WIRING — orchestrator read this block; do NOT touch the listed files here.
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ┌── main.slint ─────────────────────────────────────────────────────────────
+// │  1. Add import at top of file:
+// │       import { AgentsView, AgentRow } from "agents_view.slint";
+// │
+// │  2. Locate the ProbeView instance wired to the "agents" / "cluster" tab.
+// │     Its blurb is approximately "cluster/agent topology" and its
+// │     run-clicked fires the agents probe function.
+// │
+// │  3. Replace that ProbeView element with:
+// │         AgentsView {
+// │             agents:          root.agents-model;
+// │             running:         root.agents-running;   // re-use existing bool
+// │             raw-output:      root.agents-raw-output;
+// │             refresh-clicked => { root.agents-probe-run(); }
+// │         }
+// │
+// │  4. Add two new properties to the root AppWindow (or equivalent):
+// │         in-out property <[AgentRow]> agents-model: [];
+// │         in-out property <string>     agents-raw-output: "";
+// │     (agents-running already exists as the ProbeView's `running` twin.)
+// └───────────────────────────────────────────────────────────────────────────
+//
+// ┌── main.rs ─────────────────────────────────────────────────────────────────
+// │  Find the agents probe callback (the handler that currently sets the
+// │  ProbeView `output` string — typically on_agents_run_clicked or similar).
+// │
+// │  On probe output received:
+// │    a. Try JSON parse into serde_json::Value (array of agent objects).
+// │    b. Success → build Vec<AgentRow>, push to a slint::VecModel<AgentRow>,
+// │       bind to agents-model via invoke_from_event_loop; set agents-raw-output
+// │       to "".
+// │    c. Failure (plain text) → set agents-raw-output to the raw string; set
+// │       agents-model to an empty VecModel.  The raw fallback renders itself.
+// │
+// │  AgentRow field mapping from the probe JSON (verify names against the
+// │  actual probe function output):
+// │    name          →  agent display name / id string
+// │    hemisphere    →  "left" | "right" | "cerebellum"  (lowercase)
+// │    provider      →  provider name string
+// │    model         →  model id string
+// │    state         →  "idle" | "working" | "error"
+// │    current-task  →  active task description  (empty string when idle)
+// │    tasks-done    →  completed task count  (0 when unknown or idle)
+// └───────────────────────────────────────────────────────────────────────────
+//
+// ┌── panel_logic.rs ──────────────────────────────────────────────────────────
+// │  No changes required.  Probe dispatch stays as-is.
+// └───────────────────────────────────────────────────────────────────────────
+//
+// Layout note — 2-column grid:
+//   A true 2-column grid with a single flat [AgentRow] model cannot be expressed
+//   cleanly in Slint 1.16: a for-loop over a model cannot be split into two
+//   VerticalLayouts without `visible: false` items that still reserve height,
+//   producing top-gap misalignment in the right column.
+//   The current layout is a single scrollable column.  To upgrade to 2 columns:
+//   add `in property <[AgentRow]> agents-left` and `agents-right`; split them in
+//   Rust; render each in its own `horizontal-stretch: 1` VerticalLayout.
+
+import { Theme } from "theme.slint";
+import { Card, Led, Kicker } from "components.slint";
+
+// ── Wire type ─────────────────────────────────────────────────────────────────
+
+/// One entry in the live agent roster.
+/// Exported so main.rs can construct values via the Slint Rust bindings.
+export struct AgentRow {
+    name: string,
+    hemisphere: string,    // "left" | "right" | "cerebellum"
+    provider: string,
+    model: string,
+    state: string,         // "idle" | "working" | "error"
+    current-task: string,
+    tasks-done: int,
+}
+
+// ── HemiChip ──────────────────────────────────────────────────────────────────
+// Pill badge for the hemisphere role.
+// left=green-tint · right=cyan-tint · cerebellum=amber-tint
+
+component HemiChip inherits Rectangle {
+    in property <string> hemisphere;
+
+    property <color> chip-bg:
+        root.hemisphere == "left"       ? Theme.memory-tint
+        : root.hemisphere == "right"    ? Theme.audit-tint
+        : Theme.warning-tint;
+
+    property <color> chip-fg:
+        root.hemisphere == "left"       ? Theme.memory
+        : root.hemisphere == "right"    ? Theme.audit
+        : Theme.warning;
+
+    height: 20px;
+    width: hemi-lbl.preferred-width + 16px;
+    border-radius: Theme.radius-pill;
+    background: root.chip-bg;
+    border-width: 1px;
+    border-color: root.chip-fg.with-alpha(0.35);
+
+    hemi-lbl := Text {
+        text: root.hemisphere == "left"       ? "LEFT"
+            : root.hemisphere == "right"      ? "RIGHT"
+            : root.hemisphere == "cerebellum" ? "CEREBELLUM"
+            : root.hemisphere;
+        color: root.chip-fg;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-2xs;
+        letter-spacing: Theme.letter-spacing-wide;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+}
+
+// ── CountChip ─────────────────────────────────────────────────────────────────
+// Small pill showing the tasks-done integer.
+
+component CountChip inherits Rectangle {
+    in property <int> count;
+
+    height: 20px;
+    width: cnt-lbl.preferred-width + 14px;
+    border-radius: Theme.radius-pill;
+    background: Theme.surface-2;
+    border-width: 1px;
+    border-color: Theme.border-default;
+
+    cnt-lbl := Text {
+        text: root.count + " done";
+        color: Theme.text-tertiary;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-2xs;
+        letter-spacing: Theme.letter-spacing-tight;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+}
+
+// ── AgentCard ─────────────────────────────────────────────────────────────────
+// One agent represented as a Card:
+//   • Row 1  name (sans base, left) + state Led (right, pulses when "working")
+//   • Row 2  hemisphere chip  (Left=green · Right=cyan · Cerebellum=amber)
+//   • Row 3  provider · model  (mono, elided)
+//   • Row 4  state label  +  current task  (elided)
+//   • Row 5  tasks-done count chip  (only when tasks-done > 0)
+
+component AgentCard inherits Card {
+    in property <AgentRow> agent;
+
+    // Led pulse is the ambient motion — disable the Card shimmer sweep here.
+    shimmer: false;
+
+    accessible-role: text;
+    accessible-label:
+        (root.agent.name != "" ? root.agent.name : "agent")
+        + ", " + (root.agent.hemisphere != "" ? root.agent.hemisphere : "unknown")
+        + " hemisphere, "
+        + (root.agent.state != "" ? root.agent.state : "idle");
+
+    // Map app state values to Led states:
+    //   working → "live"  (green, opacity-breathe pulse)
+    //   error   → "error" (pink)
+    //   idle    → "off"   (text-disabled, static)
+    property <string> led-state:
+        root.agent.state == "working" ? "live"
+        : root.agent.state == "error" ? "error"
+        : "off";
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        alignment: start;
+
+        // ── Row 1: name + state Led ───────────────────────────────────────
+        HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            height: 24px;
+
+            Text {
+                text: root.agent.name != "" ? root.agent.name : "—";
+                color: Theme.text-primary;
+                font-family: Theme.font-sans;
+                font-size: Theme.font-size-base;
+                font-weight: Theme.weight-medium;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            Led {
+                state: root.led-state;
+                dot-size: 8px;
+            }
+        }
+
+        // ── Row 2: hemisphere chip ────────────────────────────────────────
+        HemiChip { hemisphere: root.agent.hemisphere; }
+
+        // ── Row 3: provider · model (mono, elided) ────────────────────────
+        Text {
+            text: root.agent.provider != "" && root.agent.model != ""
+                ? root.agent.provider + " · " + root.agent.model
+                : root.agent.provider != "" ? root.agent.provider
+                : root.agent.model != "" ? root.agent.model
+                : "—";
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-xs;
+            overflow: elide;
+        }
+
+        // ── Row 4: state label + current task (elided) ───────────────────
+        HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            height: 18px;
+
+            Text {
+                text: root.agent.state != "" ? root.agent.state : "idle";
+                color: root.agent.state == "working" ? Theme.memory
+                    : root.agent.state == "error"    ? Theme.consent
+                    : Theme.text-disabled;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-2xs;
+                letter-spacing: Theme.letter-spacing-wide;
+                vertical-alignment: center;
+                width: 54px;
+            }
+
+            Text {
+                text: root.agent.current-task;
+                color: Theme.text-secondary;
+                font-family: Theme.font-sans;
+                font-size: Theme.font-size-xs;
+                overflow: elide;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+        }
+
+        // ── Row 5: tasks-done count chip (absent when zero) ───────────────
+        if root.agent.tasks-done > 0: CountChip {
+            count: root.agent.tasks-done;
+        }
+    }
+}
+
+// ── AgentsView ────────────────────────────────────────────────────────────────
+
+export component AgentsView inherits Rectangle {
+    // Structured model — Rust populates this from the parsed probe JSON.
+    in property <[AgentRow]> agents: [];
+    // True while a refresh probe is in flight.
+    in property <bool> running: false;
+    // Fires when the operator clicks the Refresh pill.
+    callback refresh-clicked();
+    // Raw probe text — when set and agents is empty, renders the legacy mono dump.
+    in property <string> raw-output: "";
+
+    // Derived visibility flags (avoids compound && in element-if prefixes,
+    // mirroring the guard-property style used elsewhere in the codebase).
+    property <bool> has-agents:  root.agents.length > 0;
+    property <bool> show-raw:    root.agents.length == 0 && root.raw-output != "";
+    property <bool> show-empty:  root.agents.length == 0 && root.raw-output == "";
+
+    background: Theme.bg-base;
+
+    VerticalLayout {
+        padding: 28px;
+        spacing: 14px;
+
+        // ── Header: blurb + Refresh pill ─────────────────────────────────────
+        // Grammar mirrors ProbeView (tabs.slint): blurb left, action pill right.
+        HorizontalLayout {
+            alignment: space-between;
+
+            Text {
+                text: "Agent topology — cluster, hemispheres, running tasks.";
+                color: Theme.text-secondary;
+                font-family: Theme.font-sans;
+                font-size: Theme.font-size-md;
+                vertical-alignment: center;
+            }
+
+            Rectangle {
+                width: pill-lbl.preferred-width + 32px;
+                height: 38px;
+                border-radius: Theme.radius-pill;
+                background: root.running ? Theme.surface-2 : Theme.accent-tint;
+                border-width: 1px;
+                border-color: Theme.border-accent;
+                accessible-label: root.running ? "Refresh running" : "Refresh agents";
+                accessible-role: button;
+                accessible-action-default => {
+                    if !root.running { root.refresh-clicked(); }
+                }
+
+                pill-lbl := Text {
+                    text: root.running ? "running…" : "Refresh";
+                    color: root.running ? Theme.text-tertiary : Theme.accent;
+                    font-family: Theme.font-sans;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { if (!root.running) { root.refresh-clicked(); } }
+                }
+            }
+        }
+
+        // ── Structured card list ──────────────────────────────────────────────
+        // Single scrollable column.  See file header for why 2-column via a
+        // single flat model is deferred (reserved-space misalignment from
+        // `visible`-gated for-loops in two side-by-side VerticalLayouts).
+        if root.has-agents: Rectangle {
+            vertical-stretch: 1;
+            background: transparent;
+            border-radius: Theme.radius-md;
+
+            Flickable {
+                viewport-width: self.width;
+
+                VerticalLayout {
+                    padding: 2px;
+                    spacing: 14px;
+                    alignment: start;
+                    width: parent.width;
+
+                    for agent in root.agents: AgentCard {
+                        agent: agent;
+                        width: parent.width - 4px;
+                    }
+                }
+            }
+        }
+
+        // ── Raw-output fallback ───────────────────────────────────────────────
+        // Preserves the ProbeView mono-dump when probe returns plain text or the
+        // JSON wiring is not yet in place.  Rendered only when agents is empty
+        // and raw-output is non-empty.
+        if root.show-raw: Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-void;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            Flickable {
+                viewport-width: self.width;
+
+                Text {
+                    x: 18px;
+                    y: 16px;
+                    width: parent.width - 36px;
+                    text: root.raw-output;
+                    color: Theme.text-secondary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-sm;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // ── Empty state ───────────────────────────────────────────────────────
+        // Both agents and raw-output are empty: first load, probe not yet run.
+        if root.show-empty: Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-void;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+
+                Text {
+                    text: "⚇";
+                    color: Theme.text-disabled;
+                    font-size: Theme.font-size-display-sm;
+                    horizontal-alignment: center;
+                    width: parent.width;
+                }
+
+                Text {
+                    text: "No agents found.";
+                    color: Theme.text-tertiary;
+                    font-family: Theme.font-sans;
+                    font-size: Theme.font-size-base;
+                    horizontal-alignment: center;
+                    width: parent.width;
+                }
+
+                Text {
+                    text: "Click Refresh to probe the cluster.";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-xs;
+                    horizontal-alignment: center;
+                    width: parent.width;
+                }
+            }
+        }
+    }
+}

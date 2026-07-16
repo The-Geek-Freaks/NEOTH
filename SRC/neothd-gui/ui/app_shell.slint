@@ -196,8 +196,10 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Automation"; glyph: "⟳"; visible: root.complexity >= 2; active: root.active-tab == "automation"; clicked => { root.nav("automation"); } }
                 NavBtn { label: "Loops"; glyph: "∞"; visible: root.complexity >= 2 && root.show-loops; active: root.active-tab == "loops"; clicked => { root.nav("loops"); } }
                 // Wave 4a — WORK additions (≥1 gate matches Automation).
-                NavBtn { label: "n8n"; glyph: "⧉"; visible: root.complexity >= 1; active: root.active-tab == "n8n"; clicked => { root.nav("n8n"); } }
-                NavBtn { label: "Calendar"; glyph: "▦"; visible: root.complexity >= 1; active: root.active-tab == "calendar"; clicked => { root.nav("calendar"); } }
+                // Glyph dedup: n8n had Plugins' ⧉, Calendar had Resources' ▦ —
+                // every nav glyph is unique so icons stay meaning-bearing.
+                NavBtn { label: "n8n"; glyph: "⇶"; visible: root.complexity >= 1; active: root.active-tab == "n8n"; clicked => { root.nav("n8n"); } }
+                NavBtn { label: "Calendar"; glyph: "◷"; visible: root.complexity >= 1; active: root.active-tab == "calendar"; clicked => { root.nav("calendar"); } }
                 NavBtn { label: "Evolve"; glyph: "✦"; visible: root.complexity >= 1; active: root.active-tab == "evolve"; clicked => { root.nav("evolve"); } }
                 // FEAT-05 — Self-Dev Proposal Review (same gate as Evolve: complexity ≥ 1).
                 NavBtn { label: "Self-Dev"; glyph: "⊞"; visible: root.complexity >= 1; active: root.active-tab == "selfdev"; clicked => { root.nav("selfdev"); } }
@@ -225,6 +227,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Wiki"; glyph: "⌗"; visible: root.complexity >= 1; active: root.active-tab == "wiki"; clicked => { root.nav("wiki"); } }
                 NavBtn { label: "Companion"; glyph: "⊕"; active: root.active-tab == "companion"; clicked => { root.nav("companion"); } }
                 NavBtn { label: "Mesh"; glyph: "◇"; visible: root.complexity >= 2; active: root.active-tab == "mesh"; clicked => { root.nav("mesh"); } }
+                NavBtn { label: "WAL"; glyph: "≣"; visible: root.complexity >= 2; active: root.active-tab == "wal"; clicked => { root.nav("wal"); } }
                 NavBtn { label: "Doctor"; glyph: "✚"; active: root.active-tab == "doctor"; clicked => { root.nav("doctor"); } }
                 NavBtn { label: "Config"; glyph: "⚙"; active: root.active-tab == "config"; clicked => { root.nav("config"); } }
             }

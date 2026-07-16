@@ -523,6 +523,7 @@ mod win_private {
 /// complexity level.
 mod buddy_activity;
 mod gui_action;
+mod gui_stream;
 mod panel_logic;
 mod wizard_logic;
 
@@ -1143,6 +1144,11 @@ fn main() -> Result<()> {
     // never lies about what is running.
     window.set_app_version_line(concat!("v", env!("CARGO_PKG_VERSION"), " · sovereign").into());
 
+    // Daemon→GUI activity bus — the Buddy reacts live to WAL events
+    // (dreaming, council, self-improve, cron, loops, channel ingress).
+    // Fail-silent: without a daemon binary the follower just retries.
+    gui_stream::spawn_wal_follower(window.as_weak());
+
     // Daemon-offline banner retry — reset to "connecting" (hides the
     // banner) and re-run the same probe the startup path uses.
     let weak_daemon_retry = window.as_weak();
@@ -1744,6 +1750,58 @@ fn main() -> Result<()> {
     let chat_budget_for_send = chat_auto_nudge_budget.clone();
     let chat_auto_flag_for_send = chat_auto_in_progress.clone();
     let chat_attach_for_send = chat_attachments.clone();
+
+    // Wave 5 — message hover actions: Copy / Retry / Delete on bubbles.
+    {
+        use slint::Model;
+        let weak_copy = window.as_weak();
+        window.on_chat_message_copy(move |idx| {
+            let Some(w) = weak_copy.upgrade() else { return };
+            let Some(msg) = w.get_chat_messages().row_data(idx as usize) else {
+                return;
+            };
+            match arboard::Clipboard::new().and_then(|mut c| c.set_text(msg.text.to_string())) {
+                Ok(()) => {}
+                Err(e) => tracing::warn!(error = %e, "clipboard copy failed"),
+            }
+        });
+
+        // Retry: resend the nearest operator message at-or-before the
+        // clicked bubble through the normal send path.
+        let weak_retry = window.as_weak();
+        window.on_chat_message_retry(move |idx| {
+            let Some(w) = weak_retry.upgrade() else { return };
+            let msgs = w.get_chat_messages();
+            let mut i = idx as usize;
+            loop {
+                let Some(m) = msgs.row_data(i) else { break };
+                if m.role == "operator" {
+                    let text = m.text.clone();
+                    w.invoke_chat_send_clicked(text);
+                    break;
+                }
+                if i == 0 {
+                    break;
+                }
+                i -= 1;
+            }
+        });
+
+        // Delete: drop the bubble from the visible model (view-level only —
+        // the WAL keeps the audit truth; this is declutter, not history edit).
+        let weak_delete = window.as_weak();
+        window.on_chat_message_delete(move |idx| {
+            let Some(w) = weak_delete.upgrade() else { return };
+            let msgs = w.get_chat_messages();
+            let kept: Vec<ChatMessage> = (0..msgs.row_count())
+                .filter(|i| *i != idx as usize)
+                .filter_map(|i| msgs.row_data(i))
+                .collect();
+            w.set_chat_messages(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
+                kept,
+            ))));
+        });
+    }
 
     // GOLD-ADAPT-ODY-12/14 — deep-link chip routing. `nav` chips ARE the
     // UI-control events (panel navigation); `kanban` chips navigate to the
@@ -3119,9 +3177,32 @@ fn main() -> Result<()> {
         buddy(&w0, GuiActivity::AgentDeploy);
         let weak = weak_agents.clone();
         std::thread::spawn(move || {
-            let output = run_neothd_probe(&["agents", "list"]);
+            // Wave 5 — JSON first for the structured card grid; the raw text
+            // dump stays as the fallback body when parsing yields nothing.
+            let json_out = run_neothd_probe(&["agents", "list", "--output", "json"]);
+            let cards = panel_logic::parse_agents_list(&json_out);
+            let output = if cards.is_empty() {
+                run_neothd_probe(&["agents", "list"])
+            } else {
+                String::new()
+            };
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
+                    let rows: Vec<AgentRow> = cards
+                        .into_iter()
+                        .map(|c| AgentRow {
+                            name: c.name.into(),
+                            hemisphere: c.hemisphere.into(),
+                            provider: c.provider.into(),
+                            model: c.model.into(),
+                            state: c.state.into(),
+                            current_task: c.current_task.into(),
+                            tasks_done: c.tasks_done,
+                        })
+                        .collect();
+                    w.set_agents_model(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(rows),
+                    )));
                     w.set_agents_output(output.into());
                     w.set_agents_running(false);
                 }
@@ -4373,6 +4454,263 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── Wave 5 — WAL Inspector callbacks ──────────────────────────────────────
+    {
+        use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+
+        // Cache of the last probe (unfiltered) + current view filters.
+        let wal_cache: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::WalRowData>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let wal_text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let wal_band = std::sync::Arc::new(AtomicI32::new(0));
+        let wal_limit = std::sync::Arc::new(AtomicI32::new(200));
+        let wal_follow = std::sync::Arc::new(AtomicBool::new(false));
+
+        // Seed the band combo options.
+        let band_opts: Vec<slint::SharedString> = panel_logic::WAL_BAND_OPTIONS
+            .iter()
+            .map(|(label, _)| (*label).into())
+            .collect();
+        window.set_wal_opcode_options(slint::ModelRc::new(std::rc::Rc::new(
+            slint::VecModel::from(band_opts),
+        )));
+
+        // Apply cache → filtered rows → Slint model.
+        fn wal_apply(
+            w: &MainWindow,
+            cache: &[panel_logic::WalRowData],
+            text: &str,
+            band: usize,
+        ) {
+            let filtered = panel_logic::filter_wal_rows(cache, text, band);
+            let rows: Vec<WalEventRow> = filtered
+                .iter()
+                .map(|r| WalEventRow {
+                    seq: r.seq,
+                    ts: r.ts.as_str().into(),
+                    opcode: r.opcode.as_str().into(),
+                    kind: r.kind.as_str().into(),
+                    summary: r.summary.as_str().into(),
+                    tint: r.tint.as_str().into(),
+                })
+                .collect();
+            w.set_wal_events(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
+                rows,
+            ))));
+        }
+
+        // One probe pass — runs on a worker thread, lands on the loop.
+        fn wal_refresh(
+            weak: slint::Weak<MainWindow>,
+            cache: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::WalRowData>>>,
+            text: std::sync::Arc<std::sync::Mutex<String>>,
+            band: std::sync::Arc<AtomicI32>,
+            limit: i32,
+        ) {
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&[
+                    "wal",
+                    "show",
+                    "--limit",
+                    &limit.to_string(),
+                    "--output",
+                    "json",
+                ]);
+                let (rows, matched) = panel_logic::parse_wal_show(&out);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    w.set_wal_total_count(matched);
+                    w.set_wal_has_older(matched > rows.len() as i32);
+                    let t = text.lock().unwrap().clone();
+                    let b = band.load(Ordering::Relaxed) as usize;
+                    *cache.lock().unwrap() = rows;
+                    wal_apply(&w, &cache.lock().unwrap(), &t, b);
+                });
+            });
+        }
+
+        // Initial load + refresh triggers.
+        wal_refresh(
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+            200,
+        );
+
+        let (weak_f, cache_f, text_f, band_f) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+        );
+        window.on_wal_filter_edited(move |s| {
+            *text_f.lock().unwrap() = s.to_string();
+            if let Some(w) = weak_f.upgrade() {
+                wal_apply(
+                    &w,
+                    &cache_f.lock().unwrap(),
+                    &s,
+                    band_f.load(Ordering::Relaxed) as usize,
+                );
+            }
+        });
+
+        let (weak_b, cache_b, text_b, band_b) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+        );
+        window.on_wal_opcode_filter_changed(move |idx| {
+            band_b.store(idx, Ordering::Relaxed);
+            if let Some(w) = weak_b.upgrade() {
+                wal_apply(
+                    &w,
+                    &cache_b.lock().unwrap(),
+                    &text_b.lock().unwrap(),
+                    idx as usize,
+                );
+            }
+        });
+
+        let (weak_o, cache_o, text_o, band_o, limit_o) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+            wal_limit.clone(),
+        );
+        window.on_wal_load_older_clicked(move || {
+            let new_limit = (limit_o.load(Ordering::Relaxed) * 2).min(2000);
+            limit_o.store(new_limit, Ordering::Relaxed);
+            wal_refresh(
+                weak_o.clone(),
+                cache_o.clone(),
+                text_o.clone(),
+                band_o.clone(),
+                new_limit,
+            );
+        });
+
+        // Follow mode — background poll every 3 s while enabled.
+        {
+            let follow = wal_follow.clone();
+            window.on_wal_follow_toggled(move |on| {
+                follow.store(on, Ordering::Relaxed);
+            });
+            let (weak_p, cache_p, text_p, band_p, limit_p, follow_p) = (
+                window.as_weak(),
+                wal_cache.clone(),
+                wal_text.clone(),
+                wal_band.clone(),
+                wal_limit.clone(),
+                wal_follow.clone(),
+            );
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if follow_p.load(Ordering::Relaxed) {
+                        wal_refresh(
+                            weak_p.clone(),
+                            cache_p.clone(),
+                            text_p.clone(),
+                            band_p.clone(),
+                            limit_p.load(Ordering::Relaxed),
+                        );
+                    }
+                }
+            });
+        }
+
+        // Row select → detail pane shows that frame's pretty JSON.
+        let (weak_s, cache_s) = (window.as_weak(), wal_cache.clone());
+        window.on_wal_row_selected(move |seq| {
+            if let Some(w) = weak_s.upgrade() {
+                let detail = cache_s
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r.seq == seq)
+                    .map(|r| r.detail_json.clone())
+                    .unwrap_or_default();
+                w.set_wal_detail_json(detail.as_str().into());
+            }
+        });
+
+        // Copy detail JSON to the clipboard.
+        let weak_c = window.as_weak();
+        window.on_wal_copy_detail_clicked(move || {
+            if let Some(w) = weak_c.upgrade() {
+                let text = w.get_wal_detail_json().to_string();
+                if !text.is_empty()
+                    && let Err(e) =
+                        arboard::Clipboard::new().and_then(|mut c| c.set_text(text))
+                {
+                    tracing::warn!(error = %e, "WAL detail clipboard copy failed");
+                }
+            }
+        });
+
+        // Verify — header/frame validity stats over the newest segment.
+        let weak_v = window.as_weak();
+        window.on_wal_verify_clicked(move || {
+            let Some(w0) = weak_v.upgrade() else { return };
+            w0.set_wal_verify_running(true);
+            let weak = weak_v.clone();
+            std::thread::spawn(move || {
+                let newest = std::fs::read_dir(default_neoth_home().join("wal"))
+                    .ok()
+                    .and_then(|rd| {
+                        let mut segs: Vec<PathBuf> = rd
+                            .flatten()
+                            .map(|e| e.path())
+                            .filter(|p| {
+                                p.extension().and_then(|s| s.to_str()) == Some("wal")
+                            })
+                            .collect();
+                        segs.sort();
+                        segs.pop()
+                    });
+                let verdict = match newest {
+                    None => "no WAL segments found".to_string(),
+                    Some(seg) => {
+                        let out = run_neothd_probe(&[
+                            "wal",
+                            "stats",
+                            &seg.display().to_string(),
+                            "--output",
+                            "json",
+                        ]);
+                        match serde_json::from_str::<serde_json::Value>(&out) {
+                            Ok(v) => {
+                                let ok = v
+                                    .get("header_ok")
+                                    .and_then(|x| x.as_bool())
+                                    .unwrap_or(false);
+                                if ok {
+                                    "ok".to_string()
+                                } else {
+                                    "FAIL: segment header invalid".to_string()
+                                }
+                            }
+                            Err(_) => format!(
+                                "FAIL: {}",
+                                out.trim().chars().take(80).collect::<String>()
+                            ),
+                        }
+                    }
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_wal_verify_result(verdict.as_str().into());
+                        w.set_wal_verify_running(false);
+                    }
+                });
+            });
+        });
+    }
+
     // ── Wave 4b — Mesh & Cluster panel callbacks ──────────────────────────────
     {
         let weak_mesh = window.as_weak();
@@ -4387,6 +4725,31 @@ fn main() -> Result<()> {
         let weak_mesh_init = window.as_weak();
         std::thread::spawn(move || {
             refresh_mesh(weak_mesh_init);
+        });
+
+        // Wave 5 — per-peer sync-state query: vector-clock delta for one
+        // authenticated peer, surfaced as a toast (read-only probe).
+        let weak_mesh_sync = window.as_weak();
+        window.on_mesh_peer_sync_clicked(move |peer_id| {
+            let weak = weak_mesh_sync.clone();
+            let peer = peer_id.to_string();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&[
+                    "cluster",
+                    "sync-state",
+                    "--peer",
+                    peer.as_str(),
+                    "--output",
+                    "json",
+                ]);
+                let summary: String = out.trim().chars().take(160).collect();
+                let body = if summary.is_empty() {
+                    "no sync state reported".to_string()
+                } else {
+                    summary
+                };
+                push_toast(&weak, "info", "Peer sync state", &body);
+            });
         });
     }
 
@@ -7058,20 +7421,32 @@ fn main() -> Result<()> {
             };
             win.hide().unwrap_or(());
             ov.show().unwrap_or(());
-            // Set always-on-top and position bottom-right after show() so the
-            // winit event loop is active and the accessor can succeed.
+            // Set always-on-top and position after show() so the winit event
+            // loop is active and the accessor can succeed. A position saved
+            // from a previous drag wins over the bottom-right default; it is
+            // clamped into the current monitor so a monitor change can never
+            // strand the overlay off-screen.
+            let saved = std::fs::read_to_string(default_neoth_home().join(".overlay-pos"))
+                .ok()
+                .and_then(|s| panel_logic::parse_overlay_pos(&s));
             ov.window().with_winit_window(|w| {
                 w.set_window_level(WindowLevel::AlwaysOnTop);
-                // Position: primary-monitor bottom-right, 20px inset.
                 if let Some(mon) = w.current_monitor() {
                     let s = mon.size();
                     // 400 × 560 is the overlay's approximate pixel footprint at
                     // default 96 DPI; at higher scale factors it may clip —
                     // the operator can drag it from there.
-                    w.set_outer_position(PhysicalPosition::new(
-                        (s.width as i32).saturating_sub(400),
-                        (s.height as i32).saturating_sub(560),
-                    ));
+                    let (x, y) = match saved {
+                        Some((sx, sy)) => (
+                            sx.clamp(0, (s.width as i32).saturating_sub(120)),
+                            sy.clamp(0, (s.height as i32).saturating_sub(120)),
+                        ),
+                        None => (
+                            (s.width as i32).saturating_sub(400),
+                            (s.height as i32).saturating_sub(560),
+                        ),
+                    };
+                    w.set_outer_position(PhysicalPosition::new(x, y));
                 }
             });
             // Seed the overlay with the current buddy state so it is not blank.
@@ -7094,6 +7469,32 @@ fn main() -> Result<()> {
             }
         });
 
+        // Persist the overlay's dragged position so the next minimize
+        // reopens it where the operator left it. Best-effort — a failed
+        // write just means the default position next time.
+        fn save_overlay_pos(ov: &MiniOverlay) {
+            use slint::winit_030::WinitWindowAccessor;
+            ov.window().with_winit_window(|w| {
+                if let Ok(pos) = w.outer_position() {
+                    let _ = std::fs::write(
+                        default_neoth_home().join(".overlay-pos"),
+                        format!("{},{}", pos.x, pos.y),
+                    );
+                }
+            });
+        }
+
+        // overlay drag — pointer-down on the title strip hands the move to
+        // the OS compositor. drag_window() runs the whole native move loop.
+        let overlay_weak_for_drag = overlay.as_weak();
+        overlay.on_drag_started(move || {
+            if let Some(ov) = overlay_weak_for_drag.upgrade() {
+                ov.window().with_winit_window(|w| {
+                    let _ = w.drag_window();
+                });
+            }
+        });
+
         // overlay restore-clicked → hide overlay, show main window.
         let overlay_weak_for_restore = overlay.as_weak();
         let window_weak_for_restore = window.as_weak();
@@ -7104,6 +7505,7 @@ fn main() -> Result<()> {
             let Some(win) = window_weak_for_restore.upgrade() else {
                 return;
             };
+            save_overlay_pos(&ov);
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
         });
@@ -7118,6 +7520,7 @@ fn main() -> Result<()> {
             let Some(win) = window_weak_for_hide.upgrade() else {
                 return;
             };
+            save_overlay_pos(&ov);
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
         });
@@ -12332,6 +12735,11 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     let foreign_out =
         run_neothd_probe(&["cluster", "events", "--output", "json", "--limit", "500"]);
     let backup = panel_logic::parse_foreign_backup(&foreign_out);
+    // Wave 5 — fleet dashboard: per-peer resource meters from the swarm
+    // snapshot table + the raw gossip stream as mono log lines.
+    let swarm_out = run_neothd_probe(&["cluster", "swarm", "--output", "json"]);
+    let swarm_nodes = panel_logic::parse_swarm_nodes(&swarm_out);
+    let gossip_lines = panel_logic::format_gossip_lines(&foreign_out, 60);
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
@@ -12341,12 +12749,30 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         let peer_rows: Vec<MeshPeerRow> = snap
             .peers
             .into_iter()
-            .map(|p| MeshPeerRow {
-                id: p.id.into(),
-                last_seen: p.last_seen.into(), // Slint kebab→snake: last-seen → last_seen
-                reachable: p.reachable,
+            .map(|p| {
+                // Join gossip resource snapshots onto the peer list by node
+                // id prefix (status ids may be truncated for display).
+                let res = swarm_nodes
+                    .iter()
+                    .find(|n| n.node_id == p.id || n.node_id.starts_with(&p.id));
+                MeshPeerRow {
+                    id: p.id.into(),
+                    last_seen: p.last_seen.into(), // Slint kebab→snake: last-seen → last_seen
+                    reachable: p.reachable,
+                    cpu_pct: res.map(|n| n.cpu_frac).unwrap_or(0.0),
+                    ram_pct: res.map(|n| n.ram_frac).unwrap_or(0.0),
+                    vram_pct: res.map(|n| n.vram_frac).unwrap_or(0.0),
+                    role: "".into(),    // roles land with the gossip payload extension
+                    version: "".into(), // ditto — neoth_version is not gossiped yet
+                    staleness_secs: res.map(|n| n.age_secs).unwrap_or(0),
+                }
             })
             .collect();
+        let gossip_model: Vec<slint::SharedString> =
+            gossip_lines.iter().map(|l| l.as_str().into()).collect();
+        w.set_mesh_gossip_events(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            gossip_model,
+        ))));
         w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
             peer_rows,
         ))));

@@ -1,5 +1,37 @@
 // NEOTH Chat surface — Pick #33. Post-onboarding daily view.
 //
+// WIRING (new in this revision — orchestrator wires in main.rs / panel_logic.rs):
+//
+//   NEW CALLBACKS on ChatView:
+//     message-copy(index: int)
+//       → arboard (or slint clipboard) write of messages[index].text
+//     message-retry(index: int)
+//       → find the last "operator" message before `index`, re-send its text
+//         through the existing send_clicked handler
+//     message-delete(index: int)
+//       → remove entry at `index` from the Rust-side Vec<ChatMessage>,
+//         then push the updated slice back via ChatView.set_messages(…)
+//     scroll-to-bottom-clicked()
+//       → informational hook; Slint already writes viewport-y directly,
+//         so use this to reset `unseen-count` to 0 on the Rust side
+//     starter-clicked(prompt: string)
+//       → equivalent to send_clicked(prompt); auto-populates the draft
+//         and fires a send immediately
+//
+//   NEW PROPERTIES on ChatView:
+//     unseen-count: int
+//       → increment on each appended message when auto_follow is false
+//         (detect via the scrolled signal or a Rust-side tracking bool);
+//         reset to 0 when the FAB is clicked or the viewport snaps to bottom
+//     starter-prompts: [string]
+//       → pre-fill with ["What can you do?", "Show me a demo",
+//         "Help me get started"]; override from startup config if desired
+//
+//   CODE BLOCKS: messages are plain text; no code-block sub-renderer exists
+//   in this component, so no per-block copy affordance is added. When a
+//   code-block renderer is introduced, wire it to message-copy(index) with
+//   the block text as the clipboard payload. (Noted in wiring_notes.)
+//
 // Three-column layout:
 //   - Left: conversation sidebar (channels + active thread)
 //   - Center: scrollback + composer (input box + send button)
@@ -69,10 +101,21 @@ export struct ConsentGrant {
 // One message. Operator messages right-align with accent-green tint;
 // NEOTH messages left-align with card surface; system messages
 // center-align with muted text.
+//
+// Hover-action bar: on bubble hover a glass chip row fades in at the
+// top-right of the bubble — Copy (⧉), Retry (↺, assistant only),
+// Delete (✕, consent-pink on hover). Callbacks bubble up to ChatView.
 
 component ChatBubble inherits Rectangle {
     in property <ChatMessage> message;
     in property <length> bubble-max-width: 600px;
+    /// Index of this bubble in the messages model — passed from the
+    /// for loop so action callbacks carry the right index.
+    in property <int> bubble-index: 0;
+
+    callback copy-clicked();
+    callback retry-clicked();
+    callback delete-clicked();
 
     height: max(40px, body.preferred-height + Theme.space-base * 2);
 
@@ -102,6 +145,13 @@ component ChatBubble inherits Rectangle {
             border-radius: Theme.chat-bubble-style == 1 ? Theme.radius-xs : Theme.radius-card;
             max-width: root.bubble-max-width;
 
+            // ── Z-layer 0: full-bubble hover tracker ─────────────────
+            // Declared first (lowest z-order) so its has-hover fires
+            // on the full rect area while action-bar's inner TouchAreas
+            // (declared later, higher z) still capture click events.
+            bubble-hover := TouchArea {}
+
+            // ── Z-layer 1: message content ────────────────────────────
             VerticalLayout {
                 // ODY-11: density-aware padding (compact 8px / normal 16px / spacious 24px).
                 padding: Theme.bubble-padding;
@@ -183,6 +233,112 @@ component ChatBubble inherits Rectangle {
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%;
+                        }
+                    }
+                }
+            }
+
+            // ── Z-layer 2: hover action bar ───────────────────────────
+            // Glass chip row that fades in when the bubble is hovered.
+            // Width: 3 chips (Copy + Retry + Delete) for assistant roles;
+            // 2 chips (Copy + Delete) for operator — using fixed widths
+            // so the reactive layout stays stable during the fade.
+            // Anchored to top-right of the bubble inner rect.
+            Rectangle {
+                x: parent.width - self.width - 8px;
+                y: 8px;
+                // 2-chip width: (22+2+22) inner + 12px padding = 58px
+                // 3-chip width: (22+2+22+2+22) inner + 12px padding = 82px
+                width: root.message.role != "operator" ? 82px : 58px;
+                height: 28px;
+                border-radius: Theme.radius-pill;
+                background: Theme.surface-glass;
+                border-width: 1px;
+                border-color: Theme.border-default;
+                opacity: bubble-hover.has-hover ? 1.0 : 0.0;
+                animate opacity { duration: Theme.duration-fast; easing: ease-out; }
+
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 2px;
+                    alignment: center;
+
+                    // ── Copy ⧉ ───────────────────────────────────────
+                    Rectangle {
+                        width: 22px;
+                        height: 22px;
+                        border-radius: Theme.radius-xs;
+                        background: copy-ta.has-hover ? Theme.surface-2 : transparent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        accessible-role: button;
+                        accessible-label: "Copy message";
+                        Text {
+                            text: "⧉";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: copy-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                            animate color { duration: Theme.duration-fast; easing: ease-out; }
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                        copy-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.copy-clicked(); }
+                        }
+                    }
+
+                    // ── Retry ↺ (assistant / error / system bubbles only) ──
+                    if root.message.role != "operator": Rectangle {
+                        width: 22px;
+                        height: 22px;
+                        border-radius: Theme.radius-xs;
+                        background: retry-ta.has-hover ? Theme.surface-2 : transparent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        accessible-role: button;
+                        accessible-label: "Retry";
+                        Text {
+                            text: "↺";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: retry-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                            animate color { duration: Theme.duration-fast; easing: ease-out; }
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                        retry-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.retry-clicked(); }
+                        }
+                    }
+
+                    // ── Delete ✕ (consent-pink danger hover) ─────────
+                    Rectangle {
+                        width: 22px;
+                        height: 22px;
+                        border-radius: Theme.radius-xs;
+                        background: del-ta.has-hover ? Theme.consent-tint : transparent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        accessible-role: button;
+                        accessible-label: "Delete message";
+                        Text {
+                            text: "✕";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: del-ta.has-hover ? Theme.consent : Theme.text-secondary;
+                            animate color { duration: Theme.duration-fast; easing: ease-out; }
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                        del-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.delete-clicked(); }
                         }
                     }
                 }
@@ -534,6 +690,13 @@ export component ChatView inherits Rectangle {
     /// GOLD-ADAPT-ODY-12/14 — deep-link chips for the LAST reply.
     /// Rendered above the composer; replaced on every completed turn.
     in property <[LinkChip]> link-chips: [];
+    /// Number of messages received while the user was scrolled away from
+    /// the bottom. Rust increments on each new message when auto-follow
+    /// is disengaged; resets to 0 when scroll-to-bottom-clicked fires.
+    in property <int> unseen-count: 0;
+    /// Starter-prompt chips shown in the empty transcript state.
+    /// Rust may override these from startup config; defaults shown here.
+    in property <[string]> starter-prompts: ["What can you do?", "Show me a demo", "Help me get started"];
 
     callback send-clicked(string);
     callback channel-switched(int);
@@ -550,6 +713,15 @@ export component ChatView inherits Rectangle {
     /// Operator pressed ArrowUp with an empty composer — bubbles up to
     /// Rust so it can write the last sent input back into `composer-draft`.
     callback recall-requested();
+    /// Hover-action bar callbacks — index is the position in `messages`.
+    callback message-copy(int);
+    callback message-retry(int);
+    callback message-delete(int);
+    /// FAB tapped — Rust should reset `unseen-count` to 0.
+    callback scroll-to-bottom-clicked();
+    /// Empty state starter chip tapped — fire the prompt as if the operator
+    /// sent it. Rust handler is identical to send-clicked.
+    callback starter-clicked(string);
 
     // ── Consent strip (chat-surface quick-access) ─────────────────────
     /// Current operating mode string: "gated" | "full-auto" | "sovereign-buddy" | "advanced"
@@ -897,50 +1069,175 @@ export component ChatView inherits Rectangle {
                 }
             }
 
-            scrollback := ScrollView {
+            // ── Scrollback + scroll-to-bottom FAB wrapper ─────────────
+            // A wrapping Rectangle lets the FAB float as an absolute
+            // overlay over the ScrollView without affecting layout flow.
+            Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
 
-                // Manual-scroll opt-out: `scrolled` fires only on
-                // user-initiated drag/flick (NOT on the programmatic
-                // viewport-y write above), so re-derive auto-follow from
-                // proximity to the bottom (within 12px = still following).
-                scrolled => {
-                    root.auto-follow =
-                        self.viewport-y <= -(self.viewport-height - self.visible-height) + 12px;
+                scrollback := ScrollView {
+                    width: parent.width;
+                    height: parent.height;
+
+                    // Manual-scroll opt-out: `scrolled` fires only on
+                    // user-initiated drag/flick (NOT on the programmatic
+                    // viewport-y write above), so re-derive auto-follow from
+                    // proximity to the bottom (within 12px = still following).
+                    scrolled => {
+                        root.auto-follow =
+                            self.viewport-y <= -(self.viewport-height - self.visible-height) + 12px;
+                    }
+
+                    VerticalLayout {
+                        padding: Theme.space-base;
+                        // ODY-11: density-aware inter-bubble gap (compact 4px / normal 8px / spacious 16px).
+                        spacing: Theme.bubble-gap;
+
+                        // ── Empty transcript state ─────────────────────
+                        // Shown when no messages exist. Replaced by the
+                        // bubble list as soon as the first message arrives.
+                        if root.messages.length == 0: Rectangle {
+                            height: 360px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: Theme.space-base;
+
+                                // Buddy-orb glyph — neon green, large
+                                Text {
+                                    text: "◎";
+                                    font-family: Theme.font-display;
+                                    font-size: 56px;
+                                    color: Theme.accent-green.with-alpha(0.7);
+                                    horizontal-alignment: center;
+                                }
+
+                                // Hint headline
+                                Text {
+                                    text: "Say hello…";
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-h2;
+                                    font-weight: Theme.weight-light;
+                                    color: Theme.text-muted;
+                                    horizontal-alignment: center;
+                                }
+
+                                // Sub-hint
+                                Text {
+                                    text: "Type a message below or pick a starter.";
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-body;
+                                    color: Theme.text-dim;
+                                    horizontal-alignment: center;
+                                }
+
+                                // Starter-prompt chips — horizontal row, centred.
+                                // Wraps to a new line naturally when the row is too
+                                // narrow; each chip fires starter-clicked(prompt).
+                                if root.starter-prompts.length > 0: HorizontalLayout {
+                                    alignment: center;
+                                    spacing: Theme.space-tight;
+                                    for prompt in root.starter-prompts: Rectangle {
+                                        height: 34px;
+                                        width: starter-lbl.preferred-width + Theme.space-base * 2;
+                                        border-radius: Theme.radius-pill;
+                                        background: starter-ta.has-hover ? Theme.accent-tint : transparent;
+                                        border-width: 1px;
+                                        border-color: starter-ta.has-hover ? Theme.border-accent : Theme.border-default;
+                                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                                        animate border-color { duration: Theme.duration-fast; easing: ease-out; }
+                                        accessible-role: button;
+                                        accessible-label: prompt;
+
+                                        starter-lbl := Text {
+                                            text: prompt;
+                                            font-family: Theme.font-display;
+                                            font-size: Theme.font-size-caption;
+                                            color: starter-ta.has-hover ? Theme.accent : Theme.text-secondary;
+                                            animate color { duration: Theme.duration-fast; easing: ease-out; }
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width - Theme.space-base * 2;
+                                            x: Theme.space-base;
+                                        }
+                                        starter-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.starter-clicked(prompt); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        for msg[idx] in root.messages: ChatBubble {
+                            message: msg;
+                            bubble-index: idx;
+                            bubble-max-width: 560px;
+                            copy-clicked => { root.message-copy(idx); }
+                            retry-clicked => { root.message-retry(idx); }
+                            delete-clicked => { root.message-delete(idx); }
+                        }
+                    }
                 }
 
-                VerticalLayout {
-                    padding: Theme.space-base;
-                    // ODY-11: density-aware inter-bubble gap (compact 4px / normal 8px / spacious 16px).
-                    spacing: Theme.bubble-gap;
+                // ── Scroll-to-bottom FAB ───────────────────────────────
+                // Floating pill bottom-right. Visible when the user has
+                // scrolled away from the bottom (auto-follow = false).
+                // Clicking snaps the viewport back to the bottom and fires
+                // scroll-to-bottom-clicked so Rust can reset unseen-count.
+                if !root.auto-follow: Rectangle {
+                    x: parent.width - self.width - Theme.space-base;
+                    y: parent.height - self.height - Theme.space-base;
+                    width: fab-row.preferred-width + Theme.space-base;
+                    height: 36px;
+                    border-radius: Theme.radius-pill;
+                    background: Theme.accent-tint;
+                    border-width: 1px;
+                    border-color: Theme.border-accent;
+                    accessible-role: button;
+                    accessible-label: "Scroll to bottom";
 
-                    if root.messages.length == 0: Rectangle {
-                        height: 200px;
-                        VerticalLayout {
-                            alignment: center;
-                            spacing: Theme.space-tight;
-                            Text {
-                                text: "No messages yet.";
-                                font-family: Theme.font-display;
-                                font-size: Theme.font-size-h2;
-                                font-weight: Theme.weight-light;
-                                color: Theme.text-muted;
+                    fab-row := HorizontalLayout {
+                        padding-left: Theme.space-base;
+                        padding-right: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        alignment: center;
+
+                        Text {
+                            text: "↓";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            color: Theme.accent;
+                            vertical-alignment: center;
+                        }
+
+                        if root.unseen-count > 0: Rectangle {
+                            height: 18px;
+                            width: unseen-lbl.preferred-width + 10px;
+                            border-radius: Theme.radius-pill;
+                            background: Theme.accent-green.with-alpha(0.25);
+                            unseen-lbl := Text {
+                                text: root.unseen-count > 99 ? "99+" : root.unseen-count;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.accent;
                                 horizontal-alignment: center;
-                            }
-                            Text {
-                                text: "Type a message below to start. `/help` lists every command.";
-                                font-family: Theme.font-display;
-                                font-size: Theme.font-size-body;
-                                color: Theme.text-dim;
-                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                width: 100%;
                             }
                         }
                     }
 
-                    for msg in root.messages: ChatBubble {
-                        message: msg;
-                        bubble-max-width: 560px;
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            scrollback.viewport-y = min(0px, -(scrollback.viewport-height - scrollback.visible-height));
+                            root.auto-follow = true;
+                            root.scroll-to-bottom-clicked();
+                        }
                     }
                 }
             }

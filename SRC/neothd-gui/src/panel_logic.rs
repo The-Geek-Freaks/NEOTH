@@ -2513,6 +2513,255 @@ pub fn next_toast_id(toasts: &[(i32, String, String, String)]) -> i32 {
     max + 1
 }
 
+// ── Agents tab — structured card data ─────────────────────────────────────────
+
+/// One agent card parsed from `neoth agents list --output json`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AgentRowData {
+    pub name: String,
+    pub hemisphere: String, // source label: "built-in" | "operator"
+    pub provider: String,
+    pub model: String,
+    pub state: String, // "idle" | "off"
+    pub current_task: String,
+    pub tasks_done: i32,
+}
+
+/// Tolerant parse; empty vec on any shape mismatch (caller falls back to
+/// the raw mono dump so nothing regresses).
+pub fn parse_agents_list(json: &str) -> Vec<AgentRowData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(rows) = v.get("agents").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .map(|a| AgentRowData {
+            name: a
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            hemisphere: a
+                .get("source")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            provider: String::new(),
+            model: a
+                .get("model")
+                .and_then(|x| x.as_str())
+                .unwrap_or("(default)")
+                .to_string(),
+            state: if a.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false) {
+                "idle".to_string()
+            } else {
+                "off".to_string()
+            },
+            current_task: a
+                .get("description")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            tasks_done: 0,
+        })
+        .collect()
+}
+
+// ── WAL inspector ─────────────────────────────────────────────────────────────
+
+/// One row parsed from `neoth wal show --output json` for the inspector.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WalRowData {
+    pub seq: i32,
+    pub ts: String,
+    pub opcode: String,
+    pub kind: String,
+    pub summary: String,
+    pub tint: String,
+    pub detail_json: String,
+}
+
+/// Semantic tint per opcode band — mirrors the WAL registry's band map
+/// (events.rs header table) onto the GUI's meaning colours.
+pub fn wal_tint_for(event_type: u8) -> &'static str {
+    match event_type {
+        0x10..=0x2F => "memory",              // memory / recall / self-dev
+        0x30..=0x3F => "audit",               // channels / ingress-egress
+        0x40..=0x4F => "warning",             // cron (amber = in-progress)
+        0x60..=0x6F => "audit",               // council / decisions
+        0x70..=0x7F => "warning",             // coding workflow + loops
+        0xC0..=0xCF => "consent",             // caps / denials / security
+        0xF0..=0xFF => "memory",              // dreaming / high band
+        _ => "plain",
+    }
+}
+
+/// Parse the `wal show` JSON envelope into inspector rows (already
+/// newest-first from the CLI). Returns (rows, frames_matched).
+pub fn parse_wal_show(json: &str) -> (Vec<WalRowData>, i32) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let matched = v
+        .get("frames_matched")
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0) as i32;
+    let Some(frames) = v.get("frames").and_then(|x| x.as_array()) else {
+        return (Vec::new(), matched);
+    };
+    let rows = frames
+        .iter()
+        .map(|f| {
+            let opcode = f
+                .get("event_type")
+                .and_then(|x| x.as_str())
+                .unwrap_or("0x??")
+                .to_string();
+            let et = u8::from_str_radix(opcode.trim_start_matches("0x"), 16).unwrap_or(0);
+            let ts_ns = f.get("ts_ns").and_then(|x| x.as_u64()).unwrap_or(0);
+            let payload_len = f.get("payload_len").and_then(|x| x.as_u64()).unwrap_or(0);
+            let importance = f.get("importance").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            WalRowData {
+                seq: f.get("event_id").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                ts: format_epoch_utc((ts_ns / 1_000_000_000) as i64),
+                opcode,
+                kind: f
+                    .get("event_name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                summary: format!("{} B · imp {:.2}", payload_len, importance),
+                tint: wal_tint_for(et).to_string(),
+                detail_json: serde_json::to_string_pretty(f).unwrap_or_default(),
+            }
+        })
+        .collect();
+    (rows, matched)
+}
+
+/// Client-side filter for the inspector: free-text over kind/opcode plus
+/// an opcode-band index matching `WAL_BAND_OPTIONS`.
+pub const WAL_BAND_OPTIONS: &[(&str, Option<(u8, u8)>)] = &[
+    ("all bands", None),
+    ("memory 0x10–0x2F", Some((0x10, 0x2F))),
+    ("channels 0x30–0x3F", Some((0x30, 0x3F))),
+    ("cron 0x40–0x4F", Some((0x40, 0x4F))),
+    ("council 0x60–0x6F", Some((0x60, 0x6F))),
+    ("coding+loops 0x70–0x7F", Some((0x70, 0x7F))),
+    ("security 0xC0–0xCF", Some((0xC0, 0xCF))),
+    ("dreaming 0xF0–0xFF", Some((0xF0, 0xFF))),
+];
+
+pub fn filter_wal_rows(rows: &[WalRowData], text: &str, band_idx: usize) -> Vec<WalRowData> {
+    let q = text.trim().to_lowercase();
+    let band = WAL_BAND_OPTIONS
+        .get(band_idx)
+        .and_then(|(_, range)| *range);
+    rows.iter()
+        .filter(|r| {
+            let et = u8::from_str_radix(r.opcode.trim_start_matches("0x"), 16).unwrap_or(0);
+            let band_ok = band.is_none_or(|(lo, hi)| et >= lo && et <= hi);
+            let text_ok = q.is_empty()
+                || r.kind.to_lowercase().contains(&q)
+                || r.opcode.to_lowercase().contains(&q);
+            band_ok && text_ok
+        })
+        .cloned()
+        .collect()
+}
+
+// ── Mesh fleet dashboard — swarm resource snapshots ──────────────────────────
+
+/// One node row parsed from `neoth cluster swarm --output json`
+/// (top-level `{ "sampling": …, "nodes": [ … ] }`). Fractions are 0..1
+/// ready for SegBar meters.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SwarmNodeData {
+    pub node_id: String,
+    pub cpu_frac: f32,
+    pub ram_frac: f32,
+    pub vram_frac: f32,
+    pub age_secs: i32,
+}
+
+/// Parse the swarm dashboard JSON. Tolerant: bad JSON / missing fields
+/// yield an empty vec / zeroed fractions (meters render empty).
+pub fn parse_swarm_nodes(json: &str) -> Vec<SwarmNodeData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(nodes) = v.get("nodes").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    fn frac(used: Option<f64>, total: Option<f64>) -> f32 {
+        match (used, total) {
+            (Some(u), Some(t)) if t > 0.0 => (u / t).clamp(0.0, 1.0) as f32,
+            _ => 0.0,
+        }
+    }
+    nodes
+        .iter()
+        .map(|n| SwarmNodeData {
+            node_id: n
+                .get("node_id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            cpu_frac: (n.get("cpu_pct").and_then(|x| x.as_f64()).unwrap_or(0.0) / 100.0)
+                .clamp(0.0, 1.0) as f32,
+            ram_frac: frac(
+                n.get("ram_used_mb").and_then(|x| x.as_f64()),
+                n.get("ram_total_mb").and_then(|x| x.as_f64()),
+            ),
+            vram_frac: frac(
+                n.get("vram_used_mb").and_then(|x| x.as_f64()),
+                n.get("vram_total_mb").and_then(|x| x.as_f64()),
+            ),
+            age_secs: n.get("age_s").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+        })
+        .collect()
+}
+
+/// Render `cluster events --output json` rows as mono log lines for the
+/// mesh tab's gossip stream, newest first, capped. Tolerant of shape
+/// drift: rows missing fields render with placeholders.
+pub fn format_gossip_lines(json: &str, cap: usize) -> Vec<String> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(rows) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut lines: Vec<(i64, String)> = rows
+        .iter()
+        .map(|r| {
+            let ts = r.get("received_at").and_then(|x| x.as_i64()).unwrap_or(0);
+            let peer = r
+                .get("origin_peer_pk")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
+            let peer8: String = peer.chars().take(8).collect();
+            let et = r.get("event_type").and_then(|x| x.as_u64()).unwrap_or(0);
+            let bytes = r.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+            (
+                ts,
+                format!(
+                    "{}  {}  0x{:02X}  {}",
+                    format_epoch_utc(ts),
+                    peer8,
+                    et,
+                    format_backup_bytes(bytes)
+                ),
+            )
+        })
+        .collect();
+    lines.sort_by_key(|(ts, _)| std::cmp::Reverse(*ts));
+    lines.into_iter().take(cap).map(|(_, l)| l).collect()
+}
+
+// ── Companion overlay position persistence ──────────────────────────────────
+
+/// Parse the "x,y" dotfile written on overlay hide/restore. Whitespace
+/// tolerant; anything malformed yields None (default position applies).
+pub fn parse_overlay_pos(s: &str) -> Option<(i32, i32)> {
+    let (x, y) = s.trim().split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
 // ── Command palette (Ctrl+K) ─────────────────────────────────────────────────
 // Pure catalog + filter; the Slint plumbing lives in main.rs.
 
@@ -2531,8 +2780,8 @@ pub const PALETTE_CATALOG: &[PaletteEntry] = &[
     ("Agents", "⚇", "agents", "WORK"),
     ("Automation", "⟳", "automation", "WORK"),
     ("Loops", "∞", "loops", "WORK"),
-    ("n8n", "⧉", "n8n", "WORK"),
-    ("Calendar", "▦", "calendar", "WORK"),
+    ("n8n", "⇶", "n8n", "WORK"),
+    ("Calendar", "◷", "calendar", "WORK"),
     ("Evolve", "✦", "evolve", "WORK"),
     ("Self-Dev", "⊞", "selfdev", "WORK"),
     ("Dreaming", "☽", "dreaming", "WORK"),
@@ -2549,6 +2798,7 @@ pub const PALETTE_CATALOG: &[PaletteEntry] = &[
     ("Wiki", "⌗", "wiki", "SYSTEM"),
     ("Companion", "⊕", "companion", "SYSTEM"),
     ("Mesh", "◇", "mesh", "SYSTEM"),
+    ("WAL", "≣", "wal", "SYSTEM"),
     ("Doctor", "✚", "doctor", "SYSTEM"),
     ("Config", "⚙", "config", "SYSTEM"),
 ];
@@ -6591,6 +6841,100 @@ mod tests {
         assert_eq!(format_backup_bytes(512), "512 B");
         assert_eq!(format_backup_bytes(1536), "1.5 KB");
         assert_eq!(format_backup_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn parse_agents_list_maps_fields_and_tolerates_garbage() {
+        let json = r#"{"count":1,"agents":[{"name":"reviewer","source":"built-in",
+            "description":"reviews code","model":"qwen2","tool_count":3,"enabled":true}]}"#;
+        let rows = parse_agents_list(json);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "reviewer");
+        assert_eq!(rows[0].hemisphere, "built-in");
+        assert_eq!(rows[0].state, "idle");
+        assert_eq!(rows[0].current_task, "reviews code");
+        assert!(parse_agents_list("nope").is_empty());
+        assert!(parse_agents_list("{}").is_empty());
+    }
+
+    #[test]
+    fn parse_wal_show_rows_and_tints() {
+        let json = r#"{"frames_matched":3,"frames":[
+            {"event_type":"0x40","event_name":"job_fired","event_subtype":0,
+             "payload_len":120,"importance":0.5,"ts_ns":1000000000,"event_id":7,"payload_hash":"00"},
+            {"event_type":"0xC7","event_name":"plugin_cap_denied","event_subtype":0,
+             "payload_len":8,"importance":0.9,"ts_ns":2000000000,"event_id":8,"payload_hash":"01"}]}"#;
+        let (rows, matched) = parse_wal_show(json);
+        assert_eq!(matched, 3);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].seq, 7);
+        assert_eq!(rows[0].tint, "warning", "cron band = amber");
+        assert_eq!(rows[1].tint, "consent", "security band = pink");
+        assert!(rows[0].detail_json.contains("job_fired"));
+        assert!(parse_wal_show("garbage").0.is_empty());
+    }
+
+    #[test]
+    fn filter_wal_rows_by_text_and_band() {
+        let (rows, _) = parse_wal_show(
+            r#"{"frames_matched":2,"frames":[
+            {"event_type":"0x40","event_name":"job_fired","payload_len":1,"importance":0.1,"ts_ns":0,"event_id":1},
+            {"event_type":"0x62","event_name":"council_vote","payload_len":1,"importance":0.1,"ts_ns":0,"event_id":2}]}"#,
+        );
+        assert_eq!(filter_wal_rows(&rows, "", 0).len(), 2);
+        assert_eq!(filter_wal_rows(&rows, "council", 0).len(), 1);
+        assert_eq!(filter_wal_rows(&rows, "0x40", 0).len(), 1);
+        // band 3 = cron 0x40–0x4F
+        let cron = filter_wal_rows(&rows, "", 3);
+        assert_eq!(cron.len(), 1);
+        assert_eq!(cron[0].kind, "job_fired");
+        assert!(filter_wal_rows(&rows, "zzz", 0).is_empty());
+    }
+
+    #[test]
+    fn format_gossip_lines_newest_first_and_capped() {
+        let json = r#"[
+            {"origin_peer_pk":"aabbccddeeff0011","origin_seq":1,"event_type":50,"payload_bytes":100,"received_at":1000},
+            {"origin_peer_pk":"1122334455667788","origin_seq":2,"event_type":64,"payload_bytes":2048,"received_at":2000}]"#;
+        let lines = format_gossip_lines(json, 10);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("11223344"), "newest first: {lines:?}");
+        assert!(lines[0].contains("0x40"));
+        assert!(lines[1].contains("aabbccdd"));
+        assert_eq!(format_gossip_lines(json, 1).len(), 1);
+        assert!(format_gossip_lines("garbage", 5).is_empty());
+        assert!(format_gossip_lines("{}", 5).is_empty());
+    }
+
+    #[test]
+    fn parse_swarm_nodes_full_and_degenerate() {
+        let json = r#"{"sampling":{"enabled":true},"nodes":[
+            {"node_id":"abc","hostname":"cube","cpu_pct":42.5,
+             "ram_used_mb":8000,"ram_total_mb":16000,
+             "vram_used_mb":0,"vram_total_mb":0,"ts_unix":1,"age_s":7}]}"#;
+        let nodes = parse_swarm_nodes(json);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, "abc");
+        assert!((nodes[0].cpu_frac - 0.425).abs() < 1e-6);
+        assert!((nodes[0].ram_frac - 0.5).abs() < 1e-6);
+        assert_eq!(nodes[0].vram_frac, 0.0, "zero-total VRAM must not divide");
+        assert_eq!(nodes[0].age_secs, 7);
+
+        assert!(parse_swarm_nodes("").is_empty());
+        assert!(parse_swarm_nodes("{}").is_empty());
+        assert!(parse_swarm_nodes(r#"{"nodes":"nope"}"#).is_empty());
+        // cpu over 100 clamps to 1.0
+        let hot = parse_swarm_nodes(r#"{"nodes":[{"node_id":"x","cpu_pct":250.0}]}"#);
+        assert_eq!(hot[0].cpu_frac, 1.0);
+    }
+
+    #[test]
+    fn parse_overlay_pos_roundtrip_and_garbage() {
+        assert_eq!(parse_overlay_pos("120,340"), Some((120, 340)));
+        assert_eq!(parse_overlay_pos(" -5 , 0 \n"), Some((-5, 0)));
+        assert_eq!(parse_overlay_pos(""), None);
+        assert_eq!(parse_overlay_pos("120"), None);
+        assert_eq!(parse_overlay_pos("a,b"), None);
     }
 
     #[test]

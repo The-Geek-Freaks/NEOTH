@@ -17,13 +17,11 @@
 // entirely on the Rust side via the `slint::winit_030::WinitWindowAccessor`
 // + `winit::window::WindowLevel::AlwaysOnTop` after `overlay.show()`.
 //
-// Drag: A TouchArea covering the title strip sets `root.title-drag-delta` so
-// Rust can offset the window position on drag events. Because Slint's
-// winit accessor does not expose pointer-move events directly, drag is
-// approximated by the operator using OS native window move (they can grab
-// any frameless area and drag it with the OS compositor if the platform
-// supports it). The title-strip TouchArea is reserved for future pointer-
-// delta wiring — for now it just provides a distinct grab area.
+// Drag: pointer-down on the title strip fires `drag-started()`; Rust calls
+// winit's `drag_window()` which hands the move to the OS compositor
+// (native smooth drag on Windows/macOS/most WMs). The final position is
+// persisted to ~/.neoth/.overlay-pos on restore/hide and re-applied on the
+// next minimize-to-companion.
 
 import { Theme } from "theme.slint";
 import { Buddy } from "buddy.slint";
@@ -62,6 +60,9 @@ export component MiniOverlay inherits Window {
     callback hide-clicked();
     /// Operator sent a message from the overlay composer.
     callback send-clicked(string);
+    /// Pointer-down on the title strip — Rust starts an OS-native
+    /// compositor drag via winit drag_window().
+    callback drag-started();
 
     // ── Root rectangle — applies the border + inner layout ───────────
     Rectangle {
@@ -161,12 +162,19 @@ export component MiniOverlay inherits Window {
                         }
                     }
                 }
-                // Drag TouchArea covering the title bar (for future pointer-delta wiring)
+                // Drag TouchArea covering the title bar — pointer-down hands
+                // the move to the OS compositor (Rust: winit drag_window()).
                 TouchArea {
                     width: title-bar.width - 80px;  // leave the buttons accessible
                     height: title-bar.height;
                     x: 0; y: 0;
-                    // No action — just marks the drag zone for the operator
+                    mouse-cursor: grab;
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.down
+                                && ev.button == PointerEventButton.left) {
+                            root.drag-started();
+                        }
+                    }
                 }
             }
 

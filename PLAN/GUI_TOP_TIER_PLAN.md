@@ -89,6 +89,41 @@
 - [ ] F2 WAL-Sync-Status je Peer (Vector-Clock-Delta), Gossip-Event-Stream.
 - [ ] F3 Per-Node-Aktionen (request sync, kick peer), Node-Rollen.
 
+## Wave H — 12/10 KILLER-BACKLOG (Research-Wave 2, `wf_c9f1360d-bda`, web-grounded)
+
+GUI-only Superpowers (Rangfolge nach wow×feasibility):
+- [ ] H1 **WAL-Timeline-Scrubber** — 255 Opcodes in semantischen Bändern = vor-gefärbte
+      Timeline; scrubben durch die Audit-History statt grep-Dump. (Killer, eigener Tab/WAL-Inspector-Erweiterung)
+- [ ] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
+- [ ] H3 **System-Tray + Windows-Toasts + Jump-List** — App lebt im Tray, native Notifications. (Killer)
+- [ ] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
+- [ ] H5 Overview: Time-Series-Charts (Token/Cost/Activity Sparklines). (Killer)
+- [ ] H6 Live-Theme-Editor mit Instant-Preview (tweaks.toml GUI). (High)
+
+Buddy (Companion-Research):
+- [ ] H7 **Speech-Bubble-Quick-Entry am Orb** (ChatGPT Option+Space-Pattern, am Buddy verankert). (Killer)
+- [ ] H8 **Edge-Snapping mit Spring-Gravity** beim Drag. (Killer — Drag-Basis ✅ gebaut)
+- [ ] H9 **Daemon-Event-Mood-Reactions** (Event-Bus, Spec-Agent läuft). (Killer)
+- [ ] H10 State-Ring (listening/thinking/speaking-Visualisierung). (Killer)
+- [ ] H11 Click-through default + hover-to-activate; Quiet-Hours/Attention-Budget. (High)
+- [ ] H12 Rechtsklick auf Orb → Quick-Command-Palette. (High)
+
+Kanban (Linear/Height/GH-Projects):
+- [ ] H13 **Space-Peek-Panel** (Karte nicht-disruptiv previewen). (Killer)
+- [ ] H14 **AI-Agent als First-Class-Assignee** auf Karten (Linear-Agents-Modell — Hemisphere-Zuordnung sichtbar/steuerbar). (Killer)
+- [ ] H15 Inline-Diffs in Karten (syntax-highlighted). (High)
+- [ ] H16 Batch-Select + Bulk-Actions, WIP-Limits, Saved-Filter-Views, Swimlanes. (High)
+
+Chat (Claude/ChatGPT/Perplexity-Research):
+- [ ] H17 **Edit-and-Branch mit Variant-Navigator**. (Killer)
+- [ ] H18 **Regenerate mit Model-Picker**. (Killer)
+- [ ] H19 Code-Block-Affordances (Copy/Run/Collapse) + Always-Visible-Stop. (Killer)
+- [ ] H20 Prompt-Library mit Template-Variablen; Multi-Model-Split-View (Council-Compare!); Volltext-Suche. (High)
+
+Mesh/Fleet (Grafana/Netdata/k9s):
+- [ ] H21 Netdata-Node-Cards mit Color-Ring-Health (Basis ✅ Build-Agent). (Killer)
+- [ ] H22 Health-Heatmap (Zeit × Peer), Topology-Graph mit RTT, Composite-Cluster-Bar. (High)
+
 ## Gates (BSOD-Regeln beachten)
 - Slint: `SRC/_gui_check.bat` (mit `-j` VOR `--`).
 - Rust: `cargo check -j1 --tests` — NIE lokal test-linken; Tests → CI.

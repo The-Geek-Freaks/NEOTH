@@ -27,6 +27,8 @@ import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
 export { MiniOverlay }
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
+import { AgentsView, AgentRow } from "agents_view.slint";
+import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
 import { CronView, CronJobRow } from "cron.slint";
 import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
@@ -45,7 +47,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -450,6 +452,25 @@ export component MainWindow inherits Window {
     in property <string> agents-output: "";
     in property <bool> agents-running: false;
     callback agents-refresh-clicked();
+    // Wave 5 — structured agent cards; raw output stays the fallback.
+    in property <[AgentRow]> agents-model: [];
+
+    // Wave 5 — WAL Inspector (audit chain browser).
+    in property <[WalEventRow]> wal-events: [];
+    in-out property <int>       wal-selected-seq: -1;
+    in property <string>        wal-detail-json: "";
+    in property <bool>          wal-verify-running: false;
+    in property <string>        wal-verify-result: "";
+    in property <int>           wal-total-count: 0;
+    in property <bool>          wal-has-older: false;
+    in property <[string]>      wal-opcode-options: [];
+    callback wal-verify-clicked();
+    callback wal-filter-edited(string);
+    callback wal-opcode-filter-changed(int);
+    callback wal-follow-toggled(bool);
+    callback wal-row-selected(int);
+    callback wal-load-older-clicked();
+    callback wal-copy-detail-clicked();
     // Automation tab — CRUD cron panel (GAP-01).
     in property <[CronJobRow]> cron-jobs: [];
     in property <bool>         cron-running: false;
@@ -720,6 +741,10 @@ export component MainWindow inherits Window {
     in property <int>             mesh-foreign-peers: 0;
     in property <string>          mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
+    // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
+    in property <[string]>        mesh-gossip-events: [];
+    in-out property <string>      mesh-expanded-peer: "";
+    callback mesh-peer-sync-clicked(string);
 
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
@@ -739,6 +764,7 @@ export component MainWindow inherits Window {
         : root.nav-active == "plugins"     ? "Plugins"
         : root.nav-active == "cluster"     ? "Private Mesh"
         : root.nav-active == "resources"   ? "Resources"
+        : root.nav-active == "wal"         ? "WAL Inspector"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
         : root.nav-active == "n8n"         ? "Automation Bridge"
@@ -854,6 +880,11 @@ export component MainWindow inherits Window {
     callback chat-consent-revoke(string);
     /// Chat strip requests a consent data refresh.
     callback chat-consent-refresh();
+    // Wave 5 — message hover actions (copy/retry/delete) + scroll FAB.
+    in-out property <int> chat-unseen-count: 0;
+    callback chat-message-copy(int);
+    callback chat-message-retry(int);
+    callback chat-message-delete(int);
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust populates these from `neothd kanban list/show --output json`
@@ -2824,6 +2855,26 @@ export component MainWindow inherits Window {
                     root.palette-selected = max(root.palette-selected - 1, 0);
                     return accept;
                 }
+                // Ctrl+1..5 — direct tab jumps for the core surfaces.
+                if (event.modifiers.control && event.text == "1") {
+                    root.nav-active = "chat"; root.step = WizardStep.chat; return accept;
+                }
+                if (event.modifiers.control && event.text == "2") {
+                    root.nav-active = "overview"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "3") {
+                    root.nav-active = "coding"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "4") {
+                    root.nav-active = "memory"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "5") {
+                    root.nav-active = "channels"; root.step = WizardStep.settings; return accept;
+                }
+                // Ctrl+, — settings/config, the desktop-app convention.
+                if (event.modifiers.control && event.text == ",") {
+                    root.nav-active = "config"; root.step = WizardStep.settings; return accept;
+                }
                 reject
             }
             HorizontalLayout {
@@ -2933,6 +2984,7 @@ export component MainWindow inherits Window {
                 if (root.nav-active != "chat"
                         && root.nav-active != "overview"
                         && root.nav-active != "agents" && root.nav-active != "automation"
+                        && root.nav-active != "wal"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
@@ -3249,6 +3301,13 @@ export component MainWindow inherits Window {
                     consent-set-mode(m) => { root.chat-consent-set-mode(m); }
                     consent-revoke(p) => { root.chat-consent-revoke(p); }
                     consent-refresh => { root.chat-consent-refresh(); }
+                    // Wave 5 — message hover actions + scroll FAB + starters.
+                    unseen-count: root.chat-unseen-count;
+                    message-copy(i) => { root.chat-message-copy(i); }
+                    message-retry(i) => { root.chat-message-retry(i); }
+                    message-delete(i) => { root.chat-message-delete(i); }
+                    scroll-to-bottom-clicked => { root.chat-unseen-count = 0; }
+                    starter-clicked(p) => { root.chat-send-clicked(p); }
                 } }  // close ChatView + SovereignFade
 
                 // Design Wave 3 — Overview / Mission Control dashboard.
@@ -3304,14 +3363,31 @@ export component MainWindow inherits Window {
                     security-running: root.doctor-security-running;
                     security-run-clicked => { root.doctor-security-run-clicked(); }
                 }
-                // Agents — the cluster/agent topology (`neoth cluster status`).
-                if root.nav-active == "agents": ProbeView {
-                    blurb: "Agent & worker topology — council hemispheres + cluster nodes.";
-                    action-label: "Refresh agents";
-                    output: root.agents-output;
+                // Agents — structured card grid (Wave 5); raw probe output
+                // stays as the fallback body when parsing fails.
+                if root.nav-active == "agents": AgentsView {
+                    agents: root.agents-model;
                     running: root.agents-running;
-                    empty-hint: "Click \"Refresh agents\" to load the live topology.";
-                    run-clicked => { root.agents-refresh-clicked(); }
+                    raw-output: root.agents-output;
+                    refresh-clicked => { root.agents-refresh-clicked(); }
+                }
+                // WAL Inspector — the audit chain, browsable (Wave 5).
+                if root.nav-active == "wal": WalInspectorView {
+                    events: root.wal-events;
+                    selected-seq <=> root.wal-selected-seq;
+                    detail-json: root.wal-detail-json;
+                    verify-running: root.wal-verify-running;
+                    verify-result: root.wal-verify-result;
+                    total-count: root.wal-total-count;
+                    has-older: root.wal-has-older;
+                    opcode-filter-options: root.wal-opcode-options;
+                    verify-clicked => { root.wal-verify-clicked(); }
+                    filter-edited(s) => { root.wal-filter-edited(s); }
+                    opcode-filter-changed(i) => { root.wal-opcode-filter-changed(i); }
+                    follow-toggled(b) => { root.wal-follow-toggled(b); }
+                    row-selected(seq) => { root.wal-row-selected(seq); }
+                    load-older-clicked => { root.wal-load-older-clicked(); }
+                    copy-detail-clicked => { root.wal-copy-detail-clicked(); }
                 }
                 // Automation — CRUD cron scheduler (GAP-01). n8n lives in its own tab.
                 if root.nav-active == "automation": CronView {
@@ -3518,13 +3594,22 @@ export component MainWindow inherits Window {
                     mesh-listen-port: root.mesh-listen-port;
                     mesh-trusted-ssids: root.mesh-trusted-ssids;
                     mesh-peers: root.mesh-peers;
+                    mesh-peer-count: root.mesh-peers.length;
                     mesh-gossip-note: root.mesh-gossip-note;
                     mesh-foreign-rows: root.mesh-foreign-rows;
                     mesh-foreign-total: root.mesh-foreign-total;
                     mesh-foreign-bytes: root.mesh-foreign-bytes;
                     mesh-foreign-peers: root.mesh-foreign-peers;
                     mesh-refreshed-at: root.mesh-refreshed-at;
+                    // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
+                    gossip-events: root.mesh-gossip-events;
+                    expanded-peer: root.mesh-expanded-peer;
                     mesh-refresh-clicked => { root.mesh-refresh-clicked(); }
+                    peer-sync-clicked(id) => { root.mesh-peer-sync-clicked(id); }
+                    // Expand-toggle is pure view state — no Rust round-trip.
+                    peer-expanded(id) => {
+                        root.mesh-expanded-peer = (root.mesh-expanded-peer == id) ? "" : id;
+                    }
                 }
 
                 StatusFooter {

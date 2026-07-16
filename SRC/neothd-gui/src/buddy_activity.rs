@@ -51,6 +51,20 @@ pub enum GuiActivity {
     AgentParallel,
     AgentDeploy,
 
+    // ── Daemon lifecycle (WAL-driven, fired by the events follower) ──
+    /// Dreaming pass composing a journal entry (WAL 0xF4).
+    Dreaming,
+    /// Council deliberation in flight (WAL 0x60–0x64).
+    CouncilDeliberating,
+    /// Self-improvement / reflection pass (WAL 0xBE/0xBF, 0x1C–0x1E).
+    SelfImproving,
+    /// FEAT-05 self-reprogramming proposal/apply in flight.
+    SelfReprogramming,
+    /// A cron job is executing (WAL 0x40–0x46).
+    CronRunning,
+    /// Loop engine iteration in flight (WAL 0x7C–0x7F).
+    LoopRunning,
+
     // ── Generic settings write ───────────────────────────────────────
     SettingsApplied,
     SettingsError,
@@ -84,6 +98,13 @@ impl GuiActivity {
 
             GuiActivity::AgentParallel => ("parallel", "parallel workers"),
             GuiActivity::AgentDeploy => ("agents", "agents deployed"),
+
+            GuiActivity::Dreaming => ("sleeping", "dreaming…"),
+            GuiActivity::CouncilDeliberating => ("parallel", "council in session"),
+            GuiActivity::SelfImproving => ("learning", "self-improving"),
+            GuiActivity::SelfReprogramming => ("cracking", "rewriting myself"),
+            GuiActivity::CronRunning => ("working", "running a job"),
+            GuiActivity::LoopRunning => ("working", "loop running"),
 
             GuiActivity::SettingsApplied => ("success", "saved"),
             GuiActivity::SettingsError => ("alert", "action failed"),
@@ -145,6 +166,12 @@ mod tests {
         GuiActivity::ProviderFallback,
         GuiActivity::AgentParallel,
         GuiActivity::AgentDeploy,
+        GuiActivity::Dreaming,
+        GuiActivity::CouncilDeliberating,
+        GuiActivity::SelfImproving,
+        GuiActivity::SelfReprogramming,
+        GuiActivity::CronRunning,
+        GuiActivity::LoopRunning,
         GuiActivity::SettingsApplied,
         GuiActivity::SettingsError,
     ];
