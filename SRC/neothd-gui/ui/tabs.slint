@@ -117,7 +117,12 @@ export component ProbeView inherits Rectangle {
                     color: root.running ? Theme.text-tertiary : Theme.accent;
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm; vertical-alignment: center;
                 }
-                TouchArea { clicked => { if (!root.running) { root.run-clicked(); } } }
+                TouchArea {
+                    clicked => { if (!root.running) { root.run-clicked(); } }
+                    accessible-role: button;
+                    accessible-label: root.action-label;
+                    accessible-action-default => { if (!root.running) { root.run-clicked(); } }
+                }
             }
         }
         Rectangle {
@@ -189,7 +194,12 @@ export component DoctorView inherits Rectangle {
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;
                 }
-                TouchArea { clicked => { if (!root.running) { root.run-clicked(); } } }
+                TouchArea {
+                    clicked => { if (!root.running) { root.run-clicked(); } }
+                    accessible-role: button;
+                    accessible-label: "run neoth doctor";
+                    accessible-action-default => { if (!root.running) { root.run-clicked(); } }
+                }
             }
         }
 
@@ -230,7 +240,12 @@ export component DoctorView inherits Rectangle {
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;
                 }
-                TouchArea { clicked => { if (!root.status-running) { root.status-run-clicked(); } } }
+                TouchArea {
+                    clicked => { if (!root.status-running) { root.status-run-clicked(); } }
+                    accessible-role: button;
+                    accessible-label: "run status probe";
+                    accessible-action-default => { if (!root.status-running) { root.status-run-clicked(); } }
+                }
             }
         }
 
@@ -271,7 +286,12 @@ export component DoctorView inherits Rectangle {
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;
                 }
-                TouchArea { clicked => { if (!root.security-running) { root.security-run-clicked(); } } }
+                TouchArea {
+                    clicked => { if (!root.security-running) { root.security-run-clicked(); } }
+                    accessible-role: button;
+                    accessible-label: "run security audit";
+                    accessible-action-default => { if (!root.security-running) { root.security-run-clicked(); } }
+                }
             }
         }
 
@@ -312,7 +332,12 @@ export component DoctorView inherits Rectangle {
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;
                 }
-                TouchArea { clicked => { if (!root.undo-running) { root.undo-run-clicked(); } } }
+                TouchArea {
+                    clicked => { if (!root.undo-running) { root.undo-run-clicked(); } }
+                    accessible-role: button;
+                    accessible-label: "show reversible actions";
+                    accessible-action-default => { if (!root.undo-running) { root.undo-run-clicked(); } }
+                }
             }
         }
 

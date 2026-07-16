@@ -79,6 +79,9 @@ component ProposalCard inherits Rectangle {
                 background: Theme.consent;
                 TouchArea {
                     clicked => { root.accept-clicked(); }
+                    accessible-role: button;
+                    accessible-label: "accept proposal";
+                    accessible-action-default => { root.accept-clicked(); }
                 }
                 Text {
                     text: "Accept";

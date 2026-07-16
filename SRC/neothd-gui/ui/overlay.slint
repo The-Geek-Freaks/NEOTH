@@ -177,6 +177,9 @@ export component MiniOverlay inherits Window {
 
                     TouchArea {
                         clicked => { root.bubble-dismissed(); }
+                        accessible-role: button;
+                        accessible-label: "dismiss message";
+                        accessible-action-default => { root.bubble-dismissed(); }
                     }
                 }
 
@@ -369,6 +372,9 @@ export component MiniOverlay inherits Window {
                         }
                         mic-ta := TouchArea {
                             clicked => { root.mic-clicked(); }
+                            accessible-role: button;
+                            accessible-label: "toggle dictation";
+                            accessible-action-default => { root.mic-clicked(); }
                         }
                     }
 
@@ -510,6 +516,12 @@ export component MiniOverlay inherits Window {
                                     root.compact = true;
                                     root.compact-toggled(true);
                                 }
+                                accessible-role: button;
+                                accessible-label: "collapse to compact overlay";
+                                accessible-action-default => {
+                                    root.compact = true;
+                                    root.compact-toggled(true);
+                                }
                             }
                         }
 
@@ -532,6 +544,9 @@ export component MiniOverlay inherits Window {
                             }
                             restore-ta := TouchArea {
                                 clicked => { root.restore-clicked(); }
+                                accessible-role: button;
+                                accessible-label: "restore main window";
+                                accessible-action-default => { root.restore-clicked(); }
                             }
                         }
 
@@ -554,6 +569,9 @@ export component MiniOverlay inherits Window {
                             }
                             close-ta := TouchArea {
                                 clicked => { root.hide-clicked(); }
+                                accessible-role: button;
+                                accessible-label: "hide overlay";
+                                accessible-action-default => { root.hide-clicked(); }
                             }
                         }
                     }
