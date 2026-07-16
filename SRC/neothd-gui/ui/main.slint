@@ -3561,6 +3561,8 @@ export component MainWindow inherits Window {
                     running: root.mcp-running;
                     empty-hint: "Click \"Refresh\" to load the MCP server registry.";
                     run-clicked => { root.mcp-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.mcp-output == "") { root.mcp-run-clicked(); } }
                 }
                 // Research P0 — lifecycle hooks registry (neoth hooks list).
                 if root.nav-active == "hooks": ProbeView {
@@ -3570,6 +3572,8 @@ export component MainWindow inherits Window {
                     running: root.hooks-running;
                     empty-hint: "Click \"Refresh\" to load the hook registry.";
                     run-clicked => { root.hooks-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.hooks-output == "") { root.hooks-run-clicked(); } }
                 }
                 // Research P0 — ground-truth fact store (neoth groundtruth list).
                 if root.nav-active == "groundtruth": ProbeView {
@@ -3579,6 +3583,8 @@ export component MainWindow inherits Window {
                     running: root.gt-running;
                     empty-hint: "Click \"Refresh\" to load the ground-truth store.";
                     run-clicked => { root.gt-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.gt-output == "") { root.gt-run-clicked(); } }
                 }
                 if root.nav-active == "catalog": ProbeView {
                     blurb: "Model catalog — every cached provider model with capability/price metadata (neoth catalog list). Read-only; refresh from the CLI with neoth catalog refresh.";
@@ -3587,6 +3593,8 @@ export component MainWindow inherits Window {
                     running: root.catalog-running;
                     empty-hint: "Click \"Refresh\" to load the model catalog.";
                     run-clicked => { root.catalog-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.catalog-output == "") { root.catalog-run-clicked(); } }
                 }
                 if root.nav-active == "quota": ProbeView {
                     blurb: "Provider quota — per-provider daily request state and any active 429 backoff window (neoth quota status). Read-only.";
@@ -3595,6 +3603,8 @@ export component MainWindow inherits Window {
                     running: root.quota-running;
                     empty-hint: "Click \"Refresh\" to load the provider quota.";
                     run-clicked => { root.quota-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.quota-output == "") { root.quota-run-clicked(); } }
                 }
                 if root.nav-active == "tweaks": ProbeView {
                     blurb: "Runtime tweaks — the appearance/behavior overrides layered over the built-in defaults (neoth tweaks show, ~/.neoth/tweaks.toml). Read-only.";
@@ -3603,6 +3613,8 @@ export component MainWindow inherits Window {
                     running: root.tweaks-running;
                     empty-hint: "Click \"Refresh\" to load the runtime tweaks.";
                     run-clicked => { root.tweaks-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.tweaks-output == "") { root.tweaks-run-clicked(); } }
                 }
                 // WAL Inspector — the audit chain, browsable (Wave 5) with
                 // the timeline scrubber strip above (Wave 6, GUI-only killer:
