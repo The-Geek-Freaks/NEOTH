@@ -128,6 +128,16 @@ pub struct MemoryArgs {
     #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin"])]
     pub people: bool,
 
+    /// H2 — export the Hebbian association graph (idx_memory_links) as
+    /// JSON for the GUI memory-graph view: episode nodes (label, tier,
+    /// degree, louvain community) + weighted links. Read-only.
+    #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin", "people"])]
+    pub graph: bool,
+
+    /// Cap the strongest links exported by `--graph` (default 400).
+    #[arg(long, default_value_t = 400)]
+    pub graph_limit: usize,
+
     /// V10-08 — rebuild the HNSW embedding index from scratch by scanning
     /// all rows in `idx_embedding`. Writes the snapshot to
     /// `<neoth_home>/embeddings.hnsw`. Use after a database restore or when
@@ -194,6 +204,9 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     }
     if args.people {
         return run_memory_people(&args);
+    }
+    if args.graph {
+        return run_memory_graph(&args);
     }
     if args.rebuild_index {
         return run_memory_rebuild_index(&args).await;
@@ -914,6 +927,100 @@ fn physical_erasure_incomplete(summary: &PhysicalRedactSummary) -> bool {
     summary.errors > 0
 }
 
+/// `neoth memory --graph` — H2. Export the Hebbian association graph
+/// for the GUI memory-graph view. Pure read over `idx_memory_links`
+/// joined with the tier tables for labels: hot = idx_episode,
+/// warm = idx_consolidated, cold = idx_longterm; a node whose id no
+/// longer resolves anywhere is labelled by id (links outlive rows
+/// until the decay pass prunes them).
+fn run_memory_graph(args: &MemoryArgs) -> Result<()> {
+    use crate::memory::{assoc_graph, store};
+    use std::collections::{BTreeSet, HashMap};
+
+    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path)
+        .with_context(|| format!("open views.db for graph: {}", db_path.display()))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT lo_id, hi_id, weight FROM idx_memory_links \
+         WHERE weight > 0.0 ORDER BY weight DESC LIMIT ?1",
+    )?;
+    let edges: Vec<(i64, i64, f64)> = stmt
+        .query_map([args.graph_limit as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    let mut ids: BTreeSet<i64> = BTreeSet::new();
+    let mut degree: HashMap<i64, u32> = HashMap::new();
+    for (a, b, _) in &edges {
+        ids.insert(*a);
+        ids.insert(*b);
+        *degree.entry(*a).or_default() += 1;
+        *degree.entry(*b).or_default() += 1;
+    }
+    let communities = assoc_graph::louvain(&edges);
+    let mut comm_of: HashMap<i64, usize> = HashMap::new();
+    for (ci, group) in communities.iter().enumerate() {
+        for id in group {
+            comm_of.insert(*id, ci);
+        }
+    }
+
+    // Label + tier per node. One-line label, capped at 80 chars.
+    fn label_of(conn: &rusqlite::Connection, table: &str, id: i64) -> Option<String> {
+        conn.query_row(
+            &format!("SELECT text FROM {table} WHERE event_id = ?1"),
+            [id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+    let nodes: Vec<serde_json::Value> = ids
+        .iter()
+        .map(|id| {
+            let (label, tier) = if let Some(t) = label_of(&conn, "idx_episode", *id) {
+                (t, "hot")
+            } else if let Some(t) = label_of(&conn, "idx_consolidated", *id) {
+                (t, "warm")
+            } else if let Some(t) = label_of(&conn, "idx_longterm", *id) {
+                (t, "cold")
+            } else {
+                (format!("event {id}"), "fact")
+            };
+            let one_line: String = label.replace('\n', " ").chars().take(80).collect();
+            serde_json::json!({
+                "id": id,
+                "label": one_line,
+                "tier": tier,
+                "degree": degree.get(id).copied().unwrap_or(0),
+                "community": comm_of.get(id).copied().unwrap_or(0),
+            })
+        })
+        .collect();
+
+    let edges_json: Vec<serde_json::Value> = edges
+        .iter()
+        .map(|(a, b, w)| serde_json::json!({ "a": a, "b": b, "w": w }))
+        .collect();
+    let body = serde_json::json!({
+        "nodes": nodes,
+        "edges": edges_json,
+        "communities": communities.len(),
+    });
+    match args.output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{body}"),
+        OutputFormat::Table => println!(
+            "# memory graph — {} nodes, {} links, {} communities\n\
+             # (use --output json for the full export)",
+            ids.len(),
+            edges.len(),
+            communities.len()
+        ),
+    }
+    Ok(())
+}
+
 /// `neoth memory --dimension` — EXP-FD-0. Compute D_mem across tiers.
 async fn run_memory_dimension(args: &MemoryArgs) -> Result<()> {
     use crate::memory::{dimension, store};
@@ -1291,6 +1398,8 @@ mod tests {
             tier: None,
             archive: None,
             forget: None,
+            graph: false,
+            graph_limit: 400,
             confirm: false,
             physical: false,
             pin,
