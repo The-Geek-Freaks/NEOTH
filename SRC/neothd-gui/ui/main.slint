@@ -20,7 +20,7 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
@@ -32,7 +32,7 @@ import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
 import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
 import { MemoryGraphView, GraphNode, GraphEdge } from "memory_graph.slint";
 import { CronView, CronJobRow } from "cron.slint";
-import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
+import { OverviewView, HemiCard, CalEvent, ConsentEntry, CostSessionRow } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
 // Design Wave 4a — new real-data panels.
 import { N8nView, N8nWorkflow } from "n8n.slint";
@@ -49,7 +49,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -213,6 +213,9 @@ export component MainWindow inherits Window {
     callback daemon-retry-clicked();
     // Sidebar version line — Rust binds the real CARGO_PKG_VERSION.
     in property <string> app-version-line: "v1.0 · sovereign";
+    // E4 — About / What's-new overlay (changelog embedded at build time).
+    in-out property <bool> about-open: false;
+    in property <string> about-changelog: "";
     // Command palette (Ctrl+K). Rust filters palette-results on
     // palette-query-edited; activation reuses the sidebar nav path.
     in-out property <bool> palette-open: false;
@@ -544,6 +547,10 @@ export component MainWindow inherits Window {
     in property <[ConsentEntry]> ov-consent-entries: [];
     in property <string> ov-smart-approve: "";
     in property <string> ov-refreshed-at: "";
+    // Wave 8 — cost & usage card (C7/H5).
+    in property <[CostSessionRow]> ov-cost-sessions: [];
+    in property <[float]> ov-usage-days: [];
+    in property <string> ov-usage-days-label: "";
     callback overview-refresh-clicked();
 
     // ── Wave 4a — n8n panel ────────────────────────────────────────────────────
@@ -910,6 +917,23 @@ export component MainWindow inherits Window {
     callback chat-message-copy(int);
     callback chat-message-retry(int);
     callback chat-message-delete(int);
+    // Wave 8 — code-block copy + always-visible stop.
+    callback chat-code-copy(int);
+    callback chat-stop-stream();
+
+    // Wave 8 — C2 per-action permissions matrix (Privacy tab).
+    in property <[PermRow]> cfg-perm-rows: [];
+    in property <string>    cfg-perm-level: "";
+    callback cfg-perm-set(string, string);
+    callback cfg-perm-clear(string);
+
+    // Wave 8 — A4 kanban card context menu.
+    in-out property <bool>   kanban-ctx-open: false;
+    in-out property <string> kanban-ctx-task: "";
+    in-out property <length> kanban-ctx-x: 0px;
+    in-out property <length> kanban-ctx-y: 0px;
+    callback kanban-move-task(string, string);
+    callback kanban-copy-task-id(string);
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust populates these from `neothd kanban list/show --output json`
@@ -2911,6 +2935,7 @@ export component MainWindow inherits Window {
                 operator-name: root.operator-id != "" ? root.operator-id : "operator";
                 project-domain: root.project-domain;
                 version-line: root.app-version-line;
+                version-clicked => { root.about-open = true; }
                 nav(t) => {
                     root.nav-active = t;
                     root.step = (t == "chat") ? WizardStep.chat : WizardStep.settings;
@@ -3264,6 +3289,17 @@ export component MainWindow inherits Window {
                     cfg-elicitation-enabled-changed(v) => { root.cfg-elicitation-enabled-changed(v); }
                     cfg-elicitation-min-intensity-changed(v) => { root.cfg-elicitation-min-intensity-changed(v); }
                     cfg-tone-modifier-enabled-changed(v) => { root.cfg-tone-modifier-enabled-changed(v); }
+                    // Wave 8 — C2 permissions matrix + A4 kanban context menu.
+                    cfg-perm-rows: root.cfg-perm-rows;
+                    cfg-perm-level: root.cfg-perm-level;
+                    cfg-perm-set(a, d) => { root.cfg-perm-set(a, d); }
+                    cfg-perm-clear(a) => { root.cfg-perm-clear(a); }
+                    kanban-task-context(id, cx, cy) => {
+                        root.kanban-ctx-task = id;
+                        root.kanban-ctx-x = cx;
+                        root.kanban-ctx-y = cy;
+                        root.kanban-ctx-open = true;
+                    }
                     // DES-09 Welle B — privacy
                     cfg-review-gate-enabled <=> root.cfg-review-gate-enabled;
                     cfg-cloud-stt-enabled <=> root.cfg-cloud-stt-enabled;
@@ -3337,6 +3373,9 @@ export component MainWindow inherits Window {
                     message-delete(i) => { root.chat-message-delete(i); }
                     scroll-to-bottom-clicked => { root.chat-unseen-count = 0; }
                     starter-clicked(p) => { root.chat-send-clicked(p); }
+                    // Wave 8 — code panel copy + stop-while-streaming.
+                    code-copy(i) => { root.chat-code-copy(i); }
+                    stop-stream-clicked => { root.chat-stop-stream(); }
                 } }  // close ChatView + SovereignFade
 
                 // Design Wave 3 — Overview / Mission Control dashboard.
@@ -3365,6 +3404,11 @@ export component MainWindow inherits Window {
                     ov-smart-approve: root.ov-smart-approve;
                     ov-refreshed-at: root.ov-refreshed-at;
                     overview-refresh-clicked => { root.overview-refresh-clicked(); }
+                    // Wave 8 — cost & usage card (C7/H5).
+                    ov-cost-sessions: root.ov-cost-sessions;
+                    ov-usage-days: root.ov-usage-days;
+                    ov-usage-days-label: root.ov-usage-days-label;
+                    ov-cost-open-clicked => { root.nav-active = "overview"; }
                 }
 
                 // Net-new mockup tab — Resources (live hardware probe, wired).
@@ -3717,6 +3761,35 @@ export component MainWindow inherits Window {
         clicked => { root.buddy-menu-open = !root.buddy-menu-open; }
     }
 
+    // A4 — kanban card context menu. Coordinates come relative to the
+    // SettingsView; offset by the shell chrome (sidebar + topbar) and
+    // clamp so the menu never clips the window edge.
+    if root.kanban-ctx-open: ContextMenu {
+        width: 100%; height: 100%;
+        menu-x: min(root.kanban-ctx-x + (Theme.sidebar-collapsed ? 0px : Theme.sidebar-w),
+                    root.width - 250px);
+        menu-y: min(root.kanban-ctx-y + (Theme.header-hidden ? 0px : 68px),
+                    root.height - 320px);
+        items: [
+            { label: "Move to To-Do", glyph: "◻", danger: false },
+            { label: "Move to In Progress", glyph: "◐", danger: false },
+            { label: "Move to Review", glyph: "◎", danger: false },
+            { label: "Finish (done)", glyph: "✓", danger: false },
+            { label: "Block", glyph: "⛔", danger: true },
+            { label: "Copy task id", glyph: "⧉", danger: false },
+        ];
+        picked(i) => {
+            root.kanban-ctx-open = false;
+            if (i == 0) { root.kanban-move-task(root.kanban-ctx-task, "todo"); }
+            if (i == 1) { root.kanban-move-task(root.kanban-ctx-task, "in_progress"); }
+            if (i == 2) { root.kanban-move-task(root.kanban-ctx-task, "review"); }
+            if (i == 3) { root.kanban-move-task(root.kanban-ctx-task, "done"); }
+            if (i == 4) { root.kanban-move-task(root.kanban-ctx-task, "blocked"); }
+            if (i == 5) { root.kanban-copy-task-id(root.kanban-ctx-task); }
+        }
+        dismissed => { root.kanban-ctx-open = false; }
+    }
+
     // B4 — Buddy quick-action menu, anchored above the docked orb.
     if root.buddy-menu-open: ContextMenu {
         width: 100%; height: 100%;
@@ -3755,6 +3828,91 @@ export component MainWindow inherits Window {
         x: root.width - self.width - 12px;
         y: 78px;
         // height is driven by content; no explicit height needed.
+    }
+
+    // ── E4 — About / What's-new overlay ────────────────────────────────
+    if root.about-open: Rectangle {
+        width: 100%; height: 100%;
+        background: Theme.scrim;
+        TouchArea { clicked => { root.about-open = false; } }
+        Rectangle {
+            width: min(620px, root.width - 80px);
+            height: min(560px, root.height - 100px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface-2;
+            border-width: 1px; border-color: Theme.border-strong;
+            drop-shadow-blur: 42px;
+            drop-shadow-color: Theme.bg-void.with-alpha(0.65);
+            clip: true;
+            TouchArea { }   // swallow card clicks
+            VerticalLayout {
+                padding: 24px; spacing: 12px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "NEOTH"; color: Theme.accent;
+                            font-family: Theme.font-wordmark; font-size: 30px;
+                            font-weight: Theme.weight-bold; letter-spacing: 2px;
+                        }
+                        Text {
+                            text: root.app-version-line + " · local-first · fail-closed";
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-mono-caps;
+                        }
+                    }
+                    Rectangle {
+                        width: 32px; height: 32px; border-radius: Theme.radius-sm;
+                        background: about-close-ta.has-hover ? Theme.surface-3 : transparent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        Text {
+                            text: "✕"; color: Theme.text-secondary;
+                            font-size: Theme.font-size-sm;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        about-close-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.about-open = false; }
+                        }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+                Text {
+                    text: "WHAT'S NEW";
+                    color: Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                    letter-spacing: Theme.letter-spacing-extra-wide;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg-void;
+                    border-width: 1px; border-color: Theme.border-subtle;
+                    clip: true;
+                    Flickable {
+                        viewport-width: self.width;
+                        Text {
+                            x: 16px; y: 14px; width: parent.width - 32px;
+                            text: root.about-changelog != "" ? root.about-changelog
+                                : "changelog not bundled in this build";
+                            color: Theme.text-secondary;
+                            font-family: Theme.font-mono; font-size: Theme.font-size-xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                Text {
+                    text: "© 2026 The Geek Freaks · Apache-2.0 / MIT · Your buddy. Your life.";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                    horizontal-alignment: center;
+                }
+            }
+        }
     }
 
     // ── Command palette overlay (Ctrl+K) — above toasts, below the tour ─

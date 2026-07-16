@@ -1144,6 +1144,14 @@ fn main() -> Result<()> {
     // never lies about what is running.
     window.set_app_version_line(concat!("v", env!("CARGO_PKG_VERSION"), " · sovereign").into());
 
+    // E4 — What's-new: the repo CHANGELOG rides the binary at build time;
+    // show the newest ~6k chars (releases are newest-first at the top).
+    {
+        const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+        let head: String = CHANGELOG.chars().take(6000).collect();
+        window.set_about_changelog(head.into());
+    }
+
     // Daemon→GUI activity bus — the Buddy reacts live to WAL events
     // (dreaming, council, self-improve, cron, loops, channel ingress).
     // Fail-silent: without a daemon binary the follower just retries.
@@ -1758,6 +1766,45 @@ fn main() -> Result<()> {
     let chat_auto_flag_for_send = chat_auto_in_progress.clone();
     let chat_attach_for_send = chat_attachments.clone();
 
+    // Wave 8 — always-visible Stop: kill the in-flight chat subprocess
+    // immediately (same kill path as the stall watchdog's Stop). The
+    // completion closure finalizes the partial text as usual.
+    {
+        let child_slot = chat_child.clone();
+        let weak_stop_now = window.as_weak();
+        window.on_chat_stop_stream(move || {
+            if let Ok(mut slot) = child_slot.lock()
+                && let Some(child) = slot.as_mut()
+            {
+                let _ = child.kill();
+            }
+            if let Some(w) = weak_stop_now.upgrade() {
+                w.set_status_line("stream stopped by operator".into());
+            }
+        });
+    }
+
+    // Wave 8 — code-block copy: the panel's Copy chip lifts just the
+    // extracted fenced code, not the whole bubble.
+    {
+        use slint::Model;
+        let weak_cc = window.as_weak();
+        window.on_chat_code_copy(move |idx| {
+            let Some(w) = weak_cc.upgrade() else { return };
+            let Some(msg) = w.get_chat_messages().row_data(idx as usize) else {
+                return;
+            };
+            if msg.code_block.is_empty() {
+                return;
+            }
+            if let Err(e) =
+                arboard::Clipboard::new().and_then(|mut c| c.set_text(msg.code_block.to_string()))
+            {
+                tracing::warn!(error = %e, "code block clipboard copy failed");
+            }
+        });
+    }
+
     // Wave 5 — message hover actions: Copy / Retry / Delete on bubbles.
     {
         use slint::Model;
@@ -2090,6 +2137,10 @@ fn main() -> Result<()> {
                                 .map(|(i, seg)| {
                                     let m = if i == last { metrics.clone() } else { None };
                                     let (chip, detail) = m.unwrap_or_default();
+                                    // H19-lite — fenced code lands in the
+                                    // bubble's code panel with a Copy chip.
+                                    let (code, lang) =
+                                        panel_logic::extract_code_blocks(&seg);
                                     ChatMessage {
                                         role: "assistant".into(),
                                         text: seg.into(),
@@ -2102,6 +2153,8 @@ fn main() -> Result<()> {
                                         } else {
                                             "".into()
                                         },
+                                        code_block: code.into(),
+                                        code_lang: lang.into(),
                                     }
                                 })
                                 .collect()
@@ -3401,7 +3454,8 @@ fn main() -> Result<()> {
         w0.set_ov_refreshed_at("loading…".into());
         let weak = weak_ov.clone();
         std::thread::spawn(move || {
-            refresh_overview(weak);
+            refresh_overview(weak.clone());
+            refresh_overview_cost(weak);
         });
     });
 
@@ -3410,7 +3464,8 @@ fn main() -> Result<()> {
     {
         let weak_ov_init = window.as_weak();
         std::thread::spawn(move || {
-            refresh_overview(weak_ov_init);
+            refresh_overview(weak_ov_init.clone());
+            refresh_overview_cost(weak_ov_init);
         });
     }
 
@@ -4458,6 +4513,92 @@ fn main() -> Result<()> {
                 });
                 std::thread::spawn(move || refresh_companion(weak2));
             });
+        });
+    }
+
+    // ── Wave 8 — C2 permissions matrix + A4 kanban context menu ───────────────
+    {
+        fn perm_refresh(weak: slint::Weak<MainWindow>) {
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["permissions", "show", "--output", "json"]);
+                let (rows, level) = panel_logic::parse_permissions_show(&out);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    let model: Vec<PermRow> = rows
+                        .into_iter()
+                        .map(|r| PermRow {
+                            action: r.action.into(),
+                            decision: r.decision.into(),
+                            overridden: r.overridden,
+                        })
+                        .collect();
+                    w.set_cfg_perm_rows(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(model),
+                    )));
+                    w.set_cfg_perm_level(level.as_str().into());
+                });
+            });
+        }
+        perm_refresh(window.as_weak());
+
+        let weak_ps = window.as_weak();
+        window.on_cfg_perm_set(move |action, decision| {
+            let weak = weak_ps.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&[
+                    "permissions",
+                    "set",
+                    action.as_str(),
+                    decision.as_str(),
+                ]);
+                let summary: String = out.trim().chars().take(120).collect();
+                push_toast(&weak, "success", "Permission set", &summary);
+                perm_refresh(weak.clone());
+            });
+        });
+
+        let weak_pc = window.as_weak();
+        window.on_cfg_perm_clear(move |action| {
+            let weak = weak_pc.clone();
+            std::thread::spawn(move || {
+                let _ = run_neothd_probe(&["permissions", "clear", action.as_str()]);
+                push_toast(&weak, "info", "Permission override cleared", action.as_str());
+                perm_refresh(weak.clone());
+            });
+        });
+
+        // A4 — context-menu actions. Task ids arrive pre-formatted ("#42").
+        let weak_mv = window.as_weak();
+        window.on_kanban_move_task(move |task_id, status| {
+            let id = task_id.trim_start_matches('#').to_string();
+            let weak = weak_mv.clone();
+            std::thread::spawn(move || {
+                let out =
+                    run_neothd_probe(&["kanban", "move", id.as_str(), status.as_str()]);
+                let summary: String = out.trim().chars().take(120).collect();
+                let ok_body = if summary.is_empty() {
+                    format!("task {id} → {status}")
+                } else {
+                    summary
+                };
+                push_toast(&weak, "success", "Kanban", &ok_body);
+                let _ = slint::invoke_from_event_loop({
+                    let weak2 = weak.clone();
+                    move || {
+                        if let Some(w) = weak2.upgrade() {
+                            w.invoke_kanban_refresh_clicked();
+                        }
+                    }
+                });
+            });
+        });
+
+        window.on_kanban_copy_task_id(move |task_id| {
+            if let Err(e) = arboard::Clipboard::new()
+                .and_then(|mut c| c.set_text(task_id.trim_start_matches('#').to_string()))
+            {
+                tracing::warn!(error = %e, "task id clipboard copy failed");
+            }
         });
     }
 
@@ -13150,6 +13291,63 @@ fn refresh_chat_consent(weak: slint::Weak<MainWindow>) {
 // parses via panel_logic pure-fns, then mutates the MainWindow in one
 // invoke_from_event_loop call.  Must be called from a worker thread — never
 // from the Slint event loop.
+/// Wave 8 — C7/H5: feed the COST & USAGE card. Top sessions from the
+/// WAL token ledger + a 7-day usage sparkline (one rollup probe per
+/// day; overview refresh is manual/startup so seven quick subprocesses
+/// are fine). Rides the same triggers as refresh_overview.
+fn refresh_overview_cost(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let sessions_out = run_neothd_probe(&["cost", "top-sessions", "--output", "json"]);
+    let sessions = panel_logic::parse_cost_sessions(&sessions_out);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let mut days: Vec<f64> = Vec::with_capacity(7);
+    let mut week_cost = 0.0_f64;
+    for i in (0..7).rev() {
+        let until = now - i * 86_400;
+        let since = until - 86_400;
+        let out = run_neothd_probe(&[
+            "usage",
+            "--since-unix",
+            &since.to_string(),
+            "--until-unix",
+            &until.to_string(),
+            "--format",
+            "json",
+        ]);
+        let (cost, tokens) = panel_logic::parse_usage_rollup(&out).unwrap_or((0.0, 0));
+        week_cost += cost;
+        // Sparkline follows spend when priced, tokens otherwise.
+        days.push(if cost > 0.0 { cost } else { tokens as f64 / 1000.0 });
+    }
+    let max_day = days.iter().cloned().fold(0.0_f64, f64::max).max(1e-9);
+    let bars: Vec<f32> = days.iter().map(|d| (d / max_day) as f32).collect();
+    let label = if week_cost > 0.0 {
+        format!("usd {week_cost:.2} this week")
+    } else {
+        "no priced spend this week".to_string()
+    };
+
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let rows: Vec<CostSessionRow> = sessions
+            .into_iter()
+            .map(|s| CostSessionRow {
+                session: s.session.into(),
+                provider: s.provider.into(),
+                tokens: s.tokens.into(),
+                cost: s.cost.into(),
+            })
+            .collect();
+        w.set_ov_cost_sessions(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        w.set_ov_usage_days(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(bars))));
+        w.set_ov_usage_days_label(label.as_str().into());
+    });
+}
+
 fn refresh_overview(weak: slint::Weak<MainWindow>) {
     let bin = match which_neothd() {
         Some(b) => b,

@@ -2513,6 +2513,186 @@ pub fn next_toast_id(toasts: &[(i32, String, String, String)]) -> i32 {
     max + 1
 }
 
+// ── Chat code blocks (H19-lite) ──────────────────────────────────────────────
+
+/// Extract fenced code blocks from a chat reply. Returns (joined blocks,
+/// first language tag). Multiple blocks join with a blank line; an
+/// unterminated fence swallows to end-of-text (streaming tail).
+pub fn extract_code_blocks(text: &str) -> (String, String) {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut lang = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("```") {
+        let after = &rest[open + 3..];
+        let nl = after.find('\n');
+        let (tag, body_start) = match nl {
+            Some(n) => (after[..n].trim(), n + 1),
+            None => break, // fence at EOF with no body
+        };
+        let body = &after[body_start..];
+        let (block, next) = match body.find("```") {
+            Some(close) => (&body[..close], &body[close + 3..]),
+            None => (body, ""),
+        };
+        let trimmed = block.trim_end_matches('\n');
+        if !trimmed.trim().is_empty() {
+            if lang.is_empty() && !tag.is_empty() {
+                lang = tag.to_string();
+            }
+            blocks.push(trimmed.to_string());
+        }
+        rest = next;
+    }
+    (blocks.join("\n\n"), lang)
+}
+
+// ── Permissions matrix (C2) ──────────────────────────────────────────────────
+
+/// One per-action permission row for the Privacy matrix.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PermRowData {
+    pub action: String,
+    pub decision: String, // "allow" | "confirm" | "deny"
+    pub overridden: bool,
+}
+
+/// Parse `neoth permissions show --output json`: rows come from the
+/// ACTIVE level's decisions with `active_custom_overrides` applied on
+/// top (those mark `overridden`). Returns (rows, active_level).
+pub fn parse_permissions_show(json: &str) -> (Vec<PermRowData>, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let level = v
+        .get("active_level")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let overrides = v
+        .get("active_custom_overrides")
+        .and_then(|x| x.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let Some(matrix) = v.get("matrix").and_then(|x| x.as_array()) else {
+        return (Vec::new(), level);
+    };
+    let active = matrix
+        .iter()
+        .find(|m| m.get("level").and_then(|x| x.as_str()) == Some(level.as_str()))
+        .or_else(|| matrix.first());
+    let Some(decisions) = active
+        .and_then(|m| m.get("decisions"))
+        .and_then(|x| x.as_array())
+    else {
+        return (Vec::new(), level);
+    };
+    let rows = decisions
+        .iter()
+        .map(|d| {
+            let action = d
+                .get("action")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let base = d
+                .get("decision")
+                .and_then(|x| x.as_str())
+                .unwrap_or("confirm")
+                .to_string();
+            match overrides.get(&action).and_then(|x| x.as_str()) {
+                Some(o) => PermRowData {
+                    action,
+                    decision: o.to_lowercase(),
+                    overridden: true,
+                },
+                None => PermRowData {
+                    action,
+                    decision: base.to_lowercase(),
+                    overridden: false,
+                },
+            }
+        })
+        .collect();
+    (rows, level)
+}
+
+// ── Cost & usage (C7) ────────────────────────────────────────────────────────
+
+/// One top-session cost row for the overview card.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CostSessionData {
+    pub session: String,
+    pub provider: String,
+    pub tokens: String,
+    pub cost: String,
+}
+
+/// Parse `neoth cost top-sessions --output json` (array of row objects;
+/// tolerant of field-name drift by probing common keys).
+pub fn parse_cost_sessions(json: &str) -> Vec<CostSessionData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(rows) = v.as_array().cloned().or_else(|| {
+        v.get("sessions")
+            .or_else(|| v.get("rows"))
+            .and_then(|x| x.as_array())
+            .cloned()
+    }) else {
+        return Vec::new();
+    };
+    fn s(v: &serde_json::Value, keys: &[&str]) -> String {
+        for k in keys {
+            if let Some(x) = v.get(k) {
+                if let Some(t) = x.as_str() {
+                    return t.to_string();
+                }
+                if x.is_number() {
+                    return x.to_string();
+                }
+            }
+        }
+        String::new()
+    }
+    rows.iter()
+        .map(|r| {
+            // `models` is an array; surface the first (usually only) one.
+            let model = r
+                .get("models")
+                .and_then(|x| x.as_array())
+                .and_then(|a| a.first())
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| s(r, &["provider", "model"]));
+            CostSessionData {
+                session: s(r, &["session", "session_id", "id"])
+                    .chars()
+                    .take(18)
+                    .collect(),
+                provider: model,
+                tokens: s(r, &["total_tokens", "tokens", "output_tokens"]),
+                // top-sessions ranks by tokens, not currency — show the
+                // response count in the cost column (honest, not a fake $).
+                cost: match s(r, &["responses"]).as_str() {
+                    "" => s(r, &["cost", "total_eur", "eur"]),
+                    n => format!("{n} resp"),
+                },
+            }
+        })
+        .take(8)
+        .collect()
+}
+
+/// Parse one `neoth usage … --format json` rollup → (cost_usd, tokens).
+pub fn parse_usage_rollup(json: &str) -> Option<(f64, u64)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let cost = v.get("total_cost_usd")?.as_f64()?;
+    let tokens = v
+        .get("total_input_tokens")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0)
+        + v.get("total_output_tokens")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0);
+    Some((cost, tokens))
+}
+
 // ── Memory graph (H2) — parse + deterministic force layout ───────────────────
 
 /// One node of the Hebbian association graph, positioned 0..1.
@@ -7046,6 +7226,72 @@ mod tests {
         assert_eq!(format_backup_bytes(512), "512 B");
         assert_eq!(format_backup_bytes(1536), "1.5 KB");
         assert_eq!(format_backup_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn extract_code_blocks_single_multi_and_unterminated() {
+        let (code, lang) = extract_code_blocks("hi\n```rust\nfn a() {}\n```\nbye");
+        assert_eq!(code, "fn a() {}");
+        assert_eq!(lang, "rust");
+
+        let (code, lang) =
+            extract_code_blocks("```py\nx = 1\n```\ntext\n```\ny = 2\n```");
+        assert_eq!(code, "x = 1\n\ny = 2");
+        assert_eq!(lang, "py", "first tag wins");
+
+        // streaming tail: open fence, no close — swallow to end
+        let (code, _) = extract_code_blocks("```sh\necho hi");
+        assert_eq!(code, "echo hi");
+
+        assert_eq!(extract_code_blocks("no fences here").0, "");
+        assert_eq!(extract_code_blocks("").0, "");
+        // empty block is dropped
+        assert_eq!(extract_code_blocks("```\n\n```").0, "");
+    }
+
+    #[test]
+    fn parse_permissions_show_merges_overrides() {
+        let json = r#"{"active_level":"standard",
+            "active_custom_overrides":{"exec_arbitrary":"deny"},
+            "matrix":[
+              {"level":"strict","decisions":[{"action":"exec_arbitrary","decision":"deny","reason":""}]},
+              {"level":"standard","decisions":[
+                {"action":"exec_arbitrary","decision":"confirm","reason":"r"},
+                {"action":"channel_send","decision":"allow","reason":""}]}]}"#;
+        let (rows, level) = parse_permissions_show(json);
+        assert_eq!(level, "standard");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].action, "exec_arbitrary");
+        assert_eq!(rows[0].decision, "deny", "override wins over base confirm");
+        assert!(rows[0].overridden);
+        assert_eq!(rows[1].decision, "allow");
+        assert!(!rows[1].overridden);
+        assert!(parse_permissions_show("garbage").0.is_empty());
+    }
+
+    #[test]
+    fn parse_usage_rollup_reads_cost_and_tokens() {
+        let json = r#"{"since_unix":0,"until_unix":1,"total_call_count":3,
+            "total_ok_count":3,"total_err_count":0,"total_input_tokens":100,
+            "total_output_tokens":50,"total_cost_usd":0.12}"#;
+        assert_eq!(parse_usage_rollup(json), Some((0.12, 150)));
+        assert_eq!(parse_usage_rollup("junk"), None);
+        assert_eq!(parse_usage_rollup("{}"), None);
+    }
+
+    #[test]
+    fn parse_cost_sessions_tolerates_shapes() {
+        let arr = r#"[{"session_id":"abcdef1234567890XYZ","models":["claude_cli/opus"],
+            "input_tokens":1000,"output_tokens":234,"total_tokens":1234,
+            "responses":7,"last_ts_unix":1}]"#;
+        let rows = parse_cost_sessions(arr);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session.chars().count(), 18, "session id capped");
+        assert_eq!(rows[0].provider, "claude_cli/opus");
+        assert_eq!(rows[0].tokens, "1234");
+        assert_eq!(rows[0].cost, "7 resp");
+        assert!(parse_cost_sessions("{}").is_empty());
+        assert!(parse_cost_sessions("junk").is_empty());
     }
 
     #[test]

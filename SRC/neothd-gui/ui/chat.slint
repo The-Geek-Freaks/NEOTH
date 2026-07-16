@@ -70,6 +70,13 @@ export struct ChatMessage {
     metrics-detail: string,
     /// Exact provider response model from the stream done-sentinel.
     model: string,
+    /// H19-lite: pre-extracted fenced code blocks joined by a blank line;
+    /// empty string means no code panel is shown. The Rust side runs a
+    /// fenced-block regex over the reply text and joins matches with "\n\n".
+    code-block: string,
+    /// Language tag of the first fenced block (e.g. "rust", "python", "sh").
+    /// May be empty if the opening fence had no language specifier.
+    code-lang: string,
 }
 
 /// GOLD-ADAPT-ODY-01 — one recent session in the sidebar (from the
@@ -116,8 +123,16 @@ component ChatBubble inherits Rectangle {
     callback copy-clicked();
     callback retry-clicked();
     callback delete-clicked();
+    /// Fired when the Copy chip inside the code panel is clicked.
+    /// The ChatView for-loop forwards this as code-copy(bubble-index).
+    callback code-copy();
 
-    height: max(40px, body.preferred-height + Theme.space-base * 2);
+    /// Per-bubble collapse state for the code panel body. Starts expanded.
+    private property <bool> code-collapsed: false;
+
+    // Height now tracks the named inner VerticalLayout so the code panel
+    // (when present) contributes to the bubble's natural height.
+    height: max(40px, bubble-content.preferred-height);
 
     HorizontalLayout {
         alignment: root.message.role == "operator" ? end : (root.message.role == "system" ? center : start);
@@ -152,7 +167,7 @@ component ChatBubble inherits Rectangle {
             bubble-hover := TouchArea {}
 
             // ── Z-layer 1: message content ────────────────────────────
-            VerticalLayout {
+            bubble-content := VerticalLayout {
                 // ODY-11: density-aware padding (compact 8px / normal 16px / spacious 24px).
                 padding: Theme.bubble-padding;
                 spacing: Theme.space-tight;
@@ -233,6 +248,155 @@ component ChatBubble inherits Rectangle {
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             width: 100%;
+                        }
+                    }
+                }
+
+                // ── H19-lite: code-block panel ────────────────────────
+                // Shown below the message text when code-block is non-empty.
+                // bg-void surface gives visual depth distinct from the bubble
+                // background. Chevron collapses the body; Copy chip copies the
+                // raw code text via root.code-copy() → ChatView.code-copy(idx).
+                if root.message.code-block != "": Rectangle {
+                    background: Theme.bg-void;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+
+                        // ── Header: lang tag · Copy chip · Collapse chevron ──
+                        HorizontalLayout {
+                            padding-left: Theme.space-base;
+                            padding-right: Theme.space-tight;
+                            padding-top: 4px;
+                            padding-bottom: 4px;
+                            spacing: Theme.space-tight;
+
+                            // Language tag — mono 2xs, text-muted, letter-spaced
+                            // for an uppercase-like aesthetic (Slint has no
+                            // text-transform, so extra letter-spacing approximates it).
+                            Text {
+                                text: root.message.code-lang;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-muted;
+                                letter-spacing: Theme.letter-spacing-extra-wide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+
+                            // Copy chip — glass pill, mono label, surface-2 on hover.
+                            Rectangle {
+                                width: code-copy-lbl.preferred-width + Theme.space-base;
+                                height: 22px;
+                                border-radius: Theme.radius-pill;
+                                background: code-copy-ta.has-hover
+                                    ? Theme.surface-2
+                                    : Theme.surface-glass;
+                                border-width: 1px;
+                                border-color: Theme.border-default;
+                                animate background {
+                                    duration: Theme.duration-fast;
+                                    easing: ease-out;
+                                }
+                                accessible-role: button;
+                                accessible-label: "Copy code";
+                                HorizontalLayout {
+                                    alignment: center;
+                                    padding-left: 6px;
+                                    padding-right: 6px;
+                                    code-copy-lbl := Text {
+                                        text: "Copy";
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        color: code-copy-ta.has-hover
+                                            ? Theme.text-primary
+                                            : Theme.text-secondary;
+                                        animate color {
+                                            duration: Theme.duration-fast;
+                                            easing: ease-out;
+                                        }
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                code-copy-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.code-copy(); }
+                                }
+                            }
+
+                            // Collapse / expand chevron (▾ = open, ▸ = folded).
+                            Rectangle {
+                                width: 22px;
+                                height: 22px;
+                                border-radius: Theme.radius-xs;
+                                background: collapse-ta.has-hover
+                                    ? Theme.surface-2
+                                    : transparent;
+                                animate background {
+                                    duration: Theme.duration-fast;
+                                    easing: ease-out;
+                                }
+                                accessible-role: button;
+                                accessible-label: root.code-collapsed
+                                    ? "Expand code"
+                                    : "Collapse code";
+                                Text {
+                                    text: root.code-collapsed ? "▸" : "▾";
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-caption;
+                                    color: collapse-ta.has-hover
+                                        ? Theme.text-primary
+                                        : Theme.text-secondary;
+                                    animate color {
+                                        duration: Theme.duration-fast;
+                                        easing: ease-out;
+                                    }
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                                collapse-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.code-collapsed = !root.code-collapsed;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Thin separator between header and code body.
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+
+                        // ── Body: clips to 0 height when collapsed ────────
+                        // `clip: true` + animated height produces the fold.
+                        // preferred-height is read from the child Text so the
+                        // animation targets the exact content height.
+                        Rectangle {
+                            clip: true;
+                            height: root.code-collapsed
+                                ? 0px
+                                : code-body-txt.preferred-height + Theme.space-base * 2;
+                            animate height {
+                                duration: Theme.duration-fast;
+                                easing: ease-out;
+                            }
+
+                            code-body-txt := Text {
+                                x: Theme.space-base;
+                                y: Theme.space-base;
+                                width: parent.width - Theme.space-base * 2;
+                                text: root.message.code-block;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-secondary;
+                                wrap: word-wrap;
+                            }
                         }
                     }
                 }
@@ -451,6 +615,9 @@ component Composer inherits Rectangle {
     callback send-clicked(string);
     callback attach-clicked();
     callback remove-attachment(int);
+    /// Fires when the operator taps the Stop button while send-in-flight
+    /// is true. Rust kills the chat subprocess and finalises the partial text.
+    callback stop-stream-clicked();
     /// Operator pressed ArrowUp with an empty composer — fires so Rust
     /// can write the last sent input back into `draft`.
     callback recall-requested();
@@ -636,17 +803,24 @@ component Composer inherits Rectangle {
             }
         }
 
-        NeothButton {
+        // ALWAYS-VISIBLE STOP (H19-lite): while send-in-flight the Send
+        // button is replaced by a danger/Stop button that fires
+        // stop-stream-clicked(). Enter-to-send is already gated in
+        // key-pressed by !root.send-in-flight, so it stays disabled.
+        if !root.send-in-flight: NeothButton {
             label: "Send →";
             enabled: root.send-enabled && root.draft != "";
-            // GUI-07: spinner replaces the label while the daemon streams.
-            loading: root.send-in-flight;
             clicked => {
-                if (root.draft != "" && !root.send-in-flight) {
+                if (root.draft != "") {
                     root.send-clicked(root.draft);
                     root.draft = "";
                 }
             }
+        }
+        if root.send-in-flight: NeothButton {
+            label: "Stop";
+            danger: true;
+            clicked => { root.stop-stream-clicked(); }
         }
         }
 
@@ -722,6 +896,12 @@ export component ChatView inherits Rectangle {
     /// Empty state starter chip tapped — fire the prompt as if the operator
     /// sent it. Rust handler is identical to send-clicked.
     callback starter-clicked(string);
+    /// Code panel copy chip clicked — `index` is the position in `messages`.
+    /// Rust side copies `messages[index].code-block` to the clipboard.
+    callback code-copy(int);
+    /// Operator tapped Stop while a reply is streaming (H19-lite).
+    /// Rust kills the chat subprocess and finalises the partial message text.
+    callback stop-stream-clicked();
 
     // ── Consent strip (chat-surface quick-access) ─────────────────────
     /// Current operating mode string: "gated" | "full-auto" | "sovereign-buddy" | "advanced"
@@ -1177,6 +1357,7 @@ export component ChatView inherits Rectangle {
                             copy-clicked => { root.message-copy(idx); }
                             retry-clicked => { root.message-retry(idx); }
                             delete-clicked => { root.message-delete(idx); }
+                            code-copy => { root.code-copy(idx); }
                         }
                     }
                 }
@@ -1317,6 +1498,7 @@ export component ChatView inherits Rectangle {
                 attach-clicked => { root.attach-clicked(); }
                 remove-attachment(i) => { root.remove-attachment(i); }
                 recall-requested => { root.recall-requested(); }
+                stop-stream-clicked => { root.stop-stream-clicked(); }
             }
         }
     }

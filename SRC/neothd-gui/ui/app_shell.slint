@@ -140,6 +140,8 @@ export component Sidebar inherits Rectangle {
     callback nav(string);
     callback set-complexity(int);
     callback toggle-theme();
+    // E4 — version line opens the About / What's-new overlay.
+    callback version-clicked();
 
     width: Theme.sidebar-w;   // B23: driven by tweaks.toml sidebar_width_px or 248px built-in
     background: Theme.bg-sunken;
@@ -161,12 +163,23 @@ export component Sidebar inherits Rectangle {
                     font-family: Theme.font-wordmark; font-size: 23px; font-weight: Theme.weight-bold;
                     letter-spacing: 1px;
                 }
-                Text {
-                    // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
-                    // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
-                    text: root.version-line; color: Theme.text-tertiary;
-                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
-                    letter-spacing: Theme.letter-spacing-mono-caps;
+                Rectangle {
+                    height: ver-txt.height;
+                    ver-txt := Text {
+                        x: 0;
+                        // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
+                        // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
+                        text: root.version-line;
+                        color: ver-ta.has-hover ? Theme.text-secondary : Theme.text-tertiary;
+                        font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                        letter-spacing: Theme.letter-spacing-mono-caps;
+                        animate color { duration: Theme.duration-fast; easing: ease-out; }
+                    }
+                    // E4 — click opens About / What's new.
+                    ver-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.version-clicked(); }
+                    }
                 }
             }
         }

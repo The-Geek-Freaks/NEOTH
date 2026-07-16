@@ -77,6 +77,15 @@ export struct ClusterPeerRow {
     last-seen: string,
 }
 
+// C2 — one row in the per-action permissions matrix.
+// Rust populates via `neoth permissions show --output json`
+// (active level decisions merged with active_custom_overrides).
+export struct PermRow {
+    action: string,
+    decision: string,   // "allow" | "confirm" | "deny"
+    overridden: bool,
+}
+
 // GU-01 — one role→provider binding for the Hemispheres panel.
 export struct HemisphereRow {
     role: string,      // "left" | "right" | "cerebellum"
@@ -242,6 +251,9 @@ component KanbanTaskCard inherits Rectangle {
     /// accent-green when the operator picked it for the detail pane.
     in property <bool> selected: false;
     callback clicked();
+    /// A4 — fires on right-click up; x/y approximate absolute position
+    /// (card.absolute-position + mouse offset within card).
+    callback context-menu(length, length);
 
     min-height: 90px;
     background: Theme.bg-card;
@@ -256,6 +268,17 @@ component KanbanTaskCard inherits Rectangle {
 
     touch := TouchArea {
         clicked => { root.clicked(); }
+        // A4: right-click fires context-menu with approximate window-space coords.
+        // root.absolute-position is the card's top-left in logical px from the window
+        // origin; self.mouse-x/y is the pointer offset within this TouchArea.
+        pointer-event(ev) => {
+            if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
+                root.context-menu(
+                    root.absolute-position.x + self.mouse-x,
+                    root.absolute-position.y + self.mouse-y,
+                );
+            }
+        }
     }
 
     VerticalLayout {
@@ -320,6 +343,8 @@ component KanbanColumn inherits Rectangle {
     in property <[KanbanTaskRow]> tasks: [];
     in property <string> selected-task-id: "";
     callback task-clicked(string);
+    /// A4 — forwards right-click from a card to the parent view.
+    callback task-context(string /*task-id*/, length /*x*/, length /*y*/);
 
     background: Theme.bg-base;
     border-radius: Theme.radius-button;
@@ -362,6 +387,7 @@ component KanbanColumn inherits Rectangle {
                 hemisphere: entry.hemisphere;
                 selected: entry.task-id == root.selected-task-id;
                 clicked => { root.task-clicked(entry.task-id); }
+                context-menu(x, y) => { root.task-context(entry.task-id, x, y); }
             }
         }
     }
@@ -718,6 +744,11 @@ export component SettingsView inherits Rectangle {
     /// GAP-03: mark a task done via `neoth kanban finish <id>`.
     /// Fires from the "✓ Finish Task" button in the detail pane.
     callback kanban-task-finish(string);
+    /// A4 — operator right-clicked a KanbanTaskCard.
+    /// Args: (task_id, x, y). x/y are approximate logical-px coordinates
+    /// (card.absolute-position + mouse-within-card). The orchestrator uses
+    /// these to position the shared ContextMenu overlay mounted in main.slint.
+    callback kanban-task-context(string /*task id*/, length /*x*/, length /*y*/);
     /// G-5 fix — operator clicked "← Chat" in the sidebar header so
     /// they can leave Settings. Without this they were trapped
     /// because the ⚙ icon lives in the Chat sidebar (not visible
@@ -847,6 +878,19 @@ export component SettingsView inherits Rectangle {
     // (enabled, start-hour, end-hour) — Rust validates + writes the
     // proactive.quiet_hours_utc [u8;2] (or null when disabled).
     callback cfg-quiet-hours-changed(bool, string, string);
+
+    // ── C2 — per-action permissions matrix (Privacy tab) ─────────────────
+    // Rows from `neoth permissions show --output json`: active level decisions
+    // merged with active_custom_overrides. cfg-perm-level is the current
+    // autonomy level shown in the Expander header.
+    in property <[PermRow]> cfg-perm-rows: [];
+    in property <string> cfg-perm-level: "";
+    /// Operator picked a new decision for an action row.
+    /// Rust: `neoth permissions set <action> <decision>`
+    callback cfg-perm-set(string /*action*/, string /*decision*/);
+    /// Operator clicked the ✕ clear glyph on an overridden row.
+    /// Rust: `neoth permissions clear <action>`
+    callback cfg-perm-clear(string /*action*/);
 
     // ── DES-09 Welle C — Memory editors ──────────────────────────────────
     in-out property <bool> cfg-memory-name-sessions: false;
@@ -2744,6 +2788,175 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
+                // C2 — per-action permissions matrix. Shows the effective
+                // decision for every guarded action (merged from the active
+                // autonomy level + any custom overrides). Overrides require the
+                // "custom" autonomy level; the header line reminds the operator.
+                Expander {
+                    title: "Per-action permissions";
+                    hint: "custom overrides";
+                    expanded: false;
+                    // Header: active level label + override-level hint
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "active level: " + root.cfg-perm-level;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-tertiary;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "overrides require the custom level";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-disabled;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    if root.cfg-perm-rows.length == 0: Text {
+                        text: "(no permissions loaded — start the daemon)";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    for r in root.cfg-perm-rows: HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        padding-top: 2px;
+                        padding-bottom: 2px;
+                        // Action name (mono caption)
+                        Text {
+                            text: r.action;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        // 3-way segmented control — pill style matching ComplexitySeg
+                        // grammar: active = accent-tint bg + border-accent;
+                        // DENY active uses consent-pink tint.
+                        HorizontalLayout {
+                            spacing: 2px;
+                            // ALLOW segment
+                            Rectangle {
+                                width: 54px;
+                                height: 22px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                background: r.decision == "allow"
+                                    ? Theme.accent-green.with-alpha(0.12)
+                                    : transparent;
+                                border-color: r.decision == "allow"
+                                    ? Theme.accent-green
+                                    : Theme.border-subtle;
+                                animate background { duration: Theme.duration-fast; easing: ease-out; }
+                                TouchArea {
+                                    clicked => { root.cfg-perm-set(r.action, "allow"); }
+                                }
+                                Text {
+                                    text: "ALLOW";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    font-weight: Theme.weight-medium;
+                                    color: r.decision == "allow"
+                                        ? Theme.accent-green
+                                        : Theme.text-muted;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                            // CONFIRM segment
+                            Rectangle {
+                                width: 62px;
+                                height: 22px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                background: r.decision == "confirm"
+                                    ? Theme.accent-amber.with-alpha(0.12)
+                                    : transparent;
+                                border-color: r.decision == "confirm"
+                                    ? Theme.accent-amber
+                                    : Theme.border-subtle;
+                                animate background { duration: Theme.duration-fast; easing: ease-out; }
+                                TouchArea {
+                                    clicked => { root.cfg-perm-set(r.action, "confirm"); }
+                                }
+                                Text {
+                                    text: "CONFIRM";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    font-weight: Theme.weight-medium;
+                                    color: r.decision == "confirm"
+                                        ? Theme.accent-amber
+                                        : Theme.text-muted;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                            // DENY segment — consent-pink tint when active
+                            Rectangle {
+                                width: 46px;
+                                height: 22px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                background: r.decision == "deny"
+                                    ? Theme.accent-pink.with-alpha(0.12)
+                                    : transparent;
+                                border-color: r.decision == "deny"
+                                    ? Theme.accent-pink
+                                    : Theme.border-subtle;
+                                animate background { duration: Theme.duration-fast; easing: ease-out; }
+                                TouchArea {
+                                    clicked => { root.cfg-perm-set(r.action, "deny"); }
+                                }
+                                Text {
+                                    text: "DENY";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    font-weight: Theme.weight-medium;
+                                    color: r.decision == "deny"
+                                        ? Theme.accent-pink
+                                        : Theme.text-muted;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                        }
+                        // Clear glyph — visible only on overridden rows.
+                        // Fires cfg-perm-clear to drop the override back to the
+                        // active level default. Hover turns text consent-pink.
+                        if r.overridden: Rectangle {
+                            width: 20px;
+                            height: 22px;
+                            background: transparent;
+                            perm-clear-ta := TouchArea {
+                                clicked => { root.cfg-perm-clear(r.action); }
+                            }
+                            Text {
+                                text: "✕";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: perm-clear-ta.has-hover
+                                    ? Theme.accent-pink
+                                    : Theme.text-tertiary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                width: parent.width;
+                                height: parent.height;
+                            }
+                        }
+                    }
+                }
+
                 // GOLD-PROG-08 — live token budget (council-path meter), polled
                 // from ~/.neoth/usage_meter.json (daemon writes it every 10s).
                 Card {
@@ -3470,6 +3683,7 @@ export component SettingsView inherits Rectangle {
                                 tasks: root.kanban-backlog;
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
+                                task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                             }
                             KanbanColumn {
                                 label: "TODO";
@@ -3478,6 +3692,7 @@ export component SettingsView inherits Rectangle {
                                 tasks: root.kanban-todo;
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
+                                task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                             }
                             KanbanColumn {
                                 label: "IN PROGRESS";
@@ -3488,6 +3703,7 @@ export component SettingsView inherits Rectangle {
                                 tasks: root.kanban-in-progress;
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
+                                task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                             }
                             KanbanColumn {
                                 label: "REVIEW";
@@ -3496,6 +3712,7 @@ export component SettingsView inherits Rectangle {
                                 tasks: root.kanban-review;
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
+                                task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                             }
                             KanbanColumn {
                                 label: "DONE";
@@ -3504,6 +3721,7 @@ export component SettingsView inherits Rectangle {
                                 tasks: root.kanban-done;
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
+                                task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                             }
                         }
                     }

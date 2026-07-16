@@ -31,7 +31,7 @@
       dynamisch anhängbar, Anzeige als eigene Sektion auf der Karte.
 - [ ] A3 Kanban-Write-Ops komplettieren (GAP-03): move/status, archive, blocked-Toggle,
       Session-Selector (Board zeigt bisher nur letzte Session).
-- [ ] A4 Rechtsklick-Kontextmenü auf Kanban-Karten (move to column, archive, block, copy id).
+- [x] A4 Rechtsklick-Kontextmenü auf Kanban-Karten (move to column, archive, block, copy id).
 
 ### Wave B — Buddy lebendig (GOLD-R4-06)
 - [x] B1 Daemon→GUI-Event-Bus: GuiActivity an WAL-Events verdrahten —
@@ -46,14 +46,14 @@
 
 ### Wave C — CLI↔GUI-Parity P0s (GOLD-R4-05)
 - [x] C1 WAL-Inspector-Tab: Events pagen, Opcode-Filter, verify-Button (audit-cyan).
-- [ ] C2 Permissions-Matrix in Privacy (custom_autonomy.overrides, ~20 Action-Keys,
+- [x] C2 Permissions-Matrix in Privacy (custom_autonomy.overrides, ~20 Action-Keys,
       aus `neoth permissions show --output json`).
 - [ ] C3 Operator-Identity in Config (operator_id, language_primary/code, role, role_custom).
 - [ ] C4 MCP-Panel (`neoth mcp` list/add/remove/toggle).
 - [ ] C5 Undo-Trigger + Slash-Command-Lücken: /quit (Daemon-Stop-Button Doctor),
       /critic + /background (Chat-Composer-Buttons), /tour //recipe //glossary (Chat).
 - [ ] C6 Cluster-Config editierbar (master switch, transport, peers, trusted_ssids).
-- [ ] C7 Usage/Cost-Analytics-View (`neoth cost/usage`) im Overview.
+- [x] C7 Usage/Cost-Analytics-View (`neoth cost/usage`) im Overview.
 
 ### Wave D — Interaction-Grammar (Best-in-Class-Transfer)
 - [x] D1 Command-Palette Ctrl+K: Navigation + Aktionen (doctor, new task, theme,
@@ -69,7 +69,7 @@
 - [x] E1 Glyph-Dedup + eine Icon-Familie (Sidebar-Kollisionen fixen).
 - [ ] E2 Skeleton-States (shape-matched) statt Spinner/Leere; Empty-States mit Aktion.
 - [ ] E3 Optimistic UI auf allen Toggles/Mutationen (nie Spinner auf cron-toggle).
-- [ ] E4 About/Version/Copyright-Panel + In-App-Changelog ("What's new" nach Update).
+- [x] E4 About/Version/Copyright-Panel + In-App-Changelog ("What's new" nach Update).
 - [x] E5 `agents`-ProbeView → strukturierte View (Cards statt Text-Dump).
 - [ ] E6 Density-Mode-Rollout auf alle Tabs (bisher nur chat).
 
@@ -97,7 +97,7 @@ GUI-only Superpowers (Rangfolge nach wow×feasibility):
 - [x] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
 - [ ] H3 **System-Tray + Windows-Toasts + Jump-List** — App lebt im Tray, native Notifications. (Killer)
 - [ ] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
-- [ ] H5 Overview: Time-Series-Charts (Token/Cost/Activity Sparklines). (Killer)
+- [x] H5 Overview: Time-Series-Charts (7-Tage-Sparkline) (Token/Cost/Activity Sparklines). (Killer)
 - [ ] H6 Live-Theme-Editor mit Instant-Preview (tweaks.toml GUI). (High)
 
 Buddy (Companion-Research):
@@ -117,7 +117,7 @@ Kanban (Linear/Height/GH-Projects):
 Chat (Claude/ChatGPT/Perplexity-Research):
 - [ ] H17 **Edit-and-Branch mit Variant-Navigator**. (Killer)
 - [ ] H18 **Regenerate mit Model-Picker**. (Killer)
-- [ ] H19 Code-Block-Affordances (Copy/Run/Collapse) + Always-Visible-Stop. (Killer)
+- [x] H19 Code-Block-Affordances (Copy/Run/Collapse) + Always-Visible-Stop. (Killer)
 - [ ] H20 Prompt-Library mit Template-Variablen; Multi-Model-Split-View (Council-Compare!); Volltext-Suche. (High)
 
 Mesh/Fleet (Grafana/Netdata/k9s):

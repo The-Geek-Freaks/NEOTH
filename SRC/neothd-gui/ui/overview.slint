@@ -49,6 +49,14 @@ export struct ConsentEntry {
     granted: bool,
 }
 
+/// One row in the COST & USAGE top-sessions table.
+export struct CostSessionRow {
+    session: string,    // short session name / id
+    provider: string,   // provider slug, e.g. "anthropic" | "openai"
+    tokens: string,     // formatted token count, e.g. "42 k"
+    cost: string,       // formatted cost, e.g. "€ 0.18"
+}
+
 // ── OverviewView ───────────────────────────────────────────────────────────────
 
 export component OverviewView inherits Rectangle {
@@ -93,6 +101,16 @@ export component OverviewView inherits Rectangle {
     // shared refresh timestamp & refresh trigger
     in property <string> ov-refreshed-at: "";
     callback overview-refresh-clicked();
+
+    // COST & USAGE card
+    in property <[CostSessionRow]> ov-cost-sessions: [];
+    // 7 normalized (0..1) daily spend values; index 0 = oldest day.
+    in property <[float]> ov-usage-days: [];
+    // mono caption beneath the sparkline, e.g. "eur 0.42 this week".
+    in property <string> ov-usage-days-label: "";
+    // fired when the operator clicks the card chevron (orchestrator can
+    // deep-link to a dedicated cost/billing panel from here).
+    callback ov-cost-open-clicked();
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -346,6 +364,199 @@ export component OverviewView inherits Rectangle {
 
                                 if root.ov-agent-names.length == 0: Text {
                                     text: "No agents running.";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-xs;
+                                }
+
+                                RefreshFooter { ts: root.ov-refreshed-at; }
+                            }
+                        }
+
+                        // ── COST & USAGE card ─────────────────────────────────
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                // Card header: kicker + chevron deep-link
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "COST & USAGE"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    // Small chevron — fires ov-cost-open-clicked for
+                                    // the orchestrator to handle deep-linking.
+                                    Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                        border-radius: Theme.radius-xs;
+                                        background: cvu-chevron.has-hover ? Theme.surface-2 : transparent;
+                                        animate background {
+                                            duration: Theme.duration-fast;
+                                            easing: ease-out;
+                                        }
+                                        Text {
+                                            text: "▸";
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                        cvu-chevron := TouchArea {
+                                            clicked => { root.ov-cost-open-clicked(); }
+                                        }
+                                    }
+                                }
+
+                                // ── 7-bar daily spend sparkline ──────────────────
+                                if root.ov-usage-days.length > 0: Rectangle {
+                                    height: 36px;
+                                    background: transparent;
+                                    HorizontalLayout {
+                                        spacing: 4px;
+                                        alignment: start;
+                                        // Each wrapper rect is 14px wide × 36px tall;
+                                        // the inner bar is bottom-anchored via explicit y.
+                                        for val[i] in root.ov-usage-days: Rectangle {
+                                            width: 14px;
+                                            height: 36px;
+                                            background: transparent;
+                                            Rectangle {
+                                                x: 0;
+                                                y: parent.height - max(2px, val * parent.height);
+                                                width: parent.width;
+                                                height: max(2px, val * parent.height);
+                                                border-radius: 2px;
+                                                background: Theme.accent;
+                                                // brighter bars for higher spend days
+                                                opacity: 0.55 + val * 0.45;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Sparkline caption (e.g. "eur 0.42 this week")
+                                if root.ov-usage-days-label != "": Text {
+                                    text: root.ov-usage-days-label;
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    letter-spacing: Theme.letter-spacing-tight;
+                                }
+
+                                // ── TOP SESSIONS table ───────────────────────────
+                                Kicker { label: "TOP SESSIONS"; }
+
+                                // Column header row — only shown when data exists
+                                if root.ov-cost-sessions.length > 0: Rectangle {
+                                    height: 22px;
+                                    background: transparent;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 4px;
+                                        alignment: start;
+                                        Text {
+                                            text: "SESSION";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                            horizontal-stretch: 2;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: "PROVIDER";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                            horizontal-stretch: 1;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: "TOKENS";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                            horizontal-alignment: right;
+                                            horizontal-stretch: 1;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: "COST";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            letter-spacing: Theme.letter-spacing-wide;
+                                            horizontal-alignment: right;
+                                            horizontal-stretch: 1;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // Data rows — max 8 visible (visible: false keeps
+                                // layout space; acceptable at low row counts)
+                                for entry[i] in root.ov-cost-sessions: Rectangle {
+                                    height: 28px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: Theme.border-subtle;
+                                    visible: i < 8;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 4px;
+                                        alignment: start;
+                                        Text {
+                                            text: entry.session;
+                                            color: Theme.text-secondary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            horizontal-stretch: 2;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: entry.provider;
+                                            color: Theme.audit;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            horizontal-stretch: 1;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: entry.tokens;
+                                            color: Theme.text-primary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            horizontal-alignment: right;
+                                            horizontal-stretch: 1;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: entry.cost;
+                                            color: Theme.warning;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            horizontal-alignment: right;
+                                            horizontal-stretch: 1;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // Empty state
+                                if root.ov-cost-sessions.length == 0: Text {
+                                    text: "no spend recorded yet";
                                     color: Theme.text-disabled;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-xs;
