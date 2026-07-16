@@ -16,6 +16,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Security evidence is release-relevant only for the current branch HEAD.
+# Superseded push runs waste scanners and delay the exact-head verdict.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

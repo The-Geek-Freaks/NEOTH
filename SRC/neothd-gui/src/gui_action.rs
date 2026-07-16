@@ -99,6 +99,265 @@ fn require_id(actual: &str, expected: &str) -> Result<(), String> {
     }
 }
 
+fn require_task_id(actual: i64, expected: &str) -> Result<(), String> {
+    let expected = expected
+        .parse::<i64>()
+        .map_err(|_| format!("expected task id `{expected}` is not an integer"))?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "acknowledged task id `{actual}`, expected `{expected}`"
+        ))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionMutationAck {
+    pub operation: String,
+    pub action: String,
+    pub decision: Option<String>,
+    pub path: String,
+}
+
+impl PermissionMutationAck {
+    pub fn verify_set(&self, action: &str, decision: &str) -> Result<(), String> {
+        require_action(&self.operation, "set")?;
+        require_id(&self.action, action)?;
+        if self.decision.as_deref() != Some(decision) {
+            return Err(format!(
+                "acknowledged decision `{:?}`, expected `{decision}`",
+                self.decision
+            ));
+        }
+        self.require_path()
+    }
+
+    pub fn verify_clear(&self, action: &str) -> Result<(), String> {
+        require_action(&self.operation, "cleared")?;
+        require_id(&self.action, action)?;
+        if self.decision.is_some() {
+            return Err("clear acknowledgement unexpectedly retained a decision".to_string());
+        }
+        self.require_path()
+    }
+
+    fn require_path(&self) -> Result<(), String> {
+        if self.path.trim().is_empty() {
+            Err("permission acknowledgement is missing its config path".to_string())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KanbanMoveAck {
+    pub ok: bool,
+    pub action: String,
+    pub task_id: i64,
+    pub status: String,
+}
+
+impl KanbanMoveAck {
+    pub fn verify(&self, task_id: &str, status: &str) -> Result<(), String> {
+        if !self.ok {
+            return Err("Kanban move did not acknowledge success".to_string());
+        }
+        require_action(&self.action, "move")?;
+        require_task_id(self.task_id, task_id)?;
+        if self.status == status {
+            Ok(())
+        } else {
+            Err(format!(
+                "acknowledged status `{}`, expected `{status}`",
+                self.status
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KanbanAssignAck {
+    pub ok: bool,
+    pub action: String,
+    pub task_id: i64,
+    pub hemisphere: String,
+    pub worker: Option<String>,
+}
+
+impl KanbanAssignAck {
+    pub fn verify(
+        &self,
+        task_id: &str,
+        hemisphere: &str,
+        worker: Option<&str>,
+    ) -> Result<(), String> {
+        if !self.ok {
+            return Err("Kanban assignment did not acknowledge success".to_string());
+        }
+        require_action(&self.action, "assign")?;
+        require_task_id(self.task_id, task_id)?;
+        if self.hemisphere != hemisphere {
+            return Err(format!(
+                "acknowledged hemisphere `{}`, expected `{hemisphere}`",
+                self.hemisphere
+            ));
+        }
+        if self.worker.as_deref() != worker {
+            return Err(format!(
+                "acknowledged worker `{:?}`, expected `{worker:?}`",
+                self.worker
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KanbanAddAck {
+    pub ok: bool,
+    pub action: String,
+    pub task_id: i64,
+    pub session_id: i64,
+    pub status: String,
+    pub title: String,
+    pub task_type: String,
+}
+
+impl KanbanAddAck {
+    pub fn verify(&self, title: &str, task_type: &str) -> Result<(), String> {
+        if !self.ok {
+            return Err("Kanban add did not acknowledge success".to_string());
+        }
+        require_action(&self.action, "add")?;
+        if self.task_id <= 0 || self.session_id <= 0 {
+            return Err("Kanban add acknowledgement is missing task/session ids".to_string());
+        }
+        if self.status != "backlog" {
+            return Err(format!(
+                "acknowledged status `{}`, expected `backlog`",
+                self.status
+            ));
+        }
+        if self.title != title {
+            return Err(format!(
+                "acknowledged title `{}`, expected `{title}`",
+                self.title
+            ));
+        }
+        if self.task_type != task_type {
+            return Err(format!(
+                "acknowledged task type `{}`, expected `{task_type}`",
+                self.task_type
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KanbanCommentAck {
+    pub ok: bool,
+    pub action: String,
+    pub task_id: i64,
+    pub comment_id: i64,
+    pub author: String,
+}
+
+impl KanbanCommentAck {
+    pub fn verify(&self, task_id: &str, author: &str) -> Result<(), String> {
+        if !self.ok {
+            return Err("Kanban comment did not acknowledge success".to_string());
+        }
+        require_action(&self.action, "comment")?;
+        require_task_id(self.task_id, task_id)?;
+        if self.comment_id <= 0 {
+            return Err("Kanban comment acknowledgement is missing its id".to_string());
+        }
+        if self.author != author {
+            return Err(format!(
+                "acknowledged author `{}`, expected `{author}`",
+                self.author
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KanbanFinishAck {
+    pub ok: bool,
+    pub action: String,
+    pub task_id: i64,
+    pub status: String,
+    pub verified_tests: bool,
+}
+
+impl KanbanFinishAck {
+    pub fn verify(&self, task_id: &str, verified_tests: bool) -> Result<(), String> {
+        if !self.ok {
+            return Err("Kanban finish did not acknowledge success".to_string());
+        }
+        require_action(&self.action, "finish")?;
+        require_task_id(self.task_id, task_id)?;
+        if self.status != "done" {
+            return Err(format!(
+                "acknowledged status `{}`, expected `done`",
+                self.status
+            ));
+        }
+        if self.verified_tests != verified_tests {
+            return Err(format!(
+                "acknowledged verified-tests `{}`, expected `{verified_tests}`",
+                self.verified_tests
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KanbanPromoteAck {
+    pub ok: bool,
+    pub action: String,
+    pub task_id: i64,
+    pub from_status: String,
+    pub status: String,
+    pub promoted: bool,
+    pub blocker: Option<String>,
+}
+
+impl KanbanPromoteAck {
+    pub fn verify(&self, task_id: &str) -> Result<(), String> {
+        if !self.ok {
+            return Err(self
+                .blocker
+                .clone()
+                .unwrap_or_else(|| "Kanban promote did not acknowledge success".to_string()));
+        }
+        require_action(&self.action, "promote")?;
+        require_task_id(self.task_id, task_id)?;
+        if self.from_status != "review" || self.status != "done" || !self.promoted {
+            return Err(format!(
+                "Kanban promote acknowledged {} -> {} (promoted={})",
+                self.from_status, self.status, self.promoted
+            ));
+        }
+        if self.blocker.is_some() {
+            return Err("successful Kanban promote unexpectedly included a blocker".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CronMutationAck {
@@ -634,6 +893,116 @@ mod tests {
     }
 
     #[test]
+    fn permission_and_kanban_receipts_fail_closed_on_process_or_schema_errors() {
+        let success_looking = r#"{"ok":true,"action":"move","task_id":42,"status":"done"}"#;
+        assert!(
+            decode_json_output::<KanbanMoveAck>(
+                &output(9, success_looking, "database is locked"),
+                "Kanban move",
+            )
+            .unwrap_err()
+            .contains("exit 9")
+        );
+        assert!(
+            decode_json_output::<KanbanMoveAck>(&output(0, "not-json", ""), "Kanban move",)
+                .unwrap_err()
+                .contains("invalid acknowledgement")
+        );
+        assert!(
+            decode_json_output::<PermissionMutationAck>(&output(0, "", ""), "Permission set",)
+                .unwrap_err()
+                .contains("no acknowledgement")
+        );
+    }
+
+    #[test]
+    fn permission_receipts_bind_operation_action_and_decision() {
+        let set: PermissionMutationAck = serde_json::from_str(
+            r#"{"operation":"set","action":"shell_exec","decision":"confirm","path":"freedom.yaml"}"#,
+        )
+        .unwrap();
+        set.verify_set("shell_exec", "confirm").unwrap();
+        assert!(set.verify_set("file_write", "confirm").is_err());
+        assert!(set.verify_set("shell_exec", "allow").is_err());
+
+        let wrong_operation: PermissionMutationAck = serde_json::from_str(
+            r#"{"operation":"cleared","action":"shell_exec","decision":null,"path":"freedom.yaml"}"#,
+        )
+        .unwrap();
+        assert!(wrong_operation.verify_set("shell_exec", "confirm").is_err());
+        wrong_operation.verify_clear("shell_exec").unwrap();
+        assert!(wrong_operation.verify_clear("file_write").is_err());
+    }
+
+    #[test]
+    fn kanban_receipts_bind_action_task_and_target() {
+        let added: KanbanAddAck = serde_json::from_str(
+            r#"{"ok":true,"action":"add","task_id":42,"session_id":7,"status":"backlog","title":"Ship it","task_type":"feature"}"#,
+        )
+        .unwrap();
+        added.verify("Ship it", "feature").unwrap();
+        assert!(added.verify("Wrong title", "feature").is_err());
+        assert!(added.verify("Ship it", "bug").is_err());
+
+        let missing_session: KanbanAddAck = serde_json::from_str(
+            r#"{"ok":true,"action":"add","task_id":42,"session_id":0,"status":"backlog","title":"Ship it","task_type":"feature"}"#,
+        )
+        .unwrap();
+        assert!(missing_session.verify("Ship it", "feature").is_err());
+
+        let moved: KanbanMoveAck = serde_json::from_str(
+            r#"{"ok":true,"action":"move","task_id":42,"status":"in_progress"}"#,
+        )
+        .unwrap();
+        moved.verify("42", "in_progress").unwrap();
+        assert!(moved.verify("41", "in_progress").is_err());
+        assert!(moved.verify("42", "done").is_err());
+
+        let wrong_action: KanbanMoveAck = serde_json::from_str(
+            r#"{"ok":true,"action":"assign","task_id":42,"status":"in_progress"}"#,
+        )
+        .unwrap();
+        assert!(wrong_action.verify("42", "in_progress").is_err());
+
+        let assigned: KanbanAssignAck = serde_json::from_str(
+            r#"{"ok":true,"action":"assign","task_id":42,"hemisphere":"left","worker":null}"#,
+        )
+        .unwrap();
+        assigned.verify("42", "left", None).unwrap();
+        assert!(assigned.verify("42", "right", None).is_err());
+        assert!(assigned.verify("42", "left", Some("worker-a")).is_err());
+
+        let comment: KanbanCommentAck = serde_json::from_str(
+            r#"{"ok":true,"action":"comment","task_id":42,"comment_id":9,"author":"operator"}"#,
+        )
+        .unwrap();
+        comment.verify("42", "operator").unwrap();
+        assert!(comment.verify("41", "operator").is_err());
+        assert!(comment.verify("42", "buddy").is_err());
+
+        let finished: KanbanFinishAck = serde_json::from_str(
+            r#"{"ok":true,"action":"finish","task_id":42,"status":"done","verified_tests":false}"#,
+        )
+        .unwrap();
+        finished.verify("42", false).unwrap();
+        assert!(finished.verify("41", false).is_err());
+        assert!(finished.verify("42", true).is_err());
+
+        let promoted: KanbanPromoteAck = serde_json::from_str(
+            r#"{"ok":true,"action":"promote","task_id":42,"from_status":"review","status":"done","promoted":true,"blocker":null}"#,
+        )
+        .unwrap();
+        promoted.verify("42").unwrap();
+        assert!(promoted.verify("41").is_err());
+
+        let blocked: KanbanPromoteAck = serde_json::from_str(
+            r#"{"ok":false,"action":"promote","task_id":42,"from_status":"review","status":"review","promoted":false,"blocker":"tests failing"}"#,
+        )
+        .unwrap();
+        assert_eq!(blocked.verify("42").unwrap_err(), "tests failing");
+    }
+
+    #[test]
     fn typed_toggle_ack_binds_action_and_state() {
         let ack = decode_json_output::<ToggleAck>(
             &output(0, r#"{"ok":true,"action":"enable","enabled":true}"#, ""),
@@ -767,8 +1136,9 @@ mod tests {
             .unwrap();
         let callbacks = &source[start..end];
 
-        // The sole raw probe in this region is the read-only Dream-day view.
-        assert_eq!(callbacks.matches("run_neothd_probe(").count(), 1);
+        // Raw probes in this region are read-only views: Dream day,
+        // Permissions matrix, Memory graph, and two WAL inspectors.
+        assert_eq!(callbacks.matches("run_neothd_probe(").count(), 5);
         assert!(callbacks.contains("run_neothd_probe(&[\"dream\", \"show\""));
         // Baseline: Cron 4, Babel 2, Calendar 1, Self-Improve 5,
         // Self-Dev 4, Obsidian 2, Dream 1, Reflect 1, Buddy policy 4,
@@ -809,5 +1179,106 @@ mod tests {
             );
         }
         assert!(callbacks.contains("&[\"reflect\", \"digest\", \"daily\"]"));
+
+        let wave8_start = source
+            .find("Wave 8 — C2 permissions matrix + A4 kanban context menu")
+            .unwrap();
+        let wave8_end = source[wave8_start..]
+            .find("H2 — Memory graph callbacks")
+            .map(|offset| wave8_start + offset)
+            .unwrap();
+        let wave8 = &source[wave8_start..wave8_end];
+        assert_eq!(
+            wave8.matches("run_neothd_probe(").count(),
+            1,
+            "only the read-only permissions matrix may use the probe boundary"
+        );
+        assert!(wave8.contains("run_neothd_probe(&[\"permissions\", \"show\""));
+        for action in [
+            "Permission set",
+            "Permission clear",
+            "Kanban move",
+            "Kanban assign",
+        ] {
+            assert!(
+                wave8.contains(&format!("\"{action}\"")),
+                "missing typed Wave 8 action: {action}"
+            );
+        }
+        assert_eq!(wave8.matches("run_neothd_json_action::<").count(), 4);
+    }
+
+    #[test]
+    fn every_kanban_mutation_callback_uses_a_typed_receipt() {
+        let source = include_str!("main.rs");
+        assert_eq!(
+            source.matches("window.on_kanban_").count(),
+            10,
+            "new Kanban callbacks must be classified as read-only or typed mutations"
+        );
+        for read_only in [
+            "window.on_kanban_refresh_clicked",
+            "window.on_kanban_copy_task_id",
+            "window.on_kanban_task_selected",
+        ] {
+            assert!(
+                source.contains(read_only),
+                "missing read-only callback {read_only}"
+            );
+        }
+
+        let spec_start = source.find("GOLD-ADAPT-AOS-06 — New-Spec pane").unwrap();
+        let spec_end = source[spec_start..]
+            .find("GOLD-ADAPT-ODY-03 — attach/remove handlers")
+            .map(|offset| spec_start + offset)
+            .unwrap();
+        let spec = &source[spec_start..spec_end];
+        assert!(spec.contains("run_neothd_json_action::<gui_action::KanbanAddAck>"));
+        assert!(spec.contains("ack.verify(&title, \"feature\")"));
+        assert!(spec.contains("request_kanban_refresh(&weak)"));
+        for unchecked in ["spawn_neothd_plain", ".output()", "run_neothd_probe("] {
+            assert!(
+                !spec.contains(unchecked),
+                "spec-create regressed to unchecked boundary: {unchecked}"
+            );
+        }
+
+        let wave8_start = source
+            .find("Wave 8 — C2 permissions matrix + A4 kanban context menu")
+            .unwrap();
+        let wave8_end = source[wave8_start..]
+            .find("H2 — Memory graph callbacks")
+            .map(|offset| wave8_start + offset)
+            .unwrap();
+        let wave8 = &source[wave8_start..wave8_end];
+        for receipt in ["KanbanMoveAck", "KanbanAssignAck"] {
+            assert!(wave8.contains(receipt), "missing Wave 8 receipt {receipt}");
+        }
+
+        let legacy_start = source
+            .find("Step 6 (2026-05-20): operator action handlers")
+            .unwrap();
+        let legacy_end = source[legacy_start..]
+            .find("Step 5 (2026-05-20): task-card click handler")
+            .map(|offset| legacy_start + offset)
+            .unwrap();
+        let legacy = &source[legacy_start..legacy_end];
+        assert_eq!(legacy.matches("run_neothd_json_action::<").count(), 5);
+        assert_eq!(legacy.matches("request_kanban_refresh(&weak)").count(), 5);
+        for receipt in [
+            "KanbanMoveAck",
+            "KanbanPromoteAck",
+            "KanbanCommentAck",
+            "KanbanAssignAck",
+            "KanbanFinishAck",
+        ] {
+            assert!(legacy.contains(receipt), "missing legacy receipt {receipt}");
+        }
+        for unchecked in ["spawn_neothd_plain", ".output()", "run_neothd_probe("] {
+            assert!(
+                !legacy.contains(unchecked),
+                "legacy Kanban mutation regressed to unchecked boundary: {unchecked}"
+            );
+        }
     }
 }

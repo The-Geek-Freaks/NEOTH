@@ -350,7 +350,7 @@ export component AgentsView inherits Rectangle {
 
                     for agent in root.agents: AgentCard {
                         agent: agent;
-                        width: parent.width - 4px;
+                        horizontal-stretch: 1;
                     }
                 }
             }
@@ -405,7 +405,7 @@ export component AgentsView inherits Rectangle {
                     color: Theme.text-disabled;
                     font-size: Theme.font-size-display-sm;
                     horizontal-alignment: center;
-                    width: parent.width;
+                    horizontal-stretch: 1;
                 }
 
                 Text {
@@ -414,7 +414,7 @@ export component AgentsView inherits Rectangle {
                     font-family: Theme.font-sans;
                     font-size: Theme.font-size-base;
                     horizontal-alignment: center;
-                    width: parent.width;
+                    horizontal-stretch: 1;
                 }
 
                 Text {
@@ -423,7 +423,7 @@ export component AgentsView inherits Rectangle {
                     font-family: Theme.font-mono;
                     font-size: Theme.font-size-xs;
                     horizontal-alignment: center;
-                    width: parent.width;
+                    horizontal-stretch: 1;
                 }
             }
         }

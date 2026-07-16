@@ -525,6 +525,7 @@ mod buddy_activity;
 mod gui_action;
 mod gui_stream;
 mod panel_logic;
+mod tray;
 mod wizard_logic;
 
 use buddy_activity::GuiActivity;
@@ -616,88 +617,13 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
     });
 }
 
-// H3 — system tray: a procedural neon-orb icon, Show/Quit menu, and
-// left-click-to-restore. Menu/tray events arrive on a global channel;
-// a 200 ms UI timer drains them (the winit loop owns the message pump).
-// Returns None when the platform refuses a tray (headless CI) — the
-// GUI works exactly as before in that case.
-fn setup_tray(window: &MainWindow) -> Option<tray_icon::TrayIcon> {
-    use tray_icon::{
-        TrayIconBuilder, TrayIconEvent,
-        menu::{Menu, MenuEvent, MenuItem},
-    };
-
-    // Procedural icon: the buddy orb as a neon-green disc with a soft
-    // antialiased edge on transparency — no asset file to ship.
-    let size = 32u32;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-    let c = (size as f32) / 2.0 - 0.5;
-    let r = c - 2.0;
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as f32 - c;
-            let dy = y as f32 - c;
-            let d = (dx * dx + dy * dy).sqrt();
-            if d <= r {
-                let i = ((y * size + x) * 4) as usize;
-                rgba[i] = 0x00;
-                rgba[i + 1] = 0xFF;
-                rgba[i + 2] = 0x80;
-                rgba[i + 3] = if d > r - 1.5 {
-                    (255.0 * (r - d).max(0.0) / 1.5) as u8
-                } else {
-                    255
-                };
-            }
+fn request_kanban_refresh(window: &slint::Weak<MainWindow>) {
+    let weak = window.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(w) = weak.upgrade() {
+            w.invoke_kanban_refresh_clicked();
         }
-    }
-    let icon = tray_icon::Icon::from_rgba(rgba, size, size).ok()?;
-
-    let menu = Menu::new();
-    let show_item = MenuItem::new("Show NEOTH", true, None);
-    let quit_item = MenuItem::new("Quit", true, None);
-    menu.append_items(&[&show_item, &quit_item]).ok()?;
-
-    let tray = TrayIconBuilder::new()
-        .with_icon(icon)
-        .with_tooltip("NEOTH — your buddy, your life")
-        .with_menu(Box::new(menu))
-        .build()
-        .ok()?;
-
-    let show_id = show_item.id().clone();
-    let quit_id = quit_item.id().clone();
-    let weak = window.as_weak();
-    let timer = slint::Timer::default();
-    timer.start(
-        slint::TimerMode::Repeated,
-        std::time::Duration::from_millis(200),
-        move || {
-            while let Ok(ev) = MenuEvent::receiver().try_recv() {
-                if ev.id == show_id {
-                    if let Some(w) = weak.upgrade() {
-                        let _ = w.show();
-                    }
-                } else if ev.id == quit_id {
-                    let _ = slint::quit_event_loop();
-                }
-            }
-            while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
-                if let TrayIconEvent::Click {
-                    button: tray_icon::MouseButton::Left,
-                    button_state: tray_icon::MouseButtonState::Up,
-                    ..
-                } = ev
-                    && let Some(w) = weak.upgrade()
-                {
-                    let _ = w.show();
-                }
-            }
-        },
-    );
-    // Keep the drain timer alive for the app lifetime (toast-timer pattern).
-    std::mem::forget(timer);
-    Some(tray)
+    });
 }
 
 // Run the hardware/daemon probe on a worker thread and land the result
@@ -2447,39 +2373,46 @@ fn main() -> Result<()> {
         window.on_spec_create(move |title, goal, acceptance| {
             let title = title.trim().to_string();
             if title.is_empty() {
+                push_toast(
+                    &weak_spec,
+                    "warn",
+                    "Kanban add failed",
+                    "Task title cannot be empty.",
+                );
                 return;
             }
             let desc = panel_logic::compose_spec_description(goal.as_str(), acceptance.as_str());
             let weak = weak_spec.clone();
             std::thread::spawn(move || {
-                let outcome: Result<String, String> = (|| {
-                    let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
-                    let mut cmd = spawn_neothd_plain(&bin);
-                    cmd.arg("kanban").arg("add").arg(&title);
-                    if let Some(d) = &desc {
-                        cmd.arg("--description").arg(d);
+                let mut args = vec!["kanban".to_string(), "add".to_string(), title.clone()];
+                if let Some(description) = desc {
+                    args.extend(["--description".to_string(), description]);
+                }
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                let outcome =
+                    run_neothd_json_action::<gui_action::KanbanAddAck>(&arg_refs, "Kanban add")
+                        .and_then(|ack| {
+                            ack.verify(&title, "feature")?;
+                            Ok(ack)
+                        });
+                let status = match outcome {
+                    Ok(ack) => {
+                        let message = format!(
+                            "task #{} created in session #{} (backlog)",
+                            ack.task_id, ack.session_id
+                        );
+                        push_toast(&weak, "success", "Kanban task created", &message);
+                        request_kanban_refresh(&weak);
+                        message
                     }
-                    match cmd.output() {
-                        Ok(o) if o.status.success() => {
-                            Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
-                        }
-                        Ok(o) => Err(format!(
-                            "kanban add failed: {}",
-                            String::from_utf8_lossy(&o.stderr).trim()
-                        )),
-                        Err(e) => Err(format!("kanban add could not start: {e}")),
+                    Err(error) => {
+                        push_toast(&weak, "warn", "Kanban add failed", &error);
+                        error
                     }
-                })();
+                };
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        match outcome {
-                            Ok(line) => {
-                                w.set_status_line(line.into());
-                                // Board refresh reuses the existing handler.
-                                w.invoke_kanban_refresh_clicked();
-                            }
-                            Err(e) => w.set_status_line(e.into()),
-                        }
+                        w.set_status_line(status.into());
                     }
                 });
             });
@@ -4685,28 +4618,47 @@ fn main() -> Result<()> {
 
         let weak_ps = window.as_weak();
         window.on_cfg_perm_set(move |action, decision| {
+            let action = action.to_string();
+            let decision = decision.to_string();
             let weak = weak_ps.clone();
             std::thread::spawn(move || {
-                let out =
-                    run_neothd_probe(&["permissions", "set", action.as_str(), decision.as_str()]);
-                let summary: String = out.trim().chars().take(120).collect();
-                push_toast(&weak, "success", "Permission set", &summary);
-                perm_refresh(weak.clone());
+                let result = run_neothd_json_action::<gui_action::PermissionMutationAck>(
+                    &["permissions", "set", action.as_str(), decision.as_str()],
+                    "Permission set",
+                )
+                .and_then(|ack| ack.verify_set(&action, &decision));
+                match result {
+                    Ok(()) => {
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Permission set",
+                            &format!("{action} = {decision}"),
+                        );
+                        perm_refresh(weak.clone());
+                    }
+                    Err(error) => push_toast(&weak, "warn", "Permission set failed", &error),
+                }
             });
         });
 
         let weak_pc = window.as_weak();
         window.on_cfg_perm_clear(move |action| {
+            let action = action.to_string();
             let weak = weak_pc.clone();
             std::thread::spawn(move || {
-                let _ = run_neothd_probe(&["permissions", "clear", action.as_str()]);
-                push_toast(
-                    &weak,
-                    "info",
-                    "Permission override cleared",
-                    action.as_str(),
-                );
-                perm_refresh(weak.clone());
+                let result = run_neothd_json_action::<gui_action::PermissionMutationAck>(
+                    &["permissions", "clear", action.as_str()],
+                    "Permission clear",
+                )
+                .and_then(|ack| ack.verify_clear(&action));
+                match result {
+                    Ok(()) => {
+                        push_toast(&weak, "success", "Permission override cleared", &action);
+                        perm_refresh(weak.clone());
+                    }
+                    Err(error) => push_toast(&weak, "warn", "Permission clear failed", &error),
+                }
             });
         });
 
@@ -4714,24 +4666,35 @@ fn main() -> Result<()> {
         let weak_mv = window.as_weak();
         window.on_kanban_move_task(move |task_id, status| {
             let id = task_id.trim_start_matches('#').to_string();
+            let status = status.to_string();
             let weak = weak_mv.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["kanban", "move", id.as_str(), status.as_str()]);
-                let summary: String = out.trim().chars().take(120).collect();
-                let ok_body = if summary.is_empty() {
-                    format!("task {id} → {status}")
-                } else {
-                    summary
-                };
-                push_toast(&weak, "success", "Kanban", &ok_body);
-                let _ = slint::invoke_from_event_loop({
-                    let weak2 = weak.clone();
-                    move || {
-                        if let Some(w) = weak2.upgrade() {
-                            w.invoke_kanban_refresh_clicked();
-                        }
+                let result = run_neothd_json_action::<gui_action::KanbanMoveAck>(
+                    &["kanban", "move", id.as_str(), status.as_str()],
+                    "Kanban move",
+                )
+                .and_then(|ack| ack.verify(&id, &status));
+                match result {
+                    Ok(()) => {
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Kanban",
+                            &format!("task #{id} → {status}"),
+                        );
+                        let _ = slint::invoke_from_event_loop({
+                            let weak2 = weak.clone();
+                            move || {
+                                if let Some(w) = weak2.upgrade() {
+                                    w.invoke_kanban_refresh_clicked();
+                                }
+                            }
+                        });
                     }
-                });
+                    Err(error) => {
+                        push_toast(&weak, "warn", "Kanban move failed", &error);
+                    }
+                }
             });
         });
 
@@ -4739,24 +4702,35 @@ fn main() -> Result<()> {
         let weak_as = window.as_weak();
         window.on_kanban_assign_task(move |task_id, hemisphere| {
             let id = task_id.trim_start_matches('#').to_string();
+            let hemisphere = hemisphere.to_string();
             let weak = weak_as.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["kanban", "assign", id.as_str(), hemisphere.as_str()]);
-                let summary: String = out.trim().chars().take(120).collect();
-                let body = if summary.is_empty() {
-                    format!("task {id} → {hemisphere}")
-                } else {
-                    summary
-                };
-                push_toast(&weak, "success", "Kanban assign", &body);
-                let _ = slint::invoke_from_event_loop({
-                    let weak2 = weak.clone();
-                    move || {
-                        if let Some(w) = weak2.upgrade() {
-                            w.invoke_kanban_refresh_clicked();
-                        }
+                let result = run_neothd_json_action::<gui_action::KanbanAssignAck>(
+                    &["kanban", "assign", id.as_str(), hemisphere.as_str()],
+                    "Kanban assign",
+                )
+                .and_then(|ack| ack.verify(&id, &hemisphere, None));
+                match result {
+                    Ok(()) => {
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Kanban assign",
+                            &format!("task #{id} → {hemisphere}"),
+                        );
+                        let _ = slint::invoke_from_event_loop({
+                            let weak2 = weak.clone();
+                            move || {
+                                if let Some(w) = weak2.upgrade() {
+                                    w.invoke_kanban_refresh_clicked();
+                                }
+                            }
+                        });
                     }
-                });
+                    Err(error) => {
+                        push_toast(&weak, "warn", "Kanban assign failed", &error);
+                    }
+                }
             });
         });
 
@@ -6640,60 +6614,60 @@ fn main() -> Result<()> {
     fn strip_id_hash(s: &str) -> String {
         s.strip_prefix('#').unwrap_or(s).to_string()
     }
+    let weak_task_move = window.as_weak();
     window.on_kanban_task_move(move |task_id, status| {
         let id = strip_id_hash(&task_id);
         let status_str = status.to_string();
+        let weak = weak_task_move.clone();
         std::thread::spawn(move || {
-            let Some(bin) = which_neothd() else {
-                tracing::warn!("kanban move: neothd binary not on PATH");
-                return;
-            };
-            let out = spawn_neothd_plain(&bin)
-                .arg("kanban")
-                .arg("move")
-                .arg(&id)
-                .arg(&status_str)
-                .output();
-            match out {
-                Ok(o) if o.status.success() => {
+            let result = run_neothd_json_action::<gui_action::KanbanMoveAck>(
+                &["kanban", "move", &id, &status_str],
+                "Kanban task move",
+            )
+            .and_then(|ack| ack.verify(&id, &status_str));
+            match result {
+                Ok(()) => {
                     info!(task_id = %id, status = %status_str, "kanban: move applied");
+                    push_toast(
+                        &weak,
+                        "success",
+                        "Kanban task moved",
+                        &format!("task #{id} → {status_str}"),
+                    );
+                    request_kanban_refresh(&weak);
                 }
-                Ok(o) => tracing::warn!(
-                    task_id = %id,
-                    status = %status_str,
-                    exit = ?o.status,
-                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                    "kanban move failed"
-                ),
-                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban move could not start"),
+                Err(error) => {
+                    tracing::warn!(task_id = %id, status = %status_str, error = %error, "kanban move failed");
+                    push_toast(&weak, "warn", "Kanban move failed", &error);
+                }
             }
         });
     });
+
+    let weak_task_promote = window.as_weak();
     window.on_kanban_task_promote(move |task_id| {
         let id = strip_id_hash(&task_id);
+        let weak = weak_task_promote.clone();
         std::thread::spawn(move || {
-            let Some(bin) = which_neothd() else {
-                tracing::warn!("kanban promote: neothd binary not on PATH");
-                return;
-            };
-            let out = spawn_neothd_plain(&bin)
-                .arg("kanban")
-                .arg("review")
-                .arg(&id)
-                .arg("--promote")
-                .output();
-            match out {
-                Ok(o) if o.status.success() => {
+            let result = run_neothd_json_action::<gui_action::KanbanPromoteAck>(
+                &["kanban", "review", &id, "--promote"],
+                "Kanban promote",
+            )
+            .and_then(|ack| ack.verify(&id));
+            match result {
+                Ok(()) => {
                     info!(task_id = %id, "kanban: REVIEW promoted to DONE");
+                    push_toast(
+                        &weak,
+                        "success",
+                        "Kanban task promoted",
+                        &format!("task #{id}: review → done"),
+                    );
+                    request_kanban_refresh(&weak);
                 }
-                Ok(o) => tracing::warn!(
-                    task_id = %id,
-                    exit = ?o.status,
-                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                    "kanban promote failed"
-                ),
-                Err(e) => {
-                    tracing::warn!(task_id = %id, error = %e, "kanban promote could not start")
+                Err(error) => {
+                    tracing::warn!(task_id = %id, error = %error, "kanban promote failed");
+                    push_toast(&weak, "warn", "Kanban promote failed", &error);
                 }
             }
         });
@@ -6702,68 +6676,73 @@ fn main() -> Result<()> {
     // v0.2 complete (2026-05-20) — comment + assign handlers.
     // Subprocess analog to move/promote; the 2s live-tail picks up
     // the resulting board state without a manual refresh.
+    let weak_task_comment = window.as_weak();
     window.on_kanban_task_comment(move |task_id, body| {
         let id = strip_id_hash(&task_id);
         let body_str = body.to_string();
+        let weak = weak_task_comment.clone();
         if body_str.trim().is_empty() {
+            push_toast(
+                &weak,
+                "warn",
+                "Kanban comment failed",
+                "Comment cannot be empty.",
+            );
             return;
         }
         std::thread::spawn(move || {
-            let Some(bin) = which_neothd() else {
-                tracing::warn!("kanban comment: neothd binary not on PATH");
-                return;
-            };
-            let out = spawn_neothd_plain(&bin)
-                .arg("kanban")
-                .arg("comment")
-                .arg(&id)
-                .arg(&body_str)
-                .arg("--author")
-                .arg("operator")
-                .output();
-            match out {
-                Ok(o) if o.status.success() => {
+            let result = run_neothd_json_action::<gui_action::KanbanCommentAck>(
+                &["kanban", "comment", &id, &body_str, "--author", "operator"],
+                "Kanban comment",
+            )
+            .and_then(|ack| {
+                ack.verify(&id, "operator")?;
+                Ok(ack)
+            });
+            match result {
+                Ok(ack) => {
                     info!(task_id = %id, body_len = body_str.len(), "kanban: comment appended");
+                    push_toast(
+                        &weak,
+                        "success",
+                        "Kanban comment added",
+                        &format!("comment #{} on task #{id}", ack.comment_id),
+                    );
+                    request_kanban_refresh(&weak);
                 }
-                Ok(o) => tracing::warn!(
-                    task_id = %id,
-                    exit = ?o.status,
-                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                    "kanban comment failed"
-                ),
-                Err(e) => {
-                    tracing::warn!(task_id = %id, error = %e, "kanban comment could not start")
+                Err(error) => {
+                    tracing::warn!(task_id = %id, error = %error, "kanban comment failed");
+                    push_toast(&weak, "warn", "Kanban comment failed", &error);
                 }
             }
         });
     });
+
+    let weak_task_assign = window.as_weak();
     window.on_kanban_task_assign(move |task_id, hemi| {
         let id = strip_id_hash(&task_id);
         let hemi_str = hemi.to_string();
+        let weak = weak_task_assign.clone();
         std::thread::spawn(move || {
-            let Some(bin) = which_neothd() else {
-                tracing::warn!("kanban assign: neothd binary not on PATH");
-                return;
-            };
-            let out = spawn_neothd_plain(&bin)
-                .arg("kanban")
-                .arg("assign")
-                .arg(&id)
-                .arg(&hemi_str)
-                .output();
-            match out {
-                Ok(o) if o.status.success() => {
+            let result = run_neothd_json_action::<gui_action::KanbanAssignAck>(
+                &["kanban", "assign", &id, &hemi_str],
+                "Kanban task assign",
+            )
+            .and_then(|ack| ack.verify(&id, &hemi_str, None));
+            match result {
+                Ok(()) => {
                     info!(task_id = %id, hemisphere = %hemi_str, "kanban: assigned");
+                    push_toast(
+                        &weak,
+                        "success",
+                        "Kanban task assigned",
+                        &format!("task #{id} → {hemi_str}"),
+                    );
+                    request_kanban_refresh(&weak);
                 }
-                Ok(o) => tracing::warn!(
-                    task_id = %id,
-                    hemisphere = %hemi_str,
-                    exit = ?o.status,
-                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                    "kanban assign failed"
-                ),
-                Err(e) => {
-                    tracing::warn!(task_id = %id, error = %e, "kanban assign could not start")
+                Err(error) => {
+                    tracing::warn!(task_id = %id, hemisphere = %hemi_str, error = %error, "kanban assign failed");
+                    push_toast(&weak, "warn", "Kanban assign failed", &error);
                 }
             }
         });
@@ -6771,30 +6750,30 @@ fn main() -> Result<()> {
 
     // GAP-03: finish-task handler. Subprocesses `neoth kanban finish
     // <id>`; the 2s live-tail picks up the done status automatically.
+    let weak_task_finish = window.as_weak();
     window.on_kanban_task_finish(move |task_id| {
         let id = strip_id_hash(&task_id);
+        let weak = weak_task_finish.clone();
         std::thread::spawn(move || {
-            let Some(bin) = which_neothd() else {
-                tracing::warn!("kanban finish: neothd binary not on PATH");
-                return;
-            };
-            let out = spawn_neothd_plain(&bin)
-                .arg("kanban")
-                .arg("finish")
-                .arg(&id)
-                .output();
-            match out {
-                Ok(o) if o.status.success() => {
+            let result = run_neothd_json_action::<gui_action::KanbanFinishAck>(
+                &["kanban", "finish", &id],
+                "Kanban finish",
+            )
+            .and_then(|ack| ack.verify(&id, false));
+            match result {
+                Ok(()) => {
                     info!(task_id = %id, "kanban: task finished");
+                    push_toast(
+                        &weak,
+                        "success",
+                        "Kanban task finished",
+                        &format!("task #{id} → done"),
+                    );
+                    request_kanban_refresh(&weak);
                 }
-                Ok(o) => tracing::warn!(
-                    task_id = %id,
-                    exit = ?o.status,
-                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                    "kanban finish failed"
-                ),
-                Err(e) => {
-                    tracing::warn!(task_id = %id, error = %e, "kanban finish could not start")
+                Err(error) => {
+                    tracing::warn!(task_id = %id, error = %error, "kanban finish failed");
+                    push_toast(&weak, "warn", "Kanban finish failed", &error);
                 }
             }
         });
@@ -8287,7 +8266,7 @@ fn main() -> Result<()> {
     }
     // H3 — system tray. Kept alive by the binding until run() returns;
     // None (headless/unsupported) degrades silently.
-    let _tray = setup_tray(&window);
+    let _tray = tray::setup(&window);
 
     let run_result = window.run();
     if let Some(error) = gui_ready_failure

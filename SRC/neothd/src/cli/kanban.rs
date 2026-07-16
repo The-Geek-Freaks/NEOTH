@@ -182,14 +182,14 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
         }
         KanbanAction::Move { task_id, status } => {
             let conn = open_views_db(&db_path)?;
-            run_move(&conn, KanbanTaskId(task_id), &status)
+            run_move(&conn, KanbanTaskId(task_id), &status, args.output)
         }
         KanbanAction::Finish {
             task_id,
             verify_tests,
         } => {
             let conn = open_views_db(&db_path)?;
-            run_finish(&conn, task_id, verify_tests)
+            run_finish(&conn, task_id, verify_tests, args.output)
         }
         KanbanAction::Assign {
             task_id,
@@ -197,7 +197,13 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
             worker,
         } => {
             let conn = open_views_db(&db_path)?;
-            run_assign(&conn, KanbanTaskId(task_id), &hemisphere, worker.as_deref())
+            run_assign(
+                &conn,
+                KanbanTaskId(task_id),
+                &hemisphere,
+                worker.as_deref(),
+                args.output,
+            )
         }
         KanbanAction::Add {
             title,
@@ -206,7 +212,14 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
             task_type,
         } => {
             let conn = open_views_db(&db_path)?;
-            run_add(&conn, &title, description.as_deref(), session, &task_type)
+            run_add(
+                &conn,
+                &title,
+                description.as_deref(),
+                session,
+                &task_type,
+                args.output,
+            )
         }
         KanbanAction::Comment {
             task_id,
@@ -214,7 +227,7 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
             author,
         } => {
             let conn = open_views_db(&db_path)?;
-            run_comment(&conn, KanbanTaskId(task_id), &author, &body)
+            run_comment(&conn, KanbanTaskId(task_id), &author, &body, args.output)
         }
         KanbanAction::Archive {
             session_id,
@@ -248,7 +261,7 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
             all,
         } => {
             let conn = open_views_db(&db_path)?;
-            run_review(&conn, task_id, promote, all)
+            run_review(&conn, task_id, promote, all, args.output)
         }
     }
 }
@@ -421,7 +434,12 @@ fn run_task_detail(conn: &Connection, task_id: KanbanTaskId, output: OutputForma
     Ok(())
 }
 
-fn run_move(conn: &Connection, task_id: KanbanTaskId, raw_status: &str) -> Result<()> {
+fn run_move(
+    conn: &Connection,
+    task_id: KanbanTaskId,
+    raw_status: &str,
+    output: OutputFormat,
+) -> Result<()> {
     let status = TaskStatus::from_wire(raw_status).ok_or_else(|| {
         anyhow!(
             "unknown status {raw_status:?} — valid: backlog / todo / in_progress / \
@@ -430,29 +448,75 @@ fn run_move(conn: &Connection, task_id: KanbanTaskId, raw_status: &str) -> Resul
     })?;
     let now_ns = now_unix_ns();
     store::patch_task_status(conn, task_id, status, now_ns)?;
-    println!("task #{} → {}", task_id.raw(), status.as_str());
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", kanban_move_ack(task_id.raw(), status.as_str()))
+        }
+        OutputFormat::Table => println!("task #{} → {}", task_id.raw(), status.as_str()),
+    }
     Ok(())
+}
+
+fn kanban_move_ack(task_id: i64, status: &str) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "action": "move",
+        "task_id": task_id,
+        "status": status,
+    })
 }
 
 /// GOLD-PROG-11 — close a task to DONE, optionally gating on a live `cargo test`
 /// pass. `--verify-tests` runs the suite in the CWD first; a red suite refuses
 /// the transition so a task is never marked finished over failing tests.
-fn run_finish(conn: &Connection, task_id: i64, verify_tests: bool) -> Result<()> {
+fn run_finish(
+    conn: &Connection,
+    task_id: i64,
+    verify_tests: bool,
+    output: OutputFormat,
+) -> Result<()> {
     if verify_tests {
         let cwd = std::env::current_dir().context("resolve current dir for --verify-tests")?;
-        let passed = run_cargo_tests(&cwd)?;
+        let passed = run_cargo_tests(
+            &cwd,
+            matches!(output, OutputFormat::Json | OutputFormat::Jsonl),
+        )?;
         gate_finish(task_id, passed)?;
-        println!("--verify-tests: cargo test passed");
+        if matches!(output, OutputFormat::Table) {
+            println!("--verify-tests: cargo test passed");
+        }
     }
-    run_move(conn, KanbanTaskId(task_id), "done")
+    let status = TaskStatus::Done;
+    store::patch_task_status(conn, KanbanTaskId(task_id), status, now_unix_ns())?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", kanban_finish_ack(task_id, verify_tests))
+        }
+        OutputFormat::Table => println!("task #{task_id} → {}", status.as_str()),
+    }
+    Ok(())
 }
 
-/// Run `cargo test` in `dir`; `Ok(true)` iff it exited 0. Inherits stdio so the
-/// operator watches the suite live.
-fn run_cargo_tests(dir: &std::path::Path) -> Result<bool> {
-    let status = std::process::Command::new("cargo")
-        .arg("test")
-        .current_dir(dir)
+fn kanban_finish_ack(task_id: i64, verified_tests: bool) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "action": "finish",
+        "task_id": task_id,
+        "status": "done",
+        "verified_tests": verified_tests,
+    })
+}
+
+/// Run `cargo test` in `dir`; `Ok(true)` iff it exited 0. Table mode inherits
+/// stdout so the operator watches the suite live; JSON mode suppresses child
+/// stdout so the final acknowledgement remains one parseable JSON document.
+fn run_cargo_tests(dir: &std::path::Path, json_mode: bool) -> Result<bool> {
+    let mut command = std::process::Command::new("cargo");
+    command.arg("test").current_dir(dir);
+    if json_mode {
+        command.stdout(std::process::Stdio::null());
+    }
+    let status = command
         .status()
         .context("spawn `cargo test` for --verify-tests")?;
     Ok(status.success())
@@ -475,18 +539,35 @@ fn run_assign(
     task_id: KanbanTaskId,
     raw_hemi: &str,
     worker: Option<&str>,
+    output: OutputFormat,
 ) -> Result<()> {
     let hemi = Hemisphere::from_wire(raw_hemi).ok_or_else(|| {
         anyhow!("unknown hemisphere {raw_hemi:?} — valid: left / right / cerebellum / unassigned")
     })?;
     store::patch_task_hemisphere(conn, task_id, hemi, worker, None)?;
-    println!(
-        "task #{} → hemisphere={} worker={}",
-        task_id.raw(),
-        hemi.as_str(),
-        worker.unwrap_or("(none)"),
-    );
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            kanban_assign_ack(task_id.raw(), hemi.as_str(), worker)
+        ),
+        OutputFormat::Table => println!(
+            "task #{} → hemisphere={} worker={}",
+            task_id.raw(),
+            hemi.as_str(),
+            worker.unwrap_or("(none)"),
+        ),
+    }
     Ok(())
+}
+
+fn kanban_assign_ack(task_id: i64, hemisphere: &str, worker: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "action": "assign",
+        "task_id": task_id,
+        "hemisphere": hemisphere,
+        "worker": worker,
+    })
 }
 
 /// GOLD-ADAPT-AOS-06 — direct task creation (spec-shape entry). Lands in
@@ -499,6 +580,7 @@ fn run_add(
     description: Option<&str>,
     session: Option<i64>,
     task_type: &str,
+    output: OutputFormat,
 ) -> Result<()> {
     let title = title.trim();
     if title.is_empty() {
@@ -522,22 +604,66 @@ fn run_add(
         task_type,
         None,
     )?;
-    println!(
-        "task #{} created in session #{} (backlog)",
-        task_id.raw(),
-        session_id.raw()
-    );
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            kanban_add_ack(task_id.raw(), session_id.raw(), title, task_type,)
+        ),
+        OutputFormat::Table => println!(
+            "task #{} created in session #{} (backlog)",
+            task_id.raw(),
+            session_id.raw()
+        ),
+    }
     Ok(())
 }
 
-fn run_comment(conn: &Connection, task_id: KanbanTaskId, author: &str, body: &str) -> Result<()> {
+fn kanban_add_ack(
+    task_id: i64,
+    session_id: i64,
+    title: &str,
+    task_type: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "action": "add",
+        "task_id": task_id,
+        "session_id": session_id,
+        "status": "backlog",
+        "title": title,
+        "task_type": task_type,
+    })
+}
+
+fn run_comment(
+    conn: &Connection,
+    task_id: KanbanTaskId,
+    author: &str,
+    body: &str,
+    output: OutputFormat,
+) -> Result<()> {
     if body.trim().is_empty() {
         anyhow::bail!("comment body cannot be empty");
     }
     let now_ns = now_unix_ns();
     let id = store::insert_comment(conn, task_id, now_ns, author, body)?;
-    println!("comment #{id} appended to task #{}", task_id.raw());
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", kanban_comment_ack(task_id.raw(), id, author))
+        }
+        OutputFormat::Table => println!("comment #{id} appended to task #{}", task_id.raw()),
+    }
     Ok(())
+}
+
+fn kanban_comment_ack(task_id: i64, comment_id: i64, author: &str) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "action": "comment",
+        "task_id": task_id,
+        "comment_id": comment_id,
+        "author": author,
+    })
 }
 
 fn run_archive(
@@ -572,44 +698,85 @@ fn run_review(
     task_id: Option<i64>,
     promote: bool,
     all: Option<i64>,
+    output: OutputFormat,
 ) -> Result<()> {
     use crate::coding::review::{ReviewBlocker, auto_promote_session, check_auto_promotable};
 
     if let Some(session_raw) = all {
         let session_id = KanbanSessionId(session_raw);
         if !promote {
-            // Dry-run sweep: print per-task verdict without mutating.
             let tasks = store::list_tasks_for_session(conn, session_id)?;
             let mut promotable = 0usize;
             let mut blocked = 0usize;
+            let mut verdicts = Vec::new();
             for t in &tasks {
                 if t.status != TaskStatus::Review {
                     continue;
                 }
                 match check_auto_promotable(t) {
                     Ok(()) => {
-                        println!("  #{:>4}  ✓ auto-promotable", t.task_id.raw());
                         promotable += 1;
+                        verdicts.push(serde_json::json!({
+                            "task_id": t.task_id.raw(),
+                            "promotable": true,
+                            "blocker": null,
+                        }));
+                        if matches!(output, OutputFormat::Table) {
+                            println!("  #{:>4}  ✓ auto-promotable", t.task_id.raw());
+                        }
                     }
                     Err(b) => {
-                        println!("  #{:>4}  ✗ {}", t.task_id.raw(), b.as_str());
                         blocked += 1;
+                        verdicts.push(serde_json::json!({
+                            "task_id": t.task_id.raw(),
+                            "promotable": false,
+                            "blocker": b.as_str(),
+                        }));
+                        if matches!(output, OutputFormat::Table) {
+                            println!("  #{:>4}  ✗ {}", t.task_id.raw(), b.as_str());
+                        }
                     }
                 }
             }
-            println!();
-            println!(
-                "session #{}: {promotable} auto-promotable, {blocked} blocked",
-                session_id.raw(),
-            );
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "action": "review_all",
+                        "session_id": session_id.raw(),
+                        "promotable": promotable,
+                        "blocked": blocked,
+                        "verdicts": verdicts,
+                    })
+                ),
+                OutputFormat::Table => {
+                    println!();
+                    println!(
+                        "session #{}: {promotable} auto-promotable, {blocked} blocked",
+                        session_id.raw(),
+                    );
+                }
+            }
             return Ok(());
         }
         let now_ns = now_unix_ns();
         let promoted = auto_promote_session(conn, session_id, now_ns)?;
-        println!(
-            "session #{}: {promoted} task(s) promoted REVIEW → DONE",
-            session_id.raw(),
-        );
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({
+                    "ok": true,
+                    "action": "promote_all",
+                    "session_id": session_id.raw(),
+                    "promoted": promoted,
+                })
+            ),
+            OutputFormat::Table => println!(
+                "session #{}: {promoted} task(s) promoted REVIEW → DONE",
+                session_id.raw(),
+            ),
+        }
         return Ok(());
     }
 
@@ -618,15 +785,46 @@ fn run_review(
     })?;
     let tid = KanbanTaskId(task_id);
     let task = select_one_task(conn, tid)?;
+    let from_status = task.status.as_str();
 
     match check_auto_promotable(&task) {
         Ok(()) => {
             if promote {
                 let now_ns = now_unix_ns();
                 store::patch_task_status(conn, tid, TaskStatus::Done, now_ns)?;
-                println!("task #{task_id} promoted REVIEW → DONE");
+                match output {
+                    OutputFormat::Json | OutputFormat::Jsonl => println!(
+                        "{}",
+                        kanban_review_ack(
+                            true,
+                            "promote",
+                            task_id,
+                            from_status,
+                            "done",
+                            true,
+                            None,
+                        )
+                    ),
+                    OutputFormat::Table => println!("task #{task_id} promoted REVIEW → DONE"),
+                }
             } else {
-                println!("task #{task_id}: ✓ auto-promotable (run with --promote to apply)");
+                match output {
+                    OutputFormat::Json | OutputFormat::Jsonl => println!(
+                        "{}",
+                        kanban_review_ack(
+                            true,
+                            "review",
+                            task_id,
+                            from_status,
+                            from_status,
+                            false,
+                            None,
+                        )
+                    ),
+                    OutputFormat::Table => {
+                        println!("task #{task_id}: ✓ auto-promotable (run with --promote to apply)")
+                    }
+                }
             }
         }
         Err(b) => {
@@ -638,10 +836,46 @@ fn run_review(
                     task.status.as_str(),
                 );
             }
-            println!("task #{task_id}: ✗ blocked — {}", b.as_str());
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    kanban_review_ack(
+                        false,
+                        if promote { "promote" } else { "review" },
+                        task_id,
+                        from_status,
+                        from_status,
+                        false,
+                        Some(b.as_str()),
+                    )
+                ),
+                OutputFormat::Table => {
+                    println!("task #{task_id}: ✗ blocked — {}", b.as_str())
+                }
+            }
         }
     }
     Ok(())
+}
+
+fn kanban_review_ack(
+    ok: bool,
+    action: &str,
+    task_id: i64,
+    from_status: &str,
+    status: &str,
+    promoted: bool,
+    blocker: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ok": ok,
+        "action": action,
+        "task_id": task_id,
+        "from_status": from_status,
+        "status": status,
+        "promoted": promoted,
+        "blocker": blocker,
+    })
 }
 
 fn run_watch(wal_dir: &PathBuf, limit: usize, output: OutputFormat) -> Result<()> {
@@ -1127,6 +1361,7 @@ mod tests {
             Some("Goal: pane\nAcceptance: task lands"),
             None,
             "feature",
+            OutputFormat::Table,
         )
         .unwrap();
         let (count, title, status): (i64, String, String) = conn
@@ -1147,14 +1382,22 @@ mod tests {
             .unwrap();
         assert_eq!(chan, "operator_spec");
         // Empty title refuses.
-        assert!(run_add(&conn, "   ", None, None, "feature").is_err());
+        assert!(run_add(&conn, "   ", None, None, "feature", OutputFormat::Json,).is_err());
     }
 
     #[test]
     fn add_into_existing_session_reuses_it() {
         let (_dir, conn) = fresh_db();
         let s = store::insert_session(&conn, 1, "existing", "h1", "cli", None).unwrap();
-        run_add(&conn, "follow-up task", None, Some(s.raw()), "chore").unwrap();
+        run_add(
+            &conn,
+            "follow-up task",
+            None,
+            Some(s.raw()),
+            "chore",
+            OutputFormat::Table,
+        )
+        .unwrap();
         let (sessions, tasks): (i64, i64) = conn
             .query_row(
                 "SELECT (SELECT COUNT(*) FROM idx_kanban_session), \
@@ -1196,7 +1439,7 @@ mod tests {
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let t = store::insert_task(&conn, s, 10, "title", None, "ui", None).unwrap();
 
-        run_move(&conn, t, "in_progress").expect("move ok");
+        run_move(&conn, t, "in_progress", OutputFormat::Table).expect("move ok");
         let task = select_one_task(&conn, t).unwrap();
         assert_eq!(task.status, TaskStatus::InProgress);
         assert!(task.started_ns.is_some());
@@ -1208,7 +1451,7 @@ mod tests {
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let t = store::insert_task(&conn, s, 10, "title", None, "ui", None).unwrap();
 
-        let err = run_move(&conn, t, "ready").unwrap_err();
+        let err = run_move(&conn, t, "ready", OutputFormat::Json).unwrap_err();
         assert!(err.to_string().contains("unknown status"), "got {err}");
     }
 
@@ -1218,7 +1461,7 @@ mod tests {
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let t = store::insert_task(&conn, s, 10, "title", None, "ui", None).unwrap();
 
-        run_assign(&conn, t, "left", Some("local_qwen")).expect("assign ok");
+        run_assign(&conn, t, "left", Some("local_qwen"), OutputFormat::Table).expect("assign ok");
         let task = select_one_task(&conn, t).unwrap();
         assert_eq!(task.hemisphere, Hemisphere::Left);
         assert_eq!(task.worker.as_deref(), Some("local_qwen"));
@@ -1230,8 +1473,85 @@ mod tests {
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let t = store::insert_task(&conn, s, 10, "title", None, "ui", None).unwrap();
 
-        let err = run_assign(&conn, t, "middle", None).unwrap_err();
+        let err = run_assign(&conn, t, "middle", None, OutputFormat::Json).unwrap_err();
         assert!(err.to_string().contains("unknown hemisphere"));
+    }
+
+    #[test]
+    fn mutation_json_acks_bind_action_task_and_target() {
+        assert_eq!(
+            kanban_add_ack(42, 7, "Ship it", "feature"),
+            serde_json::json!({
+                "ok": true,
+                "action": "add",
+                "task_id": 42,
+                "session_id": 7,
+                "status": "backlog",
+                "title": "Ship it",
+                "task_type": "feature",
+            })
+        );
+        assert_eq!(
+            kanban_move_ack(42, "in_progress"),
+            serde_json::json!({
+                "ok": true,
+                "action": "move",
+                "task_id": 42,
+                "status": "in_progress",
+            })
+        );
+        assert_eq!(
+            kanban_assign_ack(42, "left", Some("local_qwen")),
+            serde_json::json!({
+                "ok": true,
+                "action": "assign",
+                "task_id": 42,
+                "hemisphere": "left",
+                "worker": "local_qwen",
+            })
+        );
+        assert_eq!(
+            kanban_assign_ack(42, "unassigned", None),
+            serde_json::json!({
+                "ok": true,
+                "action": "assign",
+                "task_id": 42,
+                "hemisphere": "unassigned",
+                "worker": null,
+            })
+        );
+        assert_eq!(
+            kanban_comment_ack(42, 9, "operator"),
+            serde_json::json!({
+                "ok": true,
+                "action": "comment",
+                "task_id": 42,
+                "comment_id": 9,
+                "author": "operator",
+            })
+        );
+        assert_eq!(
+            kanban_finish_ack(42, false),
+            serde_json::json!({
+                "ok": true,
+                "action": "finish",
+                "task_id": 42,
+                "status": "done",
+                "verified_tests": false,
+            })
+        );
+        assert_eq!(
+            kanban_review_ack(true, "promote", 42, "review", "done", true, None),
+            serde_json::json!({
+                "ok": true,
+                "action": "promote",
+                "task_id": 42,
+                "from_status": "review",
+                "status": "done",
+                "promoted": true,
+                "blocker": null,
+            })
+        );
     }
 
     #[test]
@@ -1240,11 +1560,11 @@ mod tests {
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let t = store::insert_task(&conn, s, 10, "title", None, "ui", None).unwrap();
 
-        let err = run_comment(&conn, t, "operator", "   \n\t  ").unwrap_err();
+        let err = run_comment(&conn, t, "operator", "   \n\t  ", OutputFormat::Json).unwrap_err();
         assert!(err.to_string().contains("empty"));
 
         // Real body succeeds + appends.
-        run_comment(&conn, t, "operator", "looks good").expect("comment ok");
+        run_comment(&conn, t, "operator", "looks good", OutputFormat::Table).expect("comment ok");
         let comments = store::list_comments_for_task(&conn, t).unwrap();
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].body, "looks good");

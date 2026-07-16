@@ -1,7 +1,0 @@
-# Version manifest — schema reference:
-# https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/v1.6.0/manifest.version.1.6.0.json
-PackageIdentifier: TheGeekFreaks.NEOTH
-PackageVersion: 0.2.1
-DefaultLocale: en-US
-ManifestType: version
-ManifestVersion: 1.6.0

@@ -1,20 +1,10 @@
-//! R-08 — zero-install entry primitives.
+//! Zero-install runtime entry primitives.
 //!
-//! The "non-technical user on a fresh Win11 laptop" cliff: today they
-//! need `cargo build` to even reach the wizard. R-08 closes that
-//! by shipping:
-//!
-//!   - A `cargo-dist` config block (rendered at build time) that
-//!     publishes per-OS release artifacts in GitHub Releases.
-//!   - A `curl | sh` install script template for Unix.
-//!   - A `winget` manifest stub for Windows.
-//!
-//! This module ships the constants + template renderers. The
-//! actual `cargo-dist.toml` / `install.sh` / `winget-pkgs` PR
-//! lands as ops artifacts in the repo — this module is the
-//! source of truth for the URLs + version numbers the wizard
-//! prints when an operator asks "how do I install on a fresh
-//! machine?".
+//! This module owns the canonical release URLs, target mapping, and the
+//! operator-facing installer wrapper used by the runtime. Versioned package
+//! manifests are generated only after release artifact hashes exist by
+//! `packaging/generate_release_manifests.py`; keeping a second renderer here
+//! would create a competing release authority.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,10 +37,7 @@ pub const INSTALL_PS1_URL: &str = "https://get.neoth.dev/install.ps1";
 /// GitHub releases base URL the install scripts curl from.
 pub const RELEASES_BASE_URL: &str = "https://github.com/The-Geek-Freaks/NEOTH/releases";
 
-/// winget package id NEOTH ships under once the manifest PR lands.
-pub const WINGET_PACKAGE_ID: &str = "TheGeekFreaks.NEOTH";
-
-/// One target-triple the cargo-dist config publishes.
+/// One target triple published by the release workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetTriple {
@@ -127,8 +114,7 @@ impl TargetTriple {
         }
     }
 
-    /// File extension cargo-dist uses (.tar.gz everywhere except
-    /// Windows which gets .zip).
+    /// Release archive extension (.tar.gz everywhere except Windows).
     pub fn artifact_extension(self) -> &'static str {
         match self {
             Self::WindowsX86_64Msvc | Self::WindowsArm64Msvc => "zip",
@@ -174,41 +160,6 @@ pub fn render_install_sh(version: &str) -> String {
 set -eu
 
 curl -fsSL '{INSTALL_SH_URL}' | NEOTH_VERSION='v{quoted_version}' sh
-",
-    )
-}
-
-/// Render the winget manifest YAML. The actual PR to
-/// `microsoft/winget-pkgs` carries this body; the constant +
-/// renderer here keep the manifest in sync with the
-/// `WINGET_PACKAGE_ID` constant.
-pub fn render_winget_manifest(version: &str, sha256: &str) -> String {
-    let installer_url = artifact_url(version, TargetTriple::WindowsX86_64Msvc);
-    format!(
-        "PackageIdentifier: {WINGET_PACKAGE_ID}
-PackageVersion: {version}
-PackageLocale: en-US
-Publisher: The Geek Freaks
-PublisherUrl: https://github.com/The-Geek-Freaks
-PackageName: NEOTH
-PackageUrl: https://github.com/The-Geek-Freaks/NEOTH
-License: Apache-2.0
-ShortDescription: Local-first personal AI agent
-Tags:
-- ai
-- agent
-- local-first
-Installers:
-- Architecture: x64
-  InstallerType: zip
-  InstallerUrl: {installer_url}
-  InstallerSha256: {sha256}
-  NestedInstallerType: portable
-  NestedInstallerFiles:
-  - RelativeFilePath: neoth.exe
-    PortableCommandAlias: neoth
-ManifestType: singleton
-ManifestVersion: 1.6.0
 ",
     )
 }
@@ -306,12 +257,6 @@ mod tests {
         assert!(RELEASES_BASE_URL.contains("The-Geek-Freaks/NEOTH"));
     }
 
-    #[test]
-    fn winget_package_id_is_publisher_dot_product() {
-        assert_eq!(WINGET_PACKAGE_ID, "TheGeekFreaks.NEOTH");
-        assert!(WINGET_PACKAGE_ID.contains('.'));
-    }
-
     // ── artifact_url ──────────────────────────────────────────────
 
     #[test]
@@ -396,53 +341,5 @@ mod tests {
         assert!(!script.contains("install -m"));
         assert!(!script.contains("$HOME/.local/bin/freedom.yaml.example"));
         assert!(!script.contains("tar -xzf"));
-    }
-
-    // ── render_winget_manifest ────────────────────────────────────
-
-    #[test]
-    fn winget_manifest_required_fields_present() {
-        let m = render_winget_manifest("0.3.0", "abc123");
-        for required in [
-            "PackageIdentifier:",
-            "PackageVersion:",
-            "Publisher:",
-            "PackageName:",
-            "License:",
-            "Installers:",
-            "InstallerSha256:",
-            "ManifestVersion:",
-        ] {
-            assert!(m.contains(required), "missing field {required}");
-        }
-    }
-
-    #[test]
-    fn winget_manifest_embeds_version_and_sha() {
-        let m = render_winget_manifest("0.3.0", "deadbeef");
-        assert!(m.contains("PackageVersion: 0.3.0"));
-        assert!(m.contains("InstallerSha256: deadbeef"));
-    }
-
-    #[test]
-    fn winget_manifest_uses_canonical_package_id() {
-        let m = render_winget_manifest("0.3.0", "x");
-        assert!(m.contains(&format!("PackageIdentifier: {WINGET_PACKAGE_ID}")));
-    }
-
-    #[test]
-    fn winget_manifest_installer_url_matches_artifact_url() {
-        let m = render_winget_manifest("0.3.0", "x");
-        let expected = artifact_url("0.3.0", TargetTriple::WindowsX86_64Msvc);
-        assert!(
-            m.contains(&format!("InstallerUrl: {expected}")),
-            "manifest installer URL diverged from artifact_url",
-        );
-    }
-
-    #[test]
-    fn winget_manifest_portable_alias_is_neoth() {
-        let m = render_winget_manifest("0.3.0", "x");
-        assert!(m.contains("PortableCommandAlias: neoth"));
     }
 }

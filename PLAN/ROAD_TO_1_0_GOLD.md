@@ -137,6 +137,14 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
 - [x] **GOLD-R3-09 Durable mesh synchronization:** one shared SQLite state machine now drives Peeroxide and Iroh with authenticated per-peer cursors, byte-exact pending replay, commit-before-ACK, origin/sequence/digest-bound ACKs, deterministic gaps and idempotent duplicates. Protocol v5 / Iroh ALPN `neoth/cluster/gossip/2` transfers canonical Memory and Ground-Truth content (including namespaced provenance and stable evidence content IDs), resolves evidence that arrives before its Memory deterministically, and commits receipt, foreign ledger, materialization, conflict state and high-water atomically. Corrupt persisted cursors/pending frames/WAL reconstruction fail closed; export/restore and `neoth cluster sync-state` consume the same mapping. Evidence: default + locked `cluster-iroh` library checks green; cluster suite **343/343**, locked Iroh **5 passed / 1 intentional external-network ignore**, focused wal-sync 24, heartbeat 22, gossip-wire 17, foreign-indexer 21, hyperswarm 19, CLI export/restore 2, and migration 28→29 all green; `rustfmt --check` and scoped diff check pass.
 - [ ] **GOLD-R3-10 Release truth reconciliation:** update README, configuration/CLI/channel/migration/architecture/release docs and stale code comments to match the final wired behavior; regenerate derived CLI docs and require exact-head CI, Security and CodeQL green before the v1.0.0 tag.
 
+  **Truth/cadence slice 2026-07-16 (remains OPEN):** the shipped Changelog and
+  therefore the GUI About/What's-New surface no longer claim that every Gold
+  workstream or exact-head gate is complete; they name the current R3/R4
+  counts and tag blockers. CI and Security now cancel superseded branch runs
+  so only the exact current head consumes the long validation queue. The
+  code-scanning API currently reports zero open alerts, but that is not a
+  substitute for completed exact-head CI, Security and CodeQL runs.
+
 ### 3.2 WS-R4 — Zero-friction install, GUI parity and public launch
 
 Operator directive 2026-07-14: v1.0 is not complete merely because source code compiles. A non-technical user must be able to discover, install, choose an interface, configure, update, repair and uninstall NEOTH without a developer toolchain. The GUI ships as part of the product, not as an optional demo. Every visible control must have a real production consumer and every CLI-only capability needs either GUI parity or an explicit operator-grade reason recorded here. No v1.0.0 tag is allowed while any WS-R3 or WS-R4 box is open.
@@ -182,6 +190,19 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
 - [x] **GOLD-R4-03 First-run interface choice and switching:** first launch now resolves through one product launcher that chooses GUI/CLI once, persists the decision in the authoritative instance home, honors headless/SSH/noninteractive gates, and supports `neoth gui` plus GUI `Open terminal/CLI` switching through a private one-shot Ready token. Windows state writes no longer use inherited temp ACLs, path-based `icacls`, `%USERNAME%`, or hard-link publication while a zero-share private handle is open: Core and GUI create private files with a TokenUser-only protected DACL at `CreateFileW(CREATE_NEW)`, complete bytes+fsync before visibility, and publish through handle-bound replace/create-if-absent rename; directory DACL verification accepts Windows' safe OI/CI `INHERIT_ONLY` canonical split while rejecting inherited/extra-principal/deny ACEs. Evidence 2026-07-15: `wal::win_native::tests` **16 passed / 1 intentional ignored**, `cli::interface::tests` **18/18**, `cli::init::tests` **130/130** (the previous 18 DACL failures are gone), `config::credentials::tests` **29/29**, `util::atomic_write::tests` **6/6**, `cargo check --manifest-path SRC/neothd-gui/Cargo.toml --locked` green, `cargo check --manifest-path SRC/neothd/Cargo.toml --locked` green, `cargo fmt` and `git diff --check` green. Remaining R4 work is distribution/package-manager/onboarding/parity/Buddy/channel/clean-machine/accessibility/launch, tracked below.
 - [ ] **GOLD-R4-04 Zero-friction onboarding and repair:** one guided path handles provider/local-model choice, autonomy, channels, permissions, optional integrations and readiness checks with actionable errors. Resume interrupted setup, repair damaged/missing config, preserve operator data, expose logs/Doctor, and make update/rollback/uninstall safe for a non-technical user.
 - [ ] **GOLD-R4-05 Full GUI/CLI capability parity:** generate a canonical capability inventory from real command/channel/config registries, map every supported operation and state to both surfaces, implement missing GUI flows, and add drift tests. Disabled/unavailable/error states must be explicit; no stub, dead button, lossy config parser or misleading `CLI-only` label may remain.
+
+  **Typed desktop-mutation slice 2026-07-16 (remains OPEN):** every currently
+  exposed Kanban write callback (add, move/block/archive, assign, comment,
+  finish and review-promotion) and both Permission override callbacks now
+  require a successful process exit plus a strict JSON acknowledgement. The
+  GUI verifies the exact action, task/target fields and transition before a
+  success toast or refresh; malformed, empty, wrong-target and `ok:false`
+  receipts remain visible failures. Source guards inventory all Kanban
+  callbacks and reject a regression to the unchecked read-only probe boundary.
+  A4's missing Archive menu action now uses the same typed move receipt.
+  D1 actions, Ctrl+6..9, Memory-target drag/drop and permission-gated code-run
+  remain explicitly open in `GUI_TOP_TIER_PLAN.md`; this slice does not claim
+  broad GUI/CLI parity.
 - [ ] **GOLD-R4-06 Buddy product-grade utility:** evolve Buddy into an always-available desktop companion with useful quick actions, current task/session context, notifications, approvals, channel/automation status, drag/drop or share ingestion, voice/media entry where supported, safe interruption/cancel, and direct handoff into the full GUI/CLI. Every action must traverse the same permission, cost, audit and Custom-Home boundaries as the primary surfaces.
 - [ ] **GOLD-R4-07 Channel parity and onboarding quality:** compare the current channel registry against OpenClaw and the relevant adopted sources, implement every high-value channel/behavior still missing, and fully wire add/edit/probe/remove, credentials, allowlists, media/reply/streaming behavior, health/error status and GUI/CLI onboarding. Unsupported channels require an explicit evidence-based skip, not silent absence.
 - [ ] **GOLD-R4-08 Clean-machine release qualification:** automate install/first-run/switch/update/repair/uninstall smoke tests on supported Windows, macOS and Linux runners/VMs, including paths with spaces/non-ASCII, standard-user permissions, offline/local-only setup and failed network/provider states. Validate exact artifact contents, signatures, launchers, desktop/start-menu integration and CLI PATH behavior.
@@ -204,6 +225,19 @@ archive omits the glibc-linked companion explicitly. This closes a concrete
 R4-01/R4-07 implementation slice and adds release health evidence toward R4-08;
 it does **not** close those broader boxes until all platform installers,
 GUI/channel parity and clean-machine matrices pass.
+
+**Current portable desktop/package-metadata slice (2026-07-16; R4-01/02/08
+remain open):** Windows and macOS keep the native `tray-icon` backend while
+Linux now uses a pure-Rust StatusNotifierItem path; `tray-icon`, GTK,
+AppIndicator and the vulnerable GLib 0.18 tray stack are absent from the Linux
+dependency graph. A missing desktop watcher is a graceful no-tray condition,
+not a GUI startup failure. The stale checked-in WinGet 0.2.1 placeholder
+manifests and the competing runtime renderer were removed. Versioned WinGet
+and Homebrew metadata now have one authority:
+`packaging/generate_release_manifests.py`, invoked only after final artifact
+hashes exist, with a repository drift test forbidding versioned WinGet stubs.
+This removes a release-truth and clean-machine dependency cliff; it does not
+replace native signed installer, publication, N-to-N+1 or clean-machine proof.
 
 **Current clean-machine authenticity slice (2026-07-14; R4-08 remains open):**
 `SRC/install.sh` and `SRC/install.ps1` no longer require a verifier to be

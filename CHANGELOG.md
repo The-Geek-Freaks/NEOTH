@@ -7,12 +7,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased — 1.0.0-gold] — since rc1 (2026-06-24 → present)
 
-The GOLD close-out: every code workstream on the `ROAD_TO_1_0_GOLD` tracker is
-complete — mechanical whole-file count **911 done / 3 open / 0 partials**, the 3
-open items being operator-only actions (headroom install, signed-release tag
-push) or explicit v1.1 scope (OMI multimodal). WS-I repo-adaptations closed
-**308/308** (was 219/298 at rc1). CI is fully green (11 jobs + Security +
-CodeQL); 10,400+ lib tests, 309 GUI tests, workspace + doctests in CI.
+The GOLD close-out is still in progress. The authoritative
+`ROAD_TO_1_0_GOLD` tracker currently records **WS-R3 at 9/10** and **WS-R4 at
+1/13** (one complete, twelve open). The earlier mechanical whole-file total of
+**911 done / 3 open / 0 partials** and WS-I's historical **308/308** do not
+represent current release readiness. A stable `v1.0.0` tag remains blocked
+until the open R3/R4 contracts and exact-head CI, Security, CodeQL and
+clean-machine release evidence are complete.
 
 ### Security
 

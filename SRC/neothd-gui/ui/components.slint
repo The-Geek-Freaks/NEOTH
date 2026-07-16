@@ -1536,33 +1536,40 @@ export component Skeleton inherits Rectangle {
         spacing: Theme.space-tight;
 
         for i in root.rows: Rectangle {
-            // Each successive bar is slightly narrower than the last,
-            // bottoming out at 50% to avoid bars that are too short.
-            width: max(parent.width * 0.50,
-                parent.width - i * parent.width * 0.12);
             height: 16px;
-            border-radius: Theme.radius-md;
-            background: Theme.surface-1;
-            clip: true;
+            horizontal-stretch: 1;
 
-            // Shimmer band: sinusoidal sweep via animation-tick().
-            // Period ≈ 1.6 s keeps the rhythm in the brand's ambient
-            // motion range (duration-breathe / 1). All rows are in
-            // phase because they share the same animation-tick() source.
-            sweep := Rectangle {
-                property <float> _t: animation-tick() / 1600ms;
-                x: (parent.width + self.width)
-                    * (0.5 + 0.5 * sin(360deg * self._t))
-                    - self.width;
-                y: 0px;
-                width: parent.width * 0.38;
+            bar := Rectangle {
+                // Each successive bar is slightly narrower than the last,
+                // bottoming out at 50% to avoid bars that are too short. Keep
+                // this runtime geometry outside the parent VerticalLayout so
+                // it cannot feed back into that layout's preferred width.
+                width: max(parent.width * 0.50,
+                    parent.width - i * parent.width * 0.12);
                 height: parent.height;
-                // text-primary is white in dark mode, near-black in light —
-                // so the band reads as a highlight in both themes.
-                background: @linear-gradient(90deg,
-                    Theme.text-primary.with-alpha(0.00)  0%,
-                    Theme.text-primary.with-alpha(0.07) 50%,
-                    Theme.text-primary.with-alpha(0.00) 100%);
+                border-radius: Theme.radius-md;
+                background: Theme.surface-1;
+                clip: true;
+
+                // Shimmer band: sinusoidal sweep via animation-tick().
+                // Period ≈ 1.6 s keeps the rhythm in the brand's ambient
+                // motion range (duration-breathe / 1). All rows are in
+                // phase because they share the same animation-tick() source.
+                sweep := Rectangle {
+                    property <float> _t: animation-tick() / 1600ms;
+                    x: (parent.width + self.width)
+                        * (0.5 + 0.5 * sin(360deg * self._t))
+                        - self.width;
+                    y: 0px;
+                    width: parent.width * 0.38;
+                    height: parent.height;
+                    // text-primary is white in dark mode, near-black in light —
+                    // so the band reads as a highlight in both themes.
+                    background: @linear-gradient(90deg,
+                        Theme.text-primary.with-alpha(0.00)  0%,
+                        Theme.text-primary.with-alpha(0.07) 50%,
+                        Theme.text-primary.with-alpha(0.00) 100%);
+                }
             }
         }
     }

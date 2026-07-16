@@ -3818,6 +3818,7 @@ export component MainWindow inherits Window {
             { label: "Move to Review", glyph: "◎", danger: false },
             { label: "Finish (done)", glyph: "✓", danger: false },
             { label: "Block", glyph: "⛔", danger: true },
+            { label: "Archive", glyph: "▣", danger: false },
             // H14 — the AI worker is a first-class assignee (Linear-agents
             // grammar): route the card to a hemisphere from the menu.
             { label: "Assign → Left (fast)", glyph: "◑", danger: false },
@@ -3832,10 +3833,11 @@ export component MainWindow inherits Window {
             if (i == 2) { root.kanban-move-task(root.kanban-ctx-task, "review"); }
             if (i == 3) { root.kanban-move-task(root.kanban-ctx-task, "done"); }
             if (i == 4) { root.kanban-move-task(root.kanban-ctx-task, "blocked"); }
-            if (i == 5) { root.kanban-assign-task(root.kanban-ctx-task, "left"); }
-            if (i == 6) { root.kanban-assign-task(root.kanban-ctx-task, "right"); }
-            if (i == 7) { root.kanban-assign-task(root.kanban-ctx-task, "cerebellum"); }
-            if (i == 8) { root.kanban-copy-task-id(root.kanban-ctx-task); }
+            if (i == 5) { root.kanban-move-task(root.kanban-ctx-task, "archived"); }
+            if (i == 6) { root.kanban-assign-task(root.kanban-ctx-task, "left"); }
+            if (i == 7) { root.kanban-assign-task(root.kanban-ctx-task, "right"); }
+            if (i == 8) { root.kanban-assign-task(root.kanban-ctx-task, "cerebellum"); }
+            if (i == 9) { root.kanban-copy-task-id(root.kanban-ctx-task); }
         }
         dismissed => { root.kanban-ctx-open = false; }
     }

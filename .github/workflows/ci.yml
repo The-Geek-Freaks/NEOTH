@@ -28,15 +28,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # On a PR, a new push cancels the stale run (saves runner minutes during
-  # rapid iteration). On a push to MAIN, do NOT cancel: each commit must get a
-  # complete CI verdict. The `${{ github.sha }}` suffix gives every main commit
-  # its own concurrency group, so a fast push cadence (e.g. an autonomous build
-  # loop pushing every ~20 min while CI takes ~30 min) no longer leaves main
-  # perpetually "cancelled" instead of green — the prior root cause of CI never
-  # showing a success status on main.
-  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  # A newer commit supersedes every older branch run.  This keeps rapid Gold
+  # integration waves from queuing multiple full workspaces while preserving
+  # the only verdict that can authorize a release: the exact current HEAD.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

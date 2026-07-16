@@ -35,10 +35,6 @@ rfd = "0.15"
 # Wave 5 — message hover-action Copy: cross-platform system clipboard.
 arboard = { version = "3", default-features = false }
 
-# H3 — system tray: NEOTH lives in the tray; left-click restores the
-# window, the menu carries Show/Quit. Icon is a procedural neon orb.
-tray-icon = "0.19"
-
 # Shared deps from the workspace.
 anyhow = "1"
 toml = "0.8"
@@ -50,6 +46,15 @@ tracing.workspace    = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 getrandom = "0.2"
 hex = "0.4"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+# H3 — native desktop tray. Linux deliberately uses StatusNotifierItem below
+# so clean machines do not need GTK/AppIndicator development packages.
+tray-icon = { version = "0.24.1", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pure-Rust D-Bus StatusNotifierItem with a synchronous facade. No GTK.
+ksni = { version = "0.3.6", default-features = false, features = ["blocking"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }

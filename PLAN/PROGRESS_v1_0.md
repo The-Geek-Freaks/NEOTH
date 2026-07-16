@@ -8,9 +8,25 @@
 > `137/137` value in the long forensic snapshot below predates removal of the
 > lossy provider-only converter and is superseded. The runtime self-updater no
 > longer accepts or reads `GITHUB_TOKEN`; **73/73** focused updater tests include
-> an anonymous-request/no-Authorization regression. CodeQL alerts 207–212 are
-> still open on remote HEAD `a23e69d`, so R3-10 remains open until a new exact-
-> head Security/CodeQL run closes them.
+> an anonymous-request/no-Authorization regression. The GitHub code-scanning
+> API reports **zero open CodeQL alerts** on 2026-07-16. R3-10 remains open
+> because the exact current-head CI, Security and CodeQL workflows still need
+> a completed green verdict; absence of an alert is not that verdict.
+>
+> **Current feedback-correction wave (2026-07-16; no broad R3/R4 box closed):**
+> Permissions and all currently exposed Kanban GUI mutations now cross strict
+> typed JSON receipt boundaries; exact action/task/target verification precedes
+> every success toast and refresh, and source guards forbid unchecked mutation
+> probes. The missing Kanban Archive context action is wired through that same
+> contract. Changelog/About and the detailed GUI tracker no longer report false
+> completion for Gold, palette actions, Ctrl+6..9, Memory drag/drop or code-run.
+> Linux tray support uses pure-Rust StatusNotifierItem instead of the GTK/
+> AppIndicator stack; Windows/macOS remain native. The stale checked-in WinGet
+> 0.2.1 placeholders and duplicate Rust renderer are gone; post-hash release
+> manifest generation is the sole authority and has a 7-test drift contract.
+> CI/Security cancel superseded branch heads to concentrate the expensive gates
+> on the only release-relevant commit. R3-10 and R4-01/02/05/08 remain open
+> until exact-head and native clean-machine evidence exists.
 >
 > **Current frozen-source local evidence (2026-07-16):** Channel **69/69**,
 > Preset **11/11**, FULL-AUTO **22/22**, Audit-RPC **14/14**, integration state

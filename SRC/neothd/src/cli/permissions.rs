@@ -372,12 +372,7 @@ fn print_override_change(
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "operation": operation,
-                "action": action,
-                "decision": decision,
-                "path": FreedomConfig::default_path(),
-            }))?
+            serde_json::to_string_pretty(&override_change_ack(operation, action, decision))?
         ),
         OutputFormat::Table => match decision {
             Some(decision) => println!(
@@ -389,6 +384,19 @@ fn print_override_change(
         },
     }
     Ok(())
+}
+
+fn override_change_ack(
+    operation: &str,
+    action: ActionKind,
+    decision: Option<CustomDecision>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "operation": operation,
+        "action": action,
+        "decision": decision,
+        "path": FreedomConfig::default_path(),
+    })
 }
 
 #[cfg(test)]
@@ -555,5 +563,23 @@ mod tests {
                 .overrides
                 .contains_key(&ActionKind::ExternalHttpRequest)
         );
+    }
+
+    #[test]
+    fn override_json_ack_binds_operation_action_and_decision() {
+        let set = override_change_ack(
+            "set",
+            ActionKind::ExternalHttpRequest,
+            Some(CustomDecision::Deny),
+        );
+        assert_eq!(set["operation"], "set");
+        assert_eq!(set["action"], "external_http_request");
+        assert_eq!(set["decision"], "deny");
+        assert!(set["path"].as_str().is_some_and(|path| !path.is_empty()));
+
+        let cleared = override_change_ack("cleared", ActionKind::ExternalHttpRequest, None);
+        assert_eq!(cleared["operation"], "cleared");
+        assert_eq!(cleared["action"], "external_http_request");
+        assert!(cleared["decision"].is_null());
     }
 }

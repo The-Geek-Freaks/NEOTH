@@ -32,6 +32,9 @@
 - [ ] A3 Kanban-Write-Ops komplettieren (GAP-03): move/status, archive, blocked-Toggle,
       Session-Selector (Board zeigt bisher nur letzte Session).
 - [x] A4 Rechtsklick-Kontextmenü auf Kanban-Karten (move to column, archive, block, copy id).
+      Move, Finish, Block, Archive, Hemisphere-Assign und Copy-ID sind über
+      typisierte Mutationsbelege verdrahtet; Erfolg und Refresh folgen erst
+      nach exakter Bestätigung von Aktion, Task-ID und Zielstatus.
 
 ### Wave B — Buddy lebendig (GOLD-R4-06)
 - [x] B1 Daemon→GUI-Event-Bus: GuiActivity an WAL-Events verdrahten —
@@ -56,14 +59,20 @@
 - [x] C7 Usage/Cost-Analytics-View (`neoth cost/usage`) im Overview.
 
 ### Wave D — Interaction-Grammar (Best-in-Class-Transfer)
-- [x] D1 Command-Palette Ctrl+K: Navigation + Aktionen (doctor, new task, theme,
+- [~] D1 Command-Palette Ctrl+K: Navigation + Aktionen (doctor, new task, theme,
       DND, session switch) — Raycast/Linear-Pattern.
+      **Residual:** Der aktuelle `PaletteItem`-Vertrag enthält nur Tab-Ziele;
+      echte Aktionen für Doctor-Run, New Task, Theme, DND und Session-Wechsel
+      samt typisiertem Dispatch fehlen.
 - [ ] D2 Rechtsklick-Kontextmenü-Primitive in components.slint; Rollout auf
       Listen (Sessions, Channels, Cron, Plugins, Memory).
 - [ ] D3 Einheitliche hover/focus/active-Grammar + Focus-Rings überall (ein Muster).
 - [ ] D4 Filter-as-you-type in jeder Listen-View.
-- [x] D5 Keyboard-Shortcuts (Ctrl+1..9 Tabs, Ctrl+Enter send, Esc close) +
+- [~] D5 Keyboard-Shortcuts (Ctrl+1..9 Tabs, Ctrl+Enter send, Esc close) +
       Shortcut-Cheatsheet (? oder Ctrl+/).
+      **Residual:** Der globale Tab-Vertrag endet bei Ctrl+1..5; Ctrl+6..9
+      müssen noch auf stabile Tab-Ziele verdrahtet und im Cheatsheet geführt
+      werden.
 
 ### Wave E — Homogenität & Polish (GOLD-R4-09)
 - [x] E1 Glyph-Dedup + eine Icon-Familie (Sidebar-Kollisionen fixen).
@@ -96,7 +105,10 @@ GUI-only Superpowers (Rangfolge nach wow×feasibility):
       Timeline; scrubben durch die Audit-History statt grep-Dump. (Killer, eigener Tab/WAL-Inspector-Erweiterung)
 - [x] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
 - [~] H3 **System-Tray** ✅ (Windows-Toasts + Jump-List offen) — App lebt im Tray, native Notifications. (Killer)
-- [x] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
+- [~] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
+      **Residual:** `DroppedFile` legt Dateien ausschließlich im
+      Chat-Attachment-Strip ab. Memory-Ingestion und eine sichtbare
+      Zielauswahl/Statusanzeige fehlen.
 - [x] H5 Overview: Time-Series-Charts (7-Tage-Sparkline) (Token/Cost/Activity Sparklines). (Killer)
 - [ ] H6 Live-Theme-Editor mit Instant-Preview (tweaks.toml GUI). (High)
 
@@ -121,7 +133,9 @@ Chat (Claude/ChatGPT/Perplexity-Research):
       lokale Managed-Models). Schritt 1: `neoth models catalog --output json` (live catalog,
       model-version-agnostic). Schritt 2: Picker am Retry-Button (ContextMenu-Primitive),
       Auswahl → chat --model <m>, Antwort als Sibling (→ H17-Branch-Modell).
-- [x] H19 Code-Block-Affordances (Copy/Run/Collapse) + Always-Visible-Stop. (Killer)
+- [~] H19 Code-Block-Affordances (Copy/Run/Collapse) + Always-Visible-Stop. (Killer)
+      **Residual:** Copy, Collapse und Stop sind vorhanden; ein sicherer,
+      permission-gated Code-Run-Pfad mit sichtbarem Lifecycle fehlt.
 - [ ] H20 Prompt-Library mit Template-Variablen; Multi-Model-Split-View (Council-Compare!); Volltext-Suche. (High)
 
 Mesh/Fleet (Grafana/Netdata/k9s):

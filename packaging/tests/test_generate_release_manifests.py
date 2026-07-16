@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).parents[1] / "generate_release_manifests.py"
+REPOSITORY_ROOT = Path(__file__).parents[2]
 SPEC = importlib.util.spec_from_file_location("generate_release_manifests", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -95,6 +96,19 @@ class GenerateReleaseManifestsTest(unittest.TestCase):
                 if asset["name"].endswith(".tar.gz")
             )
             self.assertIsNone(raw["metadata"])
+
+    def test_repository_has_no_versioned_winget_stubs(self) -> None:
+        legacy_root = (
+            REPOSITORY_ROOT / "SRC" / "dist" / "winget" / "manifests"
+        )
+        tracked_stubs = (
+            sorted(legacy_root.rglob("*.yaml")) if legacy_root.exists() else []
+        )
+        self.assertEqual(
+            tracked_stubs,
+            [],
+            "WinGet manifests must be generated from final release hashes, not checked in",
+        )
 
     def test_rejects_tampered_payload(self) -> None:
         name = f"NEOTH-{self.version}-x64-Setup.exe"
