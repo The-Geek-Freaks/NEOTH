@@ -242,7 +242,7 @@ export component MiniOverlay inherits Window {
                         if root.unread-count > 0: Rectangle {
                             x: 28px; y: -2px;
                             width: 16px; height: 16px;
-                            border-radius: 8px;
+                            border-radius: self.width / 2;
                             background: Theme.amber-500;
                             border-width: 1.5px;
                             border-color: Theme.bg-void;
@@ -447,7 +447,7 @@ export component MiniOverlay inherits Window {
                             if root.unread-count > 0: Rectangle {
                                 x: 16px; y: -3px;
                                 width: 16px; height: 16px;
-                                border-radius: 8px;
+                                border-radius: self.width / 2;
                                 background: Theme.amber-500;
                                 border-width: 1px;
                                 border-color: Theme.bg-sunken;

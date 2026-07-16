@@ -813,6 +813,13 @@ fn apply_patch_via_worktree(
             )
         })?;
 
+    // WS-BUG P1: the worktree path is deterministic per task_id, so leaking it
+    // on ANY error path below made every retry fail at git "already checked
+    // out", permanently blocking --apply for that task. Wrap the post-creation
+    // body so a single cleanup covers all six failure returns; success keeps
+    // the worktree (documented — the operator inspects the applied diff there).
+    let apply_result: std::result::Result<(), String> = (|| {
+
     // Per Chorus verdict Q1b: refuse on dirty. The worktree was
     // just created from HEAD so it should be clean — this is a
     // defensive check against an operator that pre-populated
@@ -980,6 +987,21 @@ fn apply_patch_via_worktree(
             Err(msg)
         }
     }
+    })();
+
+    // WS-BUG P1: clean the scratch worktree on any failure so a retry can
+    // recreate it. Success intentionally keeps it (see fn doc). Best-effort —
+    // a cleanup failure is logged, not surfaced (the apply outcome is authoritative).
+    if apply_result.is_err() {
+        if let Err(e) = crate::coding::worktree::cleanup_worktree(&cfg.repo_root, &wt_path, true) {
+            tracing::warn!(
+                task_id = task.task_id.raw(),
+                error = %e,
+                "worktree cleanup after failed apply failed"
+            );
+        }
+    }
+    apply_result
 }
 
 /// Emit `0xD3 PATCH_APPLIED` into the WAL when a writer is wired.

@@ -20,7 +20,7 @@
 // no inline hex; radius never 0px.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, SegBar } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, SegBar, EmptyState } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Exported structs (Rust must re-export from main.slint) ────────────────────
@@ -272,6 +272,7 @@ component PeerCard inherits Rectangle {
                     border-color: det-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
                     accessible-role: button;
                     accessible-label: root.expanded ? "Hide peer details" : "Show peer details";
+                    accessible-action-default => { root.expand-clicked(); }
                     animate border-color { duration: Theme.duration-fast; easing: ease-out; }
 
                     Text {
@@ -685,41 +686,10 @@ export component MeshView inherits Rectangle {
                             }
 
                             // Empty state — no peers discovered
-                            if root.mesh-peers.length == 0: Rectangle {
-                                border-radius: Theme.radius-md;
-                                background: Theme.surface-1;
-                                border-width: 1px;
-                                border-color: Theme.border-subtle;
-
-                                VerticalLayout {
-                                    padding: 24px;
-                                    spacing: 8px;
-                                    alignment: center;
-
-                                    Text {
-                                        text: "CLUSTER OFF";
-                                        color: Theme.text-tertiary;
-                                        font-family: Theme.font-mono;
-                                        font-size: Theme.font-size-xs;
-                                        horizontal-alignment: center;
-                                        letter-spacing: Theme.letter-spacing-wide;
-                                    }
-                                    Text {
-                                        text: "No peers discovered. NEOTH runs standalone.";
-                                        color: Theme.text-disabled;
-                                        font-family: Theme.font-mono;
-                                        font-size: 9px;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: "→ Enable mDNS in Settings › Cluster, or add peers manually via `neoth cluster add <addr>`.";
-                                        color: Theme.text-disabled;
-                                        font-family: Theme.font-mono;
-                                        font-size: 9px;
-                                        horizontal-alignment: center;
-                                        wrap: word-wrap;
-                                    }
-                                }
+                            if root.mesh-peers.length == 0: EmptyState {
+                                glyph: "◯";
+                                title: "No peers discovered";
+                                hint: "NEOTH runs standalone — enable mDNS in Settings › Cluster, or add peers via `neoth cluster add <addr>`.";
                             }
 
                             if root.mesh-gossip-note != "": Rectangle {

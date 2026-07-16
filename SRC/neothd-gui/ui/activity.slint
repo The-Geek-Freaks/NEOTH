@@ -11,7 +11,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { SideIn, Led } from "components.slint";
+import { SideIn, Led, EmptyState } from "components.slint";
 
 // Wire type — declared here, imported + re-exported by main.slint so Rust
 // can push rows. Follows the ToastData pattern from Wave-1.
@@ -112,6 +112,9 @@ export component ActivitySidecar inherits Rectangle {
                     Rectangle {
                         width: 28px; height: 28px;
                         border-radius: Theme.radius-sm;
+                        accessible-role: button;
+                        accessible-label: "toggle activity panel";
+                        accessible-action-default => { root.toggle(); }
                         background: chev-ta.has-hover ? Theme.surface-2 : transparent;
                         animate background {
                             duration: Theme.duration-fast;
@@ -133,17 +136,11 @@ export component ActivitySidecar inherits Rectangle {
             }
 
             // ── Body ─────────────────────────────────────────────────────
-            if root.rows.length == 0: Rectangle {
+            if root.rows.length == 0: EmptyState {
                 vertical-stretch: 1;
-                Text {
-                    text: "quiet — no background work";
-                    color: Theme.text-disabled;
-                    font-family: Theme.font-mono;
-                    font-size: 11px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    width: 100%; height: 100%;
-                }
+                glyph: "○";
+                title: "no background work";
+                hint: "tasks appear here while agents run";
             }
             if root.rows.length > 0: ScrollView {
                 vertical-stretch: 1;
@@ -210,10 +207,10 @@ export component ActivitySidecar inherits Rectangle {
                                     text: r.detail;
                                     color: Theme.text-secondary;
                                     font-family: Theme.font-sans;
-                                    font-size: 10.5px;
+                                    font-size: Theme.font-size-2xs;
                                     wrap: word-wrap;
                                     overflow: elide;
-                                    // cap to ~3 lines (10.5px * 1.4 line-height * 3)
+                                    // cap to ~3 lines (font-size-2xs 11px * 1.4 line-height * 3 ≈ 46px)
                                     max-height: 46px;
                                 }
                             }
