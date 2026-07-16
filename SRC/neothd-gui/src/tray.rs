@@ -291,7 +291,17 @@ mod tests {
         let linux = targets[r#"cfg(target_os = "linux")"#]["dependencies"]
             .as_table()
             .unwrap();
-        assert!(linux.contains_key("ksni"));
+        let ksni = linux["ksni"].as_table().unwrap();
+        assert_eq!(ksni["default-features"].as_bool(), Some(false));
+        let ksni_features = ksni["features"].as_array().unwrap();
+        for required in ["blocking", "tokio"] {
+            assert!(
+                ksni_features
+                    .iter()
+                    .any(|feature| feature.as_str() == Some(required)),
+                "ksni is missing its required {required} feature"
+            );
+        }
         assert!(!linux.contains_key("tray-icon"));
 
         let desktop =

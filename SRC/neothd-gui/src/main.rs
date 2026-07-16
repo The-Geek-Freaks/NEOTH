@@ -763,14 +763,112 @@ struct CodingSessionJson {
     status: String,
 }
 
-/// A3 — session-selector override: -1 = latest, otherwise the session
-/// id the operator picked in the board's combo. Read by every
-/// fetch_kanban_board_snapshot call (click handler, refresh, poll).
+/// A3 — stable selector sentinel: row 0 is always `Latest (live)` when a
+/// successful catalog contains at least one session. Historical rows follow.
+const KANBAN_LATEST_SESSION: i64 = -1;
+
+/// A3 — session-selector override: `KANBAN_LATEST_SESSION` = the newest active
+/// session over the warm stream, otherwise the concrete historical/live id the
+/// operator pinned. Read by every board fetch (click handler, refresh, poll).
 static KANBAN_SESSION_OVERRIDE: std::sync::atomic::AtomicI64 =
-    std::sync::atomic::AtomicI64::new(-1);
+    std::sync::atomic::AtomicI64::new(KANBAN_LATEST_SESSION);
+
+/// Every operator selection change advances this generation. Async warm/cold
+/// workers capture it before fetching and may only apply their snapshot while
+/// it still matches, so a slow previous selection can never overwrite a newer
+/// one when it eventually returns to the Slint event loop.
+static KANBAN_SELECTION_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 /// A3 — ids parallel to the selector labels (set by apply_kanban_snapshot).
 static KANBAN_SESSION_IDS: std::sync::Mutex<Vec<i64>> = std::sync::Mutex::new(Vec::new());
+
+fn kanban_selector_session_id(ids: &[i64], index: i32) -> Option<i64> {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| ids.get(index))
+        .copied()
+}
+
+fn kanban_generation_matches(expected: u64, current: u64) -> bool {
+    expected == current
+}
+
+fn current_kanban_selection_generation() -> u64 {
+    KANBAN_SELECTION_GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+fn is_active_kanban_session(status: &str) -> bool {
+    status.eq_ignore_ascii_case("planning")
+        || status.eq_ignore_ascii_case("running")
+        || status.eq_ignore_ascii_case("review")
+}
+
+/// Pure catalog resolution. `sessions` is the newest-first wire order promised
+/// by `kanban list --all`. A valid pin wins even when it is terminal; an
+/// unpinned or stale selection resolves to the newest active session while all
+/// done/abandoned rows remain available in the selector.
+#[derive(Debug, Clone, PartialEq)]
+struct ResolvedKanbanCatalog {
+    labels: Vec<slint::SharedString>,
+    ids: Vec<i64>,
+    selected_session_index: Option<usize>,
+    selector_index: i32,
+    selected_override: i64,
+}
+
+fn resolve_kanban_catalog(
+    sessions: &[CodingSessionJson],
+    requested_override: i64,
+) -> ResolvedKanbanCatalog {
+    let mut labels = Vec::new();
+    let mut ids = Vec::new();
+    if !sessions.is_empty() {
+        labels.push("Latest (live)".into());
+        ids.push(KANBAN_LATEST_SESSION);
+        for session in sessions {
+            let prompt: String = session.prompt.replace('\n', " ").chars().take(42).collect();
+            labels
+                .push(format!("#{} · {} [{}]", session.session_id, prompt, session.status).into());
+            ids.push(session.session_id);
+        }
+    }
+
+    let pinned_index = (requested_override >= 0)
+        .then(|| {
+            sessions
+                .iter()
+                .position(|session| session.session_id == requested_override)
+        })
+        .flatten();
+    let selected_session_index = pinned_index.or_else(|| {
+        sessions
+            .iter()
+            .position(|session| is_active_kanban_session(&session.status))
+    });
+
+    ResolvedKanbanCatalog {
+        labels,
+        ids,
+        selected_session_index,
+        selector_index: pinned_index.map_or(0, |index| (index + 1) as i32),
+        selected_override: pinned_index
+            .map(|_| requested_override)
+            .unwrap_or(KANBAN_LATEST_SESSION),
+    }
+}
+
+/// A warm snapshot and a failed cold catalog probe must preserve the last
+/// known selector. A successful `list --all`, including an empty array, is
+/// authoritative and replaces it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum KanbanCatalogUpdate {
+    #[default]
+    Preserve,
+    Replace {
+        selected_override: i64,
+    },
+}
 
 #[derive(Debug, Deserialize)]
 struct CodingTaskJson {
@@ -827,6 +925,7 @@ struct KanbanBoardSnapshot {
     sessions_labels: Vec<slint::SharedString>,
     sessions_ids: Vec<i64>,
     active_session_idx: i32,
+    catalog_update: KanbanCatalogUpdate,
     backlog: Vec<KanbanTaskRow>,
     todo: Vec<KanbanTaskRow>,
     in_progress: Vec<KanbanTaskRow>,
@@ -2884,11 +2983,19 @@ fn main() -> Result<()> {
     // `invoke_from_event_loop`.
     let weak_kanban_init = window.as_weak();
     let mutex_init = kanban_snapshot.clone();
+    let generation_init = current_kanban_selection_generation();
     std::thread::spawn(move || {
         let snap = fetch_kanban_board_snapshot();
         let snap_for_state = snap.clone();
         let weak = weak_kanban_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
+            if !kanban_generation_matches(generation_init, current_kanban_selection_generation()) {
+                tracing::debug!(
+                    generation_init,
+                    "kanban: discarded stale startup snapshot after selection change"
+                );
+                return;
+            }
             if let Ok(mut g) = mutex_init.lock() {
                 *g = snap_for_state;
             }
@@ -3156,17 +3263,20 @@ fn main() -> Result<()> {
         });
     });
 
-    // A3 — session selector: combo index → session id via the parallel
-    // ids static; pin the override and refresh (cold path honours it).
+    // A3 — session selector: row 0 is the explicit Latest (live) sentinel;
+    // subsequent rows bind 1:1 to the concrete session ids. Advance the
+    // generation before refreshing so any old warm/cold fetch is rejected.
     let weak_sess_sel = window.as_weak();
     window.on_kanban_session_selected(move |idx| {
-        let id = KANBAN_SESSION_IDS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(idx as usize)
-            .copied();
+        let id = {
+            let ids = KANBAN_SESSION_IDS.lock().unwrap_or_else(|e| e.into_inner());
+            kanban_selector_session_id(&ids, idx)
+        };
         if let Some(id) = id {
-            KANBAN_SESSION_OVERRIDE.store(id, std::sync::atomic::Ordering::Relaxed);
+            let previous = KANBAN_SESSION_OVERRIDE.swap(id, std::sync::atomic::Ordering::AcqRel);
+            if previous != id {
+                KANBAN_SELECTION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            }
             if let Some(w) = weak_sess_sel.upgrade() {
                 w.invoke_kanban_refresh_clicked();
             }
@@ -3181,11 +3291,22 @@ fn main() -> Result<()> {
         }
         let weak = weak_kanban_refresh.clone();
         let mutex = mutex_refresh.clone();
+        let expected_generation = current_kanban_selection_generation();
         std::thread::spawn(move || {
             let snap = fetch_kanban_board_snapshot();
             info!(summary = %snap.summary, "kanban: refresh requested");
             let snap_for_state = snap.clone();
             let _ = slint::invoke_from_event_loop(move || {
+                if !kanban_generation_matches(
+                    expected_generation,
+                    current_kanban_selection_generation(),
+                ) {
+                    tracing::debug!(
+                        expected_generation,
+                        "kanban: discarded stale refresh snapshot after selection change"
+                    );
+                    return;
+                }
                 if let Ok(mut g) = mutex.lock() {
                     *g = snap_for_state;
                 }
@@ -4651,13 +4772,14 @@ fn main() -> Result<()> {
         window.on_cfg_perm_set(move |action, decision| {
             let action = action.to_string();
             let decision = decision.to_string();
+            let expected_path = default_neoth_home().join("freedom.yaml");
             let weak = weak_ps.clone();
             std::thread::spawn(move || {
                 let result = run_neothd_json_action::<gui_action::PermissionMutationAck>(
                     &["permissions", "set", action.as_str(), decision.as_str()],
                     "Permission set",
                 )
-                .and_then(|ack| ack.verify_set(&action, &decision));
+                .and_then(|ack| ack.verify_set(&action, &decision, &expected_path));
                 match result {
                     Ok(()) => {
                         push_toast(
@@ -4676,13 +4798,14 @@ fn main() -> Result<()> {
         let weak_pc = window.as_weak();
         window.on_cfg_perm_clear(move |action| {
             let action = action.to_string();
+            let expected_path = default_neoth_home().join("freedom.yaml");
             let weak = weak_pc.clone();
             std::thread::spawn(move || {
                 let result = run_neothd_json_action::<gui_action::PermissionMutationAck>(
                     &["permissions", "clear", action.as_str()],
                     "Permission clear",
                 )
-                .and_then(|ack| ack.verify_clear(&action));
+                .and_then(|ack| ack.verify_clear(&action, &expected_path));
                 match result {
                     Ok(()) => {
                         push_toast(&weak, "success", "Permission override cleared", &action);
@@ -6491,6 +6614,7 @@ fn main() -> Result<()> {
                     // the Buddy activity poll runs EVERY tick (the docked orb is
                     // always visible) so it reflects live daemon activity.
                     let want_board = w.get_step() == WizardStep::Settings;
+                    let board_generation = current_kanban_selection_generation();
                     // Skip if a prior fetch is still running. `swap` returns the
                     // previous value: true → another fetch is in flight → bail.
                     if in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -6517,6 +6641,7 @@ fn main() -> Result<()> {
                             });
                         }
                         if want_board {
+                            let expected_generation = board_generation;
                             let snap = fetch_board_warm_or_cold(&client);
                             let snap_for_state = snap.clone();
                             // Wave-2 feed C: extract before the move into the closure.
@@ -6525,6 +6650,16 @@ fn main() -> Result<()> {
                             // has `weak` (this closure moves its own handle).
                             let weak_board = weak.clone();
                             let _ = slint::invoke_from_event_loop(move || {
+                                if !kanban_generation_matches(
+                                    expected_generation,
+                                    current_kanban_selection_generation(),
+                                ) {
+                                    tracing::debug!(
+                                        expected_generation,
+                                        "kanban: discarded stale live snapshot after selection change"
+                                    );
+                                    return;
+                                }
                                 let board_changed = mutex
                                     .lock()
                                     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -8295,9 +8430,18 @@ fn main() -> Result<()> {
             }
         });
     }
-    // H3 — system tray. Kept alive by the binding until run() returns;
-    // None (headless/unsupported) degrades silently.
-    let _tray = tray::setup(&window);
+    // H3 — create the tray only after Slint's event loop has actually started.
+    // tray-icon requires this ordering on macOS and the same UI thread on
+    // Windows. The retained slot keeps the platform handle alive until run()
+    // returns; None (headless/unsupported) degrades silently.
+    let tray_slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let tray_slot_for_init = tray_slot.clone();
+    let weak_tray = window.as_weak();
+    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+        if let Some(window) = weak_tray.upgrade() {
+            *tray_slot_for_init.borrow_mut() = tray::setup(&window);
+        }
+    });
 
     let run_result = window.run();
     if let Some(error) = gui_ready_failure
@@ -11440,6 +11584,17 @@ fn delete_preset_via_subprocess(name: &str) -> String {
     }
 }
 
+fn kanban_catalog_command(bin: &Path) -> std::process::Command {
+    let mut command = spawn_neothd_plain(bin);
+    command
+        .arg("kanban")
+        .arg("list")
+        .arg("--all")
+        .arg("--output")
+        .arg("json");
+    command
+}
+
 fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
     let Some(bin) = which_neothd() else {
         return KanbanBoardSnapshot {
@@ -11449,13 +11604,9 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
         };
     };
 
-    // Step 1: list sessions (active by default — `--all` includes archived).
-    let list_out = spawn_neothd_plain(&bin)
-        .arg("kanban")
-        .arg("list")
-        .arg("--output")
-        .arg("json")
-        .output();
+    // Step 1: catalog ALL sessions newest-first. Done/abandoned sessions remain
+    // explicitly selectable while Latest (live) resolves only to an active one.
+    let list_out = kanban_catalog_command(&bin).output();
     let list_stdout = match list_out {
         Ok(out) if out.status.success() => out.stdout,
         Ok(out) => {
@@ -11489,82 +11640,66 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
             };
         }
     };
-    // A3 — expose every session to the selector; honour the override.
-    let sessions_ids: Vec<i64> = sessions.iter().map(|s| s.session_id).collect();
-    let sessions_labels: Vec<slint::SharedString> = sessions
-        .iter()
-        .map(|s| {
-            let p: String = s.prompt.replace('\n', " ").chars().take(42).collect();
-            format!("#{} · {} [{}]", s.session_id, p, s.status).into()
-        })
-        .collect();
-    let want = KANBAN_SESSION_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
-    let chosen = if want >= 0 {
-        sessions.iter().find(|s| s.session_id == want).cloned()
-    } else {
-        None
+    let requested_override = KANBAN_SESSION_OVERRIDE.load(std::sync::atomic::Ordering::Acquire);
+    let catalog = resolve_kanban_catalog(&sessions, requested_override);
+    let selected_session = catalog
+        .selected_session_index
+        .and_then(|index| sessions.get(index))
+        .cloned();
+    let mut snap = KanbanBoardSnapshot {
+        sessions_labels: catalog.labels,
+        sessions_ids: catalog.ids,
+        active_session_idx: catalog.selector_index,
+        catalog_update: KanbanCatalogUpdate::Replace {
+            selected_override: catalog.selected_override,
+        },
+        ..Default::default()
     };
-    let Some(latest) = chosen.or_else(|| sessions.into_iter().next()) else {
-        return KanbanBoardSnapshot {
-            summary: "No active session. Run `neoth code \"...\"` in your terminal, then refresh."
-                .to_string(),
-            ..Default::default()
+    let Some(selected_session) = selected_session else {
+        snap.summary = if sessions.is_empty() {
+            "No sessions yet. Run `neoth code \"...\"`, then refresh.".to_string()
+        } else {
+            "No active session. Pick a historical session or run `neoth code \"...\"`.".to_string()
         };
+        return snap;
     };
-    let active_session_idx = sessions_ids
-        .iter()
-        .position(|id| *id == latest.session_id)
-        .map(|i| i as i32)
-        .unwrap_or(0);
 
     // Step 2: full session detail incl. tasks.
     let show_out = spawn_neothd_plain(&bin)
         .arg("kanban")
         .arg("show")
-        .arg(latest.session_id.to_string())
+        .arg(selected_session.session_id.to_string())
         .arg("--output")
         .arg("json")
         .output();
     let show_stdout = match show_out {
         Ok(out) if out.status.success() => out.stdout,
         Ok(out) => {
-            return KanbanBoardSnapshot {
-                summary: format!(
-                    "kanban show #{} failed (exit {})",
-                    latest.session_id, out.status
-                ),
-                ..Default::default()
-            };
+            snap.summary = format!(
+                "kanban show #{} failed (exit {})",
+                selected_session.session_id, out.status
+            );
+            return snap;
         }
         Err(e) => {
-            return KanbanBoardSnapshot {
-                summary: format!("kanban show could not start: {e}"),
-                ..Default::default()
-            };
+            snap.summary = format!("kanban show could not start: {e}");
+            return snap;
         }
     };
     let envelope: CodingShowEnvelope = match serde_json::from_slice(&show_stdout) {
         Ok(v) => v,
         Err(e) => {
-            return KanbanBoardSnapshot {
-                summary: format!("kanban show JSON parse failed: {e}"),
-                ..Default::default()
-            };
+            snap.summary = format!("kanban show JSON parse failed: {e}");
+            return snap;
         }
     };
 
     // Step 3: group tasks by status into the five board buckets.
-    let mut snap = KanbanBoardSnapshot {
-        summary: format!(
-            "Session #{}  [{}]   {}",
-            envelope.session.session_id, envelope.session.status, envelope.session.prompt,
-        ),
-        feed: fetch_kanban_feed(&bin),
-        sessions_labels,
-        sessions_ids,
-        active_session_idx,
-        ..Default::default()
-    };
+    snap.summary = format!(
+        "Session #{}  [{}]   {}",
+        envelope.session.session_id, envelope.session.status, envelope.session.prompt,
+    );
+    snap.feed = fetch_kanban_feed(&bin);
     for task in envelope.tasks {
         let row = KanbanTaskRow {
             task_id: format!("#{}", task.task_id).into(),
@@ -12045,9 +12180,9 @@ fn fetch_activity_warm(
 fn fetch_board_warm_or_cold(
     client: &std::sync::Mutex<Option<GuiStreamClient>>,
 ) -> KanbanBoardSnapshot {
-    // A3 — the warm channel always streams the LATEST session; when the
-    // operator pinned a different one, only the cold path honours it.
-    if KANBAN_SESSION_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) >= 0 {
+    // A3 — only the explicit Latest (live) sentinel uses the warm channel;
+    // concrete historical/live pins require the cold `kanban show <id>` path.
+    if KANBAN_SESSION_OVERRIDE.load(std::sync::atomic::Ordering::Acquire) != KANBAN_LATEST_SESSION {
         return fetch_kanban_board_snapshot();
     }
     let Some(bin) = which_neothd() else {
@@ -12231,9 +12366,10 @@ fn format_hms_from_ns(ts_ns: u64) -> String {
     format!("{h:02}:{m:02}")
 }
 
-/// Push a `KanbanBoardSnapshot` into the eight Slint properties on the
-/// MainWindow. Single call site means a future schema bump only needs
-/// one update — the property names stay 1:1 with the snapshot fields.
+/// Push a `KanbanBoardSnapshot` into the Slint properties. Warm snapshots and
+/// degraded catalog probes preserve the selector; a successful catalog probe
+/// replaces it even when empty. The caller must pass the selection-generation
+/// guard before invoking this function.
 fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
     use slint::{ModelRc, VecModel};
     window.set_kanban_backlog(ModelRc::new(VecModel::from(snap.backlog)));
@@ -12243,13 +12379,19 @@ fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
     window.set_kanban_done(ModelRc::new(VecModel::from(snap.done)));
     window.set_kanban_feed(ModelRc::new(VecModel::from(snap.feed)));
     window.set_kanban_session_summary(snap.summary.into());
-    // A3 — session selector model + active index (parallel ids ride a
-    // static so the selection handler can map index → session id). The
-    // warm-channel snapshot carries no session list — keep the combo.
-    if !snap.sessions_labels.is_empty() {
+    // A3 — an authoritative empty catalog deliberately clears the model and
+    // id map. `Preserve` is reserved for warm frames and transient failures.
+    if let KanbanCatalogUpdate::Replace { selected_override } = snap.catalog_update {
+        let previous =
+            KANBAN_SESSION_OVERRIDE.swap(selected_override, std::sync::atomic::Ordering::AcqRel);
+        if previous != selected_override {
+            // A stale/missing pin was reset to Latest. Invalidate any other
+            // fetch that captured the old pin alongside this successful list.
+            KANBAN_SELECTION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
+        *KANBAN_SESSION_IDS.lock().unwrap_or_else(|e| e.into_inner()) = snap.sessions_ids;
         window.set_kanban_sessions(ModelRc::new(VecModel::from(snap.sessions_labels)));
         window.set_kanban_session_idx(snap.active_session_idx);
-        *KANBAN_SESSION_IDS.lock().unwrap_or_else(|e| e.into_inner()) = snap.sessions_ids;
     }
     // HO-02: None (degraded / un-probed path) → true, so the banner only
     // shows when we positively determined no Cerebellum is bound.
@@ -16180,6 +16322,117 @@ mod tests {
         assert!(credentials.contains("provider_key: new-provider"));
         assert!(credentials.contains("discord_token: existing-discord"));
         assert!(!credentials.contains("omi_developer_api_key"));
+    }
+
+    fn coding_session(session_id: i64, status: &str) -> CodingSessionJson {
+        CodingSessionJson {
+            session_id,
+            prompt: format!("session {session_id}"),
+            status: status.to_string(),
+        }
+    }
+
+    #[test]
+    fn kanban_catalog_binds_latest_sentinel_and_session_indices() {
+        let sessions = vec![
+            coding_session(30, "Done"),
+            coding_session(20, "Running"),
+            coding_session(10, "Abandoned"),
+        ];
+        let catalog = resolve_kanban_catalog(&sessions, KANBAN_LATEST_SESSION);
+
+        assert_eq!(catalog.labels.len(), 4);
+        assert_eq!(catalog.labels[0].as_str(), "Latest (live)");
+        assert_eq!(catalog.ids, vec![KANBAN_LATEST_SESSION, 30, 20, 10]);
+        assert_eq!(kanban_selector_session_id(&catalog.ids, 0), Some(-1));
+        assert_eq!(kanban_selector_session_id(&catalog.ids, 2), Some(20));
+        assert_eq!(kanban_selector_session_id(&catalog.ids, -1), None);
+        assert_eq!(kanban_selector_session_id(&catalog.ids, 4), None);
+    }
+
+    #[test]
+    fn kanban_latest_prefers_newest_active_but_history_stays_pinnable() {
+        let sessions = vec![
+            coding_session(30, "Done"),
+            coding_session(20, "Running"),
+            coding_session(10, "Abandoned"),
+        ];
+
+        let latest = resolve_kanban_catalog(&sessions, KANBAN_LATEST_SESSION);
+        assert_eq!(latest.selected_session_index, Some(1));
+        assert_eq!(latest.selector_index, 0);
+        assert_eq!(latest.selected_override, KANBAN_LATEST_SESSION);
+
+        let terminal_pin = resolve_kanban_catalog(&sessions, 30);
+        assert_eq!(terminal_pin.selected_session_index, Some(0));
+        assert_eq!(terminal_pin.selector_index, 1);
+        assert_eq!(terminal_pin.selected_override, 30);
+
+        let archived_pin = resolve_kanban_catalog(&sessions, 10);
+        assert_eq!(archived_pin.selected_session_index, Some(2));
+        assert_eq!(archived_pin.selector_index, 3);
+        assert_eq!(archived_pin.selected_override, 10);
+
+        let terminal_only = vec![coding_session(2, "done"), coding_session(1, "abandoned")];
+        let no_live = resolve_kanban_catalog(&terminal_only, KANBAN_LATEST_SESSION);
+        assert_eq!(no_live.selected_session_index, None);
+        assert_eq!(no_live.ids, vec![KANBAN_LATEST_SESSION, 2, 1]);
+    }
+
+    #[test]
+    fn kanban_missing_pin_and_empty_catalog_reset_to_latest_coherently() {
+        let sessions = vec![coding_session(30, "done"), coding_session(20, "review")];
+        let missing = resolve_kanban_catalog(&sessions, 404);
+        assert_eq!(missing.selected_session_index, Some(1));
+        assert_eq!(missing.selector_index, 0);
+        assert_eq!(missing.selected_override, KANBAN_LATEST_SESSION);
+
+        let empty = resolve_kanban_catalog(&[], 404);
+        assert!(empty.labels.is_empty());
+        assert!(empty.ids.is_empty());
+        assert_eq!(empty.selected_session_index, None);
+        assert_eq!(empty.selector_index, 0);
+        assert_eq!(empty.selected_override, KANBAN_LATEST_SESSION);
+
+        assert_eq!(
+            KanbanBoardSnapshot::default().catalog_update,
+            KanbanCatalogUpdate::Preserve,
+            "warm/transient snapshots preserve the last successful catalog"
+        );
+        assert_ne!(
+            KanbanCatalogUpdate::Replace {
+                selected_override: empty.selected_override,
+            },
+            KanbanCatalogUpdate::Preserve,
+            "a successful empty catalog is still an authoritative replacement"
+        );
+    }
+
+    #[test]
+    fn kanban_catalog_command_includes_history() {
+        let command = kanban_catalog_command(Path::new("neoth"));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["kanban", "list", "--all", "--output", "json"]);
+    }
+
+    #[test]
+    fn kanban_snapshot_generation_rejects_old_selection_results() {
+        assert!(kanban_generation_matches(7, 7));
+        assert!(!kanban_generation_matches(7, 8));
+    }
+
+    #[test]
+    fn top_level_about_dialog_keeps_required_slint_attribution() {
+        let source = include_str!("../ui/main.slint");
+        assert!(source.contains("if root.about-open: Rectangle"));
+        assert_eq!(
+            source.matches("AboutSlint {").count(),
+            1,
+            "Slint Royalty-free License 2.0 requires its official widget in the About dialog"
+        );
     }
 
     #[test]

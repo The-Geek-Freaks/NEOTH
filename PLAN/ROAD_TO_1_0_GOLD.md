@@ -150,6 +150,19 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
 Operator directive 2026-07-14: v1.0 is not complete merely because source code compiles. A non-technical user must be able to discover, install, choose an interface, configure, update, repair and uninstall NEOTH without a developer toolchain. The GUI ships as part of the product, not as an optional demo. Every visible control must have a real production consumer and every CLI-only capability needs either GUI parity or an explicit operator-grade reason recorded here. No v1.0.0 tag is allowed while any WS-R3 or WS-R4 box is open.
 
 - [ ] **GOLD-R4-01 Cross-platform distribution contract:** produce version-locked release artifacts containing the `neoth` CLI/daemon, `neothd-gui`, example config, README/notices/licenses and required runtime assets. Ship a normal Windows installer executable, a signed/notarizable macOS installer/app bundle, and first-class Linux packages plus a portable fallback; architecture and OS support must be explicit and machine-tested.
+
+  **Portable desktop/licensing slice 2026-07-16 (remains OPEN):** the tray
+  dependency is target-specific. Windows/macOS use the native `tray-icon`
+  backend without default features; Linux uses the pure-Rust D-Bus
+  StatusNotifierItem backend with an explicit async runtime and no GTK/
+  AppIndicator graph. Tray creation is deferred until Slint's event loop is
+  live and the handle stays owned for the window lifetime. Cargo-deny permits
+  `ksni@0.3.6` under Unlicense and the ten resolved Slint `1.16.1` crates under
+  `LicenseRef-Slint-Royalty-free-2.0` only, all version-bound; generated
+  notices include the exact shipped texts. The official `AboutSlint` widget is
+  present in the top-level About dialog to satisfy the selected Slint
+  attribution branch. Native Linux SNI runtime and clean-machine package
+  journeys are still required before this box closes.
 - [ ] **GOLD-R4-02 Package-manager and update reach:** wire GitHub Releases, crates.io where appropriate, WinGet, Homebrew and maintained Linux package metadata to the same signed version contract. Install, upgrade, downgrade/recovery and uninstall must leave no ambiguous mixed-version CLI/GUI state; generated manifests and checksums are artifact-tested.
 
   **Current self-update boundary (2026-07-15; remains OPEN):** portable bundles
@@ -200,6 +213,13 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   receipts remain visible failures. Source guards inventory all Kanban
   callbacks and reject a regression to the unchecked read-only probe boundary.
   A4's missing Archive menu action now uses the same typed move receipt.
+  Permission receipts additionally bind the exact authoritative
+  `freedom.yaml` path. The Kanban selector has an explicit `Latest (live)`
+  sentinel, enumerates terminal history through `kanban list --all`, resets a
+  stale pin coherently, distinguishes an authoritative empty catalog from a
+  transient probe failure and rejects stale async snapshots with a selection
+  generation. Concrete historical pins use the cold exact-session path; only
+  `Latest (live)` consumes the warm board stream.
   D1 actions, Ctrl+6..9, Memory-target drag/drop and permission-gated code-run
   remain explicitly open in `GUI_TOP_TIER_PLAN.md`; this slice does not claim
   broad GUI/CLI parity.

@@ -17,11 +17,17 @@
 > Permissions and all currently exposed Kanban GUI mutations now cross strict
 > typed JSON receipt boundaries; exact action/task/target verification precedes
 > every success toast and refresh, and source guards forbid unchecked mutation
-> probes. The missing Kanban Archive context action is wired through that same
-> contract. Changelog/About and the detailed GUI tracker no longer report false
+> probes. Permission receipts additionally bind the exact instance config path.
+> The missing Kanban Archive context action is wired through that same contract.
+> The session selector now has a real `Latest (live)` sentinel, complete `--all`
+> history, coherent stale/empty handling and generation-gated async updates.
+> Changelog/About and the detailed GUI tracker no longer report false
 > completion for Gold, palette actions, Ctrl+6..9, Memory drag/drop or code-run.
 > Linux tray support uses pure-Rust StatusNotifierItem instead of the GTK/
-> AppIndicator stack; Windows/macOS remain native. The stale checked-in WinGet
+> AppIndicator stack; Windows/macOS remain native, and tray creation happens
+> only after the GUI event loop starts. Version-bound cargo-deny exceptions,
+> generated notices and the official top-level `AboutSlint` widget close the
+> newly exposed ksni/Slint license contract. The stale checked-in WinGet
 > 0.2.1 placeholders and duplicate Rust renderer are gone; post-hash release
 > manifest generation is the sole authority and has a 7-test drift contract.
 > CI/Security cancel superseded branch heads to concentrate the expensive gates

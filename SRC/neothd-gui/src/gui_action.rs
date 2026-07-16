@@ -5,6 +5,7 @@
 //! exit and a typed JSON acknowledgement before the UI may report success or
 //! refresh dependent state.
 
+use std::path::Path;
 use std::process::{Command, Output};
 
 use serde::Deserialize;
@@ -122,7 +123,12 @@ pub struct PermissionMutationAck {
 }
 
 impl PermissionMutationAck {
-    pub fn verify_set(&self, action: &str, decision: &str) -> Result<(), String> {
+    pub fn verify_set(
+        &self,
+        action: &str,
+        decision: &str,
+        expected_path: &Path,
+    ) -> Result<(), String> {
         require_action(&self.operation, "set")?;
         require_id(&self.action, action)?;
         if self.decision.as_deref() != Some(decision) {
@@ -131,23 +137,48 @@ impl PermissionMutationAck {
                 self.decision
             ));
         }
-        self.require_path()
+        self.require_path(expected_path)
     }
 
-    pub fn verify_clear(&self, action: &str) -> Result<(), String> {
+    pub fn verify_clear(&self, action: &str, expected_path: &Path) -> Result<(), String> {
         require_action(&self.operation, "cleared")?;
         require_id(&self.action, action)?;
         if self.decision.is_some() {
             return Err("clear acknowledgement unexpectedly retained a decision".to_string());
         }
-        self.require_path()
+        self.require_path(expected_path)
     }
 
-    fn require_path(&self) -> Result<(), String> {
+    fn require_path(&self, expected_path: &Path) -> Result<(), String> {
         if self.path.trim().is_empty() {
-            Err("permission acknowledgement is missing its config path".to_string())
-        } else {
+            return Err("permission acknowledgement is missing its config path".to_string());
+        }
+        let actual = std::path::absolute(&self.path).map_err(|error| {
+            format!(
+                "could not normalize acknowledged config path `{}`: {error}",
+                self.path
+            )
+        })?;
+        let expected = std::path::absolute(expected_path).map_err(|error| {
+            format!(
+                "could not normalize expected config path `{}`: {error}",
+                expected_path.display()
+            )
+        })?;
+        #[cfg(windows)]
+        let matches = actual
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&expected.to_string_lossy());
+        #[cfg(not(windows))]
+        let matches = actual == expected;
+        if matches {
             Ok(())
+        } else {
+            Err(format!(
+                "acknowledged config path `{}`, expected `{}`",
+                actual.display(),
+                expected.display()
+            ))
         }
     }
 }
@@ -917,21 +948,47 @@ mod tests {
 
     #[test]
     fn permission_receipts_bind_operation_action_and_decision() {
+        let expected_path = std::env::current_dir().unwrap().join("freedom.yaml");
         let set: PermissionMutationAck = serde_json::from_str(
             r#"{"operation":"set","action":"shell_exec","decision":"confirm","path":"freedom.yaml"}"#,
         )
         .unwrap();
-        set.verify_set("shell_exec", "confirm").unwrap();
-        assert!(set.verify_set("file_write", "confirm").is_err());
-        assert!(set.verify_set("shell_exec", "allow").is_err());
+        set.verify_set("shell_exec", "confirm", &expected_path)
+            .unwrap();
+        assert!(
+            set.verify_set("file_write", "confirm", &expected_path)
+                .is_err()
+        );
+        assert!(
+            set.verify_set("shell_exec", "allow", &expected_path)
+                .is_err()
+        );
+        assert!(
+            set.verify_set(
+                "shell_exec",
+                "confirm",
+                &expected_path.with_file_name("other.yaml"),
+            )
+            .is_err()
+        );
 
         let wrong_operation: PermissionMutationAck = serde_json::from_str(
             r#"{"operation":"cleared","action":"shell_exec","decision":null,"path":"freedom.yaml"}"#,
         )
         .unwrap();
-        assert!(wrong_operation.verify_set("shell_exec", "confirm").is_err());
-        wrong_operation.verify_clear("shell_exec").unwrap();
-        assert!(wrong_operation.verify_clear("file_write").is_err());
+        assert!(
+            wrong_operation
+                .verify_set("shell_exec", "confirm", &expected_path)
+                .is_err()
+        );
+        wrong_operation
+            .verify_clear("shell_exec", &expected_path)
+            .unwrap();
+        assert!(
+            wrong_operation
+                .verify_clear("file_write", &expected_path)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1213,13 +1270,14 @@ mod tests {
         let source = include_str!("main.rs");
         assert_eq!(
             source.matches("window.on_kanban_").count(),
-            10,
+            11,
             "new Kanban callbacks must be classified as read-only or typed mutations"
         );
         for read_only in [
             "window.on_kanban_refresh_clicked",
             "window.on_kanban_copy_task_id",
             "window.on_kanban_task_selected",
+            "window.on_kanban_session_selected",
         ] {
             assert!(
                 source.contains(read_only),

@@ -54,6 +54,33 @@ allow = [
     "BSL-1.0",
 ]
 
+# Keep Unlicense scoped to the one audited dependency instead of allowing it
+# across the workspace. ksni 0.3.6 publishes `license = "Unlicense"` and the
+# canonical UNLICENSE text in its crates.io package (SHA-256:
+# 7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
+#
+# Slint 1.16.1 publishes a three-way expression: GPL-3.0-only, its royalty-free
+# desktop/mobile/web license, or its commercial license. NEOTH selects only the
+# non-copyleft royalty-free branch for its desktop GUI. Keep that choice bound
+# to every currently resolved Slint crate and exact version: a Slint upgrade or
+# newly enabled renderer must be reviewed instead of inheriting this exception.
+# The published royalty-free text has SHA-256
+# 5167f5056e850419106ab6265efbdca7cba4d99c849d1445ca0bbf6a1e2315fe and
+# requires the AboutSlint widget or public MadeWithSlint badge attribution.
+exceptions = [
+    { allow = ["Unlicense"], crate = "ksni@0.3.6" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-backend-selector@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-backend-winit@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-common@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-compiler@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-core@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-core-macros@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-renderer-femtovg@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "slint@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "slint-build@1.16.1" },
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "slint-macros@1.16.1" },
+]
+
 # v2 dropped the [licenses.deny] list (PR #611) — anything not in `allow`
 # above is denied by default. GPL / AGPL / LGPL / SSPL therefore stay
 # rejected without an explicit list, because none of them are allow-listed.

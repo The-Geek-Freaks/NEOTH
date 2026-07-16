@@ -17,7 +17,7 @@
 // `~/.neoth/credentials.yaml` rather than `freedom.yaml`, matching the
 // Codex audit split that landed earlier in this session.
 
-import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { AboutSlint, Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
@@ -4021,6 +4021,17 @@ export component MainWindow inherits Window {
                             font-family: Theme.font-mono; font-size: Theme.font-size-xs;
                             wrap: word-wrap;
                         }
+                    }
+                }
+                // Slint Royalty-free License 2.0 section 2(a): keep the
+                // official attribution widget in this top-level About dialog.
+                Rectangle {
+                    height: 80px;
+                    background: transparent;
+                    AboutSlint {
+                        width: min(280px, parent.width);
+                        height: parent.height;
+                        x: (parent.width - self.width) / 2;
                     }
                 }
                 Text {

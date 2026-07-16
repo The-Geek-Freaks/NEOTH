@@ -29,7 +29,10 @@
       WAL-Opcode (Space erschöpft) — Comments reiten existierendes Payload.
 - [x] A2 GUI: Note-Composer am Task-Detail — Author-Tag `operator-note` vs. Chat-Comment;
       dynamisch anhängbar, Anzeige als eigene Sektion auf der Karte.
-- [x] A3 Kanban-Write-Ops: move/status/block/finish/assign via Kontextmenü ✅; **Session-Selector** ✅ (Combo im Board-Header, Override-Pin, warm-Channel fällt auf cold zurück).
+- [x] A3 Kanban-Write-Ops: move/status/block/finish/assign via Kontextmenü ✅;
+      **Session-Selector** ✅ (`Latest (live)` als expliziter Warm-Sentinel,
+      `list --all` für Historie, konkrete Pins via Cold-Show, leere/stale
+      Kataloge kohärent und Async-Snapshots generationsgebunden).
 - [x] A4 Rechtsklick-Kontextmenü auf Kanban-Karten (move to column, archive, block, copy id).
       Move, Finish, Block, Archive, Hemisphere-Assign und Copy-ID sind über
       typisierte Mutationsbelege verdrahtet; Erfolg und Refresh folgen erst
@@ -77,7 +80,8 @@
 - [x] E1 Glyph-Dedup + eine Icon-Familie (Sidebar-Kollisionen fixen).
 - [~] E2 Skeleton-States: ProbeView (Agents/Automation) + AgentsView ✅; weitere Panels bei Bedarf.
 - [ ] E3 Optimistic UI auf allen Toggles/Mutationen (nie Spinner auf cron-toggle).
-- [x] E4 About/Version/Copyright-Panel + In-App-Changelog ("What's new" nach Update).
+- [x] E4 About/Version/Copyright-Panel + In-App-Changelog ("What's new" nach Update)
+      + offizielles `AboutSlint`-Attributionswidget.
 - [x] E5 `agents`-ProbeView → strukturierte View (Cards statt Text-Dump).
 - [ ] E6 Density-Mode-Rollout auf alle Tabs (bisher nur chat).
 
@@ -103,7 +107,9 @@ GUI-only Superpowers (Rangfolge nach wow×feasibility):
 - [x] H1 **WAL-Timeline-Scrubber** — 255 Opcodes in semantischen Bändern = vor-gefärbte
       Timeline; scrubben durch die Audit-History statt grep-Dump. (Killer, eigener Tab/WAL-Inspector-Erweiterung)
 - [x] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
-- [~] H3 **System-Tray** ✅ (Windows-Toasts + Jump-List offen) — App lebt im Tray, native Notifications. (Killer)
+- [~] H3 **System-Tray** ✅ (Windows-Toasts + Jump-List offen) — Windows/macOS
+      nativ, Linux via GTK-freiem StatusNotifierItem; Start erst im laufenden
+      GUI-Event-Loop. (Killer)
 - [~] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
       **Residual:** `DroppedFile` legt Dateien ausschließlich im
       Chat-Attachment-Strip ab. Memory-Ingestion und eine sichtbare
