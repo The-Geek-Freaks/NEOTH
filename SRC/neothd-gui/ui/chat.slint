@@ -526,6 +526,12 @@ component ConversationItem inherits Rectangle {
     in property <bool> any-active: false;
     callback clicked();
 
+    accessible-role: list-item;
+    accessible-label: root.unread-count > 0
+        ? "\{root.label}: \{root.last-message} (\{root.unread-count} unread)"
+        : "\{root.label}: \{root.last-message}";
+    accessible-action-default => { root.clicked(); }
+
     height: 64px;
     background: root.active ? Theme.bg-card : transparent;
     border-radius: Theme.radius-button;
@@ -1001,6 +1007,9 @@ export component ChatView inherits Rectangle {
                         for s in root.session-history: Rectangle {
                             height: 46px;
                             border-radius: Theme.radius-button;
+                            accessible-role: list-item;
+                            accessible-label: "\{s.label}: \{s.meta}";
+                            accessible-action-default => { root.session-selected(s.id); }
                             background: s.id == root.active-session-id ? Theme.bg-card
                                 : (sess-touch.has-hover ? Theme.bg-card.with-alpha(0.5) : transparent);
                             animate background { duration: Theme.duration-micro; easing: ease-out; }
