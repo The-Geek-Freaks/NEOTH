@@ -4657,8 +4657,7 @@ fn main() -> Result<()> {
             let id = task_id.trim_start_matches('#').to_string();
             let weak = weak_as.clone();
             std::thread::spawn(move || {
-                let out =
-                    run_neothd_probe(&["kanban", "assign", id.as_str(), hemisphere.as_str()]);
+                let out = run_neothd_probe(&["kanban", "assign", id.as_str(), hemisphere.as_str()]);
                 let summary: String = out.trim().chars().take(120).collect();
                 let body = if summary.is_empty() {
                     format!("task {id} → {hemisphere}")
@@ -7181,7 +7180,11 @@ fn main() -> Result<()> {
             "language_primary",
             "Language"
         );
-        wire_nested_str!(on_cfg_language_code_changed, "language_code", "Language code");
+        wire_nested_str!(
+            on_cfg_language_code_changed,
+            "language_code",
+            "Language code"
+        );
         wire_nested_str!(on_cfg_role_custom_changed, "role_custom", "Custom role");
         wire_nested_int_combo!(
             on_cfg_role_changed,
