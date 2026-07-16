@@ -2574,11 +2574,59 @@ pub fn parse_agents_list(json: &str) -> Vec<AgentRowData> {
 pub struct WalRowData {
     pub seq: i32,
     pub ts: String,
+    pub ts_ns: u64,
     pub opcode: String,
     pub kind: String,
     pub summary: String,
     pub tint: String,
     pub detail_json: String,
+}
+
+/// One timeline bucket: per-band frame counts inside an equal time slice.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WalBucketData {
+    pub label: String,
+    pub memory_n: i32,
+    pub audit_n: i32,
+    pub consent_n: i32,
+    pub warning_n: i32,
+    pub plain_n: i32,
+}
+
+/// Slice the cached rows into `n` equal time buckets (oldest first) for
+/// the timeline scrubber. Rows with ts_ns == 0 are skipped. Returns the
+/// buckets plus each bucket's (start_ns, end_ns) so a click can filter
+/// the row list to that slice.
+pub fn bucket_wal_rows(rows: &[WalRowData], n: usize) -> (Vec<WalBucketData>, Vec<(u64, u64)>) {
+    let stamps: Vec<u64> = rows.iter().map(|r| r.ts_ns).filter(|t| *t > 0).collect();
+    let (Some(&min), Some(&max)) = (stamps.iter().min(), stamps.iter().max()) else {
+        return (Vec::new(), Vec::new());
+    };
+    let n = n.max(1);
+    let span = (max - min).max(1);
+    let step = span.div_ceil(n as u64).max(1);
+    let mut buckets = vec![WalBucketData::default(); n];
+    let mut ranges = Vec::with_capacity(n);
+    for (i, b) in buckets.iter_mut().enumerate() {
+        let lo = min + step * i as u64;
+        ranges.push((lo, lo + step));
+        b.label = format_epoch_utc((lo / 1_000_000_000) as i64);
+    }
+    for r in rows {
+        if r.ts_ns == 0 {
+            continue;
+        }
+        let idx = (((r.ts_ns - min) / step) as usize).min(n - 1);
+        let b = &mut buckets[idx];
+        match r.tint.as_str() {
+            "memory" => b.memory_n += 1,
+            "audit" => b.audit_n += 1,
+            "consent" => b.consent_n += 1,
+            "warning" => b.warning_n += 1,
+            _ => b.plain_n += 1,
+        }
+    }
+    (buckets, ranges)
 }
 
 /// Semantic tint per opcode band — mirrors the WAL registry's band map
@@ -2622,6 +2670,7 @@ pub fn parse_wal_show(json: &str) -> (Vec<WalRowData>, i32) {
             WalRowData {
                 seq: f.get("event_id").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
                 ts: format_epoch_utc((ts_ns / 1_000_000_000) as i64),
+                ts_ns,
                 opcode,
                 kind: f
                     .get("event_name")
@@ -6855,6 +6904,33 @@ mod tests {
         assert_eq!(rows[0].current_task, "reviews code");
         assert!(parse_agents_list("nope").is_empty());
         assert!(parse_agents_list("{}").is_empty());
+    }
+
+    #[test]
+    fn bucket_wal_rows_counts_bands_and_ranges() {
+        let mk = |ts_ns: u64, tint: &str| WalRowData {
+            ts_ns,
+            tint: tint.into(),
+            ..Default::default()
+        };
+        let rows = vec![
+            mk(1_000_000_000, "memory"),
+            mk(2_000_000_000, "warning"),
+            mk(9_000_000_000, "consent"),
+            mk(10_000_000_000, "consent"),
+            mk(0, "audit"), // ts 0 skipped
+        ];
+        let (buckets, ranges) = bucket_wal_rows(&rows, 4);
+        assert_eq!(buckets.len(), 4);
+        assert_eq!(ranges.len(), 4);
+        let total: i32 = buckets
+            .iter()
+            .map(|b| b.memory_n + b.audit_n + b.consent_n + b.warning_n + b.plain_n)
+            .sum();
+        assert_eq!(total, 4, "ts 0 row must be skipped");
+        assert_eq!(buckets[0].memory_n, 1);
+        assert_eq!(buckets[3].consent_n, 2, "newest slice holds both consents");
+        assert!(bucket_wal_rows(&[], 4).0.is_empty());
     }
 
     #[test]

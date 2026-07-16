@@ -1492,6 +1492,13 @@ fn main() -> Result<()> {
                 "proactive.idle_only",
                 false,
             ));
+            // DES-09 G37 — quiet hours preload: a [start, end] sequence
+            // enables the editor; absent/null leaves it disabled.
+            if let Some((qs, qe)) = read_quiet_hours_in_freedom(fp) {
+                window.set_cfg_quiet_hours_enabled(true);
+                window.set_cfg_quiet_hours_start(qs.to_string().into());
+                window.set_cfg_quiet_hours_end(qe.to_string().into());
+            }
             // Welle C — memory
             window.set_cfg_memory_name_sessions(read_nested_bool_in_freedom(
                 fp,
@@ -4475,14 +4482,24 @@ fn main() -> Result<()> {
             slint::VecModel::from(band_opts),
         )));
 
-        // Apply cache → filtered rows → Slint model.
+        // Timeline scrubber state: bucket time ranges + selected bucket.
+        let wal_ranges: std::sync::Arc<std::sync::Mutex<Vec<(u64, u64)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let wal_bucket_sel = std::sync::Arc::new(AtomicI32::new(-1));
+
+        // Apply cache → filtered rows → Slint model. `range` narrows to a
+        // timeline bucket's time slice when one is selected.
         fn wal_apply(
             w: &MainWindow,
             cache: &[panel_logic::WalRowData],
             text: &str,
             band: usize,
+            range: Option<(u64, u64)>,
         ) {
-            let filtered = panel_logic::filter_wal_rows(cache, text, band);
+            let mut filtered = panel_logic::filter_wal_rows(cache, text, band);
+            if let Some((lo, hi)) = range {
+                filtered.retain(|r| r.ts_ns >= lo && r.ts_ns < hi);
+            }
             let rows: Vec<WalEventRow> = filtered
                 .iter()
                 .map(|r| WalEventRow {
@@ -4500,11 +4517,15 @@ fn main() -> Result<()> {
         }
 
         // One probe pass — runs on a worker thread, lands on the loop.
+        // Rebuilds the timeline buckets and resets the bucket selection.
+        #[allow(clippy::too_many_arguments)]
         fn wal_refresh(
             weak: slint::Weak<MainWindow>,
             cache: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::WalRowData>>>,
             text: std::sync::Arc<std::sync::Mutex<String>>,
             band: std::sync::Arc<AtomicI32>,
+            ranges: std::sync::Arc<std::sync::Mutex<Vec<(u64, u64)>>>,
+            bucket_sel: std::sync::Arc<AtomicI32>,
             limit: i32,
         ) {
             std::thread::spawn(move || {
@@ -4521,10 +4542,35 @@ fn main() -> Result<()> {
                     let Some(w) = weak.upgrade() else { return };
                     w.set_wal_total_count(matched);
                     w.set_wal_has_older(matched > rows.len() as i32);
+                    // Timeline: 48 equal slices over the fetched window.
+                    let (buckets, brs) = panel_logic::bucket_wal_rows(&rows, 48);
+                    let maxn = buckets
+                        .iter()
+                        .map(|b| b.memory_n + b.audit_n + b.consent_n + b.warning_n + b.plain_n)
+                        .max()
+                        .unwrap_or(0);
+                    *ranges.lock().unwrap() = brs;
+                    bucket_sel.store(-1, Ordering::Relaxed);
+                    w.set_wal_selected_bucket(-1);
+                    w.set_wal_timeline_max(maxn);
+                    let bmodel: Vec<WalBucket> = buckets
+                        .iter()
+                        .map(|b| WalBucket {
+                            label: b.label.as_str().into(),
+                            memory_n: b.memory_n,
+                            audit_n: b.audit_n,
+                            consent_n: b.consent_n,
+                            warning_n: b.warning_n,
+                            plain_n: b.plain_n,
+                        })
+                        .collect();
+                    w.set_wal_buckets(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(bmodel),
+                    )));
                     let t = text.lock().unwrap().clone();
                     let b = band.load(Ordering::Relaxed) as usize;
                     *cache.lock().unwrap() = rows;
-                    wal_apply(&w, &cache.lock().unwrap(), &t, b);
+                    wal_apply(&w, &cache.lock().unwrap(), &t, b, None);
                 });
             });
         }
@@ -4535,15 +4581,59 @@ fn main() -> Result<()> {
             wal_cache.clone(),
             wal_text.clone(),
             wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
             200,
         );
 
-        let (weak_f, cache_f, text_f, band_f) = (
+        // Bucket click — narrow the row list to that time slice (click the
+        // same bucket again to clear via Slint's <=> binding going -1).
+        let (weak_tl, cache_tl, text_tl, band_tl, ranges_tl, sel_tl) = (
             window.as_weak(),
             wal_cache.clone(),
             wal_text.clone(),
             wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
         );
+        window.on_wal_bucket_selected(move |idx| {
+            sel_tl.store(idx, Ordering::Relaxed);
+            if let Some(w) = weak_tl.upgrade() {
+                let range = if idx >= 0 {
+                    ranges_tl.lock().unwrap().get(idx as usize).copied()
+                } else {
+                    None
+                };
+                wal_apply(
+                    &w,
+                    &cache_tl.lock().unwrap(),
+                    &text_tl.lock().unwrap(),
+                    band_tl.load(Ordering::Relaxed) as usize,
+                    range,
+                );
+            }
+        });
+
+        // Shared helper: the currently selected bucket's time range.
+        fn wal_current_range(
+            ranges: &std::sync::Mutex<Vec<(u64, u64)>>,
+            sel: &AtomicI32,
+        ) -> Option<(u64, u64)> {
+            let idx = sel.load(Ordering::Relaxed);
+            if idx < 0 {
+                return None;
+            }
+            ranges.lock().unwrap().get(idx as usize).copied()
+        }
+
+        let (weak_f, cache_f, band_f, ranges_f, sel_f) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
+        );
+        let text_f = wal_text.clone();
         window.on_wal_filter_edited(move |s| {
             *text_f.lock().unwrap() = s.to_string();
             if let Some(w) = weak_f.upgrade() {
@@ -4552,15 +4642,18 @@ fn main() -> Result<()> {
                     &cache_f.lock().unwrap(),
                     &s,
                     band_f.load(Ordering::Relaxed) as usize,
+                    wal_current_range(&ranges_f, &sel_f),
                 );
             }
         });
 
-        let (weak_b, cache_b, text_b, band_b) = (
+        let (weak_b, cache_b, text_b, band_b, ranges_b, sel_b) = (
             window.as_weak(),
             wal_cache.clone(),
             wal_text.clone(),
             wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
         );
         window.on_wal_opcode_filter_changed(move |idx| {
             band_b.store(idx, Ordering::Relaxed);
@@ -4570,15 +4663,18 @@ fn main() -> Result<()> {
                     &cache_b.lock().unwrap(),
                     &text_b.lock().unwrap(),
                     idx as usize,
+                    wal_current_range(&ranges_b, &sel_b),
                 );
             }
         });
 
-        let (weak_o, cache_o, text_o, band_o, limit_o) = (
+        let (weak_o, cache_o, text_o, band_o, ranges_o, sel_o, limit_o) = (
             window.as_weak(),
             wal_cache.clone(),
             wal_text.clone(),
             wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
             wal_limit.clone(),
         );
         window.on_wal_load_older_clicked(move || {
@@ -4589,6 +4685,8 @@ fn main() -> Result<()> {
                 cache_o.clone(),
                 text_o.clone(),
                 band_o.clone(),
+                ranges_o.clone(),
+                sel_o.clone(),
                 new_limit,
             );
         });
@@ -4599,11 +4697,13 @@ fn main() -> Result<()> {
             window.on_wal_follow_toggled(move |on| {
                 follow.store(on, Ordering::Relaxed);
             });
-            let (weak_p, cache_p, text_p, band_p, limit_p, follow_p) = (
+            let (weak_p, cache_p, text_p, band_p, ranges_p, sel_p, limit_p, follow_p) = (
                 window.as_weak(),
                 wal_cache.clone(),
                 wal_text.clone(),
                 wal_band.clone(),
+                wal_ranges.clone(),
+                wal_bucket_sel.clone(),
                 wal_limit.clone(),
                 wal_follow.clone(),
             );
@@ -4616,6 +4716,8 @@ fn main() -> Result<()> {
                             cache_p.clone(),
                             text_p.clone(),
                             band_p.clone(),
+                            ranges_p.clone(),
+                            sel_p.clone(),
                             limit_p.load(Ordering::Relaxed),
                         );
                     }
@@ -6815,6 +6917,52 @@ fn main() -> Result<()> {
             "Proactive idle-only"
         );
 
+        // DES-09 G37 — proactive.quiet_hours_utc: [start, end] hours (UTC)
+        // or null when the operator disables the window. Wrap-around is a
+        // daemon-side feature ([22, 7] silences 22:00–06:59) so any 0–23
+        // pair is valid here.
+        {
+            let nd = neoth_dir.clone();
+            let weak = window.as_weak();
+            window.on_cfg_quiet_hours_changed(move |enabled, start, end| {
+                let value = if !enabled {
+                    serde_yaml::Value::Null
+                } else {
+                    match (start.trim().parse::<u8>(), end.trim().parse::<u8>()) {
+                        (Ok(s), Ok(e)) if s <= 23 && e <= 23 => {
+                            serde_yaml::Value::Sequence(vec![
+                                serde_yaml::Value::from(u64::from(s)),
+                                serde_yaml::Value::from(u64::from(e)),
+                            ])
+                        }
+                        _ => {
+                            push_toast(&weak, "warn", "Quiet hours", "hours must be 0–23");
+                            return;
+                        }
+                    }
+                };
+                let nd2 = nd.clone();
+                let weak2 = weak.clone();
+                let state = if enabled { "enabled" } else { "disabled" };
+                std::thread::spawn(move || {
+                    let fp = nd2.join("freedom.yaml");
+                    let rd = nd2.join(".reload-requested");
+                    let result =
+                        set_nested_in_freedom(&fp, "proactive.quiet_hours_utc", value).and_then(
+                            |_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)),
+                        );
+                    slint::invoke_from_event_loop(move || match result {
+                        Ok(_) => push_toast(&weak2, "success", "Quiet hours", state),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&weak2, "warn", "Quiet hours write failed", &msg);
+                        }
+                    })
+                    .ok();
+                });
+            });
+        }
+
         // Welle C — Memory
         wire_nested_bool!(
             on_cfg_memory_name_sessions_changed,
@@ -7495,6 +7643,58 @@ fn main() -> Result<()> {
             }
         });
 
+        // Compact-mode window sizing contract (see overlay.slint header):
+        // 64 px pill / 148 px with speech bubble / 520 px full.
+        fn resize_overlay(ov: &MiniOverlay) {
+            use slint::winit_030::WinitWindowAccessor;
+            let h: f64 = if ov.get_compact() {
+                if ov.get_bubble_text().is_empty() {
+                    64.0
+                } else {
+                    148.0
+                }
+            } else {
+                520.0
+            };
+            ov.window().with_winit_window(|w| {
+                let _ = w.request_inner_size(slint::winit_030::winit::dpi::LogicalSize::new(
+                    380.0, h,
+                ));
+            });
+        }
+
+        let overlay_weak_for_compact = overlay.as_weak();
+        overlay.on_compact_toggled(move |_on| {
+            if let Some(ov) = overlay_weak_for_compact.upgrade() {
+                resize_overlay(&ov);
+            }
+        });
+
+        let overlay_weak_for_bubble = overlay.as_weak();
+        overlay.on_bubble_dismissed(move || {
+            if let Some(ov) = overlay_weak_for_bubble.upgrade() {
+                ov.set_bubble_text("".into());
+                resize_overlay(&ov);
+            }
+        });
+
+        let overlay_weak_for_collapse = overlay.as_weak();
+        overlay.on_collapse_requested(move || {
+            if let Some(ov) = overlay_weak_for_collapse.upgrade() {
+                ov.set_compact(false);
+                resize_overlay(&ov);
+            }
+        });
+
+        // Mic capture lands with the STT wiring — say so instead of
+        // silently ignoring the click.
+        let overlay_weak_for_mic = overlay.as_weak();
+        overlay.on_mic_clicked(move || {
+            if let Some(ov) = overlay_weak_for_mic.upgrade() {
+                ov.set_status_text("voice input lands with the STT wiring".into());
+            }
+        });
+
         // overlay restore-clicked → hide overlay, show main window.
         let overlay_weak_for_restore = overlay.as_weak();
         let window_weak_for_restore = window.as_weak();
@@ -7604,6 +7804,7 @@ fn main() -> Result<()> {
                     ov.set_buddy_mood(mood.into());
                     ov.set_status_text(caption.into());
                     // Append the reply snippet to recent-lines, cap at 6.
+                    let bubble_snip = snippet.clone();
                     let mut lines: Vec<slint::SharedString> =
                         ov.get_recent_lines().iter().collect();
                     lines.push(snippet.into());
@@ -7612,6 +7813,12 @@ fn main() -> Result<()> {
                         lines.drain(..drain_count);
                     }
                     ov.set_recent_lines(ModelRc::new(VecModel::from(lines)));
+                    // Compact pill: the reply surfaces as a speech bubble
+                    // above the orb; the window grows to fit it.
+                    if ov.get_compact() {
+                        ov.set_bubble_text(bubble_snip.as_str().into());
+                        resize_overlay(&ov);
+                    }
                 });
             });
         });
@@ -9097,6 +9304,17 @@ fn make_coalescing_writer(
 
 /// DES-09 helper — read a nested boolean from freedom.yaml.
 /// Returns `default` on missing file / key / malformed YAML.
+/// DES-09 G37 — read `proactive.quiet_hours_utc` ([u8;2] or null/absent).
+fn read_quiet_hours_in_freedom(path: &Path) -> Option<(u8, u8)> {
+    let body = std::fs::read_to_string(path).ok()?;
+    let root = serde_yaml::from_str::<serde_yaml::Value>(&body).ok()?;
+    let seq = root.get("proactive")?.get("quiet_hours_utc")?.as_sequence()?;
+    match seq.as_slice() {
+        [s, e] => Some((s.as_u64()? as u8, e.as_u64()? as u8)),
+        _ => None,
+    }
+}
+
 fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> bool {
     let Ok(body) = std::fs::read_to_string(path) else {
         return default;

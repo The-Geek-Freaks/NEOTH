@@ -29,6 +29,7 @@ export { MiniOverlay }
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
 import { AgentsView, AgentRow } from "agents_view.slint";
 import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
+import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
 import { CronView, CronJobRow } from "cron.slint";
 import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
@@ -47,7 +48,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -471,6 +472,11 @@ export component MainWindow inherits Window {
     callback wal-row-selected(int);
     callback wal-load-older-clicked();
     callback wal-copy-detail-clicked();
+    // Timeline scrubber — Rust buckets the cached rows by time band.
+    in property <[WalBucket]> wal-buckets: [];
+    in-out property <int>     wal-selected-bucket: -1;
+    in property <int>         wal-timeline-max: 0;
+    callback wal-bucket-selected(int);
     // Automation tab — CRUD cron panel (GAP-01).
     in property <[CronJobRow]> cron-jobs: [];
     in property <bool>         cron-running: false;
@@ -645,6 +651,10 @@ export component MainWindow inherits Window {
     in-out property <bool>   cfg-vad-enabled: false;
     in-out property <bool>   cfg-dictation-enabled: false;
     in-out property <bool>   cfg-proactive-idle-only: false;
+    // DES-09 G37 — proactive quiet hours (UTC).
+    in-out property <bool>   cfg-quiet-hours-enabled: false;
+    in-out property <string> cfg-quiet-hours-start: "22";
+    in-out property <string> cfg-quiet-hours-end: "7";
     in-out property <bool>   cfg-memory-name-sessions: false;
     in-out property <bool>   cfg-memory-recall-shortcut: false;
     in-out property <int>    cfg-memory-vector-backend-idx: 0;
@@ -671,6 +681,7 @@ export component MainWindow inherits Window {
     callback cfg-vad-enabled-changed(bool);
     callback cfg-dictation-enabled-changed(bool);
     callback cfg-proactive-idle-only-changed(bool);
+    callback cfg-quiet-hours-changed(bool, string, string);
     callback cfg-memory-name-sessions-changed(bool);
     callback cfg-memory-recall-shortcut-changed(bool);
     callback cfg-memory-vector-backend-changed(int);
@@ -3247,6 +3258,10 @@ export component MainWindow inherits Window {
                     cfg-vad-enabled <=> root.cfg-vad-enabled;
                     cfg-dictation-enabled <=> root.cfg-dictation-enabled;
                     cfg-proactive-idle-only <=> root.cfg-proactive-idle-only;
+                    cfg-quiet-hours-enabled <=> root.cfg-quiet-hours-enabled;
+                    cfg-quiet-hours-start <=> root.cfg-quiet-hours-start;
+                    cfg-quiet-hours-end <=> root.cfg-quiet-hours-end;
+                    cfg-quiet-hours-changed(en, s, e) => { root.cfg-quiet-hours-changed(en, s, e); }
                     cfg-review-gate-enabled-changed(v) => { root.cfg-review-gate-enabled-changed(v); }
                     cfg-cloud-stt-enabled-changed(v) => { root.cfg-cloud-stt-enabled-changed(v); }
                     cfg-cloud-tts-enabled-changed(v) => { root.cfg-cloud-tts-enabled-changed(v); }
@@ -3371,8 +3386,20 @@ export component MainWindow inherits Window {
                     raw-output: root.agents-output;
                     refresh-clicked => { root.agents-refresh-clicked(); }
                 }
-                // WAL Inspector — the audit chain, browsable (Wave 5).
-                if root.nav-active == "wal": WalInspectorView {
+                // WAL Inspector — the audit chain, browsable (Wave 5) with
+                // the timeline scrubber strip above (Wave 6, GUI-only killer:
+                // the opcode bands ARE a pre-colored history).
+                if root.nav-active == "wal": VerticalLayout {
+                    spacing: 0px;
+                    WalTimelineStrip {
+                        buckets: root.wal-buckets;
+                        selected-bucket <=> root.wal-selected-bucket;
+                        max-bucket-n: root.wal-timeline-max;
+                        total-label: "\{root.wal-total-count} frames";
+                        bucket-selected(i) => { root.wal-bucket-selected(i); }
+                    }
+                    WalInspectorView {
+                    vertical-stretch: 1;
                     events: root.wal-events;
                     selected-seq <=> root.wal-selected-seq;
                     detail-json: root.wal-detail-json;
@@ -3388,7 +3415,8 @@ export component MainWindow inherits Window {
                     row-selected(seq) => { root.wal-row-selected(seq); }
                     load-older-clicked => { root.wal-load-older-clicked(); }
                     copy-detail-clicked => { root.wal-copy-detail-clicked(); }
-                }
+                    }  // close WalInspectorView
+                }  // close wal VerticalLayout
                 // Automation — CRUD cron scheduler (GAP-01). n8n lives in its own tab.
                 if root.nav-active == "automation": CronView {
                     cron-jobs: root.cron-jobs;

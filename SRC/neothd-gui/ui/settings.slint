@@ -833,6 +833,10 @@ export component SettingsView inherits Rectangle {
     in-out property <bool> cfg-vad-enabled: false;
     in-out property <bool> cfg-dictation-enabled: false;
     in-out property <bool> cfg-proactive-idle-only: false;
+    // DES-09 G37 — proactive.quiet_hours_utc editor state.
+    in-out property <bool> cfg-quiet-hours-enabled: false;
+    in-out property <string> cfg-quiet-hours-start: "22";
+    in-out property <string> cfg-quiet-hours-end: "7";
     callback cfg-review-gate-enabled-changed(bool);
     callback cfg-cloud-stt-enabled-changed(bool);
     callback cfg-cloud-tts-enabled-changed(bool);
@@ -840,6 +844,9 @@ export component SettingsView inherits Rectangle {
     callback cfg-vad-enabled-changed(bool);
     callback cfg-dictation-enabled-changed(bool);
     callback cfg-proactive-idle-only-changed(bool);
+    // (enabled, start-hour, end-hour) — Rust validates + writes the
+    // proactive.quiet_hours_utc [u8;2] (or null when disabled).
+    callback cfg-quiet-hours-changed(bool, string, string);
 
     // ── DES-09 Welle C — Memory editors ──────────────────────────────────
     in-out property <bool> cfg-memory-name-sessions: false;
@@ -3043,6 +3050,51 @@ export component SettingsView inherits Rectangle {
                             toggled(v) => {
                                 root.cfg-proactive-idle-only = v;
                                 root.cfg-proactive-idle-only-changed(v);
+                            }
+                        }
+                        // DES-09 G37 — proactive quiet hours (UTC). Wrap-around
+                        // supported daemon-side ([22, 7] silences 22:00–06:59).
+                        NeothCheckBox {
+                            text: "Quiet hours — silence proactive delivery (UTC window)";
+                            checked: root.cfg-quiet-hours-enabled;
+                            toggled(v) => {
+                                root.cfg-quiet-hours-enabled = v;
+                                root.cfg-quiet-hours-changed(v, root.cfg-quiet-hours-start, root.cfg-quiet-hours-end);
+                            }
+                        }
+                        if root.cfg-quiet-hours-enabled: HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            padding-left: Theme.space-loose;
+                            Text {
+                                text: "from"; color: Theme.text-tertiary;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-xs;
+                                vertical-alignment: center;
+                            }
+                            NeothLineEdit {
+                                width: 72px;
+                                text <=> root.cfg-quiet-hours-start;
+                                placeholder-text: "22";
+                                accepted(v) => {
+                                    root.cfg-quiet-hours-changed(root.cfg-quiet-hours-enabled, v, root.cfg-quiet-hours-end);
+                                }
+                            }
+                            Text {
+                                text: "to"; color: Theme.text-tertiary;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-xs;
+                                vertical-alignment: center;
+                            }
+                            NeothLineEdit {
+                                width: 72px;
+                                text <=> root.cfg-quiet-hours-end;
+                                placeholder-text: "7";
+                                accepted(v) => {
+                                    root.cfg-quiet-hours-changed(root.cfg-quiet-hours-enabled, root.cfg-quiet-hours-start, v);
+                                }
+                            }
+                            Text {
+                                text: "hour 0–23 · UTC"; color: Theme.text-disabled;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                                vertical-alignment: center;
                             }
                         }
                     }

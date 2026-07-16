@@ -18,6 +18,11 @@ export component Buddy inherits Rectangle {
     in property <string> mood: "idle";
     in property <length> orb-size: 120px;
     in property <bool> show-face: true;
+    // audio-level: live VU meter 0..1 from STT (listening) / TTS (speaking).
+    // Default 0 — the ring is visually present but minimal. Rust wiring: bind from
+    // neothd::audio::RawLevel (mic) or tts::PlaybackLevel (speaker) callbacks
+    // into this property via a Slint model; no compile-time requirement.
+    in property <float> audio-level: 0.0;
 
     width: root.orb-size;
     height: root.orb-size;
@@ -104,6 +109,21 @@ export component Buddy inherits Rectangle {
     property <float> pop-phase: sin(360deg * mod(animation-tick(), 350ms) / 350ms);
     property <float> pop: root.intensity() > 0.5 ? (0.06 * root.pop-phase * (1.0 - root.pulse)) : 0.0;
 
+    // ── State-ring sweep phase 0..1 over mood spin period ────────────
+    // Used by the STATE-RING for the speaking clockwise-trail calculation.
+    property <float> ring-t: mod(animation-tick(), root.spin()) / root.spin();
+
+    // ── Micro-idle blink phases ───────────────────────────────────────
+    // During idle: blink-t runs 0→1 in the first 120 ms of every 9 s cycle.
+    // Outside that 120 ms window it exceeds 1.0 → blink-scale = 1.0 (eyes open).
+    // sin() maps the window to a smooth hump: eyes squint to 15 % at t = 0.5.
+    property <float> idle-blink-t: root.is-mood("idle")
+        ? mod(animation-tick(), 9000ms) / 120ms
+        : 99.0;
+    property <float> idle-blink-scale: root.idle-blink-t <= 1.0
+        ? (1.0 - 0.85 * sin(root.idle-blink-t * 180deg))
+        : 1.0;
+
     property <length> ring-r: 44 * root.u;                          // nominal orbiter radius
     property <length> core-r: 17 * root.u;
 
@@ -171,6 +191,49 @@ export component Buddy inherits Rectangle {
         border-color: root.hue.with-alpha(0.30 + 0.10 * root.breathe);
     }
 
+    // ══ STATE-RING — 24 dot-segments at radius 52 u (just outside outer glow) ══
+    // Renders ONLY for media moods: listening (cyan, staggered level-meter pulse)
+    // and speaking (green, clockwise trailing sweep). thinking/analyzing keep their
+    // existing overlays — no double-render. audio-level boosts brightness when > 0.
+    // Segment positions follow the same sin/cos pattern as the orbiters above.
+    if root.is-mood("listening") || root.is-mood("speaking"): Rectangle {
+        width: 100%; height: 100%;
+        for seg[i] in [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]: Rectangle {
+            property <angle>  seg-a: i * 15deg;          // 360° / 24 segments = 15° step
+            property <length> seg-r: 52 * root.u;        // radius just outside 84 u ring
+            property <length> sw:    4 * root.u;         // dot diameter
+
+            // LISTENING — staggered sine wave per segment: level-meter "breathing in".
+            // Each segment drives its own phase (i * 15deg offset) so adjacent dots
+            // undulate, resembling an inward-rippling VU ring.
+            property <float> listen-ph: sin(
+                360deg * mod(animation-tick(), 600ms) / 600ms + i * 15deg);
+            property <float> listen-alpha: root.is-mood("listening")
+                ? (0.15 + 0.65 * (0.5 + 0.5 * self.listen-ph)
+                       * (0.25 + 0.75 * root.audio-level))
+                : 0.0;
+
+            // SPEAKING — clockwise trailing sweep: segment is bright when it is just
+            // behind the leading beam (trail-delta ≈ 0) and fades over 35 % of the arc.
+            // Dim floor (0.05) keeps the full ring visible even at low audio-level.
+            property <float> trail-delta: mod(root.ring-t - i * 0.04167 + 1.0, 1.0);
+            property <float> speak-alpha: root.is-mood("speaking")
+                ? (self.trail-delta < 0.35
+                    ? (0.9 * (1.0 - self.trail-delta / 0.35)
+                           * (0.3 + 0.7 * root.audio-level))
+                    : 0.05)
+                : 0.0;
+
+            width:  self.sw; height: self.sw;
+            border-radius: self.sw / 2;
+            x: root.cx + sin(self.seg-a) * self.seg-r - self.sw / 2;
+            y: root.cy - cos(self.seg-a) * self.seg-r - self.sw / 2;
+            background: root.hue;                         // cyan (listening) / green (speaking)
+            opacity: root.is-mood("listening") ? self.listen-alpha : self.speak-alpha;
+        }
+    }
+
     // ══ ORBITERS — organic elliptical motion, trailing opacity ═══════════
     // Each dot: different base radius, phase offset, and a slow wobble that
     // makes the orbit feel elliptical rather than a rigid circle.
@@ -233,13 +296,16 @@ export component Buddy inherits Rectangle {
         // eyes
         Rectangle {
             x: 42.4 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
-            width: 3.4 * root.u; height: (9 + 3 * root.pulse) * root.u;
+            width: 3.4 * root.u;
+            // idle-blink-scale collapses eye height to ~15 % for 120 ms every ~9 s.
+            height: (9 + 3 * root.pulse) * root.u * root.idle-blink-scale;
             border-radius: 1.7 * root.u;
             background: root.hue == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
         }
         Rectangle {
             x: 54.2 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
-            width: 3.4 * root.u; height: (9 + 3 * root.pulse) * root.u;
+            width: 3.4 * root.u;
+            height: (9 + 3 * root.pulse) * root.u * root.idle-blink-scale;
             border-radius: 1.7 * root.u;
             background: root.hue == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
         }
@@ -331,6 +397,17 @@ export component Buddy inherits Rectangle {
         stroke: Theme.ink-1000; stroke-width: 3px;
         commands: "M43 43 L57 57 M57 43 L43 57";
     }
+
+    // notification — amber dot badge top-right (no "!" — plain beacon dot).
+    // Distinct from the pink alert badge: amber signals pending info, not danger.
+    // Gentle breathe pulse keeps it visually alive without demanding attention.
+    if root.is-mood("notification"): Rectangle {
+        x: 62 * root.u; y: 26 * root.u;
+        width: 10 * root.u; height: 10 * root.u;
+        border-radius: self.width / 2;
+        background: Theme.amber-500;
+        opacity: 0.70 + 0.30 * root.breathe;
+    }
 }
 
 // Docked variant — Buddy pinned bottom-right with a caption chip.
@@ -338,13 +415,15 @@ export component BuddyDock inherits Rectangle {
     in property <string> mood: "idle";
     in property <string> caption: "ready";
     in property <length> orb-size: 96px;
+    // Forward VU level to the inner Buddy so the state-ring responds to live audio.
+    in property <float> audio-level: 0.0;
     callback clicked();
 
     width: bud.width + 8px;
     height: bud.height + (root.caption != "" ? cap.height + 6px : 0px);
 
     bud := Buddy {
-        mood: root.mood; orb-size: root.orb-size;
+        mood: root.mood; orb-size: root.orb-size; audio-level: root.audio-level;
         x: (parent.width - self.width) / 2; y: 0;
         TouchArea { clicked => { root.clicked(); } }
     }

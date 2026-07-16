@@ -1,0 +1,368 @@
+// NEOTH — WAL Timeline Strip
+// Audit-chain scrubber: WAL opcodes grouped into semantic bands
+// (green=memory · cyan=audit · pink=consent · amber=warning · muted=plain)
+// rendered as a horizontal strip of time buckets. Click a column to slice
+// the WAL event list to that time window.
+//
+// Design language: neon-on-near-black, audit-cyan accent (this is a proof
+// surface, same as WalInspectorView). No inline hex — Theme tokens only.
+//
+// Slint 1.16 constraints observed:
+//   - No @children inside if blocks.
+//   - Property named "row" is reserved; column index uses `col-index`.
+//   - accessible-label paired with accessible-role on the same element;
+//     AccessibleRole.text (fully-qualified) used on Text elements to avoid
+//     the `text` property shadowing the enum short-form.
+//   - Floating chips via negative-y Rectangle (Rectangle.clip defaults false).
+//   - No PopupWindow — chip is an explicit overlay Rectangle.
+//   - Animation via `animate { }` blocks; no continuous animation-tick() needed.
+//
+// ── WIRING ───────────────────────────────────────────────────────────────────
+//
+// main.slint — imports
+//   import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
+//
+// main.slint — AppWindow properties
+//   in property <[WalBucket]>  wal-timeline-buckets:        [];
+//   in-out property <int>      wal-timeline-selected-bucket: -1;
+//   in property <string>       wal-timeline-total-label:    "";
+//   in property <int>          wal-timeline-max-bucket-n:   0;
+//
+// main.slint — AppWindow callback
+//   callback wal-timeline-bucket-selected(int);
+//
+// main.slint — inside the WalInspectorView instantiation block,
+//   add after the filter-bar HorizontalLayout and before the ScrollView:
+//
+//   WalTimelineStrip {
+//       buckets           <=> root.wal-timeline-buckets;
+//       selected-bucket   <=> root.wal-timeline-selected-bucket;
+//       total-label:          root.wal-timeline-total-label;
+//       max-bucket-n:         root.wal-timeline-max-bucket-n;
+//       bucket-selected(idx) => { root.wal-timeline-bucket-selected(idx); }
+//   }
+//
+// panel_logic.rs — rebuild on every wal_events change:
+//
+//   const BUCKET_COUNT: usize = 48;
+//
+//   fn rebuild_timeline(app: &AppWindow, events: &[WalEventRow]) {
+//       if events.is_empty() {
+//           app.set_wal_timeline_buckets(Default::default());
+//           app.set_wal_timeline_max_bucket_n(0);
+//           app.set_wal_timeline_total_label(String::new());
+//           return;
+//       }
+//       let per = (events.len() + BUCKET_COUNT - 1) / BUCKET_COUNT;
+//       let mut max_n: i32 = 0;
+//       let buckets: Vec<WalBucket> = events
+//           .chunks(per)
+//           .map(|chunk| {
+//               let label = chunk.first()
+//                   .map(|e| e.ts.as_str())
+//                   .unwrap_or("")
+//                   .to_owned();
+//               let mut b = WalBucket {
+//                   label: label.into(),
+//                   memory_n: 0, audit_n: 0, consent_n: 0,
+//                   warning_n: 0, plain_n: 0,
+//               };
+//               for e in chunk {
+//                   match e.tint.as_str() {
+//                       "memory"  => b.memory_n  += 1,
+//                       "audit"   => b.audit_n   += 1,
+//                       "consent" => b.consent_n += 1,
+//                       "warning" => b.warning_n += 1,
+//                       _         => b.plain_n   += 1,
+//                   }
+//               }
+//               let total = b.memory_n + b.audit_n + b.consent_n
+//                         + b.warning_n + b.plain_n;
+//               if total > max_n { max_n = total; }
+//               b
+//           })
+//           .collect();
+//       app.set_wal_timeline_buckets(ModelRc::new(VecModel::from(buckets)));
+//       app.set_wal_timeline_max_bucket_n(max_n);
+//       app.set_wal_timeline_total_label(format!("{} events", events.len()));
+//   }
+//
+//   panel_logic.rs — wal_timeline_bucket_selected(idx) handler:
+//       // Re-use the same `per` formula to recover the slice boundaries.
+//       // Filter all_events to that slice and push to app.set_wal_events().
+//       // Reset: app.set_wal_selected_seq(-1) (clears detail pane).
+//       // Do NOT zero max-bucket-n or clear buckets — strip stays visible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { Theme } from "theme.slint";
+
+/// One time bucket with per-band frame counts.
+/// `label`     — short timestamp of the first event in the slice, e.g. "14:32".
+/// `memory-n`  — count of events with tint="memory"  (WAL memory/recall writes).
+/// `audit-n`   — count of events with tint="audit"   (chain-verify/proof ops).
+/// `consent-n` — count of events with tint="consent" (permission/boundary events).
+/// `warning-n` — count of events with tint="warning" (quota breach/anomaly).
+/// `plain-n`   — count of events with tint="plain"   (all other opcodes).
+export struct WalBucket {
+    label:     string,
+    memory-n:  int,
+    audit-n:   int,
+    consent-n: int,
+    warning-n: int,
+    plain-n:   int,
+}
+
+// ── BucketColumn ─────────────────────────────────────────────────────────────
+// Private to this file. One vertical column in the timeline strip.
+// Renders five stacked band segments bottom-aligned inside a 48px bar area,
+// a sparse time label below (every 8th column), a 2px selection rail at the
+// bottom edge, and — when selected — a floating glass chip above the bar area.
+component BucketColumn inherits Rectangle {
+    in property <WalBucket> data;
+    // `col-index` holds the loop position. "row" is a reserved property name
+    // on Slint elements and must not be used here.
+    in property <int>  col-index;
+    in property <int>  max-bucket-n;
+    in property <bool> selected;
+    in property <bool> show-label;    // true for every 8th column
+    callback clicked(int);
+
+    // ── geometry ──────────────────────────────────────────────────────────────
+    // Strip height budget: chip-zone(22) + bar(48) + label(14) + rail(2) = 86px.
+    // BucketColumn occupies the lower 64px; the chip floats into the chip-zone
+    // via y = -22px (negative-y is valid because clip defaults to false).
+    property <length> _bar-h:   48px;
+    property <length> _label-h: 14px;
+    height:      root._bar-h + root._label-h + 2px;   // 64px
+    min-width:   6px;
+    horizontal-stretch: 1;
+
+    // ── per-band heights ──────────────────────────────────────────────────────
+    // Slint type algebra: int * length / int → length (no fp intermediate).
+    // eff-max guards against divide-by-zero when all buckets are empty.
+    property <int>    _eff-max: max(root.max-bucket-n, 1);
+    property <length> _h-mem:   (root.data.memory-n  * root._bar-h) / root._eff-max;
+    property <length> _h-aud:   (root.data.audit-n   * root._bar-h) / root._eff-max;
+    property <length> _h-con:   (root.data.consent-n * root._bar-h) / root._eff-max;
+    property <length> _h-wrn:   (root.data.warning-n * root._bar-h) / root._eff-max;
+    property <length> _h-pln:   (root.data.plain-n   * root._bar-h) / root._eff-max;
+    property <int>    _total:   root.data.memory-n + root.data.audit-n
+                              + root.data.consent-n + root.data.warning-n
+                              + root.data.plain-n;
+
+    // ── column backdrop (hover / selected surface) ────────────────────────────
+    background: root.selected || col-ta.has-hover ? Theme.surface-2 : transparent;
+    border-radius: 2px;
+    animate background { duration: Theme.duration-fast; easing: ease-out; }
+
+    accessible-role: list-item;
+    accessible-label: "\{root.data.label}: \{root._total} events";
+
+    // ── floating glass chip ───────────────────────────────────────────────────
+    // Appears above the bars when this column is selected. Negative y places
+    // it in the 22px chip-zone at the top of WalTimelineStrip (column is at
+    // y = 22px inside the strip, so chip absolute-y = 22 - 22 = 0). The strip
+    // and all ancestors have clip: false (default), so nothing is clipped.
+    if root.selected && root._total > 0: Rectangle {
+        height: 18px;
+        width: chip-lbl.preferred-width + Theme.space-2 * 2;
+        y: -22px;
+        x: (parent.width - self.width) / 2;
+        background: Theme.surface-glass;
+        border-radius: Theme.radius-xs;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        chip-lbl := Text {
+            width:  parent.width;
+            height: parent.height;
+            text: "\{root._total}";
+            color: Theme.text-secondary;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs;
+            letter-spacing: Theme.letter-spacing-tight;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // ── stacked band bars ─────────────────────────────────────────────────────
+    // A wrapper Rectangle owns the opacity so the chip and label are unaffected.
+    // VerticalLayout with alignment: end pushes all content to the bottom of
+    // the 48px area — empty space appears at the top (skyline effect).
+    // Stack order top→bottom in the layout = top→bottom visually in the stack:
+    //   memory (green) · audit (cyan) · consent (pink) · warning (amber) · plain (muted)
+    // Zero-height Rectangles take no space; the band is simply absent.
+    Rectangle {
+        x: 0; y: 0;
+        width:  parent.width;
+        height: root._bar-h;
+        background: transparent;
+        opacity: root.selected ? 1.0 : (col-ta.has-hover ? 0.92 : 0.72);
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
+
+        VerticalLayout {
+            width:     parent.width;
+            height:    parent.height;
+            alignment: end;
+            spacing:   0;
+
+            Rectangle { height: root._h-mem; background: Theme.memory.with-alpha(0.85);        }
+            Rectangle { height: root._h-aud; background: Theme.audit.with-alpha(0.85);         }
+            Rectangle { height: root._h-con; background: Theme.consent.with-alpha(0.85);       }
+            Rectangle { height: root._h-wrn; background: Theme.warning.with-alpha(0.85);       }
+            Rectangle { height: root._h-pln; background: Theme.border-strong.with-alpha(0.85); }
+        }
+    }
+
+    // ── sparse time label (every 8th column) ──────────────────────────────────
+    // Rendered only when show-label is true. Space is always reserved via the
+    // column's fixed height — absent labels leave a gap that aligns all columns.
+    if root.show-label: Text {
+        x: 0;
+        y: root._bar-h;
+        width:  parent.width;
+        height: root._label-h;
+        text: root.data.label;
+        color: Theme.text-tertiary;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-2xs;
+        letter-spacing: Theme.letter-spacing-tight;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+        // accessible-role is required on the same element as accessible-label.
+        // AccessibleRole.text (qualified) avoids shadowing by the `text` property.
+        accessible-role: AccessibleRole.text;
+        accessible-label: root.data.label;
+    }
+
+    // ── 2px selection underline rail ──────────────────────────────────────────
+    // Audit-cyan matches the WAL inspector's accent colour. Width animates
+    // 0 → column-width on select (CommandPalette / WalEventItem grammar).
+    Rectangle {
+        x: 2px;
+        y: root._bar-h + root._label-h;
+        height: 2px;
+        width: root.selected ? parent.width - 4px : 0px;
+        border-radius: 1px;
+        background: Theme.audit;
+        animate width { duration: Theme.duration-fast; easing: ease-out; }
+    }
+
+    // ── interaction ───────────────────────────────────────────────────────────
+    col-ta := TouchArea {
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: "select time bucket \{root.data.label}";
+        accessible-action-default => { root.clicked(root.col-index); }
+        clicked => { root.clicked(root.col-index); }
+    }
+}
+
+// ── WalTimelineStrip ──────────────────────────────────────────────────────────
+/// Audit-chain timeline scrubber embedded in WalInspectorView.
+///
+/// Displays WAL events as a horizontal strip of time buckets (default 48),
+/// each rendered as five stacked semantic-band mini-bars. Clicking a column
+/// fires bucket-selected(index) so the Rust backend can filter the event list
+/// to that time slice.
+///
+/// WIRING: Rust rebuilds `buckets` on every wal-events update by partitioning
+/// events by timestamp. `max-bucket-n` = max total-events in any single bucket;
+/// controls bar scale and triggers empty state when 0. `bucket-selected(idx)`
+/// → Rust re-filters wal-events to the corresponding time slice and resets
+/// wal-selected-seq to -1 (clears the detail pane). The strip itself is NOT
+/// reset — buckets stay painted so the operator can pick a different slice.
+export component WalTimelineStrip inherits Rectangle {
+
+    // ── public API ───────────────────────────────────────────────────────────
+    /// Time buckets, oldest first. Typically 48 entries per visible window.
+    in property <[WalBucket]> buckets;
+    /// Index of the currently highlighted bucket; -1 = none.
+    in-out property <int>     selected-bucket: -1;
+    /// Fires when the operator clicks a bucket column.
+    callback bucket-selected(int);
+    /// Rust-formatted summary label, e.g. "2 048 events · 6 h window".
+    /// Rendered top-left within the chip-zone when non-empty.
+    in property <string>      total-label;
+    /// Max total events in any single bucket (Rust computes on bucket rebuild).
+    /// Controls proportional bar heights. 0 triggers the empty-state view.
+    in property <int>         max-bucket-n;
+
+    // ── strip dimensions ─────────────────────────────────────────────────────
+    // 22px chip-zone  — floating count chips render here (col y=22, chip y=-22,
+    //                   chip absolute-y = 0; stays inside the 86px strip).
+    // 64px column zone — BucketColumn height: _bar-h(48) + _label-h(14) + rail(2).
+    // Total: 86px.
+    // clip is intentionally left at the default (false) so chips never truncate.
+    height: 86px;
+    background: Theme.surface-1;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.total-label != ""
+        ? "WAL timeline — \{root.total-label}"
+        : "WAL timeline — no events in range";
+
+    // ── empty state ───────────────────────────────────────────────────────────
+    // Shown whenever max-bucket-n is 0 (chain empty or filter matches nothing).
+    if root.max-bucket-n == 0: Text {
+        x: 0; y: 0;
+        width:  parent.width;
+        height: parent.height;
+        text: "no events in range";
+        color: Theme.text-disabled;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-2xs;
+        letter-spacing: Theme.letter-spacing-wide;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: AccessibleRole.text;
+        accessible-label: "no events in range";
+    }
+
+    // ── bucket columns ────────────────────────────────────────────────────────
+    // HorizontalLayout sits below the chip-zone at y=22. Each BucketColumn's
+    // floating chip (y=-22 relative to the column) renders at absolute y=0
+    // within the strip — no external spacing required in the inspector layout.
+    if root.max-bucket-n > 0: HorizontalLayout {
+        x: 0;
+        y: 22px;
+        width:  parent.width;
+        height: parent.height - 22px;   // 64px
+        spacing: 2px;
+        padding-left: 4px;
+        padding-right: 4px;
+
+        for bucket[i] in root.buckets: BucketColumn {
+            data:         bucket;
+            col-index:    i;
+            max-bucket-n: root.max-bucket-n;
+            selected:     i == root.selected-bucket;
+            // sparse label: index 0, 8, 16, 24, 32, 40, 48 …
+            show-label:   mod(i, 8) == 0;
+            clicked(idx) => {
+                root.selected-bucket = idx;
+                root.bucket-selected(idx);
+            }
+        }
+    }
+
+    // ── total-label (top-left, chip-zone) ─────────────────────────────────────
+    // Rendered only when data is present so it does not compete with the
+    // empty-state hint. Uses the same 9px mono style as the count chips.
+    if root.total-label != "" && root.max-bucket-n > 0: Text {
+        x: 6px;
+        y: 4px;
+        height: 14px;
+        text: root.total-label;
+        color: Theme.text-disabled;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-2xs;
+        letter-spacing: Theme.letter-spacing-tight;
+        accessible-role: AccessibleRole.text;
+        accessible-label: root.total-label;
+    }
+}
