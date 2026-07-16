@@ -1272,6 +1272,16 @@ export component CommandPalette inherits Rectangle {
                                 letter-spacing: Theme.letter-spacing-wide;
                                 vertical-alignment: center;
                             }
+                            // Raycast-style ↵ action key — fades in on the
+                            // selected row (space reserved so no layout shift).
+                            Text {
+                                text: "↵";
+                                opacity: i == root.selected ? 1.0 : 0.0;
+                                color: Theme.accent;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                                vertical-alignment: center;
+                                animate opacity { duration: Theme.duration-fast; easing: ease-out; }
+                            }
                         }
                         row-ta := TouchArea {
                             mouse-cursor: pointer;

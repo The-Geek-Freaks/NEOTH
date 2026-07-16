@@ -345,7 +345,28 @@ export component TopBar inherits Rectangle {
                 font-family: Theme.font-display; font-size: 26px;
             }
         }
-        HorizontalLayout { alignment: end; spacing: 16px; @children }
+        HorizontalLayout {
+            alignment: end; spacing: 16px;
+            // Persistent command-palette hint (Raycast/Linear affordance).
+            // Decorative — the Ctrl+K binding lives in main.slint's FocusScope.
+            Rectangle {
+                width: kbd-hint.width + 16px; height: 22px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Theme.radius-pill;
+                background: Theme.surface-2;
+                border-width: 1px; border-color: Theme.border-subtle;
+                kbd-hint := Text {
+                    text: "Ctrl K";
+                    color: Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                    letter-spacing: Theme.letter-spacing-wide;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                accessible-role: AccessibleRole.text;
+                accessible-label: "press Ctrl K to open the command palette";
+            }
+            @children
+        }
     }
 }
 
