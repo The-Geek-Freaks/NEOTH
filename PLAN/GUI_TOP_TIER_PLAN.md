@@ -41,7 +41,7 @@
 - [x] B2 Overlay: Drag + Position-Persist (Stub ersetzen), Click-through-Option.
 - [x] B3 Human-Captions statt Mood-Keys ("thinking…" statt "thinking") +
       Speech-Bubble/Callout für Kurztext.
-- [ ] B4 Click auf BuddyDock → Quick-Action-Menü (Chat öffnen, DND, letzte Aktivität).
+- [x] B4 Click auf BuddyDock → Quick-Action-Menü (Chat öffnen, DND, letzte Aktivität).
 - [x] B5 DND / Quiet-Hours GUI (verknüpft mit proactive.quiet_hours_utc, DES-09 G37).
 
 ### Wave C — CLI↔GUI-Parity P0s (GOLD-R4-05)
@@ -94,7 +94,7 @@
 GUI-only Superpowers (Rangfolge nach wow×feasibility):
 - [x] H1 **WAL-Timeline-Scrubber** — 255 Opcodes in semantischen Bändern = vor-gefärbte
       Timeline; scrubben durch die Audit-History statt grep-Dump. (Killer, eigener Tab/WAL-Inspector-Erweiterung)
-- [ ] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
+- [x] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
 - [ ] H3 **System-Tray + Windows-Toasts + Jump-List** — App lebt im Tray, native Notifications. (Killer)
 - [ ] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
 - [ ] H5 Overview: Time-Series-Charts (Token/Cost/Activity Sparklines). (Killer)

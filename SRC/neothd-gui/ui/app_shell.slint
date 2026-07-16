@@ -214,6 +214,7 @@ export component Sidebar inherits Rectangle {
                 // Label shows when complexity ≥ 1 (Memory/Hemispheres gate).
                 NavGroup { label: "SYSTEM"; }
                 NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
+                NavBtn { label: "Graph"; glyph: "❋"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memgraph"; clicked => { root.nav("memgraph"); } }
                 NavBtn { label: "Hemispheres"; glyph: "◐"; visible: root.complexity >= 1; active: root.active-tab == "hemispheres"; clicked => { root.nav("hemispheres"); } }
                 NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
                 NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }

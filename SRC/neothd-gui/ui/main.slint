@@ -30,6 +30,7 @@ import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
 import { AgentsView, AgentRow } from "agents_view.slint";
 import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
 import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
+import { MemoryGraphView, GraphNode, GraphEdge } from "memory_graph.slint";
 import { CronView, CronJobRow } from "cron.slint";
 import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
@@ -48,7 +49,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -479,6 +480,16 @@ export component MainWindow inherits Window {
     in-out property <int>     wal-selected-bucket: -1;
     in property <int>         wal-timeline-max: 0;
     callback wal-bucket-selected(int);
+
+    // H2 — memory graph (Hebbian association view).
+    in property <[GraphNode]> memgraph-nodes: [];
+    in property <[GraphEdge]> memgraph-edges: [];
+    in-out property <int>     memgraph-selected: -1;
+    in property <string>      memgraph-detail: "";
+    in property <string>      memgraph-stats: "";
+    in property <bool>        memgraph-running: false;
+    callback memgraph-node-selected(int);
+    callback memgraph-refresh-clicked();
     // Automation tab — CRUD cron panel (GAP-01).
     in property <[CronJobRow]> cron-jobs: [];
     in property <bool>         cron-running: false;
@@ -778,6 +789,7 @@ export component MainWindow inherits Window {
         : root.nav-active == "cluster"     ? "Private Mesh"
         : root.nav-active == "resources"   ? "Resources"
         : root.nav-active == "wal"         ? "WAL Inspector"
+        : root.nav-active == "memgraph"    ? "Memory Graph"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
         : root.nav-active == "n8n"         ? "Automation Bridge"
@@ -2997,7 +3009,7 @@ export component MainWindow inherits Window {
                 if (root.nav-active != "chat"
                         && root.nav-active != "overview"
                         && root.nav-active != "agents" && root.nav-active != "automation"
-                        && root.nav-active != "wal"
+                        && root.nav-active != "wal" && root.nav-active != "memgraph"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
@@ -3419,6 +3431,18 @@ export component MainWindow inherits Window {
                     copy-detail-clicked => { root.wal-copy-detail-clicked(); }
                     }  // close WalInspectorView
                 }  // close wal VerticalLayout
+
+                // H2 — memory graph: the Hebbian association web, live.
+                if root.nav-active == "memgraph": MemoryGraphView {
+                    nodes: root.memgraph-nodes;
+                    edges: root.memgraph-edges;
+                    selected-id <=> root.memgraph-selected;
+                    detail-text: root.memgraph-detail;
+                    stats-line: root.memgraph-stats;
+                    running: root.memgraph-running;
+                    node-selected(id) => { root.memgraph-node-selected(id); }
+                    refresh-clicked => { root.memgraph-refresh-clicked(); }
+                }
                 // Automation — CRUD cron scheduler (GAP-01). n8n lives in its own tab.
                 if root.nav-active == "automation": CronView {
                     cron-jobs: root.cron-jobs;

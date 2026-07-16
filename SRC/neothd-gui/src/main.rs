@@ -4461,6 +4461,92 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── H2 — Memory graph callbacks ───────────────────────────────────────────
+    {
+        let mg_nodes: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::GraphNodeData>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        fn memgraph_refresh(
+            weak: slint::Weak<MainWindow>,
+            store: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::GraphNodeData>>>,
+        ) {
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["memory", "--graph", "--output", "json"]);
+                let (nodes, edges, comms) = panel_logic::layout_memory_graph(&out);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    let stats = format!(
+                        "{} memories · {} links · {} communities",
+                        nodes.len(),
+                        edges.len(),
+                        comms
+                    );
+                    let node_model: Vec<GraphNode> = nodes
+                        .iter()
+                        .map(|nd| GraphNode {
+                            id: nd.id as i32,
+                            label: nd.label.as_str().into(),
+                            tier: nd.tier.as_str().into(),
+                            degree: nd.degree,
+                            community: nd.community,
+                            x: nd.x,
+                            y: nd.y,
+                            r: nd.r,
+                        })
+                        .collect();
+                    let edge_model: Vec<GraphEdge> = edges
+                        .iter()
+                        .map(|e| GraphEdge {
+                            x1: e.x1,
+                            y1: e.y1,
+                            x2: e.x2,
+                            y2: e.y2,
+                            w: e.w,
+                        })
+                        .collect();
+                    *store.lock().unwrap() = nodes;
+                    w.set_memgraph_nodes(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(node_model),
+                    )));
+                    w.set_memgraph_edges(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(edge_model),
+                    )));
+                    w.set_memgraph_stats(stats.as_str().into());
+                    w.set_memgraph_running(false);
+                });
+            });
+        }
+
+        memgraph_refresh(window.as_weak(), mg_nodes.clone());
+
+        let (weak_mg, store_mg) = (window.as_weak(), mg_nodes.clone());
+        window.on_memgraph_refresh_clicked(move || {
+            if let Some(w) = weak_mg.upgrade() {
+                w.set_memgraph_running(true);
+            }
+            memgraph_refresh(weak_mg.clone(), store_mg.clone());
+        });
+
+        let (weak_sel, store_sel) = (window.as_weak(), mg_nodes.clone());
+        window.on_memgraph_node_selected(move |id| {
+            if let Some(w) = weak_sel.upgrade() {
+                let detail = store_sel
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|nd| nd.id as i32 == id)
+                    .map(|nd| {
+                        format!(
+                            "{}\n\ntier {} · {} links · community {}\nevent id {}",
+                            nd.label, nd.tier, nd.degree, nd.community, nd.id
+                        )
+                    })
+                    .unwrap_or_default();
+                w.set_memgraph_detail(detail.as_str().into());
+            }
+        });
+    }
+
     // ── Wave 5 — WAL Inspector callbacks ──────────────────────────────────────
     {
         use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};

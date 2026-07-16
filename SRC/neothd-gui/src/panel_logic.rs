@@ -2513,6 +2513,161 @@ pub fn next_toast_id(toasts: &[(i32, String, String, String)]) -> i32 {
     max + 1
 }
 
+// ── Memory graph (H2) — parse + deterministic force layout ───────────────────
+
+/// One node of the Hebbian association graph, positioned 0..1.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GraphNodeData {
+    pub id: i64,
+    pub label: String,
+    pub tier: String,
+    pub degree: i32,
+    pub community: i32,
+    pub x: f32,
+    pub y: f32,
+    pub r: f32, // 0..1 relative radius (degree-scaled)
+}
+
+/// One positioned edge (endpoints 0..1) with normalized weight.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GraphEdgeData {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+    pub w: f32,
+}
+
+/// Parse `neoth memory --graph --output json` and lay the graph out with
+/// a deterministic Fruchterman–Reingold pass (nodes start on a circle by
+/// index — no RNG, so the layout is stable across refreshes). Returns
+/// (nodes, edges, communities).
+pub fn layout_memory_graph(json: &str) -> (Vec<GraphNodeData>, Vec<GraphEdgeData>, i32) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let communities = v.get("communities").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+    let Some(jnodes) = v.get("nodes").and_then(|x| x.as_array()) else {
+        return (Vec::new(), Vec::new(), 0);
+    };
+    let jedges = v
+        .get("edges")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let n = jnodes.len();
+    if n == 0 {
+        return (Vec::new(), Vec::new(), communities);
+    }
+    let mut nodes: Vec<GraphNodeData> = jnodes
+        .iter()
+        .enumerate()
+        .map(|(i, jn)| {
+            let ang = std::f32::consts::TAU * (i as f32) / (n as f32);
+            GraphNodeData {
+                id: jn.get("id").and_then(|x| x.as_i64()).unwrap_or(0),
+                label: jn
+                    .get("label")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                tier: jn
+                    .get("tier")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("fact")
+                    .to_string(),
+                degree: jn.get("degree").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                community: jn.get("community").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                x: 0.5 + 0.4 * ang.cos(),
+                y: 0.5 + 0.4 * ang.sin(),
+                r: 0.0,
+            }
+        })
+        .collect();
+    let index_of: std::collections::HashMap<i64, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, nd)| (nd.id, i))
+        .collect();
+    let raw_edges: Vec<(usize, usize, f32)> = jedges
+        .iter()
+        .filter_map(|je| {
+            let a = *index_of.get(&je.get("a")?.as_i64()?)?;
+            let b = *index_of.get(&je.get("b")?.as_i64()?)?;
+            let w = je.get("w").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            Some((a, b, w))
+        })
+        .collect();
+
+    // Fruchterman–Reingold, 60 iterations, cooling step. O(n²) repulsion
+    // is fine at the 400-link export cap (≤ ~300 nodes).
+    // ponytail: O(n²), grid-bucket it if graphs ever exceed ~1k nodes.
+    let k = (1.0 / n as f32).sqrt();
+    let mut temp = 0.10_f32;
+    for _ in 0..60 {
+        let mut disp = vec![(0.0_f32, 0.0_f32); n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dx = nodes[i].x - nodes[j].x;
+                let dy = nodes[i].y - nodes[j].y;
+                let d2 = (dx * dx + dy * dy).max(1e-6);
+                let d = d2.sqrt();
+                let rep = k * k / d;
+                disp[i].0 += dx / d * rep;
+                disp[i].1 += dy / d * rep;
+                disp[j].0 -= dx / d * rep;
+                disp[j].1 -= dy / d * rep;
+            }
+        }
+        for (a, b, w) in &raw_edges {
+            let dx = nodes[*a].x - nodes[*b].x;
+            let dy = nodes[*a].y - nodes[*b].y;
+            let d = (dx * dx + dy * dy).max(1e-6).sqrt();
+            let att = d * d / k * (0.5 + w.clamp(0.0, 1.0));
+            disp[*a].0 -= dx / d * att;
+            disp[*a].1 -= dy / d * att;
+            disp[*b].0 += dx / d * att;
+            disp[*b].1 += dy / d * att;
+        }
+        for (i, nd) in nodes.iter_mut().enumerate() {
+            let (dx, dy) = disp[i];
+            let d = (dx * dx + dy * dy).max(1e-9).sqrt();
+            let step = d.min(temp);
+            nd.x = (nd.x + dx / d * step).clamp(0.02, 0.98);
+            nd.y = (nd.y + dy / d * step).clamp(0.02, 0.98);
+        }
+        temp *= 0.94;
+    }
+
+    // Normalize into 0.05..0.95 with aspect preserved by the caller.
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (1.0_f32, 0.0_f32, 1.0_f32, 0.0_f32);
+    for nd in &nodes {
+        min_x = min_x.min(nd.x);
+        max_x = max_x.max(nd.x);
+        min_y = min_y.min(nd.y);
+        max_y = max_y.max(nd.y);
+    }
+    let sx = (max_x - min_x).max(1e-6);
+    let sy = (max_y - min_y).max(1e-6);
+    let max_deg = nodes.iter().map(|nd| nd.degree).max().unwrap_or(1).max(1) as f32;
+    for nd in &mut nodes {
+        nd.x = 0.05 + 0.90 * (nd.x - min_x) / sx;
+        nd.y = 0.05 + 0.90 * (nd.y - min_y) / sy;
+        nd.r = (nd.degree as f32 / max_deg).clamp(0.1, 1.0);
+    }
+
+    let edges: Vec<GraphEdgeData> = raw_edges
+        .iter()
+        .map(|(a, b, w)| GraphEdgeData {
+            x1: nodes[*a].x,
+            y1: nodes[*a].y,
+            x2: nodes[*b].x,
+            y2: nodes[*b].y,
+            w: w.clamp(0.0, 1.0),
+        })
+        .collect();
+    (nodes, edges, communities)
+}
+
 // ── Agents tab — structured card data ─────────────────────────────────────────
 
 /// One agent card parsed from `neoth agents list --output json`.
@@ -2836,6 +2991,7 @@ pub const PALETTE_CATALOG: &[PaletteEntry] = &[
     ("Dreaming", "☽", "dreaming", "WORK"),
     ("Buddy Config", "⊙", "buddyconfig", "WORK"),
     ("Memory", "◈", "memory", "SYSTEM"),
+    ("Memory Graph", "❋", "memgraph", "SYSTEM"),
     ("Hemispheres", "◐", "hemispheres", "SYSTEM"),
     ("Channels", "⇄", "channels", "SYSTEM"),
     ("Privacy", "⛨", "privacy", "SYSTEM"),
@@ -6890,6 +7046,31 @@ mod tests {
         assert_eq!(format_backup_bytes(512), "512 B");
         assert_eq!(format_backup_bytes(1536), "1.5 KB");
         assert_eq!(format_backup_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn layout_memory_graph_positions_and_normalizes() {
+        let json = r#"{"communities":2,"nodes":[
+            {"id":1,"label":"alpha","tier":"hot","degree":2,"community":0},
+            {"id":2,"label":"beta","tier":"cold","degree":1,"community":0},
+            {"id":3,"label":"gamma","tier":"fact","degree":1,"community":1}],
+            "edges":[{"a":1,"b":2,"w":0.8},{"a":1,"b":3,"w":0.2}]}"#;
+        let (nodes, edges, comms) = layout_memory_graph(json);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(edges.len(), 2);
+        assert_eq!(comms, 2);
+        for nd in &nodes {
+            assert!((0.05..=0.95).contains(&nd.x), "x in bounds: {}", nd.x);
+            assert!((0.05..=0.95).contains(&nd.y), "y in bounds: {}", nd.y);
+            assert!((0.1..=1.0).contains(&nd.r));
+        }
+        assert_eq!(nodes[0].r, 1.0, "highest degree gets full radius");
+        // determinism — identical input, identical layout
+        let (again, _, _) = layout_memory_graph(json);
+        assert_eq!(nodes, again);
+        // degenerate inputs
+        assert!(layout_memory_graph("").0.is_empty());
+        assert!(layout_memory_graph(r#"{"nodes":[]}"#).0.is_empty());
     }
 
     #[test]
