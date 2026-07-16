@@ -64,7 +64,7 @@ component CronJobCard inherits Rectangle {
                     text: job.id;
                     color: Theme.text-disabled;
                     font-size: 10px;
-                    font-family: "monospace";
+                    font-family: Theme.font-mono;
                     overflow: elide;
                 }
             }
@@ -78,7 +78,7 @@ component CronJobCard inherits Rectangle {
                 text: job.cron;
                 color: Theme.text-primary;
                 font-size: Theme.font-size-sm;
-                font-family: "monospace";
+                font-family: Theme.font-mono;
                 horizontal-stretch: 1;
                 overflow: elide;
             }

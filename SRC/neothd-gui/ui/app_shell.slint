@@ -171,7 +171,7 @@ export component Sidebar inherits Rectangle {
                 Text {
                     text: "NEOTH"; color: Theme.accent;
                     font-family: Theme.font-wordmark; font-size: 23px; font-weight: Theme.weight-bold;
-                    letter-spacing: 1px;
+                    letter-spacing: Theme.letter-spacing-tight;
                 }
                 Rectangle {
                     height: ver-txt.height;
@@ -287,14 +287,14 @@ export component Sidebar inherits Rectangle {
                 border-width: 1px; border-color: Theme.border-accent;
                 Text {
                     text: "NH"; color: Theme.accent;
-                    font-family: Theme.font-mono; font-size: 11px;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                     horizontal-alignment: center; vertical-alignment: center;
                 }
             }
             VerticalLayout {
                 alignment: center; horizontal-stretch: 1;
                 Text {
-                    text: root.operator-name; color: Theme.text-primary; font-size: 13px;
+                    text: root.operator-name; color: Theme.text-primary; font-size: Theme.font-size-sm;
                     overflow: elide;
                 }
                 Text {
@@ -371,16 +371,16 @@ export component StatusFooter inherits Rectangle {
         HorizontalLayout {
             alignment: start; spacing: 10px;
             Led { state: root.daemon-state; y: (parent.height - self.height) / 2; }
-            Text { text: "⬡"; color: Theme.accent; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
-            Text { text: "neoth-core"; color: Theme.text-secondary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            Text { text: "⬡"; color: Theme.accent; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center; }
+            Text { text: "neoth-core"; color: Theme.text-secondary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center; }
             Text {
                 text: root.hardware != "" ? "· " + root.hardware : "";
-                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center;
                 overflow: elide;
             }
             Text {
                 text: root.status-message != "" ? "· " + root.status-message : "";
-                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center;
                 overflow: elide; horizontal-stretch: 1;
             }
         }
@@ -388,29 +388,29 @@ export component StatusFooter inherits Rectangle {
             alignment: end; spacing: 10px;
             Text {
                 text: root.cluster-id != "" ? "cluster " + root.cluster-id : "cluster off";
-                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center;
             }
             Text {
                 text: root.peers > 0 ? "· \{root.peers} peers" : "";
-                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center;
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center;
             }
             Rectangle {
                 width: 7px; height: 7px; border-radius: 3.5px;
                 background: root.wal-ok ? Theme.audit : Theme.text-disabled;
                 y: (parent.height - self.height) / 2;
             }
-            Text { text: "WAL"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            Text { text: "WAL"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center; }
             Rectangle {
                 width: 7px; height: 7px; border-radius: 3.5px;
                 background: root.local ? Theme.memory : Theme.text-disabled;
                 y: (parent.height - self.height) / 2;
             }
-            Text { text: "local"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            Text { text: "local"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center; }
             // Operator-requested footer copyright — the always-visible
             // ownership line, tying every screen back to the product.
             Text {
                 text: "· © 2026 The Geek Freaks";
-                color: Theme.text-disabled; font-family: Theme.font-mono; font-size: 11px;
+                color: Theme.text-disabled; font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                 vertical-alignment: center;
             }
         }
