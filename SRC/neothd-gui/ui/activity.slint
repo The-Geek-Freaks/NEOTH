@@ -112,6 +112,9 @@ export component ActivitySidecar inherits Rectangle {
                     Rectangle {
                         width: 28px; height: 28px;
                         border-radius: Theme.radius-sm;
+                        accessible-role: button;
+                        accessible-label: "toggle activity panel";
+                        accessible-action-default => { root.toggle(); }
                         background: chev-ta.has-hover ? Theme.surface-2 : transparent;
                         animate background {
                             duration: Theme.duration-fast;
@@ -210,10 +213,10 @@ export component ActivitySidecar inherits Rectangle {
                                     text: r.detail;
                                     color: Theme.text-secondary;
                                     font-family: Theme.font-sans;
-                                    font-size: 10.5px;
+                                    font-size: Theme.font-size-2xs;
                                     wrap: word-wrap;
                                     overflow: elide;
-                                    // cap to ~3 lines (10.5px * 1.4 line-height * 3)
+                                    // cap to ~3 lines (font-size-2xs 11px * 1.4 line-height * 3 ≈ 46px)
                                     max-height: 46px;
                                 }
                             }

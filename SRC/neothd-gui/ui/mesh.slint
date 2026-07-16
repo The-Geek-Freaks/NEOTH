@@ -272,6 +272,7 @@ component PeerCard inherits Rectangle {
                     border-color: det-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
                     accessible-role: button;
                     accessible-label: root.expanded ? "Hide peer details" : "Show peer details";
+                    accessible-action-default => { root.expand-clicked(); }
                     animate border-color { duration: Theme.duration-fast; easing: ease-out; }
 
                     Text {

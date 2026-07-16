@@ -393,6 +393,9 @@ export component OverviewView inherits Rectangle {
                                         width: 18px;
                                         height: 18px;
                                         border-radius: Theme.radius-xs;
+                                        accessible-role: button;
+                                        accessible-label: "open cost & usage detail";
+                                        accessible-action-default => { root.ov-cost-open-clicked(); }
                                         background: cvu-chevron.has-hover ? Theme.surface-2 : transparent;
                                         animate background {
                                             duration: Theme.duration-fast;

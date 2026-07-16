@@ -1469,6 +1469,9 @@ export component ChatView inherits Rectangle {
                     width: link-chip-txt.preferred-width + 14px;
                     height: 18px;
                     border-radius: Theme.radius-pill;
+                    accessible-role: button;
+                    accessible-label: chip.label;
+                    accessible-action-default => { root.link-chip-clicked(chip.kind, chip.id); }
                     background: Theme.audit-tint;
                     border-width: 1px;
                     border-color: link-chip-ta.has-hover ? Theme.audit : Theme.border-subtle;
