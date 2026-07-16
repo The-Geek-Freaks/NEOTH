@@ -367,10 +367,20 @@ export component Buddy inherits Rectangle {
         commands: "M43 50.5 L47.5 55 L57 45";
     }
 
-    // alert / consent — a "!" badge top-right
+    // alert / consent — a "!" badge top-right with an urgency throb
+    // (breathes + a spreading ghost ring for consent — macOS-permission feel).
     if root.is-mood("alert") || root.is-mood("consent") || root.is-mood("problem"): Rectangle {
         x: 62 * root.u; y: 26 * root.u; width: 12 * root.u; height: 12 * root.u;
         border-radius: self.width / 2; background: Theme.pink-500;
+        opacity: 0.75 + 0.25 * root.breathe;
+        // spreading ghost ring — the "attention" pulse for consent gates.
+        Rectangle {
+            width: parent.width * (1.6 + 0.6 * root.breathe);
+            height: self.width;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            border-radius: self.width / 2;
+            background: Theme.pink-500.with-alpha(0.18 * (1.0 - root.breathe));
+        }
         Text { text: "!"; color: Theme.ink-0; font-size: 9 * root.u; font-weight: 700;
                horizontal-alignment: center; vertical-alignment: center; }
     }

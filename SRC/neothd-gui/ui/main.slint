@@ -3022,6 +3022,7 @@ export component MainWindow inherits Window {
                 operator-name: root.operator-id != "" ? root.operator-id : "operator";
                 project-domain: root.project-domain;
                 version-line: root.app-version-line;
+                buddy-mood: root.buddy-mood;
                 version-clicked => { root.about-open = true; }
                 nav(t) => {
                     root.nav-active = t;
