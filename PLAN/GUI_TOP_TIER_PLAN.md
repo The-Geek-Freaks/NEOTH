@@ -139,6 +139,12 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
       Consent-Badge-Throb (hing an `breathe`) ein. Nicht-invisible Freeze-Werte
       gewählt (sweep→0.5, memory-t→0.5) damit kein Overlay unsichtbar wird.
       `animate`-Blöcke honorierten den Mode schon über die Duration-Tokens.
+      **App-weit erweitert** (2026-07-16b): auch die tick-getriebenen
+      Animationen außerhalb des Orbs — NeothButton-Spinner (`◐`), Led-Puls,
+      Skeleton-Shimmer (components.slint) und der Activity-Row-Aktiv-Puls
+      (activity.slint) — frieren bei mode 0. Nebenbei 3 latente 0ms-Divisionen
+      gefixt (die Spinner/Led/Puls teilten durch `Theme.duration-*`, das bei
+      mode 0 `0ms` ist). wal_timeline nutzt nur `animate{}` → schon safe.
       Gate GATE_EXIT=0.
 
 ### Wave G — GUI-Inventar-P0/P1 (aus gui-inventory Agent)

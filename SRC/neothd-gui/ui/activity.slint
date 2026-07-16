@@ -172,9 +172,10 @@ export component ActivitySidecar inherits Rectangle {
                                   : r.kind == "link"    ? Theme.audit
                                   : r.kind == "consent" ? Theme.consent
                                   : Theme.text-tertiary;
-                                // breathe while active (same sin formula as Led)
+                                // breathe while active (same sin formula as Led);
+                                // reduced-motion (E7) freezes it + avoids the 0ms div.
                                 opacity: r.active
-                                    ? 0.55 + 0.45 * sin(360deg * (animation-tick() / Theme.duration-breathe))
+                                    ? (Theme.animation-mode == 0 ? 0.9 : 0.55 + 0.45 * sin(360deg * (animation-tick() / Theme.duration-breathe)))
                                     : 1.0;
                             }
 
