@@ -2170,7 +2170,7 @@ fn main() -> Result<()> {
         w.set_chat_send_in_flight(true);
         // Wave-2 feed A: chat send start → plan row.
         {
-            let snippet = if body.len() > 80 { &body[..80] } else { &body };
+            let snippet = truncate_chars(&body, 80);
             push_activity(&w.as_weak(), "plan", "Thinking…", snippet);
         }
         // ODY-04 — arm the stall watchdog; refill the auto-nudge budget on
@@ -2325,7 +2325,7 @@ fn main() -> Result<()> {
                             Ok((_, stats, _)) => {
                                 format!("{}t out · {}ms", stats.output_tokens, stats.elapsed_ms)
                             }
-                            Err(e) => format!("error: {}", &e[..e.len().min(60)]),
+                            Err(e) => format!("error: {}", truncate_chars(&e, 60)),
                         };
                         push_activity(&weak_settle, "metric", "Reply done", &metric_detail);
                     }
@@ -5855,7 +5855,7 @@ fn main() -> Result<()> {
             // Wave-2 feed D: loop started.
             {
                 let snippet = if prompt.len() > 80 {
-                    &prompt[..80]
+                    truncate_chars(&prompt, 80)
                 } else {
                     &prompt
                 };
@@ -8730,8 +8730,8 @@ fn main() -> Result<()> {
                     let (mood, caption, snippet) = match result {
                         Ok(ref reply) if !reply.is_empty() => {
                             // Truncate to 120 chars for the compact scrollback.
-                            let snip = if reply.len() > 120 {
-                                format!("{}…", &reply[..120])
+                            let snip = if reply.chars().count() > 120 {
+                                format!("{}…", truncate_chars(reply, 120))
                             } else {
                                 reply.clone()
                             };
@@ -10421,6 +10421,19 @@ mod preload01_tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[test]
+    fn truncate_chars_never_slices_mid_codepoint() {
+        // WS-BUG P0 regression: byte-index slices panicked on non-ASCII.
+        assert_eq!(truncate_chars("hello", 80), "hello");
+        assert_eq!(truncate_chars("hello", 3), "hel");
+        // 77 ASCII + a 4-byte emoji: byte 80 lands mid-codepoint.
+        let s = format!("{}🌍", "x".repeat(77));
+        assert_eq!(truncate_chars(&s, 80), &"x".repeat(77)); // emoji dropped, no panic
+        assert_eq!(truncate_chars(&s, 78).chars().count(), 78); // includes the emoji
+        assert_eq!(truncate_chars("日本語テスト", 3), "日本語");
+        assert_eq!(truncate_chars("", 5), "");
+    }
+
     fn write_yaml(dir: &TempDir, content: &str) -> std::path::PathBuf {
         let path = dir.path().join("freedom.yaml");
         std::fs::write(&path, content).unwrap();
@@ -10824,6 +10837,17 @@ fn scrub_gui_control_environment(command: &mut std::process::Command) {
         INTERFACE_OVERRIDE_ENV,
     ] {
         command.env_remove(variable);
+    }
+}
+
+/// Char-boundary-safe prefix — never slices mid-codepoint. WS-BUG P0:
+/// byte-index slices (`&s[..N]`) panicked the Slint UI thread on
+/// non-ASCII input (emoji/CJK/umlaut) where byte N fell inside a
+/// multi-byte sequence.
+fn truncate_chars(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((i, _)) => &s[..i],
+        None => s,
     }
 }
 
