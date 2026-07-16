@@ -2227,6 +2227,10 @@ fn main() -> Result<()> {
                     cmd.arg("--attach").arg(p);
                 }
                 let mut child = cmd
+                    // Terminate clap's flag scan so a message starting with
+                    // '-' (e.g. "-h", "--foo") is treated as the positional
+                    // prompt, not parsed as a flag (WS-BUG P1).
+                    .arg("--")
                     .arg(&body)
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null())
@@ -8702,7 +8706,7 @@ fn main() -> Result<()> {
                 let result: std::result::Result<String, String> = (|| {
                     let bin = which_neothd().ok_or_else(|| "neothd not on PATH".to_string())?;
                     let mut cmd = spawn_neothd_plain(&bin);
-                    cmd.arg("chat").arg("--stream").arg(&body_clone);
+                    cmd.arg("chat").arg("--stream").arg("--").arg(&body_clone);
                     let mut child = cmd
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::null())
