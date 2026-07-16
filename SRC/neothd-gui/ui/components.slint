@@ -643,7 +643,7 @@ component Toast inherits Rectangle {
                 text: root.data.title;
                 color: Theme.text-primary;
                 font-family: Theme.font-sans;
-                font-size: 12px;
+                font-size: Theme.font-size-xs;
                 font-weight: Theme.weight-semibold;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
@@ -655,7 +655,7 @@ component Toast inherits Rectangle {
             text: root.data.body;
             color: Theme.text-secondary;
             font-family: Theme.font-sans;
-            font-size: 11px;
+            font-size: Theme.font-size-2xs;
             wrap: word-wrap;
         }
     }
