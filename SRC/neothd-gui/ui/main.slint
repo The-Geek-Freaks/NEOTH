@@ -216,6 +216,8 @@ export component MainWindow inherits Window {
     // E4 — About / What's-new overlay (changelog embedded at build time).
     in-out property <bool> about-open: false;
     in property <string> about-changelog: "";
+    // D5 — shortcut cheatsheet overlay (Ctrl+/).
+    in-out property <bool> shortcuts-open: false;
     // Command palette (Ctrl+K). Rust filters palette-results on
     // palette-query-edited; activation reuses the sidebar nav path.
     in-out property <bool> palette-open: false;
@@ -661,6 +663,17 @@ export component MainWindow inherits Window {
     in-out property <string> cfg-provider-api-version: "";
     in-out property <int>    cfg-persona-mode-idx: 0;
     in-out property <string> cfg-user-tz: "";
+    // C3 — operator identity.
+    in-out property <string> cfg-operator-id: "";
+    in-out property <string> cfg-language-primary: "";
+    in-out property <string> cfg-language-code: "";
+    in-out property <int>    cfg-role-idx: 5;
+    in-out property <string> cfg-role-custom: "";
+    callback cfg-operator-id-changed(string);
+    callback cfg-language-primary-changed(string);
+    callback cfg-language-code-changed(string);
+    callback cfg-role-changed(int);
+    callback cfg-role-custom-changed(string);
     in-out property <bool>   cfg-elicitation-enabled: false;
     in-out property <int>    cfg-elicitation-min-intensity-idx: 1;  // 0=low 1=medium 2=high 3=urgent
     in-out property <bool>   cfg-tone-modifier-enabled: false;
@@ -934,6 +947,8 @@ export component MainWindow inherits Window {
     in-out property <length> kanban-ctx-y: 0px;
     callback kanban-move-task(string, string);
     callback kanban-copy-task-id(string);
+    // H14 — assign a card to a hemisphere worker from the context menu.
+    callback kanban-assign-task(string, string);
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust populates these from `neothd kanban list/show --output json`
@@ -2924,6 +2939,15 @@ export component MainWindow inherits Window {
                 if (event.modifiers.control && event.text == ",") {
                     root.nav-active = "config"; root.step = WizardStep.settings; return accept;
                 }
+                // Ctrl+/ — shortcut cheatsheet (D5).
+                if (event.modifiers.control && event.text == "/") {
+                    root.shortcuts-open = !root.shortcuts-open;
+                    return accept;
+                }
+                if (root.shortcuts-open && event.text == Key.Escape) {
+                    root.shortcuts-open = false;
+                    return accept;
+                }
                 reject
             }
             HorizontalLayout {
@@ -3281,6 +3305,17 @@ export component MainWindow inherits Window {
                     // DES-09 Welle A — profile + behavior
                     cfg-persona-mode-idx <=> root.cfg-persona-mode-idx;
                     cfg-user-tz <=> root.cfg-user-tz;
+                    // C3 — operator identity.
+                    cfg-operator-id <=> root.cfg-operator-id;
+                    cfg-language-primary <=> root.cfg-language-primary;
+                    cfg-language-code <=> root.cfg-language-code;
+                    cfg-role-idx <=> root.cfg-role-idx;
+                    cfg-role-custom <=> root.cfg-role-custom;
+                    cfg-operator-id-changed(v) => { root.cfg-operator-id-changed(v); }
+                    cfg-language-primary-changed(v) => { root.cfg-language-primary-changed(v); }
+                    cfg-language-code-changed(v) => { root.cfg-language-code-changed(v); }
+                    cfg-role-changed(i) => { root.cfg-role-changed(i); }
+                    cfg-role-custom-changed(v) => { root.cfg-role-custom-changed(v); }
                     cfg-elicitation-enabled <=> root.cfg-elicitation-enabled;
                     cfg-elicitation-min-intensity-idx <=> root.cfg-elicitation-min-intensity-idx;
                     cfg-tone-modifier-enabled <=> root.cfg-tone-modifier-enabled;
@@ -3759,6 +3794,13 @@ export component MainWindow inherits Window {
         // B4 — click opens the quick-action menu instead of instantly
         // minimizing; "Minimize to companion" lives inside the menu.
         clicked => { root.buddy-menu-open = !root.buddy-menu-open; }
+        // H12 — right-click summons the command palette.
+        right-clicked => {
+            root.palette-open = true;
+            root.palette-query = "";
+            root.palette-selected = 0;
+            root.palette-query-edited("");
+        }
     }
 
     // A4 — kanban card context menu. Coordinates come relative to the
@@ -3776,6 +3818,11 @@ export component MainWindow inherits Window {
             { label: "Move to Review", glyph: "◎", danger: false },
             { label: "Finish (done)", glyph: "✓", danger: false },
             { label: "Block", glyph: "⛔", danger: true },
+            // H14 — the AI worker is a first-class assignee (Linear-agents
+            // grammar): route the card to a hemisphere from the menu.
+            { label: "Assign → Left (fast)", glyph: "◑", danger: false },
+            { label: "Assign → Right (deep)", glyph: "◐", danger: false },
+            { label: "Assign → Cerebellum", glyph: "⊕", danger: false },
             { label: "Copy task id", glyph: "⧉", danger: false },
         ];
         picked(i) => {
@@ -3785,7 +3832,10 @@ export component MainWindow inherits Window {
             if (i == 2) { root.kanban-move-task(root.kanban-ctx-task, "review"); }
             if (i == 3) { root.kanban-move-task(root.kanban-ctx-task, "done"); }
             if (i == 4) { root.kanban-move-task(root.kanban-ctx-task, "blocked"); }
-            if (i == 5) { root.kanban-copy-task-id(root.kanban-ctx-task); }
+            if (i == 5) { root.kanban-assign-task(root.kanban-ctx-task, "left"); }
+            if (i == 6) { root.kanban-assign-task(root.kanban-ctx-task, "right"); }
+            if (i == 7) { root.kanban-assign-task(root.kanban-ctx-task, "cerebellum"); }
+            if (i == 8) { root.kanban-copy-task-id(root.kanban-ctx-task); }
         }
         dismissed => { root.kanban-ctx-open = false; }
     }
@@ -3828,6 +3878,64 @@ export component MainWindow inherits Window {
         x: root.width - self.width - 12px;
         y: 78px;
         // height is driven by content; no explicit height needed.
+    }
+
+    // ── D5 — shortcut cheatsheet (Ctrl+/) ──────────────────────────────
+    if root.shortcuts-open: Rectangle {
+        width: 100%; height: 100%;
+        background: Theme.scrim;
+        TouchArea { clicked => { root.shortcuts-open = false; } }
+        Rectangle {
+            width: min(440px, root.width - 80px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            height: sc-col.preferred-height + 44px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface-2;
+            border-width: 1px; border-color: Theme.border-strong;
+            drop-shadow-blur: 42px;
+            drop-shadow-color: Theme.bg-void.with-alpha(0.65);
+            TouchArea { }
+            sc-col := VerticalLayout {
+                padding: 22px; spacing: 8px;
+                Text {
+                    text: "KEYBOARD SHORTCUTS";
+                    color: Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                    letter-spacing: Theme.letter-spacing-extra-wide;
+                }
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+                for sc in [
+                    { keys: "Ctrl+K", what: "Command palette — jump anywhere" },
+                    { keys: "Ctrl+1…5", what: "Chat · Overview · Coding · Memory · Channels" },
+                    { keys: "Ctrl+,", what: "Config" },
+                    { keys: "Ctrl+/", what: "This cheatsheet" },
+                    { keys: "Enter / Shift+Enter", what: "Send · newline (composer)" },
+                    { keys: "↑", what: "Recall last message (composer)" },
+                    { keys: "Esc", what: "Close overlay / palette" },
+                    { keys: "Right-click orb", what: "Command palette" },
+                    { keys: "Click orb", what: "Buddy quick actions" },
+                ]: HorizontalLayout {
+                    spacing: 14px;
+                    Rectangle {
+                        width: 150px; height: 26px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.bg-base;
+                        border-width: 1px; border-color: Theme.border-default;
+                        Text {
+                            text: sc.keys; color: Theme.accent;
+                            font-family: Theme.font-mono; font-size: Theme.font-size-xs;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+                    Text {
+                        text: sc.what; color: Theme.text-secondary;
+                        font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
     }
 
     // ── E4 — About / What's-new overlay ────────────────────────────────
