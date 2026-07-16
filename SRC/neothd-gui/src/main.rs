@@ -615,6 +615,35 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
     });
 }
 
+// Run the hardware/daemon probe on a worker thread and land the result
+// (summary + footer-Led state) on the event loop. Called at startup and
+// from the offline banner's Retry button.
+fn spawn_daemon_probe(weak: slint::Weak<MainWindow>) {
+    std::thread::spawn(move || {
+        let hw_summary = probe_hardware_via_subprocess();
+        // GOLD-ADAPT-GUI-04 — footer Led state derived from the probe
+        // outcome: every failure arm of the probe starts with
+        // "Hardware probe" (missing binary / bad exit / spawn error).
+        let led = if hw_summary.starts_with("Hardware probe") {
+            "error"
+        } else {
+            "live"
+        };
+        let hw_for_toast = hw_summary.clone();
+        // Wave-1 call site B: toast on daemon error so the operator gets a
+        // top-right signal even if they are looking at the chat surface.
+        if led == "error" {
+            push_toast(&weak, "warn", "Daemon unreachable", &hw_for_toast);
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_hardware_summary(hw_summary.into());
+                w.set_daemon_state(led.into());
+            }
+        });
+    });
+}
+
 // ── Wave-2 activity sidecar plumbing ─────────────────────────────────────────
 //
 // push_activity  — appends an ActivityRow (newest-first, cap 60), auto-opens
@@ -1080,33 +1109,21 @@ fn main() -> Result<()> {
     // H-3 fix — hardware probe runs in a worker thread so a hanging
     // `neothd hardware` subprocess can never block the window from
     // appearing. The placeholder string shows until the real probe
-    // result lands via `invoke_from_event_loop`.
+    // result lands via `invoke_from_event_loop`. Shared with the
+    // offline-banner Retry button via spawn_daemon_probe.
     window.set_hardware_summary("Probing hardware…".into());
     window.set_daemon_state("connecting".into());
-    let weak_hw = window.as_weak();
-    std::thread::spawn(move || {
-        let hw_summary = probe_hardware_via_subprocess();
-        // GOLD-ADAPT-GUI-04 — footer Led state derived from the probe
-        // outcome: every failure arm of the probe starts with
-        // "Hardware probe" (missing binary / bad exit / spawn error).
-        let led = if hw_summary.starts_with("Hardware probe") {
-            "error"
-        } else {
-            "live"
-        };
-        let weak = weak_hw.clone();
-        let hw_for_toast = hw_summary.clone();
-        // Wave-1 call site B: toast on daemon error so the operator gets a
-        // top-right signal even if they are looking at the chat surface.
-        if led == "error" {
-            push_toast(&weak, "warn", "Daemon unreachable", &hw_for_toast);
+    spawn_daemon_probe(window.as_weak());
+
+    // Daemon-offline banner retry — reset to "connecting" (hides the
+    // banner) and re-run the same probe the startup path uses.
+    let weak_daemon_retry = window.as_weak();
+    window.on_daemon_retry_clicked(move || {
+        if let Some(w) = weak_daemon_retry.upgrade() {
+            w.set_hardware_summary("Probing hardware…".into());
+            w.set_daemon_state("connecting".into());
         }
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_hardware_summary(hw_summary.into());
-                w.set_daemon_state(led.into());
-            }
-        });
+        spawn_daemon_probe(weak_daemon_retry.clone());
     });
 
     // GOLD-ADAPT-OH-01 — prior-AI detection for the welcome migrate

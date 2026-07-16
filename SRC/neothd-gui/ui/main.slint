@@ -205,6 +205,8 @@ export component MainWindow inherits Window {
     // GOLD-ADAPT-GUI-04 — daemon live-state for the footer Led:
     // "live" | "connecting" | "error" (derived from probe outcomes).
     in property <string> daemon-state: "connecting";
+    // Offline-banner retry — Rust re-runs the daemon/hardware probe.
+    callback daemon-retry-clicked();
     // GOLD-ADAPT-GUI-05 — TypedStatus footer ticker (Rust types it in).
     in property <string> status-message: "";
     // QM-9 Phase 2: last 24h usage rollup rendered for the dashboard.
@@ -2844,6 +2846,46 @@ export component MainWindow inherits Window {
                             horizontal-alignment: center; vertical-alignment: center;
                         }
                         min-ta := TouchArea { clicked => { root.minimize-to-companion(); } }
+                    }
+                }
+
+                // Daemon-offline banner — ONE shell-level strip instead of four
+                // per-panel blank states. daemon-state is the footer Led's
+                // source of truth; "error" means the startup/retry probe failed.
+                // Retry flips the state back to "connecting" (banner hides) and
+                // re-runs the probe; a second failure brings it back.
+                if root.daemon-state == "error": Rectangle {
+                    height: 40px;
+                    background: Theme.consent-tint;
+                    border-width: 1px; border-color: Theme.consent;
+                    HorizontalLayout {
+                        padding-left: 16px; padding-right: 12px; spacing: 12px;
+                        Text {
+                            text: "Daemon unreachable — panels may be empty or stale.";
+                            color: Theme.consent;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            width: retry-lbl.width + 24px; height: 28px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: Theme.radius-pill;
+                            background: retry-ta.has-hover ? Theme.consent-tint : transparent;
+                            border-width: 1px; border-color: Theme.consent;
+                            animate background { duration: Theme.duration-fast; easing: ease-out; }
+                            retry-lbl := Text {
+                                text: "Retry";
+                                color: Theme.consent;
+                                font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                            retry-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.daemon-retry-clicked(); }
+                            }
+                        }
                     }
                 }
 
