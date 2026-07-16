@@ -196,6 +196,8 @@ export component MainWindow inherits Window {
     // Wave-1 toast system. Rust pushes via push_toast(); expires via prune_toast().
     // The ToastStack overlay renders this model in the shell area (top-right, z=70).
     in-out property <[ToastData]> toasts: [];
+    // Operator clicked a toast card — Rust prunes the id immediately.
+    callback toast-dismissed(int);
     in property <string> hardware-summary: "";
     /// GOLD-ADAPT-OH-01 — prior-AI migration card body (welcome step).
     /// Empty = no supported assistant homes detected → card hidden.
@@ -3502,6 +3504,7 @@ export component MainWindow inherits Window {
     if (root.step == WizardStep.chat || root.step == WizardStep.settings)
             && root.toasts.length > 0: ToastStack {
         toasts: root.toasts;
+        dismissed(id) => { root.toast-dismissed(id); }
         x: root.width - self.width - 12px;
         y: 78px;
         // height is driven by content; no explicit height needed.

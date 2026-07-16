@@ -600,11 +600,11 @@ export struct ToastData {
 // a 2px progress bar over duration-toast-life.
 //
 // Rust owns lifetime: it appends via push_toast() and removes via
-// prune_toast() after 6 s (matches duration-toast-life exactly).
-// No click-to-dismiss is wired here — operator clicks the overlapping
-// area transparently unless they land on the card itself.
+// prune_toast() after 6 s (matches duration-toast-life exactly) — or
+// immediately when the operator clicks the card (dismissed()).
 component Toast inherits Rectangle {
     in property <ToastData> data;
+    callback dismissed();
 
     // led colour by kind
     property <color> led-color:
@@ -672,6 +672,12 @@ component Toast inherits Rectangle {
         init => { self._drain = 0; }
         animate _drain { duration: Theme.duration-toast-life; easing: linear; }
     }
+
+    // Click anywhere on the card dismisses it immediately.
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.dismissed(); }
+    }
 }
 
 // ── ToastStack ────────────────────────────────────────────────────────
@@ -681,6 +687,8 @@ component Toast inherits Rectangle {
 // transparent gap between cards to content below.
 export component ToastStack inherits Rectangle {
     in property <[ToastData]> toasts;
+    // Fired with the toast's id when the operator clicks a card.
+    callback dismissed(int);
 
     // Transparent background so only the cards themselves catch events.
     background: transparent;
@@ -688,7 +696,10 @@ export component ToastStack inherits Rectangle {
 
     VerticalLayout {
         spacing: 8px; padding: 0px;
-        for t in root.toasts: Toast { data: t; }
+        for t in root.toasts: Toast {
+            data: t;
+            dismissed => { root.dismissed(t.id); }
+        }
     }
 }
 

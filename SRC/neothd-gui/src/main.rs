@@ -906,6 +906,41 @@ fn main() -> Result<()> {
         }
     });
 
+    // Toast click-to-dismiss — prune the clicked id immediately instead of
+    // waiting out the 6 s drain (same prune path as the expiry timer).
+    let weak_toast_dismiss = window.as_weak();
+    window.on_toast_dismissed(move |id| {
+        use slint::Model;
+        let Some(w) = weak_toast_dismiss.upgrade() else {
+            return;
+        };
+        let remaining: Vec<(i32, String, String, String)> = w
+            .get_toasts()
+            .iter()
+            .map(|t| {
+                (
+                    t.id,
+                    t.kind.to_string(),
+                    t.title.to_string(),
+                    t.body.to_string(),
+                )
+            })
+            .collect();
+        let pruned = panel_logic::prune_toast(remaining, id);
+        let model: slint::VecModel<ToastData> = slint::VecModel::from(
+            pruned
+                .iter()
+                .map(|(i, k, ti, b)| ToastData {
+                    id: *i,
+                    kind: k.as_str().into(),
+                    title: ti.as_str().into(),
+                    body: b.as_str().into(),
+                })
+                .collect::<Vec<_>>(),
+        );
+        w.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model)));
+    });
+
     // ODY-11 — density restore: read ~/.neoth/.gui-density and apply before
     // the first paint, mirroring the .gui-theme block above.
     {
