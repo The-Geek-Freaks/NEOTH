@@ -988,9 +988,9 @@ fn main() -> Result<()> {
                 hint: hint.into(),
             })
             .collect();
-        w.set_palette_results(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
-            items,
-        ))));
+        w.set_palette_results(slint::ModelRc::new(std::rc::Rc::new(
+            slint::VecModel::from(items),
+        )));
     });
     // Seed the full catalog so the palette is populated on first open.
     window.invoke_palette_query_edited("".into());
@@ -1824,7 +1824,9 @@ fn main() -> Result<()> {
         // clicked bubble through the normal send path.
         let weak_retry = window.as_weak();
         window.on_chat_message_retry(move |idx| {
-            let Some(w) = weak_retry.upgrade() else { return };
+            let Some(w) = weak_retry.upgrade() else {
+                return;
+            };
             let msgs = w.get_chat_messages();
             let mut i = idx as usize;
             loop {
@@ -1845,15 +1847,17 @@ fn main() -> Result<()> {
         // the WAL keeps the audit truth; this is declutter, not history edit).
         let weak_delete = window.as_weak();
         window.on_chat_message_delete(move |idx| {
-            let Some(w) = weak_delete.upgrade() else { return };
+            let Some(w) = weak_delete.upgrade() else {
+                return;
+            };
             let msgs = w.get_chat_messages();
             let kept: Vec<ChatMessage> = (0..msgs.row_count())
                 .filter(|i| *i != idx as usize)
                 .filter_map(|i| msgs.row_data(i))
                 .collect();
-            w.set_chat_messages(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
-                kept,
-            ))));
+            w.set_chat_messages(slint::ModelRc::new(std::rc::Rc::new(
+                slint::VecModel::from(kept),
+            )));
         });
     }
 
@@ -2139,8 +2143,7 @@ fn main() -> Result<()> {
                                     let (chip, detail) = m.unwrap_or_default();
                                     // H19-lite — fenced code lands in the
                                     // bubble's code panel with a Copy chip.
-                                    let (code, lang) =
-                                        panel_logic::extract_code_blocks(&seg);
+                                    let (code, lang) = panel_logic::extract_code_blocks(&seg);
                                     ChatMessage {
                                         role: "assistant".into(),
                                         text: seg.into(),
@@ -4545,12 +4548,8 @@ fn main() -> Result<()> {
         window.on_cfg_perm_set(move |action, decision| {
             let weak = weak_ps.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&[
-                    "permissions",
-                    "set",
-                    action.as_str(),
-                    decision.as_str(),
-                ]);
+                let out =
+                    run_neothd_probe(&["permissions", "set", action.as_str(), decision.as_str()]);
                 let summary: String = out.trim().chars().take(120).collect();
                 push_toast(&weak, "success", "Permission set", &summary);
                 perm_refresh(weak.clone());
@@ -4562,7 +4561,12 @@ fn main() -> Result<()> {
             let weak = weak_pc.clone();
             std::thread::spawn(move || {
                 let _ = run_neothd_probe(&["permissions", "clear", action.as_str()]);
-                push_toast(&weak, "info", "Permission override cleared", action.as_str());
+                push_toast(
+                    &weak,
+                    "info",
+                    "Permission override cleared",
+                    action.as_str(),
+                );
                 perm_refresh(weak.clone());
             });
         });
@@ -4573,8 +4577,7 @@ fn main() -> Result<()> {
             let id = task_id.trim_start_matches('#').to_string();
             let weak = weak_mv.clone();
             std::thread::spawn(move || {
-                let out =
-                    run_neothd_probe(&["kanban", "move", id.as_str(), status.as_str()]);
+                let out = run_neothd_probe(&["kanban", "move", id.as_str(), status.as_str()]);
                 let summary: String = out.trim().chars().take(120).collect();
                 let ok_body = if summary.is_empty() {
                     format!("task {id} → {status}")
@@ -4738,9 +4741,9 @@ fn main() -> Result<()> {
                     tint: r.tint.as_str().into(),
                 })
                 .collect();
-            w.set_wal_events(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
-                rows,
-            ))));
+            w.set_wal_events(slint::ModelRc::new(std::rc::Rc::new(
+                slint::VecModel::from(rows),
+            )));
         }
 
         // One probe pass — runs on a worker thread, lands on the loop.
@@ -4973,8 +4976,7 @@ fn main() -> Result<()> {
             if let Some(w) = weak_c.upgrade() {
                 let text = w.get_wal_detail_json().to_string();
                 if !text.is_empty()
-                    && let Err(e) =
-                        arboard::Clipboard::new().and_then(|mut c| c.set_text(text))
+                    && let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(text))
                 {
                     tracing::warn!(error = %e, "WAL detail clipboard copy failed");
                 }
@@ -4994,9 +4996,7 @@ fn main() -> Result<()> {
                         let mut segs: Vec<PathBuf> = rd
                             .flatten()
                             .map(|e| e.path())
-                            .filter(|p| {
-                                p.extension().and_then(|s| s.to_str()) == Some("wal")
-                            })
+                            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
                             .collect();
                         segs.sort();
                         segs.pop()
@@ -5023,10 +5023,9 @@ fn main() -> Result<()> {
                                     "FAIL: segment header invalid".to_string()
                                 }
                             }
-                            Err(_) => format!(
-                                "FAIL: {}",
-                                out.trim().chars().take(80).collect::<String>()
-                            ),
+                            Err(_) => {
+                                format!("FAIL: {}", out.trim().chars().take(80).collect::<String>())
+                            }
                         }
                     }
                 };
@@ -7156,12 +7155,10 @@ fn main() -> Result<()> {
                     serde_yaml::Value::Null
                 } else {
                     match (start.trim().parse::<u8>(), end.trim().parse::<u8>()) {
-                        (Ok(s), Ok(e)) if s <= 23 && e <= 23 => {
-                            serde_yaml::Value::Sequence(vec![
-                                serde_yaml::Value::from(u64::from(s)),
-                                serde_yaml::Value::from(u64::from(e)),
-                            ])
-                        }
+                        (Ok(s), Ok(e)) if s <= 23 && e <= 23 => serde_yaml::Value::Sequence(vec![
+                            serde_yaml::Value::from(u64::from(s)),
+                            serde_yaml::Value::from(u64::from(e)),
+                        ]),
                         _ => {
                             push_toast(&weak, "warn", "Quiet hours", "hours must be 0–23");
                             return;
@@ -7174,10 +7171,10 @@ fn main() -> Result<()> {
                 std::thread::spawn(move || {
                     let fp = nd2.join("freedom.yaml");
                     let rd = nd2.join(".reload-requested");
-                    let result =
-                        set_nested_in_freedom(&fp, "proactive.quiet_hours_utc", value).and_then(
-                            |_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)),
-                        );
+                    let result = set_nested_in_freedom(&fp, "proactive.quiet_hours_utc", value)
+                        .and_then(|_| {
+                            std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e))
+                        });
                     slint::invoke_from_event_loop(move || match result {
                         Ok(_) => push_toast(&weak2, "success", "Quiet hours", state),
                         Err(ref e) => {
@@ -7884,9 +7881,8 @@ fn main() -> Result<()> {
                 520.0
             };
             ov.window().with_winit_window(|w| {
-                let _ = w.request_inner_size(slint::winit_030::winit::dpi::LogicalSize::new(
-                    380.0, h,
-                ));
+                let _ =
+                    w.request_inner_size(slint::winit_030::winit::dpi::LogicalSize::new(380.0, h));
             });
         }
 
@@ -9535,7 +9531,10 @@ fn make_coalescing_writer(
 fn read_quiet_hours_in_freedom(path: &Path) -> Option<(u8, u8)> {
     let body = std::fs::read_to_string(path).ok()?;
     let root = serde_yaml::from_str::<serde_yaml::Value>(&body).ok()?;
-    let seq = root.get("proactive")?.get("quiet_hours_utc")?.as_sequence()?;
+    let seq = root
+        .get("proactive")?
+        .get("quiet_hours_utc")?
+        .as_sequence()?;
     match seq.as_slice() {
         [s, e] => Some((s.as_u64()? as u8, e.as_u64()? as u8)),
         _ => None,
@@ -13207,7 +13206,7 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
                     cpu_pct: res.map(|n| n.cpu_frac).unwrap_or(0.0),
                     ram_pct: res.map(|n| n.ram_frac).unwrap_or(0.0),
                     vram_pct: res.map(|n| n.vram_frac).unwrap_or(0.0),
-                    role: "".into(),    // roles land with the gossip payload extension
+                    role: "".into(), // roles land with the gossip payload extension
                     version: "".into(), // ditto — neoth_version is not gossiped yet
                     staleness_secs: res.map(|n| n.age_secs).unwrap_or(0),
                 }
@@ -13321,7 +13320,11 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>) {
         let (cost, tokens) = panel_logic::parse_usage_rollup(&out).unwrap_or((0.0, 0));
         week_cost += cost;
         // Sparkline follows spend when priced, tokens otherwise.
-        days.push(if cost > 0.0 { cost } else { tokens as f64 / 1000.0 });
+        days.push(if cost > 0.0 {
+            cost
+        } else {
+            tokens as f64 / 1000.0
+        });
     }
     let max_day = days.iter().cloned().fold(0.0_f64, f64::max).max(1e-9);
     let bars: Vec<f32> = days.iter().map(|d| (d / max_day) as f32).collect();

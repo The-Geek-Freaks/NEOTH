@@ -1805,7 +1805,10 @@ mod tests {
         let mut t = notes_task(Some("base description"));
         append_task_notes(
             &mut t,
-            &[note("operator", "use the\nexisting helper"), note("left", "ack")],
+            &[
+                note("operator", "use the\nexisting helper"),
+                note("left", "ack"),
+            ],
         );
         let d = t.description.unwrap();
         assert!(d.starts_with("base description\n\n"));

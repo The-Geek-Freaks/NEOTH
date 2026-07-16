@@ -2763,11 +2763,8 @@ pub fn layout_memory_graph(json: &str) -> (Vec<GraphNodeData>, Vec<GraphEdgeData
             }
         })
         .collect();
-    let index_of: std::collections::HashMap<i64, usize> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, nd)| (nd.id, i))
-        .collect();
+    let index_of: std::collections::HashMap<i64, usize> =
+        nodes.iter().enumerate().map(|(i, nd)| (nd.id, i)).collect();
     let raw_edges: Vec<(usize, usize, f32)> = jedges
         .iter()
         .filter_map(|je| {
@@ -2968,13 +2965,13 @@ pub fn bucket_wal_rows(rows: &[WalRowData], n: usize) -> (Vec<WalBucketData>, Ve
 /// (events.rs header table) onto the GUI's meaning colours.
 pub fn wal_tint_for(event_type: u8) -> &'static str {
     match event_type {
-        0x10..=0x2F => "memory",              // memory / recall / self-dev
-        0x30..=0x3F => "audit",               // channels / ingress-egress
-        0x40..=0x4F => "warning",             // cron (amber = in-progress)
-        0x60..=0x6F => "audit",               // council / decisions
-        0x70..=0x7F => "warning",             // coding workflow + loops
-        0xC0..=0xCF => "consent",             // caps / denials / security
-        0xF0..=0xFF => "memory",              // dreaming / high band
+        0x10..=0x2F => "memory",  // memory / recall / self-dev
+        0x30..=0x3F => "audit",   // channels / ingress-egress
+        0x40..=0x4F => "warning", // cron (amber = in-progress)
+        0x60..=0x6F => "audit",   // council / decisions
+        0x70..=0x7F => "warning", // coding workflow + loops
+        0xC0..=0xCF => "consent", // caps / denials / security
+        0xF0..=0xFF => "memory",  // dreaming / high band
         _ => "plain",
     }
 }
@@ -3036,9 +3033,7 @@ pub const WAL_BAND_OPTIONS: &[(&str, Option<(u8, u8)>)] = &[
 
 pub fn filter_wal_rows(rows: &[WalRowData], text: &str, band_idx: usize) -> Vec<WalRowData> {
     let q = text.trim().to_lowercase();
-    let band = WAL_BAND_OPTIONS
-        .get(band_idx)
-        .and_then(|(_, range)| *range);
+    let band = WAL_BAND_OPTIONS.get(band_idx).and_then(|(_, range)| *range);
     rows.iter()
         .filter(|r| {
             let et = u8::from_str_radix(r.opcode.trim_start_matches("0x"), 16).unwrap_or(0);
@@ -7234,8 +7229,7 @@ mod tests {
         assert_eq!(code, "fn a() {}");
         assert_eq!(lang, "rust");
 
-        let (code, lang) =
-            extract_code_blocks("```py\nx = 1\n```\ntext\n```\ny = 2\n```");
+        let (code, lang) = extract_code_blocks("```py\nx = 1\n```\ntext\n```\ny = 2\n```");
         assert_eq!(code, "x = 1\n\ny = 2");
         assert_eq!(lang, "py", "first tag wins");
 
@@ -7450,10 +7444,10 @@ mod tests {
     fn filter_palette_matches_label_case_insensitive() {
         let hits = filter_palette("MEM");
         assert!(hits.iter().any(|(l, _, _, _)| *l == "Memory"));
-        assert!(hits.iter().all(|(l, _, tab, _)| l
-            .to_lowercase()
-            .contains("mem")
-            || tab.contains("mem")));
+        assert!(
+            hits.iter()
+                .all(|(l, _, tab, _)| l.to_lowercase().contains("mem") || tab.contains("mem"))
+        );
     }
 
     #[test]
