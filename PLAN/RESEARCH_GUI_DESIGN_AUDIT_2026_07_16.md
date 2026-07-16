@@ -4,6 +4,39 @@
 > (aus-einem-Guss), interaction grammar (right-click / filter / keyboard),
 > and buddy + animation polish. Each finding has a concrete fix + file:line.
 
+## Implementation status (2026-07-16, Fable-5 design-lane)
+
+**LANDED** (compile-gated `neothd-gui` GATE_EXIT=0, pushed):
+- Animation: BuddyDock entrance fade+rise; ConfirmDialog scrim-fade + y-rise;
+  overlay unread-badge spring-pop; sidebar buddy-mood live; consent-badge throb.
+  Buddy mood-overlay entrance fades (thinking dots, memory inflow, success ✓).
+- a11y: NavBtn / ComplexitySeg / theme-toggle (prior); activity collapse chevron,
+  chat deep-link chips, overview cost chevron, mesh PeerCard Details — all now
+  carry accessible-role/label + accessible-action-default.
+- Empty states → canonical `EmptyState`: activity body, mesh peers card,
+  WAL-inspector events-empty + no-selection hint.
+- Token floor: buddy '!' weight→Theme.weight-bold; activity detail 10.5px→2xs;
+  overlay badges 8px→self.width/2 (true circle); canonical Toast title/body →
+  font-size-xs/2xs.
+
+**DECLINED with reason** (verify-first — do NOT re-open without new evidence):
+- **Overview 5 card empty-states + mesh gossip inline** → NOT converted to
+  EmptyState. These are compact in-card status lines (the card already has a
+  Kicker header + RefreshFooter); a 28px-glyph EmptyState is oversized/redundant
+  there. They are already uniform (text-disabled/font-mono/font-size-xs).
+- **StatRow Skeleton shimmer** → needs a real Rust "probing" flag; binding the
+  shimmer to `value == ""` shimmers forever on settled-empty fields (e.g.
+  accelerator on a CPU-only host). Defer until a probe-in-flight signal exists.
+- **Mass 9px/10px→floor font bump** → real visual change (overflow risk in dense
+  chip layouts), not locally verifiable; high Codex-churn. Only token-IDENTICAL
+  swaps done. (Prior-session decision, still standing.)
+- **P0 tab-entrance SovereignFade mass-wrap / mood-pop physical scale / Toast
+  x-slide restructure** → view-collapse / layout-restructure risk that cannot be
+  confirmed without a live GUI run (BSOD rule forbids local test-link).
+- **Right-click context menus + list filters** → high user value but need Rust
+  glue in the Codex-shared `main.rs` + CLI verification; parked to avoid diff
+  clash and because behaviour can't be verified here.
+
 ---
 
 ## Animation & feedback polish — buddy.slint, overlay.slint, components.slint, app_shell.slint, main.slint
