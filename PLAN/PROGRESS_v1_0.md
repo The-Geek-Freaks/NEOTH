@@ -3,6 +3,34 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Current integrated Gold wave (2026-07-16):** the original 62-finding
+> bug-hunt corpus is reconciled as **60 fixed / 2 refuted / 0 original open or
+> partial**. Four newly discovered, non-duplicate Wave-2 P1 contracts remain
+> explicitly open: live hook `fail_fast`, channel PostProviderCall/restoration
+> plus atomic `once`, skill directories created after watcher startup, and
+> preservation of channel `delegate_to` through provider dispatch. The durable
+> cluster authority is now protocol v6 / Iroh ALPN `neoth/cluster/gossip/3`: a
+> node-global SQLite-backed 256-slot frontier ticks and stages in one immediate
+> transaction, retries exact frames, binds the full inbound frontier, never
+> evicts a live identity, and exposes `neoth cluster frontier`; an integration
+> test exposed and the implementation fixed a real first-event double-tick.
+> Webhook inbound/outbound delivery now survives crashes with independently
+> retried transport and audit states, terminal quarantine and a live recovery
+> pump. MCP child environments are scrubbed, stderr cannot deadlock discovery,
+> leaked calls receive exactly one retry, and `isError:true` reaches failure
+> feedback. WASM discovery applies manifest/byte caps and same-handle regular-
+> file validation. Frozen-source focused evidence is webhook **37/37**, WASM
+> discovery **31/31**, durable cluster sync **24/24** plus full-frontier **1/1**,
+> MCP regressions **3/3**, release packaging **24/24**, generated CLI-doc drift
+> **1/1**, Rust 1.91 formatting, metadata and diff hygiene. Claude's concurrent
+> GUI lane is integrated: provider model catalog/retry selection, one-shot model
+> override, auto-update controls and read-only MCP/hooks/ground-truth/quota/
+> tweaks probes coexist with the fail-closed cluster transaction and hardened
+> chat subprocess boundary. Read-only probes are observability, not full GUI/CLI
+> mutation parity, so they close no broad R4 box. The four Wave-2 contracts,
+> remaining R4 acceptance boxes, native clean-machine proof and exact-head
+> CI/Security/CodeQL remain release blockers.
+>
 > **Current evidence corrections (2026-07-15):** the locked `neoth-migrate`
 > suite is **125/125**, including **21/21** OpenClaw-focused checks; the older
 > `137/137` value in the long forensic snapshot below predates removal of the

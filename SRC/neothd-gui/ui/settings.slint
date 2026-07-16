@@ -639,10 +639,9 @@ export component SettingsView inherits Rectangle {
     in property <bool> show-code-sessions: true;
 
     // Bite #5 — Cluster settings (post-onboarding mirror of the
-    // wizard step). Rust side loads cluster.mdns.enabled from
-    // freedom.yaml on settings-open + sets `cluster-mdns-enabled`;
-    // toggle fires `cluster-mdns-enabled-changed(bool)` which
-    // mutates freedom.yaml + drops the reload sentinel.
+    // wizard step). Rust loads the complete cluster draft from
+    // freedom.yaml on settings-open. Changes remain local until the
+    // operator submits the single validated Apply transaction below.
     in-out property <bool> cluster-mdns-enabled: true;
     // C6 — complete cluster desired-state draft. Persistence happens only
     // through the single typed Apply callback below.
@@ -659,6 +658,14 @@ export component SettingsView inherits Rectangle {
     in-out property <bool> cfg-cluster-passphrase-set: false;
     in-out property <bool> cfg-cluster-apply-in-flight: false;
     in-out property <string> cfg-cluster-apply-status: "";
+
+    // Auto-update config (research P0).
+    in-out property <bool>   cfg-autoupdate-enabled: false;
+    in-out property <bool>   cfg-autoupdate-apply: false;
+    in-out property <int>    cfg-autoupdate-channel-idx: 0;
+    in-out property <string> cfg-autoupdate-interval: "";
+    in property <string>     autoupdate-check-output: "";
+    in property <bool>       autoupdate-check-running: false;
     in-out property <int> cluster-listen-port: 49737;
     /// Operator-readable summary of `cluster.policy.trusted_ssids`.
     /// Empty string renders the "no trusted SSIDs set" placeholder.
@@ -666,6 +673,12 @@ export component SettingsView inherits Rectangle {
     // One complete transaction. Lists are newline-delimited in the UI and
     // encoded as JSON string arrays by Rust, so commas remain lossless.
     callback cfg-cluster-apply-clicked(bool, string, int, string, bool, bool, string, bool, string, string, string);
+
+    callback cfg-autoupdate-enabled-changed(bool);
+    callback cfg-autoupdate-apply-changed(bool);
+    callback cfg-autoupdate-channel-changed(int);
+    callback cfg-autoupdate-interval-changed(string);
+    callback autoupdate-check-clicked();
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust side fetches `neothd kanban list/show --output json` on tab
@@ -4905,6 +4918,55 @@ export component SettingsView inherits Rectangle {
                             primary: false;
                             clicked => { root.rollback-preview-clicked(); }
                         }
+                    }
+                    // Auto-update config (research P0 — was CLI-only).
+                    Text {
+                        text: "AUTO-UPDATE";
+                        font-family: Theme.font-display; font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium; color: Theme.accent-green;
+                    }
+                    NeothCheckBox {
+                        text: "Automatic update checks";
+                        checked: root.cfg-autoupdate-enabled;
+                        toggled(v) => { root.cfg-autoupdate-enabled = v; root.cfg-autoupdate-enabled-changed(v); }
+                    }
+                    NeothCheckBox {
+                        text: "Auto-apply updates (unattended — off = notify only)";
+                        checked: root.cfg-autoupdate-apply;
+                        toggled(v) => { root.cfg-autoupdate-apply = v; root.cfg-autoupdate-apply-changed(v); }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Channel"; color: Theme.text-secondary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                            vertical-alignment: center; width: 130px;
+                        }
+                        NeothComboBox {
+                            model: ["stable", "rc", "nightly"];
+                            current-index: root.cfg-autoupdate-channel-idx;
+                            width: 200px;
+                            selected(i) => { root.cfg-autoupdate-channel-idx = i; root.cfg-autoupdate-channel-changed(i); }
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "check interval secs";
+                            text: root.cfg-autoupdate-interval;
+                            horizontal-stretch: 1;
+                            accepted(t) => { root.cfg-autoupdate-interval = t; root.cfg-autoupdate-interval-changed(t); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        NeothButton {
+                            label: root.autoupdate-check-running ? "checking…" : "Check now";
+                            primary: false;
+                            clicked => { if (!root.autoupdate-check-running) { root.autoupdate-check-clicked(); } }
+                        }
+                    }
+                    if root.autoupdate-check-output != "": Text {
+                        text: root.autoupdate-check-output;
+                        font-family: Theme.font-mono; font-size: Theme.font-size-caption;
+                        color: Theme.text-secondary; wrap: word-wrap;
                     }
                 }
             }

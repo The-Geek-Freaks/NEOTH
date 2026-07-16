@@ -1,12 +1,14 @@
 //! `neoth models` — manage the local model caches under `~/.neoth/models/`.
 //!
-//! Three subcommands today:
-//!   - `list`   — print every model NEOTH knows about + on-disk status.
+//! Operator-facing subcommands include:
+//!   - `list` — print every managed local model + on-disk status.
+//!   - `catalog` — print the live provider-model catalog used by the GUI.
 //!   - `pull <name>` — download a known model's artifacts. Operators
 //!     trigger this once after `neoth init` so the first media-extract
 //!     run isn't blocked on a several-GiB HF download.
 //!   - `prune <name>` — delete a model's cache directory. Useful when
 //!     iterating on disk-strapped laptops.
+//!   - `recommend` / `fit` — select and size local inference models.
 //!
 //! Known names: `clip` (vision Phase 2b), `whisper` (audio Phase 2b).
 //! `whisper-candle` and `whisper-faster` explicitly select either local STT
@@ -40,6 +42,12 @@ pub struct ModelsArgs {
 pub enum ModelsAction {
     /// Print every known model + whether its artifacts are cached.
     List,
+    /// H18 — dump the live provider-model catalog (the wizard's model
+    /// select source, `~/.neoth/models_catalog.json`) as JSON for the
+    /// GUI's regenerate-with-model picker. Read-only; never-fetched or
+    /// stale providers surface their fetch error so consumers degrade
+    /// honestly instead of guessing model ids.
+    Catalog,
     /// Download a model's artifacts into `~/.neoth/models/<flat>/`.
     /// `neoth model fetch <name>` is an accepted alias for this.
     #[command(visible_alias = "fetch")]
@@ -264,6 +272,7 @@ fn resolve_managed_model(
 pub async fn run_models(args: ModelsArgs) -> Result<()> {
     match args.action {
         ModelsAction::List => run_list(&args.output),
+        ModelsAction::Catalog => run_catalog(&args.output),
         ModelsAction::Pull { name, repo } => run_pull(&name, repo.as_deref()).await,
         ModelsAction::Prune { name } => run_prune(&name),
         ModelsAction::Recommend {
@@ -510,6 +519,44 @@ fn load_models_config(neoth_home: &std::path::Path) -> Result<FreedomConfig> {
     }
     FreedomConfig::load_from_path(&path)
         .with_context(|| format!("load model configuration {}", path.display()))
+}
+
+/// `neoth models catalog` — H18. Pure read of the on-disk live catalog;
+/// the daemon's refresh task keeps it current, this just surfaces it.
+fn run_catalog(output: &OutputFormat) -> Result<()> {
+    use crate::models::catalog::ModelsCatalog;
+    let neoth_home = FreedomConfig::default_neoth_home();
+    let catalog = ModelsCatalog::load_from(&ModelsCatalog::default_path(&neoth_home));
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&catalog)?);
+        }
+        OutputFormat::Table => {
+            if catalog.providers.is_empty() {
+                println!("# model catalog is empty — the daemon fills it on first provider use");
+                return Ok(());
+            }
+            for (name, pc) in &catalog.providers {
+                println!(
+                    "# {name} — {} model(s){}",
+                    pc.models.len(),
+                    if pc.fetched_at_unix == 0 {
+                        " (never fetched)"
+                    } else {
+                        ""
+                    }
+                );
+                for m in &pc.models {
+                    println!(
+                        "  {}{}",
+                        m.id,
+                        if m.deprecated { "  [deprecated]" } else { "" }
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_list(output: &OutputFormat) -> Result<()> {

@@ -49,7 +49,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -426,6 +426,23 @@ export component MainWindow inherits Window {
     in-out property <bool> cfg-cluster-apply-in-flight: false;
     in-out property <string> cfg-cluster-apply-status: "";
     callback cfg-cluster-apply-clicked(bool, string, int, string, bool, bool, string, bool, string, string, string);
+    // Auto-update config (research P0).
+    in-out property <bool>   cfg-autoupdate-enabled: false;
+    in-out property <bool>   cfg-autoupdate-apply: false;
+    in-out property <int>    cfg-autoupdate-channel-idx: 0;
+    in-out property <string> cfg-autoupdate-interval: "";
+    in property <string>     autoupdate-check-output: "";
+    in property <bool>       autoupdate-check-running: false;
+    callback cfg-autoupdate-enabled-changed(bool);
+    callback cfg-autoupdate-apply-changed(bool);
+    callback cfg-autoupdate-channel-changed(int);
+    callback cfg-autoupdate-interval-changed(string);
+    callback autoupdate-check-clicked();
+    callback cfg-cluster-enabled-changed(bool);
+    callback cfg-cluster-name-changed(string);
+    callback cfg-cluster-transport-changed(int);
+    callback cfg-cluster-announce-untrusted-changed(bool);
+    callback cfg-cluster-ssids-changed(string);
     in-out property <int> cluster-listen-port: 49737;
     in-out property <string> cluster-trusted-ssids-summary: "";
     // GOLD-FEAT-01c — full-auto (sudomode) toggle, forwarded to SettingsView.
@@ -470,10 +487,34 @@ export component MainWindow inherits Window {
     in property <string> doctor-security-output: "";
     in property <bool> doctor-security-running: false;
     callback doctor-security-run-clicked();
+    // C4/undo — reversible-actions probe.
+    in property <string> doctor-undo-output: "";
+    in property <bool> doctor-undo-running: false;
+    callback doctor-undo-run-clicked();
     // Agents tab — `neoth cluster status` (the agent/worker topology).
     in property <string> agents-output: "";
     in property <bool> agents-running: false;
     callback agents-refresh-clicked();
+    // C4 — MCP server registry probe (neoth mcp list).
+    in property <string> mcp-output: "";
+    in property <bool> mcp-running: false;
+    callback mcp-run-clicked();
+    // Research P0 — hooks + groundtruth registry probes.
+    in property <string> hooks-output: "";
+    in property <bool> hooks-running: false;
+    callback hooks-run-clicked();
+    in property <string> gt-output: "";
+    in property <bool> gt-running: false;
+    callback gt-run-clicked();
+    in property <string> catalog-output: "";
+    in property <bool> catalog-running: false;
+    callback catalog-run-clicked();
+    in property <string> quota-output: "";
+    in property <bool> quota-running: false;
+    callback quota-run-clicked();
+    in property <string> tweaks-output: "";
+    in property <bool> tweaks-running: false;
+    callback tweaks-run-clicked();
     // Wave 5 — structured agent cards; raw output stays the fallback.
     in property <[AgentRow]> agents-model: [];
 
@@ -829,6 +870,12 @@ export component MainWindow inherits Window {
         : root.nav-active == "resources"   ? "Resources"
         : root.nav-active == "wal"         ? "WAL Inspector"
         : root.nav-active == "memgraph"    ? "Memory Graph"
+        : root.nav-active == "mcp"         ? "MCP Servers"
+        : root.nav-active == "hooks"       ? "Hooks"
+        : root.nav-active == "groundtruth" ? "Groundtruth"
+        : root.nav-active == "catalog"         ? "Model Catalog"
+        : root.nav-active == "quota"         ? "Provider Quota"
+        : root.nav-active == "tweaks"         ? "Runtime Tweaks"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
         : root.nav-active == "n8n"         ? "Automation Bridge"
@@ -952,6 +999,12 @@ export component MainWindow inherits Window {
     // Wave 8 — code-block copy + always-visible stop.
     callback chat-code-copy(int);
     callback chat-stop-stream();
+    // H18 — regenerate with model: Retry opens a picker (Same model +
+    // live-catalog entries); Rust builds the items and executes.
+    in-out property <bool> regen-menu-open: false;
+    in-out property <int> regen-msg-idx: -1;
+    in property <[MenuItem]> regen-menu-items: [];
+    callback chat-regen-picked(int);
 
     // Wave 8 — C2 per-action permissions matrix (Privacy tab).
     in property <[PermRow]> cfg-perm-rows: [];
@@ -3082,6 +3135,10 @@ export component MainWindow inherits Window {
                         && root.nav-active != "overview"
                         && root.nav-active != "agents" && root.nav-active != "automation"
                         && root.nav-active != "wal" && root.nav-active != "memgraph"
+                        && root.nav-active != "mcp" && root.nav-active != "hooks"
+                        && root.nav-active != "groundtruth"
+                        && root.nav-active != "catalog" && root.nav-active != "quota"
+                        && root.nav-active != "tweaks"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
@@ -3302,6 +3359,22 @@ export component MainWindow inherits Window {
             cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase) => {
                 root.cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase);
             }
+            cfg-cluster-enabled-changed(v) => { root.cfg-cluster-enabled-changed(v); }
+            cfg-cluster-name-changed(v) => { root.cfg-cluster-name-changed(v); }
+            cfg-cluster-transport-changed(i) => { root.cfg-cluster-transport-changed(i); }
+            cfg-cluster-announce-untrusted-changed(v) => { root.cfg-cluster-announce-untrusted-changed(v); }
+            cfg-cluster-ssids-changed(v) => { root.cfg-cluster-ssids-changed(v); }
+            cfg-autoupdate-enabled <=> root.cfg-autoupdate-enabled;
+            cfg-autoupdate-apply <=> root.cfg-autoupdate-apply;
+            cfg-autoupdate-channel-idx <=> root.cfg-autoupdate-channel-idx;
+            cfg-autoupdate-interval <=> root.cfg-autoupdate-interval;
+            autoupdate-check-output: root.autoupdate-check-output;
+            autoupdate-check-running: root.autoupdate-check-running;
+            cfg-autoupdate-enabled-changed(v) => { root.cfg-autoupdate-enabled-changed(v); }
+            cfg-autoupdate-apply-changed(v) => { root.cfg-autoupdate-apply-changed(v); }
+            cfg-autoupdate-channel-changed(i) => { root.cfg-autoupdate-channel-changed(i); }
+            cfg-autoupdate-interval-changed(v) => { root.cfg-autoupdate-interval-changed(v); }
+            autoupdate-check-clicked => { root.autoupdate-check-clicked(); }
             cluster-listen-port: root.cluster-listen-port;
             cluster-trusted-ssids-summary: root.cluster-trusted-ssids-summary;
             full-auto-active <=> root.full-auto-active;
@@ -3511,6 +3584,9 @@ export component MainWindow inherits Window {
                     security-output: root.doctor-security-output;
                     security-running: root.doctor-security-running;
                     security-run-clicked => { root.doctor-security-run-clicked(); }
+                    undo-output: root.doctor-undo-output;
+                    undo-running: root.doctor-undo-running;
+                    undo-run-clicked => { root.doctor-undo-run-clicked(); }
                 }
                 // Agents — structured card grid (Wave 5); raw probe output
                 // stays as the fallback body when parsing fails.
@@ -3519,6 +3595,70 @@ export component MainWindow inherits Window {
                     running: root.agents-running;
                     raw-output: root.agents-output;
                     refresh-clicked => { root.agents-refresh-clicked(); }
+                }
+                // C4 — MCP server registry (neoth mcp list: servers +
+                // launcher posture + enabled count). Read-only probe.
+                if root.nav-active == "mcp": ProbeView {
+                    blurb: "MCP servers — configured tool-provider registry (~/.neoth/mcp_servers.yaml), enabled state and launcher posture (neoth mcp list).";
+                    action-label: "Refresh";
+                    output: root.mcp-output;
+                    running: root.mcp-running;
+                    empty-hint: "Click \"Refresh\" to load the MCP server registry.";
+                    run-clicked => { root.mcp-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.mcp-output == "") { root.mcp-run-clicked(); } }
+                }
+                // Research P0 — lifecycle hooks registry (neoth hooks list).
+                if root.nav-active == "hooks": ProbeView {
+                    blurb: "Lifecycle hooks — PreToolUse / PostToolUse / Stop command hooks and their enabled state (neoth hooks list). Read-only.";
+                    action-label: "Refresh";
+                    output: root.hooks-output;
+                    running: root.hooks-running;
+                    empty-hint: "Click \"Refresh\" to load the hook registry.";
+                    run-clicked => { root.hooks-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.hooks-output == "") { root.hooks-run-clicked(); } }
+                }
+                // Research P0 — ground-truth fact store (neoth groundtruth list).
+                if root.nav-active == "groundtruth": ProbeView {
+                    blurb: "Ground-truth facts — the verified fact store that gates recall and council weighting (neoth groundtruth list). Read-only.";
+                    action-label: "Refresh";
+                    output: root.gt-output;
+                    running: root.gt-running;
+                    empty-hint: "Click \"Refresh\" to load the ground-truth store.";
+                    run-clicked => { root.gt-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.gt-output == "") { root.gt-run-clicked(); } }
+                }
+                if root.nav-active == "catalog": ProbeView {
+                    blurb: "Model catalog — every cached provider model with capability/price metadata (neoth catalog list). Read-only; refresh from the CLI with neoth catalog refresh.";
+                    action-label: "Refresh";
+                    output: root.catalog-output;
+                    running: root.catalog-running;
+                    empty-hint: "Click \"Refresh\" to load the model catalog.";
+                    run-clicked => { root.catalog-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.catalog-output == "") { root.catalog-run-clicked(); } }
+                }
+                if root.nav-active == "quota": ProbeView {
+                    blurb: "Provider quota — per-provider daily request state and any active 429 backoff window (neoth quota status). Read-only.";
+                    action-label: "Refresh";
+                    output: root.quota-output;
+                    running: root.quota-running;
+                    empty-hint: "Click \"Refresh\" to load the provider quota.";
+                    run-clicked => { root.quota-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.quota-output == "") { root.quota-run-clicked(); } }
+                }
+                if root.nav-active == "tweaks": ProbeView {
+                    blurb: "Runtime tweaks — the appearance/behavior overrides layered over the built-in defaults (neoth tweaks show, ~/.neoth/tweaks.toml). Read-only.";
+                    action-label: "Refresh";
+                    output: root.tweaks-output;
+                    running: root.tweaks-running;
+                    empty-hint: "Click \"Refresh\" to load the runtime tweaks.";
+                    run-clicked => { root.tweaks-run-clicked(); }
+                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                    init => { if (root.tweaks-output == "") { root.tweaks-run-clicked(); } }
                 }
                 // WAL Inspector — the audit chain, browsable (Wave 5) with
                 // the timeline scrubber strip above (Wave 6, GUI-only killer:
@@ -3850,6 +3990,20 @@ export component MainWindow inherits Window {
             root.palette-selected = 0;
             root.palette-query-edited("");
         }
+    }
+
+    // H18 — regenerate-with-model picker (centered; the retry chip has
+    // no cursor coordinates, a stable position beats a wrong one).
+    if root.regen-menu-open: ContextMenu {
+        width: 100%; height: 100%;
+        menu-x: (root.width - 260px) / 2;
+        menu-y: root.height * 25%;
+        items: root.regen-menu-items;
+        picked(i) => {
+            root.regen-menu-open = false;
+            root.chat-regen-picked(i);
+        }
+        dismissed => { root.regen-menu-open = false; }
     }
 
     // A4 — kanban card context menu. Coordinates come relative to the

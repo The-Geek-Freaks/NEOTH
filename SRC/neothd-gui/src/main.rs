@@ -868,6 +868,13 @@ enum KanbanCatalogUpdate {
     },
 }
 
+/// H18 — one-shot model override consumed by the next chat send
+/// (the regenerate-with-model picker arms it, the send path takes it).
+static CHAT_MODEL_OVERRIDE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// H18 — picker entries from the live models catalog (loaded at startup).
+static REGEN_MODELS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 #[derive(Debug, Deserialize)]
 struct CodingTaskJson {
     task_id: i64,
@@ -1273,6 +1280,19 @@ fn main() -> Result<()> {
         window.set_about_changelog(head.into());
     }
 
+    // H18 — load the live models catalog for the regenerate picker.
+    // Provider kind scopes the list; empty catalog = picker shows only
+    // "same model" (honest degradation, no invented ids).
+    {
+        let provider_kind =
+            read_nested_str_in_freedom(&neoth_dir.join("freedom.yaml"), "provider_kind", "");
+        std::thread::spawn(move || {
+            let out = run_neothd_probe(&["models", "catalog", "--output", "json"]);
+            let models = panel_logic::parse_models_catalog(&out, &provider_kind);
+            *REGEN_MODELS.lock().unwrap_or_else(|e| e.into_inner()) = models;
+        });
+    }
+
     // Daemon→GUI activity bus — the Buddy reacts live to WAL events
     // (dreaming, council, self-improve, cron, loops, channel ingress).
     // Fail-silent: without a daemon binary the follower just retries.
@@ -1577,6 +1597,30 @@ fn main() -> Result<()> {
                 false,
             ));
             window.set_cfg_cluster_name(read_nested_str_in_freedom(fp, "cluster.name", "").into());
+            window.set_cfg_autoupdate_enabled(read_nested_bool_in_freedom(
+                fp,
+                "auto_update.enabled",
+                false,
+            ));
+            window.set_cfg_autoupdate_apply(read_nested_bool_in_freedom(
+                fp,
+                "auto_update.auto_apply",
+                false,
+            ));
+            {
+                let ch = read_nested_str_in_freedom(fp, "auto_update.channel", "stable");
+                window.set_cfg_autoupdate_channel_idx(match ch.as_str() {
+                    "rc" => 1,
+                    "nightly" => 2,
+                    _ => 0,
+                });
+            }
+            {
+                let iv = read_nested_i64_in_freedom(fp, "auto_update.check_interval_secs", 0);
+                if iv > 0 {
+                    window.set_cfg_autoupdate_interval(iv.to_string().into());
+                }
+            }
             {
                 let t = read_nested_str_in_freedom(fp, "cluster.transport", "peeroxide");
                 window.set_cfg_cluster_transport_idx(if t == "iroh" { 1 } else { 0 });
@@ -2035,15 +2079,54 @@ fn main() -> Result<()> {
             }
         });
 
-        // Retry: resend the nearest operator message at-or-before the
-        // clicked bubble through the normal send path.
+        // H18 — Retry opens the regenerate picker: "same model" plus the
+        // live-catalog entries for the configured provider. Selecting an
+        // entry arms a one-shot --model override for the resend.
         let weak_retry = window.as_weak();
         window.on_chat_message_retry(move |idx| {
             let Some(w) = weak_retry.upgrade() else {
                 return;
             };
+            let models = REGEN_MODELS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let mut items: Vec<MenuItem> = vec![MenuItem {
+                label: "Retry — same model".into(),
+                glyph: "↺".into(),
+                danger: false,
+            }];
+            items.extend(models.iter().map(|m| MenuItem {
+                label: m.as_str().into(),
+                glyph: "◇".into(),
+                danger: false,
+            }));
+            w.set_regen_menu_items(slint::ModelRc::new(std::rc::Rc::new(
+                slint::VecModel::from(items),
+            )));
+            w.set_regen_msg_idx(idx);
+            w.set_regen_menu_open(true);
+        });
+
+        // Picker selection: 0 = same model, n>0 = catalog entry n-1.
+        let weak_regen = window.as_weak();
+        window.on_chat_regen_picked(move |pick| {
+            let Some(w) = weak_regen.upgrade() else {
+                return;
+            };
+            if pick > 0 {
+                let model = REGEN_MODELS
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get((pick - 1) as usize)
+                    .cloned();
+                *CHAT_MODEL_OVERRIDE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = model;
+            }
+            let idx = w.get_regen_msg_idx();
             let msgs = w.get_chat_messages();
-            let mut i = idx as usize;
+            let mut i = idx.max(0) as usize;
             loop {
                 let Some(m) = msgs.row_data(i) else { break };
                 if m.role == "operator" {
@@ -2142,7 +2225,7 @@ fn main() -> Result<()> {
         w.set_chat_send_in_flight(true);
         // Wave-2 feed A: chat send start → plan row.
         {
-            let snippet = utf8_prefix(&body, 80);
+            let snippet = truncate_chars(&body, 80);
             push_activity(&w.as_weak(), "plan", "Thinking…", snippet);
         }
         // ODY-04 — arm the stall watchdog; refill the auto-nudge budget on
@@ -2188,11 +2271,22 @@ fn main() -> Result<()> {
                 let stream_control_token = new_stream_control_token()?;
                 cmd.arg("chat").arg("--stream");
                 cmd.env("NEOTH_STREAM_CONTROL_TOKEN", &stream_control_token);
+                // H18 — one-shot model override from the regenerate picker.
+                if let Some(m) = CHAT_MODEL_OVERRIDE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                {
+                    cmd.arg("--model").arg(m);
+                }
                 // ODY-03 — attachments ride as repeatable --attach args.
                 for p in &attach_paths {
                     cmd.arg("--attach").arg(p);
                 }
                 let mut child = cmd
+                    // Terminate clap's flag scan so a message starting with
+                    // '-' (e.g. "-h", "--foo") is treated as the positional
+                    // prompt, not parsed as a flag (WS-BUG P1).
                     .arg("--")
                     .arg(&body)
                     .stdout(std::process::Stdio::piped())
@@ -3492,6 +3586,342 @@ fn main() -> Result<()> {
                 if let Some(w) = weak.upgrade() {
                     w.set_doctor_security_output(output.into());
                     w.set_doctor_security_running(false);
+                }
+            });
+        });
+    });
+
+    // C4/undo — `neoth undo --limit 10` read-only list of reversible actions.
+    let weak_undo = window.as_weak();
+    window.on_doctor_undo_run_clicked(move || {
+        let Some(w0) = weak_undo.upgrade() else {
+            return;
+        };
+        w0.set_doctor_undo_running(true);
+        let weak = weak_undo.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("undo")
+                    .arg("--limit")
+                    .arg("10")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "No reversible actions recorded yet.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list reversible actions.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_doctor_undo_output(output.into());
+                    w.set_doctor_undo_running(false);
+                }
+            });
+        });
+    });
+
+    // Auto-update "Check now" — `neoth updater check --output json`.
+    let weak_auc = window.as_weak();
+    window.on_autoupdate_check_clicked(move || {
+        let Some(w0) = weak_auc.upgrade() else {
+            return;
+        };
+        w0.set_autoupdate_check_running(true);
+        let weak = weak_auc.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("updater")
+                    .arg("check")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "Update check produced no output.".to_string()
+                    } else {
+                        s.chars().take(600).collect()
+                    }
+                }
+                None => "neothd binary not on PATH — cannot check for updates.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_autoupdate_check_output(output.into());
+                    w.set_autoupdate_check_running(false);
+                }
+            });
+        });
+    });
+
+    // C4 — MCP registry probe: `neoth mcp list --output json`.
+    let weak_mcp = window.as_weak();
+    window.on_mcp_run_clicked(move || {
+        let Some(w0) = weak_mcp.upgrade() else {
+            return;
+        };
+        w0.set_mcp_running(true);
+        let weak = weak_mcp.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("mcp")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "No MCP servers configured (~/.neoth/mcp_servers.yaml is empty or absent)."
+                            .to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list MCP servers.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_mcp_output(output.into());
+                    w.set_mcp_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — hooks probe: `neoth hooks list --output json`.
+    let weak_hooks = window.as_weak();
+    window.on_hooks_run_clicked(move || {
+        let Some(w0) = weak_hooks.upgrade() else {
+            return;
+        };
+        w0.set_hooks_running(true);
+        let weak = weak_hooks.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("hooks")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "hooks registry is empty.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list hooks.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_hooks_output(output.into());
+                    w.set_hooks_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — groundtruth probe: `neoth groundtruth list --output json`.
+    let weak_gt = window.as_weak();
+    window.on_gt_run_clicked(move || {
+        let Some(w0) = weak_gt.upgrade() else {
+            return;
+        };
+        w0.set_gt_running(true);
+        let weak = weak_gt.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("groundtruth")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "Ground-truth store is empty.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list ground-truth facts.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_gt_output(output.into());
+                    w.set_gt_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — catalog probe: `neoth catalog list --output json`.
+    let weak_catalog = window.as_weak();
+    window.on_catalog_run_clicked(move || {
+        let Some(w0) = weak_catalog.upgrade() else {
+            return;
+        };
+        w0.set_catalog_running(true);
+        let weak = weak_catalog.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("catalog")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "the model catalog is empty (run `neoth catalog refresh`).".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load catalog.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_catalog_output(output.into());
+                    w.set_catalog_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — quota probe: `neoth quota status --output json`.
+    let weak_quota = window.as_weak();
+    window.on_quota_run_clicked(move || {
+        let Some(w0) = weak_quota.upgrade() else {
+            return;
+        };
+        w0.set_quota_running(true);
+        let weak = weak_quota.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("quota")
+                    .arg("status")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no provider quota state recorded yet.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load quota.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_quota_output(output.into());
+                    w.set_quota_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — tweaks probe: `neoth tweaks show --output json`.
+    let weak_tweaks = window.as_weak();
+    window.on_tweaks_run_clicked(move || {
+        let Some(w0) = weak_tweaks.upgrade() else {
+            return;
+        };
+        w0.set_tweaks_running(true);
+        let weak = weak_tweaks.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("tweaks")
+                    .arg("show")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no runtime tweaks set (all defaults).".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load tweaks.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_tweaks_output(output.into());
+                    w.set_tweaks_running(false);
                 }
             });
         });
@@ -7446,6 +7876,28 @@ fn main() -> Result<()> {
         wire_nested_str!(on_cfg_user_tz_changed, "user_tz", "Timezone");
         // C6 — complete cluster desired state crosses one typed CLI
         // transaction. No field is written optimistically or independently.
+        // Auto-update config (research P0).
+        wire_nested_bool!(
+            on_cfg_autoupdate_enabled_changed,
+            "auto_update.enabled",
+            "Auto-update"
+        );
+        wire_nested_bool!(
+            on_cfg_autoupdate_apply_changed,
+            "auto_update.auto_apply",
+            "Auto-apply"
+        );
+        wire_nested_int_combo!(
+            on_cfg_autoupdate_channel_changed,
+            "auto_update.channel",
+            &["stable", "rc", "nightly"],
+            "Update channel"
+        );
+        wire_nested_i64_str!(
+            on_cfg_autoupdate_interval_changed,
+            "auto_update.check_interval_secs",
+            "Update check interval"
+        );
         {
             let weak = window.as_weak();
             let apply_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -10358,6 +10810,19 @@ mod preload01_tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[test]
+    fn truncate_chars_never_slices_mid_codepoint() {
+        // WS-BUG P0 regression: byte-index slices panicked on non-ASCII.
+        assert_eq!(truncate_chars("hello", 80), "hello");
+        assert_eq!(truncate_chars("hello", 3), "hel");
+        // 77 ASCII + a 4-byte emoji: byte 80 lands mid-codepoint.
+        let s = format!("{}🌍", "x".repeat(77));
+        assert_eq!(truncate_chars(&s, 80), &"x".repeat(77)); // emoji dropped, no panic
+        assert_eq!(truncate_chars(&s, 78).chars().count(), 78); // includes the emoji
+        assert_eq!(truncate_chars("日本語テスト", 3), "日本語");
+        assert_eq!(truncate_chars("", 5), "");
+    }
+
     fn write_yaml(dir: &TempDir, content: &str) -> std::path::PathBuf {
         let path = dir.path().join("freedom.yaml");
         std::fs::write(&path, content).unwrap();
@@ -10761,6 +11226,17 @@ fn scrub_gui_control_environment(command: &mut std::process::Command) {
         INTERFACE_OVERRIDE_ENV,
     ] {
         command.env_remove(variable);
+    }
+}
+
+/// Char-boundary-safe prefix — never slices mid-codepoint. WS-BUG P0:
+/// byte-index slices (`&s[..N]`) panicked the Slint UI thread on
+/// non-ASCII input (emoji/CJK/umlaut) where byte N fell inside a
+/// multi-byte sequence.
+fn truncate_chars(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((i, _)) => &s[..i],
+        None => s,
     }
 }
 

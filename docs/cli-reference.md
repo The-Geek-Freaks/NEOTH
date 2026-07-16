@@ -180,6 +180,7 @@ neoth provider known
 neoth provider show openai_api
 neoth provider test openai_api
 neoth models list
+neoth models catalog
 neoth models pull clip
 neoth models pull whisper
 neoth ouro list
@@ -194,6 +195,7 @@ neoth ouro fetch --checkpoint ByteDance/Ouro-1.4B-Thinking
 | `provider test <id>` | Show where that provider is wired into the inference topology. |
 | `init --force` | Re-run onboarding to change provider configuration. |
 | `models list` | Show managed CLIP/Whisper/Piper cache state. |
+| `models catalog` | Return the live provider-model catalog as JSON for CLI automation and the GUI retry picker; stale or unavailable catalogs expose their error instead of inventing model IDs. |
 | `models pull <name>` | Download managed CLIP or Whisper artifacts. |
 | `ouro list/fetch/status` | Inspect, download, and inspect Ouro checkpoints. |
 | `init --provider local_qwen` | Select Qwen through hardware-aware onboarding. |

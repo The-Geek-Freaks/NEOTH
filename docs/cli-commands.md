@@ -1886,6 +1886,10 @@ Manage the local model caches under `~/.neoth/models/`
 
 _Aliases:_ `neoth model`
 
+### `neoth models catalog`
+
+H18 — dump the live provider-model catalog (the wizard's model select source, `~/.neoth/models_catalog.json`) as JSON for the GUI's regenerate-with-model picker. Read-only; never-fetched or stale providers surface their fetch error so consumers degrade honestly instead of guessing model ids
+
 ### `neoth models fit`
 
 GOLD-ADAPT-ODY-13 — estimate decode throughput (tok/s) for a ladder of quantized local models on a GPU, ranked by VRAM-fit then speed. Complements `recommend` (which model) with "how fast". The estimate is memory-bandwidth-bound: `tok/s ≈ 0.55 × bandwidth / model_GB`

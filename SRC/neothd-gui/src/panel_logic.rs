@@ -2635,6 +2635,39 @@ pub fn parse_permissions_show(json: &str) -> (Vec<PermRowData>, String) {
     (rows, level)
 }
 
+// ── Regenerate with model (H18) ──────────────────────────────────────────────
+
+/// Parse the models-catalog JSON into the picker list for one provider:
+/// non-deprecated model ids, provider order, capped at 8. Unknown
+/// provider (or empty kind) falls back to every provider's models
+/// merged in catalog order — still filtered, never invented.
+pub fn parse_models_catalog(json: &str, provider_kind: &str) -> Vec<String> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(providers) = v.get("providers").and_then(|x| x.as_object()) else {
+        return Vec::new();
+    };
+    fn ids(pc: &serde_json::Value) -> Vec<String> {
+        pc.get("models")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter(|m| {
+                        !m.get("deprecated")
+                            .and_then(|d| d.as_bool())
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    let picked: Vec<String> = match providers.get(provider_kind) {
+        Some(pc) if !ids(pc).is_empty() => ids(pc),
+        _ => providers.values().flat_map(ids).collect(),
+    };
+    picked.into_iter().take(8).collect()
+}
+
 // ── Cost & usage (C7) ────────────────────────────────────────────────────────
 
 /// One top-session cost row for the overview card.
@@ -3188,10 +3221,16 @@ pub const PALETTE_CATALOG: &[PaletteEntry] = &[
     ("Buddy Config", "⊙", "buddyconfig", "WORK"),
     ("Memory", "◈", "memory", "SYSTEM"),
     ("Memory Graph", "❋", "memgraph", "SYSTEM"),
+    ("Groundtruth", "⊨", "groundtruth", "SYSTEM"),
     ("Hemispheres", "◐", "hemispheres", "SYSTEM"),
     ("Channels", "⇄", "channels", "SYSTEM"),
     ("Privacy", "⛨", "privacy", "SYSTEM"),
     ("Plugins", "⧉", "plugins", "SYSTEM"),
+    ("MCP", "⧟", "mcp", "SYSTEM"),
+    ("Hooks", "⋔", "hooks", "SYSTEM"),
+    ("Model Catalog", "⊚", "catalog", "SYSTEM"),
+    ("Quota", "⊘", "quota", "SYSTEM"),
+    ("Tweaks", "⚗", "tweaks", "SYSTEM"),
     ("Cluster", "⬡", "cluster", "SYSTEM"),
     ("Resources", "▦", "resources", "SYSTEM"),
     ("Babel", "◬", "babel", "SYSTEM"),
@@ -7413,6 +7452,21 @@ mod tests {
         assert_eq!(rows[1].decision, "allow");
         assert!(!rows[1].overridden);
         assert!(parse_permissions_show("garbage").0.is_empty());
+    }
+
+    #[test]
+    fn parse_models_catalog_filters_and_falls_back() {
+        let json = r#"{"version":1,"providers":{
+            "claude_cli":{"fetched_at_unix":1,"models":[
+                {"id":"model-alpha"},{"id":"old-model","deprecated":true},{"id":"model-beta"}]},
+            "openai_compat":{"fetched_at_unix":1,"models":[{"id":"other-model"}]}}}"#;
+        let m = parse_models_catalog(json, "claude_cli");
+        assert_eq!(m, vec!["model-alpha", "model-beta"]);
+        // unknown provider falls back to the merged set, still filtered
+        let all = parse_models_catalog(json, "nope");
+        assert!(all.contains(&"other-model".to_string()));
+        assert!(!all.contains(&"old-model".to_string()));
+        assert!(parse_models_catalog("junk", "x").is_empty());
     }
 
     #[test]

@@ -228,10 +228,16 @@ export component Sidebar inherits Rectangle {
                 NavGroup { label: "SYSTEM"; }
                 NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
                 NavBtn { label: "Graph"; glyph: "❋"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memgraph"; clicked => { root.nav("memgraph"); } }
+                NavBtn { label: "Groundtruth"; glyph: "⊨"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "groundtruth"; clicked => { root.nav("groundtruth"); } }
                 NavBtn { label: "Hemispheres"; glyph: "◐"; visible: root.complexity >= 1; active: root.active-tab == "hemispheres"; clicked => { root.nav("hemispheres"); } }
                 NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
                 NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }
                 NavBtn { label: "Plugins"; glyph: "⧉"; visible: root.complexity >= 2; active: root.active-tab == "plugins"; clicked => { root.nav("plugins"); } }
+                NavBtn { label: "MCP"; glyph: "⧟"; visible: root.complexity >= 2; active: root.active-tab == "mcp"; clicked => { root.nav("mcp"); } }
+                NavBtn { label: "Hooks"; glyph: "⋔"; visible: root.complexity >= 2; active: root.active-tab == "hooks"; clicked => { root.nav("hooks"); } }
+                NavBtn { label: "Model Catalog"; glyph: "⊚"; visible: root.complexity >= 2; active: root.active-tab == "catalog"; clicked => { root.nav("catalog"); } }
+                NavBtn { label: "Quota"; glyph: "⊘"; visible: root.complexity >= 2; active: root.active-tab == "quota"; clicked => { root.nav("quota"); } }
+                NavBtn { label: "Tweaks"; glyph: "⚗"; visible: root.complexity >= 2; active: root.active-tab == "tweaks"; clicked => { root.nav("tweaks"); } }
                 NavBtn { label: "Cluster"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }
                 NavBtn { label: "Resources"; glyph: "▦"; visible: root.complexity >= 2; active: root.active-tab == "resources"; clicked => { root.nav("resources"); } }
                 // Wave 4a — Babel observer in SYSTEM (≥2, technical observer).
@@ -387,6 +393,13 @@ export component StatusFooter inherits Rectangle {
                 y: (parent.height - self.height) / 2;
             }
             Text { text: "local"; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 11px; vertical-alignment: center; }
+            // Operator-requested footer copyright — the always-visible
+            // ownership line, tying every screen back to the product.
+            Text {
+                text: "· © 2026 The Geek Freaks";
+                color: Theme.text-disabled; font-family: Theme.font-mono; font-size: 11px;
+                vertical-alignment: center;
+            }
         }
     }
 }

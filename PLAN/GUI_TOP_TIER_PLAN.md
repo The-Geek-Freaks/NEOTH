@@ -1,11 +1,37 @@
 # GUI TOP-TIER PLAN — Design Lane (Claude)
 
 > Erstellt 2026-07-16 aus 6-Agenten-Research-Wave (`wf_8618f46f-1a0`).
+> **Vollstaendige Research-Evidenz:** PLAN/RESEARCH_GUI_2026_07_16.md — die
+> unveraenderten Agent-Outputs beider Wellen (Parity-Audit, GUI-Inventar,
+> Buddy-Audit, Best-in-Class-Prinzipien, Killer-Features, Synthese).
 > Lane-Abgrenzung: Codex/GPT arbeitet an GOLD-Rollup-Contracts (CI, packaging,
 > integrity). Diese Lane = GUI/Design. Codex' Commit `7e53c9b5` fasste
 > main.rs / panel_logic.rs / main.slint / settings.slint an → vor jedem Push
 > `git pull --rebase`, atomare Commits, selektives `git add`.
 > Deckt die offenen GOLD-Rollups **GOLD-R4-04/05/06/09** aus ROAD_TO_1_0_GOLD.md ab.
+
+## ERFÜLLUNGSSTAND (Operator-Auftrag 2026-07-16, Stand HEAD 07cdb326)
+
+Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durchlaufen:
+
+1. **Systematisches GUI-Research** ✅ — Wave 1 `wf_8618f46f-1a0` (6 Agenten, 600k Tokens):
+   GUI-Komplettinventar (24 Slint-Files, alle Tabs/Callbacks/Lücken), CLI↔GUI-Parity-Audit
+   (~130 Subcommands / 24 Slash-Commands / 20 Config-Sections → P0-Lückenliste),
+   Tracker/Codex-Kollisionsanalyse, Buddy-Audit (26 Moods, toter Event-Bus),
+   Kanban/Cluster-Tiefenanalyse (Comments-nicht-injiziert als P0 bestätigt).
+2. **Best-in-Class-Analyse** ✅ — Wave 1 + Wave 2 `wf_c9f1360d-bda` (12 Agenten, 1.67M Tokens,
+   web-grounded): Claude Desktop, ChatGPT Desktop + Codex, Cursor/Composer, Linear, Raycast,
+   Notion/Obsidian, Perplexity, TypingMind, LibreChat, Msty, Grafana/Netdata/k9s/Tailscale,
+   Desktop-Pets/Dynamic-Island — je 3–8 konkrete Mechaniken + NEOTH-Transfer, gerankt
+   killer/high/nice. Ökosystem-Homogenität (ein Icon-Set, eine Interaction-Grammar,
+   Spacing-Grid, Footer/About/Changelog) als eigene Dimension.
+3. **Plan aus dem Research** ✅ — dieses Dokument: Wellen A–G aus dem Parity/Inventar-Audit,
+   Wave H (Killer-Backlog) aus der Web-Research-Synthese.
+4. **Implementierung** ✅ laufend — 21 Commits `67e968c5`→`07cdb326` am 2026-07-16, jede Welle
+   mit Ownership-Agenten gebaut, von Hand verdrahtet, Gates grün, gepusht. Bilanz unten
+   an den [x]-Items ablesbar (A+B komplett, C 6/7, H 14/22).
+5. **Codex-Abgleich** ✅ — durchgehend `pull --rebase` vor jedem Push; Codex merged die
+   GUI-Commits aktiv in `codex/gold-integrate` (+fmt-normalize); 0 Konflikte über 21 Commits.
 
 ## Research-Basis (verifiziert am Code, HEAD 7e53c9b5)
 
@@ -149,11 +175,14 @@ Kanban (Linear/Height/GH-Projects):
 
 Chat (Claude/ChatGPT/Perplexity-Research):
 - [ ] H17 **Edit-and-Branch mit Variant-Navigator**. (Killer)
-- [ ] H18 **Regenerate mit Model-Picker**. (Killer) — VERIFIZIERT: `neoth chat --model` existiert
-      (Priority CLI > tweaks > freedom). FEHLT: Provider-Catalog-Dump im CLI (`models list` = nur
-      lokale Managed-Models). Schritt 1: `neoth models catalog --output json` (live catalog,
-      model-version-agnostic). Schritt 2: Picker am Retry-Button (ContextMenu-Primitive),
-      Auswahl → chat --model <m>, Antwort als Sibling (→ H17-Branch-Modell).
+- [x] H18 **Regenerate mit Model-Picker**. (Killer) — SHIPPED: `neoth models
+      catalog --output json` liefert den live, modellversionsunabhängigen
+      Provider-Katalog; der Retry-Picker bietet Same model plus den Live-Katalog
+      des Providers an und übergibt die Auswahl als einmaligen `--model`-
+      Override in den Send-Pfad. Das ursprüngliche `neoth chat --model`-
+      Fundament und die Priorität CLI > tweaks > freedom bleiben erhalten.
+      Antwort-Branching/Variant-Navigation ist bewusst weiter H17, nicht Teil
+      des geschlossenen H18-Vertrags.
 - [~] H19 Code-Block-Affordances (Copy/Run/Collapse) + Always-Visible-Stop. (Killer)
       **Residual:** Copy, Collapse und Stop sind vorhanden; ein sicherer,
       permission-gated Code-Run-Pfad mit sichtbarem Lifecycle fehlt.
