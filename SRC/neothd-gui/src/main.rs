@@ -5304,6 +5304,26 @@ fn main() -> Result<()> {
             memgraph_refresh(weak_mg.clone(), store_mg.clone());
         });
 
+        // Research P0 — export the Hebbian graph JSON to a file.
+        let weak_exp = window.as_weak();
+        window.on_memgraph_export_clicked(move || {
+            let _ = &weak_exp;
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["memory", "--graph", "--output", "json"]);
+                if out.trim().is_empty() {
+                    return;
+                }
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Export memory graph")
+                    .set_file_name("neoth-memory-graph.json")
+                    .add_filter("JSON", &["json"])
+                    .save_file()
+                {
+                    let _ = std::fs::write(&path, out.as_bytes());
+                }
+            });
+        });
+
         let (weak_sel, store_sel) = (window.as_weak(), mg_nodes.clone());
         window.on_memgraph_node_selected(move |id| {
             if let Some(w) = weak_sel.upgrade() {

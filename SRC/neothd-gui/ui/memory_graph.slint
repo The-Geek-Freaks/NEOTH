@@ -155,6 +155,8 @@ export component MemoryGraphView inherits Rectangle {
     in property <string>       stats-line: "";
     /// Fired when operator clicks the Refresh pill.
     callback refresh-clicked();
+    /// Export the Hebbian graph JSON to a file (research P0).
+    callback export-clicked();
     /// True while Rust is recomputing the graph layout.
     in property <bool>         running: false;
 
@@ -225,6 +227,29 @@ export component MemoryGraphView inherits Rectangle {
                 TouchArea {
                     mouse-cursor: pointer;
                     clicked => { if (!root.running) { root.refresh-clicked(); } }
+                }
+            }
+
+            // Export pill — dumps the graph JSON to a file (ghost style).
+            Rectangle {
+                width: export-lbl.preferred-width + 28px;
+                height: 38px;
+                border-radius: Theme.radius-pill;
+                background: exp-ta.has-hover ? Theme.surface-2 : transparent;
+                border-width: 1px; border-color: Theme.border-default;
+                accessible-role: button;
+                accessible-label: "export memory graph JSON";
+                animate background { duration: Theme.duration-fast; easing: ease-out; }
+                export-lbl := Text {
+                    x: 0; width: parent.width; height: parent.height;
+                    text: "Export";
+                    color: Theme.text-secondary;
+                    font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                    vertical-alignment: center; horizontal-alignment: center;
+                }
+                exp-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.export-clicked(); }
                 }
             }
         }

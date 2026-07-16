@@ -146,7 +146,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
 > credential GUI
 > panels, `/critic` `/background` `/quit` triggers, interaction-mode picker, memory `--graph` export button. (Closed today: WAL inspector, permissions
 > matrix, operator identity, cost/usage, cluster transport, model picker, kanban
-> notes/menu/session-selector, memory graph, tray, about, **undo probe (Doctor)**, **MCP registry tab**, **hooks + groundtruth + catalog + quota + tweaks probes**, **auto-update config card**.) See also
+> notes/menu/session-selector, memory graph, tray, about, **undo probe (Doctor)**, **MCP registry tab**, **hooks + groundtruth + catalog + quota + tweaks probes**, **auto-update config card**, **memory --graph export button**.) See also
 > `PLAN/RESEARCH_BUGHUNT_2026_07_16.md` (WS-BUG — 62-finding hunt).
 
 Operator directive 2026-07-14: v1.0 is not complete merely because source code compiles. A non-technical user must be able to discover, install, choose an interface, configure, update, repair and uninstall NEOTH without a developer toolchain. The GUI ships as part of the product, not as an optional demo. Every visible control must have a real production consumer and every CLI-only capability needs either GUI parity or an explicit operator-grade reason recorded here. No v1.0.0 tag is allowed while any WS-R3 or WS-R4 box is open.
