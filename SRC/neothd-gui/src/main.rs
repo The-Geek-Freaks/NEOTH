@@ -616,6 +616,90 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
     });
 }
 
+// H3 — system tray: a procedural neon-orb icon, Show/Quit menu, and
+// left-click-to-restore. Menu/tray events arrive on a global channel;
+// a 200 ms UI timer drains them (the winit loop owns the message pump).
+// Returns None when the platform refuses a tray (headless CI) — the
+// GUI works exactly as before in that case.
+fn setup_tray(window: &MainWindow) -> Option<tray_icon::TrayIcon> {
+    use tray_icon::{
+        TrayIconBuilder, TrayIconEvent,
+        menu::{Menu, MenuEvent, MenuItem},
+    };
+
+    // Procedural icon: the buddy orb as a neon-green disc with a soft
+    // antialiased edge on transparency — no asset file to ship.
+    let size = 32u32;
+    let mut rgba = vec![0u8; (size * size * 4) as usize];
+    let c = (size as f32) / 2.0 - 0.5;
+    let r = c - 2.0;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let d = (dx * dx + dy * dy).sqrt();
+            if d <= r {
+                let i = ((y * size + x) * 4) as usize;
+                rgba[i] = 0x00;
+                rgba[i + 1] = 0xFF;
+                rgba[i + 2] = 0x80;
+                rgba[i + 3] = if d > r - 1.5 {
+                    (255.0 * (r - d).max(0.0) / 1.5) as u8
+                } else {
+                    255
+                };
+            }
+        }
+    }
+    let icon = tray_icon::Icon::from_rgba(rgba, size, size).ok()?;
+
+    let menu = Menu::new();
+    let show_item = MenuItem::new("Show NEOTH", true, None);
+    let quit_item = MenuItem::new("Quit", true, None);
+    menu.append_items(&[&show_item, &quit_item]).ok()?;
+
+    let tray = TrayIconBuilder::new()
+        .with_icon(icon)
+        .with_tooltip("NEOTH — your buddy, your life")
+        .with_menu(Box::new(menu))
+        .build()
+        .ok()?;
+
+    let show_id = show_item.id().clone();
+    let quit_id = quit_item.id().clone();
+    let weak = window.as_weak();
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(200),
+        move || {
+            while let Ok(ev) = MenuEvent::receiver().try_recv() {
+                if ev.id == show_id {
+                    if let Some(w) = weak.upgrade() {
+                        let _ = w.show();
+                    }
+                } else if ev.id == quit_id {
+                    let _ = slint::quit_event_loop();
+                }
+            }
+            while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+                if let TrayIconEvent::Click {
+                    button: tray_icon::MouseButton::Left,
+                    button_state: tray_icon::MouseButtonState::Up,
+                    ..
+                } = ev
+                    && let Some(w) = weak.upgrade()
+                {
+                    let _ = w.show();
+                }
+            }
+        },
+    );
+    // Keep the drain timer alive for the app lifetime (toast-timer pattern).
+    std::mem::forget(timer);
+    Some(tray)
+}
+
 // Run the hardware/daemon probe on a worker thread and land the result
 // (summary + footer-Led state) on the event loop. Called at startup and
 // from the offline banner's Retry button.
@@ -8201,6 +8285,10 @@ fn main() -> Result<()> {
             }
         });
     }
+    // H3 — system tray. Kept alive by the binding until run() returns;
+    // None (headless/unsupported) degrades silently.
+    let _tray = setup_tray(&window);
+
     let run_result = window.run();
     if let Some(error) = gui_ready_failure
         .lock()

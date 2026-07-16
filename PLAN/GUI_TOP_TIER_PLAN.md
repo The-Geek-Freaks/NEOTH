@@ -95,7 +95,7 @@ GUI-only Superpowers (Rangfolge nach wow×feasibility):
 - [x] H1 **WAL-Timeline-Scrubber** — 255 Opcodes in semantischen Bändern = vor-gefärbte
       Timeline; scrubben durch die Audit-History statt grep-Dump. (Killer, eigener Tab/WAL-Inspector-Erweiterung)
 - [x] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
-- [ ] H3 **System-Tray + Windows-Toasts + Jump-List** — App lebt im Tray, native Notifications. (Killer)
+- [~] H3 **System-Tray** ✅ (Windows-Toasts + Jump-List offen) — App lebt im Tray, native Notifications. (Killer)
 - [x] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
 - [x] H5 Overview: Time-Series-Charts (7-Tage-Sparkline) (Token/Cost/Activity Sparklines). (Killer)
 - [ ] H6 Live-Theme-Editor mit Instant-Preview (tweaks.toml GUI). (High)
