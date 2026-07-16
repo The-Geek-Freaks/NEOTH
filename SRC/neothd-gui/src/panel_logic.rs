@@ -3200,6 +3200,7 @@ pub const PALETTE_CATALOG: &[PaletteEntry] = &[
     ("Channels", "⇄", "channels", "SYSTEM"),
     ("Privacy", "⛨", "privacy", "SYSTEM"),
     ("Plugins", "⧉", "plugins", "SYSTEM"),
+    ("MCP", "⧟", "mcp", "SYSTEM"),
     ("Cluster", "⬡", "cluster", "SYSTEM"),
     ("Resources", "▦", "resources", "SYSTEM"),
     ("Babel", "◬", "babel", "SYSTEM"),

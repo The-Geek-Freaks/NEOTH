@@ -3529,6 +3529,49 @@ fn main() -> Result<()> {
         });
     });
 
+    // C4 — MCP registry probe: `neoth mcp list --output json`.
+    let weak_mcp = window.as_weak();
+    window.on_mcp_run_clicked(move || {
+        let Some(w0) = weak_mcp.upgrade() else {
+            return;
+        };
+        w0.set_mcp_running(true);
+        let weak = weak_mcp.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("mcp")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "No MCP servers configured (~/.neoth/mcp_servers.yaml is empty or absent)."
+                            .to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list MCP servers.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_mcp_output(output.into());
+                    w.set_mcp_running(false);
+                }
+            });
+        });
+    });
+
     // Agents tab — `neothd cluster status` (the agent/worker + node topology).
     let weak_agents = window.as_weak();
     window.on_agents_refresh_clicked(move || {

@@ -232,6 +232,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
                 NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }
                 NavBtn { label: "Plugins"; glyph: "⧉"; visible: root.complexity >= 2; active: root.active-tab == "plugins"; clicked => { root.nav("plugins"); } }
+                NavBtn { label: "MCP"; glyph: "⧟"; visible: root.complexity >= 2; active: root.active-tab == "mcp"; clicked => { root.nav("mcp"); } }
                 NavBtn { label: "Cluster"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }
                 NavBtn { label: "Resources"; glyph: "▦"; visible: root.complexity >= 2; active: root.active-tab == "resources"; clicked => { root.nav("resources"); } }
                 // Wave 4a — Babel observer in SYSTEM (≥2, technical observer).
