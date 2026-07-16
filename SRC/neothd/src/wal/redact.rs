@@ -54,7 +54,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use super::header::{CRC_LEN, EventHeaderV2, HEADER_BODY_LEN, MAGIC, PREAMBLE_LEN};
-use super::segment_header::{SEGMENT_HEADER_LEN, parse_segment_header};
+use super::segment_header::{SEGMENT_HEADER_LEN, SEGMENT_HEADER_V3_LEN, parse_segment_header};
 use super::types::EventFlags;
 
 /// Byte offset of the `flags` field WITHIN the header body (after the preamble).
@@ -126,7 +126,12 @@ where
     // no-op (the caller, `memory::forget`, reports success, so a silent skip
     // would be a privacy hole).
     let (header_len, sealed_compressed) = {
-        let probe_len = (SEGMENT_HEADER_LEN + 1).min(file_len as usize);
+        // WS-BUG P0: probe the WIDEST header (v3 = 65 B) so parse_segment_header
+        // can identify a v3 segment — the active writer format. The old
+        // `SEGMENT_HEADER_LEN + 1` (61) starved the v3 parse (needs 65), so it
+        // returned UnknownFormat{3} and forget --physical bailed "tamper-suspect"
+        // on every current segment, leaving GDPR physical redaction non-functional.
+        let probe_len = SEGMENT_HEADER_V3_LEN.min(file_len as usize);
         let mut probe = vec![0u8; probe_len];
         file.seek(SeekFrom::Start(0))
             .context("seek to segment head")?;

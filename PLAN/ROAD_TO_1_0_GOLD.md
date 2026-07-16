@@ -154,7 +154,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
 > credential GUI
 > panels, `/critic` `/background` `/quit` triggers, interaction-mode picker, memory `--graph` export button. (Closed today: WAL inspector, permissions
 > matrix, operator identity, cost/usage, cluster transport, model picker, kanban
-> notes/menu/session-selector, memory graph, tray, about, **undo probe (Doctor)**, **MCP registry tab**, **hooks + groundtruth + catalog + quota + tweaks probes**, **auto-update config card**.) See also
+> notes/menu/session-selector, memory graph, tray, about, **undo probe (Doctor)**, **MCP registry tab**, **hooks + groundtruth + catalog + quota + tweaks probes**, **auto-update config card**, **memory --graph export button**.) See also
 > `PLAN/RESEARCH_BUGHUNT_2026_07_16.md` (WS-BUG — 62-finding hunt).
 
 Operator directive 2026-07-14: v1.0 is not complete merely because source code compiles. A non-technical user must be able to discover, install, choose an interface, configure, update, repair and uninstall NEOTH without a developer toolchain. The GUI ships as part of the product, not as an optional demo. Every visible control must have a real production consumer and every CLI-only capability needs either GUI parity or an explicit operator-grade reason recorded here. No v1.0.0 tag is allowed while any WS-R3 or WS-R4 box is open.
@@ -1927,7 +1927,7 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 
 ## WS-BUG — 2026-07-16 Bug-Hunt Findings (16-finder + adversarial-verify workflow `wf_796be4c9-ea1`)
 
-**Provenance and current resolution:** the original max-scale read-only hunt covered 16 daemon+GUI subsystems and captured 62 candidate findings. The subsequent source-by-source implementation/reconciliation wave resolved the set as **60 FIXED / 2 REFUTED / 0 original OPEN or PARTIAL**. The two refutations are the unattached live-vector-clock baseline attack (#28; no production authority path) and the alleged NUL truncation (#59; Rust `Command` rejects interior NUL before spawn). Full scenarios remain in `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`; this tracker preserves the original text below as provenance. The first post-corpus audit exposed four P1 contracts. A later seven-subsystem audit reported 17 more candidates; current-source reconciliation leaves **14 actionable, 2 already closed and 1 mooted**, with Cron `once` folded into the existing hook-parity task. The unique post-corpus actionable count is therefore **17** (14 reconciled findings plus the three non-overlapping initial tasks).
+**Provenance and current resolution:** the original max-scale read-only hunt covered 16 daemon+GUI subsystems and captured 62 candidate findings. The subsequent source-by-source implementation/reconciliation wave resolved the set as **60 FIXED / 2 REFUTED / 0 original OPEN or PARTIAL**. The two refutations are the unattached live-vector-clock baseline attack (#28; no production authority path) and the alleged NUL truncation (#59; Rust `Command` rejects interior NUL before spawn). Full scenarios remain in `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`; this tracker preserves the original text below as provenance. The first post-corpus audit exposed four P1 contracts. A later seven-subsystem audit reported 17 more candidates; current-source reconciliation leaves **13 open, 3 closed and 1 mooted**, with Cron `once` folded into the existing hook-parity task. The unique open post-corpus count is therefore **16** (13 open findings plus the three non-overlapping initial tasks).
 
 ### Coverage note + pending wave 2
 
@@ -1976,9 +1976,9 @@ below. `updater::constant_time_eq` and `verify_sha256_bytes` remain reviewed-cor
 
 ### Wave 2 (2026-07-16, workflow `wf_e42cac83-d3d`) — seven-subsystem source reconciliation
 
-Raw report: **17 findings** (1×P0 · 3×P1 · 12×P2 · 1×P3). Current integrated source: **14 actionable / 2 already closed / 1 mooted**. Finding 13 is merged into `HOOK-ONCE-PARITY` above rather than duplicated. Full raw scenarios remain in `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`.
+Raw report: **17 findings** (1×P0 · 3×P1 · 12×P2 · 1×P3). Current integrated source: **13 open / 3 closed / 1 mooted**. Finding 13 is merged into `HOOK-ONCE-PARITY` above rather than duplicated. Full raw scenarios remain in `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`.
 
-- [ ] **BUG-W2-P0-WAL-REDACT-V3-PROBE** — `scan_and_redact` reads 61 bytes while current v3 headers require 65, so physical redaction rejects every current segment as tamper-suspect. Read the version-complete header and regress v1/v2/v3 live, sealed and compressed segments.
+- [x] **BUG-W2-P0-WAL-REDACT-V3-PROBE** — ✅ FIXED (`ce7d6542`; focused `wal::redact` **17/17**) — `scan_and_redact` now reads the complete 65-byte v3 header instead of a 61-byte probe, so physical redaction no longer rejects every current segment as tamper-suspect; v1/v2 parsing remains covered.
 - [ ] **BUG-W2-P1-COUNCIL-DAILY-CAP-ATOMIC** — `daily_usd_cap` has no production gate. Implement an atomic UTC-day reserve/settle ledger before every actual Council leaf, retry and fallback; unknown/unbounded cost under an active cap fails closed unless explicitly overridden.
 - [x] **BUG-W2-P1-MCP-AMBIENT-ENV** — ✅ CLOSED by current source: `configure_child_process` uses `env_clear()` plus a bounded startup baseline; the regression proves ambient API keys/proxies do not reach the child while explicit operator env remains available.
 - [ ] **BUG-W2-P1-RISK-LEASE-CONSUME-LOAD** — `consume_risk_leases_at` maps a lease-store load error to `Ok(None)` after the preceding check may have lifted the gate. Propagate the error and prove the check/consume race stays fail-closed.

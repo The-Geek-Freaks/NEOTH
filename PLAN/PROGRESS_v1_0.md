@@ -9,9 +9,9 @@
 > `fail_fast`, channel PostProviderCall/restoration plus atomic `once`, skill
 > directories created after watcher startup, and lost channel `delegate_to`.
 > A later seven-subsystem report added 17 findings; current-source triage leaves
-> **14 actionable / 2 already closed / 1 mooted**, and folds its Cron `once`
+> **13 open / 3 closed / 1 mooted**, and folds its Cron `once`
 > item into the central hook-parity contract. The unique post-corpus actionable
-> count is therefore **17**, all explicit in `ROAD_TO_1_0_GOLD.md`. The durable
+> count is therefore **16**, all explicit in `ROAD_TO_1_0_GOLD.md`. The durable
 > cluster authority is now protocol v6 / Iroh ALPN `neoth/cluster/gossip/3`: a
 > node-global SQLite-backed 256-slot frontier ticks and stages in one immediate
 > transaction, retries exact frames, binds the full inbound frontier, never
@@ -25,12 +25,14 @@
 > file validation. Frozen-source focused evidence is webhook **37/37**, WASM
 > discovery **31/31**, durable cluster sync **24/24** plus full-frontier **1/1**,
 > MCP regressions **3/3**, release packaging **24/24**, generated CLI-doc drift
-> **1/1**, Rust 1.91 formatting, metadata and diff hygiene. Claude's concurrent
+> **1/1**, Rust 1.91 formatting, metadata and diff hygiene. The Wave-2 WAL v3
+> probe defect is also closed at `ce7d6542` with focused redaction **17/17**.
+> Claude's concurrent
 > GUI lane is integrated: provider model catalog/retry selection, one-shot model
 > override, auto-update controls and read-only MCP/hooks/ground-truth/quota/
 > tweaks probes coexist with the fail-closed cluster transaction and hardened
 > chat subprocess boundary. Read-only probes are observability, not full GUI/CLI
-> mutation parity, so they close no broad R4 box. The 17 post-corpus contracts,
+> mutation parity, so they close no broad R4 box. The 16 open post-corpus contracts,
 > remaining R4 acceptance boxes, native clean-machine proof and exact-head
 > CI/Security/CodeQL remain release blockers.
 >

@@ -544,6 +544,7 @@ export component MainWindow inherits Window {
     in property <bool>        memgraph-running: false;
     callback memgraph-node-selected(int);
     callback memgraph-refresh-clicked();
+    callback memgraph-export-clicked();
     // Automation tab — CRUD cron panel (GAP-01).
     in property <[CronJobRow]> cron-jobs: [];
     in property <bool>         cron-running: false;
@@ -3690,6 +3691,7 @@ export component MainWindow inherits Window {
                     running: root.memgraph-running;
                     node-selected(id) => { root.memgraph-node-selected(id); }
                     refresh-clicked => { root.memgraph-refresh-clicked(); }
+                    export-clicked => { root.memgraph-export-clicked(); }
                 }
                 // Automation — CRUD cron scheduler (GAP-01). n8n lives in its own tab.
                 if root.nav-active == "automation": CronView {

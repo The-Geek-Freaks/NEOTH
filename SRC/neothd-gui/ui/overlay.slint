@@ -246,6 +246,10 @@ export component MiniOverlay inherits Window {
                             background: Theme.amber-500;
                             border-width: 1.5px;
                             border-color: Theme.bg-void;
+                            // Spring-pop on appearance (design audit — no blink-in).
+                            opacity: 0;
+                            init => { self.opacity = 1; }
+                            animate opacity { duration: Theme.duration-fast; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
 
                             Text {
                                 text: root.unread-count >= 9 ? "9+"
@@ -447,6 +451,10 @@ export component MiniOverlay inherits Window {
                                 background: Theme.amber-500;
                                 border-width: 1px;
                                 border-color: Theme.bg-sunken;
+                                // Spring-pop on appearance (design audit).
+                                opacity: 0;
+                                init => { self.opacity = 1; }
+                                animate opacity { duration: Theme.duration-fast; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
 
                                 Text {
                                     text: root.unread-count >= 9 ? "9+"
