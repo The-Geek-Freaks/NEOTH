@@ -480,6 +480,13 @@ export component MainWindow inherits Window {
     in property <string> mcp-output: "";
     in property <bool> mcp-running: false;
     callback mcp-run-clicked();
+    // Research P0 — hooks + groundtruth registry probes.
+    in property <string> hooks-output: "";
+    in property <bool> hooks-running: false;
+    callback hooks-run-clicked();
+    in property <string> gt-output: "";
+    in property <bool> gt-running: false;
+    callback gt-run-clicked();
     // Wave 5 — structured agent cards; raw output stays the fallback.
     in property <[AgentRow]> agents-model: [];
 
@@ -830,6 +837,8 @@ export component MainWindow inherits Window {
         : root.nav-active == "wal"         ? "WAL Inspector"
         : root.nav-active == "memgraph"    ? "Memory Graph"
         : root.nav-active == "mcp"         ? "MCP Servers"
+        : root.nav-active == "hooks"       ? "Hooks"
+        : root.nav-active == "groundtruth" ? "Groundtruth"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
         : root.nav-active == "n8n"         ? "Automation Bridge"
@@ -3089,7 +3098,8 @@ export component MainWindow inherits Window {
                         && root.nav-active != "overview"
                         && root.nav-active != "agents" && root.nav-active != "automation"
                         && root.nav-active != "wal" && root.nav-active != "memgraph"
-                        && root.nav-active != "mcp"
+                        && root.nav-active != "mcp" && root.nav-active != "hooks"
+                        && root.nav-active != "groundtruth"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
@@ -3537,6 +3547,24 @@ export component MainWindow inherits Window {
                     running: root.mcp-running;
                     empty-hint: "Click \"Refresh\" to load the MCP server registry.";
                     run-clicked => { root.mcp-run-clicked(); }
+                }
+                // Research P0 — lifecycle hooks registry (neoth hooks list).
+                if root.nav-active == "hooks": ProbeView {
+                    blurb: "Lifecycle hooks — PreToolUse / PostToolUse / Stop command hooks and their enabled state (neoth hooks list). Read-only.";
+                    action-label: "Refresh";
+                    output: root.hooks-output;
+                    running: root.hooks-running;
+                    empty-hint: "Click \"Refresh\" to load the hook registry.";
+                    run-clicked => { root.hooks-run-clicked(); }
+                }
+                // Research P0 — ground-truth fact store (neoth groundtruth list).
+                if root.nav-active == "groundtruth": ProbeView {
+                    blurb: "Ground-truth facts — the verified fact store that gates recall and council weighting (neoth groundtruth list). Read-only.";
+                    action-label: "Refresh";
+                    output: root.gt-output;
+                    running: root.gt-running;
+                    empty-hint: "Click \"Refresh\" to load the ground-truth store.";
+                    run-clicked => { root.gt-run-clicked(); }
                 }
                 // WAL Inspector — the audit chain, browsable (Wave 5) with
                 // the timeline scrubber strip above (Wave 6, GUI-only killer:

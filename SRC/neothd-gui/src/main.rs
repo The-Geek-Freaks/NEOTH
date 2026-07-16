@@ -3572,6 +3572,90 @@ fn main() -> Result<()> {
         });
     });
 
+    // Research P0 — hooks probe: `neoth hooks list --output json`.
+    let weak_hooks = window.as_weak();
+    window.on_hooks_run_clicked(move || {
+        let Some(w0) = weak_hooks.upgrade() else {
+            return;
+        };
+        w0.set_hooks_running(true);
+        let weak = weak_hooks.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("hooks")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "hooks registry is empty.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list hooks.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_hooks_output(output.into());
+                    w.set_hooks_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — groundtruth probe: `neoth groundtruth list --output json`.
+    let weak_gt = window.as_weak();
+    window.on_gt_run_clicked(move || {
+        let Some(w0) = weak_gt.upgrade() else {
+            return;
+        };
+        w0.set_gt_running(true);
+        let weak = weak_gt.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("groundtruth")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "Ground-truth store is empty.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list ground-truth facts.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_gt_output(output.into());
+                    w.set_gt_running(false);
+                }
+            });
+        });
+    });
+
     // Agents tab — `neothd cluster status` (the agent/worker + node topology).
     let weak_agents = window.as_weak();
     window.on_agents_refresh_clicked(move || {
