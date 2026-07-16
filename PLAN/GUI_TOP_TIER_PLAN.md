@@ -7,6 +7,29 @@
 > `git pull --rebase`, atomare Commits, selektives `git add`.
 > Deckt die offenen GOLD-Rollups **GOLD-R4-04/05/06/09** aus ROAD_TO_1_0_GOLD.md ab.
 
+## ERFÜLLUNGSSTAND (Operator-Auftrag 2026-07-16, Stand HEAD 07cdb326)
+
+Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durchlaufen:
+
+1. **Systematisches GUI-Research** ✅ — Wave 1 `wf_8618f46f-1a0` (6 Agenten, 600k Tokens):
+   GUI-Komplettinventar (24 Slint-Files, alle Tabs/Callbacks/Lücken), CLI↔GUI-Parity-Audit
+   (~130 Subcommands / 24 Slash-Commands / 20 Config-Sections → P0-Lückenliste),
+   Tracker/Codex-Kollisionsanalyse, Buddy-Audit (26 Moods, toter Event-Bus),
+   Kanban/Cluster-Tiefenanalyse (Comments-nicht-injiziert als P0 bestätigt).
+2. **Best-in-Class-Analyse** ✅ — Wave 1 + Wave 2 `wf_c9f1360d-bda` (12 Agenten, 1.67M Tokens,
+   web-grounded): Claude Desktop, ChatGPT Desktop + Codex, Cursor/Composer, Linear, Raycast,
+   Notion/Obsidian, Perplexity, TypingMind, LibreChat, Msty, Grafana/Netdata/k9s/Tailscale,
+   Desktop-Pets/Dynamic-Island — je 3–8 konkrete Mechaniken + NEOTH-Transfer, gerankt
+   killer/high/nice. Ökosystem-Homogenität (ein Icon-Set, eine Interaction-Grammar,
+   Spacing-Grid, Footer/About/Changelog) als eigene Dimension.
+3. **Plan aus dem Research** ✅ — dieses Dokument: Wellen A–G aus dem Parity/Inventar-Audit,
+   Wave H (Killer-Backlog) aus der Web-Research-Synthese.
+4. **Implementierung** ✅ laufend — 21 Commits `67e968c5`→`07cdb326` am 2026-07-16, jede Welle
+   mit Ownership-Agenten gebaut, von Hand verdrahtet, Gates grün, gepusht. Bilanz unten
+   an den [x]-Items ablesbar (A+B komplett, C 6/7, H 14/22).
+5. **Codex-Abgleich** ✅ — durchgehend `pull --rebase` vor jedem Push; Codex merged die
+   GUI-Commits aktiv in `codex/gold-integrate` (+fmt-normalize); 0 Konflikte über 21 Commits.
+
 ## Research-Basis (verifiziert am Code, HEAD 7e53c9b5)
 
 - GUI: 24 Slint-Files (~41k LOC gesamt, main.rs 16k), Token-System in
