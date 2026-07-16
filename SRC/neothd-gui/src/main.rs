@@ -3656,6 +3656,132 @@ fn main() -> Result<()> {
         });
     });
 
+    // Research P0 — catalog probe: `neoth catalog list --output json`.
+    let weak_catalog = window.as_weak();
+    window.on_catalog_run_clicked(move || {
+        let Some(w0) = weak_catalog.upgrade() else {
+            return;
+        };
+        w0.set_catalog_running(true);
+        let weak = weak_catalog.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("catalog")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "the model catalog is empty (run `neoth catalog refresh`).".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load catalog.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_catalog_output(output.into());
+                    w.set_catalog_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — quota probe: `neoth quota status --output json`.
+    let weak_quota = window.as_weak();
+    window.on_quota_run_clicked(move || {
+        let Some(w0) = weak_quota.upgrade() else {
+            return;
+        };
+        w0.set_quota_running(true);
+        let weak = weak_quota.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("quota")
+                    .arg("status")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no provider quota state recorded yet.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load quota.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_quota_output(output.into());
+                    w.set_quota_running(false);
+                }
+            });
+        });
+    });
+
+    // Research P0 — tweaks probe: `neoth tweaks show --output json`.
+    let weak_tweaks = window.as_weak();
+    window.on_tweaks_run_clicked(move || {
+        let Some(w0) = weak_tweaks.upgrade() else {
+            return;
+        };
+        w0.set_tweaks_running(true);
+        let weak = weak_tweaks.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("tweaks")
+                    .arg("show")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no runtime tweaks set (all defaults).".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load tweaks.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_tweaks_output(output.into());
+                    w.set_tweaks_running(false);
+                }
+            });
+        });
+    });
+
     // Agents tab — `neothd cluster status` (the agent/worker + node topology).
     let weak_agents = window.as_weak();
     window.on_agents_refresh_clicked(move || {

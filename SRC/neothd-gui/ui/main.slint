@@ -487,6 +487,15 @@ export component MainWindow inherits Window {
     in property <string> gt-output: "";
     in property <bool> gt-running: false;
     callback gt-run-clicked();
+    in property <string> catalog-output: "";
+    in property <bool> catalog-running: false;
+    callback catalog-run-clicked();
+    in property <string> quota-output: "";
+    in property <bool> quota-running: false;
+    callback quota-run-clicked();
+    in property <string> tweaks-output: "";
+    in property <bool> tweaks-running: false;
+    callback tweaks-run-clicked();
     // Wave 5 — structured agent cards; raw output stays the fallback.
     in property <[AgentRow]> agents-model: [];
 
@@ -839,6 +848,9 @@ export component MainWindow inherits Window {
         : root.nav-active == "mcp"         ? "MCP Servers"
         : root.nav-active == "hooks"       ? "Hooks"
         : root.nav-active == "groundtruth" ? "Groundtruth"
+        : root.nav-active == "catalog"         ? "Model Catalog"
+        : root.nav-active == "quota"         ? "Provider Quota"
+        : root.nav-active == "tweaks"         ? "Runtime Tweaks"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
         : root.nav-active == "n8n"         ? "Automation Bridge"
@@ -3100,6 +3112,8 @@ export component MainWindow inherits Window {
                         && root.nav-active != "wal" && root.nav-active != "memgraph"
                         && root.nav-active != "mcp" && root.nav-active != "hooks"
                         && root.nav-active != "groundtruth"
+                        && root.nav-active != "catalog" && root.nav-active != "quota"
+                        && root.nav-active != "tweaks"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
@@ -3565,6 +3579,30 @@ export component MainWindow inherits Window {
                     running: root.gt-running;
                     empty-hint: "Click \"Refresh\" to load the ground-truth store.";
                     run-clicked => { root.gt-run-clicked(); }
+                }
+                if root.nav-active == "catalog": ProbeView {
+                    blurb: "Model catalog — every cached provider model with capability/price metadata (neoth catalog list). Read-only; refresh from the CLI with neoth catalog refresh.";
+                    action-label: "Refresh";
+                    output: root.catalog-output;
+                    running: root.catalog-running;
+                    empty-hint: "Click \"Refresh\" to load the model catalog.";
+                    run-clicked => { root.catalog-run-clicked(); }
+                }
+                if root.nav-active == "quota": ProbeView {
+                    blurb: "Provider quota — per-provider daily request state and any active 429 backoff window (neoth quota status). Read-only.";
+                    action-label: "Refresh";
+                    output: root.quota-output;
+                    running: root.quota-running;
+                    empty-hint: "Click \"Refresh\" to load the provider quota.";
+                    run-clicked => { root.quota-run-clicked(); }
+                }
+                if root.nav-active == "tweaks": ProbeView {
+                    blurb: "Runtime tweaks — the appearance/behavior overrides layered over the built-in defaults (neoth tweaks show, ~/.neoth/tweaks.toml). Read-only.";
+                    action-label: "Refresh";
+                    output: root.tweaks-output;
+                    running: root.tweaks-running;
+                    empty-hint: "Click \"Refresh\" to load the runtime tweaks.";
+                    run-clicked => { root.tweaks-run-clicked(); }
                 }
                 // WAL Inspector — the audit chain, browsable (Wave 5) with
                 // the timeline scrubber strip above (Wave 6, GUI-only killer:
