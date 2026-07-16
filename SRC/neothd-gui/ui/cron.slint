@@ -14,7 +14,7 @@
 // Note: jobs.yaml has NO hot-reload; changes take effect on next daemon restart.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, NeothLineEdit, NeothCheckBox } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, NeothLineEdit, NeothCheckBox, EmptyState } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire struct ───────────────────────────────────────────────────────────────
@@ -338,17 +338,10 @@ export component CronView inherits Rectangle {
                 }
 
                 // ── JOB LIST ─────────────────────────────────────────────────
-                if root.cron-jobs.length == 0: Card {
-                    VerticalLayout {
-                        padding: 20px; spacing: 8px;
-                        alignment: center;
-                        Text {
-                            text: "No scheduled jobs — add one above.";
-                            color: Theme.text-secondary;
-                            font-size: Theme.font-size-sm;
-                            horizontal-alignment: center;
-                        }
-                    }
+                if root.cron-jobs.length == 0: EmptyState {
+                    glyph: "○";
+                    title: "No scheduled jobs";
+                    hint: "add one above with the New Job form";
                 }
 
                 for j in root.cron-jobs: CronJobCard {

@@ -14,16 +14,25 @@
   chat deep-link chips, overview cost chevron, mesh PeerCard Details — all now
   carry accessible-role/label + accessible-action-default.
 - Empty states → canonical `EmptyState`: activity body, mesh peers card,
-  WAL-inspector events-empty + no-selection hint.
+  WAL-inspector events-empty + no-selection hint, cron job-list.
+- Reduced-motion (E7): every `animation-tick()`-driven phase app-wide (Buddy orb
+  + NeothButton spinner + Led pulse + Skeleton shimmer + activity active-dot)
+  freezes at `Theme.animation-mode == 0`; fixed 3 latent 0ms divide-by-zeros on
+  that path as a side effect.
 - Token floor: buddy '!' weight→Theme.weight-bold; activity detail 10.5px→2xs;
   overlay badges 8px→self.width/2 (true circle); canonical Toast title/body →
   font-size-xs/2xs.
 
 **DECLINED with reason** (verify-first — do NOT re-open without new evidence):
-- **Overview 5 card empty-states + mesh gossip inline** → NOT converted to
-  EmptyState. These are compact in-card status lines (the card already has a
-  Kicker header + RefreshFooter); a 28px-glyph EmptyState is oversized/redundant
-  there. They are already uniform (text-disabled/font-mono/font-size-xs).
+- **Compact in-card empty lines** → NOT converted to EmptyState: overview's 5
+  cards, mesh gossip, selfimprove/selfreprog proposals, n8n workflows, dreaming
+  dreams/reflection, settings activity/peers, calendar. All are compact status
+  lines in a ~48px slot under a Kicker header (or above a RefreshFooter); a
+  28px-glyph EmptyState is oversized/redundant there. Only *standalone
+  panel-level* empties (whole list area, no adjacent Kicker) get EmptyState —
+  activity, mesh-peers, WAL-inspector, cron. Informational hints (chat provider
+  grants, buddyconfig allowlist, keet-install note, command-palette no-match)
+  are not empty-states at all.
 - **StatRow Skeleton shimmer** → needs a real Rust "probing" flag; binding the
   shimmer to `value == ""` shimmers forever on settled-empty fields (e.g.
   accelerator on a CPU-only host). Defer until a probe-in-flight signal exists.
