@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -76,8 +77,10 @@ pub struct MemorySaveResponse {
     pub bytes: usize,
 }
 
-/// `/api/provider/call` body. The shared helper composes the
-/// system prompt; n8n callers can override via `system`.
+/// `/api/provider/call` body. The handler composes the explicit `system`
+/// layer with the authenticated operator's communication profile before the
+/// concrete provider request is authorized. Callers cannot choose a profile
+/// subject and automation prompts are never learned as behavioral evidence.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProviderCallRequest {
     pub prompt: String,
@@ -85,6 +88,10 @@ pub struct ProviderCallRequest {
     pub system: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// Skip every communication-profile read for this request. Defaults false
+    /// so existing workflows keep their prior request shape and behavior.
+    #[serde(default)]
+    pub incognito: bool,
 }
 
 /// `/api/provider/call` response — sliced down to the operator-
@@ -317,6 +324,57 @@ pub async fn memory_save(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcom
 
 // ── /api/provider/call ──────────────────────────────────────────
 
+/// The n8n server authenticates either the operator master token or an
+/// operator-issued `provider:call` scoped token before this handler runs. The
+/// request schema deliberately has no subject field, so workflow JSON cannot
+/// select another person's communication profile.
+const PROVIDER_CALL_COMMUNICATION_SUBJECT: &str = "operator";
+
+fn build_provider_request(
+    home: &std::path::Path,
+    config: &crate::config::FreedomConfig,
+    req: &ProviderCallRequest,
+    effective_model: Option<String>,
+) -> anyhow::Result<crate::providers::Request> {
+    // Read-only by design: automation prompts may be machine-generated and
+    // therefore must never become behavioral evidence. `compile_prompt`
+    // returns before opening state when `incognito` is true.
+    let communication_profile = crate::profile::communication::compile_prompt(
+        home,
+        PROVIDER_CALL_COMMUNICATION_SUBJECT,
+        &config.profile.communication,
+        None,
+        req.incognito,
+    )
+    .context("compile communication profile for n8n provider call")?;
+
+    let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+        prompt: &req.prompt,
+        operator_context: None,
+        preset_addendum: None,
+        explicit_system: req.system.as_deref(),
+        repo_context_block: None,
+        skill_system_prompt: None,
+        used_skill_id: None,
+        mcp_catalogue: None,
+        persona_override: None,
+        moral_core: None,
+        identity_anchor: None,
+        identity_locked: false,
+        current_goal: None,
+        communication_profile: communication_profile.as_ref().map(|compiled| {
+            crate::pipeline::CommunicationProfilePrompt::presentation_only(compiled.as_str())
+        }),
+    });
+
+    Ok(crate::providers::Request {
+        prompt: enriched.prompt,
+        system: enriched.system,
+        model: effective_model,
+        ..Default::default()
+    })
+}
+
 /// H1 (2026-06-12) — cloud-egress consent gate for the n8n `provider_call`
 /// surface. Returns `Some(refusal)` if the call must be refused, `None` if it
 /// may proceed. Mirrors the chat path: at autonomy=Strict cloud is refused
@@ -430,11 +488,23 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     } else {
         "provider_default"
     };
-    let request = crate::providers::Request {
-        prompt: req.prompt.clone(),
-        system: req.system.clone(),
-        model: effective_model.clone(),
-        ..Default::default()
+    // Compose every provider-bound system layer BEFORE constructing the
+    // AuthorizedProvider. Its request binding therefore covers the final
+    // communication-enriched system prompt, not the caller's partial input.
+    let request = match build_provider_request(
+        &state.home,
+        live_config.as_ref(),
+        &req,
+        effective_model.clone(),
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            return HandlerOutcome::error(
+                ApiErrorCode::UpstreamError,
+                format!("provider_call prompt composition failed: {error:#}"),
+                "inspect `neoth profile communication status`; use `incognito: true` only when this workflow must not read profile state",
+            );
+        }
     };
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
@@ -448,7 +518,9 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
                 source: Some("n8n_api"),
                 call_type: Some("n8n_provider_call"),
                 request_id: Some(ctx.request_id.clone()),
+                operator_id: live_config.operator_id.clone(),
                 model_source: Some(model_source),
+                incognito: req.incognito,
                 configured_provider_kind: Some(
                     provider_kind
                         .map(|kind| kind.as_str())
@@ -566,6 +638,27 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
 mod tests {
     use super::*;
 
+    fn pin_preference(
+        home: &std::path::Path,
+        subject_id: &str,
+        session_id: &str,
+        event_byte: u8,
+        value: crate::profile::communication::PreferenceValue,
+    ) {
+        crate::profile::communication::set_explicit_preference(
+            home,
+            &crate::config::CommunicationProfileConfig::default(),
+            subject_id,
+            session_id,
+            value,
+            [event_byte; 32],
+            1_700_000_000 + i64::from(event_byte),
+            crate::profile::communication::CommunicationScope::Global,
+            false,
+        )
+        .expect("pin communication preference");
+    }
+
     #[test]
     fn parse_body_rejects_oversize_payload() {
         let big = vec![b'a'; REQUEST_BODY_LIMIT_BYTES + 1];
@@ -601,6 +694,154 @@ mod tests {
     fn recall_request_defaults_limit_to_none() {
         let r: RecallRequest = serde_json::from_str(r#"{"query": "x"}"#).unwrap();
         assert_eq!(r.limit, None);
+    }
+
+    #[test]
+    fn provider_request_injects_operator_profile_before_explicit_system() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let config = crate::config::FreedomConfig::default();
+        pin_preference(
+            home.path(),
+            PROVIDER_CALL_COMMUNICATION_SUBJECT,
+            "operator-session",
+            1,
+            crate::profile::communication::PreferenceValue::Directness(
+                crate::profile::communication::DirectnessPreference::Direct,
+            ),
+        );
+        let req = ProviderCallRequest {
+            prompt: "automation task".into(),
+            system: Some("CALLER_SYSTEM_LAYER".into()),
+            model: None,
+            incognito: false,
+        };
+
+        let request = build_provider_request(home.path(), &config, &req, Some("wire-model".into()))
+            .expect("compose provider request");
+        let system = request.system.expect("communication + explicit system");
+        let communication_pos = system.find("Be direct.").expect("compiled accommodation");
+        let explicit_pos = system
+            .find("CALLER_SYSTEM_LAYER")
+            .expect("explicit caller system");
+        assert!(communication_pos < explicit_pos);
+        assert_eq!(request.prompt, "automation task");
+        assert_eq!(request.model.as_deref(), Some("wire-model"));
+    }
+
+    #[test]
+    fn provider_request_incognito_defaults_false_and_skips_malformed_state() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let state_path = crate::profile::communication::state_path(home.path());
+        std::fs::create_dir_all(state_path.parent().expect("profile parent"))
+            .expect("create profile parent");
+        std::fs::write(&state_path, b"not valid communication state")
+            .expect("write malformed sentinel");
+        let config = crate::config::FreedomConfig::default();
+
+        let legacy: ProviderCallRequest =
+            serde_json::from_str(r#"{"prompt":"legacy"}"#).expect("legacy request parses");
+        assert!(
+            !legacy.incognito,
+            "omitted flag must remain backward-compatible"
+        );
+        assert!(
+            build_provider_request(home.path(), &config, &legacy, None).is_err(),
+            "non-incognito must not silently drop corrupt configured state"
+        );
+
+        let incognito: ProviderCallRequest = serde_json::from_str(
+            r#"{"prompt":"private automation","system":"EXPLICIT_ONLY","incognito":true}"#,
+        )
+        .expect("incognito request parses");
+        let request = build_provider_request(home.path(), &config, &incognito, None)
+            .expect("incognito skips communication-state read");
+        assert_eq!(request.system.as_deref(), Some("EXPLICIT_ONLY"));
+        assert_eq!(
+            std::fs::read(&state_path).expect("read malformed sentinel"),
+            b"not valid communication state"
+        );
+    }
+
+    #[test]
+    fn provider_request_subject_is_fixed_and_caller_override_is_ignored() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let config = crate::config::FreedomConfig::default();
+        pin_preference(
+            home.path(),
+            PROVIDER_CALL_COMMUNICATION_SUBJECT,
+            "operator-session",
+            2,
+            crate::profile::communication::PreferenceValue::Structure(
+                crate::profile::communication::StructurePreference::Bullets,
+            ),
+        );
+        pin_preference(
+            home.path(),
+            "attacker",
+            "attacker-session",
+            3,
+            crate::profile::communication::PreferenceValue::Directness(
+                crate::profile::communication::DirectnessPreference::Gentle,
+            ),
+        );
+
+        // Unknown fields remain ignored for backward-compatible JSON parsing,
+        // but there is no subject field in ProviderCallRequest and the helper
+        // always compiles the authenticated operator subject above.
+        let req: ProviderCallRequest =
+            serde_json::from_str(r#"{"prompt":"task","subject":"attacker","incognito":false}"#)
+                .expect("request with unrelated legacy field parses");
+        let request = build_provider_request(home.path(), &config, &req, None)
+            .expect("compose fixed-subject request");
+        let system = request.system.expect("operator accommodation");
+        assert!(system.contains("Use short bullet lists for parallel points."));
+        assert!(!system.contains("Use a calm, gentle tone"));
+    }
+
+    #[test]
+    fn provider_request_exports_no_profile_metadata_and_records_no_automation_evidence() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let config = crate::config::FreedomConfig::default();
+        let private_session_marker = "RAW_PROFILE_METADATA_MUST_NOT_LEAK";
+        pin_preference(
+            home.path(),
+            PROVIDER_CALL_COMMUNICATION_SUBJECT,
+            private_session_marker,
+            4,
+            crate::profile::communication::PreferenceValue::Clarification(
+                crate::profile::communication::ClarificationPreference::AskOneQuestion,
+            ),
+        );
+        let state_path = crate::profile::communication::state_path(home.path());
+        let before = std::fs::read(&state_path).expect("read state before request composition");
+        let req = ProviderCallRequest {
+            prompt: "machine-generated automation prompt".into(),
+            system: None,
+            model: None,
+            incognito: false,
+        };
+
+        let request = build_provider_request(home.path(), &config, &req, None)
+            .expect("compose provider request");
+        let system = request.system.expect("compiled accommodation");
+        assert!(system.contains("ask at most one concise question"));
+        for forbidden in [
+            private_session_marker,
+            "event_hash",
+            "subject_id",
+            "session_id",
+            "reason_code",
+        ] {
+            assert!(
+                !system.contains(forbidden),
+                "profile metadata leaked: {forbidden}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(&state_path).expect("read state after request composition"),
+            before,
+            "automation provider calls must never record behavioral evidence"
+        );
     }
 
     // ── H1 (2026-06-12): cloud-egress consent gate ──────────────────

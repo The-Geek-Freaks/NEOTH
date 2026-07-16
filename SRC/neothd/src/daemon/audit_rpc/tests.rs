@@ -95,12 +95,20 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let proof_rotation = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
     let http_intent = crate::wal::events::ExtendedSubtype::ExternalHttpIntent as u8;
     let http_result = crate::wal::events::ExtendedSubtype::ExternalHttpResult as u8;
+    let communication_controlled =
+        crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8;
     let self_edit_proposed = crate::wal::events::ExtendedSubtype::SelfEditProposed as u8;
     assert_eq!(
         ALLOWED_CLIENT_EXTENDED_SUBTYPES,
-        &[proof_rotation, http_intent, http_result]
+        &[
+            proof_rotation,
+            http_intent,
+            http_result,
+            communication_controlled,
+        ]
     );
     assert!(is_allowed_client_event_pair(0x00, proof_rotation));
+    assert!(is_allowed_client_event_pair(0x00, communication_controlled));
     assert!(!is_allowed_client_event_pair(0x00, 0));
     assert!(!is_allowed_client_event_pair(0x00, self_edit_proposed));
     assert!(is_allowed_client_event_pair(0xA8, 0));

@@ -31,9 +31,6 @@ use serde::{Deserialize, Serialize};
 use crate::profile::estimators::BehaviouralProfile;
 use crate::profile::presets::{ProfilePreset, apply_preset};
 use crate::profile::self_dev::{SelfDevProposal, propose_adjustments};
-use crate::wal::events::{
-    EVENT_TYPE_SELF_DEV_ACCEPTED, EVENT_TYPE_SELF_DEV_DECLINED, EVENT_TYPE_SELF_DEV_PROPOSED,
-};
 use crate::wal::writer::WalWriterHandle;
 
 #[derive(Args, Debug, Clone)]
@@ -108,6 +105,49 @@ pub struct StoredProposal {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProposalStore {
     pub entries: Vec<StoredProposal>,
+    #[serde(default)]
+    audit_pending: Vec<ProposalAuditIntent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ProposalAuditIntent {
+    Proposed {
+        proposal: SelfDevProposal,
+        ts_unix: i64,
+    },
+    Accepted {
+        proposal_id: String,
+        ts_unix: i64,
+    },
+    Declined {
+        proposal_id: String,
+        reason: String,
+        ts_unix: i64,
+    },
+}
+
+impl ProposalAuditIntent {
+    fn to_pending_event(&self) -> super::self_dev_outbox::PendingEvent {
+        match self {
+            Self::Proposed { proposal, ts_unix } => {
+                super::self_dev_outbox::PendingEvent::proposed(proposal.clone(), *ts_unix)
+            }
+            Self::Accepted {
+                proposal_id,
+                ts_unix,
+            } => super::self_dev_outbox::PendingEvent::accepted(proposal_id.clone(), *ts_unix),
+            Self::Declined {
+                proposal_id,
+                reason,
+                ts_unix,
+            } => super::self_dev_outbox::PendingEvent::declined(
+                proposal_id.clone(),
+                reason.clone(),
+                *ts_unix,
+            ),
+        }
+    }
 }
 
 pub fn proposals_path(home: &Path) -> PathBuf {
@@ -149,6 +189,7 @@ pub async fn run(
     writer: Option<&WalWriterHandle>,
     output: crate::cli::OutputFormat,
 ) -> Result<()> {
+    flush_pending_audits(home, writer).await?;
     match args.action {
         SelfDevAction::Review { min_confidence } => run_review(home, min_confidence, output),
         SelfDevAction::Accept { id } => run_accept(home, &id, writer, output).await,
@@ -264,11 +305,12 @@ async fn run_accept(
     output: crate::cli::OutputFormat,
 ) -> Result<()> {
     let mut store = load_store(home)?;
-    let entry = store
+    let entry_index = store
         .entries
-        .iter_mut()
-        .find(|e| e.proposal.id == id)
+        .iter()
+        .position(|e| e.proposal.id == id)
         .with_context(|| format!("proposal id `{id}` not found"))?;
+    let entry = &store.entries[entry_index];
     if entry.status == ProposalStatus::Accepted {
         render_proposal_mutation(
             output,
@@ -286,22 +328,23 @@ async fn run_accept(
             "proposal `{id}` was previously declined — re-propose via `neoth self-dev propose ...` to re-evaluate"
         );
     }
+    let proposal = entry.proposal.clone();
+    apply_proposal_effect(home, &proposal)
+        .await
+        .with_context(|| format!("apply proposal effect for `{id}`"))?;
     let ts = now_unix();
+    let entry = &mut store.entries[entry_index];
     entry.status = ProposalStatus::Accepted;
     entry.status_at_unix = ts;
     entry.decline_reason.clear();
+    store.audit_pending.push(ProposalAuditIntent::Accepted {
+        proposal_id: id.to_owned(),
+        ts_unix: ts,
+    });
     save_store(home, &store)?;
-    if let Some(w) = writer {
-        emit_accepted(w, id, ts).await?;
-    } else {
-        // No in-process writer (CLI invocation). Enqueue for the
-        // daemon's drain task so the WAL frame STILL lands.
-        super::self_dev_outbox::enqueue(
-            home,
-            &super::self_dev_outbox::PendingEvent::accepted(id, ts),
-        )
-        .await?;
-    }
+    flush_pending_audits(home, writer)
+        .await
+        .context("proposal accepted; audit intent remains pending for retry")?;
     render_proposal_mutation(
         output,
         "accept",
@@ -311,6 +354,35 @@ async fn run_accept(
         writer.is_some(),
         None,
     );
+    Ok(())
+}
+
+async fn apply_proposal_effect(home: &Path, proposal: &SelfDevProposal) -> Result<()> {
+    use crate::profile::self_dev::{ProposalKind, ValidatedProposalTarget};
+
+    match proposal
+        .validate_for_acceptance()
+        .map_err(anyhow::Error::msg)?
+    {
+        ValidatedProposalTarget::Preset(preset) => {
+            crate::cli::profile::record_active_preset(home, preset)?;
+        }
+        ValidatedProposalTarget::Verbosity(verbosity) => {
+            crate::cli::profile::set_communication_verbosity_override_at(home, verbosity)?;
+        }
+        ValidatedProposalTarget::ExtensionSelector(id) => {
+            crate::cli::skills::set_skill_enabled_at(home, &id, true).await?;
+        }
+        ValidatedProposalTarget::BriefingTime { .. } => {
+            anyhow::bail!("briefing-schedule apply is not wired yet; proposal remains pending");
+        }
+        ValidatedProposalTarget::SourceEdit => {
+            if !matches!(proposal.kind, ProposalKind::SourceEdit { .. }) {
+                anyhow::bail!("source-edit target validation mismatch");
+            }
+            anyhow::bail!("source-edit apply is not wired yet; proposal remains pending");
+        }
+    }
     Ok(())
 }
 
@@ -351,16 +423,15 @@ async fn run_decline(
     entry.status = ProposalStatus::Declined;
     entry.status_at_unix = ts;
     entry.decline_reason = reason.to_string();
+    store.audit_pending.push(ProposalAuditIntent::Declined {
+        proposal_id: id.to_owned(),
+        reason: reason.to_owned(),
+        ts_unix: ts,
+    });
     save_store(home, &store)?;
-    if let Some(w) = writer {
-        emit_declined(w, id, reason, ts).await?;
-    } else {
-        super::self_dev_outbox::enqueue(
-            home,
-            &super::self_dev_outbox::PendingEvent::declined(id, reason, ts),
-        )
-        .await?;
-    }
+    flush_pending_audits(home, writer)
+        .await
+        .context("proposal declined; audit intent remains pending for retry")?;
     render_proposal_mutation(
         output,
         "decline",
@@ -427,17 +498,11 @@ fn render_proposal_mutation(
 /// `writer` is present, else enqueued to the self-dev outbox for the daemon
 /// to drain), and returns the count of NEW proposals.
 ///
-/// ORDERING (Session 30 review-fix): the store is persisted to
-/// `proposals.json` BEFORE any WAL frame is emitted. The earlier order
-/// (emit-then-save) had a crash window — a kill between the last
-/// `emit_proposed` and the single trailing `save_store` left `0x1C` frames
-/// in the WAL for proposals absent from `proposals.json`; the next cron
-/// tick's dedup (which reads the store) then missed them and re-emitted →
-/// duplicate WAL frames the operator never saw in `neoth self-dev review`.
-/// Persist-first inverts the failure mode to the benign one: a crash after
-/// `save_store` but before emit leaves a proposal that IS in the store
-/// (visible in review, dedup-safe) but lacks its audit frame — no
-/// duplicates, no phantom frames.
+/// ORDERING: the proposal mutation and its audit intent are persisted in one
+/// `proposals.json` update. The intent is then enqueued to the durable outbox
+/// and removed only after that enqueue (and optional in-process drain) succeeds.
+/// A crash may leave a retryable pending intent, but never a visible mutation
+/// with no durable audit path.
 pub(crate) async fn propose_and_store(
     home: &Path,
     profile: &BehaviouralProfile,
@@ -456,15 +521,15 @@ pub(crate) async fn propose_and_store(
 /// one. Shared by the behavioural-snapshot path ([`propose_and_store`]) and the
 /// G-03 feedback path (the profile-adapt cron). Returns the count newly added.
 ///
-/// Persist BEFORE emitting WAL frames — a crash here yields proposals-with-no
-/// -frame (benign), never frames-with-no-store (which would re-emit + duplicate
-/// on the next tick). Dedup is by stable `proposal.id`, so re-running is
-/// idempotent (the operator never sees the same suggestion twice).
+/// The proposal rows and audit intents are committed together. Dedup is by
+/// stable `proposal.id`, so re-running is idempotent while retained audit
+/// intents keep WAL emission retryable.
 pub(crate) async fn store_proposals(
     home: &Path,
     proposals: &[SelfDevProposal],
     writer: Option<&WalWriterHandle>,
 ) -> Result<usize> {
+    flush_pending_audits(home, writer).await?;
     if proposals.is_empty() {
         return Ok(0);
     }
@@ -484,20 +549,37 @@ pub(crate) async fn store_proposals(
             status_at_unix: ts,
             decline_reason: String::new(),
         });
+        store.audit_pending.push(ProposalAuditIntent::Proposed {
+            proposal: (*p).clone(),
+            ts_unix: ts,
+        });
     }
     save_store(home, &store)?;
-    for p in &to_add {
-        if let Some(w) = writer {
-            emit_proposed(w, p, ts).await?;
-        } else {
-            super::self_dev_outbox::enqueue(
-                home,
-                &super::self_dev_outbox::PendingEvent::proposed((*p).clone(), ts),
-            )
-            .await?;
-        }
-    }
+    flush_pending_audits(home, writer)
+        .await
+        .context("proposals stored; audit intent remains pending for retry")?;
     Ok(to_add.len())
+}
+
+async fn flush_pending_audits(home: &Path, writer: Option<&WalWriterHandle>) -> Result<usize> {
+    let mut flushed = 0usize;
+    loop {
+        let store = load_store(home)?;
+        let Some(intent) = store.audit_pending.first().cloned() else {
+            return Ok(flushed);
+        };
+        let event = intent.to_pending_event();
+        super::self_dev_outbox::enqueue(home, &event).await?;
+        if let Some(w) = writer {
+            super::self_dev_outbox::drain_once(home, w).await?;
+        }
+        let mut latest = load_store(home)?;
+        if latest.audit_pending.first() == Some(&intent) {
+            latest.audit_pending.remove(0);
+            save_store(home, &latest)?;
+        }
+        flushed += 1;
+    }
 }
 
 async fn run_propose(
@@ -524,45 +606,6 @@ async fn run_propose(
         );
     }
     println!("review via `neoth self-dev review`");
-    Ok(())
-}
-
-async fn emit_proposed(
-    writer: &WalWriterHandle,
-    proposal: &SelfDevProposal,
-    ts_unix: i64,
-) -> Result<()> {
-    let payload = proposal.to_proposed_payload(ts_unix);
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_PROPOSED, &payload).build();
-    writer.append(header, payload).await?;
-    Ok(())
-}
-
-async fn emit_accepted(writer: &WalWriterHandle, id: &str, ts_unix: i64) -> Result<()> {
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "proposal_id": id,
-        "ts_unix": ts_unix,
-    }))
-    .unwrap_or_default();
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_ACCEPTED, &payload).build();
-    writer.append(header, payload).await?;
-    Ok(())
-}
-
-async fn emit_declined(
-    writer: &WalWriterHandle,
-    id: &str,
-    reason: &str,
-    ts_unix: i64,
-) -> Result<()> {
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "proposal_id": id,
-        "reason": reason,
-        "ts_unix": ts_unix,
-    }))
-    .unwrap_or_default();
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_DECLINED, &payload).build();
-    writer.append(header, payload).await?;
     Ok(())
 }
 

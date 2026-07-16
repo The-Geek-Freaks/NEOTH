@@ -125,6 +125,17 @@ pub enum ExtendedSubtype {
     ExternalHttpIntent = 0x0E,
     /// Mandatory terminal success/failure bound to `ExternalHttpIntent`.
     ExternalHttpResult = 0x0F,
+    /// GOLD-R4-11 — one authenticated communication-preference observation
+    /// transaction changed the local typed profile. The payload is strictly
+    /// metadata-only: subject/event hashes, scope code, counters, revisions,
+    /// and timestamp. Raw user text, inferred labels, and preference values
+    /// are deliberately excluded.
+    CommunicationProfileUpdated = 0x10,
+    /// GOLD-R4-11 — an explicit operator action changed or erased typed
+    /// communication preferences or a declared accessibility context. The
+    /// payload is metadata-only and records the action code plus revisions;
+    /// it never contains the declaration label or free-form user content.
+    CommunicationProfileControlled = 0x11,
 }
 
 impl ExtendedSubtype {
@@ -146,6 +157,8 @@ impl ExtendedSubtype {
             ExtendedSubtype::ProofKeyRotated => "proof_key_rotated",
             ExtendedSubtype::ExternalHttpIntent => "external_http_intent",
             ExtendedSubtype::ExternalHttpResult => "external_http_result",
+            ExtendedSubtype::CommunicationProfileUpdated => "communication_profile_updated",
+            ExtendedSubtype::CommunicationProfileControlled => "communication_profile_controlled",
         }
     }
 
@@ -167,6 +180,8 @@ impl ExtendedSubtype {
             0x0D => Some(ExtendedSubtype::ProofKeyRotated),
             0x0E => Some(ExtendedSubtype::ExternalHttpIntent),
             0x0F => Some(ExtendedSubtype::ExternalHttpResult),
+            0x10 => Some(ExtendedSubtype::CommunicationProfileUpdated),
+            0x11 => Some(ExtendedSubtype::CommunicationProfileControlled),
             _ => None,
         }
     }
@@ -190,6 +205,8 @@ impl ExtendedSubtype {
             Self::ProofKeyRotated,
             Self::ExternalHttpIntent,
             Self::ExternalHttpResult,
+            Self::CommunicationProfileUpdated,
+            Self::CommunicationProfileControlled,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3531,6 +3548,9 @@ mod tests {
             // GOLD-OUTBOUND-HTTP
             ExtendedSubtype::ExternalHttpIntent,
             ExtendedSubtype::ExternalHttpResult,
+            // GOLD-R4-11
+            ExtendedSubtype::CommunicationProfileUpdated,
+            ExtendedSubtype::CommunicationProfileControlled,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

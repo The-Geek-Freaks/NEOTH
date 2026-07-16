@@ -744,6 +744,11 @@ fn default_refusal_recovery_max_attempts() -> u32 {
 /// `NEOTH_PROFILE_LEARN_DISABLE=0`) to opt in.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProfileConfig {
+    /// Default-on, deterministic, local communication adaptation. This is
+    /// deliberately separate from `learn_enabled`: it never invokes an LLM,
+    /// never stores raw chat text, and never infers medical diagnoses.
+    #[serde(default)]
+    pub communication: CommunicationProfileConfig,
     /// When `true`, the chat handler runs `profile::run_pipeline` after
     /// each reply so operator-profile claims grow passively. Costs one
     /// extra LLM call per chat (the Stage-3 extract). Default `false`.
@@ -830,6 +835,7 @@ pub struct ProfileConfig {
 impl Default for ProfileConfig {
     fn default() -> Self {
         Self {
+            communication: CommunicationProfileConfig::default(),
             learn_enabled: default_profile_learn_enabled(),
             timeout_secs: default_profile_timeout_secs(),
             learn_provider: default_profile_learn_provider(),
@@ -838,6 +844,143 @@ impl Default for ProfileConfig {
             pii_categories_disabled: Vec::new(),
             extract_window_chars: default_profile_extract_window_chars(),
         }
+    }
+}
+
+/// Controls what the communication-profile compiler may disclose to the
+/// provider. The safe default exports only concrete presentation
+/// accommodations; it never exports a health or neurodivergence label.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommunicationPromptExport {
+    /// Do not inject the communication profile into provider prompts.
+    None,
+    /// Export only locally compiled presentation instructions.
+    #[default]
+    AccommodationsOnly,
+    /// Export an explicitly operator-declared label plus accommodations.
+    /// Passive estimators can never create such a declaration.
+    LabelAndAccommodations,
+}
+
+/// Deterministic local communication-profile policy.
+///
+/// This engine is default-on because it is bounded local computation, not the
+/// paid Stage-3 fact extractor controlled by [`ProfileConfig::learn_enabled`].
+/// It learns presentation and clarification preferences only. Authentication,
+/// cost, tool permission and safety decisions are outside its authority.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct CommunicationProfileConfig {
+    /// Master switch. Disabled and incognito turns perform zero reads/writes.
+    pub enabled: bool,
+    /// Automatically apply estimates that pass the evidence thresholds.
+    pub auto_apply_low_risk: bool,
+    /// Minimum retained observations before a passive estimate is effective.
+    pub min_observations: u32,
+    /// Minimum distinct authenticated sessions before passive application.
+    pub min_distinct_sessions: u32,
+    /// Minimum winning-weight share for passive application.
+    pub min_confidence: f32,
+    /// Half-life for low-weight passive observations.
+    pub passive_half_life_days: u32,
+    /// Half-life for explicit response-feedback controls.
+    pub feedback_half_life_days: u32,
+    /// Half-life for explicit corrections in natural language.
+    pub correction_half_life_days: u32,
+    /// Full/Sovereign can promote a stable low-risk accommodation only after
+    /// this many observations.
+    pub full_auto_min_observations: u32,
+    /// Distinct-session floor for durable Full/Sovereign promotion.
+    pub full_auto_min_distinct_sessions: u32,
+    /// Confidence floor for durable Full/Sovereign promotion.
+    pub full_auto_min_confidence: f32,
+    /// Bounded evidence retained per subject and dimension.
+    pub max_evidence_per_dimension: usize,
+    /// Provider disclosure policy.
+    pub prompt_export: CommunicationPromptExport,
+    /// Profile synchronization is private/local unless explicitly enabled by
+    /// a future signed, subject-bound cluster contract.
+    pub cluster_sync: bool,
+}
+
+impl Default for CommunicationProfileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_apply_low_risk: true,
+            min_observations: 5,
+            min_distinct_sessions: 3,
+            min_confidence: 0.75,
+            passive_half_life_days: 30,
+            feedback_half_life_days: 90,
+            correction_half_life_days: 180,
+            full_auto_min_observations: 10,
+            full_auto_min_distinct_sessions: 5,
+            full_auto_min_confidence: 0.85,
+            max_evidence_per_dimension: 32,
+            prompt_export: CommunicationPromptExport::AccommodationsOnly,
+            cluster_sync: false,
+        }
+    }
+}
+
+impl CommunicationProfileConfig {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.min_observations == 0 {
+            return Err("min_observations must be greater than zero".to_string());
+        }
+        if self.min_distinct_sessions == 0 {
+            return Err("min_distinct_sessions must be greater than zero".to_string());
+        }
+        if self.min_distinct_sessions > self.min_observations {
+            return Err("min_distinct_sessions must be <= min_observations".to_string());
+        }
+        if !self.min_confidence.is_finite() || !(0.5..=1.0).contains(&self.min_confidence) {
+            return Err("min_confidence must be within 0.5..=1.0".to_string());
+        }
+        if self.passive_half_life_days == 0
+            || self.feedback_half_life_days == 0
+            || self.correction_half_life_days == 0
+        {
+            return Err("communication half-life values must be greater than zero".to_string());
+        }
+        if self.full_auto_min_observations < self.min_observations {
+            return Err("full_auto_min_observations must be >= min_observations".to_string());
+        }
+        if self.full_auto_min_distinct_sessions < self.min_distinct_sessions {
+            return Err(
+                "full_auto_min_distinct_sessions must be >= min_distinct_sessions".to_string(),
+            );
+        }
+        if self.full_auto_min_distinct_sessions > self.full_auto_min_observations {
+            return Err(
+                "full_auto_min_distinct_sessions must be <= full_auto_min_observations".to_string(),
+            );
+        }
+        if !self.full_auto_min_confidence.is_finite()
+            || self.full_auto_min_confidence < self.min_confidence
+            || self.full_auto_min_confidence > 1.0
+        {
+            return Err("full_auto_min_confidence must be within min_confidence..=1.0".to_string());
+        }
+        if !(8..=256).contains(&self.max_evidence_per_dimension) {
+            return Err("max_evidence_per_dimension must be within 8..=256".to_string());
+        }
+        if u64::try_from(self.max_evidence_per_dimension).unwrap_or(u64::MAX)
+            < u64::from(self.full_auto_min_observations)
+        {
+            return Err(
+                "max_evidence_per_dimension must be >= full_auto_min_observations".to_string(),
+            );
+        }
+        if self.cluster_sync {
+            return Err(
+                "cluster_sync is not available until the signed subject-bound sync contract is enabled; leave it false"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 }
 

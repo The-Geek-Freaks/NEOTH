@@ -33,6 +33,7 @@ pub mod baseline_snapshot;
 pub mod briefing_gate;
 pub mod briefing_policy;
 pub mod claim_guard;
+pub mod communication;
 pub mod delta;
 pub mod estimators;
 pub mod extension_registry;

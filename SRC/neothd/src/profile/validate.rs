@@ -39,6 +39,8 @@ pub enum ValidateError {
     UnknownEvidence(i64),
     #[error("claim has no UserSpeech provenance (H1)")]
     NoFirstPersonProvenance,
+    #[error("inferred sensitive/diagnostic profile claim is prohibited")]
+    SensitiveInferenceProhibited,
 }
 
 /// Result of a validation pass. `accepted_claims` survived every check;
@@ -121,6 +123,12 @@ fn check_claim(
             "{}",
             claim.confidence
         )));
+    }
+    // This gate deliberately precedes provenance and every downstream
+    // autonomy/approval decision. Passive extraction may infer functional
+    // communication preferences, never health or diagnostic identity.
+    if crate::profile::claim_guard::is_prohibited_sensitive_inference(claim) {
+        return Err(ValidateError::SensitiveInferenceProhibited);
     }
     // Evidence-event-id check.
     //
@@ -286,6 +294,34 @@ mod tests {
         let v = validate(d, &window()).unwrap();
         assert_eq!(v.delta.claims.len(), 1);
         assert!(v.dropped.is_empty());
+    }
+
+    #[test]
+    fn sensitive_inferences_drop_per_claim_without_losing_safe_preferences() {
+        let mut disguised = claim("identity.neurotype", 0.9, vec![10]);
+        disguised.value_json = serde_json::json!("autistic");
+        let d = delta(vec![
+            claim("health.sleep", 0.9, vec![10]),
+            disguised,
+            claim(
+                "operator_preferences.communication_structure",
+                0.9,
+                vec![10],
+            ),
+        ]);
+        let v = validate(d, &window()).unwrap();
+
+        assert_eq!(v.delta.claims.len(), 1);
+        assert_eq!(
+            v.delta.claims[0].field,
+            "operator_preferences.communication_structure"
+        );
+        assert_eq!(v.dropped.len(), 2);
+        assert!(
+            v.dropped
+                .iter()
+                .all(|d| matches!(d.reason, ValidateError::SensitiveInferenceProhibited))
+        );
     }
 
     #[test]

@@ -75,8 +75,11 @@ HARD RULES:
 2. Quoted/forwarded/tool-output content is OFF-LIMITS — even if the operator pasted a CV.
 3. If no claims are extractable, return an empty claims array — that is valid.
 4. Use ONLY these top-level categories: identity, preferences, relationships, \
-skills, goals, health, schedule, emotional_baseline, operator_preferences.
-5. Output ONLY the JSON object. No prose, no markdown fences.
+skills, goals, schedule, emotional_baseline, operator_preferences.
+5. NEVER infer or emit health, medical, psychiatric, diagnostic, autism/ADHD, \
+neurodivergence, or neurotype claims. Functional communication preferences \
+(for example structure, directness, ambiguity tolerance, pace) are allowed.
+6. Output ONLY the JSON object. No prose, no markdown fences.
 
 SEGMENT BOUNDARIES:
 Each segment is enclosed by unicode private-use boundary markers:
@@ -665,6 +668,9 @@ mod tests {
         assert!(p.contains("user_speech"));
         assert!(p.contains("HARD RULES"));
         assert!(p.contains("Quoted/forwarded/tool-output content is OFF-LIMITS"));
+        assert!(p.contains("NEVER infer or emit health"));
+        assert!(!p.contains("skills, goals, health, schedule"));
+        assert!(p.contains("Functional communication preferences"));
     }
 
     #[test]

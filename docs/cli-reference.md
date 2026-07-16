@@ -60,25 +60,41 @@ provider/model-specific support at the same strict leaf boundary as the matching
 ## Profile
 
 ```bash
-neoth profile show --evidence
+neoth profile show
 neoth profile pending
 neoth profile approve <id>
 neoth profile decline <id> --reason "wrong"
-neoth profile redact identity.location
-neoth profile pause
-neoth profile resume
+neoth profile redact identity.location --reason "remove this field"
+neoth profile redactions
+neoth profile communication status
+neoth profile communication why directness
+neoth profile communication set directness direct
+neoth export --list-subjects
+neoth memory erase-communication-profile
+neoth memory erase-communication-profile --subject <pseudonymous-handle>
+neoth memory erase-communication-profile --confirm
 ```
 
 | Command | Purpose |
 | :-- | :-- |
-| `profile show` | Show active profile facts. |
-| `profile show --evidence` | Include evidence, confidence, and source. |
+| `profile show [--field <field>]` | Show materialised active profile claims. |
 | `profile pending` | List pending memory proposals. |
 | `profile approve <id>` | Approve a pending profile claim. |
 | `profile decline <id>` | Decline a pending profile claim. |
-| `profile redact <field>` | Remove and optionally block relearning. |
-| `profile export` | Export profile as JSON/Markdown. |
-| `profile pause/resume` | Control learning. |
+| `profile redact <field>` | Add a durable `never_recreate` redaction for one field. |
+| `profile redactions` / `unredact --id <id>` | Inspect or revoke redaction records. |
+| `profile communication status/show/why` | Inspect the default-on typed local communication profile without exposing raw messages. |
+| `profile communication set/reset` | Pin one presentation preference, remove one dimension, or remove the complete communication subject. |
+| `profile communication context ...` | Manage explicit-only neuro-context and its separate prompt-use opt-in. |
+| `export --list-subjects` | Strictly inventory exact pseudonymous communication-profile subject handles; no bundle is written. |
+| `memory erase-communication-profile [--subject <handle>] [--confirm]` | Preview or confirm complete erasure of exactly one typed communication subject; omission preserves the operator default. |
+
+There is no `profile pause`, `profile resume`, or `profile export` command in
+the current CLI. Normal `neoth export` includes only the typed operator
+communication state as `communication_profile.json`. An explicit `--subject
+<handle>` creates a communication-only DSAR bundle for that one exact subject;
+it never adds every channel subject. General `idx_profile` fact claims remain
+excluded; see [profile.md](profile.md) for the exact privacy and export boundary.
 
 ## Privacy and audit
 
@@ -335,6 +351,8 @@ neoth rollback list
 neoth update check
 neoth update apply
 neoth export --out ~/neoth-export
+neoth export --list-subjects
+neoth export --subject <pseudonymous-handle> --out ~/subject-export
 ```
 
 | Command | Purpose |
@@ -344,6 +362,7 @@ neoth export --out ~/neoth-export
 | `rollback list` | Show rollback points. |
 | `update check/apply` | Self-update where configured. |
 | `export` | Export memory/profile/vault data. |
+| `export --subject <handle>` | Export only one exact communication-profile subject; output directory must be empty. |
 
 ### Release signing (maintainers)
 

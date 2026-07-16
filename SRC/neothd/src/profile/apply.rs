@@ -109,6 +109,20 @@ pub async fn apply_delta(
     if delta.extraction_id.trim().is_empty() {
         anyhow::bail!("profile.apply: refusing to apply delta with empty extraction_id");
     }
+    // Final sink invariant: inferred deltas cannot persist health or
+    // diagnostic identity even if a stale pending row or a future caller
+    // accidentally bypasses validation and the claim guard. Explicit
+    // declarations use the separate typed communication-profile path.
+    if let Some(claim) = delta
+        .claims
+        .iter()
+        .find(|claim| crate::profile::claim_guard::is_prohibited_sensitive_inference(claim))
+    {
+        anyhow::bail!(
+            "profile.apply: refusing prohibited sensitive inference in field `{}`",
+            claim.field
+        );
+    }
     if claims_already_applied(conn, &delta.extraction_id)? {
         // Idempotency-skip path. A prior `apply_delta` already committed
         // the idx_profile rows for this `extraction_id`. The outbox
@@ -669,6 +683,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn apply_sink_rejects_sensitive_inference_without_writing() {
+        let (_dir, mut conn, writer, join) = setup().await;
+        let mut prohibited = delta();
+        prohibited.claims = vec![claim("health.neurotype", 0.99)];
+
+        let error = apply_delta(&mut conn, &writer, &prohibited, 1)
+            .await
+            .expect_err("the persistence sink must reject health inference");
+        assert!(error.to_string().contains("prohibited sensitive inference"));
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM idx_profile", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
     async fn apply_is_idempotent_on_same_extraction_id() {
         let (_dir, mut conn, writer, join) = setup().await;
         let _ = apply_delta(&mut conn, &writer, &delta(), 1).await.unwrap();
@@ -995,6 +1028,33 @@ mod tests {
         d.extraction_id = "".into();
         let err = apply_delta(&mut conn, &writer, &d, 1).await.unwrap_err();
         assert!(err.to_string().contains("empty extraction_id"));
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn final_sink_rejects_unicode_confusable_diagnostic_claim() {
+        let (_dir, mut conn, writer, join) = setup().await;
+        let mut inferred = claim("identity.cognitive_style", 0.9);
+        inferred.value_json = serde_json::json!("a\u{0501}hd");
+        let delta = ProfileDelta {
+            extraction_id: "ext-sensitive-confusable".into(),
+            conversation_hash: "hash".into(),
+            claims: vec![inferred],
+            guard_version: "0.1.0".into(),
+            ..Default::default()
+        };
+        let error = apply_delta(&mut conn, &writer, &delta, 1)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("prohibited sensitive inference"),
+            "{error:#}"
+        );
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM idx_profile", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
         drop(writer);
         let _ = join.await;
     }

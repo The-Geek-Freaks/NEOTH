@@ -399,21 +399,50 @@ clean-machine qualification remain completion gates under R4-01, R4-02, R4-04,
 R4-05, R4-06, R4-08 and R4-10.
 
 **Adaptive-communication, Mobile and Cluster truth correction (2026-07-16):**
-the existing profile persistence is not yet the requested adaptive communication
-feature. General claim learning and the passive profile cron default to off;
-normal CLI, Channel and GUI answers do not receive the stored profile. The only
-production profile prompt sink is the Council `Split`/Callosum branch, and
-`self-dev accept` records acceptance without applying four behavioral proposal
-types. The passive collector also lacks subject/source identity and can mix
-operator, other-channel-sender and automation text. Before default-on, the
-health/neurotype extractor must reject inferred diagnoses, Incognito must
-perform zero profile reads and writes, and a typed local communication layer
-must cover every provider-bound prompt after explicit current-turn instructions
-but before request/cost authorization. It learns accommodations such as
-directness, structure, literalness, context amount, pacing and clarification
-style, not hidden autism/ADHD labels. Explicit declarations remain separately
-operator-controlled; FULL-AUTO may make stable low-risk accommodations durable
-until revoked but never weakens provenance, privacy or anti-poisoning gates.
+the first GOLD-R4-11 implementation slice now exists in the working tree. A
+separate default-on deterministic engine stores bounded typed evidence and
+hashes, not raw messages; isolates authenticated subjects/sessions; applies
+multi-session confidence and decay; and compiles presentation-only preferences
+into CLI and inbound-Channel chat before request/cost authorization. The same
+compiler-owned layer is preserved through Council, retry/fallback, background
+and sub-agent request construction, so GUI/Buddy chats that invoke `neoth chat`
+inherit it. Explicit settings outrank corrections, feedback and passive
+signals. Exact Full autonomy may durably promote only stable low-risk
+accommodations behind stricter thresholds.
+
+Health/neurotype inference is rejected at extraction, validation, claim-guard
+and final-apply boundaries. Autism, ADHD or neurodivergence context can exist
+only after an explicit typed operator declaration; the default provider prompt
+exports accommodations only, while label export requires independent global
+and per-declaration opt-ins. `neoth chat --incognito` short-circuits all profile
+reads and writes, and the CLI now exposes status/show/why/set/reset,
+enable/disable, prompt-export and declared-context controls. Authenticated n8n
+`/api/provider/call` requests now compile the same fixed-operator presentation
+layer before provider authorization, never learn from automation prompts, and
+accept an `incognito` flag that short-circuits profile reads.
+
+Doctor now validates the communication-state file independently: strict schema
+and integrity, subject isolation, typed evidence, private permissions and
+enabled/disabled readiness are checked without printing subject ids, raw
+messages, preferences or declared context. Privacy parity is explicit rather
+than pretending typed presentation evidence is topic-addressable.
+`neoth memory --forget <topic>` always reports zero communication subjects and
+points to `neoth memory erase-communication-profile`; that dedicated command
+inventories the operator subject in dry-run mode and erases it only with
+`--confirm`, with a metadata-only audit after the state commit. Both export
+formats now include a schema-versioned, operator-only
+`communication_profile.json` (or explicit absent markers); `--since`
+intentionally does not filter current state. General `idx_profile` fact claims
+remain outside that export.
+
+GOLD-R4-11 remains **OPEN**. GUI and Buddy have no native inspect/correct/pin/
+reset/forget/context/export controls or Incognito switch; channel APIs still
+lack Incognito/control parity; the general export still omits `idx_profile`
+claims; and `profile.communication.cluster_sync` has no production consumer.
+Finally, `self-dev accept` still marks `SwitchPreset`, `AdjustVerbosity`,
+`AdjustBriefingSchedule` and `LearnExtension` proposals accepted without
+transactionally applying their effects. Those paths must be wired and proven
+before the checkbox can close.
 
 The current Mobile Companion is also not release-ready: the wizard renders a
 LAN URL for a loopback-only listener and the wrong route, does not enable the

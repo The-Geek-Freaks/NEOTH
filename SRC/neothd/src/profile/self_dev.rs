@@ -62,6 +62,17 @@ impl ProposalKind {
     }
 }
 
+/// Strictly parsed target for an operator-approved proposal. Acceptance code
+/// consumes these typed values only; proposal text is never evaluated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValidatedProposalTarget {
+    Preset(ProfilePreset),
+    Verbosity(super::presets::Verbosity),
+    BriefingTime { hour: u8, minute: u8 },
+    ExtensionSelector(String),
+    SourceEdit,
+}
+
 /// One concrete proposal the operator reviews. `confidence` is the
 /// engine's own estimate (0.0..=1.0); operator filters by it via
 /// `neoth self-dev review --min-confidence 0.7`.
@@ -99,6 +110,132 @@ impl SelfDevProposal {
             "ts_unix": ts_unix,
         }))
         .unwrap_or_default()
+    }
+
+    /// Validate the complete proposal before any durable effect is attempted.
+    /// Generated proposals normally satisfy this already, but the on-disk
+    /// store is operator-editable and therefore a trust boundary.
+    pub fn validate_for_acceptance(&self) -> Result<ValidatedProposalTarget, String> {
+        if self.id.is_empty()
+            || self.id.len() > 128
+            || !self
+                .id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err("proposal id must be 1..=128 ASCII characters from [a-zA-Z0-9_-]".into());
+        }
+        if self.reason.trim().is_empty() || self.reason.len() > 2_048 {
+            return Err("proposal reason must be non-empty and at most 2048 bytes".into());
+        }
+        if !self.confidence.is_finite() || !(0.0..=1.0).contains(&self.confidence) {
+            return Err("proposal confidence must be finite and within 0.0..=1.0".into());
+        }
+
+        match &self.kind {
+            ProposalKind::SwitchPreset => {
+                let preset = ProfilePreset::parse(&self.target)
+                    .ok_or_else(|| format!("unknown profile preset target `{}`", self.target))?;
+                if self.target != preset.as_str() {
+                    return Err(format!(
+                        "profile preset target must use canonical spelling `{}`",
+                        preset.as_str()
+                    ));
+                }
+                Ok(ValidatedProposalTarget::Preset(preset))
+            }
+            ProposalKind::AdjustVerbosity => {
+                let verbosity = match self.target.as_str() {
+                    "terse" => super::presets::Verbosity::Terse,
+                    "normal" => super::presets::Verbosity::Normal,
+                    "detailed" => super::presets::Verbosity::Detailed,
+                    other => {
+                        return Err(format!(
+                            "verbosity target must be `terse`, `normal`, or `detailed`, got `{other}`"
+                        ));
+                    }
+                };
+                Ok(ValidatedProposalTarget::Verbosity(verbosity))
+            }
+            ProposalKind::AdjustBriefingSchedule => {
+                let bytes = self.target.as_bytes();
+                if bytes.len() != 5
+                    || bytes[2] != b':'
+                    || !bytes[..2].iter().all(u8::is_ascii_digit)
+                    || !bytes[3..].iter().all(u8::is_ascii_digit)
+                {
+                    return Err(format!(
+                        "briefing target must be strict 24-hour HH:MM, got `{}`",
+                        self.target
+                    ));
+                }
+                let hour = (bytes[0] - b'0') * 10 + (bytes[1] - b'0');
+                let minute = (bytes[3] - b'0') * 10 + (bytes[4] - b'0');
+                if hour > 23 || minute > 59 {
+                    return Err(format!(
+                        "briefing target is outside 00:00..=23:59: `{}`",
+                        self.target
+                    ));
+                }
+                Ok(ValidatedProposalTarget::BriefingTime { hour, minute })
+            }
+            ProposalKind::LearnExtension => {
+                let id = self.target.as_str();
+                if id.is_empty()
+                    || id.len() > 64
+                    || !id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                {
+                    return Err(
+                        "extension target must be a 1..=64 character skill id or topic token from [a-zA-Z0-9_-]"
+                            .into(),
+                    );
+                }
+                Ok(ValidatedProposalTarget::ExtensionSelector(id.to_string()))
+            }
+            ProposalKind::SourceEdit {
+                patch_path,
+                diff_sha256,
+                target_paths,
+            } => {
+                if patch_path.as_os_str().is_empty() {
+                    return Err("source-edit patch_path must not be empty".into());
+                }
+                if diff_sha256.len() != 64
+                    || !diff_sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    return Err(
+                        "source-edit diff_sha256 must be exactly 64 lowercase hex characters"
+                            .into(),
+                    );
+                }
+                if target_paths.is_empty() {
+                    return Err("source-edit target_paths must not be empty".into());
+                }
+                for target in target_paths {
+                    let path = std::path::Path::new(target);
+                    if target.is_empty()
+                        || path.is_absolute()
+                        || path.components().any(|component| {
+                            matches!(
+                                component,
+                                std::path::Component::ParentDir
+                                    | std::path::Component::RootDir
+                                    | std::path::Component::Prefix(_)
+                            )
+                        })
+                    {
+                        return Err(format!(
+                            "source-edit target path must be a safe relative path, got `{target}`"
+                        ));
+                    }
+                }
+                Ok(ValidatedProposalTarget::SourceEdit)
+            }
+        }
     }
 }
 
@@ -568,6 +705,97 @@ mod tests {
     fn verbosity_default_for_lowkey_is_terse() {
         let lk = apply_preset(ProfilePreset::Lowkey);
         assert_eq!(lk.verbosity, Verbosity::Terse);
+    }
+
+    #[test]
+    fn acceptance_targets_parse_to_typed_values() {
+        let mut proposal = SelfDevProposal {
+            id: "switch_preset-deadbeef".into(),
+            kind: ProposalKind::SwitchPreset,
+            reason: "validated test proposal".into(),
+            confidence: 0.8,
+            target: "formal".into(),
+        };
+        assert_eq!(
+            proposal.validate_for_acceptance().unwrap(),
+            ValidatedProposalTarget::Preset(ProfilePreset::Formal)
+        );
+
+        proposal.kind = ProposalKind::AdjustVerbosity;
+        proposal.target = "detailed".into();
+        assert_eq!(
+            proposal.validate_for_acceptance().unwrap(),
+            ValidatedProposalTarget::Verbosity(Verbosity::Detailed)
+        );
+
+        proposal.kind = ProposalKind::AdjustBriefingSchedule;
+        proposal.target = "08:30".into();
+        assert_eq!(
+            proposal.validate_for_acceptance().unwrap(),
+            ValidatedProposalTarget::BriefingTime {
+                hour: 8,
+                minute: 30
+            }
+        );
+
+        proposal.kind = ProposalKind::LearnExtension;
+        proposal.target = "deep-review".into();
+        assert_eq!(
+            proposal.validate_for_acceptance().unwrap(),
+            ValidatedProposalTarget::ExtensionSelector("deep-review".into())
+        );
+    }
+
+    #[test]
+    fn acceptance_validation_rejects_noncanonical_or_unsafe_payloads() {
+        let base = SelfDevProposal {
+            id: "proposal-1".into(),
+            kind: ProposalKind::SwitchPreset,
+            reason: "test".into(),
+            confidence: 0.8,
+            target: "Formal".into(),
+        };
+        assert!(
+            base.validate_for_acceptance()
+                .unwrap_err()
+                .contains("canonical spelling")
+        );
+
+        let bad_time = SelfDevProposal {
+            kind: ProposalKind::AdjustBriefingSchedule,
+            target: "24:00".into(),
+            ..base.clone()
+        };
+        assert!(
+            bad_time
+                .validate_for_acceptance()
+                .unwrap_err()
+                .contains("outside")
+        );
+
+        let traversal = SelfDevProposal {
+            kind: ProposalKind::LearnExtension,
+            target: "../../skill".into(),
+            ..base.clone()
+        };
+        assert!(
+            traversal
+                .validate_for_acceptance()
+                .unwrap_err()
+                .contains("skill id or topic token")
+        );
+
+        let non_finite = SelfDevProposal {
+            confidence: f64::NAN,
+            target: "formal".into(),
+            ..base
+        };
+        assert!(
+            non_finite
+                .validate_for_acceptance()
+                .unwrap_err()
+                .contains("finite")
+        );
     }
 
     // ── GUI-DES-SELFDEV-APPLY-01 — SourceEdit variant ──────────────────

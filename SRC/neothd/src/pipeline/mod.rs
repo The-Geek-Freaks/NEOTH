@@ -9,8 +9,9 @@
 //! ## What lives here
 //!
 //! - [`enriched_request::build_enriched_request`] — deterministic
-//!   composition of operator_md + repo_context + skill + MCP +
-//!   persona blocks into a single `EnrichedRequest`. Pure sync; the
+//!   composition of operator_md + typed communication preferences +
+//!   repo_context + skill + MCP + persona blocks into a single
+//!   `EnrichedRequest`. Pure sync; the
 //!   caller is responsible for any async I/O (FS reads, MCP server
 //!   `tools/list`, embedding provider invocation) and hands the
 //!   already-assembled string blocks to the helper.
@@ -31,5 +32,7 @@ pub mod enriched_request;
 /// output before it re-enters the LLM prompt.
 pub mod untrusted_wrap;
 
-pub use enriched_request::{EnrichedRequest, EnrichmentInputs, build_enriched_request};
+pub use enriched_request::{
+    CommunicationProfilePrompt, EnrichedRequest, EnrichmentInputs, build_enriched_request,
+};
 pub use untrusted_wrap::wrap_untrusted;

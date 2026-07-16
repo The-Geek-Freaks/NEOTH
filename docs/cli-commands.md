@@ -1000,6 +1000,8 @@ GDPR-style operator data export — JSONL or markdown dump of every row NEOTH st
 - `--since <DATE>` — Filter to events at-or-after this date. Format `YYYY-MM-DD`. Defaults to "everything ever recorded"
 - `--format <FORMAT>` — Output format. `jsonl` = one event per line (default, lossless). `md` = human-readable digest grouped by day
 - `--home <DIR>` — Override the `~/.neoth/` home dir (mostly for tests)
+- `--subject <SUBJECT>` — Export only this exact pseudonymous communication-profile subject. Obtain handles with `--list-subjects`. This mode excludes operator-wide memory tables and archives from the bundle
+- `--list-subjects` — Strictly inventory pseudonymous communication-profile subject handles. No export directory is created and no profile content is printed
 
 ## `neoth fact-check`
 
@@ -1759,6 +1761,14 @@ Inspect the assembled NEOTH.md operator context
 - `--limit <LIMIT>` — Max rows for `--tier` recall or `memory show` provenance inspection
 - `--db <PATH>` — Override the views.db path for tier/provenance inspection
 
+### `neoth memory erase-communication-profile`
+
+Preview or confirm erasure of one complete typed communication profile. This is intentionally separate from topic forget because typed presentation evidence is not topic-addressable. Omission preserves the operator default
+
+- `--subject <SUBJECT>` — Exact, case-sensitive pseudonymous handle from `neoth export --list-subjects`. Defaults to `operator`
+- `--confirm` — Required to erase. Without this flag the command is a dry-run
+- `--home <DIR>` — Override `~/.neoth/` (primarily for isolated verification)
+
 ### `neoth memory show`
 
 Inspect verified facts and resolve their episode provenance across hot, warm, and cold tiers. Pass an id to inspect one row in any lifecycle state
@@ -2375,13 +2385,77 @@ Render proposals into `<vault>/<subdir>/Proposals/<id>.md`
 
 ## `neoth profile`
 
-Inspect the user profile materialised from `idx_profile` (Phase 2 SPEC_proactive_learning §1). `show [--field X]` lists every applied claim; `summary` collapses to one row per field — highest-confidence non-superseded claim. Read-only
+Inspect profile claims and control the typed local communication profile. `show [--field X]` / `summary` inspect materialised claims; `communication status|show|why|set|reset|context` exposes the default-on, non-diagnostic presentation adaptation without storing raw message text
 
 ### `neoth profile approve`
 
 ADV-03 item 4 Phase 6: pop a pending row + run `apply_delta` against it. Emits `EVENT_TYPE_PROFILE_DELTA_APPROVED` (0xB6) + the regular `PROFILE_DELTA` (0xB0) frame for each claim
 
 - `<EXTRACTION_ID>` — Extraction id from `neoth profile pending`. The string in the leftmost column
+
+### `neoth profile communication`
+
+Inspect and control the default-on local communication profile
+
+#### `neoth profile communication context`
+
+Manage explicitly operator-declared neuro-context
+
+##### `neoth profile communication context clear`
+
+Revoke the current explicit declaration while retaining its local history
+
+##### `neoth profile communication context declare`
+
+Store an explicit operator declaration. This is never an inferred diagnosis
+
+- `<KIND>`
+- `--prompt-use <PROMPT_USE>` — Whether the explicit label itself may be exported. The global prompt-export policy must independently allow labels too
+
+##### `neoth profile communication context show`
+
+Show the current operator declaration, including cleared declarations
+
+#### `neoth profile communication disable`
+
+Disable all automatic communication-profile reads and writes
+
+#### `neoth profile communication enable`
+
+Enable local communication adaptation in freedom.yaml
+
+#### `neoth profile communication prompt-export`
+
+Control what the local compiler may inject into provider prompts
+
+- `<MODE>`
+
+#### `neoth profile communication reset`
+
+Remove one dimension, or the complete operator communication profile
+
+- `<DIMENSION>`
+
+#### `neoth profile communication set`
+
+Pin one explicit preference immediately
+
+- `<DIMENSION>`
+- `<VALUE>` — Dimension-specific value. Run `communication show` to inspect current values
+
+#### `neoth profile communication show`
+
+Show every typed estimate for the local operator profile
+
+#### `neoth profile communication status`
+
+Show policy, state availability and an active-dimension summary
+
+#### `neoth profile communication why`
+
+Explain the typed evidence behind one dimension. Raw messages are never shown
+
+- `<DIMENSION>`
 
 ### `neoth profile conflicts`
 

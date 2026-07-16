@@ -42,7 +42,8 @@ neoth init
 neoth status
 neoth doctor
 neoth privacy audit --last 30d
-neoth profile show --evidence
+neoth profile show
+neoth profile communication status
 neoth verify
 ```
 

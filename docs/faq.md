@@ -84,10 +84,12 @@ Partially to fully, depending on your model setup.
 
 ## How do I delete or correct memory?
 
-Show evidence:
+Show active fact-profile claims and the separate communication profile:
 
 ```bash
-neoth profile show --evidence
+neoth profile show
+neoth profile communication show
+neoth profile communication why directness
 ```
 
 Redact one field:
@@ -96,11 +98,25 @@ Redact one field:
 neoth profile redact identity.location
 ```
 
-Redact all profile facts:
+Preview the complete local operator communication subject, including declared
+context and evidence counts, then erase it explicitly:
 
 ```bash
-neoth profile redact --all
+neoth memory erase-communication-profile
+neoth memory erase-communication-profile --confirm
 ```
+
+For a non-operator channel subject, run `neoth export --list-subjects`, then
+repeat the preview/confirm flow with the exact case-sensitive pseudonymous
+handle in `--subject <handle>`. Only that subject is erased; the audit stores a
+hash rather than the handle or profile content.
+
+The current CLI has no `profile redact --all` command. Use
+`neoth memory --forget <topic>` to preview the SQLite/WAL-backed memory cascade,
+then add `--confirm` (and, when required, `--physical`). That topic operation
+never covers the separate communication JSON state because typed presentation
+evidence is not topic-addressable. Its output reports that boundary and points
+to the explicit communication-profile erasure command above.
 
 Review pending memory before it is accepted:
 
@@ -112,7 +128,9 @@ neoth profile decline <id> --reason "wrong"
 
 ## Can NEOTH relearn something I redacted?
 
-Not if the redaction is marked as blocked from relearning.
+Not while its `never_recreate` redaction remains active. Inspect those records
+with `neoth profile redactions`; only `neoth profile unredact --id <id>` makes
+the field eligible for extraction again.
 
 NEOTH's profile memory is designed around evidence, approval, redaction, and replay safety. Redaction should be a control surface, not a suggestion.
 

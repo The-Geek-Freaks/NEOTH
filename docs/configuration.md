@@ -13,6 +13,7 @@ NEOTH's normal path is the GUI/CLI wizard. Advanced users can edit config files 
 | `~/.neoth/tweaks.toml` | Optional UI/statusline/model/persona customisation. |
 | `~/.neoth/plugins/` | Installed WASM plugins. |
 | `~/.neoth/skills/` | Installed skills. |
+| `~/.neoth/profile/communication.json` | Local, typed communication-preference state. It contains evidence hashes and estimates, not raw messages. |
 | `~/.neoth/wal/` | Event log. Do not edit manually. |
 | `~/.neoth/models/` | Local model cache. |
 
@@ -65,6 +66,22 @@ provider_model: claude-opus-4-7
 autonomy: standard
 
 profile:
+  communication:
+    enabled: true
+    auto_apply_low_risk: true
+    min_observations: 5
+    min_distinct_sessions: 3
+    min_confidence: 0.75
+    passive_half_life_days: 30
+    feedback_half_life_days: 90
+    correction_half_life_days: 180
+    full_auto_min_observations: 10
+    full_auto_min_distinct_sessions: 5
+    full_auto_min_confidence: 0.85
+    max_evidence_per_dimension: 32
+    prompt_export: accommodations_only
+    cluster_sync: false
+
   learn_enabled: false
   learn_provider: local_qwen
   allow_cloud_fallback: false
@@ -84,6 +101,87 @@ media:
 These keys match the deserialized schema. Channel credentials belong in the
 credential store and should normally be written through `neoth channel add`,
 not invented as nested `channels.*.enabled` booleans.
+
+### Communication adaptation
+
+`profile.communication` is separate from the optional LLM-backed fact
+extractor controlled by `profile.learn_enabled`. Communication adaptation is
+default-on, deterministic and local: it classifies an authenticated human turn
+in memory, discards the text, and persists only bounded typed evidence,
+content/event hashes and estimates. It never emits a medical diagnosis.
+
+The eight dimensions are `directness`, `structure`, `ambiguity`,
+`processing_load`, `context_amount`, `pace`, `clarification`, and
+`correction_style`. Explicit settings outrank explicit corrections, response
+feedback and passive observations. Passive preferences become active only
+after the configured observation, distinct-session and confidence floors;
+their weight decays according to the half-life settings. At the exact `full`
+autonomy level, the stricter `full_auto_*` floors may make a stable low-risk
+accommodation durable until the operator resets it. Other autonomy levels do
+not get that promotion.
+
+Provider disclosure is controlled by `prompt_export`:
+
+| Value | Provider prompt content |
+| :-- | :-- |
+| `none` | No communication-profile prompt layer. Local learning may still continue. |
+| `accommodations_only` | Default. Export concrete presentation instructions, never a neuro-context label. |
+| `label_and_accommodations` | Permit a label only when the operator also declared that context with `--prompt-use label-and-accommodations`. Both switches are required. |
+
+NEOTH does not infer autism, ADHD, neurodivergence, or another health label.
+The only supported neuro-context is an explicit typed operator declaration:
+
+```bash
+neoth profile communication context declare neurodivergent
+neoth profile communication context declare autistic
+neoth profile communication context declare adhd
+```
+
+These commands default to accommodations-only use. A label can enter a
+provider prompt only after the two independent opt-ins described above. Use
+`neoth profile communication context clear` to revoke future use while retaining
+the local declaration history. Use
+`neoth memory erase-communication-profile` for a dry-run inventory and add
+`--confirm` to erase the complete local operator communication subject with an
+audited privacy operation. `neoth profile communication reset` remains the
+lower-level profile control for the same subject.
+
+Shared channel workspaces can contain additional pseudonymous subjects. Run
+`neoth export --list-subjects` to inventory their exact handles, then use
+`--subject <handle>` on export or erasure. Unknown/case-mismatched handles fail
+closed. A selected-subject export contains only `communication_profile.json` in
+an empty destination; it never copies operator memory or archives.
+
+Inspect and control the effective state through the CLI:
+
+```bash
+neoth profile communication status
+neoth profile communication show
+neoth profile communication why directness
+neoth profile communication set structure numbered-steps
+neoth profile communication reset structure
+neoth profile communication prompt-export accommodations-only
+neoth profile communication disable
+neoth profile communication enable
+```
+
+`neoth chat --incognito` short-circuits communication-profile compilation and
+recording before the state file is opened, so that turn performs zero
+communication-profile reads and writes. Normal CLI chat and authenticated
+inbound channel dispatch compile the same presentation-only layer; GUI and
+Buddy conversations that invoke `neoth chat` inherit it. Doctor validates the
+communication state, typed evidence, subject isolation and private permissions
+without exposing profile content. GUI/Buddy controls, channel-side Incognito
+controls, cluster synchronization and a general `idx_profile` claim export are
+still open Gold gaps. Communication state has its own explicit preview/confirm
+erasure command, an operator-scoped default export, and an exact single-subject
+DSAR export; channel subjects are never bulk-exported. Topic forget
+intentionally reports that typed communication evidence is not
+topic-addressable. Authenticated direct n8n `/api/provider/call` requests use
+the fixed local operator subject and accept `incognito: true` for zero profile
+reads.
+`cluster_sync` therefore remains `false`; enabling it does not currently create
+a production synchronization path.
 
 ### Swarm resource dashboard
 

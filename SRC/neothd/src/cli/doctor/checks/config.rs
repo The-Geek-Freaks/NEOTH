@@ -251,6 +251,86 @@ pub(crate) fn check_profile_extensions(home: &Path) -> CheckOutcome {
     }
 }
 
+pub(crate) fn check_communication_profile(home: &Path) -> CheckOutcome {
+    const NAME: &str = "communication profile";
+    let config = match load_freedom_config_state(&home.join("freedom.yaml")) {
+        FreedomConfigState::Loaded { config, .. } => config,
+        _ => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Pass,
+                detail: "skipped until freedom.yaml is valid (see freedom.yaml check)".into(),
+            };
+        }
+    };
+    let path = crate::profile::communication::state_path(home);
+    if !path.exists() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: if config.profile.communication.enabled {
+                "enabled with safe defaults; no authenticated observations recorded yet".into()
+            } else {
+                "disabled; no retained communication state".into()
+            },
+        };
+    }
+    if !is_mode_0600(&path) {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Fail,
+            detail: format!(
+                "private profile state has mode > 0600 — run `chmod 0600 {}`",
+                path.display()
+            ),
+        };
+    }
+    let state = match crate::profile::communication::load_state(home) {
+        Ok(state) => state,
+        Err(error) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: format!("typed state failed integrity validation: {error:#}"),
+            };
+        }
+    };
+    let subject_count = state.subjects.len();
+    let evidence_count = state
+        .subjects
+        .values()
+        .flat_map(|subject| subject.evidence.values())
+        .map(Vec::len)
+        .sum::<usize>();
+    let active_count = state
+        .subjects
+        .values()
+        .flat_map(|subject| subject.estimates.values())
+        .filter(|estimate| estimate.active)
+        .count();
+    if !config.profile.communication.enabled {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "disabled with valid retained state (revision {}, {subject_count} subject(s), \
+                 {evidence_count} typed evidence item(s)); run `neoth profile communication \
+                 enable` or `reset`",
+                state.revision
+            ),
+        };
+    }
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Pass,
+        detail: format!(
+            "enabled; typed state revision {}, {subject_count} isolated subject(s), \
+             {evidence_count} evidence item(s), {active_count} active accommodation(s)",
+            state.revision
+        ),
+    }
+}
+
 fn load_validated_skill_count(home: &Path) -> anyhow::Result<usize> {
     let skills_dir = home.join("skills");
     let worker = std::thread::Builder::new()
@@ -649,6 +729,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_policy_yaml,
     check_tweaks_toml,
     check_profile_extensions,
+    check_communication_profile,
     check_skill_mode_registry,
     check_advisable_groundtruth_injection,
     check_advisable_consolidation_sweep,
@@ -739,6 +820,22 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                          TOML syntax error.",
         fix: "Missing → use defaults. Syntax error → diff against \
               `assets/profile_extensions.toml.example`.",
+    },
+    CheckDoc {
+        name: "communication profile",
+        purpose: "Default-on local communication adaptation state at \
+                  `~/.neoth/profile/communication.json`. Doctor checks private \
+                  file permissions, strict schema/integrity, subject isolation, \
+                  typed evidence, and whether the engine is enabled. Counts are \
+                  shown without exposing subject ids, raw messages, preferences, \
+                  or explicitly declared accessibility context.",
+        common_failures: "Manual JSON edits; interrupted or foreign writes; \
+                         permissions broader than 0600; adaptation explicitly \
+                         disabled while retained state remains on disk.",
+        fix: "Corrupt state → inspect locally, then run \
+              `neoth profile communication reset` to erase it. Disabled → \
+              `neoth profile communication enable`. Broad permissions → \
+              `chmod 600 ~/.neoth/profile/communication.json`.",
     },
     CheckDoc {
         name: "skill/mode registry",
@@ -880,6 +977,11 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn write_default_freedom(home: &Path) {
+        let body = serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap();
+        std::fs::write(home.join("freedom.yaml"), body).unwrap();
+    }
+
     #[test]
     fn freedom_check_reports_missing_separately() {
         let home = tempdir().unwrap();
@@ -924,6 +1026,44 @@ mod tests {
         assert_eq!(outcome.status, CheckStatus::Fail);
         assert!(outcome.detail.contains("invalid configuration"));
         assert!(outcome.detail.contains("listen_port"));
+    }
+
+    #[test]
+    fn communication_profile_check_accepts_pristine_default_on_home() {
+        let home = tempdir().unwrap();
+        write_default_freedom(home.path());
+        let outcome = check_communication_profile(home.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("enabled with safe defaults"));
+        assert!(!outcome.detail.contains("operator"));
+    }
+
+    #[test]
+    fn communication_profile_check_fails_strict_unknown_state_fields() {
+        let home = tempdir().unwrap();
+        write_default_freedom(home.path());
+        let path = crate::profile::communication::state_path(home.path());
+        crate::util::atomic_write::atomic_write_private(
+            &path,
+            br#"{
+                "schema_version": 1,
+                "revision": 0,
+                "subjects": {
+                    "operator": {
+                        "revision": 0,
+                        "evidence": {},
+                        "estimates": {},
+                        "declared_context": null,
+                        "raw_text": "must never be accepted"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        let outcome = check_communication_profile(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("integrity validation"));
+        assert!(!outcome.detail.contains("must never be accepted"));
     }
 
     fn write_mode_skill(home: &Path, id: &str, mode_id: &str) {

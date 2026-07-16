@@ -889,10 +889,10 @@ pub enum Commands {
     /// Phase 13 R-5. Idempotent — re-runs skip unchanged files.
     Obsidian(obsidian::ObsidianArgs),
 
-    /// Inspect the user profile materialised from `idx_profile`
-    /// (Phase 2 SPEC_proactive_learning §1). `show [--field X]` lists
-    /// every applied claim; `summary` collapses to one row per field
-    /// — highest-confidence non-superseded claim. Read-only.
+    /// Inspect profile claims and control the typed local communication profile.
+    /// `show [--field X]` / `summary` inspect materialised claims;
+    /// `communication status|show|why|set|reset|context` exposes the default-on,
+    /// non-diagnostic presentation adaptation without storing raw message text.
     Profile(profile::ProfileArgs),
 
     /// Per-provider quota visibility — show backoff windows + daily counters,

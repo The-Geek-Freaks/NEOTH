@@ -41,6 +41,21 @@ pub enum MemoryAction {
         #[arg(long)]
         verified_only: bool,
     },
+    /// Preview or confirm erasure of one complete typed communication profile.
+    /// This is intentionally separate from topic forget because typed
+    /// presentation evidence is not topic-addressable.
+    EraseCommunicationProfile {
+        /// Exact, case-sensitive pseudonymous handle from
+        /// `neoth export --list-subjects`. Defaults to `operator`.
+        #[arg(long, value_name = "SUBJECT")]
+        subject: Option<String>,
+        /// Required to erase. Without this flag the command is a dry-run.
+        #[arg(long)]
+        confirm: bool,
+        /// Override `~/.neoth/` (primarily for isolated verification).
+        #[arg(long, value_name = "DIR")]
+        home: Option<PathBuf>,
+    },
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -168,6 +183,19 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     if let Some(action) = args.action.as_ref() {
         return match action {
             MemoryAction::Show { id, verified_only } => run_memory_show(&args, *id, *verified_only),
+            MemoryAction::EraseCommunicationProfile {
+                subject,
+                confirm,
+                home,
+            } => {
+                run_communication_profile_erasure(
+                    &args,
+                    subject.as_deref(),
+                    *confirm,
+                    home.as_deref(),
+                )
+                .await
+            }
         };
     }
 
@@ -552,6 +580,295 @@ async fn run_memory_tier(args: &MemoryArgs, tier: TierFilter) -> Result<()> {
     Ok(())
 }
 
+const COMMUNICATION_OPERATOR_SUBJECT: &str = "operator";
+const COMMUNICATION_ERASE_COMMAND: &str = "neoth memory erase-communication-profile --confirm";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CommunicationProfileInventory {
+    dimensions: usize,
+    evidence_records: usize,
+    declared_context_records: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CommunicationProfileErasureReport {
+    dry_run: bool,
+    confirmed: bool,
+    subject_sha256: String,
+    operator_subject: bool,
+    state_file_present_before: bool,
+    subject_present_before: bool,
+    would_change: bool,
+    changed: bool,
+    dimensions: usize,
+    evidence_records: usize,
+    declared_context_records: usize,
+    state_revision_before: u64,
+    state_revision_after: Option<u64>,
+    wal_audit_persisted: bool,
+    audit_semantics: &'static str,
+    topic_forget_affected: bool,
+    confirm_with: Option<String>,
+}
+
+fn communication_profile_inventory(
+    subject: Option<&crate::profile::communication::SubjectCommunicationProfile>,
+) -> CommunicationProfileInventory {
+    let Some(subject) = subject else {
+        return CommunicationProfileInventory::default();
+    };
+    CommunicationProfileInventory {
+        dimensions: subject
+            .evidence
+            .keys()
+            .chain(subject.estimates.keys())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        evidence_records: subject.evidence.values().map(Vec::len).sum(),
+        declared_context_records: usize::from(subject.declared_context.is_some()),
+    }
+}
+
+fn render_communication_profile_erasure(
+    report: &CommunicationProfileErasureReport,
+    output: &OutputFormat,
+) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(report)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(report)?),
+        OutputFormat::Table => {
+            let heading = if report.dry_run {
+                "# Communication-profile erasure preview"
+            } else {
+                "# Communication-profile erasure complete"
+            };
+            println!("{heading}");
+            println!(
+                "  selected subject   : sha256:{} ({})",
+                &report.subject_sha256[..report.subject_sha256.len().min(16)],
+                if report.operator_subject {
+                    "operator"
+                } else {
+                    "pseudonymous channel subject"
+                }
+            );
+            println!(
+                "  subject present    : {}",
+                if report.subject_present_before {
+                    "present"
+                } else {
+                    "absent"
+                }
+            );
+            println!("  typed dimensions  : {}", report.dimensions);
+            println!("  evidence records  : {}", report.evidence_records);
+            println!("  context records   : {}", report.declared_context_records);
+            if report.dry_run {
+                println!("  would delete      : {}", report.would_change);
+                println!(
+                    "  No changes made. Confirm with {}.",
+                    report.confirm_with.as_deref().unwrap_or("`--confirm`")
+                );
+            } else {
+                println!("  subject deleted   : {}", report.changed);
+                println!(
+                    "  state revision    : {} -> {}",
+                    report.state_revision_before,
+                    report
+                        .state_revision_after
+                        .unwrap_or(report.state_revision_before)
+                );
+                println!("  WAL audit         : persisted metadata-only post-commit receipt");
+            }
+            println!(
+                "  Topic forget remains separate because typed communication evidence is not topic-addressable."
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn run_communication_profile_erasure(
+    args: &MemoryArgs,
+    subject_selector: Option<&str>,
+    confirm: bool,
+    home_override: Option<&std::path::Path>,
+) -> Result<()> {
+    let subject_id = subject_selector.unwrap_or(COMMUNICATION_OPERATOR_SUBJECT);
+    crate::daemon::export::validate_communication_subject_selector(subject_id)?;
+    let home = home_override
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(FreedomConfig::default_neoth_home);
+    let state_path = crate::profile::communication::state_path(&home);
+    let state_file_present_before = state_path
+        .try_exists()
+        .with_context(|| format!("inspect communication profile at {}", state_path.display()))?;
+    let before = crate::profile::communication::load_state(&home).with_context(|| {
+        format!(
+            "strictly load communication profile at {}",
+            state_path.display()
+        )
+    })?;
+    let subject = before.subjects.get(subject_id);
+    if subject_selector.is_some() && subject.is_none() {
+        anyhow::bail!(
+            "selected communication-profile subject was not found; selectors are exact and case-sensitive"
+        );
+    }
+    let subject_present_before = subject.is_some();
+    let inventory = communication_profile_inventory(subject);
+    let subject_sha256 = crate::daemon::export::communication_subject_sha256(subject_id);
+
+    if !confirm {
+        return render_communication_profile_erasure(
+            &CommunicationProfileErasureReport {
+                dry_run: true,
+                confirmed: false,
+                subject_sha256,
+                operator_subject: subject_id == COMMUNICATION_OPERATOR_SUBJECT,
+                state_file_present_before,
+                subject_present_before,
+                would_change: subject_present_before,
+                changed: false,
+                dimensions: inventory.dimensions,
+                evidence_records: inventory.evidence_records,
+                declared_context_records: inventory.declared_context_records,
+                state_revision_before: before.revision,
+                state_revision_after: None,
+                wal_audit_persisted: false,
+                audit_semantics: "none_dry_run",
+                topic_forget_affected: false,
+                confirm_with: Some(if subject_selector.is_some() {
+                    "the same exact `--subject` selector plus `--confirm`".to_owned()
+                } else {
+                    format!("`{COMMUNICATION_ERASE_COMMAND}`")
+                }),
+            },
+            &args.output,
+        );
+    }
+
+    let changed = crate::profile::communication::forget_subject(&home, subject_id)
+        .context("erase selected typed communication subject")?;
+    let after = crate::profile::communication::load_state(&home)
+        .context("reload communication profile after erasure")?;
+    append_communication_subject_erasure_audit_at(&home, subject_id, changed, after.revision)
+        .await?;
+    render_communication_profile_erasure(
+        &CommunicationProfileErasureReport {
+            dry_run: false,
+            confirmed: true,
+            subject_sha256,
+            operator_subject: subject_id == COMMUNICATION_OPERATOR_SUBJECT,
+            state_file_present_before,
+            subject_present_before,
+            would_change: subject_present_before,
+            changed,
+            dimensions: inventory.dimensions,
+            evidence_records: inventory.evidence_records,
+            declared_context_records: inventory.declared_context_records,
+            state_revision_before: before.revision,
+            state_revision_after: Some(after.revision),
+            wal_audit_persisted: true,
+            audit_semantics: "metadata_only_post_commit_receipt",
+            topic_forget_affected: false,
+            confirm_with: None,
+        },
+        &args.output,
+    )
+}
+
+fn communication_subject_erasure_audit_payload(
+    subject_id: &str,
+    changed: bool,
+    state_revision: u64,
+    ts_unix: i64,
+) -> Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": 1,
+        "action_code": crate::cli::profile::CommunicationControlAction::ForgetSubject as u8,
+        "changed": changed,
+        "subject_sha256": crate::daemon::export::communication_subject_sha256(subject_id),
+        "subject_revision_observed": Option::<u64>::None,
+        "state_revision_observed": state_revision,
+        "ts_unix": ts_unix,
+    }))
+    .context("serialize communication-subject erasure audit")
+}
+
+/// Append the required metadata-only post-commit receipt for the exact subject
+/// selected by the DSAR command. The older profile CLI helper is intentionally
+/// operator-only, so using it here would produce a false audit identity.
+async fn append_communication_subject_erasure_audit_at(
+    home: &std::path::Path,
+    subject_id: &str,
+    changed: bool,
+    state_revision: u64,
+) -> Result<()> {
+    let payload = communication_subject_erasure_audit_payload(
+        subject_id,
+        changed,
+        state_revision,
+        crate::time::now_unix_i64(),
+    )?;
+    let subtype = crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8;
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+        .is_some();
+
+    if daemon_live {
+        crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
+            home,
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            subtype,
+            &payload,
+        )
+        .await
+        .map_err(anyhow::Error::new)
+        .context("running daemon refused required communication-subject erasure audit")?;
+        return Ok(());
+    }
+
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create communication-subject WAL dir {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(
+        &wal_dir,
+        "communication-profile-control",
+    );
+    let (writer, join) = crate::wal::spawn_for_home(segment, home.to_path_buf())
+        .context("spawn one-shot communication-subject control WAL writer")?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(subtype)
+        .build();
+    let append = writer
+        .append(header, payload)
+        .await
+        .context("append required communication-subject erasure audit")
+        .map(|_| ());
+    drop(writer);
+    let shutdown = join
+        .await
+        .context("join one-shot communication-subject control WAL writer");
+    match (append, shutdown) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(append), Err(shutdown)) => Err(anyhow::anyhow!(
+            "{append:#}; additionally failed to close communication-subject audit WAL: {shutdown:#}"
+        )),
+    }
+}
+
+fn communication_profile_topic_forget_metadata() -> serde_json::Value {
+    serde_json::json!({
+        "subjects_deleted": 0,
+        "topic_addressable": false,
+        "reason": "typed_communication_evidence_is_not_topic_addressable",
+        "erase_with": COMMUNICATION_ERASE_COMMAND,
+    })
+}
+
 /// `neoth memory --forget <topic> [--confirm]` — GDPR cascade-delete.
 ///
 /// Without `--confirm` this is a dry-run that prints what would be
@@ -593,9 +910,14 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                         "people_json": report.people_rows,
                         "total": total,
                     },
+                    "communication_profile": communication_profile_topic_forget_metadata(),
                     "confirm_with": "neoth memory --forget \"<topic>\" --confirm",
                 });
-                println!("{}", serde_json::to_string_pretty(&body)?);
+                match args.output {
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&body)?),
+                    OutputFormat::Jsonl => println!("{}", serde_json::to_string(&body)?),
+                    OutputFormat::Table => unreachable!(),
+                }
             }
             OutputFormat::Table => {
                 println!("# Forget dry-run for topic `{topic}`");
@@ -620,6 +942,9 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                     report.foreign_event_rows
                 );
                 println!("  people.json      : {} rows", report.people_rows);
+                println!(
+                    "  communication    : 0 subjects (not topic-addressable; erase with `{COMMUNICATION_ERASE_COMMAND}`)"
+                );
                 println!("  total            : {total}");
                 println!();
                 println!("  No changes made. Re-run with `--confirm` to execute.");
@@ -681,7 +1006,18 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     );
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            let mut body = serde_json::to_value(&report).context("serialize forget report")?;
+            body.as_object_mut()
+                .expect("ForgetReport serializes to an object")
+                .insert(
+                    "communication_profile".to_owned(),
+                    communication_profile_topic_forget_metadata(),
+                );
+            match args.output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&body)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&body)?),
+                OutputFormat::Table => unreachable!(),
+            }
         }
         OutputFormat::Table => {
             println!("# Forget complete for topic `{topic}`");
@@ -726,6 +1062,9 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 report.contradiction_rows
             );
             println!("  people.json      : {} rows deleted", report.people_rows);
+            println!(
+                "  communication    : 0 subjects deleted (not topic-addressable; erase with `{COMMUNICATION_ERASE_COMMAND}`)"
+            );
             println!("  total            : {}", report.total());
         }
     }
@@ -1282,6 +1621,39 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn seed_communication_profile(
+        home: &std::path::Path,
+        subject_id: &str,
+        session_id: &str,
+        event_hash: [u8; 32],
+    ) {
+        use crate::profile::communication::{
+            CommunicationScope, DirectnessPreference, PreferenceValue,
+        };
+
+        crate::profile::communication::set_explicit_preference(
+            home,
+            &crate::config::CommunicationProfileConfig::default(),
+            subject_id,
+            session_id,
+            PreferenceValue::Directness(DirectnessPreference::Direct),
+            event_hash,
+            1_700_000_000,
+            CommunicationScope::Global,
+            false,
+        )
+        .unwrap();
+    }
+
+    fn seed_operator_communication_profile(home: &std::path::Path) {
+        seed_communication_profile(
+            home,
+            COMMUNICATION_OPERATOR_SUBJECT,
+            "private-session-id",
+            [7; 32],
+        );
+    }
+
     fn pin_test_args(db: PathBuf, pin: Option<i64>, unpin: Option<i64>) -> MemoryArgs {
         MemoryArgs {
             action: None,
@@ -1366,6 +1738,218 @@ mod tests {
             verified_only.iter().all(|row| row.fact.id != synthesis_id),
             "--verified-only retains the recall trust boundary"
         );
+    }
+
+    #[test]
+    fn communication_profile_erasure_subcommand_is_explicitly_confirmed() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "memory",
+            "erase-communication-profile",
+            "--confirm",
+            "--home",
+            "C:/isolated-neoth",
+        ])
+        .unwrap();
+        let Commands::Memory(args) = cli.command else {
+            panic!("memory command expected")
+        };
+        let Some(MemoryAction::EraseCommunicationProfile {
+            subject,
+            confirm,
+            home,
+        }) = args.action
+        else {
+            panic!("communication-profile erasure action expected")
+        };
+        assert!(subject.is_none(), "omission must preserve operator default");
+        assert!(confirm);
+        assert_eq!(home, Some(PathBuf::from("C:/isolated-neoth")));
+
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "memory",
+            "erase-communication-profile",
+            "--subject",
+            "native:matrix:AbC",
+        ])
+        .unwrap();
+        let Commands::Memory(args) = cli.command else {
+            panic!("memory command expected")
+        };
+        let Some(MemoryAction::EraseCommunicationProfile { subject, .. }) = args.action else {
+            panic!("communication-profile erasure action expected")
+        };
+        assert_eq!(subject.as_deref(), Some("native:matrix:AbC"));
+    }
+
+    #[tokio::test]
+    async fn selected_communication_subject_dry_runs_then_deletes_only_it_and_audits() {
+        let home = tempdir().unwrap();
+        seed_operator_communication_profile(home.path());
+        let selected = "native:matrix:other-hash";
+        seed_communication_profile(home.path(), selected, "other-private-session", [8; 32]);
+        let before = crate::profile::communication::load_state(home.path()).unwrap();
+        let args = MemoryArgs {
+            output: OutputFormat::Table,
+            ..Default::default()
+        };
+
+        run_communication_profile_erasure(&args, Some(selected), false, Some(home.path()))
+            .await
+            .unwrap();
+        let dry_run_state = crate::profile::communication::load_state(home.path()).unwrap();
+        assert!(dry_run_state.subjects.contains_key(selected));
+        assert!(
+            dry_run_state
+                .subjects
+                .contains_key(COMMUNICATION_OPERATOR_SUBJECT)
+        );
+        assert!(!home.path().join("wal").exists());
+
+        run_communication_profile_erasure(&args, Some(selected), true, Some(home.path()))
+            .await
+            .unwrap();
+        let after = crate::profile::communication::load_state(home.path()).unwrap();
+        assert!(!after.subjects.contains_key(selected));
+        assert!(after.subjects.contains_key(COMMUNICATION_OPERATOR_SUBJECT));
+        assert_eq!(after.revision, before.revision + 1);
+
+        let segments = std::fs::read_dir(home.path().join("wal"))
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("wal"))
+            .collect::<Vec<_>>();
+        assert_eq!(segments.len(), 1);
+        let bytes = std::fs::read(&segments[0]).unwrap();
+        let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let frame = crate::wal::frame::decode_frame(&bytes[segment_header.header_len()..]).unwrap();
+        assert_eq!(
+            frame.header.event_type,
+            crate::wal::events::EVENT_TYPE_EXTENDED
+        );
+        assert_eq!(
+            frame.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8
+        );
+        let payload_text = std::str::from_utf8(frame.payload).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        let keys = payload
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            keys,
+            [
+                "action_code",
+                "changed",
+                "schema_version",
+                "state_revision_observed",
+                "subject_revision_observed",
+                "subject_sha256",
+                "ts_unix",
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(
+            payload["action_code"],
+            crate::cli::profile::CommunicationControlAction::ForgetSubject as u8
+        );
+        assert_eq!(payload["changed"], true);
+        assert_eq!(payload["state_revision_observed"], after.revision);
+        assert!(payload["subject_revision_observed"].is_null());
+        assert_eq!(
+            payload["subject_sha256"],
+            crate::daemon::export::communication_subject_sha256(selected)
+        );
+        for sensitive in [
+            COMMUNICATION_OPERATOR_SUBJECT,
+            selected,
+            "private-session-id",
+            "other-private-session",
+            "direct",
+            "adhd",
+        ] {
+            assert!(!payload_text.contains(sensitive));
+        }
+    }
+
+    #[tokio::test]
+    async fn omitted_subject_keeps_backward_compatible_operator_erasure() {
+        let home = tempdir().unwrap();
+        seed_operator_communication_profile(home.path());
+        let args = MemoryArgs {
+            output: OutputFormat::Json,
+            ..Default::default()
+        };
+
+        run_communication_profile_erasure(&args, None, true, Some(home.path()))
+            .await
+            .unwrap();
+        assert!(
+            !crate::profile::communication::load_state(home.path())
+                .unwrap()
+                .subjects
+                .contains_key(COMMUNICATION_OPERATOR_SUBJECT)
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_unknown_or_case_mismatched_subject_fails_without_mutation_or_audit() {
+        let home = tempdir().unwrap();
+        seed_operator_communication_profile(home.path());
+        let before = crate::profile::communication::load_state(home.path()).unwrap();
+        let args = MemoryArgs::default();
+
+        for selector in ["Operator", "unknown-subject"] {
+            let error =
+                run_communication_profile_erasure(&args, Some(selector), true, Some(home.path()))
+                    .await
+                    .unwrap_err();
+            assert!(format!("{error:#}").contains("exact and case-sensitive"));
+        }
+        let after = crate::profile::communication::load_state(home.path()).unwrap();
+        assert_eq!(after, before);
+        assert!(!home.path().join("wal").exists());
+
+        let error =
+            run_communication_profile_erasure(&args, Some(" operator"), false, Some(home.path()))
+                .await
+                .unwrap_err();
+        assert!(format!("{error:#}").contains("invalid communication-profile subject selector"));
+    }
+
+    #[test]
+    fn topic_forget_never_erases_unaddressable_communication_profile() {
+        let home = tempdir().unwrap();
+        seed_operator_communication_profile(home.path());
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (811, 1, 1000, 'erase Acme topic', 'h', 0.5, 0)",
+            [],
+        )
+        .unwrap();
+
+        let report = crate::memory::forget::forget_by_topic(&conn, "Acme", 1_700_000_001).unwrap();
+        assert_eq!(report.episode_rows, 1);
+        assert!(
+            crate::profile::communication::load_state(home.path())
+                .unwrap()
+                .subjects
+                .contains_key(COMMUNICATION_OPERATOR_SUBJECT)
+        );
+        let metadata = communication_profile_topic_forget_metadata();
+        assert_eq!(metadata["subjects_deleted"], 0);
+        assert_eq!(metadata["topic_addressable"], false);
+        assert_eq!(metadata["erase_with"], COMMUNICATION_ERASE_COMMAND);
     }
 
     #[test]

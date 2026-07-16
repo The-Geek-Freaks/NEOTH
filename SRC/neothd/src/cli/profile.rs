@@ -1,19 +1,22 @@
-//! `neoth profile` — read-only visibility into the user-profile state.
+//! `neoth profile` — inspect and explicitly control user-profile state.
 //!
-//! Operators run the pipeline via channel ingress or `neoth chat` (when
-//! the dispatch wires it up); this CLI surfaces the result. Pure read
-//! against `idx_profile` — no writes, no LLM, no provider calls.
+//! Claim inspection remains a pure read against `idx_profile`. Explicit
+//! redaction, approval, preset, persona and communication-profile commands use
+//! their typed persistence paths; none of the communication controls invokes
+//! an LLM or stores raw message text.
 //!
-//! Two actions:
+//! Core inspection actions:
 //!   - `show [--field <path>]` lists every active claim (one row per
 //!     field × extraction_id). With `--field`, filters to a single
 //!     path (e.g. `identity.location`).
 //!   - `summary` collapses to one row per field — the highest-confidence
 //!     non-superseded claim per dot-path. Useful for "what does NEOTH
 //!     think about me right now?".
+//!   - `communication ...` exposes the independent, typed presentation
+//!     profile plus explicit operator declarations and privacy controls.
 
 use anyhow::{Context, Result};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -93,6 +96,15 @@ pub enum ProfileAction {
     Persona {
         #[command(subcommand)]
         sub: PersonaSub,
+    },
+    /// Inspect and control the default-on local communication profile.
+    ///
+    /// This surface stores only typed presentation preferences and
+    /// operator-declared context. It never displays raw message text and never
+    /// presents a diagnosis inferred from language.
+    Communication {
+        #[command(subcommand)]
+        sub: CommunicationSub,
     },
 
     /// Manually drive the 6-stage profile pipeline. Pick a single
@@ -381,6 +393,1249 @@ pub enum PersonaSub {
     Clear,
 }
 
+/// Operator-facing controls for the deterministic communication profile.
+#[derive(Subcommand, Debug, Clone)]
+pub enum CommunicationSub {
+    /// Show policy, state availability and an active-dimension summary.
+    Status,
+    /// Show every typed estimate for the local operator profile.
+    Show,
+    /// Explain the typed evidence behind one dimension. Raw messages are never shown.
+    Why {
+        #[arg(value_enum)]
+        dimension: CommunicationDimensionArg,
+    },
+    /// Pin one explicit preference immediately.
+    Set {
+        #[arg(value_enum)]
+        dimension: CommunicationDimensionArg,
+        /// Dimension-specific value. Run `communication show` to inspect current values.
+        value: String,
+    },
+    /// Remove one dimension, or the complete operator communication profile.
+    Reset {
+        #[arg(value_enum)]
+        dimension: Option<CommunicationDimensionArg>,
+    },
+    /// Enable local communication adaptation in freedom.yaml.
+    Enable,
+    /// Disable all automatic communication-profile reads and writes.
+    Disable,
+    /// Control what the local compiler may inject into provider prompts.
+    PromptExport {
+        #[arg(value_enum)]
+        mode: CommunicationPromptExportArg,
+    },
+    /// Manage explicitly operator-declared neuro-context.
+    Context {
+        #[command(subcommand)]
+        sub: CommunicationContextSub,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CommunicationContextSub {
+    /// Show the current operator declaration, including cleared declarations.
+    Show,
+    /// Store an explicit operator declaration. This is never an inferred diagnosis.
+    Declare {
+        #[arg(value_enum)]
+        kind: DeclaredContextKindArg,
+        /// Whether the explicit label itself may be exported. The global
+        /// prompt-export policy must independently allow labels too.
+        #[arg(long, value_enum, default_value = "accommodations-only")]
+        prompt_use: DeclaredContextPromptUseArg,
+    },
+    /// Revoke the current explicit declaration while retaining its local history.
+    Clear,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommunicationDimensionArg {
+    Directness,
+    Structure,
+    Ambiguity,
+    ProcessingLoad,
+    ContextAmount,
+    Pace,
+    Clarification,
+    CorrectionStyle,
+}
+
+impl From<CommunicationDimensionArg> for crate::profile::communication::CommunicationDimension {
+    fn from(value: CommunicationDimensionArg) -> Self {
+        use crate::profile::communication::CommunicationDimension;
+        match value {
+            CommunicationDimensionArg::Directness => CommunicationDimension::Directness,
+            CommunicationDimensionArg::Structure => CommunicationDimension::Structure,
+            CommunicationDimensionArg::Ambiguity => CommunicationDimension::Ambiguity,
+            CommunicationDimensionArg::ProcessingLoad => CommunicationDimension::ProcessingLoad,
+            CommunicationDimensionArg::ContextAmount => CommunicationDimension::ContextAmount,
+            CommunicationDimensionArg::Pace => CommunicationDimension::Pace,
+            CommunicationDimensionArg::Clarification => CommunicationDimension::Clarification,
+            CommunicationDimensionArg::CorrectionStyle => CommunicationDimension::CorrectionStyle,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommunicationPromptExportArg {
+    None,
+    AccommodationsOnly,
+    LabelAndAccommodations,
+}
+
+impl From<CommunicationPromptExportArg> for crate::config::CommunicationPromptExport {
+    fn from(value: CommunicationPromptExportArg) -> Self {
+        match value {
+            CommunicationPromptExportArg::None => Self::None,
+            CommunicationPromptExportArg::AccommodationsOnly => Self::AccommodationsOnly,
+            CommunicationPromptExportArg::LabelAndAccommodations => Self::LabelAndAccommodations,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclaredContextKindArg {
+    Neurodivergent,
+    Autistic,
+    Adhd,
+}
+
+impl From<DeclaredContextKindArg> for crate::profile::communication::DeclaredContextKind {
+    fn from(value: DeclaredContextKindArg) -> Self {
+        match value {
+            DeclaredContextKindArg::Neurodivergent => Self::Neurodivergent,
+            DeclaredContextKindArg::Autistic => Self::Autistic,
+            DeclaredContextKindArg::Adhd => Self::Adhd,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclaredContextPromptUseArg {
+    AccommodationsOnly,
+    LabelAndAccommodations,
+}
+
+impl From<DeclaredContextPromptUseArg> for crate::profile::communication::DeclaredContextPromptUse {
+    fn from(value: DeclaredContextPromptUseArg) -> Self {
+        match value {
+            DeclaredContextPromptUseArg::AccommodationsOnly => Self::AccommodationsOnly,
+            DeclaredContextPromptUseArg::LabelAndAccommodations => Self::LabelAndAccommodations,
+        }
+    }
+}
+
+const COMMUNICATION_OPERATOR_SUBJECT: &str = "operator";
+const COMMUNICATION_CLI_EVENT_DOMAIN: &str = "cli.operator.communication.explicit.v1";
+
+/// Stable metadata-only action codes for explicit communication-profile
+/// controls. Append only: these values are part of the durable WAL contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum CommunicationControlAction {
+    SetPreference = 1,
+    ResetDimension = 2,
+    ForgetSubject = 3,
+    Enable = 4,
+    Disable = 5,
+    SetPromptExport = 6,
+    DeclareContext = 7,
+    ClearContext = 8,
+}
+
+#[derive(Debug, Clone)]
+struct CommunicationActionIdentity {
+    event_hash: [u8; 32],
+    event_hash_hex: String,
+    session_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct CommunicationMutationReceipt {
+    action: &'static str,
+    changed: bool,
+    subject_id: &'static str,
+    dimension: Option<&'static str>,
+    value: Option<&'static str>,
+    prompt_use: Option<&'static str>,
+    event_hash: Option<String>,
+    persistence: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AuditedCommunicationMutationReceipt<'a> {
+    #[serde(flatten)]
+    mutation: &'a CommunicationMutationReceipt,
+    wal_audit_persisted: bool,
+}
+
+fn communication_control_audit_payload(
+    action: CommunicationControlAction,
+    changed: bool,
+    subject_id: &str,
+    subject_revision: Option<u64>,
+    state_revision: u64,
+    ts_unix: i64,
+) -> Result<Vec<u8>> {
+    use sha2::Digest as _;
+
+    let mut subject_hasher = sha2::Sha256::new();
+    subject_hasher.update(b"neoth.communication.audit-subject.v1\0");
+    subject_hasher.update(subject_id.as_bytes());
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": 1,
+        "action_code": action as u8,
+        "changed": changed,
+        "subject_sha256": hex::encode(subject_hasher.finalize()),
+        "subject_revision_observed": subject_revision,
+        "state_revision_observed": state_revision,
+        "ts_unix": ts_unix,
+    }))
+    .context("serialize communication-profile control audit")
+}
+
+/// Append a required post-commit audit receipt. The profile/config mutation
+/// has already completed when this runs, so an append failure is surfaced but
+/// this function deliberately does not claim cross-file atomicity.
+pub(crate) async fn append_communication_control_audit_at(
+    home: &std::path::Path,
+    action: CommunicationControlAction,
+    changed: bool,
+) -> Result<()> {
+    let state = crate::profile::communication::load_state(home)?;
+    let payload = communication_control_audit_payload(
+        action,
+        changed,
+        COMMUNICATION_OPERATOR_SUBJECT,
+        state
+            .subjects
+            .get(COMMUNICATION_OPERATOR_SUBJECT)
+            .map(|subject| subject.revision),
+        state.revision,
+        crate::time::now_unix_i64(),
+    )?;
+    let subtype = crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8;
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+        .is_some();
+
+    if daemon_live {
+        crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
+            home,
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            subtype,
+            &payload,
+        )
+        .await
+        .map_err(anyhow::Error::new)
+        .context("running daemon refused the required communication-profile control audit")?;
+        return Ok(());
+    }
+
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create communication-profile WAL dir {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(
+        &wal_dir,
+        "communication-profile-control",
+    );
+    let (writer, join) = crate::wal::spawn_for_home(segment, home.to_path_buf())
+        .context("spawn one-shot communication-profile control WAL writer")?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(subtype)
+        .build();
+    let append = writer
+        .append(header, payload)
+        .await
+        .context("append required communication-profile control audit")
+        .map(|_| ());
+    drop(writer);
+    let shutdown = join
+        .await
+        .context("join one-shot communication-profile control WAL writer");
+    match (append, shutdown) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(append), Err(shutdown)) => Err(anyhow::anyhow!(
+            "{append:#}; additionally failed to close communication-profile audit WAL: {shutdown:#}"
+        )),
+    }
+}
+
+fn mint_communication_action_identity(
+    action: &str,
+    value: &str,
+) -> Result<CommunicationActionIdentity> {
+    let mut nonce = [0_u8; 32];
+    getrandom::getrandom(&mut nonce)
+        .map_err(|error| anyhow::anyhow!("OS RNG unavailable for communication action: {error}"))?;
+    let session_id = format!("cli-{}", hex::encode(&nonce[..16]));
+    let mut event_identity = Vec::with_capacity(action.len() + value.len() + nonce.len() + 2);
+    event_identity.extend_from_slice(action.as_bytes());
+    event_identity.push(0);
+    event_identity.extend_from_slice(value.as_bytes());
+    event_identity.push(0);
+    event_identity.extend_from_slice(&nonce);
+    let event_hash = crate::profile::communication::evidence_event_hash(
+        COMMUNICATION_CLI_EVENT_DOMAIN,
+        COMMUNICATION_OPERATOR_SUBJECT,
+        &session_id,
+        &event_identity,
+    );
+    Ok(CommunicationActionIdentity {
+        event_hash,
+        event_hash_hex: hex::encode(event_hash),
+        session_id,
+    })
+}
+
+fn normalise_communication_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('-', "_")
+}
+
+fn valid_preference_values(
+    dimension: crate::profile::communication::CommunicationDimension,
+) -> &'static str {
+    use crate::profile::communication::CommunicationDimension;
+    match dimension {
+        CommunicationDimension::Directness => "direct, balanced, gentle",
+        CommunicationDimension::Structure => "prose, bullets, numbered-steps",
+        CommunicationDimension::Ambiguity => "literal-explicit, balanced, inferential",
+        CommunicationDimension::ProcessingLoad => "one-chunk, compact, balanced, deep",
+        CommunicationDimension::ContextAmount => "minimal, short-recap, continuity-rich",
+        CommunicationDimension::Pace => "immediate-full, staged, ask-before-next",
+        CommunicationDimension::Clarification => {
+            "act-with-stated-assumptions, ask-one-question, clarify-first"
+        }
+        CommunicationDimension::CorrectionStyle => {
+            "acknowledge-and-fix, explain-then-fix, silent-fix"
+        }
+    }
+}
+
+fn parse_communication_preference(
+    dimension: crate::profile::communication::CommunicationDimension,
+    value: &str,
+) -> Result<crate::profile::communication::PreferenceValue> {
+    use crate::profile::communication::{
+        AmbiguityPreference, ClarificationPreference, CommunicationDimension,
+        ContextAmountPreference, CorrectionStylePreference, DirectnessPreference, PacePreference,
+        PreferenceValue, ProcessingLoadPreference, StructurePreference,
+    };
+    let normalized = normalise_communication_value(value);
+    let parsed = match (dimension, normalized.as_str()) {
+        (CommunicationDimension::Directness, "direct") => {
+            PreferenceValue::Directness(DirectnessPreference::Direct)
+        }
+        (CommunicationDimension::Directness, "balanced") => {
+            PreferenceValue::Directness(DirectnessPreference::Balanced)
+        }
+        (CommunicationDimension::Directness, "gentle") => {
+            PreferenceValue::Directness(DirectnessPreference::Gentle)
+        }
+        (CommunicationDimension::Structure, "prose") => {
+            PreferenceValue::Structure(StructurePreference::Prose)
+        }
+        (CommunicationDimension::Structure, "bullets") => {
+            PreferenceValue::Structure(StructurePreference::Bullets)
+        }
+        (CommunicationDimension::Structure, "numbered_steps") => {
+            PreferenceValue::Structure(StructurePreference::NumberedSteps)
+        }
+        (CommunicationDimension::Ambiguity, "literal_explicit") => {
+            PreferenceValue::Ambiguity(AmbiguityPreference::LiteralExplicit)
+        }
+        (CommunicationDimension::Ambiguity, "balanced") => {
+            PreferenceValue::Ambiguity(AmbiguityPreference::Balanced)
+        }
+        (CommunicationDimension::Ambiguity, "inferential") => {
+            PreferenceValue::Ambiguity(AmbiguityPreference::Inferential)
+        }
+        (CommunicationDimension::ProcessingLoad, "one_chunk") => {
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::OneChunk)
+        }
+        (CommunicationDimension::ProcessingLoad, "compact") => {
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact)
+        }
+        (CommunicationDimension::ProcessingLoad, "balanced") => {
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Balanced)
+        }
+        (CommunicationDimension::ProcessingLoad, "deep") => {
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep)
+        }
+        (CommunicationDimension::ContextAmount, "minimal") => {
+            PreferenceValue::ContextAmount(ContextAmountPreference::Minimal)
+        }
+        (CommunicationDimension::ContextAmount, "short_recap") => {
+            PreferenceValue::ContextAmount(ContextAmountPreference::ShortRecap)
+        }
+        (CommunicationDimension::ContextAmount, "continuity_rich") => {
+            PreferenceValue::ContextAmount(ContextAmountPreference::ContinuityRich)
+        }
+        (CommunicationDimension::Pace, "immediate_full") => {
+            PreferenceValue::Pace(PacePreference::ImmediateFull)
+        }
+        (CommunicationDimension::Pace, "staged") => PreferenceValue::Pace(PacePreference::Staged),
+        (CommunicationDimension::Pace, "ask_before_next") => {
+            PreferenceValue::Pace(PacePreference::AskBeforeNext)
+        }
+        (CommunicationDimension::Clarification, "act_with_stated_assumptions") => {
+            PreferenceValue::Clarification(ClarificationPreference::ActWithStatedAssumptions)
+        }
+        (CommunicationDimension::Clarification, "ask_one_question") => {
+            PreferenceValue::Clarification(ClarificationPreference::AskOneQuestion)
+        }
+        (CommunicationDimension::Clarification, "clarify_first") => {
+            PreferenceValue::Clarification(ClarificationPreference::ClarifyFirst)
+        }
+        (CommunicationDimension::CorrectionStyle, "acknowledge_and_fix") => {
+            PreferenceValue::CorrectionStyle(CorrectionStylePreference::AcknowledgeAndFix)
+        }
+        (CommunicationDimension::CorrectionStyle, "explain_then_fix") => {
+            PreferenceValue::CorrectionStyle(CorrectionStylePreference::ExplainThenFix)
+        }
+        (CommunicationDimension::CorrectionStyle, "silent_fix") => {
+            PreferenceValue::CorrectionStyle(CorrectionStylePreference::SilentFix)
+        }
+        _ => anyhow::bail!(
+            "invalid value `{value}` for `{}`; expected one of: {}",
+            dimension.as_str(),
+            valid_preference_values(dimension)
+        ),
+    };
+    Ok(parsed)
+}
+
+fn preference_value_name(value: crate::profile::communication::PreferenceValue) -> &'static str {
+    use crate::profile::communication::{
+        AmbiguityPreference, ClarificationPreference, ContextAmountPreference,
+        CorrectionStylePreference, DirectnessPreference, PacePreference, PreferenceValue,
+        ProcessingLoadPreference, StructurePreference,
+    };
+    match value {
+        PreferenceValue::Directness(DirectnessPreference::Direct) => "direct",
+        PreferenceValue::Directness(DirectnessPreference::Balanced) => "balanced",
+        PreferenceValue::Directness(DirectnessPreference::Gentle) => "gentle",
+        PreferenceValue::Structure(StructurePreference::Prose) => "prose",
+        PreferenceValue::Structure(StructurePreference::Bullets) => "bullets",
+        PreferenceValue::Structure(StructurePreference::NumberedSteps) => "numbered_steps",
+        PreferenceValue::Ambiguity(AmbiguityPreference::LiteralExplicit) => "literal_explicit",
+        PreferenceValue::Ambiguity(AmbiguityPreference::Balanced) => "balanced",
+        PreferenceValue::Ambiguity(AmbiguityPreference::Inferential) => "inferential",
+        PreferenceValue::ProcessingLoad(ProcessingLoadPreference::OneChunk) => "one_chunk",
+        PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact) => "compact",
+        PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Balanced) => "balanced",
+        PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep) => "deep",
+        PreferenceValue::ContextAmount(ContextAmountPreference::Minimal) => "minimal",
+        PreferenceValue::ContextAmount(ContextAmountPreference::ShortRecap) => "short_recap",
+        PreferenceValue::ContextAmount(ContextAmountPreference::ContinuityRich) => {
+            "continuity_rich"
+        }
+        PreferenceValue::Pace(PacePreference::ImmediateFull) => "immediate_full",
+        PreferenceValue::Pace(PacePreference::Staged) => "staged",
+        PreferenceValue::Pace(PacePreference::AskBeforeNext) => "ask_before_next",
+        PreferenceValue::Clarification(ClarificationPreference::ActWithStatedAssumptions) => {
+            "act_with_stated_assumptions"
+        }
+        PreferenceValue::Clarification(ClarificationPreference::AskOneQuestion) => {
+            "ask_one_question"
+        }
+        PreferenceValue::Clarification(ClarificationPreference::ClarifyFirst) => "clarify_first",
+        PreferenceValue::CorrectionStyle(CorrectionStylePreference::AcknowledgeAndFix) => {
+            "acknowledge_and_fix"
+        }
+        PreferenceValue::CorrectionStyle(CorrectionStylePreference::ExplainThenFix) => {
+            "explain_then_fix"
+        }
+        PreferenceValue::CorrectionStyle(CorrectionStylePreference::SilentFix) => "silent_fix",
+    }
+}
+
+fn prompt_export_name(value: crate::config::CommunicationPromptExport) -> &'static str {
+    match value {
+        crate::config::CommunicationPromptExport::None => "none",
+        crate::config::CommunicationPromptExport::AccommodationsOnly => "accommodations_only",
+        crate::config::CommunicationPromptExport::LabelAndAccommodations => {
+            "label_and_accommodations"
+        }
+    }
+}
+
+fn declared_context_kind_name(
+    value: crate::profile::communication::DeclaredContextKind,
+) -> &'static str {
+    match value {
+        crate::profile::communication::DeclaredContextKind::Neurodivergent => "neurodivergent",
+        crate::profile::communication::DeclaredContextKind::Autistic => "autistic",
+        crate::profile::communication::DeclaredContextKind::Adhd => "adhd",
+    }
+}
+
+fn declared_prompt_use_name(
+    value: crate::profile::communication::DeclaredContextPromptUse,
+) -> &'static str {
+    match value {
+        crate::profile::communication::DeclaredContextPromptUse::AccommodationsOnly => {
+            "accommodations_only"
+        }
+        crate::profile::communication::DeclaredContextPromptUse::LabelAndAccommodations => {
+            "label_and_accommodations"
+        }
+    }
+}
+
+fn evidence_source_name(value: crate::profile::communication::EvidenceSource) -> &'static str {
+    match value {
+        crate::profile::communication::EvidenceSource::ExplicitSetting => "explicit_setting",
+        crate::profile::communication::EvidenceSource::ExplicitCorrection => "explicit_correction",
+        crate::profile::communication::EvidenceSource::ResponseFeedback => "response_feedback",
+        crate::profile::communication::EvidenceSource::PassiveOutcome => "passive_outcome",
+    }
+}
+
+fn communication_scope_name(
+    value: &crate::profile::communication::CommunicationScope,
+) -> &'static str {
+    match value {
+        crate::profile::communication::CommunicationScope::Global => "global",
+        crate::profile::communication::CommunicationScope::Channel(_) => "channel",
+        crate::profile::communication::CommunicationScope::Task(_) => "task",
+    }
+}
+
+fn emit_communication_json(value: &serde_json::Value, output: &OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(value)?),
+        OutputFormat::Table => unreachable!("table output has a dedicated renderer"),
+    }
+    Ok(())
+}
+
+fn load_communication_policy_at(
+    home: &std::path::Path,
+    require_initialized: bool,
+) -> Result<crate::config::CommunicationProfileConfig> {
+    let config_path = home.join("freedom.yaml");
+    let config = if require_initialized {
+        FreedomConfig::load_from_path(&config_path)
+    } else {
+        FreedomConfig::load_from_path_or_default(&config_path)
+    }
+    .with_context(|| format!("load communication policy from {}", config_path.display()))?;
+    Ok(config.profile.communication)
+}
+
+fn set_communication_enabled_at(home: &std::path::Path, enabled: bool) -> Result<bool> {
+    let config_path = home.join("freedom.yaml");
+    FreedomConfig::update_at(&config_path, |config| {
+        let changed = config.profile.communication.enabled != enabled;
+        config.profile.communication.enabled = enabled;
+        Ok(changed)
+    })
+    .with_context(|| {
+        format!(
+            "update profile.communication.enabled in {}",
+            config_path.display()
+        )
+    })
+}
+
+fn set_communication_prompt_export_at(
+    home: &std::path::Path,
+    mode: crate::config::CommunicationPromptExport,
+) -> Result<bool> {
+    let config_path = home.join("freedom.yaml");
+    FreedomConfig::update_at(&config_path, |config| {
+        let changed = config.profile.communication.prompt_export != mode;
+        config.profile.communication.prompt_export = mode;
+        Ok(changed)
+    })
+    .with_context(|| {
+        format!(
+            "update profile.communication.prompt_export in {}",
+            config_path.display()
+        )
+    })
+}
+
+fn set_communication_preference_at(
+    home: &std::path::Path,
+    dimension: crate::profile::communication::CommunicationDimension,
+    value: &str,
+) -> Result<CommunicationMutationReceipt> {
+    let policy = load_communication_policy_at(home, true)?;
+    if !policy.enabled {
+        anyhow::bail!(
+            "communication adaptation is disabled; run `neoth profile communication enable` first"
+        );
+    }
+    let preference = parse_communication_preference(dimension, value)?;
+    let value_name = preference_value_name(preference);
+    let identity = mint_communication_action_identity("set", value_name)?;
+    // The core orders same-source explicit settings by second-resolution
+    // timestamp and then event hash. Preserve intuitive sequential CLI order
+    // even when two commands land in the same wall-clock second.
+    let observed_at_unix = crate::profile::communication::load_state(home)?
+        .subjects
+        .get(COMMUNICATION_OPERATOR_SUBJECT)
+        .and_then(|subject| subject.evidence.get(&dimension))
+        .and_then(|items| items.iter().map(|item| item.observed_at_unix).max())
+        .map(|previous| crate::time::now_unix_i64().max(previous.saturating_add(1)))
+        .unwrap_or_else(crate::time::now_unix_i64);
+    let outcome = crate::profile::communication::set_explicit_preference(
+        home,
+        &policy,
+        COMMUNICATION_OPERATOR_SUBJECT,
+        &identity.session_id,
+        preference,
+        identity.event_hash,
+        observed_at_unix,
+        crate::profile::communication::CommunicationScope::Global,
+        false,
+    )?;
+    if outcome.recorded != 1 {
+        anyhow::bail!(
+            "explicit communication preference was not persisted (recorded={}, duplicates={}, rate_limited={})",
+            outcome.recorded,
+            outcome.duplicates,
+            outcome.rate_limited
+        );
+    }
+    Ok(CommunicationMutationReceipt {
+        action: "set",
+        changed: true,
+        subject_id: COMMUNICATION_OPERATOR_SUBJECT,
+        dimension: Some(dimension.as_str()),
+        value: Some(value_name),
+        prompt_use: None,
+        event_hash: Some(identity.event_hash_hex),
+        persistence: crate::profile::communication::STATE_RELATIVE_PATH,
+    })
+}
+
+/// Apply the independent self-development verbosity knob through the same
+/// typed, global communication-profile sink consumed by CLI, channels, n8n,
+/// Council, fallback and sub-agent provider paths. This intentionally does
+/// not switch presets (which would also alter formality, clarification and
+/// disclaimer behaviour).
+pub(crate) fn set_communication_verbosity_override_at(
+    home: &std::path::Path,
+    verbosity: crate::profile::presets::Verbosity,
+) -> Result<bool> {
+    use crate::profile::communication::{
+        CommunicationDimension, PreferenceValue, ProcessingLoadPreference,
+    };
+
+    let desired = match verbosity {
+        crate::profile::presets::Verbosity::Terse => {
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact)
+        }
+        crate::profile::presets::Verbosity::Normal => {
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Balanced)
+        }
+        crate::profile::presets::Verbosity::Detailed => {
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep)
+        }
+    };
+    let policy = load_communication_policy_at(home, true)?;
+    if !policy.enabled {
+        anyhow::bail!(
+            "cannot apply an independent verbosity override while communication adaptation is disabled; enable it first"
+        );
+    }
+    let state = crate::profile::communication::load_state(home)?;
+    let already_applied = state
+        .subjects
+        .get(COMMUNICATION_OPERATOR_SUBJECT)
+        .and_then(|subject| {
+            subject
+                .estimates
+                .get(&CommunicationDimension::ProcessingLoad)
+        })
+        .is_some_and(|estimate| estimate.pinned && estimate.selected == desired);
+    if already_applied {
+        return Ok(false);
+    }
+
+    let value = preference_value_name(desired);
+    let receipt =
+        set_communication_preference_at(home, CommunicationDimension::ProcessingLoad, value)?;
+    Ok(receipt.changed)
+}
+
+fn reset_communication_at(
+    home: &std::path::Path,
+    dimension: Option<crate::profile::communication::CommunicationDimension>,
+) -> Result<CommunicationMutationReceipt> {
+    let changed = if let Some(dimension) = dimension {
+        // An explicit privacy/reset action remains available while automatic
+        // adaptation is disabled. The enabled clone is used only for this
+        // operator-authorized deletion; freedom.yaml is not changed.
+        let mut mutation_policy = load_communication_policy_at(home, false)?;
+        mutation_policy.enabled = true;
+        crate::profile::communication::reset_dimension(
+            home,
+            &mutation_policy,
+            COMMUNICATION_OPERATOR_SUBJECT,
+            dimension,
+            false,
+        )?
+    } else {
+        crate::profile::communication::forget_subject(home, COMMUNICATION_OPERATOR_SUBJECT)?
+    };
+    Ok(CommunicationMutationReceipt {
+        action: "reset",
+        changed,
+        subject_id: COMMUNICATION_OPERATOR_SUBJECT,
+        dimension: dimension.map(|value| value.as_str()),
+        value: None,
+        prompt_use: None,
+        event_hash: None,
+        persistence: crate::profile::communication::STATE_RELATIVE_PATH,
+    })
+}
+
+fn declare_communication_context_at(
+    home: &std::path::Path,
+    kind: crate::profile::communication::DeclaredContextKind,
+    prompt_use: crate::profile::communication::DeclaredContextPromptUse,
+) -> Result<CommunicationMutationReceipt> {
+    let policy = load_communication_policy_at(home, true)?;
+    if !policy.enabled {
+        anyhow::bail!(
+            "communication adaptation is disabled; run `neoth profile communication enable` first"
+        );
+    }
+    let kind_name = declared_context_kind_name(kind);
+    let identity = mint_communication_action_identity("declare_context", kind_name)?;
+    let changed = crate::profile::communication::declare_context(
+        home,
+        &policy,
+        COMMUNICATION_OPERATOR_SUBJECT,
+        kind,
+        identity.event_hash,
+        prompt_use,
+        crate::time::now_unix_i64(),
+        false,
+    )?;
+    Ok(CommunicationMutationReceipt {
+        action: "declare_context",
+        changed,
+        subject_id: COMMUNICATION_OPERATOR_SUBJECT,
+        dimension: None,
+        value: Some(kind_name),
+        prompt_use: Some(declared_prompt_use_name(prompt_use)),
+        event_hash: Some(identity.event_hash_hex),
+        persistence: crate::profile::communication::STATE_RELATIVE_PATH,
+    })
+}
+
+fn clear_communication_context_at(home: &std::path::Path) -> Result<CommunicationMutationReceipt> {
+    let current = crate::profile::communication::load_state(home)?
+        .subjects
+        .get(COMMUNICATION_OPERATOR_SUBJECT)
+        .and_then(|subject| subject.declared_context.as_ref())
+        .is_some_and(|context| context.revoked_at_unix.is_none());
+    let changed = if current {
+        let mut mutation_policy = load_communication_policy_at(home, false)?;
+        mutation_policy.enabled = true;
+        crate::profile::communication::clear_declared_context(
+            home,
+            &mutation_policy,
+            COMMUNICATION_OPERATOR_SUBJECT,
+            crate::time::now_unix_i64(),
+            false,
+        )?
+    } else {
+        false
+    };
+    Ok(CommunicationMutationReceipt {
+        action: "clear_context",
+        changed,
+        subject_id: COMMUNICATION_OPERATOR_SUBJECT,
+        dimension: None,
+        value: None,
+        prompt_use: None,
+        event_hash: None,
+        persistence: crate::profile::communication::STATE_RELATIVE_PATH,
+    })
+}
+
+fn declared_context_json(
+    context: Option<&crate::profile::communication::DeclaredContext>,
+) -> serde_json::Value {
+    context.map_or(serde_json::Value::Null, |context| {
+        serde_json::json!({
+            "kind": declared_context_kind_name(context.kind),
+            "origin": "operator_declared",
+            "medical_inference": false,
+            "prompt_use": declared_prompt_use_name(context.prompt_use),
+            "source_event_hash": context.source_event_hash,
+            "set_at_unix": context.set_at_unix,
+            "revoked_at_unix": context.revoked_at_unix,
+            "active": context.revoked_at_unix.is_none(),
+        })
+    })
+}
+
+fn dimension_estimate_json(
+    dimension: crate::profile::communication::CommunicationDimension,
+    estimate: &crate::profile::communication::DimensionEstimate,
+) -> serde_json::Value {
+    serde_json::json!({
+        "dimension": dimension.as_str(),
+        "value": preference_value_name(estimate.selected),
+        "active": estimate.active,
+        "confidence": estimate.confidence,
+        "effective_weight": estimate.effective_weight,
+        "observation_count": estimate.observation_count,
+        "distinct_sessions": estimate.distinct_sessions,
+        "first_seen_unix": estimate.first_seen_unix,
+        "last_seen_unix": estimate.last_seen_unix,
+        "pinned": estimate.pinned,
+        "durable_by_full_auto": estimate.durable_by_full_auto,
+    })
+}
+
+fn render_communication_receipt(
+    receipt: &AuditedCommunicationMutationReceipt<'_>,
+    output: &OutputFormat,
+) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            emit_communication_json(&serde_json::to_value(receipt)?, output)
+        }
+        OutputFormat::Table => {
+            let receipt = receipt.mutation;
+            let state = if receipt.changed {
+                "changed"
+            } else {
+                "unchanged"
+            };
+            println!("Communication profile: {} ({state}).", receipt.action);
+            if let Some(dimension) = receipt.dimension {
+                println!("  Dimension: {dimension}");
+            }
+            if let Some(value) = receipt.value {
+                println!("  Value: {value}");
+            }
+            if let Some(prompt_use) = receipt.prompt_use {
+                println!("  Prompt use: {prompt_use}");
+            }
+            if let Some(event_hash) = &receipt.event_hash {
+                println!("  Hash-bound local event: {event_hash}");
+            }
+            println!("  Persistence: {}", receipt.persistence);
+            println!("  WAL audit: persisted (metadata only; post-commit receipt).");
+            Ok(())
+        }
+    }
+}
+
+async fn audit_and_render_communication_receipt(
+    home: &std::path::Path,
+    action: CommunicationControlAction,
+    receipt: &CommunicationMutationReceipt,
+    output: &OutputFormat,
+) -> Result<()> {
+    append_communication_control_audit_at(home, action, receipt.changed).await?;
+    render_communication_receipt(
+        &AuditedCommunicationMutationReceipt {
+            mutation: receipt,
+            wal_audit_persisted: true,
+        },
+        output,
+    )
+}
+
+fn run_communication_status_at(home: &std::path::Path, output: &OutputFormat) -> Result<()> {
+    let config_path = home.join("freedom.yaml");
+    let config_present = config_path
+        .try_exists()
+        .with_context(|| format!("inspect {}", config_path.display()))?;
+    let policy = load_communication_policy_at(home, false)?;
+    let state_path = crate::profile::communication::state_path(home);
+    let state_present = state_path
+        .try_exists()
+        .with_context(|| format!("inspect {}", state_path.display()))?;
+    let state = crate::profile::communication::load_state(home)?;
+    let subject = state.subjects.get(COMMUNICATION_OPERATOR_SUBJECT);
+    let active_dimensions = subject
+        .map(|subject| {
+            subject
+                .estimates
+                .values()
+                .filter(|estimate| estimate.active)
+                .count()
+        })
+        .unwrap_or_default();
+    let context = subject.and_then(|subject| subject.declared_context.as_ref());
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => emit_communication_json(
+            &serde_json::json!({
+                "enabled": policy.enabled,
+                "auto_apply_low_risk": policy.auto_apply_low_risk,
+                "prompt_export": prompt_export_name(policy.prompt_export),
+                "config": {
+                    "path": config_path,
+                    "present": config_present,
+                },
+                "state": {
+                    "path": state_path,
+                    "present": state_present,
+                    "schema_version": state.schema_version,
+                    "global_revision": state.revision,
+                    "subject_revision": subject.map(|subject| subject.revision),
+                    "active_dimensions": active_dimensions,
+                    "retained_dimensions": subject.map(|subject| subject.estimates.len()).unwrap_or_default(),
+                },
+                "declared_context": declared_context_json(context),
+                "privacy": {
+                    "raw_text_persisted": false,
+                    "medical_inference": false,
+                    "cluster_sync": policy.cluster_sync,
+                },
+                "audit": {
+                    "set_and_declare_actions_store_event_hashes": true,
+                    "mutations_emit_wal_events": true,
+                    "wal_subtype": "communication_profile_controlled",
+                },
+            }),
+            output,
+        ),
+        OutputFormat::Table => {
+            println!("Communication profile");
+            println!("  Enabled: {}", policy.enabled);
+            println!(
+                "  Auto-apply low-risk preferences: {}",
+                policy.auto_apply_low_risk
+            );
+            println!(
+                "  Prompt export: {}",
+                prompt_export_name(policy.prompt_export)
+            );
+            println!(
+                "  Config: {} ({})",
+                config_path.display(),
+                if config_present {
+                    "present"
+                } else {
+                    "defaults only"
+                }
+            );
+            println!(
+                "  State: {} ({})",
+                state_path.display(),
+                if state_present {
+                    "present"
+                } else {
+                    "not created"
+                }
+            );
+            println!("  Active dimensions: {active_dimensions}/8");
+            match context {
+                Some(context) if context.revoked_at_unix.is_none() => println!(
+                    "  Operator-declared context: {} (not inferred)",
+                    declared_context_kind_name(context.kind)
+                ),
+                _ => println!("  Operator-declared context: none active"),
+            }
+            println!("  Raw text persisted: no");
+            println!("  Medical diagnosis inferred: no");
+            println!("  Mutation audit: communication_profile_controlled (metadata only)");
+            Ok(())
+        }
+    }
+}
+
+fn run_communication_show_at(home: &std::path::Path, output: &OutputFormat) -> Result<()> {
+    let state = crate::profile::communication::load_state(home)?;
+    let subject = state.subjects.get(COMMUNICATION_OPERATOR_SUBJECT);
+    let dimensions = crate::profile::communication::CommunicationDimension::ALL
+        .into_iter()
+        .filter_map(|dimension| {
+            subject
+                .and_then(|subject| subject.estimates.get(&dimension))
+                .map(|estimate| dimension_estimate_json(dimension, estimate))
+        })
+        .collect::<Vec<_>>();
+    let context = subject.and_then(|subject| subject.declared_context.as_ref());
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => emit_communication_json(
+            &serde_json::json!({
+                "subject_id": COMMUNICATION_OPERATOR_SUBJECT,
+                "revision": subject.map(|subject| subject.revision),
+                "dimensions": dimensions,
+                "declared_context": declared_context_json(context),
+                "raw_text_persisted": false,
+                "medical_inference": false,
+            }),
+            output,
+        ),
+        OutputFormat::Table => {
+            println!("Communication preferences (typed, local, non-diagnostic)");
+            let Some(subject) = subject else {
+                println!("  No operator communication profile has been created yet.");
+                return Ok(());
+            };
+            if subject.estimates.is_empty() {
+                println!("  No dimension estimates are retained.");
+            } else {
+                println!(
+                    "  {:<18} {:<28} {:<8} {:>5} {:>8} {:>8}",
+                    "DIMENSION", "VALUE", "STATE", "CONF", "OBS", "SESSIONS"
+                );
+                for dimension in crate::profile::communication::CommunicationDimension::ALL {
+                    let Some(estimate) = subject.estimates.get(&dimension) else {
+                        continue;
+                    };
+                    println!(
+                        "  {:<18} {:<28} {:<8} {:>5.2} {:>8} {:>8}",
+                        dimension.as_str(),
+                        preference_value_name(estimate.selected),
+                        if estimate.active {
+                            "active"
+                        } else {
+                            "learning"
+                        },
+                        estimate.confidence,
+                        estimate.observation_count,
+                        estimate.distinct_sessions,
+                    );
+                }
+            }
+            match context {
+                Some(context) if context.revoked_at_unix.is_none() => println!(
+                    "\n  Operator-declared context: {} (prompt use: {}; never inferred)",
+                    declared_context_kind_name(context.kind),
+                    declared_prompt_use_name(context.prompt_use)
+                ),
+                Some(context) => println!(
+                    "\n  Cleared operator declaration: {} (revoked at {})",
+                    declared_context_kind_name(context.kind),
+                    context.revoked_at_unix.unwrap_or_default()
+                ),
+                None => {}
+            }
+            Ok(())
+        }
+    }
+}
+
+fn run_communication_why_at(
+    home: &std::path::Path,
+    dimension: crate::profile::communication::CommunicationDimension,
+    output: &OutputFormat,
+) -> Result<()> {
+    let state = crate::profile::communication::load_state(home)?;
+    let subject = state.subjects.get(COMMUNICATION_OPERATOR_SUBJECT);
+    let estimate = subject.and_then(|subject| subject.estimates.get(&dimension));
+    let evidence = subject
+        .and_then(|subject| subject.evidence.get(&dimension))
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let evidence_json = evidence
+        .iter()
+        .map(|item| {
+            serde_json::json!({
+                "event_hash": item.event_hash,
+                "source": evidence_source_name(item.source),
+                "value": preference_value_name(item.value),
+                "observed_at_unix": item.observed_at_unix,
+                "scope": communication_scope_name(&item.scope),
+                "authenticated_subject": item.authenticated_subject,
+                "reason_code": item.reason_code,
+            })
+        })
+        .collect::<Vec<_>>();
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => emit_communication_json(
+            &serde_json::json!({
+                "dimension": dimension.as_str(),
+                "estimate": estimate.map(|estimate| dimension_estimate_json(dimension, estimate)),
+                "evidence": evidence_json,
+                "raw_text_included": false,
+                "diagnostic_claims_included": false,
+            }),
+            output,
+        ),
+        OutputFormat::Table => {
+            println!("Why `{}`", dimension.as_str());
+            match estimate {
+                Some(estimate) => println!(
+                    "  Selected: {} (confidence {:.2}, {}, {} observations across {} sessions)",
+                    preference_value_name(estimate.selected),
+                    estimate.confidence,
+                    if estimate.active {
+                        "active"
+                    } else {
+                        "still learning"
+                    },
+                    estimate.observation_count,
+                    estimate.distinct_sessions,
+                ),
+                None => println!("  No estimate exists for this dimension."),
+            }
+            if evidence.is_empty() {
+                println!("  No typed evidence is retained.");
+            } else {
+                println!("  Typed evidence (raw messages are not stored or shown):");
+                for item in evidence {
+                    let hash_prefix = &item.event_hash[..item.event_hash.len().min(16)];
+                    println!(
+                        "    {hash_prefix}… {:<20} {:<28} {}",
+                        evidence_source_name(item.source),
+                        preference_value_name(item.value),
+                        item.reason_code,
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn run_communication_context_show_at(home: &std::path::Path, output: &OutputFormat) -> Result<()> {
+    let state = crate::profile::communication::load_state(home)?;
+    let context = state
+        .subjects
+        .get(COMMUNICATION_OPERATOR_SUBJECT)
+        .and_then(|subject| subject.declared_context.as_ref());
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => emit_communication_json(
+            &serde_json::json!({
+                "declared_context": declared_context_json(context),
+                "origin": "operator_declared_only",
+                "medical_inference": false,
+            }),
+            output,
+        ),
+        OutputFormat::Table => {
+            match context {
+                None => println!("No operator-declared neuro-context is stored."),
+                Some(context) if context.revoked_at_unix.is_none() => println!(
+                    "Operator-declared context: {}\n  Prompt use: {}\n  This is an explicit declaration, not an inferred diagnosis.",
+                    declared_context_kind_name(context.kind),
+                    declared_prompt_use_name(context.prompt_use),
+                ),
+                Some(context) => println!(
+                    "No active operator declaration. Last declaration `{}` was cleared at {}.",
+                    declared_context_kind_name(context.kind),
+                    context.revoked_at_unix.unwrap_or_default(),
+                ),
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_communication_sub_at(
+    home: &std::path::Path,
+    sub: CommunicationSub,
+    output: &OutputFormat,
+) -> Result<()> {
+    match sub {
+        CommunicationSub::Status => run_communication_status_at(home, output),
+        CommunicationSub::Show => run_communication_show_at(home, output),
+        CommunicationSub::Why { dimension } => {
+            run_communication_why_at(home, dimension.into(), output)
+        }
+        CommunicationSub::Set { dimension, value } => {
+            let receipt = set_communication_preference_at(home, dimension.into(), &value)?;
+            audit_and_render_communication_receipt(
+                home,
+                CommunicationControlAction::SetPreference,
+                &receipt,
+                output,
+            )
+            .await
+        }
+        CommunicationSub::Reset { dimension } => {
+            let action = if dimension.is_some() {
+                CommunicationControlAction::ResetDimension
+            } else {
+                CommunicationControlAction::ForgetSubject
+            };
+            let receipt = reset_communication_at(home, dimension.map(Into::into))?;
+            audit_and_render_communication_receipt(home, action, &receipt, output).await
+        }
+        command @ (CommunicationSub::Enable | CommunicationSub::Disable) => {
+            let enabled = matches!(command, CommunicationSub::Enable);
+            let changed = set_communication_enabled_at(home, enabled)?;
+            let receipt = CommunicationMutationReceipt {
+                action: if enabled { "enable" } else { "disable" },
+                changed,
+                subject_id: COMMUNICATION_OPERATOR_SUBJECT,
+                dimension: None,
+                value: Some(if enabled { "enabled" } else { "disabled" }),
+                prompt_use: None,
+                event_hash: None,
+                persistence: "freedom.yaml",
+            };
+            audit_and_render_communication_receipt(
+                home,
+                if enabled {
+                    CommunicationControlAction::Enable
+                } else {
+                    CommunicationControlAction::Disable
+                },
+                &receipt,
+                output,
+            )
+            .await
+        }
+        CommunicationSub::PromptExport { mode } => {
+            let mode = crate::config::CommunicationPromptExport::from(mode);
+            let changed = set_communication_prompt_export_at(home, mode)?;
+            let receipt = CommunicationMutationReceipt {
+                action: "prompt_export",
+                changed,
+                subject_id: COMMUNICATION_OPERATOR_SUBJECT,
+                dimension: None,
+                value: Some(prompt_export_name(mode)),
+                prompt_use: None,
+                event_hash: None,
+                persistence: "freedom.yaml",
+            };
+            audit_and_render_communication_receipt(
+                home,
+                CommunicationControlAction::SetPromptExport,
+                &receipt,
+                output,
+            )
+            .await
+        }
+        CommunicationSub::Context { sub } => match sub {
+            CommunicationContextSub::Show => run_communication_context_show_at(home, output),
+            CommunicationContextSub::Declare { kind, prompt_use } => {
+                let receipt =
+                    declare_communication_context_at(home, kind.into(), prompt_use.into())?;
+                audit_and_render_communication_receipt(
+                    home,
+                    CommunicationControlAction::DeclareContext,
+                    &receipt,
+                    output,
+                )
+                .await
+            }
+            CommunicationContextSub::Clear => {
+                let receipt = clear_communication_context_at(home)?;
+                audit_and_render_communication_receipt(
+                    home,
+                    CommunicationControlAction::ClearContext,
+                    &receipt,
+                    output,
+                )
+                .await
+            }
+        },
+    }
+}
+
 fn load_profile_extensions(
     path: Option<&std::path::Path>,
 ) -> Result<crate::profile::extension_registry::TypedExtensionRegistry> {
@@ -402,6 +1657,13 @@ struct ProfileRow {
 }
 
 pub async fn run_profile(args: ProfileArgs) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    // Communication-profile controls do not depend on views.db. Dispatching
+    // them first prevents a read-only status/config command from creating or
+    // migrating an unrelated database and keeps NEOTH_HOME authoritative.
+    if let ProfileAction::Communication { sub } = args.action.clone() {
+        return run_communication_sub_at(&home, sub, &args.output).await;
+    }
     // Validate the typed extension boundary before opening/migrating views.db
     // or constructing a paid provider. A broken existing registry must leave
     // both external and durable state untouched.
@@ -411,7 +1673,7 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
         } => Some(load_profile_extensions(extensions_file.as_deref())?),
         _ => None,
     };
-    let db_path = FreedomConfig::default_neoth_home().join("views.db");
+    let db_path = home.join("views.db");
     let conn = store::open(&db_path).context("open views.db")?;
     match args.action {
         ProfileAction::Show { field, limit } => {
@@ -494,6 +1756,9 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
         }
         ProfileAction::Preset { sub } => run_preset_sub(sub, &args.output).await,
         ProfileAction::Persona { sub } => run_persona_sub(sub, &args.output).await,
+        ProfileAction::Communication { .. } => {
+            unreachable!("communication actions dispatch before views.db is opened")
+        }
         ProfileAction::Run {
             trigger_event,
             last_n,
@@ -2181,12 +3446,281 @@ fn render_knobs(rows: &[KnobRow], output: &OutputFormat) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
     use rusqlite::params;
 
     // ── UX-04 knob_rows ────────────────────────────────────────────
     // `ProfilePreset` is already in scope via `use super::*`; only
     // `AutonomyLevel` needs importing here.
     use crate::permissions::AutonomyLevel;
+
+    fn write_communication_test_config(home: &std::path::Path) {
+        std::fs::create_dir_all(home).unwrap();
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn communication_cli_parses_operator_surface() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "profile",
+            "communication",
+            "set",
+            "processing-load",
+            "deep",
+        ])
+        .unwrap();
+        let crate::cli::Commands::Profile(args) = cli.command else {
+            panic!("profile command expected")
+        };
+        let ProfileAction::Communication {
+            sub: CommunicationSub::Set { dimension, value },
+        } = args.action
+        else {
+            panic!("communication set expected")
+        };
+        assert_eq!(dimension, CommunicationDimensionArg::ProcessingLoad);
+        assert_eq!(value, "deep");
+
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "profile",
+            "communication",
+            "context",
+            "declare",
+            "adhd",
+            "--prompt-use",
+            "label-and-accommodations",
+        ])
+        .unwrap();
+        let crate::cli::Commands::Profile(args) = cli.command else {
+            panic!("profile command expected")
+        };
+        let ProfileAction::Communication {
+            sub:
+                CommunicationSub::Context {
+                    sub: CommunicationContextSub::Declare { kind, prompt_use },
+                },
+        } = args.action
+        else {
+            panic!("communication context declare expected")
+        };
+        assert_eq!(kind, DeclaredContextKindArg::Adhd);
+        assert_eq!(
+            prompt_use,
+            DeclaredContextPromptUseArg::LabelAndAccommodations
+        );
+    }
+
+    #[test]
+    fn communication_preference_parser_is_dimension_typed() {
+        use crate::profile::communication::{
+            CommunicationDimension, PreferenceValue, ProcessingLoadPreference,
+        };
+        assert_eq!(
+            parse_communication_preference(CommunicationDimension::ProcessingLoad, "deep").unwrap(),
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep)
+        );
+        let error =
+            parse_communication_preference(CommunicationDimension::Directness, "deep").unwrap_err();
+        assert!(error.to_string().contains("direct, balanced, gentle"));
+    }
+
+    #[test]
+    fn communication_config_mutations_use_canonical_selected_home() {
+        let dir = tempfile::tempdir().unwrap();
+        write_communication_test_config(dir.path());
+        assert!(set_communication_enabled_at(dir.path(), false).unwrap());
+        assert!(
+            set_communication_prompt_export_at(
+                dir.path(),
+                crate::config::CommunicationPromptExport::None,
+            )
+            .unwrap()
+        );
+        let reloaded = FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
+        assert!(!reloaded.profile.communication.enabled);
+        assert_eq!(
+            reloaded.profile.communication.prompt_export,
+            crate::config::CommunicationPromptExport::None
+        );
+    }
+
+    #[test]
+    fn communication_explicit_settings_get_unique_persisted_event_hashes() {
+        use crate::profile::communication::{CommunicationDimension, DirectnessPreference};
+        let dir = tempfile::tempdir().unwrap();
+        write_communication_test_config(dir.path());
+        let direct = set_communication_preference_at(
+            dir.path(),
+            CommunicationDimension::Directness,
+            "direct",
+        )
+        .unwrap();
+        let gentle = set_communication_preference_at(
+            dir.path(),
+            CommunicationDimension::Directness,
+            "gentle",
+        )
+        .unwrap();
+        assert_ne!(direct.event_hash, gentle.event_hash);
+        assert_eq!(direct.event_hash.as_deref().unwrap().len(), 64);
+
+        let state = crate::profile::communication::load_state(dir.path()).unwrap();
+        let subject = &state.subjects[COMMUNICATION_OPERATOR_SUBJECT];
+        assert_eq!(
+            subject.estimates[&CommunicationDimension::Directness].selected,
+            crate::profile::communication::PreferenceValue::Directness(
+                DirectnessPreference::Gentle
+            )
+        );
+        assert_eq!(
+            subject.evidence[&CommunicationDimension::Directness][0].event_hash,
+            direct.event_hash.unwrap()
+        );
+        assert_eq!(
+            subject.evidence[&CommunicationDimension::Directness][1].event_hash,
+            gentle.event_hash.unwrap()
+        );
+    }
+
+    #[test]
+    fn communication_control_audit_payload_excludes_sensitive_fields() {
+        let payload = communication_control_audit_payload(
+            CommunicationControlAction::DeclareContext,
+            true,
+            "secret-subject-adhd",
+            Some(41),
+            73,
+            1_700_000_000,
+        )
+        .unwrap();
+        let text = std::str::from_utf8(&payload).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        let keys = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(
+            keys,
+            [
+                "action_code",
+                "changed",
+                "schema_version",
+                "state_revision_observed",
+                "subject_revision_observed",
+                "subject_sha256",
+                "ts_unix",
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(
+            value["action_code"],
+            CommunicationControlAction::DeclareContext as u8
+        );
+        assert_eq!(value["subject_sha256"].as_str().unwrap().len(), 64);
+        for sensitive in [
+            "secret-subject-adhd",
+            "adhd",
+            "direct",
+            "cli-session",
+            "prompt_export",
+            "freedom.yaml",
+        ] {
+            assert!(
+                !text.contains(sensitive),
+                "audit payload leaked sensitive marker `{sensitive}`: {text}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn communication_control_audit_waits_for_a_parseable_wal_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        append_communication_control_audit_at(
+            dir.path(),
+            CommunicationControlAction::ForgetSubject,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let wal_dir = dir.path().join("wal");
+        let segments = std::fs::read_dir(&wal_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("wal"))
+            .collect::<Vec<_>>();
+        assert_eq!(segments.len(), 1);
+        let bytes = std::fs::read(&segments[0]).unwrap();
+        let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let body = &bytes[segment_header.header_len()..];
+        let frame = crate::wal::frame::decode_frame(body).unwrap();
+        assert_eq!(
+            frame.header.event_type,
+            crate::wal::events::EVENT_TYPE_EXTENDED
+        );
+        assert_eq!(
+            frame.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8
+        );
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(
+            payload["action_code"],
+            CommunicationControlAction::ForgetSubject as u8
+        );
+        assert_eq!(payload["changed"], false);
+        assert_eq!(payload["state_revision_observed"], 0);
+        assert!(payload["subject_revision_observed"].is_null());
+    }
+
+    #[test]
+    fn communication_reset_and_context_clear_work_while_engine_is_disabled() {
+        use crate::profile::communication::{CommunicationDimension, DeclaredContextKind};
+        let dir = tempfile::tempdir().unwrap();
+        write_communication_test_config(dir.path());
+        set_communication_preference_at(dir.path(), CommunicationDimension::Directness, "direct")
+            .unwrap();
+        let declared = declare_communication_context_at(
+            dir.path(),
+            DeclaredContextKind::Adhd,
+            crate::profile::communication::DeclaredContextPromptUse::AccommodationsOnly,
+        )
+        .unwrap();
+        assert_eq!(declared.event_hash.as_deref().unwrap().len(), 64);
+        set_communication_enabled_at(dir.path(), false).unwrap();
+
+        assert!(
+            reset_communication_at(dir.path(), Some(CommunicationDimension::Directness))
+                .unwrap()
+                .changed
+        );
+        assert!(clear_communication_context_at(dir.path()).unwrap().changed);
+        assert!(!clear_communication_context_at(dir.path()).unwrap().changed);
+        let state = crate::profile::communication::load_state(dir.path()).unwrap();
+        let subject = &state.subjects[COMMUNICATION_OPERATOR_SUBJECT];
+        assert!(
+            !subject
+                .evidence
+                .contains_key(&CommunicationDimension::Directness)
+        );
+        assert!(
+            subject
+                .declared_context
+                .as_ref()
+                .unwrap()
+                .revoked_at_unix
+                .is_some()
+        );
+    }
 
     #[test]
     fn profile_extension_preflight_propagates_malformed_registry_with_path() {
@@ -2447,6 +3981,7 @@ mod tests {
             identity_anchor: None,
             identity_locked: false,
             current_goal: None,
+            communication_profile: None,
         });
 
         let system = out.system.expect("system layered");
@@ -2500,6 +4035,7 @@ mod tests {
             identity_anchor: None,
             identity_locked: false,
             current_goal: None,
+            communication_profile: None,
         });
         // Exact "op\n\nuser" — no third blank line between them.
         assert_eq!(out.system.as_deref(), Some("op\n\nuser"));
@@ -3146,6 +4682,7 @@ mod tests {
             identity_anchor: None,
             identity_locked: false,
             current_goal: None,
+            communication_profile: None,
         });
         if let Some(ref sys) = enriched.system {
             assert!(
@@ -3176,6 +4713,7 @@ mod tests {
             identity_anchor: Some(anchor),
             identity_locked: true,
             current_goal: None,
+            communication_profile: None,
         });
         let sys = enriched
             .system

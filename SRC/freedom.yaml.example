@@ -353,7 +353,20 @@ claude_cli:
     hard_timeout_secs: 300
 
 
-# ── 15. Profile learning (off by default) ────────────────────────────────────
+# ── 15. Communication adaptation + fact learning ─────────────────────────────
+
+# The communication engine is ON by default. It is deterministic and local:
+# no extra model call, no raw-message persistence, and no medical diagnosis.
+# It learns typed presentation preferences only after repeated authenticated
+# evidence across sessions. Explicit settings always win. Incognito performs
+# zero profile reads and writes. Full/Sovereign may make a stable low-risk
+# accommodation durable until the operator resets it; privacy and subject
+# isolation remain mandatory.
+#
+# `prompt_export: accommodations_only` sends providers only concrete style
+# instructions. It never sends autism/ADHD/neurodivergence labels. Label export
+# requires both an explicit operator declaration and the explicit
+# `label_and_accommodations` setting.
 
 # When `learn_enabled: true`, NEOTH runs the 6-stage profile pipeline
 # after every `neoth chat` reply. The pipeline reads the conversation
@@ -378,6 +391,24 @@ claude_cli:
 #   NEOTH_PROFILE_LEARN_DISABLE=1 — per-call brake (skip even when on)
 #   NEOTH_PROFILE_LEARN_FORCE=1   — per-call lift  (run even when off)
 profile:
+  communication:
+    enabled: true
+    auto_apply_low_risk: true
+    min_observations: 5
+    min_distinct_sessions: 3
+    min_confidence: 0.75
+    passive_half_life_days: 30
+    feedback_half_life_days: 90
+    correction_half_life_days: 180
+    full_auto_min_observations: 10
+    full_auto_min_distinct_sessions: 5
+    full_auto_min_confidence: 0.85
+    max_evidence_per_dimension: 32
+    prompt_export: accommodations_only
+    cluster_sync: false
+
+  # Separate opt-in LLM fact extraction. This can cost provider tokens;
+  # communication adaptation above cannot.
   learn_enabled: false
   timeout_secs: 15
 

@@ -125,7 +125,9 @@ Depending on your autonomy setting, NEOTH may ask in the GUI instead of requirin
 ## 5. Check what NEOTH knows
 
 ```bash
-neoth profile show --evidence
+neoth profile show
+neoth profile communication status
+neoth profile communication show
 neoth privacy audit --last 7d
 neoth verify
 ```
@@ -134,8 +136,10 @@ Useful actions:
 
 | Command | Purpose |
 | :-- | :-- |
-| `neoth profile show --evidence` | Show profile claims with sources and confidence. |
-| `neoth profile redact <field>` | Remove a fact and prevent unwanted relearning. |
+| `neoth profile show` | Show materialised fact-profile claims. |
+| `neoth profile communication show` | Show typed presentation estimates; raw messages are never displayed. |
+| `neoth profile communication why <dimension>` | Explain the typed evidence behind one presentation preference. |
+| `neoth profile redact <field>` | Prevent one fact field from being re-extracted until explicitly unredacted. |
 | `neoth profile pending` | Review memory proposals before they become durable facts. |
 | `neoth privacy audit` | Show provider destinations, network surfaces, and sensitive events. |
 | `neoth verify` | Verify HMAC compaction markers in the local WAL. |

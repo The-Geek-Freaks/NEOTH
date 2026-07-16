@@ -57,10 +57,13 @@ impl BgJobId {
 ///
 /// `label` is `"background"` or `"btw"` — stored in the WAL payload
 /// so the operator can distinguish the two command names in `neoth wal
-/// show`.
+/// show`. `system` is the fully composed context/presentation block from the
+/// originating CLI or channel turn; the exact bytes are bound by the leaf
+/// authorizer below.
 pub async fn spawn_background_session(
     label: &str,
     prompt: String,
+    system: Option<String>,
     config: FreedomConfig,
     provider: Arc<dyn Provider>,
     writer: Option<&crate::wal::writer::WalWriterHandle>,
@@ -71,7 +74,7 @@ pub async fn spawn_background_session(
     let result_path = bgjobs_dir.join(format!("{}.result", job_id.as_str()));
     let exit_path = bgjobs_dir.join(format!("{}.exit", job_id.as_str()));
 
-    let request = build_bg_request(&prompt, &config);
+    let request = build_bg_request(&prompt, &config, system);
     // The owned boundary travels into the detached job so authorization stays
     // immediately adjacent to the actual leaf request (including any fallback
     // hop or compactor mutation) instead of becoming a stale queue-time quote.
@@ -149,7 +152,7 @@ pub async fn spawn_background_session(
 /// Thin headless provider call. Uses `provider.complete()` directly —
 /// no stdout, no WAL/hook overhead, no skill routing. Intentionally
 /// thin: ephemeral background sessions trade depth for speed.
-fn build_bg_request(prompt: &str, config: &FreedomConfig) -> Request {
+fn build_bg_request(prompt: &str, config: &FreedomConfig, system: Option<String>) -> Request {
     let default_model = config
         .inference
         .slot_for(crate::config::inference::HemisphereRole::Left)
@@ -158,7 +161,7 @@ fn build_bg_request(prompt: &str, config: &FreedomConfig) -> Request {
         .or(config.provider_model.clone());
     Request {
         prompt: prompt.to_owned(),
-        system: None,
+        system,
         model: default_model,
         temperature: None,
         top_p: None,
@@ -473,9 +476,22 @@ mod tests {
         let provider = Arc::new(MockProvider::new("the-answer"));
         let config = FreedomConfig::default();
 
-        let request = build_bg_request("test prompt", &config);
+        let request = build_bg_request("test prompt", &config, None);
         let text = run_bg_headless(request, provider).await.unwrap();
         assert_eq!(text, "the-answer");
+    }
+
+    #[test]
+    fn background_request_preserves_the_originating_system_contract() {
+        let config = FreedomConfig::default();
+        let system = concat!(
+            "<communication_preferences authority=\"presentation_only\">\n",
+            "- Be direct.\n",
+            "</communication_preferences>"
+        )
+        .to_owned();
+        let request = build_bg_request("test prompt", &config, Some(system.clone()));
+        assert_eq!(request.system.as_deref(), Some(system.as_str()));
     }
 
     #[tokio::test]

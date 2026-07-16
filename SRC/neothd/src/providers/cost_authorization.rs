@@ -2908,6 +2908,20 @@ mod tests {
             )
         );
         let mut changed = req.clone();
+        changed.system = Some("bound system with communication profile".into());
+        assert_ne!(
+            base,
+            request_binding_sha256(
+                "openai_api",
+                "gpt-5",
+                &changed,
+                "test.binding",
+                false,
+                Some(4096),
+            ),
+            "the exact final system prompt must be part of provider authorization"
+        );
+        let mut changed = req.clone();
         changed.stop_sequences.push("SECOND".into());
         assert_ne!(
             base,

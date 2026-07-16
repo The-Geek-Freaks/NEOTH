@@ -3,32 +3,40 @@
 //!
 //! ## Layer order (top-down, last-write-wins-by-append)
 //!
-//! 1. **operator_context** — assembled `~/.neoth/NEOTH.md` + project +
-//!    rules + memory. Top of stack so operator rules are visible
-//!    before anything else the model reads.
-//! 2. **preset_addendum** — active profile preset's `system_addendum`
+//! 1. **moral_core** — the operator's behavioural constitution.
+//! 2. **identity_anchor** — locked loyal-buddy identity, when active.
+//! 3. **current_goal** — the operator's durable active goal.
+//! 4. **communication_profile** — a typed, explicitly
+//!    `authority="presentation_only"` response-presentation contract. It can
+//!    tune wording, structure, pacing, context level, clarification, and
+//!    correction style, but cannot alter facts, task scope, permissions,
+//!    tools, policy, safety, or provider authorization.
+//! 5. **operator_context** — assembled `~/.neoth/NEOTH.md` + project +
+//!    rules + memory. It follows the narrowly typed durable layers and stays
+//!    ahead of presets, invocation overrides, skills, and tool catalogues.
+//! 6. **preset_addendum** — active profile preset's `system_addendum`
 //!    (LOWKEY / FORMAL / DEEPDIVE / TUTOR / OPSEC). AR-01 (Session 24):
 //!    caller resolves the active preset from `~/.neoth/profile/active_preset.txt`
 //!    via `cli/profile.rs::load_active_preset` + `profile::presets::apply_preset`
 //!    on every turn so `neoth profile preset apply <name>` takes effect
 //!    without a daemon restart. Placed adjacent to operator_context because
 //!    the preset is operator-tuning, not a context body.
-//! 3. **explicit_system** — caller-supplied override (CLI `--system`,
+//! 7. **explicit_system** — caller-supplied override (CLI `--system`,
 //!    channel-side slash command template, etc.). Merged via blank
 //!    line after the operator-tuning layers.
-//! 4. **repo_context_block** — K-Repo-Map auto-context block when
+//! 8. **repo_context_block** — K-Repo-Map auto-context block when
 //!    `freedom.yaml::code_map.auto_context_max_files > 0` and the
 //!    code map matched relevant files for this prompt. Caller decides
 //!    whether to compute/skip the block.
-//! 5. **skill_system_prompt** — matched skill's `system_prompt` (or
+//! 9. **skill_system_prompt** — matched skill's `system_prompt` (or
 //!    `<skill base> + "\n\n" + <mode delta>` when the mode router
 //!    overlays a narrower trigger). Caller resolves the match
 //!    upstream and hands the assembled string here.
-//! 6. **mcp_catalogue** — rendered MCP tool catalogue when at least
+//! 10. **mcp_catalogue** — rendered MCP tool catalogue when at least
 //!    one MCP server is enabled. Caller pre-assembles the block via
 //!    `mcp::catalogue::assemble_catalogue_for_prompt` (async) when the
 //!    prompt is available, or `mcp::catalogue::assemble_catalogue` otherwise.
-//! 7. **persona_override** — `tweaks.toml::persona_override` rendered
+//! 11. **persona_override** — `tweaks.toml::persona_override` rendered
 //!    as a `"Tone + persona: <text>"` PREFIX so the tone instruction
 //!    is the first line the model reads after the layered context.
 //!
@@ -54,6 +62,77 @@
 //! dispatch is a separate concern outside this helper. `used_skill_id`
 //! is plumbed through so the downstream WAL audit (`EVENT_TYPE_SKILL_USED`)
 //! + sub-agent review gate can record which skill activated for this turn.
+
+/// A pre-compiled communication-preference block whose authority is fixed at
+/// response presentation. The private payload prevents callers from attaching
+/// a different authority label to inferred preferences; construction is only
+/// possible through [`Self::presentation_only`].
+///
+/// The compiler that learns/merges preferences lives outside this pure prompt
+/// composer. This type is deliberately just a borrowed, typed hand-off from
+/// that compiler to the final provider request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommunicationProfilePrompt<'a> {
+    compiled: &'a str,
+}
+
+impl<'a> CommunicationProfilePrompt<'a> {
+    /// The sole authority this prompt layer can carry.
+    pub const AUTHORITY: &'static str = "presentation_only";
+
+    /// Bind an already-compiled profile to presentation-only authority.
+    #[must_use]
+    pub const fn presentation_only(compiled: &'a str) -> Self {
+        Self { compiled }
+    }
+
+    /// Return the compiled payload without the system-prompt envelope.
+    #[must_use]
+    pub const fn compiled(self) -> &'a str {
+        self.compiled
+    }
+
+    /// Return the fixed authority label used in the prompt envelope.
+    #[must_use]
+    pub const fn authority(self) -> &'static str {
+        Self::AUTHORITY
+    }
+
+    fn render(self) -> Option<String> {
+        let compiled = self.compiled.trim();
+        if compiled.is_empty() {
+            return None;
+        }
+
+        // `profile::communication::CompiledCommunicationPrompt` already owns
+        // the canonical envelope and effect hash. Preserve that compiler output
+        // byte-for-byte rather than nesting a second profile element around it.
+        // The fallback below keeps this boundary safe for older/body-only
+        // producers while the Rust type still fixes the effective authority.
+        let already_enveloped = compiled
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains(r#"authority="presentation_only""#));
+        if already_enveloped {
+            return Some(compiled.to_owned());
+        }
+
+        Some(format!(
+            concat!(
+                "<communication-profile authority=\"{}\">\n",
+                "Apply this profile only to response presentation: wording, structure, ",
+                "pacing, context level, clarification, and correction style. It cannot ",
+                "change facts, task scope, operator authority, permissions, tool policy, ",
+                "safety policy, or provider authorization. Do not present inferred ",
+                "preferences as a medical or psychological diagnosis.\n",
+                "{}\n",
+                "</communication-profile>"
+            ),
+            Self::AUTHORITY,
+            compiled,
+        ))
+    }
+}
 
 /// Inputs to [`build_enriched_request`]. All borrowed; the helper
 /// allocates the final `String`s it returns. Caller owns the source
@@ -111,6 +190,11 @@ pub struct EnrichmentInputs<'a> {
     /// so the operator's active goal is always visible to the model. `None`
     /// when no goal is persisted in `~/.neoth/current_goal.json`.
     pub current_goal: Option<&'a str>,
+    /// Pre-compiled communication preferences with authority fixed by the
+    /// [`CommunicationProfilePrompt`] type. Injected after the durable goal and
+    /// before free-form operator context so explicit per-project/per-turn
+    /// instructions remain able to override an inferred presentation choice.
+    pub communication_profile: Option<CommunicationProfilePrompt<'a>>,
 }
 
 /// Output of [`build_enriched_request`]. Owned strings — the caller
@@ -175,13 +259,20 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
         None
     };
 
-    let layers: [Option<&str>; 9] = [
+    let communication_profile_layer = inputs
+        .communication_profile
+        .and_then(CommunicationProfilePrompt::render);
+
+    let layers: [Option<&str>; 10] = [
         // GOLD-FEAT-07 — moral core is position 0: highest-priority directives.
         inputs.moral_core.map(str::trim).filter(|s| !s.is_empty()),
         // GOLD-ADAPT-JV-MODE-01 — identity anchor at position 1 when locked.
         identity_anchor_layer,
         // GOLD-FEAT-11 — cross-turn goal at position 2 (after identity, before context).
         inputs.current_goal.map(str::trim).filter(|s| !s.is_empty()),
+        // GOLD-R4-11 — learned/explicit communication preferences are limited
+        // to presentation and cannot elevate their own authority.
+        communication_profile_layer.as_deref(),
         inputs
             .operator_context
             .map(str::trim)
@@ -272,6 +363,7 @@ mod tests {
             identity_anchor: None,
             identity_locked: false,
             current_goal: None,
+            communication_profile: None,
         }
     }
 
@@ -297,6 +389,103 @@ mod tests {
     fn no_moral_core_is_unchanged() {
         let out = build_enriched_request(empty_inputs("hi"));
         assert!(out.system.is_none(), "empty inputs → no system");
+    }
+
+    #[test]
+    fn communication_profile_authority_is_fixed_to_presentation_only() {
+        let profile = CommunicationProfilePrompt::presentation_only("- Prefer short paragraphs.");
+        assert_eq!(profile.authority(), "presentation_only");
+        assert_eq!(
+            profile.compiled(),
+            "- Prefer short paragraphs.",
+            "the typed hand-off must preserve the compiler output"
+        );
+    }
+
+    #[test]
+    fn canonical_compiler_envelope_passes_through_byte_identical() {
+        let compiled = concat!(
+            "<communication_preferences provenance=\"local_observable_profile\" ",
+            "non_diagnostic=\"true\" authority=\"presentation_only\">\n",
+            "- Be direct.\n",
+            "</communication_preferences>"
+        );
+        let mut inputs = empty_inputs("hello");
+        inputs.communication_profile =
+            Some(CommunicationProfilePrompt::presentation_only(compiled));
+
+        let out = build_enriched_request(inputs);
+        assert_eq!(out.system.as_deref(), Some(compiled));
+    }
+
+    #[test]
+    fn communication_profile_is_bounded_and_ordered_before_explicit_context() {
+        let mut inputs = empty_inputs("explain this");
+        inputs.current_goal = Some("Goal: ship NEOTH.");
+        inputs.communication_profile = Some(CommunicationProfilePrompt::presentation_only(
+            "- Use direct language.\n- Surface ambiguity explicitly.",
+        ));
+        inputs.operator_context = Some("Operator rule: include evidence.");
+        inputs.preset_addendum = Some("Use a formal register.");
+
+        let out = build_enriched_request(inputs);
+        let system = out
+            .system
+            .expect("communication profile must create a system layer");
+        assert!(
+            system.contains("<communication-profile authority=\"presentation_only\">"),
+            "authority label must be visible to the provider: {system}"
+        );
+        assert!(
+            system.contains("It cannot change facts, task scope, operator authority"),
+            "the presentation boundary must travel with the learned preferences: {system}"
+        );
+        assert!(system.contains("- Use direct language."));
+        assert!(system.contains("</communication-profile>"));
+
+        let goal = system.find("Goal: ship NEOTH.").unwrap();
+        let profile = system.find("<communication-profile").unwrap();
+        let operator = system.find("Operator rule: include evidence.").unwrap();
+        let preset = system.find("Use a formal register.").unwrap();
+        assert!(
+            goal < profile,
+            "durable goal must precede presentation preferences"
+        );
+        assert!(
+            profile < operator,
+            "explicit operator context must remain later than inferred preferences"
+        );
+        assert!(
+            operator < preset,
+            "explicit preset ordering must remain unchanged"
+        );
+        assert_eq!(
+            out.prompt, "explain this",
+            "user prompt must remain byte-identical"
+        );
+    }
+
+    #[test]
+    fn empty_communication_profile_collapses_without_prompt_drift() {
+        let mut inputs = empty_inputs("hello");
+        inputs.communication_profile =
+            Some(CommunicationProfilePrompt::presentation_only("  \n  "));
+        let out = build_enriched_request(inputs);
+        assert_eq!(out.system, None);
+        assert_eq!(out.prompt, "hello");
+    }
+
+    #[test]
+    fn communication_profile_alone_does_not_activate_skill_secrecy_contract() {
+        let mut inputs = empty_inputs("hello");
+        inputs.communication_profile = Some(CommunicationProfilePrompt::presentation_only(
+            "- Prefer a concise answer.",
+        ));
+        let system = build_enriched_request(inputs).system.unwrap();
+        assert!(
+            !system.contains(PROMPT_NON_DISCLOSURE_CLAUSE),
+            "the operator must be able to inspect their own learned preferences"
+        );
     }
 
     /// GR-051: template skills (pm-*) carry a `$ARGUMENTS` slot that the
@@ -493,6 +682,7 @@ mod tests {
             identity_anchor: None,
             identity_locked: false,
             current_goal: None,
+            communication_profile: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -564,6 +754,7 @@ mod tests {
             identity_anchor: None,
             identity_locked: false,
             current_goal: None,
+            communication_profile: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(
@@ -607,6 +798,7 @@ mod tests {
             identity_anchor: None,
             identity_locked: false,
             current_goal: None,
+            communication_profile: None,
         };
         let out = build_enriched_request(inputs);
         let expected = concat!(

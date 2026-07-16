@@ -191,7 +191,7 @@ operator.
 
 | Area | 1.0 target behavior |
 | :-- | :-- |
-| **Buddy** | Keeps a durable personal profile, remembers approved facts, adapts to your style, and asks before crossing trust boundaries. |
+| **Buddy** | Keeps approved facts separate from a default-on local communication profile. It adapts presentation without storing raw messages or inferring diagnoses; inspect, pin, explain or reset it with `neoth profile communication ...`. Native GUI/Buddy controls are still a Gold parity item. |
 | **Brain** | Routes work through role-bound brain paths for fast answers, deeper reasoning, and verification. |
 | **Memory** | Uses five durable memory tiers — episode, profile, ground truth, consolidated, long-term — plus your external vault (Obsidian/Paperless) ingested into them. |
 | **Daily life** | Ingests Paperless documents, CalDAV calendar, notes, files, images, audio, and video into reviewable memory; IMAP inbox triage is a source-build opt-in and has no SMTP/send path. |
@@ -224,6 +224,7 @@ NEOTH is local-first and fail-closed by design.
 | **No silent provider fallback** | `neoth provider list` and `neoth wal show --type provider_fallback_attempted` (every 429 failover is a durable audit frame) |
 | **No ambient plugin power** | `neoth plugin ledger` (capabilities used) and `neoth wal show --type plugin_cap_denied` (over-level calls refused at runtime) |
 | **No invisible memory mutation** | `neoth profile pending` and `neoth profile show` |
+| **No hidden communication label** | `neoth profile communication status` and `show`; the default provider prompt exports accommodations only, and neuro-context exists only after an explicit typed declaration |
 | **No unverifiable history** | `neoth verify` |
 | **No accidental channel writes** | approval policy plus WAL events for outbound actions |
 
@@ -407,6 +408,7 @@ today:
 | `neoth identity merge` | The same person on Telegram, WhatsApp, and email becomes one identity. |
 | `neoth recall-score` | LongMemEval-style memory benchmark with inter-rater kappa — prove recall quality. |
 | `neoth memory-eval` | Reproducible recall benchmark in a temp DB; never touches real memory. |
+| `neoth profile communication why directness` | Explain the typed, subject-bound evidence behind an active presentation preference without revealing raw messages. |
 | `neoth cost "<prompt>"` | Token count and dollar estimate before the call is made. |
 | `neoth lease grant codex code:write --ttl 30m` | Time-limited capability grant that auto-expires; WAL-logged. |
 | `neoth recipe share` | Prompt template as a `neoth://recipe/…` deeplink anyone can run with their own parameters. |

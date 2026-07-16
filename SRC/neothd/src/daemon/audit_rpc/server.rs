@@ -71,6 +71,7 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
     ExtendedSubtype::ProofKeyRotated as u8,
     ExtendedSubtype::ExternalHttpIntent as u8,
     ExtendedSubtype::ExternalHttpResult as u8,
+    ExtendedSubtype::CommunicationProfileControlled as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.

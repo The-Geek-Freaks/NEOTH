@@ -188,9 +188,10 @@ pub use features::{
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
-    AutoUpdateConfig, CodeMapConfig, CodingConfig, DoctorConfig, PluginsConfig, ProfileConfig,
-    RefusalRecoveryConfig, ReleaseChannel, SupervisorConfig, SupervisorKind, TaskEngineConfig,
-    UpdaterConfig, WasmPluginsConfig,
+    AutoUpdateConfig, CodeMapConfig, CodingConfig, CommunicationProfileConfig,
+    CommunicationPromptExport, DoctorConfig, PluginsConfig, ProfileConfig, RefusalRecoveryConfig,
+    ReleaseChannel, SupervisorConfig, SupervisorKind, TaskEngineConfig, UpdaterConfig,
+    WasmPluginsConfig,
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
@@ -1529,6 +1530,11 @@ impl FreedomConfig {
             .cluster
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
+        public
+            .profile
+            .communication
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid profile.communication config: {error}"))?;
         serde_yaml::to_string(&public).context("serialize FreedomConfig as YAML for freedom.yaml")
     }
 
@@ -1566,6 +1572,11 @@ impl FreedomConfig {
             .cluster
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid cluster config: {error}"))?;
+        config
+            .profile
+            .communication
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid profile.communication config: {error}"))?;
 
         // Merge `~/.neoth/credentials.yaml` if present. credentials.yaml
         // is the dedicated home for plaintext secrets — the values there

@@ -28,8 +28,157 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use unicode_normalization::UnicodeNormalization as _;
+
 use crate::profile::delta::ProfileDelta;
 use crate::profile::types::AttributedWindow;
+
+fn sensitive_scan_char(character: char) -> Option<char> {
+    let codepoint = character as u32;
+    if character.is_control()
+        || matches!(
+            codepoint,
+            0x00AD
+                | 0x034F
+                | 0x061C
+                | 0x115F..=0x1160
+                | 0x17B4..=0x17B5
+                | 0x180B..=0x180F
+                | 0x200B..=0x200F
+                | 0x202A..=0x202E
+                | 0x2060..=0x206F
+                | 0x3164
+                | 0xFE00..=0xFE0F
+                | 0xFEFF
+                | 0xFFA0
+                | 0xE0100..=0xE01EF
+        )
+    {
+        return None;
+    }
+
+    // Small dependency-free confusable fold for the Greek/Cyrillic glyphs
+    // commonly used to split diagnostic markers. NFKC handles full-width and
+    // compatibility forms; this closes the remaining visual ASCII spoofs at
+    // the final durable-claim boundary.
+    Some(match character {
+        'а' | 'Α' | 'α' => 'a',
+        'В' | 'в' | 'Β' | 'β' => 'b',
+        'с' | 'С' | 'ϲ' | 'Ϲ' => 'c',
+        'е' | 'Е' | 'Ε' | 'ε' => 'e',
+        'Н' | 'н' | 'Η' | 'η' => 'h',
+        'і' | 'І' | 'Ι' | 'ι' => 'i',
+        'Ј' | 'ј' => 'j',
+        'Κ' | 'κ' | 'К' | 'к' => 'k',
+        'Μ' | 'μ' | 'М' | 'м' => 'm',
+        'Ν' | 'п' | 'П' => 'n',
+        'ν' => 'v',
+        'о' | 'О' | 'Ο' | 'ο' => 'o',
+        'р' | 'Р' | 'Ρ' | 'ρ' => 'p',
+        'Τ' | 'τ' | 'Т' | 'т' => 't',
+        'у' | 'У' | 'Υ' | 'υ' => 'y',
+        'х' | 'Х' | 'Χ' | 'χ' => 'x',
+        other => other,
+    })
+}
+
+fn normalize_for_sensitive_scan(value: &str) -> String {
+    value
+        .nfkc()
+        .filter_map(sensitive_scan_char)
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// Match an ASCII marker while treating any still-unmapped non-ASCII
+/// alphanumeric glyph as one conservative substitution. This avoids making a
+/// brittle claim that the small fold above implements the full UTS #39
+/// confusables table: at this final persistence boundary, an ambiguous glyph
+/// inside an otherwise matching diagnostic token is sufficient to reject it.
+fn contains_marker_with_non_ascii_substitutions(compact: &str, marker: &str) -> bool {
+    if !marker.is_ascii() {
+        return false;
+    }
+    let candidate = compact.chars().collect::<Vec<_>>();
+    let expected = marker.chars().collect::<Vec<_>>();
+    if expected.is_empty() || candidate.len() < expected.len() {
+        return false;
+    }
+    candidate.windows(expected.len()).any(|window| {
+        let mut exact_ascii = 0_usize;
+        let matches = window.iter().zip(&expected).all(|(actual, expected)| {
+            if actual == expected {
+                exact_ascii += 1;
+                true
+            } else {
+                actual.is_alphanumeric() && !actual.is_ascii()
+            }
+        });
+        matches && exact_ascii >= expected.len().min(2)
+    })
+}
+
+/// Sensitive inferences that an LLM/passive extractor must never turn into a
+/// durable profile claim. Explicit operator declarations use a separate,
+/// typed path; this gate applies only to inferred [`RawClaim`](crate::profile::delta::RawClaim)s.
+///
+/// `health` is denied as a category. The marker check is defence against a
+/// model misclassifying a diagnosis under another category such as
+/// `identity.neurotype`.
+pub(crate) fn is_prohibited_sensitive_inference(claim: &crate::profile::delta::RawClaim) -> bool {
+    let field = normalize_for_sensitive_scan(claim.field.trim());
+    if field == "health" || field.starts_with("health.") {
+        return true;
+    }
+
+    let mut candidate = field;
+    candidate.push(' ');
+    candidate.push_str(&normalize_for_sensitive_scan(&claim.value_json.to_string()));
+    candidate.push(' ');
+    candidate.push_str(&normalize_for_sensitive_scan(&claim.reasoning));
+
+    const DIAGNOSTIC_MARKERS: &[&str] = &[
+        "autism",
+        "autistic",
+        "autismus",
+        "autistisch",
+        "adhd",
+        "adhs",
+        "neurodiverg",
+        "neurotyp",
+        "psychiatr",
+        "mental health",
+        "mental_health",
+        "mental-health",
+        "diagnos",
+        "disorder",
+        "störung",
+        "bipolar",
+        "schizophren",
+        "psychosis",
+        "psychotic",
+        "depressi",
+        "ptsd",
+        "ocd",
+        "dsm-",
+        "dsm ",
+        "icd-",
+        "icd ",
+    ];
+    let compact = candidate
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .collect::<String>();
+    DIAGNOSTIC_MARKERS.iter().any(|marker| {
+        let compact_marker = marker
+            .chars()
+            .filter(|character| character.is_alphanumeric())
+            .collect::<String>();
+        candidate.contains(marker)
+            || compact.contains(&compact_marker)
+            || contains_marker_with_non_ascii_substitutions(&compact, &compact_marker)
+    })
+}
 
 /// Default cap matching the spec's `max_llm_calls_per_day = 500`.
 pub const DEFAULT_MAX_LLM_CALLS_PER_DAY: u32 = 500;
@@ -56,6 +205,8 @@ pub enum GuardReason {
     UnknownCategoryNotRegistered { field: String },
     #[error("field `{field}` carries a date outside the conversation-window anchor range")]
     TimestampOutsideWindow { field: String },
+    #[error("inferred sensitive/diagnostic profile claim is prohibited: `{field}`")]
+    SensitiveInferenceProhibited { field: String },
 }
 
 /// Knobs the operator sets via `~/.neoth/profile_claim_guard.toml` (the
@@ -292,6 +443,25 @@ impl ProfileClaimGuard {
             };
         }
 
+        // P0 privacy boundary — passive/LLM learning may adapt communication
+        // needs, but it must not persist health or diagnostic/neurotype claims.
+        // This check is independent of autonomy and therefore cannot be
+        // bypassed by Full/Sovereign. Stage 4 normally drops these per-claim;
+        // this whole-delta rejection protects direct guard callers that skip
+        // validation.
+        if let Some(claim) = delta
+            .claims
+            .iter()
+            .find(|claim| is_prohibited_sensitive_inference(claim))
+        {
+            let field = claim.field.clone();
+            let hash = delta_hash(&delta);
+            return GuardOutcome::Rejected {
+                reason: GuardReason::SensitiveInferenceProhibited { field },
+                blocked_delta_hash: hash,
+            };
+        }
+
         // 3. H2 — redaction registry. Exact-field redactions and
         //    `_tombstone.<topic>` anti-resurrection sentinels both reject the
         //    whole delta. The topic matcher inspects structured values too, so
@@ -506,6 +676,73 @@ mod tests {
             GuardOutcome::Accepted(d) => assert!(d.claims.is_empty()),
             _ => panic!("zero claims is a valid pass per spec"),
         }
+    }
+
+    #[test]
+    fn health_claim_is_rejected_before_any_autonomy_or_approval_gate() {
+        let g = ProfileClaimGuard::default();
+        let d = delta(vec![claim("health.sleep", 0.9)]);
+        let outcome = g.check(d, &window_with_user_speech(), T0);
+        assert!(matches!(
+            outcome,
+            GuardOutcome::Rejected {
+                reason: GuardReason::SensitiveInferenceProhibited { ref field },
+                ..
+            } if field == "health.sleep"
+        ));
+    }
+
+    #[test]
+    fn diagnostic_claim_hidden_under_identity_is_rejected() {
+        let g = ProfileClaimGuard::default();
+        let mut inferred = claim("identity.neurotype", 0.9);
+        inferred.value_json = serde_json::json!("ADHD");
+        let outcome = g.check(delta(vec![inferred]), &window_with_user_speech(), T0);
+        assert!(matches!(
+            outcome,
+            GuardOutcome::Rejected {
+                reason: GuardReason::SensitiveInferenceProhibited { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn diagnostic_claim_unicode_and_separator_obfuscation_is_rejected() {
+        let g = ProfileClaimGuard::default();
+        for value in [
+            "a\u{200b}utism",
+            "ＡＤＨＤ",
+            "аutism",
+            "a\u{0501}hd",
+            "a u t i s m",
+            "neuro\u{2060}divergent",
+        ] {
+            let mut inferred = claim("identity.communication_style", 0.9);
+            inferred.value_json = serde_json::json!(value);
+            let outcome = g.check(delta(vec![inferred]), &window_with_user_speech(), T0);
+            assert!(
+                matches!(
+                    outcome,
+                    GuardOutcome::Rejected {
+                        reason: GuardReason::SensitiveInferenceProhibited { .. },
+                        ..
+                    }
+                ),
+                "obfuscated diagnostic marker passed: {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn functional_communication_preference_remains_allowed() {
+        let g = ProfileClaimGuard::default();
+        let d = delta(vec![claim(
+            "operator_preferences.communication_structure",
+            0.9,
+        )]);
+        let outcome = g.check(d, &window_with_user_speech(), T0);
+        assert!(matches!(outcome, GuardOutcome::Accepted(_)));
     }
 
     #[test]

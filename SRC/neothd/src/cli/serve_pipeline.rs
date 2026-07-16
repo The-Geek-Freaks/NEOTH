@@ -153,6 +153,41 @@ pub(crate) fn sender_hash_of(sender_id: &str) -> String {
     format!("{:016x}", xxhash_rust::xxh3::xxh3_64(sender_id.as_bytes()))
 }
 
+/// Resolve the communication-profile subject for one inbound turn. The pinned
+/// operator intentionally shares the `operator` subject with CLI/GUI. Other
+/// people use the cross-channel identity UUID; first-sight resolution failures
+/// fall back to a channel-scoped hash so a phone number/user id is never copied
+/// into the profile state path.
+fn communication_subject_id(
+    inbound: &InboundMessage,
+    operator_human_uuid: Option<&str>,
+    channel: &str,
+    sender_hash: &str,
+) -> String {
+    if matches!(
+        (inbound.human_uuid.as_deref(), operator_human_uuid),
+        (Some(sender), Some(operator)) if sender == operator
+    ) {
+        "operator".to_owned()
+    } else {
+        inbound
+            .human_uuid
+            .clone()
+            .unwrap_or_else(|| format!("native:{channel}:{sender_hash}"))
+    }
+}
+
+fn communication_scope_for_subject(
+    subject_id: &str,
+    channel: &str,
+) -> crate::profile::communication::CommunicationScope {
+    if subject_id == "operator" {
+        crate::profile::communication::CommunicationScope::Global
+    } else {
+        crate::profile::communication::CommunicationScope::Channel(channel.to_owned())
+    }
+}
+
 /// GOLD-ARCH-01 phase 2 (inbound stage): SPEC-11 cross-channel identity
 /// resolve. Stamp `inbound.human_uuid` from the `(channel, sender_id, chat_id)`
 /// triple so the WAL + `neoth identity list/merge` can attribute the message to
@@ -1113,6 +1148,64 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             .await?;
             let sanitized_text = report.text;
 
+            // GOLD-R4-11 — learn only typed communication preferences from the
+            // accepted, sanitized human turn. Raw text is classified locally
+            // and discarded; persisted evidence carries only hashes, enums and
+            // the subject-isolated identity. A conservative day bucket counts
+            // as one channel session, so three rapid messages cannot satisfy
+            // the cross-session promotion threshold.
+            let channel_communication_subject = communication_subject_id(
+                &inbound,
+                config_for_handler
+                    .channel_weights
+                    .operator_human_uuid
+                    .as_deref(),
+                channel_str,
+                &sender_hash,
+            );
+            // The pinned operator intentionally shares one global profile
+            // with CLI/GUI. Other humans remain channel-scoped even when a
+            // cross-channel UUID identifies the same person.
+            let channel_communication_scope =
+                communication_scope_for_subject(&channel_communication_subject, channel_str);
+            let communication_session = format!(
+                "channel:{channel_str}:{sender_hash}:{}",
+                (ingress_ts_unix as i64).div_euclid(86_400)
+            );
+            let communication_event_hash = crate::profile::communication::evidence_event_hash(
+                "channel_ingress",
+                &channel_communication_subject,
+                &communication_session,
+                &ingress_event_id.to_le_bytes(),
+            );
+            let durable_full_auto = channel_communication_subject == "operator"
+                && config_for_handler.autonomy == crate::permissions::AutonomyLevel::Full;
+            let communication_outcome = crate::profile::communication::record_authenticated_turn(
+                &neoth_home,
+                &config_for_handler.profile.communication,
+                &sanitized_text,
+                communication_event_hash,
+                &channel_communication_subject,
+                &communication_session,
+                ingress_ts_unix as i64,
+                channel_communication_scope.clone(),
+                true,
+                durable_full_auto,
+                false,
+            )
+            .context("record communication evidence for channel turn")?;
+            crate::profile::communication::append_observation_audit(
+                &neoth_home,
+                &writer,
+                &channel_communication_subject,
+                communication_event_hash,
+                &channel_communication_scope,
+                &communication_outcome,
+                ingress_ts_unix as i64,
+            )
+            .await
+            .context("audit communication evidence for channel turn")?;
+
             // ── GOLD-ADAPT-GOOSE-03: UUID-reply fast-path ─────────────────
             // When the operator sends "yes <uuid>" or "no <uuid>" in reply to
             // a pending approval elicitation, we must intercept the message
@@ -1727,6 +1820,19 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .as_ref()
                 .and_then(|g| g.as_system_layer());
 
+            // GOLD-R4-11 — apply the same typed communication layer on every
+            // channel reply. A provably pinned operator shares the local
+            // `operator` profile with CLI/GUI; every other sender is isolated
+            // by cross-channel human UUID, with a PII-safe native hash fallback.
+            let channel_communication_profile = crate::profile::communication::compile_prompt(
+                &neoth_home,
+                &channel_communication_subject,
+                &config_for_handler.profile.communication,
+                Some(&channel_communication_scope),
+                false,
+            )
+            .context("compile communication profile for channel turn")?;
+
             let channel_enriched =
                 crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
                     prompt: &sanitized_text,
@@ -1743,6 +1849,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     identity_anchor: channel_identity_anchor,
                     identity_locked: serve_identity_locked,
                     current_goal: channel_goal_layer.as_deref(),
+                    communication_profile: channel_communication_profile.as_ref().map(|compiled| {
+                        crate::pipeline::CommunicationProfilePrompt::presentation_only(
+                            compiled.as_str(),
+                        )
+                    }),
                 });
             let channel_enriched_system = channel_enriched.system;
             let channel_used_skill_id = channel_enriched.used_skill_id;
@@ -1883,6 +1994,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             match crate::cli::bg_session::spawn_background_session(
                                 &name,
                                 prompt_body,
+                                channel_enriched_system.clone(),
                                 config_for_handler.as_ref().clone(),
                                 Arc::clone(&provider),
                                 Some(&writer),
@@ -3599,6 +3711,48 @@ mod tests {
             raw_ts_ms: None,
             human_uuid: None,
         }
+    }
+
+    #[test]
+    fn communication_subject_shares_only_the_proven_pinned_operator_profile() {
+        let mut msg = inbound(Some("hi"), None);
+        msg.human_uuid = Some("human-operator".into());
+        assert_eq!(
+            communication_subject_id(&msg, Some("human-operator"), "telegram", "hash"),
+            "operator"
+        );
+
+        assert_eq!(
+            communication_subject_id(&msg, Some("different-human"), "telegram", "hash"),
+            "human-operator",
+            "a non-operator keeps a separate cross-channel subject"
+        );
+        assert_eq!(
+            communication_subject_id(&msg, None, "telegram", "hash"),
+            "human-operator",
+            "missing operator pin must never promote a sender"
+        );
+    }
+
+    #[test]
+    fn communication_subject_fallback_never_persists_the_raw_sender_id() {
+        let msg = inbound(Some("hi"), None);
+        let sender_hash = sender_hash_of(&msg.sender_id);
+        let subject = communication_subject_id(&msg, None, "telegram", &sender_hash);
+        assert_eq!(subject, format!("native:telegram:{sender_hash}"));
+        assert!(!subject.contains(&msg.sender_id));
+    }
+
+    #[test]
+    fn communication_scope_is_global_only_for_the_pinned_operator() {
+        assert_eq!(
+            communication_scope_for_subject("operator", "telegram"),
+            crate::profile::communication::CommunicationScope::Global
+        );
+        assert_eq!(
+            communication_scope_for_subject("human-123", "telegram"),
+            crate::profile::communication::CommunicationScope::Channel("telegram".into())
+        );
     }
 
     #[test]

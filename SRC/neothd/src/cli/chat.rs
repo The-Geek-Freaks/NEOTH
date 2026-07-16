@@ -339,6 +339,11 @@ struct AgentRawLayers {
     mcp_catalogue: Option<String>,
     persona_override: Option<String>,
     moral_core: Option<String>,
+    /// GOLD-R4-11 — compiler-owned, presentation-only communication profile.
+    /// This layer is not skill-omittable: an agent may narrow context/tool
+    /// exposure, but cannot silently discard the operator's accessibility and
+    /// communication needs.
+    communication_profile: Option<String>,
     recall_block: Option<String>,
     guidance_block: Option<String>,
     skill_delegate_to: Option<String>,
@@ -423,9 +428,17 @@ async fn build_prompt_bundle(
     // registry build (no watcher, no shared state).
     let (blocks_res, registry_res) = match crate::skills::registry::global() {
         Some(reg) => {
-            let blocks = crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs).await;
+            let blocks = if args.incognito {
+                Ok(Vec::new())
+            } else {
+                crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs).await
+            };
             (blocks, Ok::<_, anyhow::Error>(reg))
         }
+        None if args.incognito => (
+            Ok(Vec::new()),
+            crate::skills::SkillRegistry::load(&skills_dir).await,
+        ),
         None => {
             let (b, r) = tokio::join!(
                 crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs),
@@ -476,7 +489,11 @@ async fn build_prompt_bundle(
     // These `freedom.yaml` fields were written at onboarding but never
     // reached the prompt before, so the model knew neither the
     // operator's role nor their preferred response language.
-    let operator_context = merge_operator_facts(&config, rendered_md);
+    let operator_context = if args.incognito {
+        None
+    } else {
+        merge_operator_facts(&config, rendered_md)
+    };
 
     // ── K-Wire-3 (Session 23) — layered enrichment via shared helper ──────
     // Pre-loads every enrichment block the prior 200-LOC inline
@@ -913,9 +930,13 @@ async fn build_prompt_bundle(
     // write into the profile snapshot). LOWKEY's addendum is the empty
     // string; `filter(!is_empty)` keeps the field None for that case so
     // the enricher doesn't introduce a stray blank line.
-    let preset_addendum = crate::cli::profile::load_active_preset(&home)
-        .map(|p| crate::profile::presets::apply_preset(p).system_addendum)
-        .filter(|s| !s.is_empty());
+    let preset_addendum = if args.incognito {
+        None
+    } else {
+        crate::cli::profile::load_active_preset(&home)
+            .map(|p| crate::profile::presets::apply_preset(p).system_addendum)
+            .filter(|s| !s.is_empty())
+    };
 
     // ── K-Repo-Map Phase 3c — pre-compute the auto-context block ─────────
     // Best-effort: any failure silently skips injection.
@@ -961,7 +982,7 @@ async fn build_prompt_bundle(
     // ── GOLD-ADAPT-MEM-12 — session-guidance block (recent hindsight sessions
     // + open fact-contradictions), folded above the recall block as session-
     // wide context. Best-effort → None on a fresh install / quiet week.
-    let guidance_block = maybe_guidance_block(&home).await;
+    let guidance_block = maybe_guidance_block(&home, args.incognito).await;
 
     // ── Compose layered system prompt via shared helper ───────────────────
     // GOLD-FEAT-07 — load the operator's LOWKEY moral core (if any) for
@@ -973,7 +994,11 @@ async fn build_prompt_bundle(
     // GOLD-ADAPT-JV-MODE-01 — load persona mode; derive identity anchor text
     // and the identity_locked flag. loyal_buddy pins the bundled skill body at
     // position 1 (after moral_core) so no downstream layer can override it.
-    let persona_mode = crate::cli::profile::load_persona_mode(&home);
+    let persona_mode = if args.incognito {
+        None
+    } else {
+        crate::cli::profile::load_persona_mode(&home)
+    };
     let (identity_anchor_text, identity_locked) = match persona_mode {
         Some(crate::config::PersonaMode::LoyalBuddy) => {
             // Pull system_prompt from the bundled skill YAML at compile time.
@@ -987,8 +1012,26 @@ async fn build_prompt_bundle(
     };
 
     // GOLD-FEAT-11 — load cross-turn goal (best-effort; None on missing/corrupt file).
-    let goal_persist = crate::daemon::goal_persist::GoalPersist::load(&home);
+    let goal_persist = if args.incognito {
+        None
+    } else {
+        crate::daemon::goal_persist::GoalPersist::load(&home)
+    };
     let goal_layer_text = goal_persist.as_ref().and_then(|g| g.as_system_layer());
+
+    // GOLD-R4-11 — deterministic local communication adaptation. The compiler
+    // returns before opening profile state for incognito turns and only exports
+    // the accommodations allowed by `profile.communication.prompt_export`.
+    // Corrupt configured state is fail-loud, matching moral-core handling: a
+    // requested profile cannot disappear silently before provider dispatch.
+    let communication_profile = crate::profile::communication::compile_prompt(
+        &home,
+        "operator",
+        &config.profile.communication,
+        None,
+        args.incognito,
+    )
+    .context("compile communication profile for chat turn")?;
 
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt: &prompt,
@@ -1004,6 +1047,9 @@ async fn build_prompt_bundle(
         identity_anchor: identity_anchor_text,
         identity_locked,
         current_goal: goal_layer_text.as_deref(),
+        communication_profile: communication_profile.as_ref().map(|compiled| {
+            crate::pipeline::CommunicationProfilePrompt::presentation_only(compiled.as_str())
+        }),
     });
     // Fold the layers in authority order: enriched.system (operator / skills /
     // MCP / moral) > guidance (MEM-12 session-wide context) > recall (Block::D
@@ -1046,6 +1092,8 @@ async fn build_prompt_bundle(
         mcp_catalogue,
         persona_override,
         moral_core,
+        communication_profile: communication_profile
+            .map(crate::profile::communication::CompiledCommunicationPrompt::into_string),
         recall_block: recall_block_raw,
         guidance_block: guidance_block_raw,
         skill_delegate_to,
@@ -1302,6 +1350,10 @@ async fn enforce_preflight(
             // Cross-turn goal not re-injected into sub-agents (operator goal is
             // already visible via the parent turn's system prompt context).
             current_goal: None,
+            communication_profile: agent_raw_layers
+                .communication_profile
+                .as_deref()
+                .map(crate::pipeline::CommunicationProfilePrompt::presentation_only),
         });
         // Fold guidance + recall on top (same authority order as main path),
         // respecting the omit flags.
@@ -1467,6 +1519,7 @@ async fn enforce_preflight(
                                 match crate::cli::bg_session::spawn_background_session(
                                     &name,
                                     prompt_body,
+                                    combined_system.clone(),
                                     config.clone(),
                                     bg_provider.into(),
                                     Some(&writer),
@@ -2410,12 +2463,13 @@ async fn dispatch_provider(
                 // never drift. CLI-specific bits stay here: the convened log
                 // above, the WAL-writer shutdown on failure, stdout print, and
                 // the cost-estimate tuple below.
-                let response_text = match dispatch_council_with_recovery(
+                let response_text = match dispatch_council_with_recovery_for_turn(
                     &req,
                     config,
                     home,
                     &writer,
                     call_authorizer.clone(),
+                    args.incognito,
                 )
                 .await
                 {
@@ -3045,6 +3099,42 @@ async fn run_post_reply_pipelines(
         response_text =
             crate::hooks::block_filter::restore_blocks(&response_text, &pending_block_restorations);
     }
+
+    // Learn presentation preferences only from an authenticated, accepted
+    // operator turn. The recorder stores typed evidence plus this durable WAL
+    // identity; it never persists `prompt` itself and is inert in Incognito.
+    let communication_event_hash = crate::profile::communication::evidence_event_hash(
+        "cli_turn",
+        "operator",
+        &current_session_id,
+        &raw_event_id.to_le_bytes(),
+    );
+    let communication_scope = crate::profile::communication::CommunicationScope::Global;
+    let communication_outcome = crate::profile::communication::record_authenticated_turn(
+        &first_tour_home,
+        &config.profile.communication,
+        &prompt,
+        communication_event_hash,
+        "operator",
+        &current_session_id,
+        chat_ts_unix,
+        communication_scope.clone(),
+        true,
+        matches!(config.autonomy, crate::permissions::AutonomyLevel::Full),
+        args.incognito,
+    )
+    .context("record authenticated communication-adaptation evidence")?;
+    crate::profile::communication::append_observation_audit(
+        &first_tour_home,
+        &writer,
+        "operator",
+        communication_event_hash,
+        &communication_scope,
+        &communication_outcome,
+        chat_ts_unix,
+    )
+    .await
+    .context("audit authenticated communication-adaptation evidence")?;
 
     // Each concrete leaf response was durably recorded at the provider
     // boundary before control returned here. Close the turn journal only after
@@ -5170,6 +5260,9 @@ struct ProviderHemisphere {
     /// hemisphere resolves its OWN voice through `slot_for_sub`, so a
     /// SecurityEngineer on outer-Left never contaminates inner-Right.
     voice: Option<crate::council::types::CouncilVoice>,
+    /// False on incognito turns so recursive sub-councils cannot re-open a
+    /// learned-memory surface after the outer prompt was scrubbed.
+    allow_persistent_context: bool,
 }
 
 #[async_trait::async_trait]
@@ -5338,6 +5431,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     HemisphereRole::Left,
                     &self.base_req,
                     self.authorizer.clone(),
+                    self.allow_persistent_context,
                 )
                 .await;
                 let r = build_sub_hemisphere_with_config(
@@ -5347,6 +5441,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     HemisphereRole::Right,
                     &self.base_req,
                     self.authorizer.clone(),
+                    self.allow_persistent_context,
                 )
                 .await;
                 let c = build_sub_hemisphere_with_config(
@@ -5356,6 +5451,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     HemisphereRole::Cerebellum,
                     &self.base_req,
                     self.authorizer.clone(),
+                    self.allow_persistent_context,
                 )
                 .await;
                 let unwrap = |res: Result<ProviderHemisphere>, name: &str| match res {
@@ -5375,6 +5471,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     HemisphereRole::Left,
                     &self.base_req,
                     self.authorizer.clone(),
+                    self.allow_persistent_context,
                 )
                 .await;
                 let r = build_hemisphere_with_config(
@@ -5383,6 +5480,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     HemisphereRole::Right,
                     &self.base_req,
                     self.authorizer.clone(),
+                    self.allow_persistent_context,
                 )
                 .await;
                 let c = build_hemisphere_with_config(
@@ -5391,6 +5489,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     HemisphereRole::Cerebellum,
                     &self.base_req,
                     self.authorizer.clone(),
+                    self.allow_persistent_context,
                 )
                 .await;
                 let unwrap = |res: Result<ProviderHemisphere>, name: &str| match res {
@@ -5504,13 +5603,29 @@ async fn hemisphere_recall_fragment(
     role: crate::config::inference::HemisphereRole,
     prompt: &str,
     neoth_home: &std::path::Path,
+    allow_persistent_context: bool,
 ) -> Option<String> {
     let prompt = prompt.to_string();
     let db_path = neoth_home.join("views.db");
-    tokio::task::spawn_blocking(move || hemisphere_recall_fragment_at(&db_path, role, &prompt))
-        .await
-        .ok()
-        .flatten()
+    tokio::task::spawn_blocking(move || {
+        hemisphere_recall_fragment_for_turn_at(&db_path, role, &prompt, allow_persistent_context)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn hemisphere_recall_fragment_for_turn_at(
+    db_path: &std::path::Path,
+    role: crate::config::inference::HemisphereRole,
+    prompt: &str,
+    allow_persistent_context: bool,
+) -> Option<String> {
+    if allow_persistent_context {
+        hemisphere_recall_fragment_at(db_path, role, prompt)
+    } else {
+        None
+    }
 }
 
 /// Test-friendly core of [`hemisphere_recall_fragment`]: explicit `db_path`.
@@ -5592,6 +5707,7 @@ async fn build_hemisphere(
         outer_role: None,
         // GOLD-WIRE-04: this role's specialist voice, applied at leaf `ask`.
         voice: config.inference.slot_for(role).voice,
+        allow_persistent_context: false,
     })
 }
 
@@ -5625,6 +5741,7 @@ async fn build_hemisphere_with_config(
     role: crate::config::inference::HemisphereRole,
     req: &crate::providers::Request,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    allow_persistent_context: bool,
 ) -> Result<ProviderHemisphere> {
     let provider = crate::providers::from_config_for_role(config.as_ref(), role).await?;
     // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
@@ -5645,7 +5762,9 @@ async fn build_hemisphere_with_config(
             .clone()
             .or_else(|| provider.default_model().map(str::to_owned));
     }
-    if let Some(frag) = hemisphere_recall_fragment(role, &req.prompt, neoth_home).await {
+    if let Some(frag) =
+        hemisphere_recall_fragment(role, &req.prompt, neoth_home, allow_persistent_context).await
+    {
         base_req.system = match base_req.system.take() {
             Some(s) if !s.trim().is_empty() => Some(format!("{s}\n\n{frag}")),
             _ => Some(frag),
@@ -5659,6 +5778,7 @@ async fn build_hemisphere_with_config(
         config: Some(config),
         outer_role: Some(role),
         voice,
+        allow_persistent_context,
     })
 }
 
@@ -5680,6 +5800,7 @@ async fn build_sub_hemisphere_with_config(
     inner_role: crate::config::inference::HemisphereRole,
     req: &crate::providers::Request,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    allow_persistent_context: bool,
 ) -> Result<ProviderHemisphere> {
     let provider =
         crate::providers::from_config_for_sub_role(config.as_ref(), outer_role, inner_role).await?;
@@ -5706,6 +5827,7 @@ async fn build_sub_hemisphere_with_config(
         config: Some(config),
         outer_role: None,
         voice,
+        allow_persistent_context,
     })
 }
 
@@ -5746,6 +5868,21 @@ async fn profile_block_for_callosum(
             );
             None
         }
+    }
+}
+
+/// Incognito turns must not even open the learned-profile database. Keeping
+/// the policy outside the lookup helper makes the no-read branch explicit and
+/// testable while preserving the ordinary channel/Council path.
+async fn profile_block_for_callosum_for_turn(
+    db_path: PathBuf,
+    disabled_categories: Vec<String>,
+    incognito: bool,
+) -> Option<String> {
+    if incognito {
+        None
+    } else {
+        profile_block_for_callosum(db_path, disabled_categories).await
     }
 }
 
@@ -6083,13 +6220,25 @@ pub(crate) async fn emit_architecture_findings_audit(
 /// authz needed). Best-effort: no recent cards AND no pending → `None`.
 /// Production resolves both stores under the operator's HOME; see
 /// [`maybe_guidance_block_at`] for the explicit-path test variant.
-async fn maybe_guidance_block(home: &std::path::Path) -> Option<String> {
+async fn maybe_guidance_block(home: &std::path::Path, incognito: bool) -> Option<String> {
     let home = home.to_path_buf();
     let now = now_unix() as i64;
-    tokio::task::spawn_blocking(move || maybe_guidance_block_at(&home, now))
+    tokio::task::spawn_blocking(move || maybe_guidance_block_for_turn_at(&home, now, incognito))
         .await
         .ok()
         .flatten()
+}
+
+fn maybe_guidance_block_for_turn_at(
+    home: &std::path::Path,
+    now_unix: i64,
+    incognito: bool,
+) -> Option<String> {
+    if incognito {
+        None
+    } else {
+        maybe_guidance_block_at(home, now_unix)
+    }
 }
 
 /// Sliding window for the "recent sessions" lane — one week of hindsight cards.
@@ -6985,6 +7134,18 @@ pub(crate) async fn dispatch_council_with_recovery(
     writer: &crate::wal::writer::WalWriterHandle,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<String> {
+    dispatch_council_with_recovery_for_turn(req, config, neoth_home, writer, authorizer, false)
+        .await
+}
+
+async fn dispatch_council_with_recovery_for_turn(
+    req: &crate::providers::Request,
+    config: &FreedomConfig,
+    neoth_home: &std::path::Path,
+    writer: &crate::wal::writer::WalWriterHandle,
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    incognito: bool,
+) -> Result<String> {
     // Pick #8 F8 (Session 14 Pick #20) — channel-path pre-flight
     // diversity audit. Mirrors the CLI-path emission in `run_chat_with`
     // so the WAL audit trail records misconfigured topologies
@@ -7001,15 +7162,17 @@ pub(crate) async fn dispatch_council_with_recovery(
         tracing::info!("MIF: conflicted intent — council skipped, disambiguation surfaced");
         return Ok(message);
     }
-    let outcome = run_council_debate(config, neoth_home, req, &authorizer).await?;
+    let outcome = run_council_debate(config, neoth_home, req, &authorizer, !incognito).await?;
     // KF-01 (COR-17): persist verbatim hemisphere transcripts (opt-in) so
     // `neoth council replay` can show the actual prose. No-op unless
     // freedom.yaml::council.persist_transcripts = true. Emitted here so BOTH
     // the CLI and channel paths record replayable transcripts identically.
-    emit_council_transcripts(writer, prompt_hash_pre, &outcome, config).await;
+    if !incognito {
+        emit_council_transcripts(writer, prompt_hash_pre, &outcome, config).await;
+    }
     // B-3 (Session 13) — record this debate's wall-clock so the NEXT
     // inbound's trigger eval honours the rate cooldown.
-    {
+    if !incognito {
         if let Err(e) =
             crate::council::last_ts::record(neoth_home, crate::council::last_ts::now_unix())
         {
@@ -7069,10 +7232,13 @@ pub(crate) async fn dispatch_council_with_recovery(
     // consensus_or_best` or `best_always`, pick by quality score
     // rather than verdict-text fallback. LegacyMajority returns
     // `None` here so the existing v0.1 behaviour is preserved.
-    let rw_path = crate::memory::routing_weights::RoutingWeights::default_path(neoth_home);
-    let mut routing_weights =
+    let mut routing_weights = if incognito {
+        crate::memory::routing_weights::RoutingWeights::in_memory()
+    } else {
+        let rw_path = crate::memory::routing_weights::RoutingWeights::default_path(neoth_home);
         crate::memory::routing_weights::RoutingWeights::load_from(&rw_path)
-            .with_context(|| format!("load routing weights {}", rw_path.display()))?;
+            .with_context(|| format!("load routing weights {}", rw_path.display()))?
+    };
     let role_agnostic = select_winner_role_agnostic(
         &outcome,
         config.council.selection_mode,
@@ -7217,13 +7383,15 @@ pub(crate) async fn dispatch_council_with_recovery(
         }
         // SP-4: record acceptance signal so future debates on the
         // same topic lift the winning hemisphere's memory_weight.
-        routing_weights.record_acceptance(
-            prompt_hash_outer,
-            winner.role,
-            crate::memory::routing_weights::now_unix(),
-        );
-        if let Err(e) = routing_weights.save() {
-            tracing::warn!(error = %e, "could not persist routing_weights.json (channel)");
+        if !incognito {
+            routing_weights.record_acceptance(
+                prompt_hash_outer,
+                winner.role,
+                crate::memory::routing_weights::now_unix(),
+            );
+            if let Err(e) = routing_weights.save() {
+                tracing::warn!(error = %e, "could not persist routing_weights.json (channel)");
+            }
         }
         // GOLD-LOOP-01 — dissent-spike auto-invoke. When the council debate
         // produced strong dissent (score >= 0.6) AND the operator has opted in
@@ -7234,7 +7402,10 @@ pub(crate) async fn dispatch_council_with_recovery(
         //
         // Note: this fires AFTER the self-reflect refine + self-score gate
         // above, so the loop starts from the already-refined text in `req`.
-        if outcome.dissent.is_strong_dissent() && config.loop_config.auto_invoke_on_dissent {
+        if !incognito
+            && outcome.dissent.is_strong_dissent()
+            && config.loop_config.auto_invoke_on_dissent
+        {
             let loop_cfg = crate::loop_engine::engine::LoopConfig::for_dissent_invoke(
                 config.autonomy,
                 neoth_home.to_path_buf(),
@@ -7346,9 +7517,10 @@ pub(crate) async fn dispatch_council_with_recovery(
                             .unwrap_or("")
                     });
                 let prompt_hash = prompt_hash_outer;
-                let profile_block = profile_block_for_callosum(
+                let profile_block = profile_block_for_callosum_for_turn(
                     neoth_home.join("views.db"),
                     config.profile.pii_categories_disabled.clone(),
+                    incognito,
                 )
                 .await
                 .unwrap_or_default();
@@ -7519,6 +7691,7 @@ async fn run_council_debate(
     neoth_home: &std::path::Path,
     req: &crate::providers::Request,
     authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+    allow_persistent_context: bool,
 ) -> Result<crate::council::CouncilDebate> {
     use crate::config::inference::HemisphereRole;
     // Finding 2: once-per-process advisory when council topology
@@ -7536,6 +7709,7 @@ async fn run_council_debate(
         HemisphereRole::Left,
         req,
         authorizer.clone(),
+        allow_persistent_context,
     )
     .await?;
     let right = build_hemisphere_with_config(
@@ -7544,6 +7718,7 @@ async fn run_council_debate(
         HemisphereRole::Right,
         req,
         authorizer.clone(),
+        allow_persistent_context,
     )
     .await?;
     let cere = build_hemisphere_with_config(
@@ -7552,6 +7727,7 @@ async fn run_council_debate(
         HemisphereRole::Cerebellum,
         req,
         authorizer.clone(),
+        allow_persistent_context,
     )
     .await?;
     let prompt_hash = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
@@ -7576,7 +7752,7 @@ async fn run_council_debate(
     let budget_probe = budget.clone();
     // GOLD-G02-COUNCIL-01 — verified groundtruth flows into every
     // hemisphere prompt + the post-response contradiction check.
-    let assertions = if config.council.groundtruth_injection {
+    let assertions = if allow_persistent_context && config.council.groundtruth_injection {
         tokio::task::block_in_place(|| fetch_council_assertions(neoth_home, 10))?
     } else {
         Vec::new()
@@ -7596,12 +7772,14 @@ async fn run_council_debate(
     // Persist the council-budget posture for `neoth council budget`
     // (best-effort, OUTSIDE the orchestrator hot path — one funnel for
     // both the CLI + channel council paths).
-    crate::council::budget::record_budget_outcome(
-        neoth_home,
-        budget_probe.used(),
-        budget_probe.cap(),
-        now_unix() as i64,
-    );
+    if allow_persistent_context {
+        crate::council::budget::record_budget_outcome(
+            neoth_home,
+            budget_probe.used(),
+            budget_probe.cap(),
+            now_unix() as i64,
+        );
+    }
     Ok(outcome)
 }
 
@@ -8368,6 +8546,34 @@ mod tests {
         let _ = pipeline_task.await.unwrap();
         // No specific value assertion (env-sensitive); the
         // contract is: doesn't deadlock, doesn't panic.
+    }
+
+    #[tokio::test]
+    async fn incognito_callosum_omits_existing_profile_claims() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO idx_profile (extraction_id, event_id, field, value_json, confidence, \
+             evidence_event_ids, guard_version, applied_at, superseded_at) \
+             VALUES ('ext-incognito', 42, 'operator_preferences.communication_structure', \
+             '\"structured\"', 0.95, '[]', 'test', 1, NULL)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let normal = profile_block_for_callosum_for_turn(db_path.clone(), Vec::new(), false)
+            .await
+            .expect("ordinary Council turn should load the stored profile claim");
+        assert!(normal.contains("communication_structure"), "{normal}");
+
+        assert!(
+            profile_block_for_callosum_for_turn(db_path, Vec::new(), true)
+                .await
+                .is_none(),
+            "incognito Council turn must not expose stored profile claims"
+        );
     }
 
     struct MockProvider {
@@ -9463,6 +9669,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: None,
+            allow_persistent_context: true,
         };
         let result = ph.ask_with_depth("hi", 1).await.unwrap();
         assert_eq!(result.text, "ok");
@@ -9487,6 +9694,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: None,
+            allow_persistent_context: true,
         };
         let result = ph.ask_with_depth("hi", 0).await.unwrap();
         assert_eq!(result.text, "ok");
@@ -9516,6 +9724,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: None,
+            allow_persistent_context: true,
         };
         // depth=4 (MAX cap) + no config → still flat, one call.
         let result = ph.ask_with_depth("hi", 4).await.unwrap();
@@ -9548,6 +9757,7 @@ mod tests {
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(crate::config::inference::HemisphereRole::Left),
             voice: None,
+            allow_persistent_context: true,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
         // Error msg names "build sub-" so operator sees which leg failed.
@@ -9889,6 +10099,7 @@ mod tests {
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(HemisphereRole::Left),
             voice: None,
+            allow_persistent_context: true,
         };
 
         let result = ph.ask_with_depth("hi", 2).await;
@@ -9934,6 +10145,7 @@ mod tests {
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: None,
             voice: None,
+            allow_persistent_context: true,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
         // Skip provider → build_hemisphere_with_config (Phase 2 path)
@@ -10078,6 +10290,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: Some(CouncilVoice::SecurityEngineer),
+            allow_persistent_context: true,
         };
 
         ph.ask("operator question").await.unwrap();
@@ -10578,6 +10791,10 @@ mod tests {
         let out = maybe_guidance_block_at(dir.path(), 1_700_000_000)
             .expect("a pending contradiction yields a block");
         assert!(out.contains("1 flagged fact-contradiction"), "{out}");
+        assert!(
+            maybe_guidance_block_for_turn_at(dir.path(), 1_700_000_000, true).is_none(),
+            "incognito must suppress an otherwise visible guidance block"
+        );
     }
 
     // ── GOLD-ADAPT-JV-MEM-16 — guidance snapshot integration ────────────────
@@ -10712,6 +10929,10 @@ mod tests {
             "Left leads with groundtruth: {frag}"
         );
         assert!(frag.contains("quokkas"), "{frag}");
+        assert!(
+            hemisphere_recall_fragment_for_turn_at(&db, R::Left, "quokkas", false).is_none(),
+            "incognito Council must not read hemisphere recall"
+        );
     }
 
     #[test]

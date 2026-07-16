@@ -63,7 +63,7 @@ Enforcement layers (all active by default):
 | `/api/recall` | POST | `{query, limit?}` | `{hits: [...], total}` (routes through `memory::ctx::search`) |
 | `/api/stats` | GET | — | `{events_total, provider_requests, channel_inbound, channel_outbound}` |
 | `/api/memory/save` | POST | `{kind, body, tags?}` | `{stored, bytes}` (writes a RAW_TEXT WAL frame) |
-| `/api/provider/call` | POST | `{prompt, system?, model?}` | `{completion, model}` (runs `providers::from_config(...).complete()`) |
+| `/api/provider/call` | POST | `{prompt, system?, model?, incognito?}` | `{completion, model}` (authenticated operator communication profile + authorized provider leaf) |
 | `/api/channel/send` | POST | `{channel, recipient, text}` | `{queued}` (writes a CHANNEL_EGRESS WAL frame; adapter dispatch via the broker) |
 
 ---
@@ -132,6 +132,29 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -d '{"kind": "fact", "body": "Prefer terse replies", "tags": ["tone","preference"]}' \
   http://127.0.0.1:9744/api/memory/save
 ```
+
+## Example: /api/provider/call
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Summarize the deployment status","system":"Return valid Markdown","incognito":false}' \
+  http://127.0.0.1:9744/api/provider/call
+```
+
+After bearer authentication, this endpoint is bound to the local `operator`
+communication subject; request JSON cannot select or spoof another subject.
+NEOTH compiles the same typed presentation-only layer used by chat, then adds
+the caller's explicit `system` layer through the canonical prompt composer. The
+resulting final system prompt is part of the concrete provider request and its
+cost/consent authorization binding.
+
+Automation prompts may be machine-generated, so this endpoint never records
+them as communication-profile evidence. Existing request bodies remain valid:
+`incognito` defaults to `false`. Set it to `true` when the workflow must perform
+zero communication-profile reads; even corrupt profile state is not opened in
+that mode. The provider lifecycle stays content-free/auditable and is marked
+`incognito: true`.
 
 ---
 

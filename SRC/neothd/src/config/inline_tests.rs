@@ -673,6 +673,118 @@ mod tests {
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(!cfg.profile.learn_enabled);
         assert_eq!(cfg.profile.timeout_secs, 15);
+        assert!(
+            cfg.profile.communication.enabled,
+            "local communication adaptation is independent from paid LLM fact learning"
+        );
+        assert_eq!(cfg.profile.communication.min_observations, 5);
+        assert_eq!(cfg.profile.communication.min_distinct_sessions, 3);
+        assert_eq!(
+            cfg.profile.communication.prompt_export,
+            CommunicationPromptExport::AccommodationsOnly
+        );
+        assert!(!cfg.profile.communication.cluster_sync);
+    }
+
+    #[test]
+    fn communication_profile_policy_round_trips_and_validates() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\n\
+             profile:\n  \
+               communication:\n    \
+                 enabled: false\n    \
+                 min_observations: 8\n    \
+                 min_distinct_sessions: 4\n    \
+                 min_confidence: 0.8\n    \
+                 full_auto_min_observations: 12\n    \
+                 full_auto_min_distinct_sessions: 6\n    \
+                 full_auto_min_confidence: 0.9\n    \
+                 prompt_export: none\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(!cfg.profile.communication.enabled);
+        assert_eq!(cfg.profile.communication.min_observations, 8);
+        assert_eq!(cfg.profile.communication.min_distinct_sessions, 4);
+        assert_eq!(
+            cfg.profile.communication.prompt_export,
+            CommunicationPromptExport::None
+        );
+    }
+
+    #[test]
+    fn communication_profile_rejects_weaker_full_auto_thresholds() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\n\
+             profile:\n  \
+               communication:\n    \
+                 min_observations: 10\n    \
+                 full_auto_min_observations: 5\n",
+        );
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("full_auto_min_observations must be >= min_observations")
+        );
+    }
+
+    #[test]
+    fn communication_profile_rejects_unreachable_or_non_finite_thresholds() {
+        let mut policy = CommunicationProfileConfig {
+            min_observations: 3,
+            min_distinct_sessions: 4,
+            ..CommunicationProfileConfig::default()
+        };
+        assert_eq!(
+            policy.validate().unwrap_err(),
+            "min_distinct_sessions must be <= min_observations"
+        );
+
+        policy = CommunicationProfileConfig {
+            min_confidence: f32::NAN,
+            ..CommunicationProfileConfig::default()
+        };
+        assert_eq!(
+            policy.validate().unwrap_err(),
+            "min_confidence must be within 0.5..=1.0"
+        );
+
+        policy = CommunicationProfileConfig {
+            full_auto_min_observations: 40,
+            max_evidence_per_dimension: 32,
+            ..CommunicationProfileConfig::default()
+        };
+        assert_eq!(
+            policy.validate().unwrap_err(),
+            "max_evidence_per_dimension must be >= full_auto_min_observations"
+        );
+
+        policy = CommunicationProfileConfig {
+            full_auto_min_confidence: f32::NAN,
+            ..CommunicationProfileConfig::default()
+        };
+        assert_eq!(
+            policy.validate().unwrap_err(),
+            "full_auto_min_confidence must be within min_confidence..=1.0"
+        );
+    }
+
+    #[test]
+    fn communication_profile_rejects_unwired_cluster_sync() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\n\
+             profile:\n  \
+               communication:\n    \
+                 cluster_sync: true\n",
+        );
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        assert!(error.to_string().contains("cluster_sync is not available"));
     }
 
     #[test]

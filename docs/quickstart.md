@@ -72,14 +72,16 @@ You can change every answer later.
 ```bash
 neoth chat "Remember that I prefer direct answers."
 neoth recall "how do I like answers?"
-neoth profile show --evidence
+neoth profile show
+neoth profile communication status
 neoth privacy audit --last 7d
 ```
 
 Expected result:
 
 - NEOTH recalls the preference.
-- The profile view shows where the fact came from.
+- The fact-profile view shows the materialised claim, while communication
+  status shows whether local presentation adaptation is active.
 - The privacy audit shows whether anything left your machine.
 
 ## Add a chat channel

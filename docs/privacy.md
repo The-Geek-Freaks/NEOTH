@@ -12,7 +12,7 @@ README.
 
 | Rule | Meaning |
 | :-- | :-- |
-| Local-first memory | Durable profile facts, recall indexes, WAL, and operator data live in the NEOTH home by default. |
+| Local-first memory | Durable profile facts, typed communication preferences, recall indexes, WAL, and operator data live in the NEOTH home by default. |
 | Explicit provider routing | Model calls go to configured providers only; profile extraction does not silently fall back to cloud. |
 | Fail-closed sensitive work | If a required local/private path is unavailable, NEOTH reports the problem instead of using a less private path. |
 | Evidence before belief | Durable profile facts carry source evidence, confidence, and review state. |
@@ -24,8 +24,10 @@ README.
 
 ```bash
 neoth privacy audit --last 30d
-neoth profile show --evidence
+neoth profile show
 neoth profile pending
+neoth profile communication status
+neoth profile communication show
 neoth verify
 neoth plugin ledger
 neoth doctor
@@ -46,6 +48,24 @@ The tamper-evident WAL retains historical payload bytes by default. Add
 failed segment makes the command fail loudly instead of reporting a complete
 physical erase.
 
+Communication adaptation is stored separately in
+`~/.neoth/profile/communication.json`. The topic-based memory cascade does not
+search or erase that file, and its preview does not count those records. Use
+`neoth profile communication reset <dimension>` to remove one dimension or
+`neoth memory erase-communication-profile` to preview the complete typed
+operator subject (dimensions, evidence and declared-context record counts).
+For a channel data-subject request, first run `neoth export --list-subjects`,
+then pass the exact pseudonymous handle to
+`neoth memory erase-communication-profile --subject <handle>`. Handles are
+case-sensitive; an unknown selector fails without deleting or auditing another
+subject. Add `--confirm` to erase only the selected subject and persist a
+metadata-only privacy audit containing its hash, never its handle or profile
+content. `context clear` only revokes future use and deliberately retains
+declaration history. Topic forget remains separate by design because typed
+presentation evidence is not topic-addressable; both its human and JSON outputs
+report zero affected communication subjects and point to the explicit erasure
+command.
+
 ## What stays local
 
 | Data | Default location |
@@ -55,6 +75,7 @@ physical erase.
 | WAL audit trail | `~/.neoth/wal/` |
 | Read-side indexes | `~/.neoth/views.db` |
 | Profile facts | SQLite views backed by WAL events |
+| Communication preferences | `~/.neoth/profile/communication.json`; typed evidence hashes and estimates, never raw messages |
 | Local model cache | `~/.neoth/models/` (download libraries may also use their transfer cache) |
 | Skills and plugins | `~/.neoth/skills/`, plugin registry, capability ledger |
 | Backups | `~/.neoth/backups/` unless configured otherwise; `credentials.yaml` is excluded by default |
@@ -67,7 +88,7 @@ before enabling them rather than treating this overview as exhaustive.
 
 | Destination | When it is used | How to inspect |
 | :-- | :-- | :-- |
-| LLM provider | You configure a cloud model for chat/reasoning. | `neoth provider list`, `neoth privacy audit --last 30d` |
+| LLM provider | You configure a cloud model for chat/reasoning. The effective prompt can include compiled communication accommodations. A neuro-context label requires two explicit operator opt-ins. | `neoth provider list`, `neoth profile communication status`, `neoth privacy audit --last 30d` |
 | Chat platform | You connect Telegram, WhatsApp, Slack, Discord, or another channel. | `neoth channel list`, `neoth privacy audit --last 30d` |
 | Cloud TTS | You select Edge, ElevenLabs, Azure, or ViitorVoice and explicitly set `media.cloud_tts_enabled: true`. | `neoth tts status`, `neoth wal show --type tts_synthesized` |
 | Public search/API | You run web search, arXiv, or another explicitly configured integration. | Command status/output and the surface-specific audit contract |
@@ -83,11 +104,52 @@ prove that every possible external side effect emitted a frame. See the
 [network and audit matrix](security/threat-model.md) for exact gates, audit
 semantics, and known limitations.
 
+## Communication adaptation and neuro-context
+
+The default-on communication engine is deterministic local code, not an LLM
+diagnostic system. It observes bounded presentation signals such as desired
+directness, structure, literalness, context amount, pacing, clarification and
+correction style. Raw messages are classified in memory and discarded; the
+persistent state holds typed values, subject/session bindings, timestamps and
+content/event hashes.
+
+Autism, ADHD, neurodivergence and health diagnoses are never inferred by this
+engine or the general fact-profile extractor. A neuro-context record exists
+only after the operator runs `neoth profile communication context declare ...`.
+By default, even an explicit declaration compiles only concrete accommodations.
+The label itself can be sent to a provider only when both the global
+`prompt_export: label_and_accommodations` policy and that declaration's
+`--prompt-use label-and-accommodations` choice allow it. Revoked declarations
+are not compiled into future prompts.
+
+For `neoth chat --incognito`, the communication compiler and recorder return
+before opening the state file: the turn performs zero communication-profile
+reads and writes. The mandatory provider lifecycle remains content-free and
+auditable as an Incognito event. This guarantee applies to the CLI Incognito
+mode and to authenticated n8n `/api/provider/call` requests carrying
+`"incognito": true`; the GUI, Buddy and channel API do not yet expose equivalent
+Incognito controls.
+
+`neoth export` exports episodic, consolidated, long-term, ground-truth and
+archived-session data plus `communication_profile.json` in both JSONL and
+Markdown bundles. That schema-versioned file contains only the typed local
+`operator` subject (or explicit absent markers); channel/other-human subjects
+are never bulk-included. `neoth export --list-subjects` is the explicit,
+read-only inventory of pseudonymous exact selectors. `neoth export --subject
+<handle>` requires one existing exact selector and creates a
+communication-profile-only bundle in an empty output directory; operator-wide
+memory rows and archives are excluded to prevent cross-subject disclosure.
+Communication preferences are current state, so `--since` does not filter the
+communication file and it declares `since_filter_applied: false`. The general
+`idx_profile` fact-claim set is still not included; complete fact-profile export
+parity remains an open Gold requirement.
+
 ## Fail-closed examples
 
 | Situation | Expected behavior |
 | :-- | :-- |
 | Local profile model is missing | Doctor reports model cache/readiness; profile extraction does not silently switch to cloud. |
+| Communication-profile state is corrupt | A path that requested adaptation fails loudly instead of silently dropping the configured prompt layer. Doctor reports the dedicated state integrity failure without printing profile content. |
 | Provider token is expired | Provider call fails or circuit-breaks; NEOTH does not use another provider unless policy allows it. |
 | Plugin asks for a blocked hostcall | Plugin invocation is denied and audited. |
 | Channel token is half-configured | Doctor reports configured-not-started state instead of pretending the channel is live. |
