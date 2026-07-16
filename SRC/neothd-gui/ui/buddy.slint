@@ -88,14 +88,20 @@ export component Buddy inherits Rectangle {
     }
 
     // ── Continuous phases ────────────────────────────────────────────
-    property <angle> orbit: 360deg * mod(animation-tick(), root.spin()) / root.spin();
+    // Reduced-/no-motion contract (E7): at Theme.animation-mode == 0 every
+    // tick-driven phase collapses to a static neutral value, so the orb — and
+    // everything downstream (rings, glow, core breath, consent-badge throb,
+    // speaking ring, blink) — renders frozen. `animate` blocks already honour
+    // the mode via the duration tokens; these continuous phases could not, so
+    // they are gated explicitly here.
+    property <angle> orbit: Theme.animation-mode == 0 ? 0deg : 360deg * mod(animation-tick(), root.spin()) / root.spin();
 
     // Active pulse — drives active overlays and orbiters.
-    property <float> pulse: 0.5 + 0.5 * sin(360deg * mod(animation-tick(), root.breath()) / root.breath());
+    property <float> pulse: Theme.animation-mode == 0 ? 0.5 : 0.5 + 0.5 * sin(360deg * mod(animation-tick(), root.breath()) / root.breath());
 
     // Idle breathe — always-on slow inhale/exhale, period ~4 s regardless of
     // mood, very subtle so it never competes with the active pulse.
-    property <float> breathe: 0.5 + 0.5 * sin(360deg * mod(animation-tick(), 4000ms) / 4000ms);
+    property <float> breathe: Theme.animation-mode == 0 ? 0.5 : 0.5 + 0.5 * sin(360deg * mod(animation-tick(), 4000ms) / 4000ms);
 
     // State-entry pop: a one-shot scale overshoot on entering an active mood.
     // We approximate it by tracking a fast rising/decaying phase keyed to
@@ -107,11 +113,11 @@ export component Buddy inherits Rectangle {
     // complement of the slower pulse — this gives a small "extra bounce" right
     // when the mood first activates and the pulse restarts.
     property <float> pop-phase: sin(360deg * mod(animation-tick(), 350ms) / 350ms);
-    property <float> pop: root.intensity() > 0.5 ? (0.06 * root.pop-phase * (1.0 - root.pulse)) : 0.0;
+    property <float> pop: (Theme.animation-mode == 0 || root.intensity() <= 0.5) ? 0.0 : (0.06 * root.pop-phase * (1.0 - root.pulse));
 
     // ── State-ring sweep phase 0..1 over mood spin period ────────────
     // Used by the STATE-RING for the speaking clockwise-trail calculation.
-    property <float> ring-t: mod(animation-tick(), root.spin()) / root.spin();
+    property <float> ring-t: Theme.animation-mode == 0 ? 0.0 : mod(animation-tick(), root.spin()) / root.spin();
 
     // ── Micro-idle blink phases ───────────────────────────────────────
     // During idle: blink-t runs 0→1 in the first 120 ms of every 9 s cycle.
@@ -120,7 +126,7 @@ export component Buddy inherits Rectangle {
     property <float> idle-blink-t: root.is-mood("idle")
         ? mod(animation-tick(), 9000ms) / 120ms
         : 99.0;
-    property <float> idle-blink-scale: root.idle-blink-t <= 1.0
+    property <float> idle-blink-scale: (Theme.animation-mode != 0 && root.idle-blink-t <= 1.0)
         ? (1.0 - 0.85 * sin(root.idle-blink-t * 180deg))
         : 1.0;
 
@@ -207,7 +213,7 @@ export component Buddy inherits Rectangle {
             // LISTENING — staggered sine wave per segment: level-meter "breathing in".
             // Each segment drives its own phase (i * 15deg offset) so adjacent dots
             // undulate, resembling an inward-rippling VU ring.
-            property <float> listen-ph: sin(
+            property <float> listen-ph: Theme.animation-mode == 0 ? 0.0 : sin(
                 360deg * mod(animation-tick(), 600ms) / 600ms + i * 15deg);
             property <float> listen-alpha: root.is-mood("listening")
                 ? (0.15 + 0.65 * (0.5 + 0.5 * self.listen-ph)
@@ -244,7 +250,7 @@ export component Buddy inherits Rectangle {
         property <angle> a: root.orbit + (i * 120deg);
         // Radius wobble: each dot has slightly different radii (44±4 u) and a
         // slow elliptical wobble to break rigid-circle symmetry.
-        property <float> wobble: 0.5 + 0.5 * sin((360deg * mod(animation-tick(), 6200ms) / 6200ms) + i * 117deg);
+        property <float> wobble: Theme.animation-mode == 0 ? 0.5 : 0.5 + 0.5 * sin((360deg * mod(animation-tick(), 6200ms) / 6200ms) + i * 117deg);
         property <length> r-base: (42 + i * 1.5) * root.u;   // 42 / 43.5 / 45 u
         property <length> dr: d * root.u;
         property <length> rx: self.r-base + (3.5 * root.u * self.wobble);   // elliptical x
@@ -264,7 +270,7 @@ export component Buddy inherits Rectangle {
         opacity: 0; init => { self.opacity = 1; }
         animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         for p[i] in [0deg, 90deg, 180deg, 270deg]: Rectangle {
-            property <float> t: mod(animation-tick() / 1s + i * 0.3, 1.2) / 1.2;
+            property <float> t: Theme.animation-mode == 0 ? 0.5 : mod(animation-tick() / 1s + i * 0.3, 1.2) / 1.2;
             property <length> rr: (30 - 24 * self.t) * root.u;
             width: 3.2 * root.u; height: 3.2 * root.u; border-radius: self.width / 2;
             x: root.cx + (sin(p) * self.rr) - self.width / 2;
@@ -333,7 +339,7 @@ export component Buddy inherits Rectangle {
         for dx[i] in [44, 50, 56]: Rectangle {
             // Stagger offset: each dot 0.28 s behind the previous.
             // Use a sin²-like shape (sin * abs(sin)) for snappier attack, smooth decay.
-            property <float> raw: sin(360deg * mod(animation-tick() / 0.88s + i * 0.32, 1.0));
+            property <float> raw: Theme.animation-mode == 0 ? 0.0 : sin(360deg * mod(animation-tick() / 0.88s + i * 0.32, 1.0));
             property <float> ph: self.raw * (self.raw < 0.0 ? -1.0 : 1.0);   // |sin| shape
             x: (dx - 1.9) * root.u; y: (50 - 1.9 - 3.5 * self.ph) * root.u;
             width: 3.8 * root.u; height: 3.8 * root.u; border-radius: self.width / 2;
@@ -344,7 +350,7 @@ export component Buddy inherits Rectangle {
 
     // working / analyzing — scan bar with edge fade via two gradient rects
     if root.is-mood("working") || root.is-mood("analyzing"): Rectangle {
-        property <float> sweep: mod(animation-tick(), 1.4s) / 1.4s;
+        property <float> sweep: Theme.animation-mode == 0 ? 0.5 : mod(animation-tick(), 1.4s) / 1.4s;
         x: 30 * root.u; y: (40 + 20 * self.sweep) * root.u;
         width: 40 * root.u; height: 2.0 * root.u; border-radius: 1.0 * root.u;
         background: Theme.ink-1000;

@@ -130,9 +130,16 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
       + offizielles `AboutSlint`-Attributionswidget.
 - [x] E5 `agents`-ProbeView → strukturierte View (Cards statt Text-Dump).
 - [ ] E6 Density-Mode-Rollout auf alle Tabs (bisher nur chat).
-- [ ] E7 Reduced-/No-Motion-Vertrag für jede tick-getriebene Animation. Der
-      Consent-Badge-Throb hängt aktuell direkt an `animation-tick()` und muss
-      bei `Theme.animation-mode == 0` statisch bleiben.
+- [x] E7 Reduced-/No-Motion-Vertrag für jede tick-getriebene Animation ✅
+      (2026-07-16): jede `animation-tick()`-getriebene Phase im Buddy-Orb
+      (orbit/pulse/breathe/pop/ring-t/blink + die transienten Overlays
+      listen-ph/wobble/memory-t/thinking-raw/scan-sweep) kollabiert bei
+      `Theme.animation-mode == 0` auf einen statischen Neutralwert. Damit
+      frieren Idle-Breath, Ringe, Glow, Blink, Speaking-Ring UND der
+      Consent-Badge-Throb (hing an `breathe`) ein. Nicht-invisible Freeze-Werte
+      gewählt (sweep→0.5, memory-t→0.5) damit kein Overlay unsichtbar wird.
+      `animate`-Blöcke honorierten den Mode schon über die Duration-Tokens.
+      Gate GATE_EXIT=0.
 
 ### Wave G — GUI-Inventar-P0/P1 (aus gui-inventory Agent)
 - [x] G1 P0: ToastStack click-to-dismiss (`callback toast-dismissed(int)` + Rust-Drain).
