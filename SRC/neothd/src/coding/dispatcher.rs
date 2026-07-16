@@ -819,174 +819,179 @@ fn apply_patch_via_worktree(
     // body so a single cleanup covers all six failure returns; success keeps
     // the worktree (documented — the operator inspects the applied diff there).
     let apply_result: std::result::Result<(), String> = (|| {
-
-    // Per Chorus verdict Q1b: refuse on dirty. The worktree was
-    // just created from HEAD so it should be clean — this is a
-    // defensive check against an operator that pre-populated
-    // the .neoth-task-N/ dir.
-    match crate::coding::worktree::is_worktree_dirty(&wt_path) {
-        Ok(true) => {
-            return Err(format!(
-                "task {} worktree {} is dirty — refusing apply (Chorus Q1b)",
-                task.task_id.raw(),
-                wt_path.display()
-            ));
-        }
-        Err(e) => {
-            return Err(format!("worktree dirty-check failed: {e}"));
-        }
-        Ok(false) => {}
-    }
-
-    // REPOW pre-edit risk gate — autonomy-tiered: Warn / RequireConfirm / Block.
-    // Standard → warn only.  Elevated → confirm for risk ≥ 0.85.
-    // Full → block for risk ≥ HIGH_RISK_THRESHOLD unless an override lease covers it.
-    // Block / RequireConfirm: skip the apply (return Err) — NO interactive prompt.
-    // The has_override check reads the lease store from default_neoth_home; a store
-    // load failure is treated as no-override (fail-closed for elevated/full paths).
-    // Git failures inside assess_edit_risk degrade to no-warning (existing behaviour).
-    {
-        use crate::code_map::risk::{RiskGateAction, risk_gate_action};
-        use crate::permissions::AutonomyLevel;
-
-        let changed = crate::code_map::risk::patch_changed_files(&outcome.patch_path);
-        let warnings = crate::code_map::risk::assess_edit_risk(&cfg.repo_root, &changed);
-
-        // Determine override-lease status once (shared across all files in this patch).
-        // Only consulted when autonomy is Elevated or Full — skip the I/O otherwise.
-        let autonomy_level = cfg
-            .autonomy_policy
-            .as_ref()
-            .map(crate::permissions::AutonomyPolicySnapshot::level)
-            .unwrap_or(AutonomyLevel::Standard);
-        let has_override = match autonomy_level {
-            AutonomyLevel::Elevated | AutonomyLevel::Full => {
-                // neoth: override token = a DangerousCommand lease granted to "operator".
-                // Operator runs: `neoth lease grant operator dangerous_command --ttl 300`
-                let home = crate::config::FreedomConfig::default_neoth_home();
-                let path = crate::permissions::lease::LeaseStore::default_path(&home);
-                let now = crate::time::now_unix_i64();
-                crate::permissions::lease::LeaseStore::load(&path)
-                    .ok()
-                    .and_then(|store| {
-                        store
-                            .find_covering(
-                                crate::security::risk_gate::RISK_LEASE_SUBJECT,
-                                &crate::permissions::lease::LeaseScope::DangerousCommand,
-                                now,
-                            )
-                            .map(|_| true)
-                    })
-                    .unwrap_or(false)
+        // Per Chorus verdict Q1b: refuse on dirty. The worktree was
+        // just created from HEAD so it should be clean — this is a
+        // defensive check against an operator that pre-populated
+        // the .neoth-task-N/ dir.
+        match crate::coding::worktree::is_worktree_dirty(&wt_path) {
+            Ok(true) => {
+                return Err(format!(
+                    "task {} worktree {} is dirty — refusing apply (Chorus Q1b)",
+                    task.task_id.raw(),
+                    wt_path.display()
+                ));
             }
-            _ => false,
-        };
+            Err(e) => {
+                return Err(format!("worktree dirty-check failed: {e}"));
+            }
+            Ok(false) => {}
+        }
 
-        for w in &warnings {
-            let action = risk_gate_action(autonomy_level, w.risk_score, has_override);
-            match action {
-                RiskGateAction::Warn => {
-                    warn!(
-                        task_id = task.task_id.raw(),
-                        file = %w.file,
-                        risk_score = w.risk_score,
-                        bus_factor = w.bus_factor,
-                        reason = %w.reason,
-                        autonomy = ?autonomy_level,
-                        "⚠ editing high-risk file — review carefully",
-                    );
+        // REPOW pre-edit risk gate — autonomy-tiered: Warn / RequireConfirm / Block.
+        // Standard → warn only.  Elevated → confirm for risk ≥ 0.85.
+        // Full → block for risk ≥ HIGH_RISK_THRESHOLD unless an override lease covers it.
+        // Block / RequireConfirm: skip the apply (return Err) — NO interactive prompt.
+        // The has_override check reads the lease store from default_neoth_home; a store
+        // load failure is treated as no-override (fail-closed for elevated/full paths).
+        // Git failures inside assess_edit_risk degrade to no-warning (existing behaviour).
+        {
+            use crate::code_map::risk::{RiskGateAction, risk_gate_action};
+            use crate::permissions::AutonomyLevel;
+
+            let changed = crate::code_map::risk::patch_changed_files(&outcome.patch_path);
+            let warnings = crate::code_map::risk::assess_edit_risk(&cfg.repo_root, &changed);
+
+            // Determine override-lease status once (shared across all files in this patch).
+            // Only consulted when autonomy is Elevated or Full — skip the I/O otherwise.
+            let autonomy_level = cfg
+                .autonomy_policy
+                .as_ref()
+                .map(crate::permissions::AutonomyPolicySnapshot::level)
+                .unwrap_or(AutonomyLevel::Standard);
+            let has_override = match autonomy_level {
+                AutonomyLevel::Elevated | AutonomyLevel::Full => {
+                    // neoth: override token = a DangerousCommand lease granted to "operator".
+                    // Operator runs: `neoth lease grant operator dangerous_command --ttl 300`
+                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    let path = crate::permissions::lease::LeaseStore::default_path(&home);
+                    let now = crate::time::now_unix_i64();
+                    crate::permissions::lease::LeaseStore::load(&path)
+                        .ok()
+                        .and_then(|store| {
+                            store
+                                .find_covering(
+                                    crate::security::risk_gate::RISK_LEASE_SUBJECT,
+                                    &crate::permissions::lease::LeaseScope::DangerousCommand,
+                                    now,
+                                )
+                                .map(|_| true)
+                        })
+                        .unwrap_or(false)
                 }
-                RiskGateAction::RequireConfirm | RiskGateAction::Block => {
-                    warn!(
-                        task_id = task.task_id.raw(),
-                        file = %w.file,
-                        risk_score = w.risk_score,
-                        bus_factor = w.bus_factor,
-                        reason = %w.reason,
-                        autonomy = ?autonomy_level,
-                        has_override = has_override,
-                        "⛔ BLOCKED high-risk edit — grant an override lease to allow \
-                         (`neoth lease grant operator dangerous_command --ttl 300`)",
-                    );
-                    return Err(format!(
-                        "risk gate blocked edit of `{}` for task {} \
+                _ => false,
+            };
+
+            for w in &warnings {
+                let action = risk_gate_action(autonomy_level, w.risk_score, has_override);
+                match action {
+                    RiskGateAction::Warn => {
+                        warn!(
+                            task_id = task.task_id.raw(),
+                            file = %w.file,
+                            risk_score = w.risk_score,
+                            bus_factor = w.bus_factor,
+                            reason = %w.reason,
+                            autonomy = ?autonomy_level,
+                            "⚠ editing high-risk file — review carefully",
+                        );
+                    }
+                    RiskGateAction::RequireConfirm | RiskGateAction::Block => {
+                        warn!(
+                            task_id = task.task_id.raw(),
+                            file = %w.file,
+                            risk_score = w.risk_score,
+                            bus_factor = w.bus_factor,
+                            reason = %w.reason,
+                            autonomy = ?autonomy_level,
+                            has_override = has_override,
+                            "⛔ BLOCKED high-risk edit — grant an override lease to allow \
+                             (`neoth lease grant operator dangerous_command --ttl 300`)",
+                        );
+                        return Err(format!(
+                            "risk gate blocked edit of `{}` for task {} \
                          (risk={:.2}, autonomy={autonomy_level:?}) — \
                          grant an override lease to allow: \
                          `neoth lease grant operator dangerous_command --ttl 300`",
-                        w.file,
-                        task.task_id.raw(),
-                        w.risk_score,
-                    ));
+                            w.file,
+                            task.task_id.raw(),
+                            w.risk_score,
+                        ));
+                    }
                 }
             }
         }
-    }
 
-    let patch_hash = crate::coding::worktree::patch_hash(&outcome.patch_path)
-        .unwrap_or_else(|_| "(unhashable)".to_string());
+        let patch_hash = crate::coding::worktree::patch_hash(&outcome.patch_path)
+            .unwrap_or_else(|_| "(unhashable)".to_string());
 
-    match crate::coding::worktree::apply_patch_in_worktree(&wt_path, &outcome.patch_path) {
-        Ok(crate::coding::worktree::PatchApplyOutcome::Applied { worktree_path }) => {
-            info!(
-                task_id = task.task_id.raw(),
-                worktree = %worktree_path.display(),
-                "patch applied"
-            );
-            // Phase 4 test-loop: when the operator configured a
-            // test command, run it inside the worktree. A
-            // non-zero exit routes through the retry-policy
-            // path the same way a git apply rejection does.
-            let result = if let Some(cmd) = cfg.test_cmd.as_deref() {
-                run_worktree_tests(&worktree_path, cmd, cfg.test_timeout, task)
-            } else {
-                Ok(())
-            };
-
-            match result {
-                Ok(()) => {
-                    emit_patch_applied_wal(
-                        cfg.wal_writer.as_deref(),
-                        task,
-                        &worktree_path,
-                        &patch_hash,
-                    );
+        match crate::coding::worktree::apply_patch_in_worktree(&wt_path, &outcome.patch_path) {
+            Ok(crate::coding::worktree::PatchApplyOutcome::Applied { worktree_path }) => {
+                info!(
+                    task_id = task.task_id.raw(),
+                    worktree = %worktree_path.display(),
+                    "patch applied"
+                );
+                // Phase 4 test-loop: when the operator configured a
+                // test command, run it inside the worktree. A
+                // non-zero exit routes through the retry-policy
+                // path the same way a git apply rejection does.
+                let result = if let Some(cmd) = cfg.test_cmd.as_deref() {
+                    run_worktree_tests(&worktree_path, cmd, cfg.test_timeout, task)
+                } else {
                     Ok(())
-                }
-                Err((stage, msg)) => {
-                    emit_patch_apply_failed_wal(
-                        cfg.wal_writer.as_deref(),
-                        task,
-                        &worktree_path,
-                        stage,
-                        &msg,
-                    );
-                    Err(msg)
+                };
+
+                match result {
+                    Ok(()) => {
+                        emit_patch_applied_wal(
+                            cfg.wal_writer.as_deref(),
+                            task,
+                            &worktree_path,
+                            &patch_hash,
+                        );
+                        Ok(())
+                    }
+                    Err((stage, msg)) => {
+                        emit_patch_apply_failed_wal(
+                            cfg.wal_writer.as_deref(),
+                            task,
+                            &worktree_path,
+                            stage,
+                            &msg,
+                        );
+                        Err(msg)
+                    }
                 }
             }
+            Ok(crate::coding::worktree::PatchApplyOutcome::Rejected { stderr }) => {
+                let msg = format!(
+                    "git apply rejected patch for task {}: {stderr}",
+                    task.task_id.raw()
+                );
+                emit_patch_apply_failed_wal(
+                    cfg.wal_writer.as_deref(),
+                    task,
+                    &wt_path,
+                    "apply",
+                    &msg,
+                );
+                Err(msg)
+            }
+            Err(e) => {
+                let msg = format!(
+                    "apply_patch_in_worktree IO error for task {}: {e}",
+                    task.task_id.raw()
+                );
+                emit_patch_apply_failed_wal(
+                    cfg.wal_writer.as_deref(),
+                    task,
+                    &wt_path,
+                    "apply_check",
+                    &msg,
+                );
+                Err(msg)
+            }
         }
-        Ok(crate::coding::worktree::PatchApplyOutcome::Rejected { stderr }) => {
-            let msg = format!(
-                "git apply rejected patch for task {}: {stderr}",
-                task.task_id.raw()
-            );
-            emit_patch_apply_failed_wal(cfg.wal_writer.as_deref(), task, &wt_path, "apply", &msg);
-            Err(msg)
-        }
-        Err(e) => {
-            let msg = format!(
-                "apply_patch_in_worktree IO error for task {}: {e}",
-                task.task_id.raw()
-            );
-            emit_patch_apply_failed_wal(
-                cfg.wal_writer.as_deref(),
-                task,
-                &wt_path,
-                "apply_check",
-                &msg,
-            );
-            Err(msg)
-        }
-    }
     })();
 
     // WS-BUG P1: clean the scratch worktree on any failure so a retry can
