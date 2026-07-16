@@ -1576,6 +1576,16 @@ fn main() -> Result<()> {
                 "cluster.enabled",
                 false,
             ));
+            window.set_cfg_autoupdate_enabled(read_nested_bool_in_freedom(fp, "auto_update.enabled", false));
+            window.set_cfg_autoupdate_apply(read_nested_bool_in_freedom(fp, "auto_update.auto_apply", false));
+            {
+                let ch = read_nested_str_in_freedom(fp, "auto_update.channel", "stable");
+                window.set_cfg_autoupdate_channel_idx(match ch.as_str() { "rc" => 1, "nightly" => 2, _ => 0 });
+            }
+            {
+                let iv = read_nested_i64_in_freedom(fp, "auto_update.check_interval_secs", 0);
+                if iv > 0 { window.set_cfg_autoupdate_interval(iv.to_string().into()); }
+            }
             window
                 .set_cfg_cluster_name(read_nested_str_in_freedom(fp, "cluster.name", "").into());
             {
@@ -3524,6 +3534,48 @@ fn main() -> Result<()> {
                 if let Some(w) = weak.upgrade() {
                     w.set_doctor_undo_output(output.into());
                     w.set_doctor_undo_running(false);
+                }
+            });
+        });
+    });
+
+    // Auto-update "Check now" — `neoth updater check --output json`.
+    let weak_auc = window.as_weak();
+    window.on_autoupdate_check_clicked(move || {
+        let Some(w0) = weak_auc.upgrade() else {
+            return;
+        };
+        w0.set_autoupdate_check_running(true);
+        let weak = weak_auc.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("updater")
+                    .arg("check")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "Update check produced no output.".to_string()
+                    } else {
+                        s.chars().take(600).collect()
+                    }
+                }
+                None => "neothd binary not on PATH — cannot check for updates.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_autoupdate_check_output(output.into());
+                    w.set_autoupdate_check_running(false);
                 }
             });
         });
@@ -7672,6 +7724,20 @@ fn main() -> Result<()> {
         wire_nested_str!(on_cfg_user_tz_changed, "user_tz", "Timezone");
         // C6 — cluster transport config.
         wire_nested_bool!(on_cfg_cluster_enabled_changed, "cluster.enabled", "Cluster transport");
+        // Auto-update config (research P0).
+        wire_nested_bool!(on_cfg_autoupdate_enabled_changed, "auto_update.enabled", "Auto-update");
+        wire_nested_bool!(on_cfg_autoupdate_apply_changed, "auto_update.auto_apply", "Auto-apply");
+        wire_nested_int_combo!(
+            on_cfg_autoupdate_channel_changed,
+            "auto_update.channel",
+            &["stable", "rc", "nightly"],
+            "Update channel"
+        );
+        wire_nested_i64_str!(
+            on_cfg_autoupdate_interval_changed,
+            "auto_update.check_interval_secs",
+            "Update check interval"
+        );
         wire_nested_str!(on_cfg_cluster_name_changed, "cluster.name", "Cluster name");
         wire_nested_int_combo!(
             on_cfg_cluster_transport_changed,

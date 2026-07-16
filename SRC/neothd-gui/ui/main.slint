@@ -418,6 +418,18 @@ export component MainWindow inherits Window {
     in-out property <int>    cfg-cluster-transport-idx: 0;
     in-out property <bool>   cfg-cluster-announce-untrusted: false;
     in-out property <string> cfg-cluster-ssids: "";
+    // Auto-update config (research P0).
+    in-out property <bool>   cfg-autoupdate-enabled: false;
+    in-out property <bool>   cfg-autoupdate-apply: false;
+    in-out property <int>    cfg-autoupdate-channel-idx: 0;
+    in-out property <string> cfg-autoupdate-interval: "";
+    in property <string>     autoupdate-check-output: "";
+    in property <bool>       autoupdate-check-running: false;
+    callback cfg-autoupdate-enabled-changed(bool);
+    callback cfg-autoupdate-apply-changed(bool);
+    callback cfg-autoupdate-channel-changed(int);
+    callback cfg-autoupdate-interval-changed(string);
+    callback autoupdate-check-clicked();
     callback cfg-cluster-enabled-changed(bool);
     callback cfg-cluster-name-changed(string);
     callback cfg-cluster-transport-changed(int);
@@ -3328,6 +3340,17 @@ export component MainWindow inherits Window {
             cfg-cluster-transport-changed(i) => { root.cfg-cluster-transport-changed(i); }
             cfg-cluster-announce-untrusted-changed(v) => { root.cfg-cluster-announce-untrusted-changed(v); }
             cfg-cluster-ssids-changed(v) => { root.cfg-cluster-ssids-changed(v); }
+            cfg-autoupdate-enabled <=> root.cfg-autoupdate-enabled;
+            cfg-autoupdate-apply <=> root.cfg-autoupdate-apply;
+            cfg-autoupdate-channel-idx <=> root.cfg-autoupdate-channel-idx;
+            cfg-autoupdate-interval <=> root.cfg-autoupdate-interval;
+            autoupdate-check-output: root.autoupdate-check-output;
+            autoupdate-check-running: root.autoupdate-check-running;
+            cfg-autoupdate-enabled-changed(v) => { root.cfg-autoupdate-enabled-changed(v); }
+            cfg-autoupdate-apply-changed(v) => { root.cfg-autoupdate-apply-changed(v); }
+            cfg-autoupdate-channel-changed(i) => { root.cfg-autoupdate-channel-changed(i); }
+            cfg-autoupdate-interval-changed(v) => { root.cfg-autoupdate-interval-changed(v); }
+            autoupdate-check-clicked => { root.autoupdate-check-clicked(); }
             cluster-listen-port: root.cluster-listen-port;
             cluster-trusted-ssids-summary: root.cluster-trusted-ssids-summary;
             cluster-mdns-enabled-changed(enabled) => {
