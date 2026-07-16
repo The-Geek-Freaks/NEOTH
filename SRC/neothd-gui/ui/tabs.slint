@@ -4,7 +4,7 @@
 // probe; Doctor runs `neoth doctor`.
 
 import { Theme } from "theme.slint";
-import { SegBar } from "components.slint";
+import { SegBar, Skeleton } from "components.slint";
 
 // One labelled stat row (mono eyebrow + value).
 component StatRow inherits Rectangle {
@@ -123,7 +123,12 @@ export component ProbeView inherits Rectangle {
         Rectangle {
             vertical-stretch: 1; border-radius: Theme.radius-lg;
             background: Theme.bg-void; border-width: 1px; border-color: Theme.border-subtle;
-            Flickable {
+            // E2 — shape-matched shimmer while the first probe is in flight.
+            if root.running && root.output == "": Skeleton {
+                x: 18px; y: 16px; width: parent.width - 36px;
+                rows: 5;
+            }
+            if !(root.running && root.output == ""): Flickable {
                 viewport-width: self.width;
                 Text {
                     x: 18px; y: 16px; width: parent.width - 36px;

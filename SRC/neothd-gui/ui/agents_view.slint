@@ -68,7 +68,7 @@
 //   Rust; render each in its own `horizontal-stretch: 1` VerticalLayout.
 
 import { Theme } from "theme.slint";
-import { Card, Led, Kicker } from "components.slint";
+import { Card, Led, Kicker, Skeleton } from "components.slint";
 
 // ── Wire type ─────────────────────────────────────────────────────────────────
 
@@ -276,7 +276,9 @@ export component AgentsView inherits Rectangle {
     // mirroring the guard-property style used elsewhere in the codebase).
     property <bool> has-agents:  root.agents.length > 0;
     property <bool> show-raw:    root.agents.length == 0 && root.raw-output != "";
-    property <bool> show-empty:  root.agents.length == 0 && root.raw-output == "";
+    // E2 — first auto-load shows a shimmer, not the empty hint.
+    property <bool> show-skeleton: root.running && root.agents.length == 0 && root.raw-output == "";
+    property <bool> show-empty:  !root.running && root.agents.length == 0 && root.raw-output == "";
 
     background: Theme.bg-base;
 
@@ -383,6 +385,10 @@ export component AgentsView inherits Rectangle {
 
         // ── Empty state ───────────────────────────────────────────────────────
         // Both agents and raw-output are empty: first load, probe not yet run.
+        if root.show-skeleton: Skeleton {
+            rows: 4;
+            vertical-stretch: 1;
+        }
         if root.show-empty: Rectangle {
             vertical-stretch: 1;
             border-radius: Theme.radius-lg;

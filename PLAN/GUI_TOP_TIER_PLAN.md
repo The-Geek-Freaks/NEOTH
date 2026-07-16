@@ -67,7 +67,7 @@
 
 ### Wave E — Homogenität & Polish (GOLD-R4-09)
 - [x] E1 Glyph-Dedup + eine Icon-Familie (Sidebar-Kollisionen fixen).
-- [ ] E2 Skeleton-States (shape-matched) statt Spinner/Leere; Empty-States mit Aktion.
+- [~] E2 Skeleton-States: ProbeView (Agents/Automation) + AgentsView ✅; weitere Panels bei Bedarf.
 - [ ] E3 Optimistic UI auf allen Toggles/Mutationen (nie Spinner auf cron-toggle).
 - [x] E4 About/Version/Copyright-Panel + In-App-Changelog ("What's new" nach Update).
 - [x] E5 `agents`-ProbeView → strukturierte View (Cards statt Text-Dump).
@@ -116,7 +116,11 @@ Kanban (Linear/Height/GH-Projects):
 
 Chat (Claude/ChatGPT/Perplexity-Research):
 - [ ] H17 **Edit-and-Branch mit Variant-Navigator**. (Killer)
-- [ ] H18 **Regenerate mit Model-Picker**. (Killer)
+- [ ] H18 **Regenerate mit Model-Picker**. (Killer) — VERIFIZIERT: `neoth chat --model` existiert
+      (Priority CLI > tweaks > freedom). FEHLT: Provider-Catalog-Dump im CLI (`models list` = nur
+      lokale Managed-Models). Schritt 1: `neoth models catalog --output json` (live catalog,
+      model-version-agnostic). Schritt 2: Picker am Retry-Button (ContextMenu-Primitive),
+      Auswahl → chat --model <m>, Antwort als Sibling (→ H17-Branch-Modell).
 - [x] H19 Code-Block-Affordances (Copy/Run/Collapse) + Always-Visible-Stop. (Killer)
 - [ ] H20 Prompt-Library mit Template-Variablen; Multi-Model-Split-View (Council-Compare!); Volltext-Suche. (High)
 
