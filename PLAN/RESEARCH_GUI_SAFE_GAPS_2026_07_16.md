@@ -180,3 +180,14 @@
 ## ⚠ VERIFY-FIRST CORRECTION (2026-07-16b, Claude)
 - **ConfirmDialog findings [chat delete / cron remove / mesh conflict / selfimprove rollback] RECLASSIFIED needs-live-verify.** ConfirmDialog (components.slint:1379) is a full-scrim modal centering on `root.width`, has ZERO existing mounts, and the finding's in-card mount would scope the scrim to the card. Correct impl = view-root mount + z-order-last + card→view callback plumbing, whose visual correctness (scrim coverage, centering, z-order) is not locally verifiable under the BSOD no-live-GUI rule. Deferred to a live-verify session.
 - **TooltipArea-wrap findings** similarly deferred: hover-popup positioning is not locally verifiable. Pure `accessible-role`/`accessible-label` additions (zero visual, compile≈correct) ARE being shipped.
+
+## ✅ IMPLEMENTED this session (Claude, 2026-07-16b — gate-green, pushed)
+Token-adopt: app_shell StatusFooter/operator/wordmark, cron monospace→font-mono.
+Buddy: 5 more mood-overlay entrance fades (working scan-bar deferred: sweep geometry) + BuddyDock keyboard a11y (role/label/action-default + caption label).
+a11y (accessible-role/label/action-default): overlay dismiss/mic/compact/restore/hide, tabs ProbeView+4 DoctorView probes, selfimprove Accept, chat ConversationItem+session-rows (prior wave), sleeping mood.
+Affordances: CommandPalette ↵ action chip (opacity-gated, no shift), TopBar persistent "Ctrl K" hint pill, chat scroll-to-bottom FAB entrance fade.
+
+## ⏸ DEFERRED (documented — need live-GUI-verify OR low-value/churn)
+- **needs-live-verify** (BSOD rule forbids local GUI run): ConfirmDialog on destructive actions [chat-delete/cron-remove/mesh-conflict/selfimprove-rollback] (unmounted full-scrim modal — placement/z-order unverifiable); TooltipArea wraps [chat attach/consent/session-title, overlay mic/nav] (hover-popup positioning); CommandPalette keyboard-legend footer (card restructure); streaming-cursor blink (message-text restructure); overview cost-chevron FocusScope (tab-order).
+- **fiddly / medium-risk, unverifiable appearance**: BuddyDock caption cross-fade (Timer state machine); buddy face-mouth/eye-position detail; MenuItem shortcut field (struct + render).
+- **low-value / churn**: 1px off-grid spacing (needs new space-inner token in shared theme.slint); compact in-card empties (policy: stay bare Text); activity list-row a11y (low).
