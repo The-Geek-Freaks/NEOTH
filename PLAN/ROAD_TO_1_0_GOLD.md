@@ -1859,6 +1859,19 @@ Full triaged detail (decisive file:line per finding) in the local file. **Securi
 
 **Provenance:** a max-scale read-only hunt across 16 daemon+GUI subsystems, each finding adversarially refuted (default REFUTED on doubt). **62 findings captured, 41 CONFIRMED / 21 REFUTED at corpus level.** Full dossier with every finding's failure-scenario + fix: `PLAN/RESEARCH_BUGHUNT_2026_07_16.md`. The four ★ items were re-verified by hand against current code this session. Severity: 2×P0 · 22×P1 · 31×P2 · 7×P3. No fixes applied yet (operator/Codex-lane coordination — this lane writes the tracker only).
 
+### Coverage note + pending wave 2
+
+Wave 1 (workflow `wf_796be4c9-ea1`) landed **9 of 16** subsystem finders before the
+verify barrier saturated on API load: channels, cluster-mesh, daemon-lifecycle,
+gui-glue, media, memory-recall, onboarding-repair, scheduling, selfdev. **Still un-hunted
+(wave 2 `wf_323561b2-fb8` aborted on the monthly API spend limit — 5 finders `spend limit`,
+2 `prompt too long`):** `wal/`, `coding/`, `council/`+`providers/`, `security/`+`permissions/`,
+`config/`+`tweaks/`, `mcp/`+`wasm_plugin/`+`skills/`+`hooks/`, `updater/`. Re-run wave 2 once
+budget resets (chunk the crypto/coding prompts smaller — they overran the context window).
+Manual spot-checks this session: `updater::constant_time_eq` (install_transaction.rs:2085)
+and `verify_sha256_bytes` (self_update.rs:972) reviewed — both correct (fixed-length CT
+compare; artifact-integrity hash needs no constant-time), no finding.
+
 ### P0 / P1 — actionable (fix sketch inline; `[ ]` = open)
 - [ ] **BUG-P0-gui-glue** ★ — Byte-index slice on user chat text panics on non-ASCII input (UI thread crash) (`SRC/neothd-gui/src/main.rs:2163`, panic). **Fix:** Replace `&body[..80]` at main.rs:2163 with a char-boundary-safe truncation: `let snippet = body.char_indices().nth(80).map(|(i,_)| &body[..i]).unwrap_or(&body);`
 - [ ] **BUG-P0-gui-glue** ★ — Byte-index slice on subprocess error string panics on non-ASCII error text (UI thread crash) (`SRC/neothd-gui/src/main.rs:2318`, panic). **Fix:** Replace `&e[..e.len().min(60)]` at main.rs:2318 with `e.char_indices().nth(60).map(|(i,_)| &e[..i]).unwrap_or(&e)`
