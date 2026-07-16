@@ -1,6 +1,9 @@
 # GUI TOP-TIER PLAN — Design Lane (Claude)
 
 > Erstellt 2026-07-16 aus 6-Agenten-Research-Wave (`wf_8618f46f-1a0`).
+> **Vollstaendige Research-Evidenz:** PLAN/RESEARCH_GUI_2026_07_16.md — die
+> unveraenderten Agent-Outputs beider Wellen (Parity-Audit, GUI-Inventar,
+> Buddy-Audit, Best-in-Class-Prinzipien, Killer-Features, Synthese).
 > Lane-Abgrenzung: Codex/GPT arbeitet an GOLD-Rollup-Contracts (CI, packaging,
 > integrity). Diese Lane = GUI/Design. Codex' Commit `7e53c9b5` fasste
 > main.rs / panel_logic.rs / main.slint / settings.slint an → vor jedem Push
